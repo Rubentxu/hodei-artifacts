@@ -1,0 +1,84 @@
+# Rust target and build artifacts
+/target/
+**/target/
+**/*.rlib
+
+# WASM / Trunk outputs
+dist/
+**/dist/
+*.wasm
+*.wat
+
+# Node/Tailwind caches
+node_modules/
+**/node_modules/
+.parcel-cache/
+.vite/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+ # Rust / Cargo
+/target/
+**/target/
+
+# Trunk (apps/app-web)
+/apps/app-web/dist/
+/apps/app-web/.trunk/
+.windsurf
+.cursor
+.claude
+
+# WASM build artifacts generated outside target/dist (safety)
+*.wasm
+*.wat
+
+# Node / tooling
+node_modules/
+
+# Logs
+*.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Coverage / reports
+coverage/
+*.lcov
+
+# Temp files
+.tmp/
+tmp/
+*.tmp
+
+# Env files
+.env
+.env.*
+releases/
+
+# Playwright test resources
+tests/test-results/
+tests/playwright-report/
+tests/node_modules/
+tests/package-lock.json
+tests/screenshots/
+tests/playwright-tests/**/*-snapshots/
+tests/playwright-tests/**/videos/
+tests/playwright-tests/**/screenshots/
+tests/playwright-tests/**/*.png
+tests/playwright-tests/**/*.webm
+
+docs/architecture/
+docs/web-bundles/
+.bmad-core/
+/.github/instructions/copilot-instructions.md
+/docs/repomix-example.md

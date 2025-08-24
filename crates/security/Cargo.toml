@@ -1,0 +1,11 @@
+[package]
+name = "security"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
