@@ -42,12 +42,21 @@ crates/<context>/
     support/   # Builders, fixtures, helpers reutilizables
 ```
 
-Para pruebas cross-crate de la aplicación completa (HTTP, métricas, tracing) puede añadirse un nivel superior:
+Para pruebas cross-crate de la aplicación completa (HTTP, métricas, tracing), se ha implementado un directorio E2E independiente:
 ```
-tests/
-  e2e_service/
+e2e/
+  tests/
+  setup/
+  package.json
+  playwright.config.ts
 ```
-(Este todavía no se ha introducido; se hará cuando exista servidor HTTP unificado.)
+
+**E2E Tests con Playwright**: Los tests end-to-end se implementan usando Playwright en TypeScript/JavaScript, completamente separados del ecosistema Rust. Esta separación permite:
+- Tests de interfaz web completos sin acoplamiento al framework de testing de Rust
+- Soporte multi-navegador (Chrome, Firefox, Safari, Edge)
+- Testing en dispositivos móviles simulados
+- Configuración independiente de setup/teardown global
+- Integración directa con el servidor HTTP del sistema
 
 ---
 
@@ -73,6 +82,7 @@ Regla de legibilidad: el nombre comunica el “subject under test” + la caract
 | Unit | Lógica pura, mapeos DTO↔Domain, validaciones regex, normalización de datos | I/O real, acceso a red, dependencias asíncronas externas | Creación entidad, error por nombre inválido |
 | Integration | Adaptadores reales (Mongo, S3, Kafka), índices, comportamiento idempotente | Mocks de la misma tecnología persistente (no mockear driver) | Duplicado nombre repositorio produce error, carrera insert checksum |
 | E2E / Slice | Flujo completo HTTP / comando vertical | Alterar configuración global fuera del scope del test | Upload → persist → evento (futuro) |
+| E2E Playwright | Flujos completos vía HTTP, interacciones UI, workflows multi-página | Tests unitarios o de integración (usar categorías apropiadas) | Upload artifact → search → download, gestión repositorios |
 
 ---
 
@@ -129,8 +139,9 @@ Cobertura se generará (CI-T6) sin gate inicial; gate se evaluará post MVP.
 Jobs planificados (ver WBS):
 1. `test-unit`: `cargo test --all --lib --tests --no-default-features` (sin features de integración).
 2. `test-integration`: activa features (`integration-mongo`, futuras `integration-kafka`) y ejecuta integración.
-3. `test-e2e`: introducido cuando exista servidor HTTP consolidado.
-4. Verificación organización tests: ejecuta `bash scripts/verify-no-inline-tests.sh` (CI-T7).
+3. `test-e2e-rust`: tests E2E internos por crate usando `cargo test --test 'e2e_*'`.
+4. `test-e2e-playwright`: ejecuta `cd e2e && npm test` para pruebas end-to-end completas.
+5. Verificación organización tests: ejecuta `bash scripts/verify-no-inline-tests.sh` (CI-T7).
 
 Orden recomendado en workflow:
 - Lint / Format → Inline Test Verification → Unit → Integration → (E2E) → Coverage.
@@ -154,9 +165,10 @@ Orden recomendado en workflow:
 | Fecha | Decisión | Referencia |
 |-------|----------|------------|
 | 2025-08-XX | Eliminación total de `test-internals` y traits de inyección para tests | TEST-ORG2 / TEST-ORG3 |
-| 2025-08-XX | Adopción política “cero inline tests” + script verificación | TEST-ORG4 |
+| 2025-08-XX | Adopción política "cero inline tests" + script verificación | TEST-ORG4 |
 | 2025-08-XX | Normalización prefijos `unit_` / `it_` / `e2e_` | TEST-ORG5 |
 | 2025-08-24 | Versión 1.1: excepción permitida doctests, guía helpers compartidos, benchmarks y comandos filtrado/cobertura | TEST-ORG1 |
+| 2025-08-25 | Versión 1.2: implementación estructura E2E con Playwright, separación completa de ecosistema Rust para tests de sistema | TEST-ORG6 |
 
 (Actualizar fechas exactas en commit.)
 
@@ -288,6 +300,65 @@ Requisitos:
 1. No manipular flags de compilación que oculten branches críticos.
 2. Excluir (si se parametriza) código generado y soporte de test para mantener señal.
 Objetivo futuro gate: ≥ 70% dominios críticos (upload, repository) manteniendo evolución incremental.
+
+---
+
+---
+
+## 23. Tests E2E con Playwright
+
+### 23.1 Estructura del Directorio E2E
+```
+e2e/
+├── package.json                    # Dependencias Node.js y scripts
+├── playwright.config.ts           # Configuración Playwright
+├── setup/
+│   ├── global-setup.ts           # Setup global (verificar servicios)
+│   └── global-teardown.ts        # Cleanup global
+└── tests/
+    └── *.spec.ts                 # Tests E2E por funcionalidad
+```
+
+### 23.2 Configuración y Ejecución
+- **Instalación**: `cd e2e && npm install`
+- **Ejecución**: `npm test` (todos los tests) o `npm run test:headed` (con UI)
+- **Debug**: `npm run debug` para modo debug interactivo
+- **Reportes**: `npm run report` para abrir reporte HTML
+
+### 23.3 Características Implementadas
+- **Multi-navegador**: Chrome, Firefox, Safari, Edge
+- **Dispositivos móviles**: Pixel 5, iPhone 12 Pro
+- **Paralelización**: Tests ejecutados en paralelo por defecto
+- **Retry automático**: 2 reintentos en CI, 0 en local
+- **Screenshots**: Captura automática en fallos
+- **Videos**: Grabación en fallos para debugging
+- **Integración servidor**: Setup automático del servidor Rust
+
+### 23.4 Patrones de Testing E2E
+```typescript
+// Ejemplo de estructura de test
+test.describe('Gestión de Artefactos', () => {
+  test.beforeEach(async ({ page }) => {
+    // Setup específico del test
+  });
+
+  test('workflow completo upload-search-download', async ({ page }) => {
+    // Implementación del test
+  });
+});
+```
+
+### 23.5 Gestión de Datos de Test
+- Datos de test generados dinámicamente por test
+- Cleanup automático entre tests
+- Fixtures reutilizables en `setup/`
+
+### 23.6 Integración con CI/CD
+Pipeline E2E Playwright:
+1. Instalación dependencias Node.js
+2. Compilación aplicación Rust
+3. Ejecución tests con retry automático
+4. Upload artefactos (screenshots, videos, reportes)
 
 ---
 

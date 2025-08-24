@@ -48,4 +48,52 @@ impl ArtifactStorage for S3ArtifactStorage {
 
         Ok(())
     }
+
+    async fn get_object_stream(
+        &self,
+        repository_id: &RepositoryId,
+        artifact_id: &ArtifactId,
+    ) -> Result<Vec<u8>, ArtifactError> {
+        let key = self.build_object_key(repository_id, artifact_id);
+
+        let response = self.s3_client
+            .get_object()
+            .bucket(&self.bucket_name)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| ArtifactError::Storage(format!("S3 get_object: {e}")))?;
+
+        let bytes = response.body
+            .collect()
+            .await
+            .map_err(|e| ArtifactError::Storage(format!("S3 read body: {e}")))?
+            .into_bytes()
+            .to_vec();
+
+        Ok(bytes)
+    }
+
+    async fn get_presigned_download_url(
+        &self,
+        repository_id: &RepositoryId,
+        artifact_id: &ArtifactId,
+        expires_in_secs: u64,
+    ) -> Result<String, ArtifactError> {
+        let key = self.build_object_key(repository_id, artifact_id);
+
+        let presigned_req = self.s3_client
+            .get_object()
+            .bucket(&self.bucket_name)
+            .key(key)
+            .presigned(
+                aws_sdk_s3::presigning::PresigningConfig::expires_in(
+                    std::time::Duration::from_secs(expires_in_secs)
+                ).map_err(|e| ArtifactError::Storage(format!("Presigning config: {e}")))?
+            )
+            .await
+            .map_err(|e| ArtifactError::Storage(format!("S3 presign: {e}")))?;
+
+        Ok(presigned_req.uri().to_string())
+    }
 }

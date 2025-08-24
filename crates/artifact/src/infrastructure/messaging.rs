@@ -10,6 +10,7 @@ use crate::domain::model::Artifact;
 use crate::error::ArtifactError;
 
 const ARTIFACT_CREATED_TOPIC: &str = "artifact_created";
+const ARTIFACT_DOWNLOAD_REQUESTED_TOPIC: &str = "artifact_download_requested";
 
 pub struct KafkaArtifactEventPublisher {
     producer: FutureProducer,
@@ -45,6 +46,26 @@ impl ArtifactEventPublisher for KafkaArtifactEventPublisher {
             .await
             .map_err(|(e, _)| {
                 error!("Failed to send Kafka message: {}", e);
+                ArtifactError::Event(e.to_string())
+            })?;
+
+        Ok(())
+    }
+
+    async fn publish_download_requested(&self, event: &shared::domain::event::ArtifactDownloadRequestedEvent) -> Result<(), ArtifactError> {
+        let payload = serde_json::to_string(event).map_err(|e| {
+            error!("Failed to serialize download event: {}", e);
+            ArtifactError::Event(e.to_string())
+        })?;
+
+        let record: FutureRecord<String, String> =
+            FutureRecord::to(ARTIFACT_DOWNLOAD_REQUESTED_TOPIC).payload(&payload);
+
+        self.producer
+            .send(record, std::time::Duration::from_secs(0))
+            .await
+            .map_err(|(e, _)| {
+                error!("Failed to send Kafka download message: {}", e);
                 ArtifactError::Event(e.to_string())
             })?;
 
