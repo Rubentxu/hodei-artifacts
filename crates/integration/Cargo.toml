@@ -1,14 +1,10 @@
 [package]
-name = "supply-chain"
+name = "integration"
 version = "0.1.0"
 edition = "2024"
-
 [dependencies]
 shared = { path = "../shared" }
 serde = { workspace = true }
 thiserror = { workspace = true }
-async-trait = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
 anyhow = { workspace = true }
-uuid = { workspace = true }
-chrono = { workspace = true }
+async-trait = { workspace = true }

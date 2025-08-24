@@ -8,4 +8,6 @@ shared = { path = "../shared" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

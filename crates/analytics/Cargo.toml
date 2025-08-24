@@ -5,4 +5,7 @@ edition = "2024"
 
 [dependencies]
 shared = { path = "../shared" }
-
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
