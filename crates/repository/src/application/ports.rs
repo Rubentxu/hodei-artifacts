@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use serde::Serialize;
+use shared::domain::event::{DomainEventEnvelope, DomainEventPayload};
 use shared::{RepositoryId, UserId, IsoTimestamp};
 use crate::domain::model::{Repository, RepositoryName, RepositoryDescription};
 use crate::error::RepositoryError;
@@ -15,10 +17,10 @@ pub struct NewRepositoryParams {
 pub trait RepositoryStore: Send + Sync {
     async fn save(&self, repo: &Repository) -> Result<(), RepositoryError>;
     async fn get(&self, id: &RepositoryId) -> Result<Option<Repository>, RepositoryError>;
+    async fn find_by_name(&self, name: &RepositoryName) -> Result<Option<Repository>, RepositoryError>;
 }
 
 #[async_trait]
-pub trait RepositoryEventPublisher: Send + Sync {
-    async fn publish_created(&self, repo: &Repository) -> Result<(), RepositoryError>;
+pub trait EventBus: Send + Sync {
+    async fn publish<E: DomainEventPayload + Serialize + Send + Sync>(&self, event: &DomainEventEnvelope<E>) -> Result<(), RepositoryError>;
 }
-

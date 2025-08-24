@@ -5,6 +5,7 @@ pub enum ArtifactError {
     #[error("Error repositorio: {0}")] Repository(String),
     #[error("Error almacenamiento: {0}")] Storage(String),
     #[error("Error publicando evento: {0}")] Event(String),
+    #[error("Artifact duplicado")] Duplicate,
     #[error("Artifact no encontrado")] NotFound,
 }
 

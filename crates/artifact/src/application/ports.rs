@@ -7,6 +7,8 @@ use crate::error::ArtifactError;
 pub trait ArtifactRepository: Send + Sync {
     async fn save(&self, artifact: &Artifact) -> Result<(), ArtifactError>;
     async fn get(&self, id: &ArtifactId) -> Result<Option<Artifact>, ArtifactError>;
+    /// Búsqueda para idempotencia: localizar artifact existente por (repository_id, checksum).
+    async fn find_by_repo_and_checksum(&self, repository: &RepositoryId, checksum: &ArtifactChecksum) -> Result<Option<Artifact>, ArtifactError>;
 }
 
 #[async_trait]

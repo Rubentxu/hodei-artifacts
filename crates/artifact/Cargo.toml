@@ -9,4 +9,26 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+# Habilitamos feature test-util para reutilizar helpers en tests de integración (coste bajo, sólo añade módulo)
+infra-mongo = { path = "../infra-mongo", features = ["test-util"] }
+# Usamos la versión workspace de mongodb (unificada).
+mongodb = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+rdkafka = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
 
+[features]
+# integration-mongo: habilita tests de integración que requieren instancia Mongo real (vía testcontainers fallback).
+integration-mongo = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["localstack", "kafka"] }
+aws-config = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+rdkafka = { workspace = true }

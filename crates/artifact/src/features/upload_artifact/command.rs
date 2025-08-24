@@ -1,6 +1,7 @@
 use shared::{RepositoryId, UserId};
 use crate::domain::model::{ArtifactVersion, ArtifactChecksum};
 
+#[derive(Clone)]
 pub struct UploadArtifactCommand {
     pub repository_id: RepositoryId,
     pub version: ArtifactVersion,
@@ -14,4 +15,3 @@ pub struct UploadArtifactCommand {
 pub struct UploadArtifactResult {
     pub artifact_id: shared::ArtifactId,
 }
-

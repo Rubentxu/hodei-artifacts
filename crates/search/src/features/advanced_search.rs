@@ -64,7 +64,7 @@ pub struct FacetValue {
 }
 
 // Placeholder handler - will be implemented following VSA TDD approach
-pub async fn handle_advanced_search(query: AdvancedSearchQuery) -> Result<AdvancedSearchResult, crate::error::SearchError> {
+pub async fn handle_advanced_search(_query: AdvancedSearchQuery) -> Result<AdvancedSearchResult, crate::error::SearchError> {
     // Implementation will follow when the actual advanced search engine is developed
     todo!("Implement advanced search handler following TDD approach")
 }

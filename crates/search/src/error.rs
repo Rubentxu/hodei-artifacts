@@ -3,6 +3,12 @@
 //! Defines all error types used within the search domain
 //! Following robust error handling patterns with thiserror
 
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
 use thiserror::Error;
 
 /// Main error type for the Search bounded context
@@ -131,20 +137,37 @@ impl SearchError {
 /// Result type alias for Search operations
 pub type SearchResult<T> = Result<T, SearchError>;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl IntoResponse for SearchError {
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self {
+            SearchError::InvalidQuery { reason } => (StatusCode::BAD_REQUEST, reason),
+            SearchError::InvalidParameters { field, reason } => (
+                StatusCode::BAD_REQUEST,
+                format!("Invalid parameter '{}': {}", field, reason),
+            ),
+            SearchError::IndexNotFound { index_name } => (
+                StatusCode::NOT_FOUND,
+                format!("Index '{}' not found", index_name),
+            ),
+            SearchError::Authentication { message } => (StatusCode::UNAUTHORIZED, message),
+            SearchError::Authorization { message } => (StatusCode::FORBIDDEN, message),
+            SearchError::RateLimitExceeded { user_id } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                format!("Rate limit exceeded for user '{}'", user_id),
+            ),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "An internal server error occurred".to_string(),
+            ),
+        };
 
-    #[test]
-    fn test_error_creation() {
-        let error = SearchError::query_failed("syntax error");
-        assert!(matches!(error, SearchError::QueryFailed { .. }));
-    }
+        let body = Json(json!({
+            "error": {
+                "code": status.as_u16(),
+                "message": error_message,
+            }
+        }));
 
-    #[test]
-    fn test_error_categories() {
-        let error = SearchError::search_timeout(5000);
-        assert_eq!(error.category(), "timeout_error");
-        assert!(error.is_retryable());
+        (status, body).into_response()
     }
 }

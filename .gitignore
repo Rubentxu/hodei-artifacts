@@ -2,6 +2,9 @@
 /target/
 **/target/
 **/*.rlib
+scripts
+
+Cargo.lock
 
 # WASM / Trunk outputs
 dist/

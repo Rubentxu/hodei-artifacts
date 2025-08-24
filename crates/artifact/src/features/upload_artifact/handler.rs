@@ -1,8 +1,7 @@
 use crate::features::upload_artifact::command::{UploadArtifactCommand, UploadArtifactResult};
-use crate::application::ports::{ArtifactRepository, ArtifactStorage, ArtifactEventPublisher, NewArtifactParams};
-use crate::domain::model::{Artifact, ArtifactVersion, ArtifactChecksum};
+use crate::application::ports::{ArtifactRepository, ArtifactStorage, ArtifactEventPublisher};
+use crate::domain::model::{Artifact, ArtifactChecksum};
 use crate::error::ArtifactError;
-use shared::{IsoTimestamp, ArtifactId};
 
 pub async fn handle(
     repo: &dyn ArtifactRepository,
@@ -10,29 +9,29 @@ pub async fn handle(
     publisher: &dyn ArtifactEventPublisher,
     cmd: UploadArtifactCommand,
 ) -> Result<UploadArtifactResult, ArtifactError> {
-    let params = NewArtifactParams {
-        repository_id: cmd.repository_id,
-        version: ArtifactVersion(cmd.version.0),
-        file_name: cmd.file_name.clone(),
-        size_bytes: cmd.size_bytes,
-        checksum: ArtifactChecksum(cmd.checksum.0),
-        created_by: cmd.user_id,
-        occurred_at: IsoTimestamp::now(),
-    };
+    // 1. Lógica de idempotencia: buscar si el artefacto ya existe.
+    let checksum = ArtifactChecksum(cmd.checksum.0.clone());
+    if let Some(existing_artifact) = repo.find_by_repo_and_checksum(&cmd.repository_id, &checksum).await? {
+        return Ok(UploadArtifactResult {
+            artifact_id: existing_artifact.id,
+        });
+    }
 
+    // 2. Si no existe, crear y persistir el nuevo artefacto.
     let artifact = Artifact::new(
-        params.repository_id,
-        params.version,
-        params.file_name,
-        params.size_bytes,
-        params.checksum,
-        params.created_by,
+        cmd.repository_id,
+        cmd.version,
+        cmd.file_name,
+        cmd.size_bytes,
+        checksum,
+        cmd.user_id,
     );
 
+    // 3. Orquestar efectos secundarios: almacenamiento, persistencia y publicación de eventos.
     storage.put_object(&artifact.repository_id, &artifact.id, &cmd.bytes).await?;
     repo.save(&artifact).await?;
     publisher.publish_created(&artifact).await?;
 
-    Ok(UploadArtifactResult { artifact_id: ArtifactId(artifact.id.0) })
+    // 4. Devolver el ID del artefacto (nuevo o existente).
+    Ok(UploadArtifactResult { artifact_id: artifact.id })
 }
-

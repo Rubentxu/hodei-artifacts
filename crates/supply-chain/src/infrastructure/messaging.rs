@@ -3,8 +3,6 @@
 //! Implements event publishing ports for supply chain operations
 //! Following Event-Driven Architecture principles
 
-use async_trait::async_trait;
-use anyhow::Result;
 
 // Placeholder for event publisher implementations
 // These will connect to Kafka for supply chain events

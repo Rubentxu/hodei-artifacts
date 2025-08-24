@@ -1,39 +1,67 @@
-//! Persistence adapters for Search bounded context
-//!
-//! Implements search index storage and retrieval operations
-//! Following Repository pattern with dependency inversion
-
 use async_trait::async_trait;
-use anyhow::Result;
-use std::collections::HashMap;
+use futures::stream::StreamExt;
+use mongodb::{Client, Collection, IndexModel};
+use mongodb::bson::{doc, Document};
+use crate::application::ports::SearchIndex;
+use repository::domain::model::Repository;
+use crate::domain::model::ArtifactSearchDocument;
+use crate::error::{SearchError, SearchResult};
 
-// Placeholder for search persistence implementations
-// These will be implemented as concrete adapters for Elasticsearch, etc.
+const DB_NAME: &str = "hodei";
+const COLLECTION_NAME: &str = "search_index";
 
-pub struct ElasticsearchStore {
-    indices: HashMap<String, SearchIndex>,
+pub struct MongoSearchIndex {
+    collection: Collection<ArtifactSearchDocument>,
 }
 
-impl ElasticsearchStore {
-    pub fn new() -> Self {
-        Self {
-            indices: HashMap::new(),
+impl MongoSearchIndex {
+    pub async fn new(client: &Client) -> SearchResult<Self> {
+        let db = client.database(DB_NAME);
+        let collection = db.collection(COLLECTION_NAME);
+
+        // Create a text index on all string fields
+        let index_model = IndexModel::builder()
+            .keys(doc! { "$**": "text" })
+            .build();
+        collection.create_index(index_model).await.map_err(|e| {
+            SearchError::IndexOperationFailed {
+                operation: "create_text_index".to_string(),
+                reason: e.to_string(),
+            }
+        })?;
+
+        Ok(Self { collection })
+    }
+}
+
+#[async_trait]
+impl SearchIndex for MongoSearchIndex {
+    async fn index(&self, document: &ArtifactSearchDocument) -> SearchResult<()> {
+        self.collection
+            .insert_one(document)
+            .await
+            .map_err(|e| SearchError::IndexOperationFailed {
+                operation: "insert".to_string(),
+                reason: e.to_string(),
+            })?;
+        Ok(())
+    }
+
+    async fn search(&self, query: &str) -> SearchResult<Vec<ArtifactSearchDocument>> {
+        let filter = doc! { "$text": { "$search": query } };
+        let mut cursor = self.collection.find(filter).await.map_err(|e| {
+            SearchError::QueryFailed {
+                message: e.to_string(),
+            }
+        })?;
+
+        let mut results = Vec::new();
+        while let Some(doc) = cursor.next().await {
+            results.push(doc.map_err(|e| SearchError::QueryFailed {
+                message: e.to_string(),
+            })?);
         }
+
+        Ok(results)
     }
 }
-
-impl Default for ElasticsearchStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// Placeholder structures for search infrastructure
-pub struct SearchIndex {
-    pub name: String,
-    pub mapping: serde_json::Value,
-    pub settings: serde_json::Value,
-}
-
-// Implementation will depend on the actual SearchEngine trait
-// This follows VSA principles with infrastructure adapters

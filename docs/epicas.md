@@ -532,3 +532,9 @@ El plan es **evolutivo** y se ajustará basado en feedback del mercado, performa
 
 ---
 **Próximas Actualizaciones**: Mensuales con métricas de progreso y ajustes de prioridades basados en datos reales de uso.
+
+## Tareas realizadas
+
+- Se corrigió el retorno de `aggregate_id` en Shared (DomainEvent) para devolver `String`.
+- Se configuró el arranque del servidor HTTP en la API (`hodei-artifacts-api`) usando `hyper::Server::bind` y se añadió la dependencia en `Cargo.toml`.
+- Se implementó el puerto `SbomRepository` en Supply Chain con una implementación en memoria para `SbomSummary`.

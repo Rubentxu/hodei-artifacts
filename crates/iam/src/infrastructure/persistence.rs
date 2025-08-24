@@ -3,8 +3,6 @@
 //! Implements the repository ports defined in application layer
 //! Following the Repository pattern with dependency inversion
 
-use async_trait::async_trait;
-use anyhow::Result;
 use std::collections::HashMap;
 use uuid::Uuid;
 

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+first_line="$(head -n1 "$1")"
+if ! grep -Eq '^(feat|fix|refactor|perf|test|docs|build|chore|ci|revert)(\([a-z0-9\-]+(\-[a-z0-9\-]+)?\))?(!)?: [A-Z,a-z0-9]' <<< "$first_line"; then
+  echo "Formato de commit inválido. El resumen debe seguir el patrón: type(scope): resumen" >&2
+  echo "Ejemplo: feat(search): añadir filtro básico de búsqueda" >&2
+  exit 1
+fi
+if grep -qi '^co-authored-by:' "$1"; then
+  echo "Error: No se permiten líneas 'Co-authored-by:' en los mensajes de commit." >&2
+  exit 1
+fi
