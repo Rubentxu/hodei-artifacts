@@ -23,6 +23,24 @@ Por favor, seleccione el tipo de cambio que introduce este pull request:
 
 ## Checklist
 
+### General
 *   \[ ] He revisado mi propio código.
 *   \[ ] He añadido tests unitarios para cubrir mis cambios.
 *   \[ ] He actualizado la documentación (si es necesario).
+
+### Features (si aplica)
+*   \[ ] Command/Query definido y documentado.
+*   \[ ] Validaciones puras con tests unitarios.
+*   \[ ] UseCase ejecuta orden canónico (validate → dedupe → side-effects).
+*   \[ ] Handler sin lógica de negocio (≤ 40 LOC).
+*   \[ ] Idempotencia implementada y testada (si aplica).
+*   \[ ] Evento con correlation id y payload completo.
+*   \[ ] Métricas básicas (counter + histogram).
+*   \[ ] Spans de tracing configurados.
+*   \[ ] Errores mapeados exhaustivamente.
+*   \[ ] Sin `#[cfg(test)]` en `src/**`.
+*   \[ ] OpenAPI actualizado con nuevos endpoints.
+*   \[ ] Tests: unitarios (validaciones) + integración (flujo completo).
+*   \[ ] Coverage ≥ 85% en módulos logic/.
+
+Consultar [docs/feature-style-guide.md](../docs/feature-style-guide.md) para detalles.

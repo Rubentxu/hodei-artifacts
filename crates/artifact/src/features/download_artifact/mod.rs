@@ -6,7 +6,8 @@
 pub mod query;
 pub mod logic;
 pub mod handler;
+pub mod instrumentation;
 
 pub use query::{GetArtifactQuery, GetArtifactResponse, DownloadMethod};
 pub use logic::handle_get_artifact;
-pub use handler::{download_artifact_handler, DownloadQueryParams, DownloadResponse, DownloadInfo};
+pub use handler::handle;

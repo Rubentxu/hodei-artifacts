@@ -11,6 +11,8 @@ Sistema de repositorio de artefactos construido en Rust con arquitectura moderna
 | **[domain.md](./domain.md)** | Modelo de dominio y entidades | Backend Developers, Data Architects |
 | **[epicas.md](./epicas.md)** | Features y roadmap (200+ features) | Product Managers, Tech Leads |
 | **[evento-catalog.md](./evento-catalog.md)** | Catálogo de eventos (120+ eventos) | Backend Developers, Integration Engineers |
+| **[feature-style-guide.md](./feature-style-guide.md)** | Guía de estilo para implementar features (VSA + Hexagonal) | Backend Developers, Tech Leads |
+| **[testing-organization.md](./testing-organization.md)** | Estrategia de testing y organización | QA Engineers, Backend Developers |
 
 ## 🚀 Inicio Rápido
 
@@ -22,7 +24,8 @@ Sistema de repositorio de artefactos construido en Rust con arquitectura moderna
 ### Para implementar features:
 1. Busca la feature en **[epicas.md](./epicas.md)**
 2. Revisa eventos relacionados en **[evento-catalog.md](./evento-catalog.md)**
-3. Sigue los patrones en **[arquitectura-sistema.md](./arquitectura-sistema.md)**
+3. **Lee [feature-style-guide.md](./feature-style-guide.md)** para patrones de implementación
+4. Sigue la arquitectura general en **[arquitectura-sistema.md](./arquitectura-sistema.md)**
 
 ## 🔧 Stack Tecnológico
 
