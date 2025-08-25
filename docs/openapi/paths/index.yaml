@@ -1,0 +1,19 @@
+# Mapa de paths: referencia a archivos por operación
+# v1 core
+/v1/repositories: { $ref: './repositories.yaml#/repositoriesRoot' }
+/v1/repositories/{id}: { $ref: './repositories.yaml#/repositoryById' }
+/v1/artifacts: { $ref: './artifacts.yaml#/artifactsRoot' }
+/v1/artifacts/{id}: { $ref: './artifacts.yaml#/artifactById' }
+/v1/search: { $ref: './search.yaml#/searchV1' }
+
+# v2 ecosystems
+/maven2/{groupId}/{artifactId}/{version}/{fileName}: { $ref: './maven.yaml#/download' }
+/{packageName}: { $ref: './npm.yaml#/packageMeta' }
+/{packageName}/-/{fileName}: { $ref: './npm.yaml#/tarball' }
+/simple/{packageName}/: { $ref: './pypi.yaml#/simpleIndex' }
+/packages/{fileName}: { $ref: './pypi.yaml#/packageFile' }
+/packages: { $ref: './pypi.yaml#/upload' }
+
+# v2 auth
+/auth/tokens: { $ref: './auth.yaml#/tokens' }
+/auth/tokens/{tokenId}: { $ref: './auth.yaml#/tokenById' }

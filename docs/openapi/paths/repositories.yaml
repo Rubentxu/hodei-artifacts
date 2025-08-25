@@ -1,0 +1,88 @@
+repositoriesRoot:
+  get:
+    tags: [repositories]
+    summary: Listar repositorios
+    operationId: listRepositories
+    parameters:
+      - name: limit
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      - name: offset
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+    responses:
+      '200':
+        description: Lista de repositorios
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/repository.yaml#/RepositoryListResponse'
+      '500': { $ref: '../components/responses.yaml#/InternalError' }
+  post:
+    tags: [repositories]
+    summary: Crear repositorio
+    operationId: createRepository
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/repository.yaml#/CreateRepositoryRequest'
+    responses:
+      '201':
+        description: Repositorio creado
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/repository.yaml#/Repository'
+      '409': { $ref: '../components/responses.yaml#/Conflict' }
+      '422': { $ref: '../components/responses.yaml#/BadRequest' }
+      '500': { $ref: '../components/responses.yaml#/InternalError' }
+
+repositoryById:
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  get:
+    tags: [repositories]
+    summary: Obtener un repositorio
+    operationId: getRepository
+    responses:
+      '200':
+        description: Detalles del repositorio
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/repository.yaml#/Repository'
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '500': { $ref: '../components/responses.yaml#/InternalError' }
+  put:
+    tags: [repositories]
+    summary: Actualizar un repositorio
+    operationId: updateRepository
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/repository.yaml#/UpdateRepositoryRequest'
+    responses:
+      '200':
+        description: Repositorio actualizado
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/repository.yaml#/Repository'
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '422': { $ref: '../components/responses.yaml#/BadRequest' }
+      '500': { $ref: '../components/responses.yaml#/InternalError' }
+  delete:
+    tags: [repositories]
+    summary: Eliminar un repositorio
+    operationId: deleteRepository
+    responses:
+      '204': { description: Repositorio eliminado }
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '500': { $ref: '../components/responses.yaml#/InternalError' }

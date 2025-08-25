@@ -1,0 +1,20 @@
+ApiKeyAuth:
+  type: apiKey
+  in: header
+  name: X-API-Key
+  description: |
+    Token de API para autenticación. Obténlo desde /auth/tokens.
+    Ejemplo: X-API-Key: repo_abc123def456
+BasicAuth:
+  type: http
+  scheme: basic
+  description: |
+    Autenticación HTTP Basic con usuario y contraseña.
+    Compatible con herramientas CLI estándar.
+BearerAuth:
+  type: http
+  scheme: bearer
+  bearerFormat: JWT
+  description: |
+    Token Bearer JWT para integración con sistemas externos.
+    Formato: Authorization: Bearer <token>

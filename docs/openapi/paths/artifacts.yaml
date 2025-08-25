@@ -1,0 +1,60 @@
+artifactsRoot:
+  post:
+    tags: [artifacts]
+    summary: Subir artefacto (multipart)
+    operationId: uploadArtifact
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file, metadata]
+            properties:
+              file:
+                type: string
+                format: binary
+              metadata:
+                type: string
+                format: json
+    responses:
+      '202':
+        description: Artefacto aceptado / creado
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/artifact.yaml#/ArtifactUploadResponse'
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '409':
+        description: Posible duplicado (idempotencia)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/artifact.yaml#/ArtifactUploadResponse'
+      '422': { $ref: '../components/responses.yaml#/BadRequest' }
+      '500': { $ref: '../components/responses.yaml#/InternalError' }
+
+artifactById:
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema: { type: string }
+    - name: presigned
+      in: query
+      schema: { type: boolean, default: false }
+  get:
+    tags: [artifacts]
+    summary: Obtener artefacto (stream o URL presignada)
+    operationId: getArtifact
+    responses:
+      '200':
+        description: Binario o JSON URL
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+          application/json:
+            schema:
+              $ref: '../components/schemas/artifact.yaml#/PresignedUrlResponse'
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '500': { $ref: '../components/responses.yaml#/InternalError' }

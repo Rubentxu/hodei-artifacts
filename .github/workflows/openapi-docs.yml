@@ -1,0 +1,63 @@
+name: OpenAPI Docs
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'docs/openapi/**'
+      - '.github/workflows/openapi-docs.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install CLI tools
+        run: |
+          npm i -g @redocly/cli swagger-cli
+
+      - name: Validate (swagger-cli)
+        run: swagger-cli validate docs/openapi/openapi.yaml
+
+      - name: Lint (redocly)
+        run: redocly lint docs/openapi/openapi.yaml || true
+        # Usa || true para no fallar el pipeline por avisos de estilo
+
+      - name: Bundle OpenAPI
+        run: |
+          redocly bundle docs/openapi/openapi.yaml -o openapi.bundled.yaml
+          mkdir -p build
+          cp openapi.bundled.yaml build/
+
+      - name: Build ReDoc HTML
+        run: |
+          redocly build-docs docs/openapi/openapi.yaml -o build/index.html --disableGoogleFont
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-site
+          path: build
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,95 @@
+download:
+  get:
+    tags: [Maven Repository]
+    summary: Descargar artefacto Maven
+    description: |
+      Descarga un artefacto Maven específico. Compatible con `mvn dependency:resolve`.
+      
+      Ejemplo pom.xml:
+      ```xml
+      <repository>
+        <id>custom-repo</id>
+        <url>https://api.repo-manager.com/v2/maven2</url>
+      </repository>
+      ```
+    parameters:
+      - name: groupId
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-zA-Z0-9._-]+$' }
+        example: com.example
+      - name: artifactId
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-zA-Z0-9._-]+$' }
+        example: my-library
+      - name: version
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$' }
+        example: 1.2.3
+      - name: fileName
+        in: path
+        required: true
+        schema: { type: string }
+        example: my-library-1.2.3.jar
+    responses:
+      '200':
+        description: Artefacto descargado exitosamente
+        headers:
+          Content-Type: { schema: { type: string } }
+          ETag: { schema: { type: string } }
+          X-Checksum-SHA1: { schema: { type: string } }
+          X-Checksum-MD5: { schema: { type: string } }
+        content:
+          application/java-archive: { schema: { type: string, format: binary } }
+          application/xml: { schema: { type: string, format: binary } }
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+      '403': { $ref: '../components/responses.yaml#/Forbidden' }
+    security:
+      - ApiKeyAuth: [read:maven]
+      - BasicAuth: [read:maven]
+
+  put:
+    tags: [Maven Repository]
+    summary: Subir artefacto Maven
+    description: |
+      Sube un artefacto Maven al repositorio. Compatible con `mvn deploy`.
+    parameters:
+      - name: groupId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: artifactId
+        in: path
+        required: true
+        schema: { type: string }
+      - name: version
+        in: path
+        required: true
+        schema: { type: string }
+      - name: fileName
+        in: path
+        required: true
+        schema: { type: string }
+    requestBody:
+      required: true
+      content:
+        application/java-archive: { schema: { type: string, format: binary } }
+        application/xml: { schema: { type: string, format: binary } }
+        text/plain: { schema: { type: string } }
+    responses:
+      '201':
+        description: Artefacto subido exitosamente
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/uploadResponse.yaml#/UploadResponse'
+      '409': { $ref: '../components/responses.yaml#/Conflict' }
+      '400': { $ref: '../components/responses.yaml#/BadRequest' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+      '403': { $ref: '../components/responses.yaml#/Forbidden' }
+    security:
+      - ApiKeyAuth: [write:maven]
+      - BasicAuth: [write:maven]

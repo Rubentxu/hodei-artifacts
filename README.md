@@ -1,0 +1,251 @@
+# Hodei Artifacts
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Rust Edition: 2024](https://img.shields.io/badge/rust-Edition%202024-orange)](#)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-openapi.yaml-blue)](docs/openapi/openapi.yaml)
+[![API Docs](https://img.shields.io/badge/docs-API%20Docs-blueviolet)](https://<org>.github.io/<repo>/)
+
+Repositorio de artefactos de nueva generación, nativo en Rust, orientado a alto rendimiento, seguridad de la cadena de suministro y escalabilidad. Inspirado en Nexus/Artifactory, diseñado como monolito modular evolutivo con Vertical Slice Architecture (VSA), Arquitectura Hexagonal y Event-Driven Architecture (EDA).
+
+> Índice de documentación: [docs/README.md](docs/README.md). Documentación fuente: [docs/prd.md](docs/prd.md), [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md), [docs/domain.md](docs/domain.md), [docs/feature-style-guide.md](docs/feature-style-guide.md).
+
+## Características clave
+
+- Alto rendimiento (Tokio, Rust) y latencias objetivo p95/p99 definidas en PRD.
+- Almacenamiento de binarios en S3/MinIO y metadatos en MongoDB.
+- Búsqueda embebida (Tantivy) y análisis de dependencias (roadmap).
+- Seguridad by design: ABAC con Cedar, SBOM, firma y auditoría.
+- Contract-first: `docs/openapi/openapi.yaml` como fuente de verdad de APIs.
+- Observabilidad: métricas Prometheus, tracing (OpenTelemetry), logs estructurados.
+
+## Empezar con la documentación
+
+1. Lee el PRD: [docs/prd.md](docs/prd.md)
+2. Revisa el modelo de dominio: [docs/domain.md](docs/domain.md)
+3. Profundiza en arquitectura: [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md)
+4. Para implementar features: [docs/feature-style-guide.md](docs/feature-style-guide.md)
+
+## Vista de arquitectura (alto nivel)
+
+```mermaid
+graph TB
+    subgraph "External"
+        CI[CI/CD]
+        DEV[Developers]
+        SEC[Security Tools]
+    end
+
+    subgraph "Hodei Artifacts"
+        API[API Gateway]
+        subgraph "Slices (VSA)"
+            S1[Artifact Ingest]
+            S2[Artifact Retrieval]
+            S3[Search & Discovery]
+            S4[Security Scanning]
+            S5[Repository Mgmt]
+            S6[IAM & ABAC]
+        end
+        KAFKA[Kafka]
+        MONGO[MongoDB]
+        S3[S3/MinIO]
+        CACHE[Redis]
+    end
+
+    CI & DEV & SEC --> API
+    API --> S1 & S2 & S3 & S4 & S5 & S6
+    S1 --> KAFKA
+    S4 --> KAFKA
+    S5 --> KAFKA
+    KAFKA --> S3
+    KAFKA --> S4
+    S1 & S2 & S3 & S4 & S5 & S6 --> MONGO
+    S1 & S2 --> S3
+    API --> CACHE
+```
+
+- Organización por slices verticales con puertos/adaptadores (Hexagonal).
+- Comunicación asíncrona vía eventos (Kafka) entre slices.
+
+## Estructura del repositorio (monorepo)
+
+```
+crates/
+  shared/        # Tipos/errores/utilidades compartidas (DTOs, tipos comunes)
+  artifact/      # BC de artefactos (subida/descarga/metadatos/eventos)
+  repository/    # Puertos/adaptadores de acceso a datos (Mongo, contratos comunes)
+  supply-chain/  # (WIP) SBOM, attestations, verificación de cadena (SLSA, in‑toto)
+  search/        # BC de búsqueda e indexación (Tantivy)
+  security/      # (WIP) ABAC, firmas, cumplimiento y verificaciones
+  analytics/     # (WIP) analítica/seguridad
+  integration/   # Utilidades y escenarios de tests de integración multi-crate
+  distribution/  # (WIP) distribución/CDN
+  iam/           # (WIP) identidades y políticas ABAC
+  infra-mongo/   # Cliente/helpers MongoDB y utilidades de test
+src/             # binario principal y bootstrap (axum, wiring)
+docs/            # PRD, arquitectura, guías, catálogo de eventos
+e2e/             # tests end-to-end con Playwright (APIs)
+openapi.yaml     # contrato de APIs síncronas
+```
+
+- Detalles por crate: ver los README en cada carpeta (`crates/*/README*.md`).
+
+## Crates
+
+- __shared__: Tipos, errores y utilidades compartidas para consistencia transversal. Ruta: `crates/shared/`.
+- __artifact__: Gestión de artefactos binarios: subida, descarga, metadatos, idempotencia y publicación de eventos. Ruta: `crates/artifact/`.
+- __repository__: Abstracciones y adaptadores de acceso a datos (MongoDB y contratos de repositorio). Ruta: `crates/repository/`.
+- __supply-chain__: (WIP) Cadena de suministro: SBOM, attestations, provenance y verificaciones (SLSA/in‑toto en roadmap). Ruta: `crates/supply-chain/`.
+- __search__: Búsqueda e indexación con Tantivy; APIs de consulta y gestión de índices; consumo de eventos de `artifact`. Ruta: `crates/search/`.
+- __security__: (WIP) Seguridad: ABAC con Cedar, validación de firmas (Cosign en roadmap), verificación de SBOM/attestations. Ruta: `crates/security/`.
+- __analytics__: (WIP) Analítica y seguridad avanzada. Ruta: `crates/analytics/`.
+- __integration__: Testing de integración y helpers E2E reutilizables entre crates. Ruta: `crates/integration/`.
+- __distribution__: (WIP) Distribución/CDN. Ruta: `crates/distribution/`.
+- __iam__: (WIP) Identidades, roles y políticas ABAC. Ruta: `crates/iam/`.
+- __infra-mongo__: Infraestructura MongoDB: cliente, helpers y utilidades de test (`test-util`). Ruta: `crates/infra-mongo/`.
+
+## Requisitos
+
+- Rust estable reciente
+- Docker + Docker Compose (para dependencias locales)
+- MongoDB, MinIO y Kafka (recomendado lanzar con Testcontainers en tests)
+
+## Puesta en marcha (desarrollo)
+
+1. Clonar e instalar toolchain Rust y cargo.
+2. Construir:
+   ```bash
+   cargo build
+   ```
+3. Ejecutar tests (unit + integración):
+   ```bash
+   cargo test
+   ```
+4. Ejecutar binario (servicio HTTP):
+   ```bash
+   cargo run
+   ```
+
+- Tests de integración usan `testcontainers`; no necesitas servicios locales si usas los tests.
+
+## Cómo ejecutar los tests
+
+- __Unitarios e integración (Rust)__
+  - Todos los tests:
+    ```bash
+    cargo test
+    ```
+  - Ver salida/logs del test:
+    ```bash
+    RUST_LOG=info cargo test -- --nocapture
+    ```
+  - Ejecutar por crate:
+    ```bash
+    cargo test -p <nombre_crate>
+    ```
+  - Solo unit tests (lib/bin) en todo el workspace:
+    ```bash
+    cargo test --lib --bins
+    ```
+  - Solo tests de integración (carpeta `tests/`):
+    ```bash
+    cargo test --tests
+    ```
+  - Solo doc tests:
+    ```bash
+    cargo test --doc
+    ```
+  - Filtrar por nombre de test:
+    ```bash
+    cargo test <patron>
+    ```
+  - Solo un fichero de integración concreto (dentro de un crate):
+    ```bash
+    cargo test -p <nombre_crate> --test <fichero_sin_.rs>
+    ```
+  - (Opcional) Usando nextest:
+    ```bash
+    cargo nextest run
+    ```
+    - Equivalentes: `cargo nextest run --tests`, `--lib`, `-p <crate>`
+
+- __End-to-End (Playwright)__ en `e2e/`:
+  ```bash
+  cd e2e
+  npm ci
+  npx playwright install --with-deps
+  npx playwright test
+  ```
+  - Define `BASE_URL` si tu servicio HTTP no usa el valor por defecto del config.
+
+## APIs
+
+- Contrato principal: `docs/openapi/openapi.yaml`.
+- Handlers en `src/infrastructure/api.rs` y slices en `crates/*/features`.
+- Especificación modular: `docs/openapi/openapi.yaml`.
+- Documentación HTML (GitHub Pages): https://<org>.github.io/<repo>/
+
+### Enlaces rápidos (endpoints principales)
+
+- Repositorios
+  - `GET /v1/repositories` — Listar repositorios
+  - `POST /v1/repositories` — Crear repositorio
+  - `GET /v1/repositories/{id}` — Obtener repositorio
+  - `PUT /v1/repositories/{id}` — Actualizar repositorio
+  - `DELETE /v1/repositories/{id}` — Eliminar repositorio
+- Artefactos
+  - `POST /v1/artifacts` — Subir artefacto (multipart)
+  - `GET /v1/artifacts/{id}` — Descargar artefacto o URL presignada (`?presigned=true`)
+- Búsqueda
+  - `GET /v1/search` — Búsqueda básica (`q`, `limit`, `offset`)
+- Ecosistemas
+  - Maven
+    - `GET /v1/maven/{groupId}/{artifactId}/{version}/{artifactFile}` — Descargar JAR/POM
+    - `GET /v1/maven/metadata?groupId=..&artifactId=..` — maven-metadata.xml
+  - npm
+    - `GET /v1/npm/{package}` — Metadata paquete
+    - `GET /v1/npm/{package}/-/{tarball}` — Descargar tarball
+  - PyPI
+    - `GET /v1/pypi/{package}/json` — Metadata paquete
+    - `GET /v1/pypi/{package}/{version}/json` — Metadata versión
+    - `GET /v1/pypi/{package}/{version}/download?file=...` — Descargar distribución
+
+## Seguridad
+
+- ABAC con Cedar (políticas y PEP en API Gateway).
+- SBOM, firma con Cosign (roadmap), `cargo-audit` en CI.
+
+## Observabilidad
+
+- Endpoint `/metrics` (Prometheus).
+- Trazas y logs con `tracing` + OpenTelemetry.
+
+## Contribución
+
+- Convenciones y estilo: `docs/feature-style-guide.md`, `docs/commits.md`, `docs/rust-best-practices.md`.
+- Pull Requests: seguir PRD `docs/prd.md` y tareas `docs/implementation-tasks.md`.
+
+## Roadmap (extracto)
+
+- Fase 1: Ingesta/Recuperación, formatos Maven/npm, auth básica.
+- Fase 2: Seguridad y análisis de dependencias, dashboard, eventos.
+- Fase 3: SSO/Federación, despliegue cloud-native avanzado, más formatos.
+
+Ver detalles en `docs/plan.md` y `docs/epicas.md`.
+
+## Licencia
+
+MIT. Ver archivo `LICENSE` en la raíz del repositorio.
+
+## Recursos
+
+- Índice de documentación: [docs/README.md](docs/README.md)
+- PRD: [docs/prd.md](docs/prd.md) — Requisitos de producto y objetivos
+- Arquitectura: [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md) — Especificaciones técnicas completas
+- Dominio: [docs/domain.md](docs/domain.md) — Modelo de dominio y entidades
+- Épicas: [docs/epicas.md](docs/epicas.md) — Roadmap y features
+- Catálogo de eventos: [docs/evento-catalog.md](docs/evento-catalog.md) — 120+ eventos y contratos
+- Guía de implementación de features: [docs/feature-style-guide.md](docs/feature-style-guide.md) — Patrones VSA + Hexagonal
+- Testing: [docs/testing-organization.md](docs/testing-organization.md) — Estrategia y organización; [docs/test-containers.md](docs/test-containers.md) — Uso de Testcontainers
+
+CI relevante:
+- OpenAPI Drift check: .github/workflows/openapi-drift.yml

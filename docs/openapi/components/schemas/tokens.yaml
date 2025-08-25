@@ -1,0 +1,37 @@
+TokenRequest:
+  type: object
+  required: [name, permissions]
+  properties:
+    name: { type: string, example: 'CI/CD Pipeline Token' }
+    description: { type: string }
+    permissions:
+      type: array
+      items:
+        type: string
+        enum: [read:maven, write:maven, read:npm, write:npm, read:pypi, write:pypi, read, write]
+      example: [read:maven, write:maven]
+    expiresAt: { type: string, format: date-time }
+
+TokenResponse:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    name: { type: string }
+    token: { type: string, description: Token de API (solo se muestra una vez) }
+    permissions:
+      type: array
+      items: { type: string }
+    createdAt: { type: string, format: date-time }
+    expiresAt: { type: string, format: date-time, nullable: true }
+
+TokenInfo:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    name: { type: string }
+    permissions:
+      type: array
+      items: { type: string }
+    createdAt: { type: string, format: date-time }
+    lastUsed: { type: string, format: date-time, nullable: true }
+    expiresAt: { type: string, format: date-time, nullable: true }

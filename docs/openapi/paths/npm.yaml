@@ -1,0 +1,87 @@
+packageMeta:
+  get:
+    tags: [npm Registry]
+    summary: Obtener metadatos del paquete npm
+    description: |
+      Obtiene metadatos completos de un paquete npm. Compatible con `npm install`.
+    parameters:
+      - name: packageName
+        in: path
+        required: true
+        schema: { type: string, pattern: '^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$' }
+        example: '@myorg/my-package'
+    responses:
+      '200':
+        description: Metadatos del paquete
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/npmMetadata.yaml#/NpmPackageMetadata'
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+    security:
+      - ApiKeyAuth: [read:npm]
+      - BearerAuth: [read:npm]
+
+  put:
+    tags: [npm Registry]
+    summary: Publicar paquete npm
+    description: |
+      Publica un nuevo paquete npm. Compatible con `npm publish`.
+    parameters:
+      - name: packageName
+        in: path
+        required: true
+        schema: { type: string }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/npmPublish.yaml#/NpmPublishRequest'
+    responses:
+      '201':
+        description: Paquete publicado exitosamente
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/npmPublish.yaml#/NpmPublishResponse'
+      '409': { $ref: '../components/responses.yaml#/Conflict' }
+      '400': { $ref: '../components/responses.yaml#/BadRequest' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+      '403': { $ref: '../components/responses.yaml#/Forbidden' }
+    security:
+      - ApiKeyAuth: [write:npm]
+      - BearerAuth: [write:npm]
+
+tarball:
+  get:
+    tags: [npm Registry]
+    summary: Descargar tarball npm
+    description: Descarga el tarball de una versión específica del paquete.
+    parameters:
+      - name: packageName
+        in: path
+        required: true
+        schema: { type: string }
+      - name: fileName
+        in: path
+        required: true
+        schema: { type: string, pattern: '^.+\\.tgz$' }
+        example: my-package-1.0.0.tgz
+    responses:
+      '200':
+        description: Tarball descargado exitosamente
+        headers:
+          Content-Type:
+            schema: { type: string, enum: [application/gzip] }
+          X-Checksum-SHA1:
+            schema: { type: string }
+        content:
+          application/gzip:
+            schema: { type: string, format: binary }
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+    security:
+      - ApiKeyAuth: [read:npm]
+      - BearerAuth: [read:npm]

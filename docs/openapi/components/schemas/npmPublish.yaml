@@ -1,0 +1,22 @@
+NpmPublishRequest:
+  type: object
+  required: [_id, name, versions, _attachments]
+  properties:
+    _id: { type: string }
+    name: { type: string }
+    description: { type: string }
+    dist-tags: { type: object }
+    versions: { type: object }
+    maintainers:
+      type: array
+      items: { $ref: './npmMetadata.yaml#/NpmMaintainer' }
+    _attachments:
+      type: object
+      description: Archivos adjuntos del paquete
+
+NpmPublishResponse:
+  type: object
+  properties:
+    success: { type: boolean }
+    id: { type: string }
+    rev: { type: string }

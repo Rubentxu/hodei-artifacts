@@ -1,0 +1,77 @@
+simpleIndex:
+  get:
+    tags: [PyPI Repository]
+    summary: Obtener índice simple de paquete Python
+    description: |
+      Obtiene el índice simple de un paquete Python según PEP 503.
+    parameters:
+      - name: packageName
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$' }
+        example: requests
+    responses:
+      '200':
+        description: Página de índice simple HTML
+        content:
+          text/html:
+            schema: { type: string }
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+    security:
+      - ApiKeyAuth: [read:pypi]
+      - BasicAuth: [read:pypi]
+
+packageFile:
+  get:
+    tags: [PyPI Repository]
+    summary: Descargar paquete Python
+    description: Descarga un archivo de paquete Python (.whl o .tar.gz).
+    parameters:
+      - name: fileName
+        in: path
+        required: true
+        schema: { type: string, pattern: '^.+\.(whl|tar\\.gz)$' }
+        example: requests-2.28.0-py3-none-any.whl
+    responses:
+      '200':
+        description: Paquete descargado exitosamente
+        headers:
+          Content-Type: { schema: { type: string } }
+          X-Checksum-SHA256: { schema: { type: string } }
+          X-Checksum-MD5: { schema: { type: string } }
+        content:
+          application/zip: { schema: { type: string, format: binary } }
+          application/gzip: { schema: { type: string, format: binary } }
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+    security:
+      - ApiKeyAuth: [read:pypi]
+      - BasicAuth: [read:pypi]
+
+upload:
+  post:
+    tags: [PyPI Repository]
+    summary: Subir paquete Python
+    description: |
+      Sube un paquete Python al repositorio. Compatible con `twine upload` y `poetry publish`.
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/pythonUpload.yaml#/PythonPackageUpload'
+    responses:
+      '201':
+        description: Paquete subido exitosamente
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/uploadResponse.yaml#/UploadResponse'
+      '400': { $ref: '../components/responses.yaml#/BadRequest' }
+      '409': { $ref: '../components/responses.yaml#/Conflict' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+      '403': { $ref: '../components/responses.yaml#/Forbidden' }
+    security:
+      - ApiKeyAuth: [write:pypi]
+      - BasicAuth: [write:pypi]

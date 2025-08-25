@@ -1,0 +1,30 @@
+NotFound:
+  description: Recurso no encontrado
+  content:
+    application/json:
+      schema: { $ref: './schemas/error.yaml#/Error' }
+Unauthorized:
+  description: No autorizado - credenciales inválidas o ausentes
+  content:
+    application/json:
+      schema: { $ref: './schemas/error.yaml#/Error' }
+Forbidden:
+  description: Prohibido - sin permisos suficientes
+  content:
+    application/json:
+      schema: { $ref: './schemas/error.yaml#/Error' }
+BadRequest:
+  description: Solicitud inválida
+  content:
+    application/json:
+      schema: { $ref: './schemas/error.yaml#/Error' }
+Conflict:
+  description: Conflicto - el recurso ya existe
+  content:
+    application/json:
+      schema: { $ref: './schemas/error.yaml#/Error' }
+InternalError:
+  description: Error interno del servidor
+  content:
+    application/json:
+      schema: { $ref: './schemas/error.yaml#/Error' }

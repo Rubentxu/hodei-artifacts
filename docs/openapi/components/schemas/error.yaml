@@ -1,0 +1,13 @@
+Error:
+  type: object
+  required: [error, message, code]
+  properties:
+    error:
+      type: string
+    message:
+      type: string
+    code:
+      type: integer
+    details:
+      type: object
+      additionalProperties: true

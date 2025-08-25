@@ -1,0 +1,24 @@
+UploadResponse:
+  type: object
+  properties:
+    success:
+      type: boolean
+      example: true
+    message:
+      type: string
+      example: Artefacto subido exitosamente
+    artifact:
+      type: object
+      properties:
+        name: { type: string }
+        version: { type: string }
+        size: { type: integer, format: int64 }
+        checksums:
+          type: object
+          properties:
+            sha1: { type: string }
+            md5: { type: string }
+            sha256: { type: string }
+    uploadedAt:
+      type: string
+      format: date-time

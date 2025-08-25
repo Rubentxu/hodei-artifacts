@@ -1,0 +1,52 @@
+tokens:
+  post:
+    tags: [Authentication]
+    summary: Generar token de API
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/tokens.yaml#/TokenRequest'
+    responses:
+      '201':
+        description: Token creado exitosamente
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/tokens.yaml#/TokenResponse'
+      '400': { $ref: '../components/responses.yaml#/BadRequest' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+    security:
+      - BasicAuth: []
+  get:
+    tags: [Authentication]
+    summary: Listar tokens de API
+    responses:
+      '200':
+        description: Lista de tokens
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../components/schemas/tokens.yaml#/TokenInfo'
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+    security:
+      - BasicAuth: []
+
+tokenById:
+  parameters:
+    - name: tokenId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  delete:
+    tags: [Authentication]
+    summary: Revocar token de API
+    responses:
+      '204': { description: Token revocado exitosamente }
+      '404': { $ref: '../components/responses.yaml#/NotFound' }
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
+    security:
+      - BasicAuth: []

@@ -1,0 +1,44 @@
+NpmPackageMetadata:
+  type: object
+  required: [name, versions, "dist-tags"]
+  properties:
+    _id: { type: string, example: '@myorg/my-package' }
+    name: { type: string, example: '@myorg/my-package' }
+    description: { type: string }
+    dist-tags:
+      type: object
+      properties:
+        latest: { type: string, example: '1.0.0' }
+    versions:
+      type: object
+      additionalProperties:
+        $ref: '#/NpmVersionMetadata'
+    time:
+      type: object
+      additionalProperties: { type: string, format: date-time }
+    maintainers:
+      type: array
+      items: { $ref: '#/NpmMaintainer' }
+
+NpmVersionMetadata:
+  type: object
+  properties:
+    name: { type: string }
+    version: { type: string }
+    description: { type: string }
+    main: { type: string }
+    scripts: { type: object }
+    dependencies: { type: object }
+    devDependencies: { type: object }
+    dist:
+      type: object
+      properties:
+        tarball: { type: string, format: uri }
+        shasum: { type: string }
+        integrity: { type: string }
+
+NpmMaintainer:
+  type: object
+  properties:
+    name: { type: string }
+    email: { type: string, format: email }

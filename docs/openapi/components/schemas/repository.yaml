@@ -1,0 +1,29 @@
+Repository:
+  type: object
+  required: [id, name, createdAt]
+  properties:
+    id: { type: string, format: uuid }
+    name: { type: string }
+    description: { type: string }
+    createdAt: { type: string, format: date-time }
+
+RepositoryListResponse:
+  type: object
+  properties:
+    total: { type: integer }
+    items:
+      type: array
+      items: { $ref: '#/Repository' }
+
+CreateRepositoryRequest:
+  type: object
+  required: [name]
+  properties:
+    name: { type: string }
+    description: { type: string }
+
+UpdateRepositoryRequest:
+  type: object
+  properties:
+    name: { type: string }
+    description: { type: string }

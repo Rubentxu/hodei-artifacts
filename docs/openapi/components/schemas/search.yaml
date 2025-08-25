@@ -1,0 +1,28 @@
+SearchResults:
+  type: object
+  properties:
+    total: { type: integer }
+    limit: { type: integer }
+    offset: { type: integer }
+    results:
+      type: array
+      items: { $ref: '#/PackageResult' }
+
+PackageResult:
+  type: object
+  properties:
+    type: { type: string, enum: [maven, npm, pypi] }
+    name: { type: string }
+    latestVersion: { type: string }
+    description: { type: string }
+    downloadUrl: { type: string, format: uri }
+    lastModified: { type: string, format: date-time }
+    downloads: { type: integer }
+    maintainers:
+      type: array
+      items: { type: string }
+    keywords:
+      type: array
+      items: { type: string }
+    license: { type: string }
+    score: { type: number, format: float }

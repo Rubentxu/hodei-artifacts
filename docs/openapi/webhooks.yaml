@@ -1,0 +1,20 @@
+packageUploaded:
+  post:
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              event: { type: string, example: package.uploaded }
+              timestamp: { type: string, format: date-time }
+              data:
+                type: object
+                properties:
+                  type: { type: string, enum: [maven, npm, pypi] }
+                  name: { type: string }
+                  version: { type: string }
+                  uploader: { type: string }
+    responses:
+      '200': { description: Webhook procesado exitosamente }

@@ -1,0 +1,26 @@
+searchV1:
+  get:
+    tags: [search]
+    summary: Búsqueda básica de artefactos
+    operationId: searchArtifacts
+    parameters:
+      - name: q
+        in: query
+        required: true
+        schema: { type: string }
+        description: Substring
+      - name: limit
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      - name: offset
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+    responses:
+      '200':
+        description: Resultados
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/search.yaml#/SearchResults'
+      '422': { $ref: '../components/responses.yaml#/BadRequest' }
+      '500': { $ref: '../components/responses.yaml#/InternalError' }

@@ -84,6 +84,38 @@ graph TB
 
 * *Nota sobre el diagrama: La API Gateway actúa como **Policy Enforcement Point (PEP)**, validando cada petición antes de dirigirla al Slice correspondiente.*
 
+## 🗂️ Organización del monorepo (real)
+
+El código se organiza como un monorepo de crates de Rust. Cada bounded context vive en su propio crate, y el binario principal expone la API HTTP y realiza el wiring (bootstrap):
+
+```
+crates/
+  shared/        # Tipos/errores/utilidades compartidas (DTOs, tipos comunes)
+  artifact/      # BC de artefactos (subida/descarga/metadatos/eventos)
+  repository/    # Puertos/adaptadores de acceso a datos (Mongo, contratos comunes)
+  supply-chain/  # (WIP) SBOM, attestations, verificación de cadena (SLSA, in‑toto)
+  search/        # BC de búsqueda e indexación (Tantivy)
+  security/      # (WIP) ABAC, firmas, cumplimiento y verificaciones
+  analytics/     # (WIP) analítica/seguridad
+  integration/   # Utilidades y escenarios de tests de integración multi-crate
+  distribution/  # (WIP) distribución/CDN
+  iam/           # (WIP) identidades y políticas ABAC
+  infra-mongo/   # Cliente/helpers MongoDB y utilidades de test
+src/
+  infrastructure/
+    api.rs       # Enrutado HTTP (Axum) y handlers altos
+    bootstrap.rs # Wiring de dependencias
+  application.rs # Integración de slices en el binario
+  main.rs        # Punto de entrada del servicio
+openapi.yaml     # Contrato de APIs síncronas
+```
+
+Reglas de dependencia a nivel workspace:
+
+- Los crates de dominio (p.ej. `artifact`, `search`) pueden depender de `shared`, `repository` e `infra-mongo`.
+- Evitar dependencias cíclicas entre crates de dominio.
+- El binario (`hodei-artifacts-api`, carpeta `src/`) sólo orquesta: no contiene lógica de negocio.
+
 ## 🔧 Stack Tecnológico
 
 
@@ -114,32 +146,28 @@ La arquitectura VSA es nuestro pilar organizativo. Cada *slice* es un módulo au
 Para un programador, esto se traduce en una estructura de directorios simple y predecible. Organizamos el código por **feature**, no por capa técnica.
 
 ```
-src/
+crates/artifact/src/
 ├── features/
 │   │
 │   ├── upload_artifact/        // <-- SLICE VERTICAL 1
-│   │   ├── mod.rs              // Define la API pública del módulo.
-│   │   ├── handler.rs          // Endpoint de la API (función que recibe la petición HTTP).
-│   │   ├── command.rs          // Definición del caso de uso (ej. struct UploadArtifactCommand).
-│   │   └── logic.rs            // Lógica de negocio pura para este feature.
+│   │   ├── mod.rs              // API del slice (reexports, wiring interno)
+│   │   ├── handler.rs          // Handler HTTP (usado por el binario/API)
+│   │   ├── command.rs          // Caso de uso (ej. UploadArtifactCommand)
+│   │   └── logic/              // Lógica de negocio pura (módulos internos)
 │   │
 │   └── download_artifact/      // <-- SLICE VERTICAL 2
 │       ├── mod.rs
 │       ├── handler.rs
-│       ├── query.rs            // Para lecturas, se suele usar "Query".
-│       └── logic.rs
+│       ├── query.rs            // Consultas/lecturas del slice
+│       └── logic/
 │
-├── shared/                     // <-- CÓDIGO REUTILIZABLE
-│   ├── domain/
-│   │   └── models.rs           // Entidades centrales (ej. struct Artifact).
-│   ├── infrastructure/
-│   │   ├── database.rs         // Pool de conexiones a BD.
-│   │   └── storage.rs          // Cliente S3.
-│   └── web/
-│       ├── middleware.rs       // Middleware de autenticación, logging.
-│       └── errors.rs           // Manejo de errores comunes.
-│
-└── main.rs                     // Punto de entrada: solo enruta peticiones a los handlers.
+├── domain/                     // Modelo del dominio del BC (entidades/valores)
+├── application/                // Orquestación de casos de uso, DTOs
+├── infrastructure/             // Adaptadores (Mongo, S3, Kafka)
+└── error.rs                    // Tipos de error del BC
+
+# En el binario principal (enrutado HTTP)
+src/infrastructure/api.rs       // Define rutas y delega en <crate>::features::*::handler
 ```
 
 ### La Regla de Oro de las Dependencias

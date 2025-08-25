@@ -1,0 +1,12 @@
+ArtifactUploadResponse:
+  type: object
+  properties:
+    id: { type: string }
+    status: { type: string, enum: [accepted, duplicate] }
+    repositoryId: { type: string, format: uuid }
+
+PresignedUrlResponse:
+  type: object
+  properties:
+    url: { type: string, format: uri }
+    expiresAt: { type: string, format: date-time }

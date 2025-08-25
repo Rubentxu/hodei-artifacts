@@ -1,0 +1,18 @@
+PythonPackageUpload:
+  type: object
+  required: [content, filetype, pyversion, metadata_version, name, version]
+  properties:
+    content: { type: string, format: binary }
+    filetype: { type: string, enum: [bdist_wheel, sdist] }
+    pyversion: { type: string, example: 'py3' }
+    metadata_version: { type: string, example: '2.1' }
+    name: { type: string, example: 'my-python-package' }
+    version: { type: string, example: '1.0.0' }
+    summary: { type: string }
+    description: { type: string }
+    author: { type: string }
+    author_email: { type: string, format: email }
+    license: { type: string }
+    keywords: { type: string }
+    classifiers: { type: string, description: Clasificadores separados por nuevas líneas }
+    requires_dist: { type: string, description: Dependencias en formato PEP 508 }

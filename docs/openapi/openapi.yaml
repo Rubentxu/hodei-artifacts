@@ -1,0 +1,77 @@
+openapi: 3.0.3
+info:
+  title: Universal Package Repository Manager API
+  description: |
+    API RESTful para gestión de repositorios de artefactos compatible con Maven, npm y PyPI.
+    Soporta descarga de dependencias y subida de artefactos con autenticación y autorización completa.
+    
+    ## Características principales:
+    - Compatible con herramientas CLI estándar (mvn, npm, pip, poetry)
+    - Autenticación mediante API Keys y Basic Auth
+    - Autorización basada en roles y permisos granulares
+    - Validación de integridad con checksums
+    - Versionado semántico
+    - Metadatos extendidos
+    
+    ## Herramientas CLI soportadas:
+    - Maven: `mvn deploy`, `mvn dependency:resolve`
+    - npm: `npm publish`, `npm install`
+    - pip: `pip install`, `twine upload`
+    - Poetry: `poetry publish`, `poetry add`
+  version: 2.1.0
+  contact:
+    name: Repository Manager API Support
+    email: support@repo-manager.com
+    url: https://docs.repo-manager.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: https://repo-manager.com/terms
+
+servers:
+  - url: https://api.repo-manager.com/v2
+    description: Servidor de producción
+  - url: https://staging-api.repo-manager.com/v2
+    description: Servidor de staging
+  - url: http://localhost:8080/v2
+    description: Desarrollo local
+
+security:
+  - ApiKeyAuth: []
+  - BasicAuth: []
+  - BearerAuth: []
+
+tags:
+  - name: Maven Repository
+    description: Operaciones para repositorio Maven compatible con mvn CLI
+    externalDocs:
+      description: Documentación Maven
+      url: https://maven.apache.org/guides/introduction/introduction-to-repositories.html
+  - name: npm Registry
+    description: Operaciones para registro npm compatible con npm CLI
+    externalDocs:
+      description: Documentación npm registry
+      url: https://docs.npmjs.com/cli/v8/using-npm/registry
+  - name: PyPI Repository
+    description: Operaciones para repositorio Python compatible con pip y poetry
+    externalDocs:
+      description: PEP 503 - Simple Repository API
+      url: https://peps.python.org/pep-0503/
+  - name: Authentication
+    description: Gestión de autenticación y tokens de API
+  - name: Search
+    description: Búsqueda y descubrimiento de paquetes
+
+paths:
+  $ref: ./paths/index.yaml
+
+webhooks:
+  $ref: ./webhooks.yaml
+
+components:
+  securitySchemes:
+    $ref: ./components/securitySchemes.yaml
+  responses:
+    $ref: ./components/responses.yaml
+  schemas:
+    $ref: ./components/schemas/index.yaml
