@@ -10,6 +10,10 @@
 pub mod validate;
 pub mod use_case;
 pub mod build_event;
+mod build_event_test;
+mod use_case_test;
+mod validate_test;
+
 
 use crate::{
     application::ports::{ArtifactRepository, ArtifactStorage, ArtifactEventPublisher},
