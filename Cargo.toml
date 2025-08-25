@@ -18,11 +18,13 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
+license = "MIT"
 
 [package]
 name = "hodei-artifacts-api"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [lib]
 name = "hodei_artifacts_api"

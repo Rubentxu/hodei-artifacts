@@ -2,7 +2,7 @@
 name = "infra-mongo"
 version = "0.1.0"
 edition = "2024"
-license = "Apache-2.0"
+license = "MIT"
 description = "Infraestructura MongoDB compartida: cliente, configuración y utilidades para adaptadores de puertos."
 categories = ["database"]
 keywords = ["mongodb", "infrastructure", "hexagonal"]
