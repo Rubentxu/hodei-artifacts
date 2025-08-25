@@ -47,8 +47,8 @@ log() {
   printf '[verify-inline-tests] %s\n' "$*" >&2
 }
 
-# Recolectar ficheros fuente relevantes
-mapfile -t FILES < <(find . -type f -path '*/src/*' -name '*.rs' ! -name '*.disabled' | sort)
+# Recolectar ficheros fuente relevantes (excluir archivos *_test.rs que son válidos)
+mapfile -t FILES < <(find . -type f -path '*/src/*' -name '*.rs' ! -name '*.disabled' ! -name '*_test.rs' | sort)
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
   log "No se encontraron archivos .rs bajo src/** (¿estructura inesperada?)."

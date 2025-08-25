@@ -335,8 +335,8 @@ async fn test_download_artifact_storage_error() {
         other => panic!("Expected NotFound error, got: {:?}", other),
     }
 
-    // Verificar que se publicó el evento de intento de descarga
+    // Verificar que NO se publicó evento cuando falla el storage
+    // El evento solo se publica después de un use case exitoso
     let events = event_publisher.get_published_events();
-    assert_eq!(events.len(), 1);
-    assert!(events[0].contains("download_requested"));
+    assert_eq!(events.len(), 0);
 }

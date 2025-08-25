@@ -1,4 +1,4 @@
-use artifact::domain::model::{PackageCoordinates, Ecosystem, CoordinatesError};
+use crate::domain::model::{PackageCoordinates, Ecosystem, CoordinatesError};
 use std::collections::BTreeMap;
 
 #[cfg(test)]
@@ -215,8 +215,9 @@ mod package_coordinates_tests {
     }
 }
 
+#[cfg(test)]
 mod version_tests {
-    use artifact::domain::model::Version;
+    use crate::domain::model::Version;
 
     #[test]
     fn should_store_original_and_normalized_versions() {
@@ -235,8 +236,9 @@ mod version_tests {
     }
 }
 
+#[cfg(test)]
 mod ecosystem_tests {
-    use artifact::domain::model::Ecosystem;
+    use crate::domain::model::Ecosystem;
     use serde_json;
 
     #[test]

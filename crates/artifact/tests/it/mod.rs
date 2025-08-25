@@ -1,5 +1,0 @@
-mod it_artifact_repository_integration;
-mod it_download_artifact;
-mod it_kafka_publisher_integration;
-mod it_s3_storage_integration;
-mod it_upload_artifact;

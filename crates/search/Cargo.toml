@@ -2,6 +2,7 @@
 name = "search"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 shared = { path = "../shared" }
@@ -35,4 +36,3 @@ uuid = { workspace = true }
 [[test]]
 name = "it_basic_search"
 path = "tests/it_basic_search.rs"
-harness = false

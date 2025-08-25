@@ -36,7 +36,7 @@ pub async fn start_server(mongo_port: u16, s3_port: u16, kafka_port: u16) -> u16
 
     // Bootstrap de la aplicación
     let app_state = bootstrap().await.expect("Failed to bootstrap application state");
-    let application = Application::new(port, app_state);
+    let application = Application::new(port, app_state).await;
 
     // Ejecutar la aplicación en un hilo separado
     tokio::spawn(async move {

@@ -1,10 +1,10 @@
-use artifact::domain::model::{Artifact, ArtifactVersion, ArtifactChecksum};
+use crate::domain::model::{Artifact, ArtifactVersion, ArtifactChecksum};
 use shared::{RepositoryId, UserId};
 
 #[cfg(test)]
 mod artifact_tests {
     use super::*;
-    use crate::support::{Fixtures, artifact, maven_artifact};
+    use crate::tests::support::{Fixtures, artifact, maven_artifact};
 
     mod artifact_creation {
         use super::*;
@@ -114,6 +114,7 @@ mod artifact_tests {
     }
 }
 
+#[cfg(test)]
 mod artifact_version_tests {
     use super::*;
 
@@ -138,6 +139,7 @@ mod artifact_version_tests {
     }
 }
 
+#[cfg(test)]
 mod artifact_checksum_tests {
     use super::*;
 

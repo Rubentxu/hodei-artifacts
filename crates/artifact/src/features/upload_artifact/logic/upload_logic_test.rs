@@ -6,9 +6,9 @@
 
 #[cfg(test)]
 mod upload_artifact_logic_tests {
-    use artifact::domain::model::{Artifact, ArtifactVersion, ArtifactChecksum};
-    use artifact::features::upload_artifact::command::UploadArtifactCommand;
-    use artifact::features::upload_artifact::logic::{
+    use crate::domain::model::{Artifact, ArtifactVersion, ArtifactChecksum};
+    use crate::features::upload_artifact::command::UploadArtifactCommand;
+    use crate::features::upload_artifact::logic::{
         validate::{validate_upload_command, validate_idempotency, IdempotencyCheck},
         dedupe::{check_deduplication, DeduplicationResult},
         use_case::{execute_upload_use_case, UploadResult},
@@ -18,7 +18,7 @@ mod upload_artifact_logic_tests {
             validate_artifact_for_events
         }
     };
-    use artifact::error::ArtifactError;
+    use crate::error::ArtifactError;
     use shared::{UserId, RepositoryId, ArtifactId, IsoTimestamp};
     use uuid::Uuid;
 
