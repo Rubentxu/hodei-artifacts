@@ -7,6 +7,7 @@ use anyhow::Result;
 use testcontainers_modules::mongo::Mongo;
 use testcontainers::{runners::AsyncRunner, ContainerAsync};
 use tracing::info;
+use tokio::time::{sleep, Duration}; // Add this import
 
 // Contenedor Docker que se mantiene vivo durante toda la ejecución de los tests.
 pub struct TestMongoContainer {
@@ -43,6 +44,26 @@ pub async fn ephemeral_store() -> Result<(MongoClientFactory, Option<TestMongoCo
     };
 
     let factory = MongoClientFactory::new(config);
+
+    // --- ADD RETRY LOGIC HERE ---
+    let max_retries = 10;
+    for i in 0..max_retries {
+        match factory.client().await {
+            Ok(_) => {
+                info!("Conexión a MongoDB establecida después de {} intentos.", i + 1);
+                break; // Connection successful, break the loop
+            }
+            Err(e) => {
+                if i == max_retries - 1 {
+                    return Err(anyhow::anyhow!("Fallo al conectar a MongoDB después de {} intentos: {}", max_retries, e));
+                }
+                info!("Intento {} de {}: Fallo al conectar a MongoDB: {}. Reintentando...", i + 1, max_retries, e);
+                sleep(Duration::from_millis(500)).await;
+            }
+        }
+    }
+    // --- END RETRY LOGIC ---
+
     let test_container = TestMongoContainer {
         _container: container,
     };
