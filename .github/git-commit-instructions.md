@@ -1,3 +1,0 @@
-- conventional commits
-- sin poner autores en el mensaje del commit.
-- Solo hacer referencia a los cambios.
