@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use repository::infrastructure::MongoRepositoryStore;
-use search::infrastructure::persistence::MongoSearchIndex;
+use repository::application::ports::RepositoryStore;
+use search::application::ports::SearchIndex;
+use iam::application::api::IamApi;
 
-#[derive(Clone)]
+
+/// Estado global de la aplicación, compartido entre todos los handlers.
 pub struct AppState {
-    pub repo_store: Arc<MongoRepositoryStore>,
-    pub search_index: Arc<MongoSearchIndex>,
+    pub repo_store: Arc<dyn RepositoryStore>, // Repositorio de repositorios
+    pub search_index: Arc<dyn SearchIndex>,
+    pub iam_api: Arc<IamApi>,
 }

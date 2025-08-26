@@ -1,2 +1,12 @@
-// Features (vertical slices) del bounded context IAM
-
+pub mod create_user;
+pub mod update_user_attributes;
+pub mod create_policy;
+pub mod get_user;
+pub mod list_users;
+pub mod delete_user;
+pub mod login;
+pub mod get_policy;
+pub mod list_policies;
+pub mod delete_policy;
+pub mod attach_policy_to_user;
+pub mod detach_policy_from_user;

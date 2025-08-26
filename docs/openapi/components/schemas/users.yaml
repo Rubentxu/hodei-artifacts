@@ -1,0 +1,69 @@
+CreateUserCommand:
+  type: object
+  required:
+    - username
+    - email
+    - password
+  properties:
+    username:
+      type: string
+      description: Unique username for the user
+      example: "john.doe"
+    email:
+      type: string
+      format: email
+      description: Email address of the user
+      example: "john.doe@example.com"
+    password:
+      type: string
+      format: password
+      description: User's password
+      example: "StrongPassword123!"
+    attributes:
+      type: object
+      description: Flexible attributes for ABAC policies (JSON object)
+      additionalProperties: true
+      example:
+        department: "engineering"
+        role: "developer"
+
+CreateUserResponse:
+  type: object
+  required:
+    - id
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Unique ID of the created user
+      example: "a1b2c3d4-e5f6-7890-1234-567890abcdef"
+
+UpdateUserAttributesCommand:
+  type: object
+  required:
+    - user_id
+    - attributes
+  properties:
+    user_id:
+      type: string
+      format: uuid
+      description: The ID of the user whose attributes are to be updated
+      example: "a1b2c3d4-e5f6-7890-1234-567890abcdef"
+    attributes:
+      type: object
+      description: New flexible attributes for ABAC policies (JSON object)
+      additionalProperties: true
+      example:
+        department: "qa"
+        status: "active"
+
+UpdateUserAttributesResponse:
+  type: object
+  required:
+    - user_id
+  properties:
+    user_id:
+      type: string
+      format: uuid
+      description: The ID of the user whose attributes were updated
+      example: "a1b2c3d4-e5f6-7890-1234-567890abcdef"

@@ -6,6 +6,10 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use crate::state::AppState;
 use artifact::infrastructure::MongoArtifactRepository;
+use iam::application::api::IamApi;
+use iam::infrastructure::cedar_policy_validator::CedarPolicyValidator;
+use iam::infrastructure::mongo_policy_repository::MongoPolicyRepository;
+use iam::infrastructure::mongo_user_repository::MongoUserRepository;
 use infra_mongo::{MongoClientFactory, MongoConfig};
 use repository::infrastructure::MongoRepositoryStore;
 use search::infrastructure::persistence::MongoSearchIndex;
@@ -24,10 +28,25 @@ pub async fn bootstrap() -> Result<Arc<Mutex<AppState>>> {
             .await
             .context("failed to create search index")?,
     );
+    let client = factory.client().await?;
+    let user_repo = Arc::new(MongoUserRepository::new(
+        client.database("iam").collection("users"),
+    ));
+    let policy_repo = Arc::new(MongoPolicyRepository::new(
+        client.database("iam").collection("policies"),
+    ));
+    let policy_validator = Arc::new(CedarPolicyValidator);
+
+    let iam_api = Arc::new(IamApi::new(
+        user_repo.clone(),
+        policy_repo.clone(),
+        policy_validator.clone(),
+    ));
 
     let app_state = AppState {
         repo_store,
         search_index,
+        iam_api,
     };
 
     Ok(Arc::new(Mutex::new(app_state)))

@@ -1,16 +1,6 @@
-//! Infrastructure layer for IAM bounded context
-//!
-//! This module contains adapters that implement the ports defined in application layer.
-//! Following Hexagonal Architecture principles:
-//! - Infrastructure depends on domain, never the reverse
-//! - Concrete implementations of abstract ports
-//! - External system integrations (HTTP, DB, messaging)
-
-pub mod persistence;
-pub mod messaging;
-pub mod http;
-
-// Re-export commonly used infrastructure components
-pub use persistence::*;
-pub use messaging::*;
-pub use http::*;
+pub mod mongo_user_repository;
+pub mod mongo_service_account_repository;
+pub mod mongo_policy_repository;
+pub mod cedar_authorizer;
+pub mod cedar_policy_validator;
+pub mod redis_decision_cache;

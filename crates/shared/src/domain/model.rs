@@ -30,6 +30,33 @@ impl fmt::Display for RepositoryId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UserId(pub Uuid);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct ServiceAccountId(pub Uuid);
+
+impl ServiceAccountId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for ServiceAccountId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<Uuid> for ServiceAccountId {
+    fn from(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
+}
+
+impl std::fmt::Display for ServiceAccountId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 impl UserId { pub fn new() -> Self { Self(Uuid::new_v4()) } }
 
 impl fmt::Display for UserId {

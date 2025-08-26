@@ -61,6 +61,10 @@ tags:
     description: Gestión de autenticación y tokens de API
   - name: Search
     description: Búsqueda y descubrimiento de paquetes
+  - name: Users
+    description: User management and authorization policies
+  - name: Policies
+    description: Policy management for ABAC
 
 paths:
   $ref: ./paths/index.yaml

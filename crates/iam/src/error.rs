@@ -2,6 +2,18 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum IamError {
-    #[error("Error repositorio usuarios: {0}")] Repository(String),
-    #[error("Usuario no encontrado")] NotFound,
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+    #[error("Repository error: {0}")]
+    MongoError(String),
+    #[error("User not found")]
+    NotFound,
+    #[error("Internal error: {0}")]
+    InternalError(String),
+    #[error("Unauthorized")]
+    Unauthorized,
+    #[error("JWT error: {0}")]
+    JwtError(String),
+    #[error("Bcrypt error: {0}")]
+    BcryptError(String),
 }

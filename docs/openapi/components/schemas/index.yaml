@@ -17,3 +17,9 @@ CreateRepositoryRequest: { $ref: './repository.yaml#/CreateRepositoryRequest' }
 UpdateRepositoryRequest: { $ref: './repository.yaml#/UpdateRepositoryRequest' }
 ArtifactUploadResponse: { $ref: './artifact.yaml#/ArtifactUploadResponse' }
 PresignedUrlResponse: { $ref: './artifact.yaml#/PresignedUrlResponse' }
+CreateUserCommand: { $ref: './users.yaml#/CreateUserCommand' }
+CreateUserResponse: { $ref: './users.yaml#/CreateUserResponse' }
+UpdateUserAttributesCommand: { $ref: './users.yaml#/UpdateUserAttributesCommand' }
+UpdateUserAttributesResponse: { $ref: './users.yaml#/UpdateUserAttributesResponse' }
+CreatePolicyCommand: { $ref: './policies.yaml#/CreatePolicyCommand' }
+CreatePolicyResponse: { $ref: './policies.yaml#/CreatePolicyResponse' }

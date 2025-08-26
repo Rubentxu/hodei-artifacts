@@ -6,6 +6,13 @@
 /v1/artifacts/{id}: { $ref: './artifacts.yaml#/artifactById' }
 /v1/search: { $ref: './search.yaml#/searchV1' }
 
+# v1 users
+/v1/users: { $ref: './users.yaml#/usersRoot' }
+/v1/users/{id}/attributes: { $ref: './users.yaml#/usersAttributes' }
+
+# v1 policies
+/v1/policies: { $ref: './policies.yaml#/policiesRoot' }
+
 # v2 ecosystems
 /maven2/{groupId}/{artifactId}/{version}/{fileName}: { $ref: './maven.yaml#/download' }
 /{packageName}: { $ref: './npm.yaml#/packageMeta' }
