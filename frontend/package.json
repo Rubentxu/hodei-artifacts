@@ -14,7 +14,16 @@
     "test": "vitest",
     "test:coverage": "vitest --coverage",
     "preview": "vite preview",
-    "prepare": "husky install"
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,css,scss,html}": [
+      "prettier --write"
+    ]
   },
   "dependencies": {
     "@tailwindcss/forms": "^0.5.10",
@@ -52,6 +61,7 @@
     "husky": "^9.1.7",
     "jsdom": "^26.1.0",
     "lint-staged": "^16.1.5",
+    "msw": "^2.10.5",
     "postcss": "^8.5.6",
     "prettier": "^3.6.2",
     "tailwindcss": "^4.1.12",

@@ -6,13 +6,13 @@ import { resolve } from 'path';
 export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory
   const env = loadEnv(mode, process.cwd(), '');
-  
+
   return {
     plugins: [react()],
-    
+
     // Base public path when served in production
     base: env.VITE_BASE_PATH || '/',
-    
+
     // Build configuration
     build: {
       outDir: 'dist',
@@ -29,14 +29,14 @@ export default defineConfig(({ mode }) => {
       },
       chunkSizeWarningLimit: 1000,
     },
-    
+
     // Preview server configuration
     preview: {
       port: 4173,
       host: true,
       strictPort: true,
     },
-    
+
     // Development server configuration
     server: {
       port: 5173,
@@ -51,7 +51,7 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    
+
     resolve: {
       alias: {
         '@': resolve(__dirname, './src'),
@@ -66,12 +66,12 @@ export default defineConfig(({ mode }) => {
         '@types': resolve(__dirname, './src/shared/types'),
       },
     },
-    
+
     // CSS configuration
     css: {
       devSourcemap: true,
     },
-    
+
     // Optimize dependencies
     optimizeDeps: {
       include: ['react', 'react-dom'],

@@ -8,9 +8,10 @@ Este directorio contiene toda la documentación relacionada con el frontend de H
 - [**style-guide.json**](./style-guide.json) - Guía de estilos en formato JSON para tokens de diseño
 - [**project-structure.md**](./project-structure.md) - Estructura del proyecto y organización de archivos
 - [**pages-specification.md**](./pages-specification.md) - Especificación detallada de páginas y componentes
-- [**roadmap.md**](./roadmap.md) - Roadmap de desarrollo y planificación por épicas
+- [**roadmap.md**](./roadmap.md) - Roadmap de desarrollo и planificación por épicas
 - [**component-library.md**](./component-library.md) - Biblioteca de componentes reutilizables
 - [**api-integration.md**](./api-integration.md) - Integración con el backend y manejo de APIs
+- [**project_status.md**](./project_status.md) - Estado actual del desarrollo y progreso
 
 ## Tecnologías Base
 
