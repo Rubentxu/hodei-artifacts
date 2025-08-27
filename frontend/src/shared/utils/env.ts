@@ -7,28 +7,30 @@ const envSchema = z.object({
   // API Configuration
   VITE_API_BASE_URL: z.string().url().default('http://localhost:8080'),
   VITE_API_TIMEOUT: z.coerce.number().positive().default(30000),
-  
+
   // Application Configuration
   VITE_APP_NAME: z.string().default('Hodei Artifacts'),
   VITE_APP_VERSION: z.string().default('0.1.0'),
   VITE_BASE_PATH: z.string().default('/'),
-  
+
   // Feature Flags
   VITE_ENABLE_ANALYTICS: z.coerce.boolean().default(false),
   VITE_ENABLE_DEBUG: z.coerce.boolean().default(false),
   VITE_ENABLE_PWA: z.coerce.boolean().default(false),
-  
+
   // Development
   VITE_DEV_PROXY: z.coerce.boolean().default(true),
-  
+
   // Build Configuration
   VITE_SOURCEMAP: z.coerce.boolean().default(false),
-  
+
   // Mode
   MODE: z.enum(['development', 'production', 'test']).default('development'),
-  
+
   // Node Environment
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  NODE_ENV: z
+    .enum(['development', 'production', 'test'])
+    .default('development'),
 });
 
 // Type for validated environment variables

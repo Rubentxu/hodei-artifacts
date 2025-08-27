@@ -50,11 +50,11 @@ export interface PaginatedResponse<T> {
   hasPrev: boolean;
 }
 
-export type ApiError = {
+export interface ApiError {
   message: string;
   code: string;
   details?: Record<string, any>;
-};
+}
 
 // Utility types
 export type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
