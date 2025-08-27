@@ -4,5 +4,5 @@ export * from './ui';
 // Repository Components
 export * from './repository';
 
-// Auth Components
-export * from './auth';
+// Artifact Components
+export * from './artifact';
