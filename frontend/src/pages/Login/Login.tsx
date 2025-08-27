@@ -27,15 +27,15 @@ export const Login = () => {
 
     try {
       const response = await authApi.login({ email, password, rememberMe });
-      
+
       login(response.user, response.token);
       showSuccess('Login successful', 'Welcome back!');
-      
+
       // Redirect to the intended page or home
       navigate(from, { replace: true });
     } catch (error: any) {
       showError(
-        'Login failed', 
+        'Login failed',
         error.message || 'Please check your credentials and try again.'
       );
     } finally {
@@ -61,7 +61,7 @@ export const Login = () => {
               label="Email address"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={e => setEmail(e.target.value)}
               placeholder="Enter your email"
               required
               disabled={isLoading}
@@ -72,7 +72,7 @@ export const Login = () => {
               label="Password"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={e => setPassword(e.target.value)}
               placeholder="Enter your password"
               required
               disabled={isLoading}
@@ -86,12 +86,12 @@ export const Login = () => {
                   name="remember-me"
                   type="checkbox"
                   checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
+                  onChange={e => setRememberMe(e.target.checked)}
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                   disabled={isLoading}
                 />
-                <label 
-                  htmlFor="remember-me" 
+                <label
+                  htmlFor="remember-me"
                   className="ml-2 block text-sm text-gray-900"
                 >
                   Remember me
@@ -99,12 +99,15 @@ export const Login = () => {
               </div>
 
               <div className="text-sm">
-                <a 
-                  href="#" 
+                <a
+                  href="#"
                   className="font-medium text-blue-600 hover:text-blue-500"
-                  onClick={(e) => {
+                  onClick={e => {
                     e.preventDefault();
-                    showInfo('Feature coming soon', 'Password recovery will be available soon.');
+                    showInfo(
+                      'Feature coming soon',
+                      'Password recovery will be available soon.'
+                    );
                   }}
                 >
                   Forgot your password?
@@ -112,8 +115,8 @@ export const Login = () => {
               </div>
             </div>
 
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               className="w-full relative"
               disabled={isLoading}
             >
@@ -169,12 +172,15 @@ export const Login = () => {
         <div className="text-center">
           <p className="text-sm text-gray-600">
             Don't have an account?{' '}
-            <a 
-              href="#" 
+            <a
+              href="#"
               className="font-medium text-blue-600 hover:text-blue-500"
-              onClick={(e) => {
+              onClick={e => {
                 e.preventDefault();
-                showInfo('Feature coming soon', 'User registration will be available soon.');
+                showInfo(
+                  'Feature coming soon',
+                  'User registration will be available soon.'
+                );
               }}
             >
               Contact administrator

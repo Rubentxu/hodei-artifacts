@@ -1,4 +1,4 @@
-import { Card } from '../../components/ui/Card'
+import { Card } from '../../components/ui/Card';
 
 export const Home = () => {
   return (
@@ -10,7 +10,8 @@ export const Home = () => {
               Hodei Artifacts
             </h1>
             <p className="text-lg text-gray-600 mb-8">
-              Next-generation artifact repository with enterprise-grade security and performance
+              Next-generation artifact repository with enterprise-grade security
+              and performance
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <Card variant="secondary" className="p-6">
@@ -36,5 +37,5 @@ export const Home = () => {
         </div>
       </div>
     </div>
-  )
-}
+  );
+};

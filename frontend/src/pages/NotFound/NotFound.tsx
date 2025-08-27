@@ -1,5 +1,5 @@
-import { Card } from '../../components/ui/Card'
-import { Button } from '../../components/ui/Button'
+import { Card } from '../../components/ui/Card';
+import { Button } from '../../components/ui/Button';
 
 export const NotFound = () => {
   return (
@@ -9,15 +9,15 @@ export const NotFound = () => {
           <div className="mb-6">
             <h1 className="text-9xl font-bold text-gray-300">404</h1>
           </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Page not found</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">
+            Page not found
+          </h2>
           <p className="text-gray-600 mb-6">
             Sorry, we couldn't find the page you're looking for.
           </p>
-          <Button onClick={() => window.history.back()}>
-            Go back
-          </Button>
+          <Button onClick={() => window.history.back()}>Go back</Button>
         </Card>
       </div>
     </div>
-  )
-}
+  );
+};

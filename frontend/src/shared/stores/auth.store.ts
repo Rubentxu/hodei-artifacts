@@ -8,17 +8,17 @@ export interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
-  
+
   // Actions
   login: (user: User, token: string) => void;
   logout: () => void;
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
-  
+
   // Loading states
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
-  
+
   // Error state
   error: string | null;
   setError: (error: string | null) => void;
@@ -37,48 +37,48 @@ export const useAuthStore = create<AuthState>()(
 
       // Actions
       login: (user, token) => {
-        set({ 
-          user, 
-          token, 
-          isAuthenticated: true, 
+        set({
+          user,
+          token,
+          isAuthenticated: true,
           error: null,
-          isLoading: false 
+          isLoading: false,
         });
       },
 
       logout: () => {
-        set({ 
-          user: null, 
-          token: null, 
-          isAuthenticated: false, 
+        set({
+          user: null,
+          token: null,
+          isAuthenticated: false,
           error: null,
-          isLoading: false 
+          isLoading: false,
         });
       },
 
-      setUser: (user) => {
+      setUser: user => {
         set({ user });
         if (user) {
           set({ isAuthenticated: true });
         }
       },
 
-      setToken: (token) => {
+      setToken: token => {
         set({ token });
         if (token) {
           set({ isAuthenticated: true });
         }
       },
 
-      setIsLoading: (isLoading) => set({ isLoading }),
+      setIsLoading: isLoading => set({ isLoading }),
 
-      setError: (error) => set({ error }),
+      setError: error => set({ error }),
 
       clearError: () => set({ error: null }),
     }),
     {
       name: STORAGE_KEYS.AUTH,
-      partialize: (state) => ({
+      partialize: state => ({
         user: state.user,
         token: state.token,
         isAuthenticated: state.isAuthenticated,
@@ -94,7 +94,7 @@ export const useAuth = () => {
   const isAuthenticated = useAuthStore(state => state.isAuthenticated);
   const isLoading = useAuthStore(state => state.isLoading);
   const error = useAuthStore(state => state.error);
-  
+
   const login = useAuthStore(state => state.login);
   const logout = useAuthStore(state => state.logout);
   const setUser = useAuthStore(state => state.setUser);
@@ -122,7 +122,7 @@ export const useAuth = () => {
 // Hook to check user permissions
 export const usePermissions = () => {
   const user = useAuthStore(state => state.user);
-  
+
   const hasRole = (role: string): boolean => {
     return user?.role === role;
   };

@@ -6,10 +6,10 @@ interface SpinnerProps {
   variant?: 'primary' | 'secondary' | 'white';
 }
 
-export const Spinner = ({ 
-  size = 'md', 
+export const Spinner = ({
+  size = 'md',
   className,
-  variant = 'primary'
+  variant = 'primary',
 }: SpinnerProps) => {
   const sizeClasses = {
     sm: 'h-4 w-4',
@@ -25,7 +25,7 @@ export const Spinner = ({
   };
 
   return (
-    <div 
+    <div
       className={cn(
         'animate-spin',
         sizeClasses[size],

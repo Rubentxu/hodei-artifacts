@@ -1,8 +1,12 @@
-import { createBrowserRouter } from 'react-router-dom'
-import { Home } from './pages/Home'
-import { Login } from './pages/Login'
-import { Dashboard } from './pages/Dashboard'
-import { NotFound } from './pages/NotFound'
+import { createBrowserRouter } from 'react-router-dom';
+import {
+  Home,
+  Login,
+  Dashboard,
+  Repositories,
+  RepositoryDetail,
+  NotFound,
+} from './pages';
 
 export const router = createBrowserRouter([
   {
@@ -18,7 +22,15 @@ export const router = createBrowserRouter([
     element: <Dashboard />,
   },
   {
+    path: '/repositories',
+    element: <Repositories />,
+  },
+  {
+    path: '/repositories/:id',
+    element: <RepositoryDetail />,
+  },
+  {
     path: '*',
     element: <NotFound />,
   },
-])
+]);

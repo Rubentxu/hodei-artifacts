@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/shared/stores/auth.store';
 import { Spinner } from '@/components/ui/Spinner';
@@ -30,13 +30,7 @@ export const ProtectedRoute = ({
 
   // Redirect to login if authentication is required but user is not authenticated
   if (requireAuth && !isAuthenticated) {
-    return (
-      <Navigate
-        to="/login"
-        state={{ from: location }}
-        replace
-      />
-    );
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   // Redirect away from login if user is already authenticated
@@ -55,14 +49,8 @@ export const ProtectedRoute = ({
       if (fallback) {
         return <>{fallback}</>;
       }
-      
-      return (
-        <Navigate
-          to="/unauthorized"
-          state={{ from: location }}
-          replace
-        />
-      );
+
+      return <Navigate to="/unauthorized" state={{ from: location }} replace />;
     }
   }
 
@@ -71,9 +59,7 @@ export const ProtectedRoute = ({
 
 // Convenience components for common protection patterns
 export const AuthRequired = ({ children }: { children: ReactNode }) => (
-  <ProtectedRoute requireAuth={true}>
-    {children}
-  </ProtectedRoute>
+  <ProtectedRoute requireAuth={true}>{children}</ProtectedRoute>
 );
 
 export const AdminRequired = ({ children }: { children: ReactNode }) => (
@@ -83,18 +69,16 @@ export const AdminRequired = ({ children }: { children: ReactNode }) => (
 );
 
 export const PublicOnly = ({ children }: { children: ReactNode }) => (
-  <ProtectedRoute requireAuth={false}>
-    {children}
-  </ProtectedRoute>
+  <ProtectedRoute requireAuth={false}>{children}</ProtectedRoute>
 );
 
 // Hook version for programmatic access control
 export const useRouteGuard = () => {
   const { isAuthenticated, isLoading, user } = useAuth();
-  
+
   const hasRole = (role: string | string[]): boolean => {
     if (isLoading || !isAuthenticated) return false;
-    
+
     return Array.isArray(role)
       ? role.includes(user?.role || '')
       : user?.role === role;

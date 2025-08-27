@@ -47,7 +47,9 @@ export const authApi = {
 
   // Refresh access token
   refreshToken: async (refreshToken: string): Promise<RefreshTokenResponse> => {
-    return apiService.post<RefreshTokenResponse>('/auth/refresh', { refreshToken });
+    return apiService.post<RefreshTokenResponse>('/auth/refresh', {
+      refreshToken,
+    });
   },
 
   // Get current user profile
@@ -56,7 +58,9 @@ export const authApi = {
   },
 
   // Update user profile
-  updateProfile: async (userData: Partial<User>): Promise<ApiResponse<User>> => {
+  updateProfile: async (
+    userData: Partial<User>
+  ): Promise<ApiResponse<User>> => {
     return apiService.patch<ApiResponse<User>>('/auth/profile', userData);
   },
 
@@ -70,7 +74,9 @@ export const authApi = {
 
   // Request password reset
   forgotPassword: async (email: string): Promise<ApiResponse<void>> => {
-    return apiService.post<ApiResponse<void>>('/auth/forgot-password', { email });
+    return apiService.post<ApiResponse<void>>('/auth/forgot-password', {
+      email,
+    });
   },
 
   // Reset password with token
@@ -88,6 +94,8 @@ export const authApi = {
 
   // Resend verification email
   resendVerification: async (email: string): Promise<ApiResponse<void>> => {
-    return apiService.post<ApiResponse<void>>('/auth/resend-verification', { email });
+    return apiService.post<ApiResponse<void>>('/auth/resend-verification', {
+      email,
+    });
   },
 };
