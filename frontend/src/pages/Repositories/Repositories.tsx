@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { notificationService } from '@/shared/stores/notification.store';
 import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -261,14 +262,17 @@ export const Repositories = () => {
                 onEdit={repo => {
                   // TODO: Implement edit functionality
                   console.log('Edit repository:', repo);
+                  notificationService.info('Edit Feature', 'Edit functionality coming soon!');
                 }}
                 onDelete={repo => {
                   // TODO: Implement delete functionality
                   console.log('Delete repository:', repo);
+                  notificationService.info('Delete Feature', 'Delete functionality coming soon!');
                 }}
                 onToggleVisibility={repo => {
                   // TODO: Implement toggle visibility
                   console.log('Toggle visibility:', repo);
+                  notificationService.info('Visibility Feature', 'Toggle visibility coming soon!');
                 }}
               />
             ))}

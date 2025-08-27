@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { notificationService } from '@/shared/stores/notification.store';
 import { Link } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -89,9 +90,10 @@ export const RepositoryCard = ({
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      // TODO: Show toast notification
+      notificationService.success('Copied!', 'Repository ID copied to clipboard', 2000);
     } catch (error) {
       console.warn('Failed to copy to clipboard:', error);
+      notificationService.error('Copy Failed', 'Failed to copy to clipboard');
     }
   };
 

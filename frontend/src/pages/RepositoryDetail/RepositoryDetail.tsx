@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { notificationService } from '@/shared/stores/notification.store';
 import { useParams, Navigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -117,9 +118,14 @@ export const RepositoryDetail = () => {
     return `${Math.round(size * 100) / 100} ${units[unitIndex]}`;
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    // TODO: Show toast notification
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      notificationService.success('Copied!', 'Text copied to clipboard', 2000);
+    } catch (error) {
+      console.warn('Failed to copy to clipboard:', error);
+      notificationService.error('Copy Failed', 'Failed to copy to clipboard');
+    }
   };
 
   const renderTabContent = () => {
