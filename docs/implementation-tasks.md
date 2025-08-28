@@ -1,4 +1,4 @@
-# Plan Detallado de Implementación (WBS Ejecutable) - MVP Hodei Artifacts
+# Plan Detallado de Implementación (WBS Ejecutable) - Hodei Artifacts
 
 ## 0. Objetivo
 Generar un desglose accionable (work breakdown structure) directamente implementable a partir de [`plan.md`](docs/plan.md) y la arquitectura descrita en [`arquitectura-sistema.md`](docs/arquitectura-sistema.md:1). Se prioriza ruta crítica y calidad operativa temprana.
@@ -40,7 +40,7 @@ Generar un desglose accionable (work breakdown structure) directamente implement
 | INFRA-T4 | Crear índices: `repositories.name` único, `artifacts.repository_id+checksum` (placeholder hasta idempotencia) | INFRA | Scripts init |
 | INFRA-T5 | S3 Adapter implementa `ArtifactStorage` [`ports.rs`](crates/artifact/src/application/ports.rs:12) | CODE | `s3_artifact_storage.rs` |
 | INFRA-T6 | Configuración por variables entorno (MONGO_URI, S3_ENDPOINT, S3_BUCKET) | OPS | `.env.example` |
-| INFRA-T7 | Tests integración repos / artifacts (Mongo test container) | TEST | `tests/mongo_repository_test.rs` |
+| INFRA-T7 | Tests integración repos / artifacts (Custom Docker Compose framework) | TEST | `tests/integration_tests.rs` |
 
 ### 3.3 E-REPO (Historias U5, U2 soporte)
 | ID | Descripción | Tipo | Output |
@@ -218,14 +218,100 @@ Backlog → Ready → In Progress → Code Review → QA (Tests & Perf) → Done
 - Cobertura tests integración slices críticos ≥ 70% líneas relevantes (excl infra generada).
 - Sonar (o equivalente) sin code smells críticos.
 
-## 13. Acciones Post-MVP (Futuras No Incluidas)
-- Extract advanced search (facets) – extender SEARCH slice.
-- SBOM ingestion pipelines.
-- Vulnerability scanning + eventos security.
-- Multi-formato almacenamiento (OCI layers, packages).
-- BFF / GraphQL consolidación queries transversales.
+## 13. Epic E-INTEGRATION-TESTS (Framework Docker Compose - Actualizado 2025-08-28)
 
-## 14. Resumen Rápido (TL;DR)
-Implementar primero contratos, luego persistencia + repos, subir artefactos con eventos, indexar para búsqueda, añadir descarga, aplicar ABAC, endurecer con validación / idempotencia y finalmente instrumentar métricas + tracing + cache decisiones.
+### Estado del Framework de Testing
+- **Framework Custom**: `shared-test` crate con orchestración Docker Compose robusta
+- **TestEnvironment**: Struct centralizada con clientes preconfigurados (MongoDB, S3, Kafka, Cedar)
+- **Auto-cleanup**: Drop trait garantiza limpieza automática de contenedores
+- **Health checks**: Implementados para todos los servicios con timeouts
 
-Fin del documento.
+| ID | Descripción | Tipo | Output |
+|----|-------------|------|--------|
+| IT-T1 | Completar tests end-to-end missing (upload→index→search flow) | TEST | `it_complete_upload_flow.rs` |
+| IT-T2 | Tests event-driven architecture (producer→consumer→side effects) | TEST | `it_kafka_event_flow.rs` |
+| IT-T3 | Tests Maven full lifecycle con mvn CLI compatibility | TEST | `it_maven_full_lifecycle.rs` |
+| IT-T4 | Tests npm full lifecycle con npm CLI compatibility | TEST | `it_npm_full_lifecycle.rs` |
+| IT-T5 | Tests authorization integration en flujos completos | TEST | `it_authorization_integration.rs` |
+| IT-T6 | Tests event ordering y failure recovery | TEST | `it_event_ordering.rs` |
+| IT-T7 | Tests Tantivy indexing con datos reales | TEST | `it_tantivy_indexing.rs` |
+| IT-T8 | Tests performance search engine | TEST | `it_search_performance.rs` |
+| IT-T9 | Tests distribution format validation | TEST | `it_format_validation.rs` |
+| IT-T10 | Setup test parallelization framework | INFRA | Configuración CI |
+
+## 14. Epic E-SEARCH-COMPLETE (Implementaciones Pendientes)
+
+### Estado Actual: Basic search funcional, Advanced search y Tantivy con TODO
+| ID | Descripción | Tipo | Estado Actual |
+|----|-------------|------|---------------|
+| SEARCH-T9 | Implementar TantivySearchIndex completo (reemplazar todo!) | CODE | `tantivy_search.rs:21` |
+| SEARCH-T10 | Advanced search con filtros y facets | CODE | `advanced_search.rs` placeholder |
+| SEARCH-T11 | Index management API endpoints | CODE | `index_management.rs` estructura básica |
+| SEARCH-T12 | Performance tuning y optimización queries | CODE | Métricas latencia |
+
+## 15. Epic E-SUPPLY-CHAIN (Nueva Épica - DTOs listos)
+
+### Estado Actual: DTOs definidos, handlers con todo!()
+| ID | Descripción | Tipo | Output |
+|----|-------------|------|--------|
+| SUPPLY-T1 | Implementar generación SBOM (SPDX/CycloneDX) | CODE | `generate_sbom_handler` |
+| SUPPLY-T2 | Vulnerability scanning integration | CODE | `get_vulnerability_report_handler` |
+| SUPPLY-T3 | Supply chain health metrics | OBS | Métricas específicas |
+| SUPPLY-T4 | Compliance reporting | CODE | Endpoints reporting |
+
+## 16. Epic E-OPENAPI-UPDATE (Actualización Contratos)
+
+### Estado Actual: OpenAPI v2.1.0 completo base, faltan nuevos endpoints
+| ID | Descripción | Tipo | Output |
+|----|-------------|------|--------|
+| OPENAPI-T5 | Añadir search endpoints (basic/advanced) | CODE | `paths/search.yaml` update |
+| OPENAPI-T6 | Añadir supply chain endpoints | CODE | `paths/supply-chain.yaml` |
+| OPENAPI-T7 | Event webhooks API specification | CODE | `webhooks.yaml` update |
+| OPENAPI-T8 | Metrics endpoint documentation | CODE | `paths/metrics.yaml` |
+| OPENAPI-T9 | Health checks endpoints | CODE | `paths/health.yaml` |
+| OPENAPI-T10 | Contract testing pipeline setup | OPS | CI job validación |
+
+## 17. Matriz de Tests Existentes (20 archivos it_*.rs)
+
+### Coverage por Bounded Context:
+- **artifact**: 10 tests ✅ (upload, download, storage, events, idempotency)
+- **iam**: 4 tests ✅ (authentication, users, policies, attachments)  
+- **repository**: 2 tests ✅ (creation, store integration)
+- **search**: 1 test ⚠️ (basic search only)
+- **integration**: 5 tests ⚠️ (maven, npm, search, repository, error conditions)
+- **distribution**: 0 tests ❌ (implementado pero sin integration tests)
+- **supply-chain**: 0 tests ❌ (solo placeholders)
+- **analytics**: 0 tests ❌ (no implementado)
+- **security**: 0 tests ❌ (no implementado)
+
+## 18. Acciones Post-MVP (Futuras Registradas)
+- Extract advanced search (facets) – SEARCH-T10 implementa.
+- SBOM ingestion pipelines – SUPPLY-T1 cubre.
+- Vulnerability scanning + eventos security – SUPPLY-T2 cubre.
+- Multi-formato almacenamiento (OCI layers, packages) – Future epic.
+- BFF / GraphQL consolidación queries transversales – Future epic.
+
+## 19. Orden de Ejecución Actualizado
+
+### Fase 1: Completar Tests Base (Sprint 1-2)
+1. IT-T1..T5 (tests end-to-end críticos)
+2. SEARCH-T9 (Tantivy implementation)
+3. IT-T6..T8 (event architecture tests)
+
+### Fase 2: Feature Implementation (Sprint 3-4)
+1. SEARCH-T10..T12 (advanced search completo)
+2. SUPPLY-T1..T2 (supply chain básico)
+3. IT-T9..T10 (performance y parallelization)
+
+### Fase 3: Contracts & Ops (Sprint 5-6)
+1. OPENAPI-T5..T10 (contratos actualizados)
+2. SUPPLY-T3..T4 (compliance completo)
+3. CI/CD hardening final
+
+## 20. Resumen Rápido (TL;DR Actualizado)
+Framework Docker Compose funcionando. Completar tests de integración faltantes, implementar Tantivy search engine, supply chain básico, actualizar OpenAPI, y configurar parallelization. Base sólida existente permite desarrollo incremental sin blockers críticos.
+
+---
+
+**Última actualización**: 28 agosto 2025 - Estado post-análisis código actual
+**Framework de testing**: Docker Compose custom implementado y funcional
