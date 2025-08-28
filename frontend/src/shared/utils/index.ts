@@ -50,11 +50,12 @@ export const formatRelativeTime = (date: string | Date): string => {
 };
 
 // CSS class utilities
-export const cn = (
-  ...classes: (string | undefined | null | false)[]
-): string => {
-  return classes.filter(Boolean).join(' ');
-};
+import { type ClassValue, clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 
 // URL utilities
 export const buildUrl = (

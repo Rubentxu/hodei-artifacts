@@ -4,3 +4,7 @@ export { Dashboard } from './Dashboard';
 export { Repositories } from './Repositories';
 export { RepositoryDetail } from './RepositoryDetail';
 export { NotFound } from './NotFound';
+export { SearchPage } from './search';
+export { ProfilePage } from './profile';
+export * from './settings';
+export * from './admin';
