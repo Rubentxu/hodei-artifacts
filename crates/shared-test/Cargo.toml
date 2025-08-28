@@ -1,0 +1,33 @@
+[package]
+name = "shared-test"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+artifact = { path = "../artifact" }
+iam = { path = "../iam" }
+infra-mongo = { path = "../infra-mongo" }
+
+tokio = { workspace = true, features = ["full"] }
+mongodb = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+aws-types = { workspace = true }
+rdkafka = { workspace = true }
+cedar-policy = { workspace = true }
+async-trait = { workspace = true }
+bollard = { workspace = true }
+futures = { workspace = true }
+rand = "0.8"
+portpicker = "0.1"
+num_cpus = "1.16"
+hyper-hickory = "0.8.0"
+hyper-util = { version = "0.1.2", features = ["client-legacy"] }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+shared-test = { path = "../shared-test" }
+tokio = { workspace = true, features = ["full"] }
+trust-dns-resolver = "0.22.0"

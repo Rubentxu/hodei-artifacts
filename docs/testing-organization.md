@@ -1,6 +1,7 @@
 # Guía de Organización de Tests (TEST-ORG1)
 
-Versión: 1.2 (actualizada con estructura de tests unitarios en archivos separados)
+Versión: 1.3 (actualizada con ejecución paralela de tests de integración)
+Cambios 1.3: implementa sistema de generación de Docker Compose con templates para ejecución paralela de tests de integración
 Cambios 1.2: implementa estructura de tests unitarios en archivos separados con sufijo _test.rs y mantiene tests E2E con Playwright
 
 Objetivo: Establecer una convención estricta, reproducible y automatizable para la localización, tipo y nivel de abstracción de las pruebas en el monorepo. Garantiza:
@@ -32,6 +33,63 @@ crates/<context>/
   tests/
     it_calculator.rs           # Tests de integración
     it_repository.rs
+```
+
+### 1.2.1 Tests de Integración con Framework Custom (Docker Compose)
+
+Para los tests de integración que requieren un entorno de servicios completo (MongoDB, Kafka, S3, etc.), utilizamos un framework custom basado en Docker Compose. Este enfoque nos permite:
+
+- **Entornos reproducibles:** Definidos en `tests/compose/docker-compose.yml`.
+- **Orquestación centralizada:** El módulo `shared-test` gestiona el ciclo de vida del entorno (levantar, esperar por salud de servicios, tumbar).
+- **Aislamiento y ejecución paralela:** El framework genera configuraciones Docker Compose únicas para cada test, con redes, subredes y puertos dinámicos que evitan conflictos. Esto permite la ejecución paralela segura de tests de integración.
+
+**Uso:** Los tests de integración interactúan con una estructura `TestEnvironment` que provee clientes preconfigurados para los servicios.
+
+### 1.2.2 Ejecución Paralela de Tests con Template Docker Compose
+
+Para habilitar la ejecución paralela de tests de integración, se ha implementado un sistema de generación dinámica de archivos Docker Compose:
+
+**Template Docker Compose:** `tests/compose/docker-compose.template.yml`
+```yaml
+services:
+  mongodb:
+    ports:
+      - "{{MONGO_HOST_PORT}}:27017"
+  kafka:
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:{{KAFKA_HOST_PORT}}
+  zookeeper:
+    ports:
+      - "{{ZOOKEEPER_HOST_PORT}}:2181"
+  localstack:
+    ports:
+      - "{{S3_HOST_PORT}}:4566"
+networks:
+  {{NETWORK_NAME}}:
+    ipam:
+      config:
+        - subnet: {{SUBNET}}
+```
+
+**Placeholders disponibles:**
+- `{{NETWORK_NAME}}`: Nombre único de red Docker
+- `{{SUBNET}}`: Subred única para evitar conflictos de IP
+- `{{MONGO_HOST_PORT}}`: Puerto dinámico para MongoDB
+- `{{KAFKA_HOST_PORT}}`: Puerto dinámico para Kafka
+- `{{ZOOKEEPER_HOST_PORT}}`: Puerto dinámico para Zookeeper
+- `{{S3_HOST_PORT}}`: Puerto dinámico para LocalStack/S3
+
+**Detección de recursos:** El sistema detecta automáticamente los recursos disponibles (CPU, memoria) para optimizar el límite de ejecución paralela.
+
+**Uso en tests:**
+```rust
+use shared_test::setup_test_environment;
+
+#[tokio::test]
+async fn test_my_feature() {
+    let env = setup_test_environment(None).await;
+    // Test logic using isolated environment
+}
 ```
 
 ### 1.3 Tests E2E con Playwright (directorio separado)
@@ -172,12 +230,25 @@ mod calculator_test;  // Importa src/modules/calculator_test.rs
 
 Jobs planificados:
 1. `test-unit`: `cargo test --lib` (tests unitarios)
-2. `test-integration`: `cargo test --test 'it_*'` (tests de integración)
+2. `test-integration`: `cargo test --test 'it_*'` (tests de integración en paralelo)
 3. `test-e2e-playwright`: `cd e2e && npm test` (tests E2E con Playwright)
 4. Verificación organización tests: ejecuta `bash scripts/verify-no-inline-tests.sh`
+
+**Ejecución paralela optimizada:** Los tests de integración se ejecutan automáticamente en paralelo utilizando el número óptimo de workers basado en los recursos del sistema:
+```bash
+# Ejecutar tests con paralelismo automático
+cargo test --test 'it_*'
+
+# Forzar número específico de tests paralelos
+TEST_PARALLEL_JOBS=4 cargo test --test 'it_*'
+```
 
 ## 8. Referencias
 
 - Estrategia original: sección 16 de [`plan.md`](docs/plan.md#L239)
-- Integración testcontainers: [`test-containers.md`](docs/test-containers.md)
+- Framework de Tests de Integración Custom: `crates/shared-test/` (implementación del orquestador Docker Compose con ejecución paralela)
+- Template Docker Compose: `tests/compose/docker-compose.template.yml`
+- Sistema de detección de recursos: `crates/shared-test/src/resource_detector.rs`
+- Generador de compose dinámico: `crates/shared-test/src/dynamic_compose.rs`
+- Renderizador de templates: `crates/shared-test/src/template_renderer.rs`
 - Ejemplos de implementación: `crates/artifact/src/` y `crates/artifact/tests/`
