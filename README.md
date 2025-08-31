@@ -33,9 +33,23 @@ graph TB
         CI[CI/CD]
         DEV[Developers]
         SEC[Security Tools]
+        WEB[Web Users]
     end
 
-    subgraph "Hodei Artifacts"
+    subgraph "Frontend (React)"
+        UI[React SPA]
+        subgraph "Features"
+            F1[Auth]
+            F2[Repositories]
+            F3[Artifacts]
+            F4[Search]
+            F5[Users]
+        end
+        STORE[State Management]
+        HOOKS[Custom Hooks]
+    end
+
+    subgraph "Hodei Artifacts Backend"
         API[API Gateway]
         subgraph "Slices (VSA)"
             S1[Artifact Ingest]
@@ -47,10 +61,16 @@ graph TB
         end
         KAFKA[Kafka]
         MONGO[MongoDB]
-        S3[S3/MinIO]
+        S3STORAGE[S3/MinIO]
         CACHE[Redis]
     end
 
+    WEB --> UI
+    UI --> F1 & F2 & F3 & F4 & F5
+    F1 & F2 & F3 & F4 & F5 --> HOOKS
+    HOOKS --> STORE
+    HOOKS --> API
+    
     CI & DEV & SEC --> API
     API --> S1 & S2 & S3 & S4 & S5 & S6
     S1 --> KAFKA
@@ -59,12 +79,19 @@ graph TB
     KAFKA --> S3
     KAFKA --> S4
     S1 & S2 & S3 & S4 & S5 & S6 --> MONGO
-    S1 & S2 --> S3
+    S1 & S2 --> S3STORAGE
     API --> CACHE
 ```
 
-- Organización por slices verticales con puertos/adaptadores (Hexagonal).
-- Comunicación asíncrona vía eventos (Kafka) entre slices.
+### Arquitectura Backend
+- Organización por slices verticales con puertos/adaptadores (Hexagonal)
+- Comunicación asíncrona vía eventos (Kafka) entre slices
+
+### Arquitectura Frontend
+- **Component-Based Architecture** con Atomic Design (atoms, molecules, organisms)
+- **Feature-Based Organization** por dominio de negocio (auth, repositories, artifacts)
+- **State Management** híbrido: Zustand (global) + React Query (servidor)
+- **Custom Hooks** para lógica de negocio reutilizable
 
 ## Estructura del repositorio (monorepo)
 
@@ -82,8 +109,15 @@ crates/
   iam/           # (WIP) identidades y políticas ABAC
   infra-mongo/   # Cliente/helpers MongoDB y utilidades de test
 src/             # binario principal y bootstrap (axum, wiring)
+frontend/        # aplicación React con arquitectura moderna
+  src/
+    app/         # configuración global (providers, router)
+    components/  # design system (atoms, molecules, organisms)
+    features/    # organización por dominio (auth, repositories, artifacts)
+    pages/       # route components
+    shared/      # hooks, stores, utils, types compartidos
 docs/            # PRD, arquitectura, guías, catálogo de eventos
-e2e/             # tests end-to-end con Playwright (APIs)
+e2e/             # tests end-to-end con Playwright (APIs + UI)
 openapi.yaml     # contrato de APIs síncronas
 ```
 
@@ -105,13 +139,24 @@ openapi.yaml     # contrato de APIs síncronas
 
 ## Requisitos
 
+### Backend
 - Rust estable reciente
 - Docker + Docker Compose (para dependencias locales)
 - MongoDB, MinIO y Kafka (recomendado lanzar con Testcontainers en tests)
 
+### Frontend
+- Node.js 18+ y npm
+- Browser moderno con soporte ES2022
+
+### Desarrollo
+- Git
+- Playwright (para tests E2E)
+- Opcional: Storybook para desarrollo de componentes
+
 ## Puesta en marcha (desarrollo)
 
-1. Clonar e instalar toolchain Rust y cargo.
+### Backend (Rust)
+1. Clonar e instalar toolchain Rust y cargo
 2. Construir:
    ```bash
    cargo build
@@ -125,9 +170,40 @@ openapi.yaml     # contrato de APIs síncronas
    cargo run
    ```
 
-- Tests de integración usan `testcontainers`; no necesitas servicios locales si usas los tests.
+### Frontend (React)
+1. Navegar al directorio frontend:
+   ```bash
+   cd frontend
+   ```
+2. Instalar dependencias:
+   ```bash
+   npm install
+   ```
+3. Ejecutar en modo desarrollo:
+   ```bash
+   npm run dev
+   ```
+4. Ejecutar tests:
+   ```bash
+   npm test
+   ```
+5. Construir para producción:
+   ```bash
+   npm run build
+   ```
+
+### Storybook (Design System)
+```bash
+cd frontend
+npm run storybook
+```
+
+- Tests de integración backend usan `testcontainers`; no necesitas servicios locales si usas los tests
+- Frontend se conecta por defecto al backend en `http://localhost:8080`
 
 ## Cómo ejecutar los tests
+
+### Backend (Rust)
 
 - __Unitarios e integración (Rust)__
   - Todos los tests:
@@ -168,14 +244,39 @@ openapi.yaml     # contrato de APIs síncronas
     ```
     - Equivalentes: `cargo nextest run --tests`, `--lib`, `-p <crate>`
 
-- __End-to-End (Playwright)__ en `e2e/`:
+### Frontend (React)
+- __Tests unitarios y de integración__:
+  ```bash
+  cd frontend
+  npm test
+  ```
+- __Tests con coverage__:
+  ```bash
+  npm run test:coverage
+  ```
+- __Tests de componentes con Storybook__:
+  ```bash
+  npm run test-storybook
+  ```
+
+### End-to-End (Playwright)
+- __Tests de API__ en `e2e/api/`:
   ```bash
   cd e2e
   npm ci
   npx playwright install --with-deps
+  npx playwright test api/
+  ```
+- __Tests de UI__ en `e2e/ui/`:
+  ```bash
+  npx playwright test ui/
+  ```
+- __Todos los tests E2E__:
+  ```bash
   npx playwright test
   ```
-  - Define `BASE_URL` si tu servicio HTTP no usa el valor por defecto del config.
+  - Define `BASE_URL` si tu servicio HTTP no usa el valor por defecto del config
+  - Define `FRONTEND_URL` para tests de UI (por defecto: `http://localhost:5173`)
 
 ## APIs
 
@@ -238,14 +339,23 @@ MIT. Ver archivo `LICENSE` en la raíz del repositorio.
 
 ## Recursos
 
+### Documentación General
 - Índice de documentación: [docs/README.md](docs/README.md)
 - PRD: [docs/prd.md](docs/prd.md) — Requisitos de producto y objetivos
 - Arquitectura: [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md) — Especificaciones técnicas completas
 - Dominio: [docs/domain.md](docs/domain.md) — Modelo de dominio y entidades
 - Épicas: [docs/epicas.md](docs/epicas.md) — Roadmap y features
 - Catálogo de eventos: [docs/evento-catalog.md](docs/evento-catalog.md) — 120+ eventos y contratos
+
+### Documentación Backend
 - Guía de implementación de features: [docs/feature-style-guide.md](docs/feature-style-guide.md) — Patrones VSA + Hexagonal
 - Testing: [docs/testing-organization.md](docs/testing-organization.md) — Estrategia y organización; [docs/test-containers.md](docs/test-containers.md) — Uso de Testcontainers
+
+### Documentación Frontend
+- Arquitectura Frontend: [docs/frontend/architecture.md](docs/frontend/architecture.md) — Patrones React modernos
+- Estructura del Proyecto: [docs/frontend/project-structure.md](docs/frontend/project-structure.md) — Organización por features
+- Biblioteca de Componentes: [docs/frontend/component-library.md](docs/frontend/component-library.md) — Design System
+- Integración con APIs: [docs/frontend/api-integration.md](docs/frontend/api-integration.md) — React Query + TypeScript
 
 CI relevante:
 - OpenAPI Drift check: .github/workflows/openapi-drift.yml
