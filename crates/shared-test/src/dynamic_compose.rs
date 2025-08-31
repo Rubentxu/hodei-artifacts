@@ -10,9 +10,8 @@ use crate::template_renderer::{render_compose_template, ComposeTemplateVars};
 #[derive(Debug, Clone)]
 pub struct DynamicPorts {
     pub mongo_port: u16,
-    pub kafka_port: u16,
+    pub rabbitmq_port: u16,
     pub s3_port: u16,
-    pub zookeeper_port: u16,
 }
 
 /// Result type for generate_unique_compose_file
@@ -38,17 +37,15 @@ pub fn generate_unique_compose_file(
     
     // Generate dynamic ports for all services
     let mongo_port = pick_unused_port().expect("Failed to find unused port for MongoDB");
-    let kafka_port = pick_unused_port().expect("Failed to find unused port for Kafka");
+    let rabbitmq_port = pick_unused_port().expect("Failed to find unused port for RabbitMQ");
     let s3_port = pick_unused_port().expect("Failed to find unused port for LocalStack");
-    let zookeeper_port = pick_unused_port().expect("Failed to find unused port for Zookeeper");
     
     // Prepare template variables
     let template_vars = ComposeTemplateVars {
         network_name: unique_network_name,
         subnet: unique_subnet,
         mongo_host_port: mongo_port,
-        kafka_host_port: kafka_port,
-        zookeeper_host_port: zookeeper_port,
+        rabbitmq_host_port: rabbitmq_port,
         s3_host_port: s3_port,
     };
     
@@ -77,9 +74,8 @@ pub fn generate_unique_compose_file(
         file_path: output_path.to_string_lossy().into_owned(),
         ports: DynamicPorts {
             mongo_port,
-            kafka_port,
+            rabbitmq_port,
             s3_port,
-            zookeeper_port,
         },
     })
 }

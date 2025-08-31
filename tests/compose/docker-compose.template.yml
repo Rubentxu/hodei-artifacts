@@ -13,28 +13,20 @@ services:
     networks:
       - {{NETWORK_NAME}}
   
-  kafka:
-    image: confluentinc/cp-kafka:7.0.1
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
     ports:
-      - "{{KAFKA_HOST_PORT}}:9092"
+      - "{{RABBITMQ_HOST_PORT}}:5672"
+      - "15672:15672" # Management UI
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:{{KAFKA_HOST_PORT}}
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    depends_on:
-      - zookeeper
-    networks:
-      - {{NETWORK_NAME}}
-  
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.0.1
-    ports:
-      - "{{ZOOKEEPER_HOST_PORT}}:2181"
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
     networks:
       - {{NETWORK_NAME}}
   

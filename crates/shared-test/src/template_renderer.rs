@@ -87,8 +87,7 @@ pub struct ComposeTemplateVars {
     pub network_name: String,
     pub subnet: String,
     pub mongo_host_port: u16,
-    pub kafka_host_port: u16,
-    pub zookeeper_host_port: u16,
+    pub rabbitmq_host_port: u16,
     pub s3_host_port: u16,
 }
 
@@ -99,8 +98,7 @@ impl ComposeTemplateVars {
         vars.insert("NETWORK_NAME", self.network_name.clone());
         vars.insert("SUBNET", self.subnet.clone());
         vars.insert("MONGO_HOST_PORT", self.mongo_host_port.to_string());
-        vars.insert("KAFKA_HOST_PORT", self.kafka_host_port.to_string());
-        vars.insert("ZOOKEEPER_HOST_PORT", self.zookeeper_host_port.to_string());
+        vars.insert("RABBITMQ_HOST_PORT", self.rabbitmq_host_port.to_string());
         vars.insert("S3_HOST_PORT", self.s3_host_port.to_string());
         vars
     }
