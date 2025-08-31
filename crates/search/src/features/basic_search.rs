@@ -42,8 +42,7 @@ pub async fn handle_basic_search(
 ) -> Result<BasicSearchResult, crate::error::SearchError> {
     let start_time = Instant::now();
 
-    // TODO: Add filtering by repository_filter
-    let search_results = search_index.search(&query.query).await?;
+    let search_results = search_index.search(&query.query, query.repository_filter).await?;
 
     let total_count = search_results.len() as u64;
 
@@ -68,7 +67,6 @@ fn map_to_search_result(doc: ArtifactSearchDocument) -> ArtifactSearchResult {
         version: doc.version,
         repository: doc.repository_id.to_string(),
         description: doc.description,
-        // TODO: The relevance score should be provided by the search engine.
-        relevance_score: 1.0,
+        relevance_score: doc.relevance_score,
     }
 }
