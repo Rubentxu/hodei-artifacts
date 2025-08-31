@@ -5,7 +5,21 @@ edition = "2024"
 license = "MIT"
 [dependencies]
 shared = { path = "../shared" }
+artifact = { path = "../artifact" }
+iam = { path = "../iam" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+cedar-policy = "4.5.1"
+sha2 = { workspace = true }
+md-5 = "0.10.6"
+base64 = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
+shared-test = { path = "../shared-test" }

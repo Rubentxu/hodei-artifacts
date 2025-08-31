@@ -15,12 +15,10 @@ tracing = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 
-rand = { version = "0.9.2", optional = true }
-testcontainers = { workspace = true, optional = true }
-testcontainers-modules = { workspace = true, features = ["mongo"], optional = true }
+rand = { version = "0.8", optional = true }
 
 [features]
 # test-util: helpers para tests de integración (p.ej. crear cliente aislado / limpiar colecciones,
 #            y fallback automático a un contenedor Mongo si no existen MONGO_URI + MONGO_DATABASE).
 default = []
-test-util = ["rand", "dep:testcontainers", "dep:testcontainers-modules"]
+test-util = ["rand"]

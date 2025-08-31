@@ -11,7 +11,8 @@ members = [
     "crates/analytics",
     "crates/integration",
     "crates/distribution",
-    "crates/infra-mongo"
+    "crates/infra-mongo",
+    "crates/shared-test"
 ]
 resolver = "2"
 
@@ -60,33 +61,36 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 # Actualizamos hyper a la rama 1.x (compatible con axum 0.7 / hyper 1) usando caret para parches.
 hyper = { version = "1", features = ["server"] }
+cedar-policy.workspace = true
+aws-sdk-s3.workspace = true
+aws-config.workspace = true
 
 [workspace.dependencies]
-hyper = { version = "1", features = ["full"] }
-reqwest = { version = "0.12.23", features = ["json"] }
-tokio = { version = "^1.38", features = ["full"] }
-axum = { version = "0.8.4" }
-serde = { version = "^1.0", features = ["derive"] }
-serde_json = { version = "^1.0" }
-tracing = { version = "^0.1" }
+bollard = "0.15.0"
 anyhow = { version = "^1.0" }
-thiserror = { version = "2.0.16" }
-uuid = { version = "^1.0", features = ["v4", "serde"] }
-chrono = { version = "^0.4", features = ["serde"] }
 async-trait = { version = "^0.1" }
-futures = { version = "0.3" }
-
-# Infra opcional inicial (caret para últimas releases compatibles)
-mongodb = "3.2.5"
-redis = { version = "0.32.5", features = ["tokio-comp"] }
 aws-config = "^1.0"
 aws-sdk-s3 = "^1.0"
-rdkafka = { version = "0.38.0", features = ["cmake-build"] }
-cedar-policy = "4.5.1"
-jsonwebtoken = "^9.3"
-ring = "^0.17"
-sha2 = "^0.10"
+aws-types = { version = "1.3.8" }
+axum = { version = "0.8.4" }
 base64 = "^0.22"
-# TEST-TC2: dependencia común para tests de integración con contenedores efímeros
-testcontainers = { version = "0.24.0", default-features = false }
+cedar-policy = "4.5.1"
+chrono = { version = "^0.4", features = ["serde"] }
+futures = { version = "0.3" }
+hyper = { version = "1", features = ["full"] }
+infra-mongo = { path = "crates/infra-mongo" }
+jsonwebtoken = "^9.3"
+mongodb = "3.2.5"
+rdkafka = { version = "0.38.0", features = ["cmake-build"] }
+redis = { version = "0.32.5", features = ["tokio-comp"] }
+reqwest = { version = "0.12.23", features = ["json"] }
+ring = "^0.17"
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0" }
+sha2 = "^0.10"
+testcontainers = { version = "0.24.0", features = ["blocking"] }
 testcontainers-modules = { version = "0.12.1" }
+thiserror = { version = "2.0.16" }
+tokio = { version = "^1.38", features = ["full"] }
+tracing = { version = "^0.1" }
+uuid = { version = "^1.0", features = ["v4", "serde"] }

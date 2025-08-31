@@ -20,6 +20,8 @@ futures = { workspace = true }
 axum = { workspace = true, features = ["macros"] }
 tokio = { workspace = true }
 tantivy = "0.25.0"
+artifact = { path = "../artifact" }
+iam = { path = "../iam" }
 
 [dev-dependencies]
 hodei-artifacts-api = { path = "../../" }
@@ -29,9 +31,8 @@ hyper = { workspace = true }
 infra-mongo = { path = "../infra-mongo", features = ["test-util"] }
 repository = { path = "../repository" }
 reqwest = { workspace = true }
-testcontainers = { workspace = true }
-testcontainers-modules = { workspace = true, features = ["kafka", "minio"] }
 uuid = { workspace = true }
+shared-test = { path = "../shared-test" }
 
 [[test]]
 name = "it_basic_search"

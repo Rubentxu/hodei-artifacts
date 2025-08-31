@@ -8,26 +8,20 @@ license = "MIT"
 artifact = { path = "../artifact" }
 iam = { path = "../iam" }
 infra-mongo = { path = "../infra-mongo" }
-
-tokio = { workspace = true, features = ["full"] }
-mongodb = { workspace = true }
-aws-config = { workspace = true }
-aws-sdk-s3 = { workspace = true }
-aws-types = { workspace = true }
-rdkafka = { workspace = true }
-cedar-policy = { workspace = true }
-async-trait = { workspace = true }
-bollard = { workspace = true }
-futures = { workspace = true }
-rand = "0.8"
-portpicker = "0.1"
-num_cpus = "1.16"
-hyper-hickory = "0.8.0"
-hyper-util = { version = "0.1.2", features = ["client-legacy"] }
-uuid = { workspace = true }
-thiserror = { workspace = true }
+shared = { path = "../shared" }
+tokio = { version = "1.47.1", features = ["full"] }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+tempfile = "3.21.0"
+mongodb = "3.2.5"
+portpicker = "0.1.1"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+aws-config = "^1.0"
+aws-sdk-s3 = "^1.0"
+cedar-policy = "4.5.1"
+rdkafka = { version = "0.38.0", features = ["cmake-build"] }
+thiserror = "2.0.16"
+async-trait = "^0.1"
+num_cpus = "1.16.0"
 
 [dev-dependencies]
-shared-test = { path = "../shared-test" }
-tokio = { workspace = true, features = ["full"] }
-trust-dns-resolver = "0.22.0"

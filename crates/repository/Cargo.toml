@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+iam = { path = "../iam" }
 shared = { path = "../shared" }
 serde = { workspace = true }
 thiserror = { workspace = true }

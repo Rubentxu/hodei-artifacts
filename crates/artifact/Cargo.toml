@@ -19,10 +19,14 @@ chrono = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 rdkafka = { workspace = true }
+lapin = "2.3.0" # Added lapin
+repository = { path = "../repository" }
 tracing = { workspace = true }
 serde_json = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
+futures-util = "0.3.30"
+tokio = { workspace = true }
 
 [features]
 # integration-mongo: habilita tests de integración que requieren instancia Mongo real (vía testcontainers fallback).
@@ -30,8 +34,6 @@ integration-mongo = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
-testcontainers = { workspace = true }
-testcontainers-modules = { workspace = true, features = ["localstack", "kafka"] }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 rdkafka = { workspace = true }
