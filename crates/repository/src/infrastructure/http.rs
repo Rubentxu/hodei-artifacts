@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use axum::{Extension, extract::Json, http::StatusCode};
+use axum::{Extension, extract::Json, http::StatusCode, routing::post, Router};
 use uuid::Uuid;
 
 use crate::application::ports::RepositoryStore; // Importa el trait para habilitar métodos (save)
@@ -78,4 +78,8 @@ pub async fn create_repository_handler(
     }
 
     Ok((StatusCode::CREATED, Json(to_response(&repo))))
+}
+
+pub fn api_router() -> Router {
+    Router::new().route("/repositories", post(create_repository_handler))
 }

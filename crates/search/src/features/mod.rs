@@ -2,7 +2,7 @@
 //!
 //! Contains all vertical slices (features) for search functionality
 //! Following VSA principles - each feature is a self-contained use case
-
+//!
 pub mod basic_search;
 pub mod advanced_search;
 pub mod index_management;

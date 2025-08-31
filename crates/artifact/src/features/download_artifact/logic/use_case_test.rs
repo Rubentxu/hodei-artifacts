@@ -33,6 +33,27 @@ mod tests {
         ) -> Result<Option<Artifact>, ArtifactError> {
             unimplemented!()
         }
+
+        async fn find_by_maven_coordinates(
+            &self,
+            _group_id: &str,
+            _artifact_id: &str,
+            _version: &str,
+            _file_name: &str,
+        ) -> Result<Option<Artifact>, ArtifactError> {
+            unimplemented!()
+        }
+
+        async fn find_by_npm_package_name(
+            &self,
+            _package_name: &str,
+        ) -> Result<Vec<Artifact>, ArtifactError> {
+            unimplemented!()
+        }
+
+        async fn find_all_artifacts(&self) -> Result<Vec<Artifact>, ArtifactError> {
+            unimplemented!()
+        }
     }
 
     struct MockArtifactStorage {

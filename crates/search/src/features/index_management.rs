@@ -66,18 +66,30 @@ pub struct ReindexRequest {
     pub batch_size: Option<u32>,
 }
 
+use std::sync::Arc;
+use crate::application::ports::IndexManagement;
+
 // Placeholder handlers - will be implemented following VSA TDD approach
-pub async fn handle_create_index(_request: IndexCreationRequest) -> Result<IndexStatus, crate::error::SearchError> {
+pub async fn handle_create_index(
+    index_manager: Arc<dyn IndexManagement>,
+    request: IndexCreationRequest,
+) -> Result<IndexStatus, crate::error::SearchError> {
     // Implementation will follow when the actual index management is developed
-    todo!("Implement index creation handler following TDD approach")
+    todo!("Implement index creation handler using IndexManagement")
 }
 
-pub async fn handle_get_index_status(_index_name: String) -> Result<IndexStatus, crate::error::SearchError> {
+pub async fn handle_get_index_status(
+    index_manager: Arc<dyn IndexManagement>,
+    index_name: String,
+) -> Result<IndexStatus, crate::error::SearchError> {
     // Implementation will follow when the actual index management is developed
-    todo!("Implement index status handler following TDD approach")
+    todo!("Implement index status handler using IndexManagement")
 }
 
-pub async fn handle_reindex(_request: ReindexRequest) -> Result<(), crate::error::SearchError> {
+pub async fn handle_reindex(
+    index_manager: Arc<dyn IndexManagement>,
+    request: ReindexRequest,
+) -> Result<(), crate::error::SearchError> {
     // Implementation will follow when the actual reindexing is developed
-    todo!("Implement reindex handler following TDD approach")
+    todo!("Implement reindex handler using IndexManagement")
 }

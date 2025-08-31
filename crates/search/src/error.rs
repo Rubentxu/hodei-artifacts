@@ -10,6 +10,8 @@ use axum::{
 };
 use serde_json::json;
 use thiserror::Error;
+use artifact::error::ArtifactError;
+use tantivy::TantivyError;
 
 /// Main error type for the Search bounded context
 #[derive(Error, Debug)]
@@ -61,6 +63,12 @@ pub enum SearchError {
 
     #[error("Authorization error: {message}")]
     Authorization { message: String },
+
+    #[error("Artifact error: {0}")]
+    Artifact(#[from] ArtifactError),
+
+    #[error("Tantivy error: {0}")]
+    Tantivy(#[from] TantivyError),
 }
 
 impl SearchError {
@@ -130,6 +138,8 @@ impl SearchError {
             SearchError::Network { .. } => "network_error",
             SearchError::Authentication { .. } => "auth_error",
             SearchError::Authorization { .. } => "authz_error",
+            SearchError::Artifact { .. } => "artifact_error",
+            SearchError::Tantivy { .. } => "tantivy_error",
         }
     }
 }
@@ -155,6 +165,7 @@ impl IntoResponse for SearchError {
                 StatusCode::TOO_MANY_REQUESTS,
                 format!("Rate limit exceeded for user '{}'", user_id),
             ),
+            SearchError::Artifact(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Artifact error: {}", e)),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "An internal server error occurred".to_string(),

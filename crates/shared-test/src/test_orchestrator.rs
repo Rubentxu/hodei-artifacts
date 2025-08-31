@@ -1,7 +1,9 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
 use std::sync::Arc;
+use std::io::Write;
+use tempfile::NamedTempFile;
 
 use artifact::infrastructure::{
     KafkaArtifactEventPublisher, MongoArtifactRepository, S3ArtifactStorage,
@@ -15,7 +17,8 @@ use iam::infrastructure::cedar_authorizer::CedarAuthorizer;
 
 use infra_mongo::{MongoClientFactory, MongoConfig};
 use mongodb::Client as MongoClient;
-use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::admin::AdminClient;
+use rdkafka::client::DefaultClientContext;
 use std::str::FromStr;
 
 // No-op DecisionCache for testing purposes
@@ -54,6 +57,11 @@ pub fn start_docker_compose(compose_file_path: &str) -> Result<(), String> {
         .unwrap_or("")
         .trim_end_matches(".yml");
 
+    // Create a temporary file to capture docker compose output
+    let mut temp_log_file = NamedTempFile::new()
+        .map_err(|e| format!("Failed to create temporary log file: {}", e))?;
+    let log_file_path = temp_log_file.path().to_string_lossy().to_string();
+
     let output = Command::new("docker")
         .arg("compose")
         .arg("-f")
@@ -62,15 +70,41 @@ pub fn start_docker_compose(compose_file_path: &str) -> Result<(), String> {
         .arg(file_name) // Use unique project name
         .arg("up")
         .arg("-d")
+        .stdout(temp_log_file.reopen().map_err(|e| format!("Failed to reopen stdout for log file: {}", e))?)
+        .stderr(temp_log_file.reopen().map_err(|e| format!("Failed to reopen stderr for log file: {}", e))?)
         .output()
         .map_err(|e| format!("Failed to execute docker compose up: {}", e))?;
 
     if !output.status.success() {
-        return Err(format!("Error starting Docker Compose: {}", String::from_utf8_lossy(&output.stderr)));
+        let log_content = std::fs::read_to_string(&log_file_path)
+            .unwrap_or_else(|_| "Could not read log file content.".to_string());
+
+        // Try to get Zookeeper specific logs if docker compose up failed
+        let zookeeper_logs_output = Command::new("docker")
+            .arg("compose")
+            .arg("-f")
+            .arg(compose_file_path)
+            .arg("-p")
+            .arg(file_name)
+            .arg("logs")
+            .arg("zookeeper")
+            .output();
+
+        let zookeeper_logs = match zookeeper_logs_output {
+            Ok(output) => String::from_utf8_lossy(&output.stdout).to_string(),
+            Err(e) => format!("Failed to get zookeeper logs: {}", e),
+        };
+
+        return Err(format!("Error starting Docker Compose. Logs in {}:\n{}\n\nZookeeper Container Logs:{}",
+            log_file_path,
+            log_content,
+            zookeeper_logs
+        ));
     }
     println!("Docker Compose environment started.");
     Ok(())
 }
+
 
 // Function to tear down Docker Compose
 pub fn teardown_docker_compose(compose_file_path: &str) {
@@ -194,40 +228,78 @@ pub async fn wait_for_mongo_ready(compose_file_path: &str, mongo_port: u16) -> R
     }
 }
 
-// Robust Kafka health check
-pub async fn wait_for_kafka_ready(kafka_port: u16) -> Result<(), String> {
-    println!("Waiting for Kafka to be ready...");
+// Robust Kafka health check with metadata fetch approach
+pub async fn wait_for_rabbitmq_ready(rabbitmq_port: u16) -> Result<(), String> {
+    println!("Waiting for RabbitMQ to be ready...");
     let mut retries = 0;
     let max_retries = 60; // 60 * 1 second = 60 seconds timeout
-    let kafka_brokers = format!("127.0.0.1:{}", kafka_port);
+    let amqp_addr = format!("amqp://guest:guest@127.0.0.1:{}/%2f", rabbitmq_port);
+
     loop {
-        let producer: FutureProducer = rdkafka::ClientConfig::new()
-            .set("bootstrap.servers", &kafka_brokers)
-            .set("message.timeout.ms", "5000")
-            .create()
-            .map_err(|e| format!("Producer creation error: {}", e))?;
-
-        let record = FutureRecord::to("test-topic")
-            .payload("test-message")
-            .key("test-key");
-
-        match producer.send(record, Duration::from_secs(10)).await {
+        match lapin::Connection::connect(&amqp_addr, lapin::ConnectionProperties::default()).await {
             Ok(_) => {
-                println!("Kafka is ready!");
+                println!("RabbitMQ is ready!");
                 return Ok(());
-            },
-            Err((e, _)) => {
-                eprintln!("Kafka not ready yet: {:?}", e);
+            }
+            Err(e) => {
+                eprintln!("RabbitMQ not ready yet: {:?}", e);
             }
         }
 
         retries += 1;
         if retries >= max_retries {
-            return Err(format!("Kafka health check failed after {} retries.", max_retries));
+            return Err(format!("RabbitMQ health check failed after {} retries.", max_retries));
         }
 
         sleep(Duration::from_secs(1)).await;
     }
+}
+
+// Setup clients
+pub async fn setup_mongo_client(factory: Arc<MongoClientFactory>) -> (MongoClient, Arc<MongoArtifactRepository>) {
+    let mongo_client = factory.client().await.unwrap().clone();
+    let artifact_repository = Arc::new(MongoArtifactRepository::new(factory));
+    artifact_repository.ensure_indexes().await.unwrap();
+    (mongo_client, artifact_repository)
+}
+
+pub async fn setup_s3_client(port: &u16) -> Arc<S3ArtifactStorage> {
+    let s3_endpoint_uri = format!("http://127.0.0.0:1:{}", port);
+    let sdk_config = aws_config::defaults(BehaviorVersion::latest())
+        .endpoint_url(s3_endpoint_uri)
+        .region(Region::new("us-east-1"))
+        .credentials_provider(Credentials::new("test", "test", None, None, "test"))
+        .load()
+        .await;
+    let s3_client = S3Client::new(&sdk_config);
+    let bucket_name = "test-bucket".to_string();
+    s3_client
+        .create_bucket()
+        .bucket(bucket_name.clone())
+        .send()
+        .await
+        .unwrap();
+    Arc::new(S3ArtifactStorage::new(s3_client, bucket_name))
+}
+
+pub async fn setup_rabbitmq_client(port: &u16) -> Result<Arc<RabbitMqArtifactEventPublisher>, String> {
+    let amqp_addr = format!("amqp://guest:guest@127.0.0.1:{}/%2f", port);
+    let publisher = RabbitMqArtifactEventPublisher::new(&amqp_addr, "hodei_artifacts_exchange")
+        .await
+        .map_err(|e| format!("Failed to create RabbitMQ publisher: {}", e))?;
+    Ok(Arc::new(publisher))
+}
+
+pub async fn setup_authorization_client() -> Arc<CedarAuthorizer<'static>> {
+    let policy_str = r#"
+        permit(
+            principal,
+            action,
+            resource
+        );
+    "#;
+    let policies = PolicySet::from_str(policy_str).expect("Failed to parse Cedar policy");
+    Arc::new(CedarAuthorizer::new(policies, &NoopDecisionCache))
 }
 
 // Robust S3 health check

@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 use futures::stream::StreamExt;
 use mongodb::{Client, Collection, IndexModel};
-use mongodb::bson::{doc, Document};
+use mongodb::bson::doc;
 use crate::application::ports::SearchIndex;
-use repository::domain::model::Repository;
 use crate::domain::model::ArtifactSearchDocument;
 use crate::error::{SearchError, SearchResult};
 
@@ -47,8 +46,13 @@ impl SearchIndex for MongoSearchIndex {
         Ok(())
     }
 
-    async fn search(&self, query: &str) -> SearchResult<Vec<ArtifactSearchDocument>> {
-        let filter = doc! { "$text": { "$search": query } };
+    async fn search(&self, query: &str, repository_filter: Option<String>) -> SearchResult<Vec<ArtifactSearchDocument>> {
+        let mut filter = doc! { "$text": { "$search": query } };
+
+        if let Some(repo_filter) = repository_filter {
+            filter.insert("repository_id", repo_filter);
+        }
+
         let mut cursor = self.collection.find(filter).await.map_err(|e| {
             SearchError::QueryFailed {
                 message: e.to_string(),

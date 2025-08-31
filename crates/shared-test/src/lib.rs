@@ -21,15 +21,21 @@ use dynamic_compose::{generate_unique_compose_file, DynamicPorts};
 use artifact::infrastructure::MongoArtifactRepository;
 use iam::infrastructure::cedar_authorizer::CedarAuthorizer;
 
+use artifact::infrastructure::{
+    RabbitMqArtifactEventPublisher, S3ArtifactStorage,
+};
+
+// ...
+
 pub struct TestEnvironment {
     pub mongo_client: MongoClient,
     pub artifact_repository: Arc<MongoArtifactRepository>,
     pub artifact_storage: Arc<S3ArtifactStorage>,
-    pub artifact_event_publisher: Arc<KafkaArtifactEventPublisher>,
+    pub artifact_event_publisher: Arc<RabbitMqArtifactEventPublisher>,
     pub authorization: Arc<CedarAuthorizer<'static>>,
     actual_compose_file_path: String,
     is_generated_compose: bool,
-    dynamic_ports: Option<DynamicPorts>,
+    pub dynamic_ports: Option<DynamicPorts>,
 }
 
 
@@ -75,25 +81,25 @@ pub async fn setup_test_environment(compose_file_path_option: Option<&str>) -> T
         .expect("Failed to start Docker Compose environment");
 
     // Use dynamic ports if available, otherwise get mapped ports from Docker
-    let (mongo_port, kafka_port, s3_port) = if let Some(ports) = &dynamic_ports {
-        (ports.mongo_port, ports.kafka_port, ports.s3_port)
+    let (mongo_port, rabbitmq_port, s3_port) = if let Some(ports) = &dynamic_ports {
+        (ports.mongo_port, ports.rabbitmq_port, ports.s3_port)
     } else {
         let mongo_port = get_mapped_port(&actual_compose_file_path, "mongodb", "27017")
             .expect("Failed to get MongoDB mapped port");
-        let kafka_port = get_mapped_port(&actual_compose_file_path, "kafka", "9092")
-            .expect("Failed to get Kafka mapped port");
+        let rabbitmq_port = get_mapped_port(&actual_compose_file_path, "rabbitmq", "5672")
+            .expect("Failed to get RabbitMQ mapped port");
         let s3_port = get_mapped_port(&actual_compose_file_path, "localstack", "4566")
             .expect("Failed to get LocalStack mapped port");
-        (mongo_port, kafka_port, s3_port)
+        (mongo_port, rabbitmq_port, s3_port)
     };
 
     let mongo_client_factory = wait_for_mongo_ready(&actual_compose_file_path, mongo_port)
         .await
         .expect("MongoDB did not become ready");
     
-    wait_for_kafka_ready(kafka_port)
+    wait_for_rabbitmq_ready(rabbitmq_port)
         .await
-        .expect("Kafka did not become ready");
+        .expect("RabbitMQ did not become ready");
 
     wait_for_s3_ready(s3_port)
         .await
@@ -101,7 +107,7 @@ pub async fn setup_test_environment(compose_file_path_option: Option<&str>) -> T
 
     let (mongo_client, artifact_repository) = setup_mongo_client(Arc::new(mongo_client_factory)).await;
     let artifact_storage = setup_s3_client(&s3_port).await;
-    let artifact_event_publisher = setup_kafka_client(&kafka_port);
+    let artifact_event_publisher = setup_rabbitmq_client(&rabbitmq_port).await.expect("Failed to setup RabbitMQ client");
     let authorization = setup_authorization_client().await;
     
     TestEnvironment {

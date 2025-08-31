@@ -3,12 +3,21 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};
 use std::fmt;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ArtifactId(pub Uuid);
 
 impl ArtifactId {
     pub fn new() -> Self { Self(Uuid::new_v4()) }
+}
+
+impl FromStr for ArtifactId {
+    type Err = uuid::Error;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s).map(ArtifactId)
+    }
 }
 
 impl fmt::Display for ArtifactId {
@@ -21,6 +30,14 @@ impl fmt::Display for ArtifactId {
 pub struct RepositoryId(pub Uuid);
 
 impl RepositoryId { pub fn new() -> Self { Self(Uuid::new_v4()) } }
+
+impl FromStr for RepositoryId {
+    type Err = uuid::Error;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s).map(RepositoryId)
+    }
+}
 
 impl fmt::Display for RepositoryId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -68,6 +85,15 @@ impl fmt::Display for UserId {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IsoTimestamp(pub DateTime<Utc>);
 impl IsoTimestamp { pub fn now() -> Self { Self(Utc::now()) } }
+
+impl FromStr for IsoTimestamp {
+    type Err = chrono::ParseError;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        DateTime::parse_from_rfc3339(s)
+            .map(|dt| IsoTimestamp(dt.with_timezone(&Utc)))
+    }
+}
 
 impl fmt::Display for IsoTimestamp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

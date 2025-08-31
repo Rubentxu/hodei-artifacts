@@ -1,1 +1,3 @@
-// Adaptadores de infraestructura (placeholder)
+// Adaptadores de infraestructura
+
+pub mod http;

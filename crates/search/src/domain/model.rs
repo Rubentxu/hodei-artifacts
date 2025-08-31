@@ -13,4 +13,5 @@ pub struct ArtifactSearchDocument {
     pub description: Option<String>,
     pub tags: Vec<String>,
     pub indexed_at: IsoTimestamp,
+    pub relevance_score: f64,
 }

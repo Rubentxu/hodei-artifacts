@@ -29,7 +29,7 @@ impl<'a> LoginUseCase<'a> {
             .ok_or(IamError::NotFound)?;
 
         if !verify(&command.password, &user.password_hash).map_err(|e| IamError::BcryptError(e.to_string()))? {
-            return Err(IamError::Unauthorized);
+            return Err(IamError::Unauthorized("Invalid credentials".to_string()));
         }
 
         // TODO: Move secret to configuration

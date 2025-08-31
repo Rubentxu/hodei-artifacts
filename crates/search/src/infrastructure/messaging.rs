@@ -67,6 +67,7 @@ impl KafkaEventConsumer {
                         description: None,
                         tags: vec![],
                         indexed_at: IsoTimestamp::now(),
+                        relevance_score: 1.0,
                     };
 
                     if let Err(e) = self.search_index.index(&document).await {

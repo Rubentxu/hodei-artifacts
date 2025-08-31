@@ -10,8 +10,8 @@ pub enum IamError {
     NotFound,
     #[error("Internal error: {0}")]
     InternalError(String),
-    #[error("Unauthorized")]
-    Unauthorized,
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
     #[error("JWT error: {0}")]
     JwtError(String),
     #[error("Bcrypt error: {0}")]
