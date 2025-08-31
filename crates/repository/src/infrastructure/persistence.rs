@@ -148,4 +148,16 @@ impl RepositoryStore for MongoRepositoryStore {
             None => Ok(None),
         }
     }
+
+    async fn delete(&self, id: &RepositoryId) -> Result<(), RepositoryError> {
+        let coll = self.collection().await?;
+        let filter = doc! { "_id": id.0.to_string() };
+        let result = coll.delete_one(filter).await
+            .map_err(|e| RepositoryError::Persistence(format!("delete: {}", e)))?;
+
+        if result.deleted_count == 0 {
+            return Err(RepositoryError::NotFound);
+        }
+        Ok(())
+    }
 }

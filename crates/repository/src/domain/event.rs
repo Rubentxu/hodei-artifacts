@@ -21,3 +21,20 @@ impl DomainEventPayload for RepositoryCreatedEvent {
         self.repository_id.0.to_string()
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepositoryDeletedEvent {
+    pub repository_id: RepositoryId,
+    pub deleted_by: UserId,
+    pub occurred_at: IsoTimestamp,
+}
+
+impl DomainEventPayload for RepositoryDeletedEvent {
+    fn base_type(&self) -> &'static str {
+        "RepositoryDeleted"
+    }
+
+    fn aggregate_id(&self) -> String {
+        self.repository_id.0.to_string()
+    }
+}
