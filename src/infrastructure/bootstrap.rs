@@ -1,18 +1,21 @@
 use std::sync::Arc;
-
 use anyhow::{Context, Result};
 use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, EnvFilter};
-
 use crate::state::AppState;
-use artifact::infrastructure::MongoArtifactRepository;
+use artifact::infrastructure::{KafkaArtifactEventPublisher, MongoArtifactRepository, RabbitMqArtifactEventPublisher, S3ArtifactStorage};
+use artifact::application::ports::ArtifactEventPublisher;
 use iam::application::api::IamApi;
 use iam::infrastructure::cedar_policy_validator::CedarPolicyValidator;
+use iam::infrastructure::cedar_authorizer::CedarAuthorizer;
+use cedar_policy::PolicySet;
+use iam::infrastructure::redis_decision_cache::RedisDecisionCache;
 use iam::infrastructure::mongo_policy_repository::MongoPolicyRepository;
 use iam::infrastructure::mongo_user_repository::MongoUserRepository;
 use infra_mongo::{MongoClientFactory, MongoConfig};
 use repository::infrastructure::MongoRepositoryStore;
 use search::infrastructure::persistence::MongoSearchIndex;
+use std::env;
 
 /// Inicializa tracing, configuración, y construye el estado de la aplicación.
 pub async fn bootstrap() -> Result<Arc<Mutex<AppState>>> {
@@ -36,6 +39,8 @@ pub async fn bootstrap() -> Result<Arc<Mutex<AppState>>> {
         client.database("iam").collection("policies"),
     ));
     let policy_validator = Arc::new(CedarPolicyValidator);
+    let redis_cache = Arc::new(RedisDecisionCache::new("redis://127.0.0.1:6379").unwrap());
+    let authorization = Arc::new(CedarAuthorizer::new(PolicySet::new(), redis_cache.clone()));
 
     let iam_api = Arc::new(IamApi::new(
         user_repo.clone(),
@@ -43,10 +48,41 @@ pub async fn bootstrap() -> Result<Arc<Mutex<AppState>>> {
         policy_validator.clone(),
     ));
 
+    // Instantiate ArtifactRepository and S3ArtifactStorage
+    let artifact_repository = Arc::new(MongoArtifactRepository::new(factory.clone()));
+    let s3_endpoint = env::var("S3_ENDPOINT").context("S3_ENDPOINT environment variable not set")?;
+    let s3_region = env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+    let s3_bucket = env::var("S3_BUCKET").context("S3_BUCKET environment variable not set")?;
+    // TODO: Implement S3 client creation from environment variables
+    let artifact_storage = Arc::new(S3ArtifactStorage::new(
+        aws_sdk_s3::Client::new(&aws_config::from_env().load().await),
+        s3_bucket,
+    ));
+
+    // Determine event broker type from environment variable
+    let event_broker_type = env::var("EVENT_BROKER_TYPE").unwrap_or_else(|_| "kafka".to_string());
+
+    let artifact_event_publisher: Arc<dyn ArtifactEventPublisher> = match event_broker_type.as_str() {
+        "rabbitmq" => {
+            let amqp_addr = env::var("AMQP_ADDR")
+                .context("AMQP_ADDR environment variable not set for RabbitMQ")?;
+            Arc::new(RabbitMqArtifactEventPublisher::new(&amqp_addr, "hodei_artifacts_exchange").await?)
+        },
+        _ => { // Default to Kafka
+            let kafka_brokers = env::var("KAFKA_BROKERS")
+                .unwrap_or_else(|_| "127.0.0.1:9092".to_string());
+            Arc::new(KafkaArtifactEventPublisher::new(&kafka_brokers).unwrap())
+        }
+    };
+
     let app_state = AppState {
         repo_store,
         search_index,
         iam_api,
+        authorization,
+        artifact_event_publisher,
+        artifact_repository,
+        artifact_storage,
     };
 
     Ok(Arc::new(Mutex::new(app_state)))
