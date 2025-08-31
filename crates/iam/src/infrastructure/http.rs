@@ -10,9 +10,9 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::{Json, Router};
 use axum::routing::{post, patch};
-use serde::{Deserialize, Serialize};
+
 use shared::UserId;
-use crate::application::IamApi;
+use crate::application::api::IamApi;
 use crate::features::create_policy::CreatePolicyCommand;
 use crate::features::create_user::CreateUserCommand;
 use crate::features::update_user_attributes::UpdateUserAttributesCommand;
@@ -53,7 +53,7 @@ impl Api {
         Path(user_id): Path<UserId>,
         Json(command): Json<UpdateUserAttributesCommand>,
     ) -> impl IntoResponse {
-        if command.id != user_id {
+        if command.user_id != user_id {
             return Err((
                 StatusCode::BAD_REQUEST,
                 "User ID in path does not match user ID in body".to_string(),

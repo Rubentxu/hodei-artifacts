@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use cedar_policy::{Authorizer, PolicySet, Response, Entities, Request, EntityUid, Context};
 use crate::error::IamError;
 use async_trait::async_trait;
@@ -18,14 +19,14 @@ struct SerializableRequest<'a> {
     context: Option<&'a Context>,
 }
 
-pub struct CedarAuthorizer<'a> {
+pub struct CedarAuthorizer {
     authorizer: Authorizer,
     policies: PolicySet,
-    cache: &'a dyn DecisionCache,
+    cache: Arc<dyn DecisionCache>,
 }
 
-impl<'a> CedarAuthorizer<'a> {
-    pub fn new(policies: PolicySet, cache: &'a dyn DecisionCache) -> Self {
+impl CedarAuthorizer {
+    pub fn new(policies: PolicySet, cache: Arc<dyn DecisionCache>) -> Self {
         Self {
             authorizer: Authorizer::new(),
             policies,
@@ -35,7 +36,7 @@ impl<'a> CedarAuthorizer<'a> {
 }
 
 #[async_trait]
-impl<'a> Authorization for CedarAuthorizer<'a> {
+impl Authorization for CedarAuthorizer {
     async fn is_authorized(&self, request: Request) -> Result<Response, IamError> {
         let serializable_request = SerializableRequest {
             principal: request.principal(),
