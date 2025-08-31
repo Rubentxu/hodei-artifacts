@@ -13,8 +13,8 @@ use uuid::Uuid;
 use artifact::application::ports::ArtifactEventPublisher;
 use artifact::domain::model::Artifact;
 use artifact::error::ArtifactError;
-use shared::domain::event::ArtifactDownloadRequestedEvent;
-use shared::{ArtifactId, RepositoryId, UserId, IsoTimestamp};
+use shared::domain::event::{ArtifactDownloadRequestedEvent, ArtifactUploaded, DomainEventEnvelope, new_artifact_uploaded_root};
+use shared::{ArtifactId, RepositoryId, UserId};
 use artifact::domain::model::{ArtifactChecksum, ArtifactVersion};
 
 /// Mock publisher que captura los JSON enviados para validación de esquemas
@@ -62,8 +62,8 @@ impl JsonCapturingPublisher {
 
 #[async_trait]
 impl ArtifactEventPublisher for JsonCapturingPublisher {
-    async fn publish_created(&self, artifact: &Artifact) -> Result<(), ArtifactError> {
-        let json_payload = serde_json::to_string(artifact)
+    async fn publish_created(&self, event: &DomainEventEnvelope<ArtifactUploaded>) -> Result<(), ArtifactError> {
+        let json_payload = serde_json::to_string(event)
             .map_err(|e| ArtifactError::Event(format!("Serialization failed: {}", e)))?;
         
         self.capture_event("artifact_created", &json_payload)
@@ -171,8 +171,18 @@ async fn test_artifact_created_json_schema_validation() {
         UserId::new(),
     );
 
-    // Publicar evento
-    publisher.publish_created(&artifact).await.unwrap();
+    // Crear y publicar evento
+    let event_payload = ArtifactUploaded {
+        artifact_id: artifact.id.clone(),
+        repository_id: artifact.repository_id.clone(),
+        uploader: artifact.created_by.clone(),
+        sha256: Some(artifact.checksum.0.clone()),
+        size_bytes: Some(artifact.size_bytes),
+        media_type: None,
+        upload_time_ms: None,
+    };
+    let event = new_artifact_uploaded_root(event_payload);
+    publisher.publish_created(&event).await.unwrap();
 
     // Verificar captura
     let captured = publisher.get_captured_events();
@@ -181,18 +191,23 @@ async fn test_artifact_created_json_schema_validation() {
     let event = &captured[0];
     assert_eq!(event.topic, "artifact_created");
 
-    // Validar que sea JSON válido y tenga estructura de Artifact
+    // Validar que sea JSON válido y tenga estructura de DomainEventEnvelope
     let json = &event.parsed_value;
     
-    // Verificar campos de Artifact
-    assert!(json.get("id").is_some(), "Artifact debe tener id");
-    assert!(json.get("repository_id").is_some(), "Artifact debe tener repository_id");
-    assert!(json.get("version").is_some(), "Artifact debe tener version");
-    assert!(json.get("file_name").is_some(), "Artifact debe tener file_name");
-    assert!(json.get("size_bytes").is_some(), "Artifact debe tener size_bytes");
-    assert!(json.get("checksum").is_some(), "Artifact debe tener checksum");
-    assert!(json.get("created_by").is_some(), "Artifact debe tener created_by");
-    assert!(json.get("created_at").is_some(), "Artifact debe tener created_at");
+    // Verificar campos del envelope
+    assert!(json.get("event_type").is_some(), "Event envelope debe tener event_type");
+    assert!(json.get("event_id").is_some(), "Event envelope debe tener event_id");
+    assert!(json.get("correlation_id").is_some(), "Event envelope debe tener correlation_id");
+    assert!(json.get("timestamp").is_some(), "Event envelope debe tener timestamp");
+    assert!(json.get("version").is_some(), "Event envelope debe tener version");
+    assert!(json.get("source").is_some(), "Event envelope debe tener source");
+    assert!(json.get("data").is_some(), "Event envelope debe tener data");
+    
+    // Verificar campos del Artifact dentro del data field
+    let data = json.get("data").expect("Event debe tener data");
+    assert!(data.get("artifact_id").is_some(), "ArtifactUploaded debe tener artifact_id");
+    assert!(data.get("repository_id").is_some(), "ArtifactUploaded debe tener repository_id");
+    assert!(data.get("uploader").is_some(), "ArtifactUploaded debe tener uploader");
 
     println!("✓ Artifact JSON schema válido: {}", event.json_payload);
 }
@@ -277,8 +292,18 @@ async fn test_multiple_events_capture_and_validation() {
         None,
     );
 
-    // Publicar ambos eventos
-    publisher.publish_created(&artifact).await.unwrap();
+    // Crear y publicar evento de creación
+    let upload_payload = ArtifactUploaded {
+        artifact_id: artifact.id.clone(),
+        repository_id: artifact.repository_id.clone(),
+        uploader: artifact.created_by.clone(),
+        sha256: Some(artifact.checksum.0.clone()),
+        size_bytes: Some(artifact.size_bytes),
+        media_type: None,
+        upload_time_ms: None,
+    };
+    let upload_event = new_artifact_uploaded_root(upload_payload);
+    publisher.publish_created(&upload_event).await.unwrap();
     publisher.publish_download_requested(&download_event).await.unwrap();
 
     // Verificar captura de múltiples eventos
@@ -351,7 +376,17 @@ async fn test_clear_captured_events_functionality() {
         UserId::new(),
     );
 
-    publisher.publish_created(&artifact).await.unwrap();
+    let upload_payload = ArtifactUploaded {
+        artifact_id: artifact.id.clone(),
+        repository_id: artifact.repository_id.clone(),
+        uploader: artifact.created_by.clone(),
+        sha256: Some(artifact.checksum.0.clone()),
+        size_bytes: Some(artifact.size_bytes),
+        media_type: None,
+        upload_time_ms: None,
+    };
+    let upload_event = new_artifact_uploaded_root(upload_payload);
+    publisher.publish_created(&upload_event).await.unwrap();
     assert_eq!(publisher.get_captured_events().len(), 1);
 
     // Limpiar eventos capturados

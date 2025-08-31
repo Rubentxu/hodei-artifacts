@@ -47,6 +47,18 @@ impl ArtifactRepository for MockArtifactRepository {
     async fn find_by_repo_and_checksum(&self, _repository: &RepositoryId, _checksum: &ArtifactChecksum) -> Result<Option<Artifact>, ArtifactError> {
         unimplemented!()
     }
+
+    async fn find_by_maven_coordinates(&self, _group_id: &str, _artifact_id: &str, _version: &str, _file_name: &str) -> Result<Option<Artifact>, ArtifactError> {
+        unimplemented!()
+    }
+
+    async fn find_by_npm_package_name(&self, _package_name: &str) -> Result<Vec<Artifact>, ArtifactError> {
+        unimplemented!()
+    }
+
+    async fn find_all_artifacts(&self) -> Result<Vec<Artifact>, ArtifactError> {
+        unimplemented!()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -132,7 +144,7 @@ impl MockEventPublisher {
 
 #[async_trait]
 impl ArtifactEventPublisher for MockEventPublisher {
-    async fn publish_created(&self, _artifact: &Artifact) -> Result<(), ArtifactError> {
+    async fn publish_created(&self, _event: &shared::domain::event::ArtifactUploadedEvent) -> Result<(), ArtifactError> {
         Ok(())
     }
 

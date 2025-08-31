@@ -9,6 +9,7 @@ pub struct UploadArtifactCommand {
     pub size_bytes: u64,
     pub checksum: ArtifactChecksum,
     pub user_id: UserId,
+    pub mime_type: String, // Added mime_type
     pub bytes: Vec<u8>,
 }
 

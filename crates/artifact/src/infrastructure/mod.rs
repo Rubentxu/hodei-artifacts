@@ -16,3 +16,5 @@ pub use storage::S3ArtifactStorage;
 
 pub mod messaging;
 pub use messaging::KafkaArtifactEventPublisher;
+pub mod rabbitmq_event_publisher;
+pub use rabbitmq_event_publisher::RabbitMqArtifactEventPublisher;

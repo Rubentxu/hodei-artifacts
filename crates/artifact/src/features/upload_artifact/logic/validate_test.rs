@@ -16,6 +16,7 @@ mod tests {
             size_bytes: 1024,
             checksum: ArtifactChecksum::new("a".repeat(64)),
             user_id: UserId::new(),
+            mime_type: "application/java-archive".to_string(),
             bytes: vec![1, 2, 3, 4],
         }
     }

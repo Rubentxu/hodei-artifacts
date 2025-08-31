@@ -9,6 +9,9 @@ pub trait ArtifactRepository: Send + Sync {
     async fn get(&self, id: &ArtifactId) -> Result<Option<Artifact>, ArtifactError>;
     /// Búsqueda para idempotencia: localizar artifact existente por (repository_id, checksum).
     async fn find_by_repo_and_checksum(&self, repository: &RepositoryId, checksum: &ArtifactChecksum) -> Result<Option<Artifact>, ArtifactError>;
+    async fn find_by_maven_coordinates(&self, group_id: &str, artifact_id: &str, version: &str, file_name: &str) -> Result<Option<Artifact>, ArtifactError>;
+    async fn find_by_npm_package_name(&self, package_name: &str) -> Result<Vec<Artifact>, ArtifactError>;
+    async fn find_all_artifacts(&self) -> Result<Vec<Artifact>, ArtifactError>;
 }
 
 #[async_trait]
@@ -24,7 +27,7 @@ pub trait ArtifactStorage: Send + Sync {
 
 #[async_trait]
 pub trait ArtifactEventPublisher: Send + Sync {
-    async fn publish_created(&self, artifact: &Artifact) -> Result<(), ArtifactError>;
+    async fn publish_created(&self, event: &shared::domain::event::ArtifactUploadedEvent) -> Result<(), ArtifactError>;
     async fn publish_download_requested(&self, event: &shared::domain::event::ArtifactDownloadRequestedEvent) -> Result<(), ArtifactError>;
 }
 

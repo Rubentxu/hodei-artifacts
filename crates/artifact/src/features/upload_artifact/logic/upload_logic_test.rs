@@ -31,6 +31,7 @@ mod upload_artifact_logic_tests {
             size_bytes: 1024,
             checksum: ArtifactChecksum::new("a".repeat(64)), // Valid SHA-256 hex
             user_id: UserId::new(),
+            mime_type: "application/java-archive".to_string(),
             bytes: vec![0u8; 1024], // Match size_bytes
         }
     }

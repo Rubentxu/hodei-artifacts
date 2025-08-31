@@ -1,6 +1,8 @@
 //! Test de condiciones de carrera para idempotencia de upload de artifacts
 //! IDEMP-2: Verificar que inserciones concurrentes del mismo artifact retornan el mismo ID
 
+#![cfg(feature = "integration-mongo")]
+
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
@@ -10,25 +12,18 @@ use artifact::{
     error::ArtifactError,
     infrastructure::persistence::MongoArtifactRepository,
 };
-use infra_mongo::test_util::mongo_test_container::{ephemeral_store, TestMongoContainer};
+use shared_test::{setup_test_environment, TestEnvironment};
 use shared::{ArtifactId, RepositoryId, UserId, IsoTimestamp};
 
-/// Construye un repositorio de artifacts con factoría Mongo aislada (DB aleatoria) usando helper que
-/// realiza fallback a testcontainers si no hay MONGO_* definidos.
-/// Devuelve el repositorio y el guard del contenedor para mantenerlo vivo durante el test.
-async fn build_artifact_repository_for_test() -> (MongoArtifactRepository, Option<TestMongoContainer>) {
-    let (factory, container) = ephemeral_store()
-        .await
-        .expect("crear factory (env o contenedor)");
-    let repository = MongoArtifactRepository::new(Arc::new(factory));
-    repository.ensure_indexes().await.expect("crear índices");
-    (repository, container)
+/// Construye un repositorio de artifacts usando el entorno de test compartido
+async fn build_artifact_repository_for_test() -> (Arc<MongoArtifactRepository>, TestEnvironment) {
+    let test_env = setup_test_environment(None).await;
+    (test_env.artifact_repository, test_env)
 }
 
 #[tokio::test]
 async fn test_concurrent_upload_same_artifact_returns_same_id() {
-    let (repo, _container) = build_artifact_repository_for_test().await;
-    let repo = Arc::new(repo);
+    let (repo, _test_env) = build_artifact_repository_for_test().await;
     
     // Crear un artifact de prueba
     let repository_id = RepositoryId(Uuid::new_v4());

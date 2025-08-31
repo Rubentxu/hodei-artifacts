@@ -54,7 +54,20 @@ pub async fn handle(
             
             // 3c. Publicación de eventos (ÚLTIMO - fire-and-forget)
             let event_start = instrumentation.record_step_start("event_publish");
-            publisher.publish_created(&artifact).await.map_err(|e| {
+            
+            // Construct ArtifactUploadedEvent
+            let event_payload = shared::domain::event::ArtifactUploaded {
+                artifact_id: artifact.id,
+                repository_id: artifact.repository_id,
+                uploader: artifact.created_by, // Use created_by instead of user_id
+                sha256: Some(artifact.checksum.0),
+                size_bytes: Some(artifact.size_bytes),
+                media_type: Some(cmd.mime_type),
+                upload_time_ms: Some(artifact.created_at.0.timestamp_millis() as u32), // Fix timestamp_millis
+            };
+            let event = shared::domain::event::new_artifact_uploaded_root(event_payload);
+
+            publisher.publish_created(&event).await.map_err(|e| {
                 instrumentation.record_error(&format!("event_publish_error: {}", e));
                 e
             })?;
