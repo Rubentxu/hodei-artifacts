@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use artifact::application::ports::{ArtifactStorage, ArtifactRepository, ArtifactEventPublisher, NewArtifactParams};
+use artifact::application::ports::{ArtifactStorage, ArtifactRepository, ArtifactEventPublisher};
 use iam::application::ports::Authorization;
 use crate::error::DistributionError;
 use shared::{RepositoryId, UserId, IsoTimestamp};
@@ -9,7 +9,6 @@ use cedar_policy::{EntityUid, Request, Context, EntityTypeName, EntityId};
 use iam::error::IamError;
 use std::str::FromStr;
 use sha2::{Sha256, Digest};
-use md5::Md5;
 use tar::Archive;
 use flate2::read::GzDecoder;
 use std::io::Read;
@@ -80,6 +79,7 @@ pub async fn handle_npm_tarball_upload(
     let artifact_id = shared::ArtifactId(Uuid::new_v4());
     let file_name = format!("{}-{}.tgz", request.package_name, request.version);
 
+    let checksum_clone = checksum.clone();
     let artifact = Artifact {
         id: artifact_id.clone(),
         repository_id: request.repository_id.clone(),
@@ -89,12 +89,14 @@ pub async fn handle_npm_tarball_upload(
         checksum: ArtifactChecksum(checksum),
         created_at: IsoTimestamp(chrono::Utc::now()),
         created_by: request.user_id.clone(),
-        coordinates: Some(PackageCoordinates {
-            ecosystem: Ecosystem::Npm,
-            group_id: None,
-            artifact_id: Some(request.package_name.clone()),
-            version: version_str,
-        }),
+        coordinates: Some(PackageCoordinates::build(
+            Ecosystem::Npm,
+            None,
+            request.package_name.clone(),
+            version_str.clone(),
+            None,
+            std::collections::BTreeMap::new(),
+        ).map_err(|e| DistributionError::Internal(format!("Failed to build package coordinates: {}", e)))?),
     };
 
     // Store artifact in repository
@@ -110,7 +112,7 @@ pub async fn handle_npm_tarball_upload(
         artifact_id: artifact_id.clone(),
         repository_id: request.repository_id.clone(),
         uploader: request.user_id.clone(),
-        sha256: Some(checksum.clone()),
+        sha256: Some(checksum_clone),
         size_bytes: Some(request.tarball_data.len() as u64),
         media_type: Some("application/gzip".to_string()),
         upload_time_ms: Some(artifact.created_at.0.timestamp_millis() as u32),

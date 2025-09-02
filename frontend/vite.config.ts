@@ -55,15 +55,6 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: {
         '@': resolve(__dirname, './src'),
-        '@components': resolve(__dirname, './src/components'),
-        '@features': resolve(__dirname, './src/features'),
-        '@pages': resolve(__dirname, './src/pages'),
-        '@shared': resolve(__dirname, './src/shared'),
-        '@hooks': resolve(__dirname, './src/shared/hooks'),
-        '@stores': resolve(__dirname, './src/shared/stores'),
-        '@api': resolve(__dirname, './src/shared/api'),
-        '@utils': resolve(__dirname, './src/shared/utils'),
-        '@types': resolve(__dirname, './src/shared/types'),
       },
     },
 

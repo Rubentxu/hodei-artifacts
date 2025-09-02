@@ -11,18 +11,27 @@ async fn it_complete_upload_index_search_flow() {
 
     // Extract dynamic ports for the API to connect to
     let mongo_port = test_env.dynamic_ports.as_ref().unwrap().mongo_port;
-    let kafka_port = test_env.dynamic_ports.as_ref().unwrap().kafka_port;
+    let rabbitmq_port = test_env.dynamic_ports.as_ref().unwrap().rabbitmq_port;
     let s3_port = test_env.dynamic_ports.as_ref().unwrap().s3_port;
 
     // 2. Start hodei-artifacts-api binary in the background
     let api_binary_path = env::current_dir()
         .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
         .join("target/debug/hodei-artifacts-api");
+    
+    println!("Looking for API binary at: {:?}", api_binary_path);
+    println!("Binary exists: {}", api_binary_path.exists());
 
     let mut api_process = Command::new(&api_binary_path)
         .env("MONGO_URI", format!("mongodb://localhost:{}", mongo_port))
-        .env("KAFKA_BROKER", format!("localhost:{}", kafka_port))
+        .env("MONGO_DATABASE", "hodei_artifacts")
+        .env("AMQP_ADDR", format!("amqp://localhost:{}", rabbitmq_port))
         .env("S3_ENDPOINT", format!("http://localhost:{}", s3_port))
+        .env("S3_BUCKET", "artifacts")
         .env("RUST_LOG", "info,hodei_artifacts=debug") // Set log level for visibility
         .spawn()
         .expect("Failed to start hodei-artifacts-api");

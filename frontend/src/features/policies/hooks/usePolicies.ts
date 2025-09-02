@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { policyService } from '../services/policyApi';
-import { useNotificationStore } from '@/shared/stores/notificationStore';
+import { useNotificationStore } from '@/shared/stores';
 import type { NewPolicy, UpdatePolicy, Policy } from '../types/policy.types';
 
 const POLICIES_KEY = 'policies';

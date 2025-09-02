@@ -8,6 +8,7 @@ use shared::domain::event::ArtifactDownloadRequestedEvent;
 use crate::error::ArtifactError;
 use anyhow::Result;
 
+#[derive(Clone)]
 pub struct RabbitMqArtifactEventPublisher {
     connection: Arc<Mutex<Connection>>,
     exchange_name: String,

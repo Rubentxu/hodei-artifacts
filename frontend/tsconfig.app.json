@@ -18,16 +18,7 @@
     /* Path aliases */
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@components/*": ["src/components/*"],
-      "@features/*": ["src/features/*"],
-      "@pages/*": ["src/pages/*"],
-      "@shared/*": ["src/shared/*"],
-      "@hooks/*": ["src/shared/hooks/*"],
-      "@stores/*": ["src/shared/stores/*"],
-      "@api/*": ["src/shared/api/*"],
-      "@utils/*": ["src/shared/utils/*"],
-      "@types/*": ["src/shared/types/*"]
+      "@/*": ["src/*"]
     },
 
     /* Linting */
@@ -38,5 +29,11 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/__tests__",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "src/setupTests.ts"
+  ]
 }

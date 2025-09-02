@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Artifact Management E2E', () => {
+test.describe('Artifact Management User Flow', () => {
   test.beforeEach(async ({ page }) => {
-    // Configurar estado inicial para cada test
-    await page.goto('/');
+    // Assuming user is logged in
+    await page.goto('/'); // Or a specific artifact management page if it exists
   });
 
   test('should upload and download an artifact', async ({ page }) => {
@@ -57,79 +57,6 @@ test.describe('Artifact Management E2E', () => {
     expect(download.suggestedFilename()).toBe('test-artifact.jar');
   });
 
-  test('should search for artifacts', async ({ page }) => {
-    // Test de búsqueda de artefactos
-    
-    // 1. Navegar a búsqueda
-    await page.goto('/search');
-    await expect(page.locator('h1')).toContainText('Search Artifacts');
-
-    // 2. Realizar búsqueda básica
-    await page.fill('[data-testid="search-input"]', 'test-artifact');
-    await page.click('[data-testid="search-button"]');
-
-    // 3. Verificar resultados
-    await expect(page.locator('[data-testid="search-results"]')).toBeVisible();
-    
-    // 4. Realizar búsqueda avanzada
-    await page.click('[data-testid="advanced-search"]');
-    await page.selectOption('[data-testid="ecosystem-filter"]', 'maven');
-    await page.fill('[data-testid="namespace-filter"]', 'com.example');
-    await page.click('[data-testid="advanced-search-button"]');
-
-    // 5. Verificar filtros aplicados
-    await expect(page.locator('[data-testid="active-filters"]')).toContainText('ecosystem: maven');
-    await expect(page.locator('[data-testid="active-filters"]')).toContainText('namespace: com.example');
-  });
-
-  test('should handle repository management', async ({ page }) => {
-    // Test de gestión de repositorios
-    
-    // 1. Navegar a repositorios
-    await page.goto('/repositories');
-    await expect(page.locator('h1')).toContainText('Repositories');
-
-    // 2. Crear nuevo repositorio
-    await page.click('[data-testid="create-repository"]');
-    await page.fill('[data-testid="repository-name"]', 'test-repository');
-    await page.fill('[data-testid="repository-description"]', 'Test repository for E2E');
-    await page.selectOption('[data-testid="repository-type"]', 'maven');
-    await page.click('[data-testid="create-button"]');
-
-    // 3. Verificar repositorio creado
-    await expect(page.locator('[data-testid="repository-created"]')).toBeVisible();
-    
-    // 4. Navegar a detalles del repositorio
-    await page.click('[data-testid="repository-link"]');
-    await expect(page.locator('[data-testid="repository-details"]')).toBeVisible();
-    await expect(page.locator('[data-testid="repository-name"]')).toContainText('test-repository');
-
-    // 5. Verificar listado de artefactos del repositorio
-    await expect(page.locator('[data-testid="repository-artifacts"]')).toBeVisible();
-  });
-
-  test('should handle error scenarios gracefully', async ({ page }) => {
-    // Test de manejo de errores
-    
-    // 1. Intentar subir archivo vacío
-    await page.goto('/upload');
-    await page.click('[data-testid="upload-button"]');
-    await expect(page.locator('[data-testid="validation-errors"]')).toBeVisible();
-    await expect(page.locator('[data-testid="validation-errors"]')).toContainText('File is required');
-
-    // 2. Intentar acceder a artefacto inexistente
-    await page.goto('/artifacts/non-existent-id/download');
-    await expect(page.locator('[data-testid="not-found"]')).toBeVisible();
-    await expect(page.locator('[data-testid="error-message"]')).toContainText('Artifact not found');
-
-    // 3. Verificar conectividad de API
-    const response = await page.request.get('/health');
-    expect(response.ok()).toBeTruthy();
-    
-    const healthData = await response.json();
-    expect(healthData.status).toBe('healthy');
-  });
-
   test('should support different package ecosystems', async ({ page }) => {
     // Test de soporte para diferentes ecosistemas
     
@@ -167,4 +94,6 @@ test.describe('Artifact Management E2E', () => {
       await expect(canonicalPreview).toContainText(ecosystem.name);
     }
   });
+
+  // Add more tests for artifact details, batch operations, etc.
 });

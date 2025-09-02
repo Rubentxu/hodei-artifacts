@@ -1,5 +1,8 @@
-import { apiClient } from '@/shared/api/client';
-import type { ApiToken, NewApiToken, CreatedApiToken } from '../types/token.types';
+import type {
+  ApiToken,
+  NewApiToken,
+  CreatedApiToken,
+} from '../types/token.types';
 
 class TokenService {
   private readonly basePath = '/tokens';
@@ -9,8 +12,20 @@ class TokenService {
     // return response.data;
     console.log('[Mock] Fetching API tokens');
     return Promise.resolve([
-      { id: 'token-1', name: 'CI/CD Pipeline', lastUsed: '2 hours ago', created: '2024-08-20', scopes: ['repo:read', 'repo:write'] },
-      { id: 'token-2', name: 'Developer Access', lastUsed: '5 hours ago', created: '2024-08-15', scopes: ['repo:read'] },
+      {
+        id: 'token-1',
+        name: 'CI/CD Pipeline',
+        lastUsed: '2 hours ago',
+        created: '2024-08-20',
+        scopes: ['repo:read', 'repo:write'],
+      },
+      {
+        id: 'token-2',
+        name: 'Developer Access',
+        lastUsed: '5 hours ago',
+        created: '2024-08-15',
+        scopes: ['repo:read'],
+      },
     ]);
   }
 

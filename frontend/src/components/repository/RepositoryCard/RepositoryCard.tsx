@@ -50,8 +50,8 @@ export const RepositoryCard = ({
     }
   };
 
-  const getVisibilityBadge = (isPublic: boolean): string => {
-    return isPublic
+  const getVisibilityBadge = (visibility: 'public' | 'private'): string => {
+    return visibility === 'public'
       ? 'bg-green-100 text-green-800'
       : 'bg-yellow-100 text-yellow-800';
   };
@@ -90,7 +90,11 @@ export const RepositoryCard = ({
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      notificationService.success('Copied!', 'Repository ID copied to clipboard', 2000);
+      notificationService.success(
+        'Copied!',
+        'Repository ID copied to clipboard',
+        2000
+      );
     } catch (error) {
       console.warn('Failed to copy to clipboard:', error);
       notificationService.error('Copy Failed', 'Failed to copy to clipboard');
@@ -140,9 +144,9 @@ export const RepositoryCard = ({
                   {repository.type.toUpperCase()}
                 </span>
                 <span
-                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getVisibilityBadge(repository.isPublic)}`}
+                  className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getVisibilityBadge(repository.visibility)}`}
                 >
-                  {repository.isPublic ? 'Public' : 'Private'}
+                  {repository.visibility === 'public' ? 'Public' : 'Private'}
                 </span>
               </div>
               <p className="text-gray-600 text-sm line-clamp-2">
@@ -232,8 +236,9 @@ export const RepositoryCard = ({
                   onClick={() => handleAction('toggle-visibility')}
                   className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
                 >
-                  {repository.isPublic ? '🔒' : '🔓'}
-                  Make {repository.isPublic ? 'Private' : 'Public'}
+                  {repository.visibility === 'public' ? '🔒' : '🔓'}
+                  Make{' '}
+                  {repository.visibility === 'public' ? 'Private' : 'Public'}
                 </button>
                 <hr className="my-1 border-gray-200" />
                 <button

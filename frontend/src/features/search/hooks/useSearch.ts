@@ -9,7 +9,7 @@ export const useSearch = (filters: SearchFilters) => {
     queryKey: [SEARCH_KEY, 'results', filters],
     queryFn: () => searchService.search(filters),
     enabled: !!filters.query, // Only run query if there is a search term
-    keepPreviousData: true,
+    placeholderData: previousData => previousData,
   });
 };
 
@@ -24,15 +24,19 @@ export const useSearchSuggestions = (query: string) => {
 export const useInfiniteSearch = (filters: Omit<SearchFilters, 'page'>) => {
   return useInfiniteQuery({
     queryKey: [SEARCH_KEY, 'infinite', filters],
-    queryFn: ({ pageParam = 1 }) => searchService.search({ ...filters, page: pageParam }),
+    queryFn: ({ pageParam = 1 }) =>
+      searchService.search({ ...filters, page: pageParam }),
     getNextPageParam: (lastPage, allPages) => {
-      const loadedCount = allPages.reduce((acc, page) => acc + page.results.length, 0);
+      const loadedCount = allPages.reduce(
+        (acc, page) => acc + page.results.length,
+        0
+      );
       if (loadedCount < lastPage.total) {
         return allPages.length + 1;
       }
       return undefined;
     },
     enabled: !!filters.query,
-    keepPreviousData: true,
+    placeholderData: previousData => previousData,
   });
 };

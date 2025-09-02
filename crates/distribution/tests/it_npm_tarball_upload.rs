@@ -183,18 +183,38 @@ async fn it_npm_tarball_upload_invalid_tarball() {
     assert!(matches!(result.unwrap_err(), distribution::error::DistributionError::InvalidNpmPackage(_)));
 }
 
-// Helper function to create a simple test tarball
+// Helper function to create a proper test tarball (.tgz format)
 fn create_test_tarball(package_name: &str, version: &str) -> Vec<u8> {
-    // In a real test, we would create an actual .tgz file
-    // For now, return some test data that represents a tarball
-    // This would be replaced with actual tar + gzip creation in a real implementation
+    use std::io::{Cursor, Write};
+    use tar::{Builder, Header};
+    use flate2::{Compression, write::GzEncoder};
     
+    // Create package.json content
     let package_json = format!(r#"{{
         "name": "{}",
         "version": "{}",
         "description": "Test package for integration tests"
-    }"#, package_name, version);
+    }}"#, package_name, version);
     
-    // Simulate tarball data (in real scenario, this would be proper gzipped tar)
-    package_json.into_bytes()
+    // Create tar archive in memory
+    let mut tar_buffer = Vec::new();
+    {
+        let mut builder = Builder::new(&mut tar_buffer);
+        
+        // Create package.json header and add to tar
+        let mut header = Header::new_gnu();
+        header.set_path("package/package.json").unwrap();
+        header.set_size(package_json.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        
+        builder.append(&header, Cursor::new(package_json.as_bytes())).unwrap();
+        
+        builder.finish().unwrap();
+    }
+    
+    // Compress tar archive with gzip
+    let mut gz_encoder = GzEncoder::new(Vec::new(), Compression::default());
+    gz_encoder.write_all(&tar_buffer).unwrap();
+    gz_encoder.finish().unwrap()
 }

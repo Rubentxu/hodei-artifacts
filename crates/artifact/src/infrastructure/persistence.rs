@@ -165,6 +165,7 @@ fn bson_date_to_chrono(dt: BsonDateTime) -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::<chrono::Utc>::from(dt.to_system_time())
 }
 
+#[derive(Clone)]
 pub struct MongoArtifactRepository {
     factory: Arc<MongoClientFactory>,
 }

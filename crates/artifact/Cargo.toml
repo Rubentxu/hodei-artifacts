@@ -31,9 +31,16 @@ tokio = { workspace = true }
 [features]
 # integration-mongo: habilita tests de integración que requieren instancia Mongo real (vía testcontainers fallback).
 integration-mongo = []
+# integration-rabbitmq: habilita tests de integración que requieren instancia RabbitMQ real.
+integration-rabbitmq = []
+# integration-s3: habilita tests de integración que requieren instancia S3 real.
+integration-s3 = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 rdkafka = { workspace = true }
+testcontainers = { version = "0.15", features = ["tokio"] }
+testcontainers-modules = "0.1"
+shared-test = { path = "../shared-test" }

@@ -5,7 +5,10 @@ interface SearchResultHighlighterProps {
   query: string;
 }
 
-const SearchResultHighlighter = ({ text, query }: SearchResultHighlighterProps) => {
+const SearchResultHighlighter = ({
+  text,
+  query,
+}: SearchResultHighlighterProps) => {
   if (!query) return <>{text}</>;
 
   const parts = text.split(new RegExp(`(${query})`, 'gi'));

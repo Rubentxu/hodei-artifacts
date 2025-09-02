@@ -2,21 +2,21 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { SearchFilters } from '../types/search.types';
 
-export type FavoriteSearch = {
+export interface FavoriteSearch {
   id: string;
   name: string;
   query: string;
   filters: Omit<SearchFilters, 'page' | 'query'>;
-};
+}
 
-type SearchState = {
+interface SearchState {
   filters: Omit<SearchFilters, 'page' | 'query'>;
   query: string;
   history: string[];
   favorites: FavoriteSearch[];
-};
+}
 
-type SearchActions = {
+interface SearchActions {
   setQuery: (query: string) => void;
   setFilters: (filters: Partial<SearchState['filters']>) => void;
   loadFavorite: (favorite: FavoriteSearch) => void;
@@ -25,7 +25,7 @@ type SearchActions = {
   removeFavorite: (id: string) => void;
   clearFilters: () => void;
   reset: () => void;
-};
+}
 
 const initialState: SearchState = {
   filters: {},

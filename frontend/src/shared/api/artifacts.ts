@@ -1,9 +1,5 @@
 import { apiService } from './client';
-import type {
-  ApiResponse,
-  PaginatedResponse,
-  ApiError,
-} from '@/shared/types';
+import type { ApiResponse, PaginatedResponse } from '@/shared/types';
 
 export interface Artifact {
   id: string;
@@ -97,11 +93,11 @@ export const artifactsApi = {
     filters?: Omit<ArtifactFilters, 'repositoryId' | 'path'>
   ): Promise<PaginatedResponse<Artifact>> => {
     const params = new URLSearchParams();
-    
+
     if (path) {
       params.append('path', path);
     }
-    
+
     if (filters?.type) {
       params.append('type', filters.type);
     }
@@ -175,7 +171,7 @@ export const artifactsApi = {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('path', path);
-    
+
     if (metadata) {
       formData.append('metadata', JSON.stringify(metadata));
     }

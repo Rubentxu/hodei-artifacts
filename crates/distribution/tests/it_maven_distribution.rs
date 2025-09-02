@@ -34,7 +34,7 @@ async fn it_maven_upload_and_download_happy_path() {
     let download_result = handle_maven_download(
         env.artifact_storage.clone(),
         env.artifact_repository.clone(),
-        repository_id.clone(),
+        env.authorization.clone(),
         group_id.clone(),
         artifact_id.clone(),
         version.clone(),
@@ -54,7 +54,7 @@ async fn it_maven_download_nonexistent_artifact() {
     let result = handle_maven_download(
         env.artifact_storage.clone(),
         env.artifact_repository.clone(),
-        repository_id,
+        env.authorization.clone(),
         "com.nonexistent".to_string(),
         "missing".to_string(),
         "1.0.0".to_string(),
@@ -106,7 +106,7 @@ async fn it_maven_multiple_versions_same_artifact() {
     let download_1 = handle_maven_download(
         env.artifact_storage.clone(),
         env.artifact_repository.clone(),
-        repository_id.clone(),
+        env.authorization.clone(),
         group_id.clone(),
         artifact_id.clone(),
         "1.0.0".to_string(),
@@ -116,7 +116,7 @@ async fn it_maven_multiple_versions_same_artifact() {
     let download_2 = handle_maven_download(
         env.artifact_storage.clone(),
         env.artifact_repository.clone(),
-        repository_id.clone(),
+        env.authorization.clone(),
         group_id.clone(),
         artifact_id.clone(),
         "2.0.0".to_string(),

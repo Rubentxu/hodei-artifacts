@@ -5,7 +5,7 @@ use artifact::{
     application::ports::{ArtifactRepository, ArtifactEventPublisher, ArtifactStorage},
     domain::model::{ArtifactVersion, ArtifactChecksum},
     features::upload_artifact::{command::UploadArtifactCommand, handler::handle},
-    infrastructure::{persistence::MongoArtifactRepository, storage::S3ArtifactStorage, messaging::RabbitMqArtifactEventPublisher},
+    infrastructure::{persistence::MongoArtifactRepository, storage::S3ArtifactStorage, RabbitMqArtifactEventPublisher},
 };
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;

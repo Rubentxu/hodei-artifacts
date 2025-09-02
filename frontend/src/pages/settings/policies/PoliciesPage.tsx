@@ -1,38 +1,36 @@
 import React, { useState } from 'react';
-import { PageHeader } from '../../../../components/layout/page-header';
-import { Button } from '../../../../components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '../../../../components/ui/card';
-import { DataTable } from '../../../../components/layout/data-table';
-import {
-  usePolicies,
-  Policy,
-  NewPolicy,
-  UpdatePolicy,
-} from '../../../../features/policies';
-import { Badge } from '../../../../components/ui/badge';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Button } from '@/components/ui/Button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { DataTable } from '@/components/layout/DataTable';
 import {
   Modal,
   ModalContent,
   ModalHeader,
   ModalTitle,
-  ModalTrigger,
-} from '../../../../components/ui/modal';
-import { Input } from '../../../../components/ui/input';
-import { CodeEditor } from '../../../../components/ui/code-editor';
+} from '@/components/ui/Modal';
+import { Input } from '@/components/ui/Input';
+import { CodeEditor } from '@/components/ui/CodeEditor';
+import type { Policy, NewPolicy, UpdatePolicy } from '@/features/policies';
+import { usePolicies } from '@/features/policies';
 import { useForm, Controller } from 'react-hook-form';
-import type { Column } from '../../../../components/layout/data-table';
+import type { Column } from '@/components/layout/DataTable';
 
-const PolicyForm = ({ policy, onSubmit, isSubmitting }) => {
+const PolicyForm = ({
+  policy,
+  onSubmit,
+  isSubmitting,
+}: {
+  policy?: Policy;
+  onSubmit: (data: NewPolicy | UpdatePolicy) => void;
+  isSubmitting: boolean;
+}) => {
   const {
     register,
     handleSubmit,
     control,
-    formState: { errors },
+    formState: {},
   } = useForm<NewPolicy | UpdatePolicy>({
     defaultValues: policy || {
       name: '',
@@ -101,7 +99,7 @@ const PoliciesPage = () => {
     {
       key: 'effect',
       title: 'Effect',
-      render: effect => (
+      render: (effect: Policy['effect']) => (
         <Badge variant={effect === 'Permit' ? 'success' : 'danger'}>
           {effect}
         </Badge>
@@ -110,7 +108,7 @@ const PoliciesPage = () => {
     {
       key: 'actions',
       title: 'Actions',
-      render: (_, policy) => (
+      render: (_, policy: Policy) => (
         <div className="space-x-2">
           <Button variant="ghost" size="sm" onClick={() => openModal(policy)}>
             Edit

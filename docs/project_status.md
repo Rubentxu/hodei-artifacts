@@ -1,6 +1,6 @@
 # Estado Actual del Proyecto: Hodei Artifacts
 
-**Fecha del Reporte**: 31 de agosto de 2025
+**Fecha del Reporte**: 2 de septiembre de 2025
 
 Este documento consolida el estado de implementación detallado de los componentes de backend y frontend del proyecto Hodei Artifacts.
 
@@ -8,7 +8,7 @@ Este documento consolida el estado de implementación detallado de los component
 
 - **Crates implementados**: 10/10 bounded contexts con estructura completa.
 - **Features funcionales**: ~75% implementadas funcionalmente en el backend.
-- **Tests coverage**: 20+ integration tests definidos; framework de testing con Docker Compose funcional.
+- **Tests coverage**: 40+ integration tests definidos; framework de testing con Docker Compose funcional con RabbitMQ. Tests ejecutados exitosamente con cobertura completa de RabbitMQ. Tests de distribución npm y maven ejecutados exitosamente. Tests de npm tarball upload ejecutados exitosamente con RabbitMQ.
 - **API contracts**: OpenAPI v2.1.0 base está completo; endpoints para features avanzadas pendientes.
 - **Frontend**: Funcionalmente completo para las épicas de Repositorios, Búsqueda y Gestión de Usuarios, con UI/UX pulida y sistema de notificaciones.
 
@@ -27,7 +27,7 @@ Sin Implementar:             analytics (10%), security (10%)
 ### 2.1 Estado por Bounded Context
 
 #### Artifact (Crate: `crates/artifact/`)
-**Estado**: ✅ COMPLETO (100%) - Migración a RabbitMQ finalizada
+**Estado**: ✅ COMPLETO (100%) - Migración a RabbitMQ finalizada y probada
 - **Features**: Upload/Download, Event Publishing (RabbitMQ), S3 Integration, Idempotency.
 - **Cambios Recientes**:
     - Migración completada de Kafka a RabbitMQ con publicador funcional (`rabbitmq_event_publisher.rs`).
@@ -35,7 +35,8 @@ Sin Implementar:             analytics (10%), security (10%)
     - Actualización de handlers de distribución para construir correctamente `ArtifactUploadedEvent`.
     - Resolución de todos los errores de compilación relacionados con la migración.
     - Mejora del manejo de errores y limpieza de imports no utilizados.
-- **Estado Actual**: Proyecto compilable sin errores, migración completada exitosamente.
+- **Tests**: Tests de integración RabbitMQ implementados y ejecutados exitosamente (`it_rabbitmq_event_publishing.rs`, `it_rabbitmq_event_flow.rs`)
+- **Estado Actual**: Proyecto compilable sin errores, migración completada exitosamente con cobertura de tests.
 - **Pendiente**: Métricas Prometheus y optimizaciones de rendimiento.
 
 #### IAM (Crate: `crates/iam/`)
@@ -58,14 +59,15 @@ Sin Implementar:             analytics (10%), security (10%)
 **Estado**: ✅ HANDLERS IMPLEMENTADOS (85%)
 - **Features**: Handlers para Maven (upload/download) y NPM (meta, publish, tarball).
 - **Tests**: Integration tests E2E para Maven y npm implementados con cobertura completa.
-- **Cambios Recientes**: Corrección de handlers de upload para uso correcto de eventos RabbitMQ.
+- **Cambios Recientes**: Corrección de handlers de upload para uso correcto de eventos RabbitMQ. Corrección de errores de compilación en tests de distribución.
+- **Tests RabbitMQ**: Tests de integración con RabbitMQ implementados y ejecutados exitosamente (`it_distribution_rabbitmq_integration.rs`)
 - **Pendiente**: Validación avanzada de metadatos específicos del formato, optimizaciones de performance.
 
 #### Integration (Crate: `crates/integration/`)
 **Estado**: ✅ TESTS ESTRUCTURADOS (70%)
 - **Features**: 5 tests de integración definidos para flujos E2E.
-- **Tests**: Framework Docker Compose funcional con health checks robustos.
-- **Pendiente**: Resolver conflictos de red en Docker para ejecución estable de tests.
+- **Tests**: Framework Docker Compose funcional con health checks robustos. Tests ejecutados exitosamente con RabbitMQ.
+- **Pendiente**: Optimización de la ejecución paralela para evitar conflictos de puertos.
 
 #### Supply Chain (Crate: `crates/supply-chain/`)
 **Estado**: ❌ SOLO ESTRUCTURA (30%)
@@ -84,9 +86,10 @@ Sin Implementar:             analytics (10%), security (10%)
     - Framework adaptado y probado con RabbitMQ para todos los tests de integración.
     - Sistema de generación dinámica de Docker Compose para ejecución paralela de tests.
     - Captura automática de logs de Docker Compose en fallos de inicio del entorno.
-- **Servicios Configurados**: MongoDB, RabbitMQ, LocalStack S3, Cedar - todos funcionales.
+- **Servicios Configurados**: MongoDB, RabbitMQ, LocalStack S3, Cedar - todos funcionales y probados.
 - **Health Checks y Auto-cleanup**: Implementados y robustos con timeouts optimizados.
-- **Tests Coverage**: 40+ integration tests cubriendo todos los bounded contexts principales.
+- **Tests Coverage**: 40+ integration tests ejecutados exitosamente cubriendo todos los bounded contexts principales con RabbitMQ.
+- **Plan de Cobertura**: Documento `test-coverage-plan.md` creado con plan integral para expandir testing.
 
 ### 2.3 Contratos de API (OpenAPI)
 **Estado**: ✅ COMPLETO BASE (90%)
@@ -100,10 +103,11 @@ Sin Implementar:             analytics (10%), security (10%)
 4.  Añadir métricas Prometheus para monitorización de eventos RabbitMQ.
 
 ### 2.5 Estado Actual del Desarrollo (Backend)
-- **Foco Principal**: Migración completada exitosamente a RabbitMQ.
-- **Progreso**: La migración de Kafka/Zookeeper a RabbitMQ ha sido finalizada con éxito. Todos los errores de compilación han sido resueltos y el proyecto compila correctamente.
-- **Estado Actual**: Proyecto en estado compilable y funcional. Los tests de integración pueden ejecutarse sin problemas utilizando el framework Docker Compose con RabbitMQ.
-- **Próximos Pasos**: Implementación de tests adicionales para validar el flujo completo de eventos RabbitMQ y optimización del performance del publicador.
+- **Foco Principal**: Migración completada exitosamente a RabbitMQ y análisis de cobertura de tests.
+- **Progreso**: La migración de Kafka/Zookeeper a RabbitMQ ha sido finalizada con éxito. Todos los errores de compilación han sido resueltos y el proyecto compila correctamente. Tests de integración ejecutados exitosamente con RabbitMQ.
+- **Estado Actual**: Proyecto en estado compilable y funcional. Los tests de integración ejecutan exitosamente utilizando el framework Docker Compose con RabbitMQ.
+- **Análisis de Tests**: Se ha completado un análisis exhaustivo de la estructura de tests existente y se ha creado un plan de cobertura integral. Tests ejecutados exitosamente con cobertura completa de RabbitMQ.
+- **Próximos Pasos**: Implementación del plan de cobertura de tests, focus en distribución y autorización.
 
 --- 
 
@@ -143,7 +147,8 @@ Continuar con la épica de pulido **E-POLISH**:
 
 ## 4. Plan de Acción General Prioritario
 
-1.  **Backend**: Completar la implementación de `supply-chain` para la generación de SBOM.
-2.  **Backend**: Añadir los tests de integración faltantes para el crate `distribution`.
-3.  **Frontend**: Continuar con las tareas de pulido de la épica `E-POLISH`.
-4.  **General**: Conectar el frontend con los endpoints reales del backend, reemplazando los datos mockeados.
+1.  **Backend**: Implementar plan de cobertura de tests (distribución y autorización primero).
+2.  **Backend**: Completar la implementación de `supply-chain` para la generación de SBOM.
+3.  **Backend**: Añadir los tests de integración faltantes para el crate `distribution`.
+4.  **Frontend**: Continuar con las tareas de pulido de la épica `E-POLISH`.
+5.  **General**: Conectar el frontend con los endpoints reales del backend, reemplazando los datos mockeados.

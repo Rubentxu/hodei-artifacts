@@ -1,9 +1,6 @@
 
 use std::sync::Arc;
 
-use artifact::infrastructure::{
-    KafkaArtifactEventPublisher, S3ArtifactStorage,
-};
 
 use mongodb::Client as MongoClient;
 
@@ -32,7 +29,7 @@ pub struct TestEnvironment {
     pub artifact_repository: Arc<MongoArtifactRepository>,
     pub artifact_storage: Arc<S3ArtifactStorage>,
     pub artifact_event_publisher: Arc<RabbitMqArtifactEventPublisher>,
-    pub authorization: Arc<CedarAuthorizer<'static>>,
+    pub authorization: Arc<CedarAuthorizer>,
     actual_compose_file_path: String,
     is_generated_compose: bool,
     pub dynamic_ports: Option<DynamicPorts>,
@@ -58,8 +55,8 @@ impl Drop for TestEnvironment {
 
 use crate::test_orchestrator::{
     start_docker_compose, teardown_docker_compose, get_mapped_port,
-    wait_for_mongo_ready, wait_for_kafka_ready, wait_for_s3_ready,
-    setup_mongo_client, setup_s3_client, setup_kafka_client, setup_authorization_client,
+    wait_for_mongo_ready, wait_for_rabbitmq_ready, wait_for_s3_ready,
+    setup_mongo_client, setup_s3_client, setup_rabbitmq_client, setup_authorization_client,
 };
 
 pub async fn setup_test_environment(compose_file_path_option: Option<&str>) -> TestEnvironment {

@@ -11,7 +11,7 @@ async fn it_maven_download_invalid_repository() {
     let result = handle_maven_download(
         env.artifact_storage.clone(),
         env.artifact_repository.clone(),
-        RepositoryId::new(), // New repository ID (should be empty)
+        env.authorization.clone(), // Authorization
         "com.example".to_string(),
         "test".to_string(),
         "1.0.0".to_string(),
@@ -31,9 +31,8 @@ async fn it_npm_download_invalid_package() {
     let result = handle_npm_tarball_download(
         env.artifact_storage.clone(),
         env.artifact_repository.clone(),
-        repository_id,
+        env.authorization.clone(),
         "nonexistent-package".to_string(),
-        "1.0.0".to_string(),
         "nonexistent-package-1.0.0.tgz".to_string(),
     ).await;
     

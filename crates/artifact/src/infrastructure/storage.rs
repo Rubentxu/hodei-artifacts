@@ -8,6 +8,7 @@ use crate::{
     error::ArtifactError,
 };
 
+#[derive(Clone)]
 pub struct S3ArtifactStorage {
     s3_client: S3Client,
     bucket_name: String,

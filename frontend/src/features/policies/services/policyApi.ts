@@ -1,4 +1,3 @@
-import { apiClient } from '@/shared/api/client';
 import type { Policy, NewPolicy, UpdatePolicy } from '../types/policy.types';
 
 class PolicyService {
@@ -9,9 +8,27 @@ class PolicyService {
     // return response.data;
     console.log('[Mock] Fetching policies');
     return Promise.resolve([
-      { id: 'policy-1', name: 'Admin Full Access', description: 'Allows full access to all resources', effect: 'Permit', body: 'permit(principal, action, resource);' },
-      { id: 'policy-2', name: 'Repository Read Access', description: 'Read access to specific repositories', effect: 'Permit', body: 'permit(principal, action == "repo:read", resource in Group::"public-repos");' },
-      { id: 'policy-3', name: 'Block Malicious IPs', description: 'Forbids access from known malicious IPs', effect: 'Forbid', body: 'forbid(principal, action, resource) when { context.ip in Group::"malicious-ips" };' },
+      {
+        id: 'policy-1',
+        name: 'Admin Full Access',
+        description: 'Allows full access to all resources',
+        effect: 'Permit',
+        body: 'permit(principal, action, resource);',
+      },
+      {
+        id: 'policy-2',
+        name: 'Repository Read Access',
+        description: 'Read access to specific repositories',
+        effect: 'Permit',
+        body: 'permit(principal, action == "repo:read", resource in Group::"public-repos");',
+      },
+      {
+        id: 'policy-3',
+        name: 'Block Malicious IPs',
+        description: 'Forbids access from known malicious IPs',
+        effect: 'Forbid',
+        body: 'forbid(principal, action, resource) when { context.ip in Group::"malicious-ips" };',
+      },
     ]);
   }
 

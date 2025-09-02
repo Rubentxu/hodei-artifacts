@@ -12,7 +12,9 @@ export interface Notification {
 
 interface NotificationState {
   notifications: Notification[];
-  addNotification: (notification: Omit<Notification, 'id' | 'createdAt'>) => void;
+  addNotification: (
+    notification: Omit<Notification, 'id' | 'createdAt'>
+  ) => void;
   removeNotification: (id: string) => void;
   clearAllNotifications: () => void;
   clearExpiredNotifications: () => void;
@@ -23,7 +25,7 @@ export const useNotificationStore = create<NotificationState>()(
     (set, get) => ({
       notifications: [],
 
-      addNotification: (notification) => {
+      addNotification: notification => {
         const newNotification: Notification = {
           ...notification,
           id: Math.random().toString(36).substr(2, 9),
@@ -31,7 +33,7 @@ export const useNotificationStore = create<NotificationState>()(
           duration: notification.duration || 5000,
         };
 
-        set((state) => ({
+        set(state => ({
           notifications: [...state.notifications, newNotification],
         }));
 
@@ -43,9 +45,9 @@ export const useNotificationStore = create<NotificationState>()(
         }
       },
 
-      removeNotification: (id) => {
-        set((state) => ({
-          notifications: state.notifications.filter((n) => n.id !== id),
+      removeNotification: id => {
+        set(state => ({
+          notifications: state.notifications.filter(n => n.id !== id),
         }));
       },
 
@@ -55,18 +57,18 @@ export const useNotificationStore = create<NotificationState>()(
 
       clearExpiredNotifications: () => {
         const now = new Date();
-        set((state) => ({
+        set(state => ({
           notifications: state.notifications.filter(
-            (n) => now.getTime() - n.createdAt.getTime() < (n.duration || 5000)
+            n => now.getTime() - n.createdAt.getTime() < (n.duration || 5000)
           ),
         }));
       },
     }),
     {
       name: 'notification-storage',
-      partialize: (state) => ({
+      partialize: state => ({
         notifications: state.notifications.filter(
-          (n) => n.type === 'error' || n.type === 'warning'
+          n => n.type === 'error' || n.type === 'warning'
         ),
       }),
     }

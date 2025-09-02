@@ -1,33 +1,29 @@
 import { createBrowserRouter } from 'react-router-dom';
-import {
-  Home,
-  Login,
-  Dashboard,
-  Repositories,
-  RepositoryDetail,
-  NotFound,
-  SearchPage,
-  ProfilePage,
-  TokensPage,
-  UsersPage,
-  PoliciesPage,
-} from './pages';
-import { MainLayout } from './components/templates/main-layout';
+
+// Direct imports
+import Login from '@/pages/Login/Login';
+import Dashboard from '@/pages/Dashboard/Dashboard';
+import Repositories from '@/pages/Repositories/Repositories';
+import RepositoryDetail from '@/pages/RepositoryDetail/RepositoryDetail';
+import NotFound from '@/pages/NotFound/NotFound';
+import SearchPage from '@/pages/search/SearchPage';
+import ProfilePage from '@/pages/profile/ProfilePage';
+import TokensPage from '@/pages/settings/tokens/TokensPage';
+import UsersPage from '@/pages/admin/users/UsersPage';
+import PoliciesPage from '@/pages/settings/policies/PoliciesPage';
+
+import { MainLayout } from '@/components/templates/MainLayout';
 
 export const router = createBrowserRouter([
   {
-    path: '/',
-    element: <Home />,
-  },
-  {
-    path: '/login',
+    path: '/login', // Login page
     element: <Login />,
   },
   {
-    element: <MainLayout />,
+    element: <MainLayout />, // Layout for authenticated routes
     children: [
       {
-        path: '/dashboard',
+        path: '/', // Dashboard at root for now
         element: <Dashboard />,
       },
       {
@@ -61,7 +57,7 @@ export const router = createBrowserRouter([
     ],
   },
   {
-    path: '*',
+    path: '*', // Catch-all for 404
     element: <NotFound />,
   },
 ]);

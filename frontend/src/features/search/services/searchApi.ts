@@ -1,4 +1,3 @@
-import { apiClient } from '@/shared/api/client';
 import type { SearchResponse, SearchFilters } from '../types/search.types';
 
 class SearchService {
@@ -24,15 +23,51 @@ class SearchService {
     console.log(`[Mock] Searching with filters: ${params.toString()}`);
     return Promise.resolve({
       results: [
-        { id: '1', name: 'react', description: 'A JavaScript library for building user interfaces', repository: 'npm-public', type: 'npm', version: '18.2.0', size: 2300000, license: 'MIT', popularity: 45000 },
-        { id: '2', name: 'vue', description: 'The Progressive JavaScript Framework', repository: 'npm-public', type: 'npm', version: '3.2.0', size: 1800000, license: 'MIT', popularity: 38000 },
-        { id: '3', name: 'django', description: 'The Web framework for perfectionists with deadlines.', repository: 'pypi-main', type: 'pypi', version: '4.1.0', size: 890000, license: 'BSD', popularity: 68000 },
+        {
+          id: '1',
+          name: 'react',
+          description: 'A JavaScript library for building user interfaces',
+          repository: 'npm-public',
+          type: 'npm',
+          version: '18.2.0',
+          size: 2300000,
+          license: 'MIT',
+          popularity: 45000,
+        },
+        {
+          id: '2',
+          name: 'vue',
+          description: 'The Progressive JavaScript Framework',
+          repository: 'npm-public',
+          type: 'npm',
+          version: '3.2.0',
+          size: 1800000,
+          license: 'MIT',
+          popularity: 38000,
+        },
+        {
+          id: '3',
+          name: 'django',
+          description: 'The Web framework for perfectionists with deadlines.',
+          repository: 'pypi-main',
+          type: 'pypi',
+          version: '4.1.0',
+          size: 890000,
+          license: 'BSD',
+          popularity: 68000,
+        },
       ],
       total: 3,
       facets: {
-        type: [{ value: 'npm', count: 2 }, { value: 'pypi', count: 1 }],
-        repository: [{ value: 'npm-public', count: 2 }, { value: 'pypi-main', count: 1 }],
-      }
+        type: [
+          { value: 'npm', count: 2 },
+          { value: 'pypi', count: 1 },
+        ],
+        repository: [
+          { value: 'npm-public', count: 2 },
+          { value: 'pypi-main', count: 1 },
+        ],
+      },
     });
   }
 

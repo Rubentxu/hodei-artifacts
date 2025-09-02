@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSearchStore } from '../../../features/search';
-import { Input } from '../../ui/input';
+import { Input } from '../../ui/Input';
 import { Search as SearchIcon, History } from 'lucide-react';
 
 const SearchBox = () => {

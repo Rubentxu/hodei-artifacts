@@ -1,15 +1,9 @@
 import React, { useState } from 'react';
-import { PageHeader } from '../../../components/layout/page-header';
-import { Button } from '../../../components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '../../../components/ui/card';
-import { DataTable } from '../../../components/layout/data-table';
-import { useTokens, ApiToken } from '../../../features/tokens';
-import { Badge } from '../../../components/ui/badge';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Button } from '@/components/ui/Button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { DataTable } from '@/components/layout/DataTable';
+import { Badge } from '@/components/ui/Badge';
 import {
   Modal,
   ModalContent,
@@ -18,22 +12,24 @@ import {
   ModalDescription,
   ModalFooter,
   ModalTrigger,
-} from '../../../components/ui/modal';
-import { Input } from '../../../components/ui/input';
+} from '@/components/ui/Modal';
+import { Input } from '@/components/ui/Input';
+import type { ApiToken } from '@/features/tokens';
+import { useTokens } from '@/features/tokens';
+import { useNotifications } from '@/shared/stores/ui.store';
 import { useForm } from 'react-hook-form';
-import type { Column } from '../../../components/layout/data-table';
+import type { Column } from '@/components/layout/DataTable';
 
 const CreateTokenModal = ({ createToken, isCreating, onTokenCreated }) => {
   const {
     register,
     handleSubmit,
-    formState: { errors },
-    reset,
+    formState: {},
   } = useForm({ defaultValues: { name: '', scopes: ['repo:read'] } });
   const [isOpen, setIsOpen] = useState(false);
 
-  const onSubmit = async data => {
-    const result = await createToken(data);
+  const onSubmit = async (data: NewApiToken) => {
+    const result: CreatedApiToken = await createToken(data);
     if (result) {
       onTokenCreated(result.token);
       // Do not close modal, parent will handle it
@@ -82,7 +78,13 @@ const CreateTokenModal = ({ createToken, isCreating, onTokenCreated }) => {
   );
 };
 
-const ShowTokenModal = ({ token, onClose }) => {
+const ShowTokenModal = ({
+  token,
+  onClose,
+}: {
+  token: string | null;
+  onClose: () => void;
+}) => {
   return (
     <Modal open={!!token} onOpenChange={onClose}>
       <ModalContent>
@@ -116,6 +118,7 @@ const TokensPage = () => {
   const [newToken, setNewToken] = useState<string | null>(null);
 
   const handleRevokeToken = (id: string) => {
+    // TODO: Replace with a custom confirmation modal or a more robust notification system
     if (confirm('Are you sure you want to revoke this token?')) {
       revokeToken(id);
     }
@@ -139,7 +142,7 @@ const TokensPage = () => {
     {
       key: 'actions',
       title: 'Actions',
-      render: (_, token) => (
+      render: (_, token: ApiToken) => (
         <div className="space-x-2">
           <Button
             variant="ghost"

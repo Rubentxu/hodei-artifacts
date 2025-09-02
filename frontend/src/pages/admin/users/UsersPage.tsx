@@ -1,31 +1,33 @@
 import React, { useState } from 'react';
-import { PageHeader } from '../../../../components/layout/page-header';
-import { Button } from '../../../../components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '../../../../components/ui/card';
-import { DataTable } from '../../../../components/layout/data-table';
-import {
-  useUsers,
-  User,
-  NewUser,
-  UpdateUser,
-} from '../../../../features/users';
-import { UserForm } from '../../../../features/users/components';
-import { Badge } from '../../../../components/ui/badge';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Button } from '@/components/ui/Button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { DataTable } from '@/components/layout/DataTable';
+import { Badge } from '@/components/ui/Badge';
 import {
   Modal,
   ModalContent,
   ModalHeader,
   ModalTitle,
   ModalTrigger,
-} from '../../../../components/ui/modal';
-import type { Column } from '../../../../components/layout/data-table';
+} from '@/components/ui/Modal';
+import type { User, NewUser, UpdateUser } from '@/features/users';
+import { useUsers } from '@/features/users';
+import { UserForm } from '@/features/users/components';
+import type { Column } from '@/components/layout/DataTable';
+import UsersPageSkeleton from '@/components/Users/UsersPageSkeleton';
 
-const UserModal = ({ user, onSubmit, isSubmitting, children }) => {
+const UserModal = ({
+  user,
+  onSubmit,
+  isSubmitting,
+  children,
+}: {
+  user?: User;
+  onSubmit: (data: NewUser | UpdateUser, closeModal: () => void) => void;
+  isSubmitting: boolean;
+  children: React.ReactNode;
+}) => {
   const [isOpen, setIsOpen] = useState(false);
 
   const handleSubmit = (data: NewUser | UpdateUser) => {
@@ -81,7 +83,7 @@ const UsersPage = () => {
     {
       key: 'actions',
       title: 'Actions',
-      render: (_, user) => (
+      render: (_, user: User) => (
         <div className="space-x-2">
           <UserModal
             user={user}
@@ -112,7 +114,15 @@ const UsersPage = () => {
           <CardTitle>All Users</CardTitle>
         </CardHeader>
         <CardContent>
-          <DataTable columns={columns} data={users || []} loading={isLoading} />
+          {isLoading ? (
+            <UsersPageSkeleton />
+          ) : (
+            <DataTable
+              columns={columns}
+              data={users || []}
+              loading={isLoading}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

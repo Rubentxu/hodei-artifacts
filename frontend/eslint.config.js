@@ -48,4 +48,14 @@ export default tseslint.config([
       },
     },
   },
+  // New configuration for test files
+  {
+    files: ['**/*.{test,spec}.{ts,tsx}', 'src/__tests__/**/*.ts'], // Target test files
+    languageOptions: {
+      parserOptions: {
+        project: './tsconfig.vitest.json', // Use the new tsconfig for test files
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
 ]);

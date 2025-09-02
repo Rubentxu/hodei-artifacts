@@ -10,7 +10,7 @@ export const ToastContainer = () => {
       aria-live="assertive"
     >
       <div className="w-full max-w-sm space-y-2">
-        {notifications.map((notification) => (
+        {notifications.map(notification => (
           <Toast
             key={notification.id}
             notification={notification}

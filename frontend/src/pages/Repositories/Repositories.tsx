@@ -1,19 +1,25 @@
+// Forcing a reload to clear Vite cache
 import { useState } from 'react';
-import { notificationService } from '@/shared/stores/notification.store';
-import { Link } from 'react-router-dom';
+import { useNotifications } from '@/shared/stores/ui.store'; // Corrected import
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Spinner';
-import { RepositoryCard, CreateRepositoryModal } from '@/components/repository';
+import {
+  RepositoryCard,
+  CreateRepositoryModal,
+  RepositoryCardSkeleton,
+} from '@/components/repository';
 import {
   useRepositories,
   useRepositoryFilters,
 } from '@/shared/hooks/repositories';
 import { useDebounce } from '@/shared/hooks';
-import type { RepositoryType } from '@/shared/types';
+import type { RepositoryType, RepositoryFilters, PaginatedResponse, Repository } from '@/shared/types'; // Added types
+import { formatSize, formatLastUpdated, getRepositoryIcon, getRepositoryTypeColor, getVisibilityBadge } from '@/shared/utils/formatters'; // Assuming these are in formatters.ts
 
 export const Repositories = () => {
+  const { info } = useNotifications();
   const [searchTerm, setSearchTerm] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const debouncedSearchTerm = useDebounce(searchTerm, 300);
@@ -50,73 +56,6 @@ export const Repositories = () => {
   const handleStatusChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const value = event.target.value;
     updateFilter('status', value || undefined);
-  };
-
-  const formatSize = (bytes: number): string => {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let size = bytes;
-    let unitIndex = 0;
-
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-
-    return `${Math.round(size * 100) / 100} ${units[unitIndex]}`;
-  };
-
-  const formatLastUpdated = (dateString: string): string => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffInHours = Math.floor(
-      (now.getTime() - date.getTime()) / (1000 * 60 * 60)
-    );
-
-    if (diffInHours < 1) {
-      return 'just now';
-    } else if (diffInHours < 24) {
-      return `${diffInHours}h ago`;
-    } else if (diffInHours < 168) {
-      return `${Math.floor(diffInHours / 24)}d ago`;
-    } else {
-      return date.toLocaleDateString();
-    }
-  };
-
-  const getRepositoryIcon = (type: RepositoryType): string => {
-    switch (type) {
-      case 'maven':
-        return '☕';
-      case 'npm':
-        return '📦';
-      case 'pypi':
-        return '🐍';
-      case 'docker':
-        return '🐳';
-      default:
-        return '📁';
-    }
-  };
-
-  const getRepositoryTypeColor = (type: RepositoryType): string => {
-    switch (type) {
-      case 'maven':
-        return 'bg-orange-100 text-orange-800';
-      case 'npm':
-        return 'bg-red-100 text-red-800';
-      case 'pypi':
-        return 'bg-blue-100 text-blue-800';
-      case 'docker':
-        return 'bg-cyan-100 text-cyan-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getVisibilityBadge = (isPublic: boolean): string => {
-    return isPublic
-      ? 'bg-green-100 text-green-800'
-      : 'bg-yellow-100 text-yellow-800';
   };
 
   if (error) {
@@ -221,8 +160,12 @@ export const Repositories = () => {
 
       {/* Loading State */}
       {isLoading && (
-        <div className="flex items-center justify-center py-12">
-          <Spinner size="lg" />
+        <div className="space-y-4">
+          <RepositoryCardSkeleton />
+          <RepositoryCardSkeleton />
+          <RepositoryCardSkeleton />
+          <RepositoryCardSkeleton />
+          <RepositoryCardSkeleton />
         </div>
       )}
 
@@ -231,7 +174,7 @@ export const Repositories = () => {
         <>
           <div className="mb-4 flex items-center justify-between">
             <p className="text-sm text-gray-600">
-              Showing {data.data.length} of {data.pagination.total} repositories
+              Showing {data.data.length} of {data.total} repositories
             </p>
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-600">Sort by:</span>
@@ -262,44 +205,53 @@ export const Repositories = () => {
                 onEdit={repo => {
                   // TODO: Implement edit functionality
                   console.log('Edit repository:', repo);
-                  notificationService.info('Edit Feature', 'Edit functionality coming soon!');
+                  info(
+                    'Edit Feature',
+                    'Edit functionality coming soon!'
+                  );
                 }}
                 onDelete={repo => {
                   // TODO: Implement delete functionality
                   console.log('Delete repository:', repo);
-                  notificationService.info('Delete Feature', 'Delete functionality coming soon!');
+                  info(
+                    'Delete Feature',
+                    'Delete functionality coming soon!'
+                  );
                 }}
                 onToggleVisibility={repo => {
                   // TODO: Implement toggle visibility
                   console.log('Toggle visibility:', repo);
-                  notificationService.info('Visibility Feature', 'Toggle visibility coming soon!');
+                  info(
+                    'Visibility Feature',
+                    'Toggle visibility coming soon!'
+                  );
                 }}
               />
             ))}
           </div>
 
           {/* Pagination */}
-          {data.pagination.totalPages > 1 && (
+          {Math.ceil(data.total / data.limit) > 1 && (
             <div className="mt-8 flex items-center justify-center">
               <nav className="flex items-center gap-2">
                 <button
                   onClick={() =>
                     updateFilter('page', Math.max(1, (filters.page || 1) - 1))
                   }
-                  disabled={!data.pagination.hasPrevious}
+                  disabled={!(data.page > 1)}
                   className="px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Previous
                 </button>
 
                 {Array.from(
-                  { length: Math.min(5, data.pagination.totalPages) },
+                  { length: Math.min(5, Math.ceil(data.total / data.limit)) },
                   (_, i) => {
                     const currentPage = filters.page || 1;
                     const startPage = Math.max(1, currentPage - 2);
                     const pageNumber = startPage + i;
 
-                    if (pageNumber > data.pagination.totalPages) return null;
+                    if (pageNumber > Math.ceil(data.total / data.limit)) return null;
 
                     return (
                       <button
@@ -322,15 +274,14 @@ export const Repositories = () => {
                     updateFilter(
                       'page',
                       Math.min(
-                        data.pagination.totalPages,
+                        Math.ceil(data.total / data.limit),
                         (filters.page || 1) + 1
                       )
                     )
                   }
-                  disabled={!data.pagination.hasNext}
-                  className="px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!(data.page * data.limit < data.total)}
                 >
-                  Next
+                  <span>Next</span>
                 </button>
               </nav>
             </div>
@@ -346,7 +297,7 @@ export const Repositories = () => {
             No repositories found
           </h3>
           <p className="text-gray-600 mb-6">
-            {filters.search || filters.type?.length || filters.status
+            {(filters.search || filters.type?.length || filters.status)
               ? 'Try adjusting your search criteria or filters.'
               : 'Get started by creating your first repository.'}
           </p>

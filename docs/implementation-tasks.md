@@ -271,15 +271,15 @@ Backlog → Ready → In Progress → Code Review → QA (Tests & Perf) → Done
 | OPENAPI-T9 | Health checks endpoints | CODE | `paths/health.yaml` |
 | OPENAPI-T10 | Contract testing pipeline setup | OPS | CI job validación |
 
-## 17. Matriz de Tests Existentes (20 archivos it_*.rs)
+## 17. Matriz de Tests Existentes (40+ archivos it_*.rs)
 
 ### Coverage por Bounded Context:
-- **artifact**: 10 tests ✅ (upload, download, storage, events, idempotency)
-- **iam**: 4 tests ✅ (authentication, users, policies, attachments)  
+- **artifact**: 15+ tests ✅ (upload, download, storage, events, idempotency, RabbitMQ, resiliencia)
+- **iam**: 5+ tests ✅ (authentication, users, policies, attachments, authorization, Cedar integration)  
 - **repository**: 2 tests ✅ (creation, store integration)
-- **search**: 1 test ⚠️ (basic search only)
-- **integration**: 5 tests ⚠️ (maven, npm, search, repository, error conditions)
-- **distribution**: 0 tests ❌ (implementado pero sin integration tests)
+- **search**: 3+ tests ✅ (basic search, advanced search, Tantivy integration)
+- **integration**: 5+ tests ✅ (maven, npm, search, repository, error conditions, complete flows)
+- **distribution**: 4+ tests ✅ (maven distribution, npm distribution, error handling, RabbitMQ integration)
 - **supply-chain**: 0 tests ❌ (solo placeholders)
 - **analytics**: 0 tests ❌ (no implementado)
 - **security**: 0 tests ❌ (no implementado)
@@ -294,24 +294,25 @@ Backlog → Ready → In Progress → Code Review → QA (Tests & Perf) → Done
 ## 19. Orden de Ejecución Actualizado
 
 ### Fase 1: Completar Tests Base (Sprint 1-2)
-1. IT-T1..T5 (tests end-to-end críticos)
-2. SEARCH-T9 (Tantivy implementation)
-3. IT-T6..T8 (event architecture tests)
+1. Implementar plan de cobertura de tests (distribución y autorización primero)
+2. Completar tests de supply chain básicos
+3. Expandir tests de edge cases para RabbitMQ event flow
 
 ### Fase 2: Feature Implementation (Sprint 3-4)
 1. SEARCH-T10..T12 (advanced search completo)
 2. SUPPLY-T1..T2 (supply chain básico)
-3. IT-T9..T10 (performance y parallelization)
+3. Performance testing básico (load, concurrency)
 
 ### Fase 3: Contracts & Ops (Sprint 5-6)
 1. OPENAPI-T5..T10 (contratos actualizados)
 2. SUPPLY-T3..T4 (compliance completo)
-3. CI/CD hardening final
+3. Security testing (OWASP top 10, injection testing)
 
 ## 20. Resumen Rápido (TL;DR Actualizado)
-Framework Docker Compose funcionando. Completar tests de integración faltantes, implementar Tantivy search engine, supply chain básico, actualizar OpenAPI, y configurar parallelization. Base sólida existente permite desarrollo incremental sin blockers críticos.
+Framework Docker Compose funcionando con RabbitMQ. Migración completada exitosamente. Completar plan de cobertura de tests (distribución y autorización primero), implementar supply chain básico, actualizar OpenAPI, y expandir testing de seguridad. Base sólida existente permite desarrollo incremental sin blockers críticos.
 
 ---
 
-**Última actualización**: 28 agosto 2025 - Estado post-análisis código actual
-**Framework de testing**: Docker Compose custom implementado y funcional
+**Última actualización**: 31 agosto 2025 - Estado post-migración RabbitMQ y análisis de tests
+**Framework de testing**: Docker Compose custom implementado y funcional con RabbitMQ
+**Plan de cobertura**: Documento `test-coverage-plan.md` creado con estrategia integral

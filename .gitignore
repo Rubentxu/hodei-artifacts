@@ -3,8 +3,30 @@
 **/target/
 **/*.rlib
 scripts
-
 Cargo.lock
+e2e/screenshot*.png
+e2e/package-lock.json
+e2e/playwright-report/
+e2e/test-results/
+
+
+# AI/LLM tool configurations (should not be committed)
+.claude/
+.cursor/
+.gemini/
+.copilot/
+.anthropic/
+.openai/
+*.claude*
+*.cursor*
+*.gemini*
+*.copilot*
+CLAUDE.md
+AI_CONFIG.md
+LLM_SETTINGS.*
+*.clinerules*    
+*.web-bundles*
+
 
 # WASM / Trunk outputs
 dist/
@@ -33,8 +55,6 @@ Thumbs.db
 /apps/app-web/dist/
 /apps/app-web/.trunk/
 .windsurf
-.cursor
-.claude
 
 # WASM build artifacts generated outside target/dist (safety)
 *.wasm

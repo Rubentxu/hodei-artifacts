@@ -1,12 +1,11 @@
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 use tokio::time::sleep;
 use std::sync::Arc;
-use std::io::Write;
 use tempfile::NamedTempFile;
 
 use artifact::infrastructure::{
-    KafkaArtifactEventPublisher, MongoArtifactRepository, S3ArtifactStorage,
+    MongoArtifactRepository, RabbitMqArtifactEventPublisher, S3ArtifactStorage,
 };
 use aws_config::BehaviorVersion;
 use aws_sdk_s3::config::{Credentials, Region};
@@ -17,8 +16,6 @@ use iam::infrastructure::cedar_authorizer::CedarAuthorizer;
 
 use infra_mongo::{MongoClientFactory, MongoConfig};
 use mongodb::Client as MongoClient;
-use rdkafka::admin::AdminClient;
-use rdkafka::client::DefaultClientContext;
 use std::str::FromStr;
 
 // No-op DecisionCache for testing purposes
@@ -58,7 +55,7 @@ pub fn start_docker_compose(compose_file_path: &str) -> Result<(), String> {
         .trim_end_matches(".yml");
 
     // Create a temporary file to capture docker compose output
-    let mut temp_log_file = NamedTempFile::new()
+    let temp_log_file = NamedTempFile::new()
         .map_err(|e| format!("Failed to create temporary log file: {}", e))?;
     let log_file_path = temp_log_file.path().to_string_lossy().to_string();
 
@@ -263,24 +260,6 @@ pub async fn setup_mongo_client(factory: Arc<MongoClientFactory>) -> (MongoClien
     (mongo_client, artifact_repository)
 }
 
-pub async fn setup_s3_client(port: &u16) -> Arc<S3ArtifactStorage> {
-    let s3_endpoint_uri = format!("http://127.0.0.0:1:{}", port);
-    let sdk_config = aws_config::defaults(BehaviorVersion::latest())
-        .endpoint_url(s3_endpoint_uri)
-        .region(Region::new("us-east-1"))
-        .credentials_provider(Credentials::new("test", "test", None, None, "test"))
-        .load()
-        .await;
-    let s3_client = S3Client::new(&sdk_config);
-    let bucket_name = "test-bucket".to_string();
-    s3_client
-        .create_bucket()
-        .bucket(bucket_name.clone())
-        .send()
-        .await
-        .unwrap();
-    Arc::new(S3ArtifactStorage::new(s3_client, bucket_name))
-}
 
 pub async fn setup_rabbitmq_client(port: &u16) -> Result<Arc<RabbitMqArtifactEventPublisher>, String> {
     let amqp_addr = format!("amqp://guest:guest@127.0.0.1:{}/%2f", port);
@@ -290,7 +269,7 @@ pub async fn setup_rabbitmq_client(port: &u16) -> Result<Arc<RabbitMqArtifactEve
     Ok(Arc::new(publisher))
 }
 
-pub async fn setup_authorization_client() -> Arc<CedarAuthorizer<'static>> {
+pub async fn setup_authorization_client() -> Arc<CedarAuthorizer> {
     let policy_str = r#"
         permit(
             principal,
@@ -299,7 +278,7 @@ pub async fn setup_authorization_client() -> Arc<CedarAuthorizer<'static>> {
         );
     "#;
     let policies = PolicySet::from_str(policy_str).expect("Failed to parse Cedar policy");
-    Arc::new(CedarAuthorizer::new(policies, &NoopDecisionCache))
+    Arc::new(CedarAuthorizer::new(policies, Arc::new(NoopDecisionCache)))
 }
 
 // Robust S3 health check
@@ -337,13 +316,6 @@ pub async fn wait_for_s3_ready(s3_port: u16) -> Result<(), String> {
 }
 
 // Setup clients
-pub async fn setup_mongo_client(factory: Arc<MongoClientFactory>) -> (MongoClient, Arc<MongoArtifactRepository>) {
-    let mongo_client = factory.client().await.unwrap().clone();
-    let artifact_repository = Arc::new(MongoArtifactRepository::new(factory));
-    artifact_repository.ensure_indexes().await.unwrap();
-    (mongo_client, artifact_repository)
-}
-
 pub async fn setup_s3_client(port: &u16) -> Arc<S3ArtifactStorage> {
     let s3_endpoint_uri = format!("http://127.0.0.1:{}", port);
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
@@ -363,19 +335,3 @@ pub async fn setup_s3_client(port: &u16) -> Arc<S3ArtifactStorage> {
     Arc::new(S3ArtifactStorage::new(s3_client, bucket_name))
 }
 
-pub fn setup_kafka_client(port: &u16) -> Arc<KafkaArtifactEventPublisher> {
-    let kafka_brokers = format!("127.0.0.1:{}", port);
-    Arc::new(KafkaArtifactEventPublisher::new(&kafka_brokers).unwrap())
-}
-
-pub async fn setup_authorization_client() -> Arc<CedarAuthorizer<'static>> {
-    let policy_str = r#"
-        permit(
-            principal,
-            action,
-            resource
-        );
-    "#;
-    let policies = PolicySet::from_str(policy_str).expect("Failed to parse Cedar policy");
-    Arc::new(CedarAuthorizer::new(policies, &NoopDecisionCache))
-}

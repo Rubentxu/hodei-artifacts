@@ -1,28 +1,18 @@
-import { useNotificationStore } from '@/shared/stores/notificationStore';
-import {
-  Toast,
-  ToastClose,
-  ToastDescription,
-  ToastProvider,
-  ToastTitle,
-  ToastViewport,
-} from '@/components/ui/toast';
+import { useNotifications } from '@/shared/stores/ui.store';
+import { Toast } from '@/components/ui/Toast';
 
 export function NotificationProvider() {
-  const { notifications, dismissNotification } = useNotificationStore();
+  const { notifications, removeNotification } = useNotifications();
 
   return (
-    <ToastProvider>
-      {notifications.map(({ id, type, title, message }) => (
-        <Toast key={id} variant={type === 'error' ? 'destructive' : 'default'}>
-          <div className="grid gap-1">
-            <ToastTitle>{title}</ToastTitle>
-            {message && <ToastDescription>{message}</ToastDescription>}
-          </div>
-          <ToastClose onClick={() => dismissNotification(id)} />
-        </Toast>
+    <div className="fixed top-0 right-0 z-50 p-4 space-y-2 w-full max-w-sm">
+      {notifications.map(notification => (
+        <Toast
+          key={notification.id}
+          notification={notification}
+          onClose={() => removeNotification(notification.id)}
+        />
       ))}
-      <ToastViewport />
-    </ToastProvider>
+    </div>
   );
 }

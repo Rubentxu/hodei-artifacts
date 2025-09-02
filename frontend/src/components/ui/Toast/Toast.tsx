@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Notification } from '@/shared/stores/notification.store';
-import { useNotificationStore } from '@/shared/stores';
+import type { Notification } from '@/shared/stores/ui.store';
 
-interface ToastProps {
+export interface ToastProps {
   notification: Notification;
   onClose: () => void;
 }
@@ -63,8 +62,9 @@ const ToastIcon = ({ type }: { type: Notification['type'] }) => {
 };
 
 const getToastStyles = (type: Notification['type']) => {
-  const baseStyles = 'max-w-sm w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5';
-  
+  const baseStyles =
+    'max-w-sm w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5';
+
   switch (type) {
     case 'success':
       return `${baseStyles} border-l-4 border-green-400`;
@@ -92,7 +92,7 @@ export const Toast = ({ notification, onClose }: ToastProps) => {
       const stepDecrement = 100 / totalSteps;
 
       const progressInterval = setInterval(() => {
-        setProgress((prev) => Math.max(0, prev - stepDecrement));
+        setProgress(prev => Math.max(0, prev - stepDecrement));
       }, interval);
 
       return () => clearInterval(progressInterval);
@@ -138,8 +138,18 @@ export const Toast = ({ notification, onClose }: ToastProps) => {
                 className="inline-flex text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
               >
                 <span className="sr-only">Close</span>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-5 h-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>

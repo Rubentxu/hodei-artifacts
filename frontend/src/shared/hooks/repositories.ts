@@ -1,12 +1,11 @@
-import { useState } from 'react';
+// Forcing a reload to clear Vite cache
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { repositoriesApi } from '@/shared/api/repositories';
 import type {
   Repository,
   RepositoryFilters,
-  CreateRepositoryRequest,
   UpdateRepositoryRequest,
-  DashboardData,
 } from '@/shared/types';
 
 // Query keys for React Query cache
@@ -38,12 +37,97 @@ export const useRepository = (id: string) => {
   });
 };
 
-export const useDashboardData = () => {
-  return useQuery({
-    queryKey: REPOSITORIES_KEYS.dashboard,
-    queryFn: () => repositoriesApi.getDashboardData(),
-    staleTime: 30 * 1000, // 30 seconds
-  });
+export const useDashboardData = (limit: number = 5) => {
+  const [isLoading, setIsLoading] = useState(true);
+
+  const mockData = {
+    data: {
+      metrics: {
+        totalPackages: 1250,
+        activeRepositories: 42,
+        onlineUsers: 7,
+        storageUsed: { value: 128, unit: 'GB' },
+      },
+      recentRepositories: [
+        {
+          id: '1',
+          name: 'hodei-main',
+          type: 'maven',
+          packageCount: 120,
+          size: 54321098,
+          lastUpdated: new Date().toISOString(),
+          visibility: 'public',
+          isPublic: true,
+          url: '',
+        },
+        {
+          id: '2',
+          name: 'project-hermes',
+          type: 'npm',
+          packageCount: 45,
+          size: 2210987,
+          lastUpdated: new Date().toISOString(),
+          visibility: 'private',
+          isPublic: false,
+          url: '',
+        },
+        {
+          id: '3',
+          name: 'data-pipelines',
+          type: 'pypi',
+          packageCount: 88,
+          size: 12345678,
+          lastUpdated: new Date().toISOString(),
+          visibility: 'public',
+          isPublic: true,
+          url: '',
+        },
+      ].slice(0, limit),
+      recentActivity: [
+        {
+          id: '1',
+          type: 'upload',
+          userName: 'Ruben',
+          targetName: 'hodei-main/artifact-1.0.jar',
+          timestamp: new Date().toISOString(),
+          targetType: 'artifact',
+          targetId: '1',
+        },
+        {
+          id: '2',
+          type: 'create',
+          userName: 'Alice',
+          targetName: 'new-frontend-repo',
+          timestamp: new Date().toISOString(),
+          targetType: 'repository',
+          targetId: '4',
+        },
+        {
+          id: '3',
+          type: 'download',
+          userName: 'Bob',
+          targetName: 'project-hermes/react-18.tgz',
+          timestamp: new Date().toISOString(),
+          targetType: 'artifact',
+          targetId: '2',
+        },
+      ].slice(0, limit),
+    },
+    success: true,
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsLoading(false);
+    }, 1500); // Simulate a 1.5 second network delay
+    return () => clearTimeout(timer);
+  }, []);
+
+  return {
+    data: isLoading ? undefined : mockData,
+    isLoading,
+    error: null,
+  };
 };
 
 export const useCreateRepository = () => {
@@ -159,10 +243,20 @@ export const useOptimisticRepositories = () => {
 export const useRepositoryFilters = (
   initialFilters: RepositoryFilters = {}
 ) => {
-  const [filters, setFilters] = useState<RepositoryFilters>(initialFilters);
+  const [filters, setFilters] = useState<RepositoryFilters>({
+    search: undefined,
+    type: undefined,
+    visibility: undefined,
+    status: undefined,
+    page: undefined,
+    limit: undefined,
+    sortBy: undefined,
+    sortOrder: undefined,
+    ...initialFilters,
+  });
 
   const updateFilter = (key: keyof RepositoryFilters, value: any) => {
-    setFilters(prev => ({
+    setFilters((prev: RepositoryFilters) => ({
       ...prev,
       [key]: value,
       page: 1, // Reset to first page when filters change

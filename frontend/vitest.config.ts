@@ -10,7 +10,7 @@ export default defineConfig({
     environment: 'jsdom',
 
     // Global test setup
-    setupFiles: ['./src/shared/test/setup.ts'],
+    setupFiles: ['./src/__tests__/setup.ts'],
 
     // Globals configuration for expect, vi, etc.
     globals: true,
@@ -81,6 +81,7 @@ export default defineConfig({
     mockReset: true,
     clearMocks: true,
     restoreMocks: true,
+    tsconfig: './tsconfig.vitest.json',
   },
 
   // Resolve configuration matching main vite config

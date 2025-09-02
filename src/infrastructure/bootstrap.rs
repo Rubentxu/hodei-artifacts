@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, EnvFilter};
 use crate::state::AppState;
-use artifact::infrastructure::{KafkaArtifactEventPublisher, MongoArtifactRepository, RabbitMqArtifactEventPublisher, S3ArtifactStorage};
+use artifact::infrastructure::{MongoArtifactRepository, RabbitMqArtifactEventPublisher, S3ArtifactStorage};
 use artifact::application::ports::ArtifactEventPublisher;
 use iam::application::api::IamApi;
 use iam::infrastructure::cedar_policy_validator::CedarPolicyValidator;
@@ -59,19 +59,19 @@ pub async fn bootstrap() -> Result<Arc<Mutex<AppState>>> {
         s3_bucket,
     ));
 
-    // Determine event broker type from environment variable
-    let event_broker_type = env::var("EVENT_BROKER_TYPE").unwrap_or_else(|_| "kafka".to_string());
-
-    let artifact_event_publisher: Arc<dyn ArtifactEventPublisher> = match event_broker_type.as_str() {
+    // Configure event broker based on environment variable
+    let artifact_event_publisher: Arc<dyn ArtifactEventPublisher> = match env::var("EVENT_BROKER_TYPE").unwrap_or_else(|_| "rabbitmq".to_string()).as_str() {
         "rabbitmq" => {
             let amqp_addr = env::var("AMQP_ADDR")
                 .context("AMQP_ADDR environment variable not set for RabbitMQ")?;
             Arc::new(RabbitMqArtifactEventPublisher::new(&amqp_addr, "hodei_artifacts_exchange").await?)
-        },
-        _ => { // Default to Kafka
-            let kafka_brokers = env::var("KAFKA_BROKERS")
-                .unwrap_or_else(|_| "127.0.0.1:9092".to_string());
-            Arc::new(KafkaArtifactEventPublisher::new(&kafka_brokers).unwrap())
+        }
+        "kafka" => {
+            // Kafka implementation would go here when available
+            anyhow::bail!("Kafka event broker is not currently implemented. Use 'rabbitmq' instead.")
+        }
+        broker_type => {
+            anyhow::bail!("Unsupported event broker type: {}. Supported types: rabbitmq", broker_type)
         }
     };
 

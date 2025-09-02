@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { ApiResponse, PaginatedResponse } from './types';
+import type { ApiResponse } from './types';
 
 export interface SearchFilters {
   query?: string;
@@ -57,41 +57,56 @@ export interface SearchSuggestion {
 
 export const searchApi = {
   // Basic search
-  search: async (filters: SearchFilters): Promise<ApiResponse<SearchResponse>> => {
+  search: async (
+    filters: SearchFilters
+  ): Promise<ApiResponse<SearchResponse>> => {
     const params = new URLSearchParams();
-    
+
     if (filters.query) params.append('q', filters.query);
-    if (filters.repositoryId) params.append('repositoryId', filters.repositoryId);
+    if (filters.repositoryId)
+      params.append('repositoryId', filters.repositoryId);
     if (filters.type?.length) {
       filters.type.forEach(type => params.append('type', type));
     }
-    if (filters.sizeMin !== undefined) params.append('sizeMin', filters.sizeMin.toString());
-    if (filters.sizeMax !== undefined) params.append('sizeMax', filters.sizeMax.toString());
-    if (filters.createdAfter) params.append('createdAfter', filters.createdAfter);
-    if (filters.createdBefore) params.append('createdBefore', filters.createdBefore);
+    if (filters.sizeMin !== undefined)
+      params.append('sizeMin', filters.sizeMin.toString());
+    if (filters.sizeMax !== undefined)
+      params.append('sizeMax', filters.sizeMax.toString());
+    if (filters.createdAfter)
+      params.append('createdAfter', filters.createdAfter);
+    if (filters.createdBefore)
+      params.append('createdBefore', filters.createdBefore);
     if (filters.sortBy) params.append('sortBy', filters.sortBy);
     if (filters.sortOrder) params.append('sortOrder', filters.sortOrder);
-    if (filters.limit !== undefined) params.append('limit', filters.limit.toString());
-    if (filters.offset !== undefined) params.append('offset', filters.offset.toString());
+    if (filters.limit !== undefined)
+      params.append('limit', filters.limit.toString());
+    if (filters.offset !== undefined)
+      params.append('offset', filters.offset.toString());
 
     const response = await apiClient.get(`/search?${params.toString()}`);
     return response.data;
   },
 
   // Autocomplete suggestions
-  suggest: async (query: string, limit: number = 5): Promise<ApiResponse<SearchSuggestion[]>> => {
+  suggest: async (
+    query: string,
+    limit: number = 5
+  ): Promise<ApiResponse<SearchSuggestion[]>> => {
     const response = await apiClient.get(`/search/suggest`, {
-      params: { q: query, limit }
+      params: { q: query, limit },
     });
     return response.data;
   },
 
   // Get search facets
-  getFacets: async (filters: SearchFilters): Promise<ApiResponse<SearchFacets>> => {
+  getFacets: async (
+    filters: SearchFilters
+  ): Promise<ApiResponse<SearchFacets>> => {
     const params = new URLSearchParams();
-    
+
     if (filters.query) params.append('q', filters.query);
-    if (filters.repositoryId) params.append('repositoryId', filters.repositoryId);
+    if (filters.repositoryId)
+      params.append('repositoryId', filters.repositoryId);
     if (filters.type?.length) {
       filters.type.forEach(type => params.append('type', type));
     }
@@ -101,45 +116,69 @@ export const searchApi = {
   },
 
   // Advanced search with complex queries
-  advancedSearch: async (query: string, filters: Omit<SearchFilters, 'query'> = {}): Promise<ApiResponse<SearchResponse>> => {
+  advancedSearch: async (
+    query: string,
+    filters: Omit<SearchFilters, 'query'> = {}
+  ): Promise<ApiResponse<SearchResponse>> => {
     const params = new URLSearchParams();
-    
+
     params.append('q', query);
-    if (filters.repositoryId) params.append('repositoryId', filters.repositoryId);
+    if (filters.repositoryId)
+      params.append('repositoryId', filters.repositoryId);
     if (filters.type?.length) {
       filters.type.forEach(type => params.append('type', type));
     }
-    if (filters.sizeMin !== undefined) params.append('sizeMin', filters.sizeMin.toString());
-    if (filters.sizeMax !== undefined) params.append('sizeMax', filters.sizeMax.toString());
-    if (filters.createdAfter) params.append('createdAfter', filters.createdAfter);
-    if (filters.createdBefore) params.append('createdBefore', filters.createdBefore);
+    if (filters.sizeMin !== undefined)
+      params.append('sizeMin', filters.sizeMin.toString());
+    if (filters.sizeMax !== undefined)
+      params.append('sizeMax', filters.sizeMax.toString());
+    if (filters.createdAfter)
+      params.append('createdAfter', filters.createdAfter);
+    if (filters.createdBefore)
+      params.append('createdBefore', filters.createdBefore);
     if (filters.sortBy) params.append('sortBy', filters.sortBy);
     if (filters.sortOrder) params.append('sortOrder', filters.sortOrder);
-    if (filters.limit !== undefined) params.append('limit', filters.limit.toString());
-    if (filters.offset !== undefined) params.append('offset', filters.offset.toString());
+    if (filters.limit !== undefined)
+      params.append('limit', filters.limit.toString());
+    if (filters.offset !== undefined)
+      params.append('offset', filters.offset.toString());
 
-    const response = await apiClient.get(`/search/advanced?${params.toString()}`);
+    const response = await apiClient.get(
+      `/search/advanced?${params.toString()}`
+    );
     return response.data;
   },
 
   // Search within a specific repository
-  searchInRepository: async (repositoryId: string, query: string, filters: Omit<SearchFilters, 'repositoryId' | 'query'> = {}): Promise<ApiResponse<SearchResponse>> => {
+  searchInRepository: async (
+    repositoryId: string,
+    query: string,
+    filters: Omit<SearchFilters, 'repositoryId' | 'query'> = {}
+  ): Promise<ApiResponse<SearchResponse>> => {
     const params = new URLSearchParams();
-    
+
     params.append('q', query);
     if (filters.type?.length) {
       filters.type.forEach(type => params.append('type', type));
     }
-    if (filters.sizeMin !== undefined) params.append('sizeMin', filters.sizeMin.toString());
-    if (filters.sizeMax !== undefined) params.append('sizeMax', filters.sizeMax.toString());
-    if (filters.createdAfter) params.append('createdAfter', filters.createdAfter);
-    if (filters.createdBefore) params.append('createdBefore', filters.createdBefore);
+    if (filters.sizeMin !== undefined)
+      params.append('sizeMin', filters.sizeMin.toString());
+    if (filters.sizeMax !== undefined)
+      params.append('sizeMax', filters.sizeMax.toString());
+    if (filters.createdAfter)
+      params.append('createdAfter', filters.createdAfter);
+    if (filters.createdBefore)
+      params.append('createdBefore', filters.createdBefore);
     if (filters.sortBy) params.append('sortBy', filters.sortBy);
     if (filters.sortOrder) params.append('sortOrder', filters.sortOrder);
-    if (filters.limit !== undefined) params.append('limit', filters.limit.toString());
-    if (filters.offset !== undefined) params.append('offset', filters.offset.toString());
+    if (filters.limit !== undefined)
+      params.append('limit', filters.limit.toString());
+    if (filters.offset !== undefined)
+      params.append('offset', filters.offset.toString());
 
-    const response = await apiClient.get(`/search/repository/${repositoryId}?${params.toString()}`);
+    const response = await apiClient.get(
+      `/search/repository/${repositoryId}?${params.toString()}`
+    );
     return response.data;
   },
 
@@ -156,17 +195,31 @@ export const searchApi = {
   },
 
   // Save search as favorite
-  saveSearch: async (name: string, query: string, filters: SearchFilters): Promise<ApiResponse<void>> => {
+  saveSearch: async (
+    name: string,
+    query: string,
+    filters: SearchFilters
+  ): Promise<ApiResponse<void>> => {
     const response = await apiClient.post('/search/favorites', {
       name,
       query,
-      filters
+      filters,
     });
     return response.data;
   },
 
   // Get saved searches
-  getSavedSearches: async (): Promise<ApiResponse<Array<{ id: string; name: string; query: string; filters: SearchFilters; createdAt: string }>>> => {
+  getSavedSearches: async (): Promise<
+    ApiResponse<
+      Array<{
+        id: string;
+        name: string;
+        query: string;
+        filters: SearchFilters;
+        createdAt: string;
+      }>
+    >
+  > => {
     const response = await apiClient.get('/search/favorites');
     return response.data;
   },
@@ -175,5 +228,5 @@ export const searchApi = {
   deleteSavedSearch: async (id: string): Promise<ApiResponse<void>> => {
     const response = await apiClient.delete(`/search/favorites/${id}`);
     return response.data;
-  }
+  },
 };

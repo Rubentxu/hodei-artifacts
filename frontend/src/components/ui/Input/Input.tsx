@@ -4,7 +4,7 @@ import { cn } from '@/shared/utils';
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   variant?: 'default' | 'error';
-  size?: 'sm' | 'md' | 'lg';
+  inputSize?: 'sm' | 'md' | 'lg';
   leftIcon?: React.ReactNode;
   rightIcon?: React.ReactNode;
   label?: string;
@@ -17,7 +17,7 @@ const inputVariants = {
     default: 'border-gray-300 focus:border-blue-500 focus:ring-blue-500',
     error: 'border-red-500 focus:border-red-500 focus:ring-red-500',
   },
-  size: {
+  inputSize: {
     sm: 'px-3 py-1.5 text-sm',
     md: 'px-3 py-2 text-sm',
     lg: 'px-4 py-3 text-base',
@@ -26,7 +26,7 @@ const inputVariants = {
 
 const getInputClasses = (
   variant: InputProps['variant'] = 'default',
-  size: InputProps['size'] = 'md'
+  inputSize: InputProps['inputSize'] = 'md'
 ) => {
   return cn(
     'block w-full rounded-md border bg-white shadow-sm transition-colors duration-200',
@@ -34,7 +34,7 @@ const getInputClasses = (
     'disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed',
     'placeholder:text-gray-400',
     inputVariants.variant[variant],
-    inputVariants.size[size]
+    inputVariants.inputSize[inputSize]
   );
 };
 
@@ -42,7 +42,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
   (
     {
       variant = 'default',
-      size = 'md',
+      inputSize = 'md',
       leftIcon,
       rightIcon,
       label,
@@ -80,7 +80,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
             ref={ref}
             id={inputId}
             className={cn(
-              getInputClasses(currentVariant, size),
+              getInputClasses(currentVariant, inputSize),
               leftIcon && 'pl-10',
               rightIcon && 'pr-10',
               className

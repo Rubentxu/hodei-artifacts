@@ -104,7 +104,7 @@ export const Login = () => {
                   className="font-medium text-blue-600 hover:text-blue-500"
                   onClick={e => {
                     e.preventDefault();
-                    showInfo(
+                    showSuccess(
                       'Feature coming soon',
                       'Password recovery will be available soon.'
                     );
@@ -147,7 +147,7 @@ export const Login = () => {
                 onClick={() => {
                   setEmail('admin@example.com');
                   setPassword('admin123');
-                  showInfo('Demo credentials', 'Using admin demo account');
+                  showSuccess('Demo credentials', 'Using admin demo account');
                 }}
                 disabled={isLoading}
               >
@@ -159,7 +159,7 @@ export const Login = () => {
                 onClick={() => {
                   setEmail('user@example.com');
                   setPassword('user123');
-                  showInfo('Demo credentials', 'Using user demo account');
+                  showSuccess('Demo credentials', 'Using user demo account');
                 }}
                 disabled={isLoading}
               >
@@ -177,7 +177,7 @@ export const Login = () => {
               className="font-medium text-blue-600 hover:text-blue-500"
               onClick={e => {
                 e.preventDefault();
-                showInfo(
+                showSuccess(
                   'Feature coming soon',
                   'User registration will be available soon.'
                 );

@@ -18,7 +18,7 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
-    baseURL: process.env.BASE_URL || 'http://localhost:3000',
+    baseURL: process.env.BASE_URL || 'http://localhost:5173',
     
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
@@ -70,11 +70,13 @@ export default defineConfig({
 
   /* Run your local dev server before starting the tests */
   webServer: {
-    command: 'cargo run --bin hodei-artifacts',
-    url: 'http://localhost:3000/health',
+    command: 'npm run dev',
+    url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000, // 2 minutes
+    cwd: '../frontend', // Run command from the frontend directory
     env: {
+      // Keep backend environment variables if needed for global setup/teardown or API calls
       RUST_LOG: 'info',
       DATABASE_URL: 'mongodb://localhost:27017/hodei_artifacts_test',
       S3_ENDPOINT: 'http://localhost:9000',
@@ -84,8 +86,8 @@ export default defineConfig({
   },
 
   /* Global setup and teardown */
-  globalSetup: require.resolve('./setup/global-setup.ts'),
-  globalTeardown: require.resolve('./setup/global-teardown.ts'),
+  globalSetup: './setup/global-setup.ts',
+  globalTeardown: './setup/global-teardown.ts',
 
   /* Test timeout */
   timeout: 30 * 1000, // 30 seconds

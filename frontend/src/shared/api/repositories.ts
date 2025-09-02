@@ -3,58 +3,12 @@ import type {
   Repository,
   ApiResponse,
   PaginatedResponse,
-  ApiError,
+  CreateRepositoryRequest,
+  UpdateRepositoryRequest,
+  RepositoryFilters,
+  DashboardData,
+  ActivityEvent,
 } from '@/shared/types';
-
-export interface CreateRepositoryRequest {
-  name: string;
-  description?: string;
-  type: 'maven' | 'npm' | 'pypi' | 'docker';
-  visibility: 'public' | 'private';
-  settings?: Record<string, any>;
-}
-
-export interface UpdateRepositoryRequest {
-  name?: string;
-  description?: string;
-  visibility?: 'public' | 'private';
-  settings?: Record<string, any>;
-}
-
-export interface RepositoryFilters {
-  type?: string[];
-  visibility?: string[];
-  search?: string;
-  page?: number;
-  limit?: number;
-  sortBy?: 'name' | 'packageCount' | 'size' | 'lastUpdated';
-  sortOrder?: 'asc' | 'desc';
-}
-
-export interface RepositoryMetrics {
-  totalPackages: number;
-  activeRepositories: number;
-  onlineUsers: number;
-  storageUsed: { value: number; unit: string };
-}
-
-export interface ActivityEvent {
-  id: string;
-  type: 'upload' | 'download' | 'create' | 'update' | 'delete';
-  userId: string;
-  userName: string;
-  targetType: 'repository' | 'artifact' | 'user';
-  targetId: string;
-  targetName: string;
-  timestamp: string;
-  details?: Record<string, any>;
-}
-
-export interface DashboardData {
-  metrics: RepositoryMetrics;
-  recentRepositories: Repository[];
-  recentActivity: ActivityEvent[];
-}
 
 export const repositoriesApi = {
   // Get all repositories with optional filters

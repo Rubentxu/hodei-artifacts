@@ -1,16 +1,12 @@
 import React, { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { PageHeader } from '../../components/layout/page-header';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '../../components/ui/card';
-import { Input } from '../../components/ui/input';
-import { Button } from '../../components/ui/button';
-import { Spinner } from '../../components/ui/spinner';
-import { useUser, UpdateUserProfile } from '../../features/users';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
+import { Button } from '@/components/ui/Button';
+import { Spinner } from '@/components/ui/Spinner';
+import type { UpdateUserProfile } from '@/features/users';
+import { useUser } from '@/features/users/hooks/useUser';
 
 const ProfilePage = () => {
   const { user, updateUser, isLoading, isUpdating } = useUser();

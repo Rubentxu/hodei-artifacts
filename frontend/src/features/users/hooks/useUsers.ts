@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userService } from '../services/userApi';
-import { useNotificationStore } from '@/shared/stores/notificationStore';
-import type { NewUser, UpdateUser, User } from '../types/user.types';
+import { useNotificationStore } from '@/shared/stores';
+import type { NewUser, UpdateUser } from '../types/user.types';
 
 const USERS_KEY = 'users';
 

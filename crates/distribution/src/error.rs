@@ -21,5 +21,7 @@ pub enum DistributionError {
     CedarParse(#[from] ParseErrors),
     #[error("Error interno: {0}")]
     Internal(String),
+    #[error("Paquete npm inválido: {0}")]
+    InvalidNpmPackage(String),
 }
 pub type DistributionResult<T> = Result<T, DistributionError>;

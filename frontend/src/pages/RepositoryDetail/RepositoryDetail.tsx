@@ -3,7 +3,7 @@ import { notificationService } from '@/shared/stores/notification.store';
 import { useParams, Navigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Spinner } from '@/components/ui/Spinner';
+import { RepositoryDetailSkeleton } from '@/components/repository';
 import { useRepository } from '@/shared/hooks/repositories';
 import type { RepositoryType } from '@/shared/types';
 
@@ -31,11 +31,7 @@ export const RepositoryDetail = () => {
   }
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
+    return <RepositoryDetailSkeleton />;
   }
 
   if (error) {
@@ -169,7 +165,7 @@ export const RepositoryDetail = () => {
                 </label>
                 <input
                   type="text"
-                  value={repository.name}
+                  value={repository.data.name}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md"
                   readOnly
                 />
@@ -179,7 +175,7 @@ export const RepositoryDetail = () => {
                   Description
                 </label>
                 <textarea
-                  value={repository.description}
+                  value={repository.data.description}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md"
                   rows={3}
                   readOnly
@@ -192,13 +188,13 @@ export const RepositoryDetail = () => {
                 <div className="flex gap-2">
                   <input
                     type="text"
-                    value={repository.url}
+                    value={repository.data.url}
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-md"
                     readOnly
                   />
                   <Button
                     variant="outline"
-                    onClick={() => copyToClipboard(repository.url)}
+                    onClick={() => copyToClipboard(repository.data.url)}
                   >
                     📋 Copy
                   </Button>
@@ -248,7 +244,9 @@ export const RepositoryDetail = () => {
             Repositories
           </a>
           <span>›</span>
-          <span className="text-gray-900 font-medium">{repository.name}</span>
+          <span className="text-gray-900 font-medium">
+            {repository.data.name}
+          </span>
         </div>
       </nav>
 
@@ -257,33 +255,33 @@ export const RepositoryDetail = () => {
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
             <span className="text-4xl">
-              {getRepositoryIcon(repository.type)}
+              {getRepositoryIcon(repository.data.type)}
             </span>
             <div>
               <div className="flex items-center gap-3 mb-2">
                 <h1 className="text-3xl font-bold text-gray-900">
-                  {repository.name}
+                  {repository.data.name}
                 </h1>
                 <span
-                  className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getRepositoryTypeColor(repository.type)}`}
+                  className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getRepositoryTypeColor(repository.data.type)}`}
                 >
-                  {repository.type.toUpperCase()}
+                  {repository.data.type.toUpperCase()}
                 </span>
                 <span
-                  className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getVisibilityBadge(repository.isPublic)}`}
+                  className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getVisibilityBadge(repository.data.isPublic)}`}
                 >
-                  {repository.isPublic ? 'Public' : 'Private'}
+                  {repository.data.isPublic ? 'Public' : 'Private'}
                 </span>
               </div>
               <p className="text-gray-600 text-lg mb-3">
-                {repository.description}
+                {repository.data.description}
               </p>
               <div className="flex items-center gap-6 text-sm text-gray-500">
-                <span>🔗 {repository.url}</span>
+                <span>🔗 {repository.data.url}</span>
                 <span>
-                  📊 {repository.packageCount.toLocaleString()} packages
+                  📊 {repository.data.packageCount.toLocaleString()} packages
                 </span>
-                <span>💾 {formatSize(repository.size)}</span>
+                <span>💾 {formatSize(repository.data.size)}</span>
               </div>
             </div>
           </div>
@@ -292,7 +290,7 @@ export const RepositoryDetail = () => {
             <Button variant="outline">🔐 Permissions</Button>
             <Button
               variant="outline"
-              onClick={() => copyToClipboard(repository.url)}
+              onClick={() => copyToClipboard(repository.data.url)}
             >
               📋 Copy URL
             </Button>

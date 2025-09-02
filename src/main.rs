@@ -1,6 +1,4 @@
 use hodei_artifacts_api::{bootstrap, Application};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

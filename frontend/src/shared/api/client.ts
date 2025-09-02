@@ -63,24 +63,14 @@ apiClient.interceptors.response.use(
         break;
 
       case 403:
-        // Forbidden - user doesn't have permission
-        const forbiddenError: ApiError = {
-          message:
-            data?.message ||
-            'You do not have permission to perform this action.',
-          code: 'FORBIDDEN',
-          details: data?.details,
-        };
-        return Promise.reject(forbiddenError);
+        // Forbidden - redirect to unauthorized page
+        window.location.href = '/unauthorized';
+        return Promise.reject(error);
 
       case 404:
-        // Not found
-        const notFoundError: ApiError = {
-          message: data?.message || 'The requested resource was not found.',
-          code: 'NOT_FOUND',
-          details: data?.details,
-        };
-        return Promise.reject(notFoundError);
+        // Not found - redirect to not-found page
+        window.location.href = '/not-found';
+        return Promise.reject(error);
 
       case 429:
         // Rate limited
@@ -93,14 +83,9 @@ apiClient.interceptors.response.use(
         return Promise.reject(rateLimitError);
 
       case 500:
-        // Server error
-        const serverError: ApiError = {
-          message:
-            data?.message || 'Internal server error. Please try again later.',
-          code: 'SERVER_ERROR',
-          details: data?.details,
-        };
-        return Promise.reject(serverError);
+        // Server error - redirect to server-error page
+        window.location.href = '/server-error';
+        return Promise.reject(error);
 
       default:
         // Generic error

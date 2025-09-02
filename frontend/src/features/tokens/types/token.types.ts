@@ -6,10 +6,10 @@ export interface ApiToken {
   scopes: string[];
 }
 
-export type NewApiToken = {
+export interface NewApiToken {
   name: string;
   scopes: string[];
-};
+}
 
 export type CreatedApiToken = ApiToken & {
   token: string; // The actual token, only shown on creation
