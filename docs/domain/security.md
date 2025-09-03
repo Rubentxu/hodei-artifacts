@@ -1,370 +1,301 @@
-# Especificación Completa del Modelo de Datos: Crate `supply-chain`
+# Especificación Completa del Modelo de Datos: Crate `security`
 
 **Versión:** 6.0
-**Crate:** `crates/supply-chain`
-**Contexto de Dominio:** Seguridad de la Cadena de Suministro
+**Crate:** `crates/security`
+**Contexto de Dominio:** Escaneo y Cumplimiento
 
 ### 1\. Propósito y Responsabilidades
 
-El crate `supply-chain` es el Bounded Context responsable de la **transparencia e integridad** de los artefactos. Su función no es encontrar vulnerabilidades, sino generar, almacenar y verificar **atestaciones**: pruebas verificables sobre cómo se construyó un artefacto, de qué está compuesto y quién lo respalda.
+El crate `security` es el Bounded Context responsable de la **evaluación de riesgos y la detección de fallos** en los artefactos de software. Es el complemento del crate `supply-chain`; mientras `supply-chain` se enfoca en la transparencia e integridad, `security` se enfoca en identificar problemas conocidos.
 
 Sus responsabilidades clave son:
 
-* Gestionar el ciclo de vida de las `Attestation`, el Agregado Raíz que representa cualquier tipo de evidencia sobre un artefacto.
-* Modelar y persistir de forma estructurada los **Software Bill of Materials (SBOM)** en formatos estándar como CycloneDX y SPDX.
-* Modelar y persistir la procedencia de la construcción de artefactos, siguiendo el estándar **SLSA**.
-* Gestionar las **firmas digitales** (ej. Cosign) asociadas a las atestaciones y artefactos.
-* Gestionar las **claves públicas** utilizadas para la verificación de firmas, estableciendo una cadena de confianza.
+* Orquestar escaneos de seguridad asíncronos (vulnerabilidades, licencias, malware, etc.) sobre los `PackageVersion`.
+* Gestionar el ciclo de vida del Agregado Raíz `SecurityScanResult`, que representa el resultado inmutable de un escaneo en un momento dado.
+* Mantener una base de datos normalizada de definiciones de vulnerabilidades (`VulnerabilityDefinition`), actuando como una fuente de verdad canónica para CVEs, GHSAs, etc.
+* Registrar las `VulnerabilityOccurrence`, que vinculan una definición de vulnerabilidad con un `PackageVersion` específico, incluyendo el contexto de la detección (ej. si ha sido parcheado o ignorado).
+* Publicar eventos de dominio sobre los resultados de los escaneos para que otros sistemas puedan reaccionar (ej. poner en cuarentena un artefacto).
 
 ### 2\. Diagrama UML del Contexto
 
 ```mermaid
 classDiagram
-    direction LR
+    direction TB
 
-    class Attestation {
+    class SecurityScanResult {
         <<Aggregate Root>>
         +Hrn hrn
-        +Hrn subject_hrn
-        +AttestationType predicate_type
-        +Json predicate
-        +List~Signature~ signatures
-        +Lifecycle lifecycle
+        +Hrn package_version_hrn
+        +String scanner_name
+        +ScanStatus status
+        +ScanSummary summary
+        +List~Hrn~ occurrences
     }
 
-    class Signature {
-        <<Value Object>>
-        +Hrn key_hrn
-        +String algorithm
-        +String value
+    class VulnerabilityOccurrence {
+        <<Entity>>
+        +Hrn hrn
+        +Hrn package_version_hrn
+        +Hrn vulnerability_definition_hrn
+        +OccurrenceStatus status
+        +Option~IgnoreInfo~ ignore_info
     }
 
-    class PublicKey {
+    class VulnerabilityDefinition {
         <<Aggregate Root>>
         +Hrn hrn
-        +String key_material
-        +KeySource source
-        +Lifecycle lifecycle
+        +String source_id
+        +VulnerabilitySource source
+        +VulnerabilitySeverity severity
+        +Option~CvssVector~ cvss
     }
     
-    class SbomPredicate {
+    class IgnoreInfo {
         <<Value Object>>
-        +List~SbomComponent~ components
-        +List~SbomRelationship~ relationships
+        +String reason
+        +OffsetDateTime expires_at
+        +Hrn ignored_by
     }
     
-    class SlsaProvenancePredicate {
-        <<Value Object>>
-        +SlsaBuilder builder
-        +SlsaRecipe recipe
-        +List~SlsaMaterial~ materials
-    }
-    
-    Attestation "1" o-- "1" SbomPredicate : (predicate)
-    Attestation "1" o-- "1" SlsaProvenancePredicate : (predicate)
-    Attestation "1" -- "0..*" Signature : "firmado por"
-    Signature "1" -- "1" PublicKey : "verificado con"
+    SecurityScanResult "1" -- "0..*" VulnerabilityOccurrence : "contiene"
+    VulnerabilityOccurrence "1" -- "1" VulnerabilityDefinition : "es una instancia de"
 ```
 
 ### 3\. Estructura de Ficheros del Dominio
 
 ```
-crates/supply-chain/src/domain/
+crates/security/src/domain/
 ├── mod.rs
-├── attestation.rs
-├── public_key.rs
-├── sbom.rs
-├── slsa.rs
+├── scan_result.rs
+├── vulnerability.rs
 └── events.rs
 ```
 
 ### 4\. Definiciones Completas en `rust`
 
-#### 4.1. Módulo de Atestación (`domain/attestation.rs`)
+#### 4.1. Módulo de Resultado de Escaneo (`domain/scan_result.rs`)
 
 ```rust
-// crates/supply-chain/src/domain/attestation.rs
+// crates/security/src/domain/scan_result.rs
 
-use crate::shared::hrn::{Hrn, OrganizationId, PackageVersionId, PublicKeyId};
+use crate::shared::hrn::{Hrn, OrganizationId, PackageVersionId, VulnerabilityOccurrenceId};
 use crate::shared::lifecycle::Lifecycle;
 use crate::shared::security::CedarResource;
 use serde::{Serialize, Deserialize};
-use cedar_policy::{EntityUid, Expr};
-use std::collections::HashMap;
+use time::OffsetDateTime;
 
-/// Una prueba criptográficamente verificable sobre un artefacto (`PackageVersion`).
-/// Es el Agregado Raíz principal de este contexto.
+/// Representa el resultado de un único escaneo de seguridad sobre un `PackageVersion`.
+/// Es un Agregado Raíz inmutable; un nuevo escaneo crea un nuevo resultado.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Attestation {
-    /// El HRN único de la atestación.
-    /// Formato: `hrn:hodei:supply-chain:<region>:<org_id>:attestation/<attestation_id>`
+pub struct SecurityScanResult {
+    /// El HRN único del resultado del escaneo.
+    /// Formato: `hrn:hodei:security:<region>:<org_id>:scan-result/<scan_id>`
     pub hrn: Hrn,
-    
-    /// La organización a la que pertenece esta atestación.
+
+    /// La organización a la que pertenece este resultado.
     pub organization_hrn: OrganizationId,
+    
+    /// El HRN del `PackageVersion` que fue escaneado.
+    pub package_version_hrn: PackageVersionId,
 
-    /// El HRN del `PackageVersion` al que se refiere esta prueba.
-    pub subject_hrn: PackageVersionId,
+    /// El nombre de la herramienta de escaneo utilizada (ej. "Trivy", "Snyk").
+    pub scanner_name: String,
+    
+    /// La versión de la herramienta de escaneo.
+    pub scanner_version: String,
+    
+    /// El estado del proceso de escaneo.
+    pub status: ScanStatus,
+    
+    /// Un resumen agregado de los hallazgos.
+    pub summary: ScanSummary,
 
-    /// El tipo de prueba contenida en el predicado (SBOM, SLSA, etc.).
-    pub predicate_type: AttestationType,
-
-    /// El contenido de la prueba en formato JSON. Se deserializa a un struct específico
-    /// (ej. `SbomPredicate`) en tiempo de ejecución, basado en `predicate_type`.
-    pub predicate: serde_json::Value,
-
-    /// Lista de firmas que validan la integridad de esta atestación.
-    pub signatures: Vec<Signature>,
-
+    /// Lista de HRNs a las `VulnerabilityOccurrence` encontradas en este escaneo.
+    pub occurrences: Vec<VulnerabilityOccurrenceId>,
+    
     /// Información de auditoría y ciclo de vida.
     pub lifecycle: Lifecycle,
 }
 
-/// Una firma digital sobre una atestación.
+/// Un resumen agregado de los hallazgos de un escaneo para una vista rápida.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Signature {
-    /// El HRN de la `PublicKey` utilizada para generar esta firma.
-    pub key_hrn: PublicKeyId,
-    
-    /// El algoritmo de firma utilizado (ej. "rsassa-pss-sha256").
-    pub algorithm: String,
-    
-    /// El valor de la firma, codificado en base64.
-    pub value: String,
+pub struct ScanSummary {
+    pub critical_count: u32,
+    pub high_count: u32,
+    pub medium_count: u32,
+    pub low_count: u32,
+    pub info_count: u32,
+    pub unknown_count: u32,
+    pub total: u32,
+    /// Una puntuación de riesgo calculada (ej. 0.0 - 10.0).
+    pub risk_score: f32,
 }
 
-/// Tipos de atestaciones soportados por el sistema.
+/// El estado del ciclo de vida de un escaneo asíncrono.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AttestationType {
-    SbomCycloneDxV1_5Json,
-    SbomSpdxV2_3Json,
-    SlsaProvenanceV1_0,
-    CosignSignature,
-    GenericSignature, // Para otros tipos de firma
-}
-
-/// Implementación para que las atestaciones puedan ser recursos en políticas Cedar.
-impl CedarResource for Attestation {
-    fn cedar_entity_uid(&self) -> EntityUid { /* ... */ }
-
-    fn cedar_attributes(&self) -> HashMap<String, Expr> {
-        let mut attrs = HashMap::new();
-        attrs.insert("predicate_type".to_string(), Expr::val(self.predicate_type.as_ref()));
-        attrs
-    }
-
-    fn cedar_parents(&self) -> Vec<EntityUid> {
-        // El padre de una atestación es el artefacto que describe.
-        // Esto permite políticas como "El artefacto X debe tener una atestación de tipo Y".
-        vec![EntityUid::from_str(self.subject_hrn.as_str()).unwrap()]
-    }
-}
+pub enum ScanStatus { Pending, InProgress, Completed, Failed }
 ```
 
-#### 4.2. Módulo de Clave Pública (`domain/public_key.rs`)
+#### 4.2. Módulo de Vulnerabilidad (`domain/vulnerability.rs`)
 
 ```rust
-// crates/supply-chain/src/domain/public_key.rs
+// crates/security/src/domain/vulnerability.rs
 
-use crate::shared::hrn::{Hrn, OrganizationId};
+use crate::shared::hrn::{Hrn, OrganizationId, PackageVersionId, VulnerabilityDefinitionId, UserId};
 use crate::shared::lifecycle::Lifecycle;
+use crate::shared::enums::VulnerabilitySeverity;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 
-/// Representa una clave pública utilizada para verificar firmas.
-/// Es un Agregado Raíz, ya que su confianza y ciclo de vida se gestionan de forma independiente.
+/// Representa la definición canónica y normalizada de una vulnerabilidad (ej. un CVE).
+/// Se almacena una sola vez y se reutiliza en múltiples ocurrencias.
+/// Es un Agregado Raíz.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PublicKey {
-    /// El HRN único de la clave.
-    /// Formato: `hrn:hodei:supply-chain:global:<org_id>:public-key/<key_fingerprint>`
-    pub hrn: Hrn,
+pub struct VulnerabilityDefinition {
+    /// HRN único para esta definición de vulnerabilidad.
+    /// Formato: `hrn:hodei:security:global:vulnerability/<source>/<source_id>`
+    pub hrn: VulnerabilityDefinitionId,
     
-    /// La organización propietaria de la clave.
-    pub organization_hrn: OrganizationId,
+    /// El identificador de la vulnerabilidad en su fuente original (ej. "CVE-2021-44228").
+    pub source_id: String,
     
-    /// El material de la clave en un formato estándar (ej. PEM, JWK).
-    pub key_material: String,
+    /// La base de datos de origen de la vulnerabilidad.
+    pub source: VulnerabilitySource,
     
-    /// El algoritmo de la clave (ej. "ecdsa-p256").
-    pub algorithm: String,
+    /// La severidad asignada por la fuente.
+    pub severity: VulnerabilitySeverity,
     
-    /// De dónde proviene esta clave y cómo se estableció su confianza.
-    pub source: KeySource,
+    /// Título o resumen corto de la vulnerabilidad.
+    pub summary: String,
     
-    /// Opcional: la clave solo es válida después de esta fecha.
-    pub valid_after: Option<OffsetDateTime>,
+    /// Descripción detallada de la vulnerabilidad.
+    pub details: String,
     
-    /// Opcional: la clave solo es válida antes de esta fecha.
-    pub valid_until: Option<OffsetDateTime>,
+    /// Puntuación CVSS, si está disponible.
+    pub cvss: Option<CvssVector>,
     
-    /// Información de auditoría y ciclo de vida.
+    /// Lista de URLs para más información (avisos, mitigaciones, etc.).
+    pub references: Vec<String>,
+    
+    /// Información de auditoría (cuándo se añadió a la base de datos de Hodei).
     pub lifecycle: Lifecycle,
 }
 
-/// La fuente de una clave pública.
+/// Representa la ocurrencia de una `VulnerabilityDefinition` en un `PackageVersion` específico.
+/// Es una entidad que vive dentro del contexto de un `SecurityScanResult`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum KeySource {
-    /// La clave fue emitida por una autoridad de certificación como Sigstore Fulcio.
-    CertificateAuthority { issuer: String },
-    /// La clave fue subida manualmente por un usuario.
-    ManualUpload { uploader_hrn: Hrn },
-}
-```
+pub struct VulnerabilityOccurrence {
+    /// HRN único para esta ocurrencia específica.
+    /// Formato: `hrn:hodei:security:<region>:<org_id>:occurrence/<occurrence_id>`
+    pub hrn: Hrn,
 
-#### 4.3. Módulo SBOM (`domain/sbom.rs`)
+    /// HRN del `PackageVersion` afectado.
+    pub package_version_hrn: PackageVersionId,
+    
+    /// HRN de la `VulnerabilityDefinition` canónica.
+    pub vulnerability_definition_hrn: VulnerabilityDefinitionId,
+    
+    /// El estado de esta ocurrencia (ej. si ha sido ignorada por un usuario).
+    pub status: OccurrenceStatus,
+    
+    /// Información detallada si la ocurrencia ha sido ignorada.
+    pub ignore_info: Option<IgnoreInfo>,
+    
+    /// Indica si existe una versión del paquete que corrige esta vulnerabilidad.
+    pub fix_is_available: bool,
+    
+    /// Lista de versiones del paquete que contienen el parche.
+    pub fixed_in_versions: Vec<String>,
 
-```rust
-// crates/supply-chain/src/domain/sbom.rs
-
-use crate::shared::models::ContentHash;
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
-
-/// Estructura que representa el contenido de un predicado SBOM, serializable a/desde JSON.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SbomPredicate {
-    pub spec_version: String,
-    pub serial_number: Option<String>,
-    pub components: Vec<SbomComponent>,
-    pub relationships: Vec<SbomRelationship>,
-    pub tools: Vec<Tool>,
-}
-
-/// Representa un componente de software dentro de un SBOM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SbomComponent {
-    /// Identificador PURL (Package URL) del componente.
-    pub purl: String,
-    pub component_type: ComponentType,
-    pub name: String,
-    pub version: String,
-    pub supplier: Option<String>,
-    pub hashes: Vec<ContentHash>,
-    pub licenses: Vec<String>, // SPDX license identifiers
+    /// Información de auditoría.
+    pub lifecycle: Lifecycle,
 }
 
-/// Representa una relación entre componentes en el SBOM.
+/// Vector CVSS v3.1 para una puntuación detallada.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SbomRelationship {
-    /// El PURL del componente de origen.
-    pub source_purl: String,
-    /// El PURL del componente de destino.
-    pub target_purl: String,
-    /// El tipo de relación (ej. "DEPENDS_ON", "CONTAINS").
-    pub relationship_type: String,
+pub struct CvssVector {
+    pub version: String, // "3.1"
+    pub vector_string: String, // "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"
+    pub base_score: f32,
+    pub temporal_score: Option<f32>,
+    pub environmental_score: Option<f32>,
 }
 
+/// Información sobre la decisión de ignorar una vulnerabilidad.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tool {
-    pub vendor: String,
-    pub name: String,
-    pub version: String,
+pub struct IgnoreInfo {
+    pub reason: String,
+    pub expires_at: Option<OffsetDateTime>,
+    pub ignored_by: UserId,
 }
 
+/// La base de datos de origen de una vulnerabilidad.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ComponentType { Library, Application, Framework, OperatingSystem, Device, File }
+pub enum VulnerabilitySource { Nvd, GitHubAdvisory, Osv, Trivy, Snyk, Other }
+
+/// El estado de una ocurrencia de vulnerabilidad.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OccurrenceStatus { Unresolved, Patched, Ignored, FalsePositive }
 ```
 
-#### 4.4. Módulo SLSA (`domain/slsa.rs`)
+#### 4.3. Módulo de Eventos (`domain/events.rs`)
 
 ```rust
-// crates/supply-chain/src/domain/slsa.rs
+// crates/security/src/domain/events.rs
 
-use crate::shared::models::ContentHash;
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
-
-/// Estructura que representa el contenido de un predicado de procedencia SLSA v1.0.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SlsaProvenancePredicate {
-    pub builder: SlsaBuilder,
-    pub recipe: SlsaRecipe,
-    pub invocation: SlsaInvocation,
-    pub materials: Vec<SlsaMaterial>,
-    pub metadata: SlsaMetadata,
-}
-
-/// Identifica el constructor que generó el artefacto.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SlsaBuilder {
-    pub id: String, // URI identificando el constructor
-}
-
-/// Describe cómo se construyó el artefacto.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SlsaRecipe {
-    #[serde(rename = "type")]
-    pub recipe_type: String, // URI
-    #[serde(rename = "entryPoint")]
-    pub entry_point: String,
-    pub arguments: serde_json::Value,
-}
-
-/// Describe la ejecución específica del proceso de construcción.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SlsaInvocation {
-    #[serde(rename = "configSource")]
-    pub config_source: SlsaConfigSource,
-    pub parameters: serde_json::Value,
-    pub environment: serde_json::Value,
-}
-
-/// Materiales (ej. código fuente) utilizados en la construcción.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SlsaMaterial {
-    pub uri: String,
-    pub digest: HashMap<String, String>, // ej. {"sha1": "...", "sha256": "..."}
-}
-
-// ... otras structs de soporte para SLSA: SlsaMetadata, SlsaConfigSource
-```
-
-#### 4.5. Módulo de Eventos (`domain/events.rs`)
-
-```rust
-// crates/supply-chain/src/domain/events.rs
-
-use crate::shared::hrn::{Hrn, PackageVersionId};
-use crate::domain::attestation::AttestationType;
+use crate::shared::hrn::{Hrn, PackageVersionId, ScanResultId};
+use crate::shared::enums::VulnerabilitySeverity;
+use crate::domain::scan_result::ScanSummary;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 
-/// Eventos de dominio publicados por el contexto `supply-chain`.
+/// Eventos de dominio publicados por el contexto `security`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SupplyChainEvent {
-    /// Se ha generado y almacenado una nueva atestación para un artefacto.
-    AttestationGenerated(AttestationGenerated),
+pub enum SecurityEvent {
+    /// Se solicita un nuevo escaneo para un artefacto.
+    /// Puede ser consumido por un orquestador de escaneos.
+    ScanRequested(ScanRequested),
 
-    /// Se ha verificado la firma de una atestación.
-    SignatureVerified(SignatureVerified),
+    /// Un escaneo se ha completado.
+    ScanCompleted(ScanCompleted),
+
+    /// Se ha encontrado una vulnerabilidad de alta criticidad para notificación inmediata.
+    CriticalVulnerabilityFound(CriticalVulnerabilityFound),
     
-    /// Se ha añadido una nueva clave pública al sistema.
-    PublicKeyAdded(PublicKeyAdded),
+    /// Una nueva definición de vulnerabilidad ha sido añadida a la base de datos.
+    VulnerabilityDefinitionAdded(VulnerabilityDefinitionAdded),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttestationGenerated {
-    pub hrn: Hrn,
-    pub subject_hrn: PackageVersionId,
-    pub predicate_type: AttestationType,
-    pub generated_by: Hrn,
+pub struct ScanRequested {
+    pub package_version_hrn: PackageVersionId,
+    pub requested_by: Hrn,
     pub at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignatureVerified {
-    pub attestation_hrn: Hrn,
-    pub key_hrn: Hrn,
-    pub is_valid: bool,
-    pub verified_by: Hrn,
+pub struct ScanCompleted {
+    pub hrn: ScanResultId,
+    pub package_version_hrn: PackageVersionId,
+    pub summary: ScanSummary,
     pub at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PublicKeyAdded {
+pub struct CriticalVulnerabilityFound {
+    pub occurrence_hrn: Hrn,
+    pub package_version_hrn: PackageVersionId,
+    pub vulnerability_id: String, // ej. "CVE-2021-44228"
+    pub severity: VulnerabilitySeverity, // Siempre será 'Critical'
+    pub at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VulnerabilityDefinitionAdded {
     pub hrn: Hrn,
-    pub source: String, // "ManualUpload", "CertificateAuthority"
-    pub added_by: Hrn,
+    pub source_id: String,
+    pub source: String,
+    pub severity: VulnerabilitySeverity,
     pub at: OffsetDateTime,
 }
 ```

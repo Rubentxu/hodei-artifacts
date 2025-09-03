@@ -1,360 +1,386 @@
-# Especificación Completa del Modelo de Datos: Crate `iam`
+# Especificación Completa del Modelo de Datos: Crate `repository`
 
 **Versión:** 6.0
-**Crate:** `crates/iam`
-**Contexto de Dominio:** Identidad y Gestión de Acceso
+**Crate:** `crates/repository`
+**Contexto de Dominio:** Gestión de Repositorios
 
 ### 1\. Propósito y Responsabilidades
 
-El crate `iam` es el Bounded Context responsable de gestionar la **identidad y el ciclo de vida de los principals**. Un "principal" es cualquier entidad que puede realizar una acción en el sistema y, por lo tanto, ser sujeto de una política de autorización.
+El crate `repository` es el Bounded Context responsable de gestionar los **contenedores de artefactos**. Actúa como el "bibliotecario" del sistema, definiendo la existencia, configuración, reglas y ubicación de almacenamiento de cada repositorio.
 
 Sus responsabilidades clave son:
 
-* Gestionar usuarios humanos (`User`).
-* Gestionar identidades para automatización (`ServiceAccount`).
-* Gestionar credenciales de acceso programático (`ApiKey`).
-* Agrupar principals para una gestión de permisos simplificada (`Group`).
-* Proporcionar la información de identidad necesaria para que otros contextos, principalmente el de `security`, realicen las evaluaciones de autorización.
-
-Este contexto define el **"quién"** en el paradigma de la autorización.
+* Gestionar el ciclo de vida completo de los repositorios (`Repository`).
+* Modelar los diferentes comportamientos de los repositorios:
+    * **Hosted**: Aloja artefactos subidos directamente.
+    * **Proxy**: Actúa como caché de un repositorio remoto.
+    * **Virtual**: Agrega el contenido de múltiples repositorios en una única URL.
+* Definir y aplicar políticas de gobernanza específicas del repositorio, como las políticas de retención (`RetentionPolicy`).
+* Gestionar la configuración de los backends de almacenamiento físico (`StorageBackend`).
 
 ### 2\. Diagrama UML del Contexto
 
 ```mermaid
 classDiagram
-    direction LR
+    direction TB
 
-    class User {
+    class Repository {
         <<Aggregate Root>>
         +Hrn hrn
-        +String email
-        +UserStatus status
-        +UserProfile profile
-        +List~Hrn~ group_memberships
-        +Lifecycle lifecycle
-    }
-
-    class Group {
-        <<Aggregate Root>>
-        +Hrn hrn
-        +Hrn organization_hrn
         +String name
+        +RepositoryType repo_type
+        +Ecosystem format
+        +RepositoryConfig config
         +Lifecycle lifecycle
     }
 
-    class ServiceAccount {
+    class RepositoryConfig {
+        <<Value Object>>
+        +HostedConfig
+        +ProxyConfig
+        +VirtualConfig
+    }
+
+    class RetentionPolicy {
         <<Aggregate Root>>
         +Hrn hrn
-        +Hrn organization_hrn
         +String name
-        +ServiceAccountStatus status
-        +Lifecycle lifecycle
-    }
-    
-    class ApiKey {
-        <<Aggregate Root>>
-        +String id
-        +Hrn hrn
-        +Hrn owner_hrn
-        +String hashed_token
-        +Lifecycle lifecycle
+        +List~RetentionRule~ rules
+        +bool is_enabled
     }
 
-    User "0..*" -- "0..*" Group : "es miembro de"
-    ServiceAccount "1" -- "0..*" ApiKey : "posee"
-    User "1" -- "0..*" ApiKey : "posee"
+    class RetentionRule {
+        <<Value Object>>
+        +RetentionRuleType
+        +RetentionAction
+    }
+
+    class StorageBackend {
+        <<Aggregate Root>>
+        +Hrn hrn
+        +String name
+        +StorageType storage_type
+        +Json connection_details
+    }
+
+    Repository "1" -- "1" RepositoryConfig : "configurado con"
+    Repository "1" -- "0..*" RetentionPolicy : "aplica"
+    Repository "1" -- "1" StorageBackend : "almacena en"
+    RetentionPolicy "1" -- "1..*" RetentionRule : "contiene"
 ```
 
 ### 3\. Estructura de Ficheros del Dominio
 
 ```
-crates/iam/src/domain/
+crates/repository/src/domain/
 ├── mod.rs
-├── user.rs
-├── group.rs
-├── service_account.rs
-├── api_key.rs
+├── repository.rs
+├── policy.rs
+├── storage.rs
 └── events.rs
 ```
 
 ### 4\. Definiciones Completas en `rust`
 
-#### 4.1. Módulo de Usuario (`domain/user.rs`)
+#### 4.1. Módulo de Repositorio (`domain/repository.rs`)
 
 ```rust
-// crates/iam/src/domain/user.rs
+// crates/repository/src/domain/repository.rs
 
-use crate::shared::hrn::{Hrn, OrganizationId};
+use crate::shared::hrn::{Hrn, OrganizationId, RepositoryId};
 use crate::shared::lifecycle::Lifecycle;
+use crate::shared::enums::Ecosystem;
 use crate::shared::security::CedarResource;
+use crate::domain::storage::StorageBackendId;
 use serde::{Serialize, Deserialize};
-use time::OffsetDateTime;
+use url::Url;
 use cedar_policy::{EntityUid, Expr};
 use std::collections::HashMap;
 
-/// Representa a un usuario humano, un principal fundamental en el sistema.
-/// Es un Agregado Raíz.
+/// Representa un contenedor para artefactos que define políticas de acceso y almacenamiento.
+/// Es el Agregado Raíz principal de este Bounded Context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    /// El HRN único y global del usuario.
-    /// Formato: `hrn:hodei:iam:global:<org_id>:user/<user_id>`
-    pub hrn: Hrn,
+pub struct Repository {
+    /// El HRN único y global del repositorio.
+    /// Formato: `hrn:hodei:repository:<region>:<org_id>:repository/<repo_name>`
+    pub hrn: RepositoryId,
 
-    /// El email del usuario, usado para login y notificaciones. Debe ser único.
-    pub email: String,
-
-    /// El estado actual de la cuenta de usuario.
-    pub status: UserStatus,
-
-    /// Información de perfil adicional y no crítica para la seguridad.
-    pub profile: UserProfile,
+    /// La organización a la que pertenece este repositorio.
+    pub organization_hrn: OrganizationId,
     
-    /// Lista de HRNs de las organizaciones a las que este usuario pertenece.
-    /// Esta información es crucial para las políticas de Cedar.
-    pub organization_memberships: Vec<OrganizationId>,
+    /// El nombre del repositorio, único dentro de la organización.
+    pub name: String,
 
-    /// Lista de HRNs de los grupos a los que este usuario pertenece.
-    pub group_memberships: Vec<Hrn>,
-
-    /// El ID del usuario en un proveedor de identidad externo (ej. Keycloak, Okta).
-    pub external_id: Option<String>,
+    /// La región geográfica donde reside primariamente este repositorio.
+    pub region: String,
     
+    /// El tipo de comportamiento del repositorio (Hosted, Proxy, Virtual).
+    pub repo_type: RepositoryType,
+    
+    /// El ecosistema de paquetes que gestiona este repositorio (Maven, Npm, etc.).
+    pub format: Ecosystem,
+
+    /// Configuración detallada y específica según el `repo_type`.
+    pub config: RepositoryConfig,
+    
+    /// HRN del backend de almacenamiento donde se guardarán los binarios.
+    pub storage_backend_hrn: StorageBackendId,
+
     /// Información de auditoría y ciclo de vida.
     pub lifecycle: Lifecycle,
 }
 
-/// Información de perfil de un usuario.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UserProfile {
-    /// El nombre completo del usuario.
-    pub full_name: Option<String>,
-    /// La URL a la imagen de avatar del usuario.
-    pub avatar_url: Option<String>,
+/// Configuración específica según el tipo de repositorio.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RepositoryConfig {
+    Hosted(HostedConfig),
+    Proxy(ProxyConfig),
+    Virtual(VirtualConfig),
 }
 
-/// El estado del ciclo de vida de una cuenta de usuario.
+/// Configuración para un repositorio de tipo `Hosted`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostedConfig {
+    /// Define si se permiten artefactos de tipo SNAPSHOT, re-despliegues, etc.
+    pub deployment_policy: DeploymentPolicy,
+}
+
+/// Configuración para un repositorio de tipo `Proxy`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyConfig {
+    /// La URL del repositorio remoto que se está "proxiando".
+    pub remote_url: Url,
+    /// Configuración del caché para los artefactos y metadatos.
+    pub cache_settings: CacheSettings,
+    /// Credenciales para autenticarse contra el repositorio remoto.
+    pub remote_authentication: Option<ProxyAuth>,
+}
+
+/// Configuración para un repositorio de tipo `Virtual`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VirtualConfig {
+    /// Lista ordenada de HRNs de repositorios (Hosted o Proxy) que se agregan.
+    pub aggregated_repositories: Vec<RepositoryId>,
+    /// Estrategia para resolver artefactos cuando existen en múltiples repositorios agregados.
+    pub resolution_order: ResolutionOrder,
+}
+
+/// Configuración de caché para repositorios Proxy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheSettings {
+    /// Tiempo de vida (en segundos) para los metadatos cacheados.
+    pub metadata_ttl_seconds: u32,
+    /// Tiempo de vida (en segundos) para los artefactos binarios cacheados.
+    pub artifact_ttl_seconds: u32,
+}
+
+/// Credenciales seguras para un repositorio Proxy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyAuth {
+    pub username: String,
+    /// HRN a un secreto en un gestor de secretos externo (ej. Vault).
+    /// El valor del secreto nunca se almacena en este modelo.
+    pub password_secret_hrn: Hrn,
+}
+
+/// El tipo de comportamiento del repositorio.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UserStatus {
-    /// El usuario puede autenticarse y operar.
-    Active,
-    /// El usuario no puede autenticarse.
-    Suspended,
-    /// La cuenta está pendiente de eliminación.
-    PendingDeletion,
-}
+pub enum RepositoryType { Hosted, Proxy, Virtual }
 
-/// Implementación para que los usuarios puedan ser 'principals' en políticas Cedar.
-impl CedarResource for User {
-    fn cedar_entity_uid(&self) -> EntityUid {
-        // Implementación para construir el EntityUid a partir del HRN.
-        // ej. `Hodei::User::"hrn:hodei:iam:global:org_...:user/usr_..."`
-    }
+/// Las reglas de despliegue para un repositorio Hosted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeploymentPolicy { AllowSnapshots, BlockSnapshots, AllowRedeploy, BlockRedeploy }
+
+/// La estrategia de resolución para un repositorio Virtual.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResolutionOrder { FirstFound }
+
+/// Implementación para que los repositorios puedan ser recursos en políticas Cedar.
+impl CedarResource for Repository {
+    fn cedar_entity_uid(&self) -> EntityUid { /* ... */ }
 
     fn cedar_attributes(&self) -> HashMap<String, Expr> {
         let mut attrs = HashMap::new();
-        attrs.insert("status".to_string(), Expr::val(self.status.as_ref()));
-
-        // Exponer las membresías de grupo es vital para políticas basadas en roles/grupos.
-        let groups = self.group_memberships.iter().map(|hrn| Expr::val(hrn.as_str())).collect();
-        attrs.insert("memberOfGroups".to_string(), Expr::set(groups));
-        
-        // Exponer las membresías de organización.
-        let orgs = self.organization_memberships.iter().map(|hrn| Expr::val(hrn.as_str())).collect();
-        attrs.insert("memberOfOrgs".to_string(), Expr::set(orgs));
-
+        attrs.insert("type".to_string(), Expr::val(self.repo_type.as_ref()));
+        attrs.insert("format".to_string(), Expr::val(self.format.as_ref()));
+        attrs.insert("region".to_string(), Expr::val(self.region.clone()));
         attrs
     }
 
     fn cedar_parents(&self) -> Vec<EntityUid> {
-        // La relación de un usuario con una organización se modela mejor como un atributo
-        // (`memberOfOrgs`), ya que un usuario puede pertenecer a varias.
-        // Por lo tanto, un usuario no tiene un padre jerárquico directo.
-        vec![]
-    }
-}
-```
-
-#### 4.2. Módulo de Grupo (`domain/group.rs`)
-
-```rust
-// crates/iam/src/domain/group.rs
-
-use crate::shared::hrn::{Hrn, OrganizationId};
-use crate::shared::lifecycle::Lifecycle;
-use crate::shared::security::CedarResource;
-use serde::{Serialize, Deserialize};
-
-/// Representa un grupo de principals (usuarios o cuentas de servicio) dentro de una organización.
-/// Facilita la asignación de permisos a múltiples principals a la vez.
-/// Es un Agregado Raíz.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Group {
-    /// El HRN único y global del grupo.
-    /// Formato: `hrn:hodei:iam:global:<org_id>:group/<group_name>`
-    pub hrn: Hrn,
-
-    /// La organización a la que pertenece este grupo.
-    pub organization_hrn: OrganizationId,
-    
-    /// El nombre del grupo, único dentro de la organización.
-    pub name: String,
-    
-    /// Descripción del propósito del grupo.
-    pub description: Option<String>,
-
-    /// Información de auditoría y ciclo de vida.
-    pub lifecycle: Lifecycle,
-}
-
-/// Implementación para que los grupos puedan ser parte de jerarquías en Cedar.
-impl CedarResource for Group {
-    fn cedar_entity_uid(&self) -> EntityUid { /* ... */ }
-    fn cedar_attributes(&self) -> HashMap<String, Expr> { /* ... */ }
-
-    fn cedar_parents(&self) -> Vec<EntityUid> {
-        // El padre de un grupo es su organización.
+        // El padre de un repositorio es su organización.
         vec![EntityUid::from_str(self.organization_hrn.as_str()).unwrap()]
     }
 }
 ```
 
-#### 4.3. Módulo de Cuenta de Servicio (`domain/service_account.rs`)
+#### 4.2. Módulo de Políticas (`domain/policy.rs`)
 
 ```rust
-// crates/iam/src/domain/service_account.rs
+// crates/repository/src/domain/policy.rs
+
+use crate::shared::hrn::{Hrn, RepositoryId};
+use crate::shared::lifecycle::Lifecycle;
+use crate::shared::enums::ArtifactStatus; // Necesario para algunas reglas
+use serde::{Serialize, Deserialize};
+
+/// Un regex validado para prevenir ataques de Denegación de Servicio (ReDoS).
+/// El constructor debe implementar la lógica de validación.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SafeRegex(String);
+
+/// Una política de retención de artefactos que se aplica a un repositorio.
+/// Es un Agregado Raíz.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionPolicy {
+    /// HRN de la política.
+    /// Formato: `hrn:hodei:repository:<region>:<org_id>:retention-policy/<policy_name>`
+    pub hrn: Hrn,
+
+    /// HRN del repositorio al que se aplica esta política.
+    pub repository_hrn: RepositoryId,
+    
+    /// Nombre de la política.
+    pub name: String,
+
+    /// Lista de reglas que componen la política. Se ejecutan en orden.
+    pub rules: Vec<RetentionRule>,
+
+    /// Si la política está activa.
+    pub is_enabled: bool,
+    
+    /// Información de auditoría y ciclo de vida.
+    pub lifecycle: Lifecycle,
+}
+
+/// Una regla específica dentro de una política de retención.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RetentionRule {
+    /// Aplica a artefactos que no han sido descargados en un número de días.
+    ByAgeSinceLastDownload {
+        max_age_days: u32,
+        action: RetentionAction,
+    },
+    /// Mantiene solo las N versiones más recientes de un paquete.
+    ByVersionCount {
+        max_versions: u32,
+        action: RetentionAction,
+    },
+    /// Aplica a artefactos que coinciden con un estado específico.
+    ByStatus {
+        status: ArtifactStatus,
+        action: RetentionAction,
+    },
+    /// Aplica a artefactos cuyo nombre de versión coincide con un regex.
+    /// Ideal para limpiar versiones SNAPSHOT.
+    MatchesVersionRegex {
+        regex: SafeRegex,
+        action: RetentionAction,
+    },
+}
+
+/// Acción a tomar cuando una regla de retención se cumple.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum RetentionAction { Delete, Archive, Notify }
+```
+
+#### 4.3. Módulo de Almacenamiento (`domain/storage.rs`)
+
+```rust
+// crates/repository/src/domain/storage.rs
 
 use crate::shared::hrn::{Hrn, OrganizationId};
 use crate::shared::lifecycle::Lifecycle;
-use crate::shared::security::CedarResource;
 use serde::{Serialize, Deserialize};
 
-/// Representa un principal no humano, como una aplicación o un sistema de CI/CD.
-/// Es un Agregado Raíz.
+/// Representa una configuración de un backend de almacenamiento físico.
+/// Es un Agregado Raíz, ya que puede ser gestionado de forma independiente.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceAccount {
-    /// El HRN único y global de la cuenta de servicio.
-    /// Formato: `hrn:hodei:iam:global:<org_id>:service-account/<sa_name>`
+pub struct StorageBackend {
+    /// HRN del backend de almacenamiento.
+    /// Formato: `hrn:hodei:repository:<region>:<org_id>:storage-backend/<backend_name>`
     pub hrn: Hrn,
 
     /// La organización a la que pertenece.
     pub organization_hrn: OrganizationId,
 
-    /// El nombre de la cuenta de servicio.
+    /// Nombre del backend.
     pub name: String,
 
-    /// Descripción de su propósito.
-    pub description: Option<String>,
-    
-    /// El estado actual de la cuenta.
-    pub status: ServiceAccountStatus,
+    /// El tipo de almacenamiento (S3, local, etc.).
+    pub storage_type: StorageType,
+
+    /// Detalles de conexión (bucket, endpoint, credenciales), encriptados.
+    /// Se usa un tipo contenedor genérico para representar datos encriptados.
+    pub connection_details: Encrypted<serde_json::Value>,
 
     /// Información de auditoría y ciclo de vida.
     pub lifecycle: Lifecycle,
 }
 
-/// El estado del ciclo de vida de una cuenta de servicio.
+/// El tipo de backend de almacenamiento.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ServiceAccountStatus { Active, Disabled }
+pub enum StorageType { S3Compatible, FileSystem, AzureBlob }
 
-/// Implementación para que las cuentas de servicio puedan ser principals en Cedar.
-impl CedarResource for ServiceAccount { /* ... similar a User y Group ... */ }
-```
-
-#### 4.4. Módulo de Clave API (`domain/api_key.rs`)
-
-```rust
-// crates/iam/src/domain/api_key.rs
-
-use crate::shared::hrn::Hrn;
-use crate::shared::lifecycle::Lifecycle;
-use serde::{Serialize, Deserialize};
-use time::OffsetDateTime;
-
-/// Representa una credencial de larga duración para acceso programático.
-/// Es un Agregado Raíz.
-/// Nota: Una ApiKey es una CREDENCIAL, no un principal. El sistema la usa para
-/// identificar a su `owner` (User o ServiceAccount), que SÍ es el principal en la política.
+/// Un tipo contenedor para representar datos que deben estar encriptados en reposo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiKey {
-    /// Un identificador corto, público y no secreto, usado para identificar la clave.
-    pub id: String,
-
-    /// El HRN único y global de la propia clave API.
-    /// Formato: `hrn:hodei:iam:global:<org_id>:apikey/<key_id>`
-    pub hrn: Hrn,
-    
-    /// El HRN de su propietario (un `User` o `ServiceAccount`). Este es el principal.
-    pub owner_hrn: Hrn,
-    
-    /// El hash del token secreto. El token en texto plano solo se muestra una vez.
-    pub hashed_token: String,
-    
-    /// Descripción de para qué se usa esta clave.
-    pub description: Option<String>,
-
-    /// Fecha y hora opcional de expiración.
-    pub expires_at: Option<OffsetDateTime>,
-    
-    /// Información de auditoría y ciclo de vida.
-    pub lifecycle: Lifecycle,
+pub struct Encrypted<T> {
+    encrypted_blob: Vec<u8>,
+    // ... metadatos de encriptación
+    _phantom: std::marker::PhantomData<T>,
 }
 ```
 
-#### 4.5. Módulo de Eventos (`domain/events.rs`)
+#### 4.4. Módulo de Eventos (`domain/events.rs`)
 
 ```rust
-// crates/iam/src/domain/events.rs
+// crates/repository/src/domain/events.rs
 
-use crate::shared::hrn::{Hrn, OrganizationId};
+use crate::shared::hrn::{Hrn, OrganizationId, RepositoryId};
+use crate::domain::repository::{RepositoryType};
+use crate::shared::enums::Ecosystem;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 
-/// Eventos de dominio publicados por el contexto `iam`.
+/// Eventos de dominio publicados por el contexto `repository`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum IamEvent {
-    UserRegistered(UserRegistered),
-    UserSuspended(UserSuspended),
-    ApiKeyCreated(ApiKeyCreated),
-    GroupCreated(GroupCreated),
-    UserAddedToGroup(UserAddedToGroup),
-    // ... otros eventos
+pub enum RepositoryEvent {
+    RepositoryCreated(RepositoryCreated),
+    RepositoryDeleted(RepositoryDeleted),
+    RetentionPolicyApplied(RetentionPolicyApplied),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserRegistered {
-    pub hrn: Hrn,
-    pub email: String,
-    pub organization_hrns: Vec<OrganizationId>,
-    pub at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSuspended {
-    pub hrn: Hrn,
-    pub suspended_by: Hrn,
-    pub at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiKeyCreated {
-    pub hrn: Hrn,
-    pub owner_hrn: Hrn,
-    pub at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GroupCreated {
-    pub hrn: Hrn,
+pub struct RepositoryCreated {
+    pub hrn: RepositoryId,
     pub name: String,
+    pub repo_type: RepositoryType,
+    pub format: Ecosystem,
     pub organization_hrn: OrganizationId,
     pub at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserAddedToGroup {
-    pub user_hrn: Hrn,
-    pub group_hrn: Hrn,
-    pub added_by: Hrn,
+pub struct RepositoryDeleted {
+    pub hrn: RepositoryId,
+    pub deleted_by: Hrn,
     pub at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionPolicyApplied {
+    pub repository_hrn: RepositoryId,
+    pub policy_hrn: Hrn,
+    pub result: PolicyExecutionResult,
+    pub at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyExecutionResult {
+    pub artifacts_deleted: u32,
+    pub artifacts_archived: u32,
+    pub notifications_sent: u32,
+    pub status: String, // "Success", "Failed"
+    pub error_message: Option<String>,
 }
 ```

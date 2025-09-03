@@ -1,386 +1,345 @@
-# Especificación Completa del Modelo de Datos: Crate `repository`
+# Especificación Completa del Modelo de Datos: Crate `artifact`
 
 **Versión:** 6.0
-**Crate:** `crates/repository`
-**Contexto de Dominio:** Gestión de Repositorios
+**Crate:** `crates/artifact`
+**Contexto de Dominio:** Ciclo de Vida del Artefacto
 
 ### 1\. Propósito y Responsabilidades
 
-El crate `repository` es el Bounded Context responsable de gestionar los **contenedores de artefactos**. Actúa como el "bibliotecario" del sistema, definiendo la existencia, configuración, reglas y ubicación de almacenamiento de cada repositorio.
+El crate `artifact` es el Bounded Context central del sistema. Su responsabilidad principal es gestionar el ciclo de vida completo de los paquetes de software y sus ficheros físicos correspondientes.
 
 Sus responsabilidades clave son:
 
-* Gestionar el ciclo de vida completo de los repositorios (`Repository`).
-* Modelar los diferentes comportamientos de los repositorios:
-    * **Hosted**: Aloja artefactos subidos directamente.
-    * **Proxy**: Actúa como caché de un repositorio remoto.
-    * **Virtual**: Agrega el contenido de múltiples repositorios en una única URL.
-* Definir y aplicar políticas de gobernanza específicas del repositorio, como las políticas de retención (`RetentionPolicy`).
-* Gestionar la configuración de los backends de almacenamiento físico (`StorageBackend`).
+* Gestionar el Agregado Raíz `PackageVersion`, que representa una versión única y publicada de un paquete de software.
+* Modelar la relación entre un `PackageVersion` (la entidad lógica) y uno o más `PhysicalArtifact` (los ficheros binarios inmutables), permitiendo la deduplicación de almacenamiento.
+* Definir y gestionar los metadatos, dependencias, etiquetas y el estado (`Active`, `Quarantined`, etc.) de cada `PackageVersion`.
+* Proporcionar un modelo de dominio detallado y fiel al estándar para artefactos OCI (contenedores Docker).
+* Publicar los eventos de dominio cruciales (ej. `PackageVersionPublished`) que inician los flujos de trabajo en otros contextos como `security` y `supply-chain`.
 
 ### 2\. Diagrama UML del Contexto
 
 ```mermaid
 classDiagram
-    direction TB
+    direction LR
 
-    class Repository {
+    class PackageVersion {
         <<Aggregate Root>>
         +Hrn hrn
-        +String name
-        +RepositoryType repo_type
-        +Ecosystem format
-        +RepositoryConfig config
+        +PackageCoordinates coordinates
+        +ArtifactStatus status
+        +PackageMetadata metadata
+        +List~ArtifactReference~ artifacts
+        +List~ArtifactDependency~ dependencies
         +Lifecycle lifecycle
     }
 
-    class RepositoryConfig {
-        <<Value Object>>
-        +HostedConfig
-        +ProxyConfig
-        +VirtualConfig
-    }
-
-    class RetentionPolicy {
+    class PhysicalArtifact {
         <<Aggregate Root>>
         +Hrn hrn
-        +String name
-        +List~RetentionRule~ rules
-        +bool is_enabled
+        +ContentHash content_hash
+        +u64 size_in_bytes
+        +String storage_location
+        +Lifecycle lifecycle
     }
 
-    class RetentionRule {
+    class ArtifactReference {
         <<Value Object>>
-        +RetentionRuleType
-        +RetentionAction
+        +Hrn artifact_hrn
+        +ArtifactType artifact_type
+        +ArtifactRole role
+    }
+    
+    class OciManifest {
+        <<Entity>>
+        +ContentHash digest
+        +OciDescriptor config
+        +List~OciDescriptor~ layers
     }
 
-    class StorageBackend {
-        <<Aggregate Root>>
-        +Hrn hrn
-        +String name
-        +StorageType storage_type
-        +Json connection_details
-    }
-
-    Repository "1" -- "1" RepositoryConfig : "configurado con"
-    Repository "1" -- "0..*" RetentionPolicy : "aplica"
-    Repository "1" -- "1" StorageBackend : "almacena en"
-    RetentionPolicy "1" -- "1..*" RetentionRule : "contiene"
+    PackageVersion "1" -- "1..*" ArtifactReference : "compuesto por"
+    ArtifactReference "1" -- "1" PhysicalArtifact : "referencia a"
+    PackageVersion "1" o-- "1" OciManifest : "(si es OCI)"
 ```
 
 ### 3\. Estructura de Ficheros del Dominio
 
 ```
-crates/repository/src/domain/
+crates/artifact/src/domain/
 ├── mod.rs
-├── repository.rs
-├── policy.rs
-├── storage.rs
+├── package_version.rs
+├── physical_artifact.rs
+├── oci.rs
 └── events.rs
 ```
 
 ### 4\. Definiciones Completas en `rust`
 
-#### 4.1. Módulo de Repositorio (`domain/repository.rs`)
+#### 4.1. Módulo de Versión de Paquete (`domain/package_version.rs`)
 
 ```rust
-// crates/repository/src/domain/repository.rs
+// crates/artifact/src/domain/package_version.rs
 
-use crate::shared::hrn::{Hrn, OrganizationId, RepositoryId};
+use crate::shared::hrn::{Hrn, OrganizationId, RepositoryId, UserId};
 use crate::shared::lifecycle::Lifecycle;
-use crate::shared::enums::Ecosystem;
+use crate::shared::models::{PackageCoordinates, ArtifactReference};
+use crate::shared::enums::{ArtifactStatus, ArtifactRole};
 use crate::shared::security::CedarResource;
-use crate::domain::storage::StorageBackendId;
 use serde::{Serialize, Deserialize};
-use url::Url;
+use time::OffsetDateTime;
 use cedar_policy::{EntityUid, Expr};
 use std::collections::HashMap;
 
-/// Representa un contenedor para artefactos que define políticas de acceso y almacenamiento.
+/// La representación de una única versión de un paquete publicado en un repositorio.
 /// Es el Agregado Raíz principal de este Bounded Context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Repository {
-    /// El HRN único y global del repositorio.
-    /// Formato: `hrn:hodei:repository:<region>:<org_id>:repository/<repo_name>`
-    pub hrn: RepositoryId,
+pub struct PackageVersion {
+    /// El HRN único y global de esta versión del paquete.
+    /// Formato: `hrn:hodei:artifact:<region>:<org_id>:package-version/<repo_name>/<path>`
+    pub hrn: Hrn,
 
-    /// La organización a la que pertenece este repositorio.
+    /// HRN de la organización propietaria (denormalizado para búsquedas y políticas rápidas).
     pub organization_hrn: OrganizationId,
-    
-    /// El nombre del repositorio, único dentro de la organización.
-    pub name: String,
 
-    /// La región geográfica donde reside primariamente este repositorio.
-    pub region: String,
-    
-    /// El tipo de comportamiento del repositorio (Hosted, Proxy, Virtual).
-    pub repo_type: RepositoryType,
-    
-    /// El ecosistema de paquetes que gestiona este repositorio (Maven, Npm, etc.).
-    pub format: Ecosystem,
+    /// HRN del repositorio que contiene esta versión del paquete.
+    pub repository_hrn: RepositoryId,
 
-    /// Configuración detallada y específica según el `repo_type`.
-    pub config: RepositoryConfig,
-    
-    /// HRN del backend de almacenamiento donde se guardarán los binarios.
-    pub storage_backend_hrn: StorageBackendId,
+    /// Las coordenadas que identifican unívocamente al paquete en su ecosistema.
+    pub coordinates: PackageCoordinates,
+
+    /// El estado actual del ciclo de vida del artefacto.
+    pub status: ArtifactStatus,
+
+    /// Metadatos descriptivos y de uso.
+    pub metadata: PackageMetadata,
+
+    /// Lista de referencias a los ficheros físicos que componen este paquete.
+    pub artifacts: Vec<ArtifactReference>,
+
+    /// Lista de las dependencias directas de este paquete.
+    pub dependencies: Vec<ArtifactDependency>,
+
+    /// Etiquetas de texto libre para clasificación y búsqueda.
+    pub tags: Vec<String>,
 
     /// Información de auditoría y ciclo de vida.
     pub lifecycle: Lifecycle,
+
+    /// Si este artefacto es de tipo OCI, HRN al `PhysicalArtifact` que contiene el manifiesto.
+    pub oci_manifest_hrn: Option<Hrn>,
 }
 
-/// Configuración específica según el tipo de repositorio.
+impl PackageVersion {
+    /// Pone en cuarentena un artefacto si está en un estado válido.
+    /// Este método encapsula la lógica de negocio para la transición de estado.
+    pub fn quarantine(&mut self, reason: String, by: Hrn, at: OffsetDateTime) -> Result<(), DomainError> {
+        // ... Lógica para una transición de estado segura
+    }
+    // ... otros métodos de negocio (deprecate, ban, etc.)
+}
+
+/// Metadatos detallados de una `PackageVersion`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RepositoryConfig {
-    Hosted(HostedConfig),
-    Proxy(ProxyConfig),
-    Virtual(VirtualConfig),
+pub struct PackageMetadata {
+    pub description: Option<String>,
+    pub licenses: Vec<String>, // SPDX license identifiers
+    pub authors: Vec<String>,
+    pub project_url: Option<String>,
+    pub repository_url: Option<String>,
+    pub last_downloaded_at: Option<OffsetDateTime>,
+    pub download_count: u64,
+    /// Metadatos personalizados para extensibilidad.
+    pub custom_properties: HashMap<String, String>,
 }
 
-/// Configuración para un repositorio de tipo `Hosted`.
+/// Una dependencia de software de este `PackageVersion`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostedConfig {
-    /// Define si se permiten artefactos de tipo SNAPSHOT, re-despliegues, etc.
-    pub deployment_policy: DeploymentPolicy,
+pub struct ArtifactDependency {
+    pub coordinates: PackageCoordinates,
+    pub scope: String, // "compile", "runtime", "test", etc.
+    pub version_constraint: String, // ej. "^1.2.3", "~4.5.0"
+    pub is_optional: bool,
 }
 
-/// Configuración para un repositorio de tipo `Proxy`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyConfig {
-    /// La URL del repositorio remoto que se está "proxiando".
-    pub remote_url: Url,
-    /// Configuración del caché para los artefactos y metadatos.
-    pub cache_settings: CacheSettings,
-    /// Credenciales para autenticarse contra el repositorio remoto.
-    pub remote_authentication: Option<ProxyAuth>,
+/// El estado del artefacto, con datos contextuales.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ArtifactStatus {
+    Active,
+    Quarantined { reason: String, since: OffsetDateTime },
+    Banned { reason: String, since: OffsetDateTime },
+    Deprecated { successor_hrn: Option<Hrn> },
 }
 
-/// Configuración para un repositorio de tipo `Virtual`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirtualConfig {
-    /// Lista ordenada de HRNs de repositorios (Hosted o Proxy) que se agregan.
-    pub aggregated_repositories: Vec<RepositoryId>,
-    /// Estrategia para resolver artefactos cuando existen en múltiples repositorios agregados.
-    pub resolution_order: ResolutionOrder,
-}
-
-/// Configuración de caché para repositorios Proxy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CacheSettings {
-    /// Tiempo de vida (en segundos) para los metadatos cacheados.
-    pub metadata_ttl_seconds: u32,
-    /// Tiempo de vida (en segundos) para los artefactos binarios cacheados.
-    pub artifact_ttl_seconds: u32,
-}
-
-/// Credenciales seguras para un repositorio Proxy.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyAuth {
-    pub username: String,
-    /// HRN a un secreto en un gestor de secretos externo (ej. Vault).
-    /// El valor del secreto nunca se almacena en este modelo.
-    pub password_secret_hrn: Hrn,
-}
-
-/// El tipo de comportamiento del repositorio.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RepositoryType { Hosted, Proxy, Virtual }
-
-/// Las reglas de despliegue para un repositorio Hosted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DeploymentPolicy { AllowSnapshots, BlockSnapshots, AllowRedeploy, BlockRedeploy }
-
-/// La estrategia de resolución para un repositorio Virtual.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ResolutionOrder { FirstFound }
-
-/// Implementación para que los repositorios puedan ser recursos en políticas Cedar.
-impl CedarResource for Repository {
+/// Implementación para que `PackageVersion` pueda ser un recurso en políticas Cedar.
+impl CedarResource for PackageVersion {
     fn cedar_entity_uid(&self) -> EntityUid { /* ... */ }
 
     fn cedar_attributes(&self) -> HashMap<String, Expr> {
         let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), Expr::val(self.repo_type.as_ref()));
-        attrs.insert("format".to_string(), Expr::val(self.format.as_ref()));
-        attrs.insert("region".to_string(), Expr::val(self.region.clone()));
+        attrs.insert("status".to_string(), Expr::val(self.status.as_ref()));
+        let tags_expr = self.tags.iter().map(|t| Expr::val(t.clone())).collect::<Vec<_>>();
+        attrs.insert("tags".to_string(), Expr::set(tags_expr));
+        // ... otros atributos como licencias, etc.
         attrs
     }
 
     fn cedar_parents(&self) -> Vec<EntityUid> {
-        // El padre de un repositorio es su organización.
-        vec![EntityUid::from_str(self.organization_hrn.as_str()).unwrap()]
+        vec![
+            EntityUid::from_str(self.repository_hrn.as_str()).unwrap(),
+            EntityUid::from_str(self.organization_hrn.as_str()).unwrap(),
+        ]
     }
 }
 ```
 
-#### 4.2. Módulo de Políticas (`domain/policy.rs`)
+#### 4.2. Módulo de Artefacto Físico (`domain/physical_artifact.rs`)
 
 ```rust
-// crates/repository/src/domain/policy.rs
-
-use crate::shared::hrn::{Hrn, RepositoryId};
-use crate::shared::lifecycle::Lifecycle;
-use crate::shared::enums::ArtifactStatus; // Necesario para algunas reglas
-use serde::{Serialize, Deserialize};
-
-/// Un regex validado para prevenir ataques de Denegación de Servicio (ReDoS).
-/// El constructor debe implementar la lógica de validación.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SafeRegex(String);
-
-/// Una política de retención de artefactos que se aplica a un repositorio.
-/// Es un Agregado Raíz.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetentionPolicy {
-    /// HRN de la política.
-    /// Formato: `hrn:hodei:repository:<region>:<org_id>:retention-policy/<policy_name>`
-    pub hrn: Hrn,
-
-    /// HRN del repositorio al que se aplica esta política.
-    pub repository_hrn: RepositoryId,
-    
-    /// Nombre de la política.
-    pub name: String,
-
-    /// Lista de reglas que componen la política. Se ejecutan en orden.
-    pub rules: Vec<RetentionRule>,
-
-    /// Si la política está activa.
-    pub is_enabled: bool,
-    
-    /// Información de auditoría y ciclo de vida.
-    pub lifecycle: Lifecycle,
-}
-
-/// Una regla específica dentro de una política de retención.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RetentionRule {
-    /// Aplica a artefactos que no han sido descargados en un número de días.
-    ByAgeSinceLastDownload {
-        max_age_days: u32,
-        action: RetentionAction,
-    },
-    /// Mantiene solo las N versiones más recientes de un paquete.
-    ByVersionCount {
-        max_versions: u32,
-        action: RetentionAction,
-    },
-    /// Aplica a artefactos que coinciden con un estado específico.
-    ByStatus {
-        status: ArtifactStatus,
-        action: RetentionAction,
-    },
-    /// Aplica a artefactos cuyo nombre de versión coincide con un regex.
-    /// Ideal para limpiar versiones SNAPSHOT.
-    MatchesVersionRegex {
-        regex: SafeRegex,
-        action: RetentionAction,
-    },
-}
-
-/// Acción a tomar cuando una regla de retención se cumple.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum RetentionAction { Delete, Archive, Notify }
-```
-
-#### 4.3. Módulo de Almacenamiento (`domain/storage.rs`)
-
-```rust
-// crates/repository/src/domain/storage.rs
+// crates/artifact/src/domain/physical_artifact.rs
 
 use crate::shared::hrn::{Hrn, OrganizationId};
 use crate::shared::lifecycle::Lifecycle;
+use crate::shared::models::ContentHash;
+use crate::shared::enums::HashAlgorithm;
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 
-/// Representa una configuración de un backend de almacenamiento físico.
-/// Es un Agregado Raíz, ya que puede ser gestionado de forma independiente.
+/// Representa un fichero físico, inmutable, almacenado en el backend de almacenamiento.
+/// Su identidad es su `content_hash`. La misma instancia puede ser referenciada
+/// por múltiples `PackageVersion`, permitiendo la deduplicación.
+/// Es un Agregado Raíz.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageBackend {
-    /// HRN del backend de almacenamiento.
-    /// Formato: `hrn:hodei:repository:<region>:<org_id>:storage-backend/<backend_name>`
+pub struct PhysicalArtifact {
+    /// HRN único para este blob físico.
+    /// Formato: `hrn:hodei:artifact:<region>:<org_id>:physical-artifact/<hash_alg>-<hash_value>`
     pub hrn: Hrn,
 
-    /// La organización a la que pertenece.
+    /// Organización que subió originalmente este artefacto.
     pub organization_hrn: OrganizationId,
 
-    /// Nombre del backend.
-    pub name: String,
+    /// El hash del contenido, que actúa como su identificador único.
+    pub content_hash: ContentHash,
 
-    /// El tipo de almacenamiento (S3, local, etc.).
-    pub storage_type: StorageType,
+    /// Tamaño del fichero en bytes.
+    pub size_in_bytes: u64,
 
-    /// Detalles de conexión (bucket, endpoint, credenciales), encriptados.
-    /// Se usa un tipo contenedor genérico para representar datos encriptados.
-    pub connection_details: Encrypted<serde_json::Value>,
+    /// Mapa de otros checksums calculados para el fichero (ej. MD5, SHA-1).
+    pub checksums: HashMap<HashAlgorithm, String>,
 
-    /// Información de auditoría y ciclo de vida.
+    /// Ubicación en el backend de almacenamiento (ej. `s3://my-bucket/cas/sha256/abc...`).
+    pub storage_location: String,
+    
+    /// Información de auditoría y ciclo de vida (útil para la recolección de basura).
     pub lifecycle: Lifecycle,
 }
+```
 
-/// El tipo de backend de almacenamiento.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StorageType { S3Compatible, FileSystem, AzureBlob }
+#### 4.3. Módulo OCI (`domain/oci.rs`)
 
-/// Un tipo contenedor para representar datos que deben estar encriptados en reposo.
+```rust
+// crates/artifact/src/domain/oci.rs
+
+use crate::shared::models::ContentHash;
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+
+/// Representa un manifiesto de imagen OCI, que es la raíz de una imagen de contenedor.
+/// El manifiesto en sí es un `PhysicalArtifact`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Encrypted<T> {
-    encrypted_blob: Vec<u8>,
-    // ... metadatos de encriptación
-    _phantom: std::marker::PhantomData<T>,
+pub struct OciManifest {
+    /// El digest del manifiesto.
+    pub digest: ContentHash,
+    /// El tipo de media, ej. "application/vnd.oci.image.manifest.v1+json".
+    pub media_type: String,
+    /// Descriptor que apunta al fichero de configuración de la imagen.
+    pub config: OciDescriptor,
+    /// Lista ordenada de descriptores que apuntan a las capas de la imagen.
+    pub layers: Vec<OciDescriptor>,
+    /// Anotaciones opcionales.
+    pub annotations: Option<HashMap<String, String>>,
 }
+
+/// Un descriptor OCI, usado para `config` y `layers`. Apunta a otro `PhysicalArtifact`
+/// a través de su `digest`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OciDescriptor {
+    pub media_type: String,
+    pub digest: ContentHash,
+    pub size: u64,
+    pub annotations: Option<HashMap<String, String>>,
+}
+
+/// Representa el fichero de configuración de una imagen OCI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OciImageConfig {
+    pub architecture: String,
+    pub os: String,
+    /// Configuración del contenedor en sí.
+    pub config: OciContainerConfig,
+    /// Historial de cómo se construyó cada capa.
+    pub history: Vec<OciHistory>,
+    /// Sistema de ficheros raíz.
+    pub rootfs: OciRootFs,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OciContainerConfig {
+    pub user: Option<String>,
+    pub exposed_ports: Option<HashMap<String, serde_json::Value>>,
+    pub env: Option<Vec<String>>,
+    pub entrypoint: Option<Vec<String>>,
+    pub cmd: Option<Vec<String>>,
+    pub working_dir: Option<String>,
+    pub labels: Option<HashMap<String, String>>,
+}
+// ... otras structs OCI: OciHistory, OciRootFs, etc.
 ```
 
 #### 4.4. Módulo de Eventos (`domain/events.rs`)
 
 ```rust
-// crates/repository/src/domain/events.rs
+// crates/artifact/src/domain/events.rs
 
-use crate::shared::hrn::{Hrn, OrganizationId, RepositoryId};
-use crate::domain::repository::{RepositoryType};
-use crate::shared::enums::Ecosystem;
+use crate::shared::hrn::{Hrn, RepositoryId, UserId};
+use crate::shared::models::{PackageCoordinates, ArtifactReference};
+use crate::domain::package_version::ArtifactStatus;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 
-/// Eventos de dominio publicados por el contexto `repository`.
+/// Eventos de dominio publicados por el contexto `artifact`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RepositoryEvent {
-    RepositoryCreated(RepositoryCreated),
-    RepositoryDeleted(RepositoryDeleted),
-    RetentionPolicyApplied(RetentionPolicyApplied),
+pub enum ArtifactEvent {
+  /// Se ha publicado una nueva versión de un paquete. Este es el evento principal.
+  PackageVersionPublished(PackageVersionPublished),
+  /// Se ha eliminado una versión de un paquete.
+  PackageVersionDeleted(PackageVersionDeleted),
+  /// El estado de una versión de paquete ha cambiado (ej. a Quarantined).
+  PackageVersionStatusChanged(PackageVersionStatusChanged),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RepositoryCreated {
-    pub hrn: RepositoryId,
-    pub name: String,
-    pub repo_type: RepositoryType,
-    pub format: Ecosystem,
-    pub organization_hrn: OrganizationId,
-    pub at: OffsetDateTime,
+pub struct PackageVersionPublished {
+  pub hrn: Hrn,
+  pub repository_hrn: RepositoryId,
+  pub coordinates: PackageCoordinates,
+  /// Lista de todos los ficheros físicos que componen este paquete.
+  pub artifacts: Vec<ArtifactReference>,
+  pub publisher_hrn: UserId,
+  pub at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RepositoryDeleted {
-    pub hrn: RepositoryId,
-    pub deleted_by: Hrn,
-    pub at: OffsetDateTime,
+pub struct PackageVersionDeleted {
+  pub hrn: Hrn,
+  pub deleted_by: Hrn,
+  pub at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetentionPolicyApplied {
-    pub repository_hrn: RepositoryId,
-    pub policy_hrn: Hrn,
-    pub result: PolicyExecutionResult,
-    pub at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyExecutionResult {
-    pub artifacts_deleted: u32,
-    pub artifacts_archived: u32,
-    pub notifications_sent: u32,
-    pub status: String, // "Success", "Failed"
-    pub error_message: Option<String>,
+pub struct PackageVersionStatusChanged {
+  pub hrn: Hrn,
+  pub old_status: ArtifactStatus,
+  pub new_status: ArtifactStatus,
+  pub changed_by: Hrn,
+  pub at: OffsetDateTime,
 }
 ```
