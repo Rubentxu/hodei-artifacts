@@ -80,7 +80,7 @@ crates/security/src/domain/
 
 use crate::shared::hrn::{Hrn, OrganizationId, PackageVersionId, VulnerabilityOccurrenceId};
 use crate::shared::lifecycle::Lifecycle;
-use crate::shared::security::CedarResource;
+use crate::shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 

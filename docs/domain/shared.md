@@ -186,30 +186,120 @@ pub struct Lifecycle {
 }
 ```
 
-#### 2.4. Módulo de Autorización: `security.rs`
+#### 2.4. Módulo de Autorización: `security/`
 
-**Responsabilidad**: Definir la interfaz (`trait`) para la integración con el motor de autorización Cedar.
+**Responsabilidad**: Sistema completo de autorización basado en Cedar DSL con integración nativa.
+
+```
+crates/shared/src/security/
+├── mod.rs              # Exporta todos los componentes
+├── cedar_integration.rs # Conversión de entidades Hodei a Cedar
+└── resources.rs        # Traits genéricos para recursos
+```
+
+#### 2.4.1. Traits Genéricos (`security/resources.rs`)
 
 ```rust
-// crates/shared/src/security.rs
+// crates/shared/src/security/resources.rs
 
-use cedar_policy::{EntityUid, Expr};
 use std::collections::HashMap;
 
 /// Un trait para cualquier entidad de dominio que pueda ser representada
-/// como un recurso o principal en una política de autorización de Cedar.
-pub trait CedarResource {
-    /// Devuelve el Identificador de Entidad Único (EntityUid) para Cedar.
-    /// Se construye a partir del HRN de la entidad.
-    fn cedar_entity_uid(&self) -> EntityUid;
+/// como un recurso o principal en un sistema de autorización.
+/// Esta interfaz genérica permite flexibilidad en la implementación de infraestructura.
+pub trait HodeiResource<IdType, AttrType> {
+    /// Devuelve el identificador único de la entidad en formato adecuado para el sistema de autorización.
+    fn resource_id(&self) -> IdType;
 
-    /// Devuelve un mapa de los atributos de la entidad para la evaluación de políticas.
-    /// Expone el estado interno del objeto (ej. "status", "tags") a Cedar.
-    fn cedar_attributes(&self) -> HashMap<String, Expr>;
+    /// Devuelve un mapa de los atributos de la entidad para evaluación de políticas.
+    /// Los valores están en formato que puede interpretar el motor de autorización específico.
+    fn resource_attributes(&self) -> HashMap<String, AttrType>;
+
+    /// Devuelve una lista de identificadores de recursos padres para herencia de políticas.
+    /// Permite la jerarquía de autorización con tipos específicos del motor de autorización.
+    fn resource_parents(&self) -> Vec<IdType>;
+}
+```
+
+#### 2.4.2. Módulo Principal (`security/mod.rs`)
+
+```rust
+// crates/shared/src/security/mod.rs
+
+pub mod cedar_integration;
+pub mod resources;
+
+// Re-export para fácil acceso
+pub use cedar_integration::{to_cedar_entity, CedarEntityConverter};
+pub use resources::HodeiResource;
+
+/// Ejemplo de implementación para Organization usando tipos Cedar
+impl HodeiResource<cedar_policy::EntityUid, cedar_policy::Expr> for Organization {
+    fn resource_id(&self) -> cedar_policy::EntityUid {
+        cedar_policy::EntityUid::from_str(self.hrn.as_str()).unwrap()
+    }
+
+    fn resource_attributes(&self) -> HashMap<String, cedar_policy::Expr> {
+        let mut attrs = HashMap::new();
+        attrs.insert("type".to_string(), cedar_policy::Expr::val("organization"));
+        attrs.insert("status".to_string(), cedar_policy::Expr::val(self.status.to_string()));
+        attrs.insert("primary_region".to_string(), cedar_policy::Expr::val(self.primary_region.clone()));
+        attrs
+    }
+
+    fn resource_parents(&self) -> Vec<cedar_policy::EntityUid> {
+        Vec::new() // Organizaciones no tienen padres
+    }
+}
+```
+
+#### 2.4.3. Integración con Cedar DSL (`security/cedar_integration.rs`)
+
+**Responsabilidad**: Convertir entidades Hodei a entidades Cedar para evaluación de políticas DSL.
+
+```rust
+// crates/shared/src/security/cedar_integration.rs
+
+use cedar_policy::{Entity, EntityType, EntityUid, RestrictedExpression};
+use crate::security::HodeiResource;
+
+/// Convierte cualquier entidad Hodei a una entidad Cedar para evaluación de políticas
+pub fn to_cedar_entity<R, IdType, AttrType>(
+    resource: &R,
+) -> Result<Entity, CedarConversionError>
+where
+    R: HodeiResource<IdType, AttrType>,
+    IdType: Into<EntityUid>,
+    AttrType: Into<RestrictedExpression>,
+{
+    let uid = resource.resource_id().into();
+    let attrs = resource.resource_attributes()
+        .into_iter()
+        .map(|(k, v)| (k, v.into()))
+        .collect();
+    let parents = resource.resource_parents()
+        .into_iter()
+        .map(|p| p.into())
+        .collect();
     
-    /// Devuelve una lista de los padres de esta entidad en la jerarquía de Cedar.
-    /// Permite la herencia de políticas (ej. un PackageVersion es hijo de su Repository).
-    fn cedar_parents(&self) -> Vec<EntityUid>;
+    Ok(Entity::new(uid, attrs, parents))
+}
+
+/// Conversor para transformar múltiples entidades Hodei al formato Cedar
+pub struct CedarEntityConverter;
+
+impl CedarEntityConverter {
+    /// Convierte un conjunto de entidades para evaluación de políticas Cedar DSL
+    pub fn convert_entities<R, IdType, AttrType>(
+        entities: &[R],
+    ) -> Result<Vec<Entity>, CedarConversionError>
+    where
+        R: HodeiResource<IdType, AttrType>,
+        IdType: Into<EntityUid>,
+        AttrType: Into<RestrictedExpression>,
+    {
+        entities.iter().map(to_cedar_entity).collect()
+    }
 }
 ```
 

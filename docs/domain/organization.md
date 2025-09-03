@@ -83,7 +83,7 @@ crates/organization/src/domain/
 
 use crate::shared::hrn::{Hrn, UserId};
 use crate::shared::lifecycle::{Lifecycle};
-use crate::shared::security::CedarResource;
+use crate::shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 use cedar_policy::{EntityUid, Expr};
@@ -138,22 +138,22 @@ pub enum OrganizationStatus {
     PendingDeletion,
 }
 
-/// Implementación del trait `CedarResource` para que las organizaciones
-/// puedan ser utilizadas en políticas de autorización.
-impl CedarResource for Organization {
-    fn cedar_entity_uid(&self) -> EntityUid {
-        // La implementación utilizaría el HRN para construir el EntityUid
-        // ej. `Hodei::Organization::"hrn:hodei:iam:global:org_123:organization"`
+/// Implementación del trait `HodeiResource<EntityUid>` para que las organizaciones
+/// puedan ser utilizadas en políticas de autorización con Cedar.
+impl HodeiResource<EntityUid, Expr> for Organization {
+    fn resource_id(&self) -> EntityUid {
+        EntityUid::from_str(&self.hrn.as_str()).unwrap()
     }
 
-    fn cedar_attributes(&self) -> HashMap<String, Expr> {
+    fn resource_attributes(&self) -> HashMap<String, Expr> {
         let mut attrs = HashMap::new();
+        attrs.insert("type".to_string(), Expr::val("organization"));
         attrs.insert("status".to_string(), Expr::val(self.status.as_ref()));
         attrs.insert("primary_region".to_string(), Expr::val(self.primary_region.clone()));
         attrs
     }
 
-    fn cedar_parents(&self) -> Vec<EntityUid> {
+    fn resource_parents(&self) -> Vec<EntityUid> {
         // Las organizaciones son la raíz de la jerarquía, no tienen padres.
         vec![]
     }

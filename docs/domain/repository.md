@@ -90,7 +90,7 @@ crates/repository/src/domain/
 use crate::shared::hrn::{Hrn, OrganizationId, RepositoryId};
 use crate::shared::lifecycle::Lifecycle;
 use crate::shared::enums::Ecosystem;
-use crate::shared::security::CedarResource;
+use crate::shared::security::HodeiResource;
 use crate::domain::storage::StorageBackendId;
 use serde::{Serialize, Deserialize};
 use url::Url;
@@ -196,18 +196,21 @@ pub enum DeploymentPolicy { AllowSnapshots, BlockSnapshots, AllowRedeploy, Block
 pub enum ResolutionOrder { FirstFound }
 
 /// Implementación para que los repositorios puedan ser recursos en políticas Cedar.
-impl CedarResource for Repository {
-    fn cedar_entity_uid(&self) -> EntityUid { /* ... */ }
+impl HodeiResource<EntityUid, Expr> for Repository {
+    fn resource_id(&self) -> EntityUid {
+        EntityUid::from_str(&self.hrn.as_str()).unwrap()
+    }
 
-    fn cedar_attributes(&self) -> HashMap<String, Expr> {
+    fn resource_attributes(&self) -> HashMap<String, Expr> {
         let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), Expr::val(self.repo_type.as_ref()));
+        attrs.insert("type".to_string(), Expr::val("repository"));
+        attrs.insert("repo_type".to_string(), Expr::val(self.repo_type.as_ref()));
         attrs.insert("format".to_string(), Expr::val(self.format.as_ref()));
         attrs.insert("region".to_string(), Expr::val(self.region.clone()));
         attrs
     }
 
-    fn cedar_parents(&self) -> Vec<EntityUid> {
+    fn resource_parents(&self) -> Vec<EntityUid> {
         // El padre de un repositorio es su organización.
         vec![EntityUid::from_str(self.organization_hrn.as_str()).unwrap()]
     }

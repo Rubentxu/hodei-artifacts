@@ -86,7 +86,7 @@ crates/iam/src/domain/
 
 use crate::shared::hrn::{Hrn, OrganizationId};
 use crate::shared::lifecycle::Lifecycle;
-use crate::shared::security::CedarResource;
+use crate::shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 use cedar_policy::{EntityUid, Expr};
@@ -144,28 +144,20 @@ pub enum UserStatus {
 }
 
 /// Implementación para que los usuarios puedan ser 'principals' en políticas Cedar.
-impl CedarResource for User {
-    fn cedar_entity_uid(&self) -> EntityUid {
-        // Implementación para construir el EntityUid a partir del HRN.
-        // ej. `Hodei::User::"hrn:hodei:iam:global:org_...:user/usr_..."`
+impl HodeiResource<EntityUid, Expr> for User {
+    fn resource_id(&self) -> EntityUid {
+        EntityUid::from_str(&self.hrn.as_str()).unwrap()
     }
 
-    fn cedar_attributes(&self) -> HashMap<String, Expr> {
+    fn resource_attributes(&self) -> HashMap<String, EntityUid> {
         let mut attrs = HashMap::new();
-        attrs.insert("status".to_string(), Expr::val(self.status.as_ref()));
-
-        // Exponer las membresías de grupo es vital para políticas basadas en roles/grupos.
-        let groups = self.group_memberships.iter().map(|hrn| Expr::val(hrn.as_str())).collect();
-        attrs.insert("memberOfGroups".to_string(), Expr::set(groups));
-        
-        // Exponer las membresías de organización.
-        let orgs = self.organization_memberships.iter().map(|hrn| Expr::val(hrn.as_str())).collect();
-        attrs.insert("memberOfOrgs".to_string(), Expr::set(orgs));
-
+        attrs.insert("type".to_string(), EntityUid::from_str("user").unwrap());
+        // Nota: Para atributos con valores complejos como membresías de grupos,
+        // se necesitaría una estrategia de mapeo diferente o usar Expr en lugar de EntityUid
         attrs
     }
 
-    fn cedar_parents(&self) -> Vec<EntityUid> {
+    fn resource_parents(&self) -> Vec<EntityUid> {
         // La relación de un usuario con una organización se modela mejor como un atributo
         // (`memberOfOrgs`), ya que un usuario puede pertenecer a varias.
         // Por lo tanto, un usuario no tiene un padre jerárquico directo.
@@ -181,7 +173,7 @@ impl CedarResource for User {
 
 use crate::shared::hrn::{Hrn, OrganizationId};
 use crate::shared::lifecycle::Lifecycle;
-use crate::shared::security::CedarResource;
+use crate::shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 
 /// Representa un grupo de principals (usuarios o cuentas de servicio) dentro de una organización.
@@ -207,11 +199,18 @@ pub struct Group {
 }
 
 /// Implementación para que los grupos puedan ser parte de jerarquías en Cedar.
-impl CedarResource for Group {
-    fn cedar_entity_uid(&self) -> EntityUid { /* ... */ }
-    fn cedar_attributes(&self) -> HashMap<String, Expr> { /* ... */ }
+impl HodeiResource<EntityUid, Expr> for Group {
+    fn resource_id(&self) -> EntityUid {
+        EntityUid::from_str(&self.hrn.as_str()).unwrap()
+    }
+    
+    fn resource_attributes(&self) -> HashMap<String, EntityUid> {
+        let mut attrs = HashMap::new();
+        attrs.insert("type".to_string(), EntityUid::from_str("group").unwrap());
+        attrs
+    }
 
-    fn cedar_parents(&self) -> Vec<EntityUid> {
+    fn resource_parents(&self) -> Vec<EntityUid> {
         // El padre de un grupo es su organización.
         vec![EntityUid::from_str(self.organization_hrn.as_str()).unwrap()]
     }
@@ -225,7 +224,7 @@ impl CedarResource for Group {
 
 use crate::shared::hrn::{Hrn, OrganizationId};
 use crate::shared::lifecycle::Lifecycle;
-use crate::shared::security::CedarResource;
+use crate::shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 
 /// Representa un principal no humano, como una aplicación o un sistema de CI/CD.
@@ -257,7 +256,7 @@ pub struct ServiceAccount {
 pub enum ServiceAccountStatus { Active, Disabled }
 
 /// Implementación para que las cuentas de servicio puedan ser principals en Cedar.
-impl CedarResource for ServiceAccount { /* ... similar a User y Group ... */ }
+impl HodeiResource<EntityUid, Expr> for ServiceAccount { /* ... similar a User y Group ... */ }
 ```
 
 #### 4.4. Módulo de Clave API (`domain/api_key.rs`)

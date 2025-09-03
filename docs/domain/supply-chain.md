@@ -87,7 +87,7 @@ crates/supply-chain/src/domain/
 
 use crate::shared::hrn::{Hrn, OrganizationId, PackageVersionId, PublicKeyId};
 use crate::shared::lifecycle::Lifecycle;
-use crate::shared::security::CedarResource;
+use crate::shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 use cedar_policy::{EntityUid, Expr};
 use std::collections::HashMap;
@@ -144,16 +144,19 @@ pub enum AttestationType {
 }
 
 /// Implementación para que las atestaciones puedan ser recursos en políticas Cedar.
-impl CedarResource for Attestation {
-    fn cedar_entity_uid(&self) -> EntityUid { /* ... */ }
+impl HodeiResource<EntityUid, Expr> for Attestation {
+    fn resource_id(&self) -> EntityUid {
+        EntityUid::from_str(&self.hrn.as_str()).unwrap()
+    }
 
-    fn cedar_attributes(&self) -> HashMap<String, Expr> {
+    fn resource_attributes(&self) -> HashMap<String, Expr> {
         let mut attrs = HashMap::new();
+        attrs.insert("type".to_string(), Expr::val("attestation"));
         attrs.insert("predicate_type".to_string(), Expr::val(self.predicate_type.as_ref()));
         attrs
     }
 
-    fn cedar_parents(&self) -> Vec<EntityUid> {
+    fn resource_parents(&self) -> Vec<EntityUid> {
         // El padre de una atestación es el artefacto que describe.
         // Esto permite políticas como "El artefacto X debe tener una atestación de tipo Y".
         vec![EntityUid::from_str(self.subject_hrn.as_str()).unwrap()]

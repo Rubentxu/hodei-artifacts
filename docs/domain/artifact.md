@@ -83,7 +83,7 @@ use crate::shared::hrn::{Hrn, OrganizationId, RepositoryId, UserId};
 use crate::shared::lifecycle::Lifecycle;
 use crate::shared::models::{PackageCoordinates, ArtifactReference};
 use crate::shared::enums::{ArtifactStatus, ArtifactRole};
-use crate::shared::security::CedarResource;
+use crate::shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 use cedar_policy::{EntityUid, Expr};
@@ -170,11 +170,14 @@ pub enum ArtifactStatus {
 }
 
 /// Implementación para que `PackageVersion` pueda ser un recurso en políticas Cedar.
-impl CedarResource for PackageVersion {
-    fn cedar_entity_uid(&self) -> EntityUid { /* ... */ }
+impl HodeiResource<EntityUid, Expr> for PackageVersion {
+    fn resource_id(&self) -> EntityUid {
+        EntityUid::from_str(&self.hrn.as_str()).unwrap()
+    }
 
-    fn cedar_attributes(&self) -> HashMap<String, Expr> {
+    fn resource_attributes(&self) -> HashMap<String, Expr> {
         let mut attrs = HashMap::new();
+        attrs.insert("type".to_string(), Expr::val("package_version"));
         attrs.insert("status".to_string(), Expr::val(self.status.as_ref()));
         let tags_expr = self.tags.iter().map(|t| Expr::val(t.clone())).collect::<Vec<_>>();
         attrs.insert("tags".to_string(), Expr::set(tags_expr));
@@ -182,7 +185,7 @@ impl CedarResource for PackageVersion {
         attrs
     }
 
-    fn cedar_parents(&self) -> Vec<EntityUid> {
+    fn resource_parents(&self) -> Vec<EntityUid> {
         vec![
             EntityUid::from_str(self.repository_hrn.as_str()).unwrap(),
             EntityUid::from_str(self.organization_hrn.as_str()).unwrap(),
