@@ -236,73 +236,127 @@ npm run storybook
 
 ## Cómo ejecutar los tests
 
-### Backend (Rust)
+Para acelerar la ejecución de los tests en Rust y optimizar el flujo de trabajo, se recomienda encarecidamente el uso del `Makefile` proporcionado en la raíz del proyecto. Este `Makefile` integra herramientas como `cargo-nextest` y `sccache` para minimizar las recompilaciones y paralelizar la ejecución de los tests.
 
-#### Estrategia de Tests Unitarios
+### 1. Configuración Inicial (Una sola vez)
 
-Para asegurar un feedback rápido y un desarrollo ágil, priorizamos los tests unitarios exhaustivos para la lógica de negocio (`use_case`) y los endpoints de la API (`api`). Estos tests deben mockear todas las dependencias externas (repositorios, almacenamiento, publicadores de eventos) para garantizar un aislamiento completo y una ejecución veloz.
+Antes de usar el `Makefile`, realiza esta configuración inicial:
 
-- **Ubicación**: Los tests unitarios se encuentran junto al código que prueban, en archivos con el sufijo `_test.rs` (ej. `use_case_test.rs`, `api_test.rs`).
-- **Mocks**: Utilizamos mocks para todas las interfaces (traits/ports) que interactúan con la infraestructura.
-- **Ejecución**: Puedes ejecutar los tests unitarios de un crate específico de la siguiente manera:
-  ```bash
-  cargo test -p <nombre_crate> --lib
-  ```
-  O para un módulo específico:
-  ```bash
-  cargo test -p <nombre_crate> <nombre_modulo_test>
-  ```
+*   **Instalar `cargo-nextest` y `sccache`:**
+    ```bash
+    make install-tools
+    ```
+    Este comando instalará `cargo-nextest` (un corredor de tests más rápido) y `sccache` (una caché de compilación).
 
-#### Tests de Integración (Rust)
+*   **Configurar tu Shell para `sccache`:**
+    ```bash
+    make setup-env
+    ```
+    Este comando imprimirá instrucciones. Debes añadir la línea `export RUSTC_WRAPPER=$(which sccache)` a tu archivo de configuración de shell (ej. `~/.bashrc`, `~/.zshrc`, o `~/.profile`) y luego reiniciar tu terminal o ejecutar `source` el archivo. Esto asegura que `sccache` se use automáticamente para todas las compilaciones de Rust, incluyendo los tests.
 
-Los tests de integración validan la interacción entre componentes y con la infraestructura real (contenedores Docker). Son más lentos pero cruciales para verificar el flujo completo.
+*   **Opcional: Configurar Enlazador más Rápido (Solo Linux):**
+    El comando `make setup-env` también proporciona instrucciones para configurar `lld` como un enlazador más rápido en tu archivo `.cargo/config.toml`. Esto es opcional pero recomendado para proyectos grandes en Linux.
 
-- **Ubicación**: Se encuentran en la carpeta `tests/` de cada crate (ej. `crates/artifact/tests/it_upload_artifact.rs`).
-- **Ejecución**: Para ejecutar solo los tests de integración (que requieren Docker/Podman), usa:
-  ```bash
-  cargo test -p <nombre_crate> --features integration -- --ignored
-  ```
-  (Nota: el flag `--ignored` es necesario porque estos tests están marcados con `#[ignore]` para no ejecutarse por defecto).
+### 2. Ejecución de Tests con Makefile
 
-#### Ejecución General de Tests
+Puedes ejecutar tests para todo el workspace o para un crate específico.
 
-- __Todos los tests (unitarios + integración)__:
-  ```bash
-  cargo test
-  ```
-- __Ver salida/logs del test__:
-  ```bash
-  RUST_LOG=info cargo test -- --nocapture
-  ```
-- __Ejecutar por crate__:
-  ```bash
-  cargo test -p <nombre_crate>
-  ```
-- __Solo unit tests (lib/bin) en todo el workspace__:
-  ```bash
-  cargo test --lib --bins
-  ```
-- __Solo tests de integración (carpeta `tests/`)__::
+*   **Ejecutar Tests Unitarios (para todo el workspace o el directorio actual):**
+    ```bash
+    make test-unit
+    ```
+
+*   **Ejecutar Tests Unitarios para un Crate Específico:**
+    ```bash
+    make test-unit CRATE=artifact
+    # Reemplaza 'artifact' con el nombre de tu crate (ej. 'iam', 'repository')
+    ```
+
+*   **Ejecutar Tests de Integración (para todo el workspace o el directorio actual):**
+    ```bash
+    make test-integration
+    ```
+    *   **Nota:** Docker debe estar ejecutándose para los tests de integración.
+
+*   **Ejecutar Tests de Integración para un Crate Específico:**
+    ```bash
+    make test-integration CRATE=artifact
+    # Reemplaza 'artifact' con el nombre de tu crate
+    ```
+
+*   **Ejecutar Todos los Tests (Unitarios y de Integración) para todo el workspace:**
+    ```bash
+    make test-all
+    ```
+
+*   **Ejecutar Todos los Tests (Unitarios y de Integración) para un Crate Específico:**
+    ```bash
+    make test-all CRATE=artifact
+    ```
+
+### 3. Personalizar el Nivel de Logging
+
+Puedes controlar la verbosidad de la salida de los tests usando la variable `RUST_LOG_LEVEL`:
+
+*   **Ejecutar tests con logs de depuración:**
+    ```bash
+    make test-unit RUST_LOG_LEVEL=debug
+    make test-integration CRATE=artifact RUST_LOG_LEVEL=trace
+    ```
+    Los niveles comunes incluyen `error`, `warn`, `info`, `debug`, `trace`.
+
+### 4. Limpiar Artefactos de Compilación
+
+Para realizar una limpieza completa y eliminar todos los artefactos compilados:
+
+```bash
+make clean
+```
+
+### 5. Ayuda
+
+Para ver un resumen de todos los comandos y variables disponibles:
+
+```bash
+make help
+```
+
+### 6. Ejecución de Tests con `cargo test` (Alternativa)
+
+Aunque se recomienda el `Makefile` para una ejecución más rápida, aquí se detallan los comandos estándar de `cargo test` para referencia:
+
+*   **Todos los tests (unitarios + integración):**
+    ```bash
+    cargo test
+    ```
+*   **Ver salida/logs del test:**
+    ```bash
+    RUST_LOG=info cargo test -- --nocapture
+    ```
+*   **Ejecutar por crate:**
+    ```bash
+    cargo test -p <nombre_crate>
+    ```
+*   **Solo unit tests (lib/bin) en todo el workspace:**
+    ```bash
+    cargo test --lib --bins
+    ```
+*   **Solo tests de integración (carpeta `tests/`):**
     ```bash
     cargo test --tests
     ```
-  - Solo doc tests:
+*   **Solo doc tests:**
     ```bash
     cargo test --doc
     ```
-  - Filtrar por nombre de test:
+*   **Filtrar por nombre de test:**
     ```bash
     cargo test <patron>
     ```
-  - Solo un fichero de integración concreto (dentro de un crate):
+*   **Solo un fichero de integración concreto (dentro de un crate):**
     ```bash
     cargo test -p <nombre_crate> --test <fichero_sin_.rs>
     ```
-  - (Opcional) Usando nextest:
-    ```bash
-    cargo nextest run
-    ```
-    - Equivalentes: `cargo nextest run --tests`, `--lib`, `-p <crate>`
 
 ### Frontend (React)
 - __Tests unitarios y de integración__:
