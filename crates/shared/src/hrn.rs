@@ -142,6 +142,10 @@ pub struct VulnerabilityDefinitionId(pub Hrn);
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VulnerabilityOccurrenceId(pub Hrn);
 
+/// Identificador para un `StorageBackend`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StorageBackendId(pub Hrn);
+
 /// Validates if a string is a valid organization name.
 /// Organization names should only contain alphanumeric characters, dots, and hyphens.
 fn is_valid_organization_name(name: &str) -> bool {

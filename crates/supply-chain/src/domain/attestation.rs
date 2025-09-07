@@ -2,10 +2,7 @@
 
 use shared::hrn::{Hrn, OrganizationId, PackageVersionId, PublicKeyId};
 use shared::lifecycle::Lifecycle;
-use shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
-use cedar_policy::{EntityUid, Expr};
-use std::collections::HashMap;
 
 /// Una prueba criptográficamente verificable sobre un artefacto (`PackageVersion`).
 /// Es el Agregado Raíz principal de este contexto.
@@ -58,22 +55,3 @@ pub enum AttestationType {
     GenericSignature, // Para otros tipos de firma
 }
 
-/// Implementación para que las atestaciones puedan ser recursos en políticas Cedar.
-impl HodeiResource<EntityUid, Expr> for Attestation {
-    fn resource_id(&self) -> EntityUid {
-        EntityUid::from_str(&self.hrn.as_str()).unwrap()
-    }
-
-    fn resource_attributes(&self) -> HashMap<String, Expr> {
-        let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), Expr::val("attestation"));
-        attrs.insert("predicate_type".to_string(), Expr::val(self.predicate_type.as_ref()));
-        attrs
-    }
-
-    fn resource_parents(&self) -> Vec<EntityUid> {
-        // El padre de una atestación es el artefacto que describe.
-        // Esto permite políticas como "El artefacto X debe tener una atestación de tipo Y".
-        vec![EntityUid::from_str(self.subject_hrn.as_str()).unwrap()]
-    }
-}

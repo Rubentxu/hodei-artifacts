@@ -1,15 +1,11 @@
 // crates/repository/src/domain/repository.rs
 
-use shared::hrn::{Hrn, OrganizationId, RepositoryId};
+use shared::hrn::{Hrn, OrganizationId, RepositoryId, StorageBackendId};
 use shared::lifecycle::Lifecycle;
 use shared::enums::Ecosystem;
 use shared::security::HodeiResource;
-use crate::domain::storage::StorageBackendId;
 use serde::{Serialize, Deserialize};
 use url::Url;
-use cedar_policy::{EntityUid, RestrictedExpression};
-use std::str::FromStr;
-use std::collections::HashMap;
 
 /// Representa un contenedor para artefactos que define políticas de acceso y almacenamiento.
 /// Es el Agregado Raíz principal de este Bounded Context.
@@ -109,23 +105,3 @@ pub enum DeploymentPolicy { AllowSnapshots, BlockSnapshots, AllowRedeploy, Block
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResolutionOrder { FirstFound }
 
-/// Implementación para que los repositorios puedan ser recursos en políticas Cedar.
-impl HodeiResource<EntityUid, RestrictedExpression> for Repository {
-    fn resource_id(&self) -> EntityUid {
-        EntityUid::from_str(&self.hrn.as_str()).unwrap()
-    }
-
-    fn resource_attributes(&self) -> HashMap<String, RestrictedExpression> {
-        let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), Expr::val("repository"));
-        attrs.insert("repo_type".to_string(), Expr::val(self.repo_type.as_ref()));
-        attrs.insert("format".to_string(), Expr::val(self.format.as_ref()));
-        attrs.insert("region".to_string(), Expr::val(self.region.clone()));
-        attrs
-    }
-
-    fn resource_parents(&self) -> Vec<EntityUid> {
-        // El padre de un repositorio es su organización.
-        vec![EntityUid::from_str(self.organization_hrn.as_str()).unwrap()]
-    }
-}

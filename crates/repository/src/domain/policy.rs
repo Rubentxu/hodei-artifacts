@@ -2,7 +2,8 @@
 
 use shared::hrn::{Hrn, RepositoryId};
 use shared::lifecycle::Lifecycle;
-use shared::enums::ArtifactStatus; // Necesario para algunas reglas
+// ArtifactStatus está definido en el crate artifact, no en shared
+// use crate::domain::artifact_status::ArtifactStatus; // TODO: Importar desde el lugar correcto
 use serde::{Serialize, Deserialize};
 
 /// Un regex validado para prevenir ataques de Denegación de Servicio (ReDoS).
@@ -48,10 +49,10 @@ pub enum RetentionRule {
         action: RetentionAction,
     },
     /// Aplica a artefactos que coinciden con un estado específico.
-    ByStatus {
-        status: ArtifactStatus,
-        action: RetentionAction,
-    },
+    // ByStatus {
+    //     status: ArtifactStatus,
+    //     action: RetentionAction,
+    // },
     /// Aplica a artefactos cuyo nombre de versión coincide con un regex.
     /// Ideal para limpiar versiones SNAPSHOT.
     MatchesVersionRegex {

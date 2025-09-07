@@ -46,4 +46,27 @@ pub struct SlsaMaterial {
     pub digest: HashMap<String, String>, // ej. {"sha1": "...", "sha256": "..."}
 }
 
-// ... otras structs de soporte para SLSA: SlsaMetadata, SlsaConfigSource
+/// Metadatos adicionales sobre la construcción.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlsaMetadata {
+    pub build_started_on: Option<String>,
+    pub build_finished_on: Option<String>,
+    pub completeness: SlsaCompleteness,
+    pub reproducible: bool,
+}
+
+/// Describe la completitud de los metadatos de construcción.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlsaCompleteness {
+    pub parameters: bool,
+    pub environment: bool,
+    pub materials: bool,
+}
+
+/// Describe la fuente de configuración usada para la construcción.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlsaConfigSource {
+    pub uri: String,
+    pub digest: HashMap<String, String>,
+    pub entry_point: String,
+}

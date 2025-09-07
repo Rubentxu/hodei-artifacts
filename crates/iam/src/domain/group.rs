@@ -27,20 +27,3 @@ pub struct Group {
     pub lifecycle: Lifecycle,
 }
 
-/// Implementación para que los grupos puedan ser parte de jerarquías en Cedar.
-impl HodeiResource<EntityUid, Expr> for Group {
-    fn resource_id(&self) -> EntityUid {
-        EntityUid::from_str(&self.hrn.as_str()).unwrap()
-    }
-    
-    fn resource_attributes(&self) -> HashMap<String, EntityUid> {
-        let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), EntityUid::from_str("group").unwrap());
-        attrs
-    }
-
-    fn resource_parents(&self) -> Vec<EntityUid> {
-        // El padre de un grupo es su organización.
-        vec![EntityUid::from_str(self.organization_hrn.as_str()).unwrap()]
-    }
-}

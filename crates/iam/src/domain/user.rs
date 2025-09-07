@@ -5,8 +5,6 @@ use shared::lifecycle::Lifecycle;
 use shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
-use cedar_policy::{EntityUid, Expr};
-use std::collections::HashMap;
 
 /// Representa a un usuario humano, un principal fundamental en el sistema.
 /// Es un Agregado Raíz.
@@ -59,24 +57,3 @@ pub enum UserStatus {
     PendingDeletion,
 }
 
-/// Implementación para que los usuarios puedan ser 'principals' en políticas Cedar.
-impl HodeiResource<EntityUid, Expr> for User {
-    fn resource_id(&self) -> EntityUid {
-        EntityUid::from_str(&self.hrn.as_str()).unwrap()
-    }
-
-    fn resource_attributes(&self) -> HashMap<String, EntityUid> {
-        let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), EntityUid::from_str("user").unwrap());
-        // Nota: Para atributos con valores complejos como membresías de grupos,
-        // se necesitaría una estrategia de mapeo diferente o usar Expr en lugar de EntityUid
-        attrs
-    }
-
-    fn resource_parents(&self) -> Vec<EntityUid> {
-        // La relación de un usuario con una organización se modela mejor como un atributo
-        // (`memberOfOrgs`), ya que un usuario puede pertenecer a varias.
-        // Por lo tanto, un usuario no tiene un padre jerárquico directo.
-        vec![]
-    }
-}

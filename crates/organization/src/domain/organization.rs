@@ -5,7 +5,8 @@ use shared::lifecycle::{Lifecycle};
 use shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
-use cedar_policy::{EntityUid, Expr};
+use cedar_policy::{EntityUid, RestrictedExpression};
+use std::str::FromStr;
 use std::collections::HashMap;
 
 /// Representa un tenant del sistema, un contenedor lógico que aísla todos sus recursos.
@@ -59,16 +60,16 @@ pub enum OrganizationStatus {
 
 /// Implementación del trait `HodeiResource<EntityUid>` para que las organizaciones
 /// puedan ser utilizadas en políticas de autorización con Cedar.
-impl HodeiResource<EntityUid, Expr> for Organization {
+impl HodeiResource<EntityUid, RestrictedExpression> for Organization {
     fn resource_id(&self) -> EntityUid {
         EntityUid::from_str(&self.hrn.as_str()).unwrap()
     }
 
-    fn resource_attributes(&self) -> HashMap<String, Expr> {
+    fn resource_attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), Expr::val("organization"));
-        attrs.insert("status".to_string(), Expr::val(self.status.as_ref()));
-        attrs.insert("primary_region".to_string(), Expr::val(self.primary_region.clone()));
+        attrs.insert("type".to_string(), RestrictedExpression::new_string("organization".to_string()));
+        attrs.insert("status".to_string(), RestrictedExpression::new_string(format!("{:?}", self.status)));
+        attrs.insert("primary_region".to_string(), RestrictedExpression::new_string(self.primary_region.clone()));
         attrs
     }
 

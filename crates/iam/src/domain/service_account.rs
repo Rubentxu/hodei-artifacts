@@ -2,7 +2,6 @@
 
 use shared::hrn::{Hrn, OrganizationId};
 use shared::lifecycle::Lifecycle;
-use shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 
 /// Representa un principal no humano, como una aplicación o un sistema de CI/CD.
@@ -32,6 +31,3 @@ pub struct ServiceAccount {
 /// El estado del ciclo de vida de una cuenta de servicio.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceAccountStatus { Active, Disabled }
-
-/// Implementación para que las cuentas de servicio puedan ser principals en Cedar.
-impl HodeiResource<EntityUid, Expr> for ServiceAccount { /* ... similar a User y Group ... */ }
