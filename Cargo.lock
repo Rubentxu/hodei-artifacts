@@ -3976,6 +3976,7 @@ version = "0.1.0"
 dependencies = [
  "cedar-policy",
  "serde",
+ "serde_json",
  "shared",
  "url",
 ]
@@ -4561,6 +4562,7 @@ dependencies = [
  "time",
  "tracing",
  "tracing-subscriber",
+ "tracing-test",
  "uuid",
 ]
 

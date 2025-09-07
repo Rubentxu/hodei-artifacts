@@ -7,7 +7,8 @@ use shared::security::HodeiResource;
 use crate::domain::storage::StorageBackendId;
 use serde::{Serialize, Deserialize};
 use url::Url;
-use cedar_policy::{EntityUid, Expr};
+use cedar_policy::{EntityUid, RestrictedExpression};
+use std::str::FromStr;
 use std::collections::HashMap;
 
 /// Representa un contenedor para artefactos que define políticas de acceso y almacenamiento.
@@ -109,12 +110,12 @@ pub enum DeploymentPolicy { AllowSnapshots, BlockSnapshots, AllowRedeploy, Block
 pub enum ResolutionOrder { FirstFound }
 
 /// Implementación para que los repositorios puedan ser recursos en políticas Cedar.
-impl HodeiResource<EntityUid, Expr> for Repository {
+impl HodeiResource<EntityUid, RestrictedExpression> for Repository {
     fn resource_id(&self) -> EntityUid {
         EntityUid::from_str(&self.hrn.as_str()).unwrap()
     }
 
-    fn resource_attributes(&self) -> HashMap<String, Expr> {
+    fn resource_attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
         attrs.insert("type".to_string(), Expr::val("repository"));
         attrs.insert("repo_type".to_string(), Expr::val(self.repo_type.as_ref()));

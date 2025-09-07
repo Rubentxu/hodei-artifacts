@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 serde = { workspace = true }
-url = { version = "2.5.0" } # As defined in domain model
+serde_json = { workspace = true }
+url = { workspace = true } # As defined in domain model
 cedar-policy = { workspace = true }
 shared = { path = "../shared" }

@@ -34,9 +34,9 @@ shared = { path = "../shared" }
 [dev-dependencies]
 reqwest = { workspace = true, features = ["multipart"] }
 testcontainers = { workspace = true }
-tracing-subscriber = "0.3.18"
-tracing-test = "0.2"
-hyper = { version = "1.0", features = ["server", "http1", "http2"] }
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true }
+hyper = { workspace = true, features = ["server", "http1", "http2"] }
 
 tokio-util = { workspace = true }
 mime = { workspace = true }
