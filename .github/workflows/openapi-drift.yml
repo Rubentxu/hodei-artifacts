@@ -11,7 +11,7 @@ on:
       - 'openapi.yaml'
       - 'scripts/check-openapi-drift.sh'
       - '.github/workflows/openapi-drift.yml'
-      - 'crates/**.rs'
+      - '../../crates_old/**.rs'
   push:
     branches: [ main ]
     paths:

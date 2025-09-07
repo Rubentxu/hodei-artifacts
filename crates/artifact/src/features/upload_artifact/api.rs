@@ -1,7 +1,11 @@
+use tracing::{info, error, debug, info_span};
 use axum::{
     extract::Multipart,
     response::{IntoResponse, Json},
     http::StatusCode,
+    Extension,
+    Router,
+    routing::post,
 };
 use std::sync::Arc;
 use bytes::Bytes;
@@ -12,9 +16,9 @@ use super::{
     dto::{UploadArtifactCommand, UploadArtifactResponse},
     use_case::UploadArtifactUseCase,
     error::UploadArtifactError,
+    di::UploadArtifactDIContainer,
 };
 
-/// The API entry point for the Upload Artifact feature.
 pub struct UploadArtifactEndpoint {
     use_case: Arc<UploadArtifactUseCase>,
 }
@@ -24,11 +28,16 @@ impl UploadArtifactEndpoint {
         Self { use_case }
     }
 
-    /// Axum handler for the artifact upload request.
-    pub async fn handle_request(
-        &self,
-        mut multipart: Multipart,
+    // removed debug_handler to avoid requiring axum macros feature in this crate
+    pub async fn upload_artifact(
+        Extension(endpoint): Extension<Arc<UploadArtifactEndpoint>>,
+        multipart: Multipart,
     ) -> impl IntoResponse {
+        Self::handle_request(endpoint, multipart).await
+    }
+
+    async fn handle_request(endpoint: Arc<UploadArtifactEndpoint>, mut multipart: Multipart) -> impl IntoResponse {
+        debug!("handle_request called");
         let mut command: Option<UploadArtifactCommand> = None;
         let mut content: Option<Bytes> = None;
 
@@ -39,17 +48,38 @@ impl UploadArtifactEndpoint {
             if name == "metadata" {
                 if let Ok(metadata_str) = std::str::from_utf8(&data) {
                     command = from_str(metadata_str).ok();
+                    debug!("Parsed metadata: {:?}", command);
+                } else {
+                    error!("Failed to parse metadata as UTF-8");
                 }
             } else if name == "file" {
                 content = Some(data);
+                debug!("Received file with length: {}", content.as_ref().unwrap().len());
             }
         }
 
         if let (Some(mut cmd), Some(cont)) = (command, content) {
+            info!("Processing upload command: {:?}", cmd);
+            info!("Content length: {}", cont.len());
             cmd.content_length = cont.len() as u64;
-            match self.use_case.execute(cmd, cont).await {
-                Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+            
+            let span = info_span!("upload_artifact_execution", 
+                coordinates = ?cmd.coordinates,
+                file_name = %cmd.file_name,
+                content_length = cmd.content_length
+            );
+            
+            let result = span.in_scope(|| async {
+                endpoint.use_case.execute(cmd, cont).await
+            }).await;
+
+            match result {
+                Ok(response) => {
+                    info!("Upload completed successfully: {}", response.hrn);
+                    (StatusCode::CREATED, Json(response)).into_response()
+                }
                 Err(e) => {
+                    error!("Upload failed: {}", e);
                     // Map domain errors to http status codes
                     let status_code = match e {
                         UploadArtifactError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -61,7 +91,17 @@ impl UploadArtifactEndpoint {
                 }
             }
         } else {
+            error!("Missing metadata or file part in upload request");
             (StatusCode::BAD_REQUEST, "Missing metadata or file part").into_response()
         }
     }
+}
+
+/// Helper to wire the Upload Artifact API into an Axum Router, as used by integration tests.
+pub fn setup_app(app: Router, di: UploadArtifactDIContainer) -> Router {
+    app.route(
+        "/artifacts",
+        post(UploadArtifactEndpoint::upload_artifact),
+    )
+    .layer(Extension(di.endpoint.clone()))
 }

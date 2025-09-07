@@ -1,7 +1,12 @@
 [package]
 name = "artifact"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+
+[features]
+integration = []
+
+auth = []
 
 [dependencies]
 async-trait = { workspace = true }
@@ -14,12 +19,14 @@ time = { workspace = true }
 axum = { workspace = true, features = ["multipart"] }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
+aws-credential-types = { workspace = true }
 hex = { workspace = true }
 futures-util = { workspace = true }
 serde_json = { workspace = true }
 mongodb = { workspace = true }
 lapin = { workspace = true }
 cedar-policy = { workspace = true }
+tracing = { workspace = true }
 
 # Workspace dependencies
 shared = { path = "../shared" }
@@ -27,6 +34,11 @@ shared = { path = "../shared" }
 [dev-dependencies]
 reqwest = { workspace = true, features = ["multipart"] }
 testcontainers = { workspace = true }
+tracing-subscriber = "0.3.18"
+tracing-test = "0.2"
+hyper = { version = "1.0", features = ["server", "http1", "http2"] }
+
 tokio-util = { workspace = true }
 mime = { workspace = true }
 futures = { workspace = true }
+tracing = { workspace = true }

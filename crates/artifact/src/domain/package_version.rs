@@ -1,6 +1,6 @@
 use shared::hrn::{Hrn, OrganizationId, RepositoryId, UserId};
 use shared::lifecycle::Lifecycle;
-use shared::models::{PackageCoordinates, ArtifactReference};
+pub(crate) use shared::models::{PackageCoordinates, ArtifactReference};
 use shared::enums::ArtifactRole;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
@@ -50,7 +50,7 @@ pub struct PackageVersion {
 impl PackageVersion {
     /// Pone en cuarentena un artefacto si está en un estado válido.
     /// Este método encapsula la lógica de negocio para la transición de estado.
-    pub fn quarantine(&mut self, reason: String, by: Hrn, at: OffsetDateTime) -> Result<(), error::DomainError> {
+    pub fn quarantine(&mut self, _reason: String, _by: Hrn, _at: OffsetDateTime) -> Result<(), error::DomainError> {
         // ... Lógica para una transición de estado segura
         Ok(())
     }

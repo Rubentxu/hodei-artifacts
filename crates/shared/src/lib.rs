@@ -6,3 +6,4 @@ pub mod hrn;
 pub mod lifecycle;
 pub mod models;
 pub mod security;
+pub mod testing;

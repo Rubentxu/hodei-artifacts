@@ -44,10 +44,10 @@ impl UploadArtifactDIContainer {
     /// Convenience function for wiring up mock dependencies for testing.
     #[cfg(test)]
     pub fn for_testing() -> Self {
-        use super::adapter::test::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher};
+        use super::test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher};
 
         let repository = Arc::new(MockArtifactRepository::new());
-        let storage = Arc::new(MockArtifactStorage);
+        let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
 
         Self::new(repository, storage, publisher)

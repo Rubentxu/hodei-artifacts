@@ -22,10 +22,13 @@ e2e/test-results/
 *.gemini*
 *.copilot*
 CLAUDE.md
+GEMINI.md
 AI_CONFIG.md
 LLM_SETTINGS.*
 *.clinerules*    
 *.web-bundles*
+.lingma/
+
 
 
 # WASM / Trunk outputs

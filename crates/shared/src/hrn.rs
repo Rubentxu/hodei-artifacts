@@ -18,10 +18,27 @@ pub struct Hrn(String);
 impl Hrn {
     /// Construye un nuevo HRN, validando su formato.
     pub fn new(input: &str) -> Result<Self, HrnError> {
-        // Placeholder validation
+        // Basic validation
         if !input.starts_with("hrn:") {
             return Err(HrnError::InvalidFormat(input.to_string()));
         }
+        
+        // Validate HRN structure
+        let parts: Vec<&str> = input.split(':').collect();
+        if parts.len() < 5 {
+            return Err(HrnError::InvalidFormat(input.to_string()));
+        }
+        
+        // Validate organization name format (only for organization HRNs)
+        if input.starts_with("hrn:hodei:iam::system:organization/") {
+            if let Some(org_part) = input.split("organization/").nth(1) {
+                let org_name = org_part.split('/').next().unwrap_or("");
+                if !is_valid_organization_name(org_name) {
+                    return Err(HrnError::InvalidFormat(input.to_string()));
+                }
+            }
+        }
+        
         Ok(Self(input.to_string()))
     }
 
@@ -57,7 +74,11 @@ pub struct RepositoryId(pub Hrn);
 
 impl RepositoryId {
     pub fn new(org_id: &OrganizationId, repo_name: &str) -> Result<Self, HrnError> {
-        let hrn_str = format!("{}/repository/{}", org_id.0.as_str(), repo_name);
+        // Extract organization name from organization HRN
+        let org_hrn = org_id.0.as_str();
+        let org_name = org_hrn.split("organization/").nth(1).unwrap_or("");
+        
+        let hrn_str = format!("hrn:hodei:artifact::system:repository/{}/{}", org_name, repo_name);
         Ok(Self(Hrn::new(&hrn_str)?))
     }
 }
@@ -120,3 +141,14 @@ pub struct VulnerabilityDefinitionId(pub Hrn);
 /// Identificador para una `VulnerabilityOccurrence`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VulnerabilityOccurrenceId(pub Hrn);
+
+/// Validates if a string is a valid organization name.
+/// Organization names should only contain alphanumeric characters, dots, and hyphens.
+fn is_valid_organization_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 63 {
+        return false;
+    }
+    
+    // Check if name contains only allowed characters
+    name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+}
