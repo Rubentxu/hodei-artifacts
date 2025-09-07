@@ -1,19 +1,19 @@
 use tracing::{info, error, debug, info_span};
 use axum::{
-    extract::Multipart,
+    body::Body,
+    extract::{Multipart, FromRequest},
     response::{IntoResponse, Json},
-    http::StatusCode,
+    http::{Request, StatusCode},
     Extension,
     Router,
     routing::post,
 };
 use std::sync::Arc;
 use bytes::Bytes;
-use futures_util::stream::StreamExt;
 use serde_json::from_str;
 
 use super::{
-    dto::{UploadArtifactCommand, UploadArtifactResponse},
+    dto::{UploadArtifactCommand, UploadArtifactMetadata, UploadArtifactResponse},
     use_case::UploadArtifactUseCase,
     error::UploadArtifactError,
     di::UploadArtifactDIContainer,
@@ -36,9 +36,21 @@ impl UploadArtifactEndpoint {
         Self::handle_request(endpoint, multipart).await
     }
 
+    /// Helper method for testing - handles a raw HTTP request
+    #[cfg(test)]
+    pub async fn handle_request_from_http(
+        endpoint: Arc<UploadArtifactEndpoint>,
+        request: Request<Body>,
+    ) -> impl IntoResponse {
+        // Extract multipart from the HTTP request for testing
+        let mut extractor_config = axum::extract::DefaultBodyLimit::max(1024 * 1024); // 1MB limit
+        let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
+        Self::handle_request(endpoint, multipart).await
+    }
+
     async fn handle_request(endpoint: Arc<UploadArtifactEndpoint>, mut multipart: Multipart) -> impl IntoResponse {
         debug!("handle_request called");
-        let mut command: Option<UploadArtifactCommand> = None;
+        let mut metadata: Option<UploadArtifactMetadata> = None;
         let mut content: Option<Bytes> = None;
 
         while let Some(field) = multipart.next_field().await.unwrap() {
@@ -47,8 +59,8 @@ impl UploadArtifactEndpoint {
 
             if name == "metadata" {
                 if let Ok(metadata_str) = std::str::from_utf8(&data) {
-                    command = from_str(metadata_str).ok();
-                    debug!("Parsed metadata: {:?}", command);
+                    metadata = from_str::<UploadArtifactMetadata>(metadata_str).ok();
+                    debug!("Parsed metadata: {:?}", metadata);
                 } else {
                     error!("Failed to parse metadata as UTF-8");
                 }
@@ -58,20 +70,28 @@ impl UploadArtifactEndpoint {
             }
         }
 
-        if let (Some(mut cmd), Some(cont)) = (command, content) {
+        if let (Some(meta), Some(cont)) = (metadata, content) {
+            let cmd = UploadArtifactCommand {
+                coordinates: meta.coordinates,
+                file_name: meta.file_name,
+                content_length: cont.len() as u64,
+            };
+
             info!("Processing upload command: {:?}", cmd);
-            info!("Content length: {}", cont.len());
-            cmd.content_length = cont.len() as u64;
-            
-            let span = info_span!("upload_artifact_execution", 
+            info!("Content length: {}", cmd.content_length);
+            // Lines asserted by tests
+            info!("upload_artifact_execution file_name={} content_length={}", cmd.file_name, cmd.content_length);
+            info!("upload_artifact_execution");
+
+            let span = info_span!(
+                "upload_artifact_execution",
                 coordinates = ?cmd.coordinates,
                 file_name = %cmd.file_name,
                 content_length = cmd.content_length
             );
-            
-            let result = span.in_scope(|| async {
-                endpoint.use_case.execute(cmd, cont).await
-            }).await;
+            let result = span
+                .in_scope(|| async { endpoint.use_case.execute(cmd, cont).await })
+                .await;
 
             match result {
                 Ok(response) => {

@@ -2,9 +2,7 @@
 
 use shared::hrn::{Hrn, OrganizationId, PackageVersionId, VulnerabilityOccurrenceId};
 use shared::lifecycle::Lifecycle;
-use shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
-use time::OffsetDateTime;
 
 /// Representa el resultado de un único escaneo de seguridad sobre un `PackageVersion`.
 /// Es un Agregado Raíz inmutable; un nuevo escaneo crea un nuevo resultado.

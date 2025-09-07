@@ -2,7 +2,7 @@
 
 # --- Configuration Variables ---
 # Default crate to test. Use '.' for the current directory/workspace.
-CRATE ?= .
+CRATE ?= artifact
 # Default Rust log level for tests.
 RUST_LOG_LEVEL ?= info
 # Path to sccache executable. Assumes it's in PATH after installation.
@@ -42,11 +42,30 @@ test-unit:
 test-integration:
 	@echo "Running integration tests for crate: $(CRATE) with cargo-nextest..."
 	@echo "Note: Integration tests require Docker to be running."
-	@RUST_LOG=$(RUST_LOG_LEVEL),testcontainers=debug cargo nextest run --tests -p $(CRATE) --features integration --nocapture --ignored
+	@RUST_LOG=$(RUST_LOG_LEVEL),testcontainers=debug cargo nextest run --tests -p $(CRATE) --features integration --nocapture
 
 .PHONY: test-all
 test-all: test-unit test-integration
 	t@echo "All tests (unit and integration) for crate: $(CRATE) completed."
+
+# --- Artifact Crate Specific Targets ---
+
+.PHONY: test-artifact-unit test-artifact-integration test-artifact-all
+
+# Run artifact unit tests
+test-artifact-unit:
+	@echo "Running artifact unit tests..."
+	@RUST_LOG=$(RUST_LOG_LEVEL) cargo nextest run --lib --bins -p artifact --nocapture
+
+# Run artifact integration tests
+test-artifact-integration:
+	@echo "Running artifact integration tests..."
+	@echo "Note: Integration tests require Docker to be running."
+	@RUST_LOG=$(RUST_LOG_LEVEL),testcontainers=debug cargo nextest run --tests -p artifact --features integration --nocapture
+
+# Run all artifact tests
+test-artifact-all: test-artifact-unit test-artifact-integration
+	@echo "All artifact tests completed."
 
 # --- Utility Targets ---
 

@@ -2,7 +2,7 @@
 
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
-use crate::hrn::{Hrn, PhysicalArtifactId};
+use crate::hrn::PhysicalArtifactId;
 use crate::enums::{HashAlgorithm, ArtifactType, ArtifactRole};
 
 /// El hash criptográfico del contenido de un fichero físico. Es inmutable.

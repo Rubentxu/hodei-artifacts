@@ -2,7 +2,6 @@
 
 use shared::hrn::{Hrn, OrganizationId};
 use shared::lifecycle::Lifecycle;
-use shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 
 /// Representa un grupo de principals (usuarios o cuentas de servicio) dentro de una organización.

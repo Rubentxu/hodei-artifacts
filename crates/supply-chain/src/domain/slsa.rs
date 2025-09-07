@@ -1,6 +1,5 @@
 // crates/supply-chain/src/domain/slsa.rs
 
-use shared::models::ContentHash;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 

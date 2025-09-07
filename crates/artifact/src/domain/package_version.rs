@@ -1,7 +1,6 @@
-use shared::hrn::{Hrn, OrganizationId, RepositoryId, UserId};
+use shared::hrn::{Hrn, OrganizationId, RepositoryId};
 use shared::lifecycle::Lifecycle;
 pub(crate) use shared::models::{PackageCoordinates, ArtifactReference};
-use shared::enums::ArtifactRole;
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 use std::collections::HashMap;

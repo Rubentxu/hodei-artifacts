@@ -3,7 +3,6 @@
 use shared::hrn::{Hrn, OrganizationId, RepositoryId, StorageBackendId};
 use shared::lifecycle::Lifecycle;
 use shared::enums::Ecosystem;
-use shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
 use url::Url;
 

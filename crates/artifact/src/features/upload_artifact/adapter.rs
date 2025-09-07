@@ -110,6 +110,7 @@ impl UploadArtifactRepository for MongoDbRepository {
 
 /// Concrete implementation of the EventPublisher port using RabbitMQ.
 pub struct RabbitMqEventPublisher {
+    #[allow(dead_code)]
     connection: Connection,
     channel: Channel,
     exchange: String,

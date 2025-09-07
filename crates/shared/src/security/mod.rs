@@ -7,7 +7,6 @@ pub mod resources;
 pub use cedar_integration::{to_cedar_entity, CedarEntityConverter};
 pub use resources::HodeiResource;
 
-use std::collections::HashMap;
 
 // /// Ejemplo de implementación para Organization usando tipos Cedar
 // impl HodeiResource<cedar_policy::EntityUid, cedar_policy::Expr> for Organization {

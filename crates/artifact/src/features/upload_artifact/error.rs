@@ -8,7 +8,7 @@ pub enum UploadArtifactError {
     #[error("Storage error: {0}")]
     StorageError(String),
 
-    #[error("Event publisher error: {0}")]
+    #[error("Event error: {0}")]
     EventError(String),
 
     #[error("Artifact already exists: {0}")]

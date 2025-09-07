@@ -17,7 +17,7 @@ use shared::{
     enums::{ArtifactRole, ArtifactType, HashAlgorithm},
     hrn::{Hrn, OrganizationId, RepositoryId, PhysicalArtifactId, UserId},
     lifecycle::Lifecycle,
-    models::{ArtifactReference, ContentHash, PackageCoordinates},
+    models::{ArtifactReference, ContentHash},
 };
 
 pub struct UploadArtifactUseCase {

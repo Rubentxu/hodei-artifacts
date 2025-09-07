@@ -2,7 +2,6 @@
 
 use shared::models::ContentHash;
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 
 /// Estructura que representa el contenido de un predicado SBOM, serializable a/desde JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]

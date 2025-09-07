@@ -20,12 +20,12 @@ mod tests {
         enums::HashAlgorithm,
         hrn::{OrganizationId, UserId},
         models::ContentHash,
-        testing::tracing_utils::setup_test_tracing,
     };
 
     #[tokio::test]
     async fn test_upload_new_artifact_should_succeed() {
         // Arrange
+        use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
@@ -73,6 +73,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_existing_artifact_should_create_new_package_version() {
         // Arrange
+        use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
@@ -137,6 +138,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_with_invalid_namespace_should_fail() {
         // Arrange
+        use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
@@ -176,6 +178,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_with_empty_file_should_succeed() {
         // Arrange
+        use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
@@ -223,6 +226,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_repository_error_should_fail() {
         // Arrange
+        use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
         let repo = Arc::new(MockArtifactRepository::new());
         *repo.should_fail_save_physical_artifact.lock().unwrap() = true;
@@ -263,6 +267,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_storage_error_should_fail() {
         // Arrange
+        use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
@@ -297,12 +302,13 @@ mod tests {
         }
         
         // Verify error logging
-        assert_log_contains!(_tracing_subscriber, tracing::Level::ERROR, "StorageError");
+        assert_log_contains!(tracing::Level::ERROR, "StorageError");
     }
 
     #[tokio::test]
     async fn test_upload_event_publisher_error_should_fail() {
         // Arrange
+        use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
@@ -337,6 +343,6 @@ mod tests {
         }
         
         // Verify error logging
-        assert_log_contains!(_tracing_subscriber, tracing::Level::ERROR, "EventError");
+        assert_log_contains!(tracing::Level::ERROR, "EventError");
     }
 }

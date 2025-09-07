@@ -9,6 +9,13 @@ pub struct UploadArtifactCommand {
     pub content_length: u64,
 }
 
+/// Minimal metadata received in the multipart form (without content_length).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadArtifactMetadata {
+    pub coordinates: PackageCoordinates,
+    pub file_name: String,
+}
+
 /// Response after a successful upload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadArtifactResponse {

@@ -30,20 +30,7 @@ mod tests {
         let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
-        let metadata = json!({
-            "coordinates": {
-                "namespace": "com.example",
-                "name": "test-artifact",
-                "version": "1.0.0",
-                "qualifiers": {}
-            },
-            "file_name": "test.bin"
-        });
-
-        let form_data = format!(
-            "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n",
-            metadata.to_string()
-        );
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")
@@ -63,7 +50,7 @@ mod tests {
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::CREATED);
         
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
         let response_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(response_json["hrn"].as_str().unwrap().contains("package-version/test-artifact/1.0.0"));
@@ -112,7 +99,7 @@ mod tests {
         // Assert - convert to Response first
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
         assert_eq!(body_bytes, "Missing metadata or file part");
 
@@ -163,7 +150,7 @@ mod tests {
         // Assert - convert to Response first
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
         assert_eq!(body_bytes, "Missing metadata or file part");
     }
@@ -180,20 +167,7 @@ mod tests {
         let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
-        let metadata = json!({
-            "coordinates": {
-                "namespace": "com.example",
-                "name": "test-artifact",
-                "version": "1.0.0",
-                "qualifiers": {}
-            },
-            "file_name": "test.bin"
-        });
-
-        let form_data = format!(
-            "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n",
-            metadata.to_string()
-        );
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")
@@ -212,7 +186,7 @@ mod tests {
         // Assert - convert to Response first
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
         assert!(body_bytes.starts_with(b"Repository error:"));
 
@@ -233,20 +207,7 @@ mod tests {
         let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
-        let metadata = json!({
-            "coordinates": {
-                "namespace": "com.example",
-                "name": "test-artifact",
-                "version": "1.0.0",
-                "qualifiers": {}
-            },
-            "file_name": "test.bin"
-        });
-
-        let form_data = format!(
-            "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n",
-            metadata.to_string()
-        );
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")
@@ -265,7 +226,7 @@ mod tests {
         // Assert - convert to Response first
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
         assert!(body_bytes.starts_with(b"Storage error:"));
 
@@ -285,20 +246,7 @@ mod tests {
         let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
-        let metadata = json!({
-            "coordinates": {
-                "namespace": "com.example",
-                "name": "test-artifact",
-                "version": "1.0.0",
-                "qualifiers": {}
-            },
-            "file_name": "test.bin"
-        });
-
-        let form_data = format!(
-            "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n",
-            metadata.to_string()
-        );
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")
@@ -317,7 +265,7 @@ mod tests {
         // Assert - convert to Response first
         let response = response.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
         assert!(body_bytes.starts_with(b"Event error:"));
 
