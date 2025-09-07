@@ -170,6 +170,39 @@ openapi.yaml     # contrato de APIs síncronas
    cargo run
    ```
 
+### Solución de problemas de Testcontainers en distribuciones Linux (Deepin, Ubuntu, etc.)
+
+Si experimentas errores de `StartupTimeout` al ejecutar los tests de integración, es muy probable que se deba a la configuración de tu motor de contenedores, especialmente en distribuciones que han empezado a adoptar **Podman**.
+
+#### Contexto: Docker vs. Podman
+
+Históricamente, Docker ha sido el estándar de facto. Sin embargo, por razones de seguridad y arquitectura (Podman no requiere un demonio o *daemon*), distribuciones más modernas están migrando o dando soporte prioritario a Podman. Este es el caso de:
+
+- **Deepin (v23+):** Usa Podman como motor por defecto, lo que puede crear conflictos si Docker está instalado o si las herramientas esperan un socket de Docker por defecto.
+- **Derivados de RHEL (Fedora, CentOS):** Han adoptado Podman como su motor principal.
+- **Ubuntu/Debian:** Aunque no tienen un motor por defecto, Podman está disponible en sus repositorios oficiales y su popularidad está creciendo.
+
+`testcontainers-rs` busca por defecto el socket de Docker, y si no lo encuentra o hay un conflicto con un servicio de Podman, los tests pueden fallar con timeouts.
+
+#### Solución: Configurar `testcontainers-rs` para usar Podman
+
+La solución más limpia y recomendada es configurar `testcontainers-rs` para que use Podman directamente.
+
+1.  **Habilita el servicio de API de Podman:**
+    Este comando inicia un servicio que "escucha" peticiones de API, de forma similar a como lo hace el demonio de Docker.
+    ```bash
+    podman system service --time=0 &
+    ```
+
+2.  **Crea un fichero de configuración para `testcontainers-rs`:**
+    Crea el fichero `~/.testcontainers.properties` y añade el siguiente contenido. Esto le indica a la librería la ruta del socket de Podman y cómo gestionar el contenedor de limpieza (Ryuk):
+    ```properties
+    docker.host=unix://${XDG_RUNTIME_DIR}/podman/podman.sock
+    ryuk.container.privileged=true
+    ```
+
+Con esta configuración, los tests deberían ejecutarse correctamente usando Podman como motor de contenedores, evitando los conflictos y timeouts.
+
 ### Frontend (React)
 1. Navegar al directorio frontend:
    ```bash
@@ -205,24 +238,51 @@ npm run storybook
 
 ### Backend (Rust)
 
-- __Unitarios e integración (Rust)__
-  - Todos los tests:
-    ```bash
-    cargo test
-    ```
-  - Ver salida/logs del test:
-    ```bash
-    RUST_LOG=info cargo test -- --nocapture
-    ```
-  - Ejecutar por crate:
-    ```bash
-    cargo test -p <nombre_crate>
-    ```
-  - Solo unit tests (lib/bin) en todo el workspace:
-    ```bash
-    cargo test --lib --bins
-    ```
-  - Solo tests de integración (carpeta `tests/`):
+#### Estrategia de Tests Unitarios
+
+Para asegurar un feedback rápido y un desarrollo ágil, priorizamos los tests unitarios exhaustivos para la lógica de negocio (`use_case`) y los endpoints de la API (`api`). Estos tests deben mockear todas las dependencias externas (repositorios, almacenamiento, publicadores de eventos) para garantizar un aislamiento completo y una ejecución veloz.
+
+- **Ubicación**: Los tests unitarios se encuentran junto al código que prueban, en archivos con el sufijo `_test.rs` (ej. `use_case_test.rs`, `api_test.rs`).
+- **Mocks**: Utilizamos mocks para todas las interfaces (traits/ports) que interactúan con la infraestructura.
+- **Ejecución**: Puedes ejecutar los tests unitarios de un crate específico de la siguiente manera:
+  ```bash
+  cargo test -p <nombre_crate> --lib
+  ```
+  O para un módulo específico:
+  ```bash
+  cargo test -p <nombre_crate> <nombre_modulo_test>
+  ```
+
+#### Tests de Integración (Rust)
+
+Los tests de integración validan la interacción entre componentes y con la infraestructura real (contenedores Docker). Son más lentos pero cruciales para verificar el flujo completo.
+
+- **Ubicación**: Se encuentran en la carpeta `tests/` de cada crate (ej. `crates/artifact/tests/it_upload_artifact.rs`).
+- **Ejecución**: Para ejecutar solo los tests de integración (que requieren Docker/Podman), usa:
+  ```bash
+  cargo test -p <nombre_crate> --features integration -- --ignored
+  ```
+  (Nota: el flag `--ignored` es necesario porque estos tests están marcados con `#[ignore]` para no ejecutarse por defecto).
+
+#### Ejecución General de Tests
+
+- __Todos los tests (unitarios + integración)__:
+  ```bash
+  cargo test
+  ```
+- __Ver salida/logs del test__:
+  ```bash
+  RUST_LOG=info cargo test -- --nocapture
+  ```
+- __Ejecutar por crate__:
+  ```bash
+  cargo test -p <nombre_crate>
+  ```
+- __Solo unit tests (lib/bin) en todo el workspace__:
+  ```bash
+  cargo test --lib --bins
+  ```
+- __Solo tests de integración (carpeta `tests/`)__::
     ```bash
     cargo test --tests
     ```

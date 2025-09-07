@@ -1,0 +1,49 @@
+// crates/supply-chain/src/domain/slsa.rs
+
+use shared::models::ContentHash;
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+
+/// Estructura que representa el contenido de un predicado de procedencia SLSA v1.0.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlsaProvenancePredicate {
+    pub builder: SlsaBuilder,
+    pub recipe: SlsaRecipe,
+    pub invocation: SlsaInvocation,
+    pub materials: Vec<SlsaMaterial>,
+    pub metadata: SlsaMetadata,
+}
+
+/// Identifica el constructor que generó el artefacto.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlsaBuilder {
+    pub id: String, // URI identificando el constructor
+}
+
+/// Describe cómo se construyó el artefacto.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlsaRecipe {
+    #[serde(rename = "type")]
+    pub recipe_type: String, // URI
+    #[serde(rename = "entryPoint")]
+    pub entry_point: String,
+    pub arguments: serde_json::Value,
+}
+
+/// Describe la ejecución específica del proceso de construcción.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlsaInvocation {
+    #[serde(rename = "configSource")]
+    pub config_source: SlsaConfigSource,
+    pub parameters: serde_json::Value,
+    pub environment: serde_json::Value,
+}
+
+/// Materiales (ej. código fuente) utilizados en la construcción.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlsaMaterial {
+    pub uri: String,
+    pub digest: HashMap<String, String>, // ej. {"sha1": "...", "sha256": "..."}
+}
+
+// ... otras structs de soporte para SLSA: SlsaMetadata, SlsaConfigSource

@@ -1,46 +1,32 @@
 [package]
 name = "artifact"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
+edition = "2021"
 
 [dependencies]
-shared = { path = "../shared" }
-serde = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
 async-trait = { workspace = true }
-# Habilitamos feature test-util para reutilizar helpers en tests de integración (coste bajo, sólo añade módulo)
-infra-mongo = { path = "../infra-mongo", features = ["test-util"] }
-# Usamos la versión workspace de mongodb (unificada).
-mongodb = { workspace = true }
-uuid = { workspace = true }
-chrono = { workspace = true }
+bytes = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+time = { workspace = true }
+axum = { workspace = true, features = ["multipart"] }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
-rdkafka = { workspace = true }
-lapin = "2.3.0" # Added lapin
-repository = { path = "../repository" }
-tracing = { workspace = true }
+hex = { workspace = true }
+futures-util = { workspace = true }
 serde_json = { workspace = true }
-axum = { workspace = true }
-base64 = { workspace = true }
-futures-util = "0.3.30"
-tokio = { workspace = true }
+mongodb = { workspace = true }
+lapin = { workspace = true }
+cedar-policy = { workspace = true }
 
-[features]
-# integration-mongo: habilita tests de integración que requieren instancia Mongo real (vía testcontainers fallback).
-integration-mongo = []
-# integration-rabbitmq: habilita tests de integración que requieren instancia RabbitMQ real.
-integration-rabbitmq = []
-# integration-s3: habilita tests de integración que requieren instancia S3 real.
-integration-s3 = []
+# Workspace dependencies
+shared = { path = "../shared" }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["full"] }
-aws-config = { workspace = true }
-aws-sdk-s3 = { workspace = true }
-rdkafka = { workspace = true }
-testcontainers = { version = "0.15", features = ["tokio"] }
-testcontainers-modules = "0.1"
-shared-test = { path = "../shared-test" }
+reqwest = { workspace = true, features = ["multipart"] }
+testcontainers = { workspace = true }
+tokio-util = { workspace = true }
+mime = { workspace = true }
+futures = { workspace = true }

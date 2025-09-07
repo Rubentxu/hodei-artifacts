@@ -66,18 +66,18 @@ graph TD
         API_Gateway --> IAM_ABAC
 
         Artifact_Ingestion --> Object_Storage[Almacenamiento de Objetos Compatible con S3]
-        Artifact_Ingestion --> Kafka_Bus[Bus de Eventos Apache Kafka]
+        Artifact_Ingestion --> RabbitMQ_Bus[Bus de Eventos RabbitMQ]
         Artifact_Ingestion --> Metadata_Management
         Artifact_Retrieval --> Object_Storage
         Metadata_Management --> MongoDB[Base de Datos de Metadatos MongoDB]
-        Security_Service --> Kafka_Bus
+        Security_Service --> RabbitMQ_Bus
         IAM_ABAC --> Cedar[Motor de Autorización Cedar]
         Observability --> Prometheus[Métricas Prometheus]
         Observability --> OpenTelemetry[Trazado OpenTelemetry]
         Observability --> Centralized_Logs[Registro Centralizado]
 
-        Kafka_Bus --> Security_Service
-        Kafka_Bus --> Observability
+        RabbitMQ_Bus --> Security_Service
+        RabbitMQ_Bus --> Observability
     end
 
     Hodei_Artifacts_App --> External_Integrations[Integraciones Externas (ej. SIEM, IdP)]
@@ -91,7 +91,7 @@ graph TD
     *   **Recomendación:** Utilizar un Monolito Modular con Arquitectura de Slice Vertical (VSA) y Arquitectura Hexagonal (Puertos y Adaptadores).
     *   **Justificación:** Este enfoque proporciona una clara separación de responsabilidades basada en las capacidades de negocio (slices verticales) mientras mantiene los beneficios de una única unidad de despliegue. La arquitectura hexagonal asegura que la lógica de negocio central sea independiente de los detalles de la infraestructura, promoviendo la capacidad de prueba y la flexibilidad. Esto se alinea con la mención del PRD de un "monolito modular" y el deseo de modularidad y escalabilidad.
 *   **Arquitectura Orientada a Eventos (EDA):**
-    *   **Recomendación:** Implementar una Arquitectura Orientada a Eventos robusta utilizando Apache Kafka como el bus de eventos central.
+    *   **Recomendación:** Implementar una Arquitectura Orientada a Eventos robusta utilizando RabbitMQ como el bus de eventos central.
     *   **Justificación:** EDA es crucial para lograr un bajo acoplamiento entre diferentes slices funcionales, permitiendo el procesamiento asíncrono y mejorando la resiliencia del sistema. Apoya el requisito del PRD de comunicación asíncrona y flujos de trabajo de seguridad proactivos.
 *   **Patrón Repositorio:**
     *   **Recomendación:** Aplicar el Patrón Repositorio para el acceso a datos.
@@ -122,7 +122,7 @@ graph TD
 | **Framework Web (Backend)** | Axum | - | Framework web para el backend | Un framework web moderno y de alto rendimiento para Rust, que se integra bien con Tokio. |
 | **Almacenamiento de Metadatos** | MongoDB | - | Base de datos para metadatos de artefactos | Ofrece flexibilidad y escalabilidad para almacenar y gestionar metadatos diversos. |
 | **Almacenamiento de Objetos** | Compatible con S3 (MinIO para desarrollo/pruebas) | - | Almacenamiento de binarios de artefactos | Proporciona escalabilidad, durabilidad y rentabilidad para grandes volúmenes de datos binarios. |
-| **Bus de Eventos** | Apache Kafka | - | Bus de mensajes para comunicación asíncrona | Permite el desacoplamiento de componentes, procesamiento asíncrono y escalabilidad para flujos de eventos. |
+| **Bus de Eventos** | RabbitMQ | - | Bus de mensajes para comunicación asíncrona | Permite el desacoplamiento de componentes, procesamiento asíncrono y escalabilidad para flujos de eventos. |
 | **Motor de Autorización** | Cedar | - | Motor de políticas ABAC | Lenguaje de políticas de alto rendimiento para control de acceso granular basado en atributos. |
 | **Caché** | Redis | - | Caché en memoria | Mejora el rendimiento al almacenar datos de acceso frecuente. |
 | **Métricas** | Prometheus | - | Recopilación y monitorización de métricas | Estándar de facto para la monitorización de sistemas cloud-native. |
@@ -374,7 +374,7 @@ graph TD
         Repository_Crate -- Uses --> InfraMongo_Crate
         Repository_Crate -- Stores/Retrieves --> MongoDB[MongoDB Metadata DB]
 
-        Kafka_Bus --> SupplyChain_Crate
+        RabbitMQ_Bus --> SupplyChain_Crate
         Kafka_Bus --> Search_Crate
         Kafka_Bus --> Security_Crate
         Kafka_Bus --> Analytics_Crate
@@ -468,7 +468,7 @@ sequenceDiagram
         MongoDB-->>Repository_Crate: 6.2. Metadatos Guardados
         Repository_Crate-->>Artifact_Crate: 6.3. Metadatos Persistidos
 
-        Artifact_Crate->>Kafka_Bus: 7. Publicar Evento: ArtifactUploaded
+        Artifact_Crate->>RabbitMQ_Bus: 7. Publicar Evento: ArtifactUploaded
         Kafka_Bus-->>Artifact_Crate: 7.1. Evento Publicado
 
         Kafka_Bus->>Security_Crate: 8. Consumir Evento: ArtifactUploaded (para escaneo)
@@ -631,7 +631,7 @@ sequenceDiagram
         MongoDB-->>Repository_Crate: 6.2. Metadatos Guardados
         Repository_Crate-->>Artifact_Crate: 6.3. Metadatos Persistidos
 
-        Artifact_Crate->>Kafka_Bus: 7. Publicar Evento: ArtifactUploaded (tipo: Maven)
+        Artifact_Crate->>RabbitMQ_Bus: 7. Publicar Evento: ArtifactUploaded (tipo: Maven)
         Kafka_Bus-->>Artifact_Crate: 7.1. Evento Publicado
 
         Kafka_Bus->>Security_Crate: 8. Consumir Evento: ArtifactUploaded (para escaneo)
@@ -689,7 +689,7 @@ sequenceDiagram
         MongoDB-->>Repository_Crate: 6.2. Metadatos Guardados
         Repository_Crate-->>Artifact_Crate: 6.3. Metadatos Persistidos
 
-        Artifact_Crate->>Kafka_Bus: 7. Publicar Evento: ArtifactUploaded (tipo: NPM)
+        Artifact_Crate->>RabbitMQ_Bus: 7. Publicar Evento: ArtifactUploaded (tipo: NPM)
         Kafka_Bus-->>Artifact_Crate: 7.1. Evento Publicado
 
         Kafka_Bus->>Security_Crate: 8. Consumir Evento: ArtifactUploaded (para escaneo)

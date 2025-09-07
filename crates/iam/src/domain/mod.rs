@@ -1,9 +1,7 @@
-pub mod user;
-pub mod principal;
-pub mod service_account;
-pub mod policy;
+// crates/iam/src/domain/mod.rs
 
-pub use user::User;
-pub use principal::Principal;
-pub use service_account::ServiceAccount;
-pub use policy::{Policy, PolicyStatus, PolicyId};
+pub mod api_key;
+pub mod events;
+pub mod group;
+pub mod service_account;
+pub mod user;

@@ -1,12 +1,6 @@
 [package]
 name = "analytics"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
+edition = "2021"
 
 [dependencies]
-shared = { path = "../shared" }
-serde = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-async-trait = { workspace = true }

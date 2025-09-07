@@ -1,13 +1,11 @@
 [package]
 name = "shared"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
+edition = "2021"
 
 [dependencies]
 serde = { workspace = true }
+time = { workspace = true }
 thiserror = { workspace = true }
+cedar-policy = { workspace = true }
 uuid = { workspace = true }
-chrono = { workspace = true }
-async-trait = { workspace = true }
-anyhow = { workspace = true }

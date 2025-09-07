@@ -1,24 +1,6 @@
 [package]
 name = "infra-mongo"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
-description = "Infraestructura MongoDB compartida: cliente, configuración y utilidades para adaptadores de puertos."
-categories = ["database"]
-keywords = ["mongodb", "infrastructure", "hexagonal"]
+edition = "2021"
 
 [dependencies]
-mongodb = "3.2.5"
-anyhow = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["full"] }
-
-rand = { version = "0.8", optional = true }
-
-[features]
-# test-util: helpers para tests de integración (p.ej. crear cliente aislado / limpiar colecciones,
-#            y fallback automático a un contenedor Mongo si no existen MONGO_URI + MONGO_DATABASE).
-default = []
-test-util = ["rand"]

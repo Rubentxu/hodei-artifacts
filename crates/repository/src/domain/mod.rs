@@ -1,3 +1,6 @@
-pub mod model;
-pub mod model_test;
-pub mod event;
+// crates/repository/src/domain/mod.rs
+
+pub mod events;
+pub mod policy;
+pub mod repository;
+pub mod storage;

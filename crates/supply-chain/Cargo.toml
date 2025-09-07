@@ -1,15 +1,11 @@
 [package]
 name = "supply-chain"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
+edition = "2021"
 
 [dependencies]
-shared = { path = "../shared" }
 serde = { workspace = true }
-thiserror = { workspace = true }
-async-trait = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
-anyhow = { workspace = true }
-uuid = { workspace = true }
-chrono = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+cedar-policy = { workspace = true }
+shared = { path = "../shared" }

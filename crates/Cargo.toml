@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "artifact",
+    "repository",
+    "supply-chain",
+    "search",
+    "security",
+    "iam",
+    "analytics",
+    "distribution",
+    "shared",
+    "infra-mongo",
+    "organization",
+]

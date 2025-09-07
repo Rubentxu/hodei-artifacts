@@ -125,28 +125,90 @@ openapi.yaml     # synchronous API contract
    cargo run
    ```
 
+### Troubleshooting Testcontainers on Linux (Deepin, Ubuntu, etc.)
+
+If you experience `StartupTimeout` errors when running integration tests, it is very likely due to your container engine setup, especially on distributions that have started to adopt **Podman**.
+
+#### Background: Docker vs. Podman
+
+Historically, Docker has been the de facto standard. However, for security and architectural reasons (Podman does not require a daemon), more modern distributions are migrating to or giving priority support to Podman. This is the case for:
+
+- **Deepin (v23+):** Uses Podman as the default engine, which can create conflicts if Docker is installed or if tools expect a Docker socket by default.
+- **RHEL derivatives (Fedora, CentOS):** Have adopted Podman as their main engine.
+- **Ubuntu/Debian:** Although they do not have a default engine, Podman is available in their official repositories and its popularity is growing.
+
+`testcontainers-rs` looks for the Docker socket by default, and if it is not found or if there is a conflict with a Podman service, the tests may fail with timeouts.
+
+#### Solution: Configure `testcontainers-rs` to use Podman
+
+The cleanest and recommended solution is to configure `testcontainers-rs` to use Podman directly.
+
+1.  **Enable the Podman API service:**
+    This command starts a service that listens for API requests, similar to how the Docker daemon does.
+    ```bash
+    podman system service --time=0 &
+    ```
+
+2.  **Create a configuration file for `testcontainers-rs`:**
+    Create the file `~/.testcontainers.properties` and add the following content to tell the library the path to the Podman socket and how to manage the cleanup container (Ryuk):
+    ```properties
+    docker.host=unix://${XDG_RUNTIME_DIR}/podman/podman.sock
+    ryuk.container.privileged=true
+    ```
+
+With this configuration, the tests should run correctly using Podman as the container engine, avoiding conflicts and timeouts.
+
 - Integration tests use `testcontainers`; no local services required if you run tests.
  
 ## How to run tests
 
-- __Unit and integration (Rust)__
-  - All tests:
-    ```bash
-    cargo test
-    ```
-  - Show test output/logs:
-    ```bash
-    RUST_LOG=info cargo test -- --nocapture
-    ```
-  - Run per crate:
-    ```bash
-    cargo test -p <crate_name>
-    ```
-  - Unit tests only (lib/bin) across workspace:
-    ```bash
-    cargo test --lib --bins
-    ```
-  - Integration tests only (folder `tests/`):
+### Backend (Rust)
+
+#### Unit Testing Strategy
+
+To ensure fast feedback and agile development, we prioritize exhaustive unit tests for business logic (`use_case`) and API endpoints (`api`). These tests must mock all external dependencies (repositories, storage, event publishers) to ensure complete isolation and fast execution.
+
+- **Location**: Unit tests are located alongside the code they test, in files with the `_test.rs` suffix (e.g., `use_case_test.rs`, `api_test.rs`).
+- **Mocks**: We use mocks for all interfaces (traits/ports) that interact with the infrastructure.
+- **Execution**: You can run unit tests for a specific crate as follows:
+  ```bash
+  cargo test -p <crate_name> --lib
+  ```
+  Or for a specific module:
+  ```bash
+  cargo test -p <crate_name> <module_test_name>
+  ```
+
+#### Integration Tests (Rust)
+
+Integration tests validate the interaction between components and with real infrastructure (Docker containers). They are slower but crucial for verifying the complete flow.
+
+- **Location**: They are located in the `tests/` folder of each crate (e.g., `crates/artifact/tests/it_upload_artifact.rs`).
+- **Execution**: To run only integration tests (which require Docker/Podman), use:
+  ```bash
+  cargo test -p <crate_name> --features integration -- --ignored
+  ```
+  (Note: the `--ignored` flag is necessary because these tests are marked with `#[ignore]` so they don't run by default).
+
+#### General Test Execution
+
+- __All tests (unit + integration)__:
+  ```bash
+  cargo test
+  ```
+- __Show test output/logs__:
+  ```bash
+  RUST_LOG=info cargo test -- --nocapture
+  ```
+- __Run per crate__:
+  ```bash
+  cargo test -p <crate_name>
+  ```
+- __Unit tests only (lib/bin) across workspace__:
+  ```bash
+  cargo test --lib --bins
+  ```
+- __Integration tests only (folder `tests/`)__::
     ```bash
     cargo test --tests
     ```

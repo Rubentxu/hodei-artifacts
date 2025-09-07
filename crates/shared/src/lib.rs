@@ -1,11 +1,8 @@
-pub mod domain;
-pub mod application;
+// crates/shared/src/lib.rs
 
-pub mod error;
-
-// Re-export tipos comunes
-pub use domain::model::*;
-pub use domain::event::*;
-pub use application::ports::*;
-pub use error::SharedError;
-
+pub mod enums;
+pub mod events;
+pub mod hrn;
+pub mod lifecycle;
+pub mod models;
+pub mod security;

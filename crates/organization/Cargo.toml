@@ -1,0 +1,10 @@
+[package]
+name = "organization"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+time = { workspace = true }
+cedar-policy = { workspace = true }
+shared = { path = "../shared" }

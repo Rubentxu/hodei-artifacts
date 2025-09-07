@@ -4,42 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-shared = { path = "../shared" }
-infra-mongo = { path = "../infra-mongo", features = ["test-util"] }
-
-# Security
-cedar-policy = { version = "4.5.1" }
-cedar-policy-core = { version = "4.5.1" }
-validator = { version = "0.16", features = ["derive"] }
-bcrypt = "0.15"
-serde_with = "3.14.0"
-jsonwebtoken = "9.3"
-chrono = { version = "0.4", features = ["serde"] }
-
-# Async
-tokio = { workspace = true }
-async-trait = { workspace = true }
-futures-util = { version = "0.3" }
-
-# Web
-axum = { workspace = true }
-
-# Data
 serde = { workspace = true }
-serde_json = { workspace = true }
-mongodb = { workspace = true }
-redis = { version = "0.23", features = ["tokio-comp"] }
-
-# Utils
-once_cell = "1.17"
-uuid = { version = "1.4", features = ["v4"] }
-
-# Observability
-tracing = { workspace = true }
-
-# Errors
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-
-[dev-dependencies]
-mockall = "0.12"
+time = { workspace = true }
+cedar-policy = { workspace = true }
+shared = { path = "../shared" }

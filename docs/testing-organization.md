@@ -35,13 +35,13 @@ crates/<context>/
     it_repository.rs
 ```
 
-### 1.2.1 Tests de Integración con Framework Custom (Docker Compose)
+### 1.2.1 Tests de Integración con `testcontainers` y Docker Compose
 
-Para los tests de integración que requieren un entorno de servicios completo (MongoDB, Kafka, S3, etc.), utilizamos un framework custom basado en Docker Compose. Este enfoque nos permite:
+Para los tests de integración que requieren un entorno de servicios completo (MongoDB, RabbitMQ, S3, etc.), utilizamos la librería `testcontainers` junto con templates de Docker Compose. Este enfoque nos permite:
 
 - **Entornos reproducibles:** Definidos en `tests/compose/docker-compose.yml`.
 - **Orquestación centralizada:** El módulo `shared-test` gestiona el ciclo de vida del entorno (levantar, esperar por salud de servicios, tumbar).
-- **Aislamiento y ejecución paralela:** El framework genera configuraciones Docker Compose únicas para cada test, con redes, subredes y puertos dinámicos que evitan conflictos. Esto permite la ejecución paralela segura de tests de integración.
+- **Aislamiento y ejecución paralela:** `testcontainers` genera configuraciones Docker Compose únicas para cada test, con redes, subredes y puertos dinámicos que evitan conflictos. Esto permite la ejecución paralela segura de tests de integración.
 
 **Uso:** Los tests de integración interactúan con una estructura `TestEnvironment` que provee clientes preconfigurados para los servicios.
 
@@ -55,12 +55,9 @@ services:
   mongodb:
     ports:
       - "{{MONGO_HOST_PORT}}:27017"
-  kafka:
-    environment:
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:{{KAFKA_HOST_PORT}}
-  zookeeper:
+  rabbitmq:
     ports:
-      - "{{ZOOKEEPER_HOST_PORT}}:2181"
+      - "{{RABBITMQ_HOST_PORT}}:5672"
   localstack:
     ports:
       - "{{S3_HOST_PORT}}:4566"
@@ -75,8 +72,7 @@ networks:
 - `{{NETWORK_NAME}}`: Nombre único de red Docker
 - `{{SUBNET}}`: Subred única para evitar conflictos de IP
 - `{{MONGO_HOST_PORT}}`: Puerto dinámico para MongoDB
-- `{{KAFKA_HOST_PORT}}`: Puerto dinámico para Kafka
-- `{{ZOOKEEPER_HOST_PORT}}`: Puerto dinámico para Zookeeper
+- `{{RABBITMQ_HOST_PORT}}`: Puerto dinámico para RabbitMQ
 - `{{S3_HOST_PORT}}`: Puerto dinámico para LocalStack/S3
 
 **Detección de recursos:** El sistema detecta automáticamente los recursos disponibles (CPU, memoria) para optimizar el límite de ejecución paralela.
@@ -246,7 +242,7 @@ TEST_PARALLEL_JOBS=4 cargo test --test 'it_*'
 ## 8. Referencias
 
 - Estrategia original: sección 16 de [`plan.md`](docs/plan.md#L239)
-- Framework de Tests de Integración Custom: `crates/shared-test/` (implementación del orquestador Docker Compose con ejecución paralela)
+
 - Template Docker Compose: `tests/compose/docker-compose.template.yml`
 - Sistema de detección de recursos: `crates/shared-test/src/resource_detector.rs`
 - Generador de compose dinámico: `crates/shared-test/src/dynamic_compose.rs`

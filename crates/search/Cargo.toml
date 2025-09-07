@@ -1,39 +1,6 @@
 [package]
 name = "search"
 version = "0.1.0"
-edition = "2024"
-license = "MIT"
+edition = "2021"
 
 [dependencies]
-shared = { path = "../shared" }
-repository = { path = "../repository" }
-serde = { workspace = true }
-thiserror = { workspace = true }
-async-trait = { workspace = true }
-anyhow = { workspace = true }
-serde_json = { workspace = true }
-mongodb = { workspace = true }
-rdkafka = { workspace = true }
-tracing = { workspace = true }
-chrono = { workspace = true }
-futures = { workspace = true }
-axum = { workspace = true, features = ["macros"] }
-tokio = { workspace = true }
-tantivy = "0.25.0"
-artifact = { path = "../artifact" }
-iam = { path = "../iam" }
-
-[dev-dependencies]
-hodei-artifacts-api = { path = "../../" }
-artifact = { path = "../artifact" }
-futures = { workspace = true }
-hyper = { workspace = true }
-infra-mongo = { path = "../infra-mongo", features = ["test-util"] }
-repository = { path = "../repository" }
-reqwest = { workspace = true }
-uuid = { workspace = true }
-shared-test = { path = "../shared-test" }
-
-[[test]]
-name = "it_basic_search"
-path = "tests/it_basic_search.rs"
