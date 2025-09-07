@@ -273,4 +273,39 @@ mod tests {
         assert!(logs_contain("EventError"));
     }
 
+    #[tokio::test]
+    #[traced_test]
+    async fn test_upload_artifact_checksum_mismatch() {
+        // Arrange
+        let repo = Arc::new(MockArtifactRepository::new());
+        let storage = Arc::new(MockArtifactStorage::new());
+        let publisher = Arc::new(MockEventPublisher::new());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
+
+        // Provide wrong checksum deliberately
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\",\"checksum\":\"deadbeef\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/artifacts")
+            .header("Content-Type", "multipart/form-data; boundary=boundary")
+            .body(Body::from(form_data))
+            .unwrap();
+
+        let mut extractor_config = axum::extract::DefaultBodyLimit::max(1024 * 1024);
+        let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
+
+        // Act
+        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), multipart).await;
+
+        // Assert
+        let response = response.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let (_parts, body) = response.into_parts();
+        let body_bytes = to_bytes(body, usize::MAX).await.unwrap();
+        assert_eq!(body_bytes, "Invalid checksum");
+        assert!(logs_contain("Checksum mismatch"));
+    }
+
 }

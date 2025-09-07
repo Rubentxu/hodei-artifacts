@@ -248,3 +248,13 @@ TEST_PARALLEL_JOBS=4 cargo test --test 'it_*'
 - Generador de compose dinámico: `crates/shared-test/src/dynamic_compose.rs`
 - Renderizador de templates: `crates/shared-test/src/template_renderer.rs`
 - Ejemplos de implementación: `crates/artifact/src/` y `crates/artifact/tests/`
+
+## IMPORTANTE: Testing
+- facilitar el testing rapido.
+- no recompilar el código que no se toca.
+- no usar println para logear usar el crate tracing.
+-  buscar una solución en el testing para que el crate de tracing se use para hacer recuperar y crear asserts que comprueben logs y spans.
+- antes de centrarse en los test de integración, hay que hacer test amplios unitarios sobre los casos de uso use_case.rs y el uso del api endpoint apir.rs, mockeando todos los servicios necesarios.
+- aprovechar el crate de tracing para crear asserts en los tests que comprueben logs, span etc
+- también testear los eventos producidos en las features.
+- usar los scripts de makefile para ejecutar los tests

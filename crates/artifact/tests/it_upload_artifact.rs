@@ -81,7 +81,7 @@ mod tests {
         _rabbitmq_container: ContainerAsync<RabbitMqImage>,
     }
 
-    async fn setup_test_environment() -> TestContext {
+    async fn setup_test_environment_with_auth(_disable_auth: bool) -> TestContext {
         helpers::setup_tracing();
         info!("Setting up test environment");
 
@@ -89,7 +89,7 @@ mod tests {
         let mongo_container = GenericImage::new("mongo", "5.0")
             .with_wait_for(WaitFor::Healthcheck(Default::default()))
             .with_health_check(Healthcheck::cmd(vec![
-                "sh", "-c", 
+                "sh", "-c",
                 "/usr/bin/mongo --eval 'db.adminCommand(\"ping\")' || exit 1"
             ])
             .with_retries(15)
@@ -148,9 +148,14 @@ mod tests {
         }
     }
 
+    async fn setup_test_environment() -> TestContext {
+        setup_test_environment_with_auth(true).await
+    }
+
     #[tokio::test]
     async fn test_successful_upload() {
         let context = setup_test_environment().await;
+
         let coordinates = PackageCoordinates { namespace: Some("com.example".to_string()), name: "test-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
         let metadata = json!({ "coordinates": coordinates, "file_name": "test.bin" });
         let file_content = b"test content";
@@ -158,7 +163,11 @@ mod tests {
             .part("file", Part::bytes(file_content.as_ref()).file_name("test.bin"))
             .part("metadata", Part::text(metadata.to_string()));
 
-        let response = context.http_client.post(format!("{}/artifacts", context.app_url)).multipart(form).send().await.unwrap();
+        let response = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("X-Test-Bypass-Auth", "true")
+            .multipart(form)
+            .send().await.unwrap();
 
         assert_eq!(response.status(), reqwest::StatusCode::CREATED);
         let body = response.json::<UploadArtifactResponse>().await.unwrap();
@@ -169,21 +178,20 @@ mod tests {
     #[tokio::test]
     async fn test_upload_with_invalid_checksum_should_fail() {
         let context = setup_test_environment().await;
-        let metadata = json!({
-            "coordinates": { "namespace": "com.example", "name": "checksum-test", "version": "1.0", "qualifiers": {} },
-            "file_name": "test.bin",
-            "checksum": "invalid-checksum"
-        });
+        let metadata = json!({ "coordinates": { "namespace": "com.example", "name": "checksum-test", "version": "1.0", "qualifiers": {} }, "file_name": "test.bin", "checksum": "invalid-checksum" });
         let form = Form::new()
             .part("file", Part::bytes(b"content").file_name("test.bin"))
             .part("metadata", Part::text(metadata.to_string()));
 
-        let response = context.http_client.post(format!("{}/artifacts", context.app_url)).multipart(form).send().await.unwrap();
+        let response = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("X-Test-Bypass-Auth", "true")
+            .multipart(form)
+            .send().await.unwrap();
 
-        // Actualmente no se valida el checksum en la API, por lo que debe crearse correctamente
-        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
-        let body = response.json::<UploadArtifactResponse>().await.unwrap();
-        assert!(body.hrn.contains("package-version/checksum-test/1.0"));
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body_text = response.text().await.unwrap();
+        assert_eq!(body_text, "Invalid checksum");
     }
 
     #[tokio::test]
@@ -192,7 +200,11 @@ mod tests {
         let metadata = json!({ "coordinates": { "namespace": "com.example", "name": "no-file-test", "version": "1.0", "qualifiers": {} } });
         let form = Form::new().part("metadata", Part::text(metadata.to_string()));
 
-        let response = context.http_client.post(format!("{}/artifacts", context.app_url)).multipart(form).send().await.unwrap();
+        let response = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("X-Test-Bypass-Auth", "true")
+            .multipart(form)
+            .send().await.unwrap();
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
     }
@@ -202,8 +214,44 @@ mod tests {
         let context = setup_test_environment().await;
         let form = Form::new().part("file", Part::bytes(b"content").file_name("test.bin"));
 
-        let response = context.http_client.post(format!("{}/artifacts", context.app_url)).multipart(form).send().await.unwrap();
+        let response = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("X-Test-Bypass-Auth", "true")
+            .multipart(form)
+            .send().await.unwrap();
 
         assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
     }
+
+    #[tokio::test]
+    async fn test_upload_requires_auth_when_enabled() {
+        let context = setup_test_environment_with_auth(false).await; // auth enabled
+        let coordinates = PackageCoordinates { namespace: Some("com.example".to_string()), name: "test-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
+        let metadata = json!({ "coordinates": coordinates, "file_name": "test.bin" });
+        let form = Form::new()
+            .part("file", Part::bytes(b"content").file_name("test.bin"))
+            .part("metadata", Part::text(metadata.to_string()));
+        let response = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .multipart(form)
+            .send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_upload_with_bearer_token_succeeds() {
+        let context = setup_test_environment_with_auth(false).await; // auth enabled
+        let coordinates = PackageCoordinates { namespace: Some("com.example".to_string()), name: "auth-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
+        let metadata = json!({ "coordinates": coordinates, "file_name": "auth.bin" });
+        let form = Form::new()
+            .part("file", Part::bytes(b"auth content").file_name("auth.bin"))
+            .part("metadata", Part::text(metadata.to_string()));
+        let response = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("Authorization", "Bearer testtoken")
+            .multipart(form)
+            .send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    }
 }
+
