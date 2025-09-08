@@ -9,13 +9,20 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
-import { 
+import {
   useUploadArtifact,
   useValidateArtifact,
   useAnalyzePackageType,
-  useGenerateArtifactMetadata
+  useGenerateArtifactMetadata,
 } from '@/shared/hooks/artifacts';
-import { Upload, Package, CheckCircle, XCircle, FileText, Download } from 'lucide-react';
+import {
+  Upload,
+  Package,
+  CheckCircle,
+  XCircle,
+  FileText,
+  Download,
+} from 'lucide-react';
 
 const Artifacts = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -33,29 +40,34 @@ const Artifacts = () => {
     valid: boolean;
     errors: string[];
   } | null>(null);
-  const [packageType, setPackageType] = useState<'maven' | 'npm' | 'pypi' | 'unknown'>('unknown');
+  const [packageType, setPackageType] = useState<
+    'maven' | 'npm' | 'pypi' | 'unknown'
+  >('unknown');
 
-  const handleFileSelect = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleFileSelect = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
 
-    setSelectedFile(file);
-    
-    // Validar archivo
-    const validation = await validateArtifact.mutateAsync(file);
-    setValidationResult(validation);
-    
-    // Analizar tipo de paquete
-    const type = await analyzePackageType.mutateAsync(file.name);
-    setPackageType(type);
-    
-    // Generar metadatos
-    const generatedMetadata = await generateMetadata.mutateAsync({
-      file,
-      type: type === 'unknown' ? undefined : type
-    });
-    setMetadata(generatedMetadata);
-  }, [validateArtifact, analyzePackageType, generateMetadata]);
+      setSelectedFile(file);
+
+      // Validar archivo
+      const validation = await validateArtifact.mutateAsync(file);
+      setValidationResult(validation);
+
+      // Analizar tipo de paquete
+      const type = await analyzePackageType.mutateAsync(file.name);
+      setPackageType(type);
+
+      // Generar metadatos
+      const generatedMetadata = await generateMetadata.mutateAsync({
+        file,
+        type: type === 'unknown' ? undefined : type,
+      });
+      setMetadata(generatedMetadata);
+    },
+    [validateArtifact, analyzePackageType, generateMetadata]
+  );
 
   const handleUpload = useCallback(async () => {
     if (!selectedFile || !validationResult?.valid) return;
@@ -63,11 +75,11 @@ const Artifacts = () => {
     try {
       const uploadBody = {
         file: selectedFile,
-        metadata: JSON.stringify(metadata)
+        metadata: JSON.stringify(metadata),
       };
 
       await uploadArtifact.mutateAsync(uploadBody);
-      
+
       // Clear form after success
       setSelectedFile(null);
       setValidationResult(null);
@@ -104,7 +116,8 @@ const Artifacts = () => {
     }
   };
 
-  const isUploadDisabled = !selectedFile || !validationResult?.valid || uploadArtifact.isPending;
+  const isUploadDisabled =
+    !selectedFile || !validationResult?.valid || uploadArtifact.isPending;
 
   return (
     <div className="space-y-6">
@@ -129,8 +142,10 @@ const Artifacts = () => {
       <Card className="p-6">
         <div className="space-y-6">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Subir Nuevo Artefacto</h3>
-            
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              Subir Nuevo Artefacto
+            </h3>
+
             {/* File Selector */}
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -147,7 +162,9 @@ const Artifacts = () => {
                 <label htmlFor="artifact-upload" className="cursor-pointer">
                   <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
                   <p className="text-sm text-gray-600">
-                    {selectedFile ? selectedFile.name : 'Click to select a file'}
+                    {selectedFile
+                      ? selectedFile.name
+                      : 'Click to select a file'}
                   </p>
                   <p className="text-xs text-gray-500 mt-1">
                     Allowed formats: JAR, WAR, EAR, POM, TGZ, WHL, EGG, ZIP
@@ -164,7 +181,7 @@ const Artifacts = () => {
               <Input
                 type="text"
                 value={repositoryId}
-                onChange={(e) => setRepositoryId(e.target.value)}
+                onChange={e => setRepositoryId(e.target.value)}
                 placeholder="Enter destination repository ID"
                 className="w-full"
               />
@@ -175,20 +192,26 @@ const Artifacts = () => {
               <div className="space-y-4">
                 {/* Validation Result */}
                 {validationResult && (
-                  <div className={`p-4 rounded-lg flex items-center gap-3 ${
-                    validationResult.valid
-                      ? 'bg-green-50 border border-green-200'
-                      : 'bg-red-50 border border-red-200'
-                  }`}>
+                  <div
+                    className={`p-4 rounded-lg flex items-center gap-3 ${
+                      validationResult.valid
+                        ? 'bg-green-50 border border-green-200'
+                        : 'bg-red-50 border border-red-200'
+                    }`}
+                  >
                     {validationResult.valid ? (
                       <CheckCircle className="w-5 h-5 text-green-600" />
                     ) : (
                       <XCircle className="w-5 h-5 text-red-600" />
                     )}
                     <div>
-                      <p className={`font-medium ${
-                        validationResult.valid ? 'text-green-800' : 'text-red-800'
-                      }`}>
+                      <p
+                        className={`font-medium ${
+                          validationResult.valid
+                            ? 'text-green-800'
+                            : 'text-red-800'
+                        }`}
+                      >
                         {validationResult.valid ? 'Valid File' : 'Invalid File'}
                       </p>
                       {validationResult.errors.length > 0 && (
@@ -207,7 +230,9 @@ const Artifacts = () => {
                   <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                     {getPackageTypeIcon(packageType)}
                     <div>
-                      <p className="font-medium text-blue-800">Detected Package Type</p>
+                      <p className="font-medium text-blue-800">
+                        Detected Package Type
+                      </p>
                       <Badge className={getPackageTypeColor(packageType)}>
                         {packageType.toUpperCase()}
                       </Badge>
@@ -220,13 +245,25 @@ const Artifacts = () => {
                   <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
                     <div className="flex items-center gap-2 mb-2">
                       <FileText className="w-4 h-4 text-gray-600" />
-                      <p className="font-medium text-gray-800">Artifact Metadata</p>
+                      <p className="font-medium text-gray-800">
+                        Artifact Metadata
+                      </p>
                     </div>
                     <div className="text-sm text-gray-600 space-y-1">
-                      <p><strong>Name:</strong> {metadata.filename}</p>
-                      <p><strong>Size:</strong> {(metadata.size / 1024 / 1024).toFixed(2)} MB</p>
-                      <p><strong>Type:</strong> {metadata.packageType}</p>
-                      <p><strong>Date:</strong> {new Date(metadata.uploadedAt).toLocaleString()}</p>
+                      <p>
+                        <strong>Name:</strong> {metadata.filename}
+                      </p>
+                      <p>
+                        <strong>Size:</strong>{' '}
+                        {(metadata.size / 1024 / 1024).toFixed(2)} MB
+                      </p>
+                      <p>
+                        <strong>Type:</strong> {metadata.packageType}
+                      </p>
+                      <p>
+                        <strong>Date:</strong>{' '}
+                        {new Date(metadata.uploadedAt).toLocaleString()}
+                      </p>
                     </div>
                   </div>
                 )}
@@ -258,16 +295,20 @@ const Artifacts = () => {
       {/* Lista de Artefactos Recientes */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">Artefactos Recientes</h3>
+          <h3 className="text-lg font-semibold text-gray-900">
+            Artefactos Recientes
+          </h3>
           <Button variant="outline" size="sm">
             Ver Todos
           </Button>
         </div>
-        
+
         <div className="text-center py-8 text-gray-500">
           <Package className="w-12 h-12 mx-auto mb-4 text-gray-300" />
           <p>No hay artefactos subidos aún</p>
-          <p className="text-sm mt-1">Sube tu primer artefacto usando el formulario de arriba</p>
+          <p className="text-sm mt-1">
+            Sube tu primer artefacto usando el formulario de arriba
+          </p>
         </div>
       </Card>
     </div>

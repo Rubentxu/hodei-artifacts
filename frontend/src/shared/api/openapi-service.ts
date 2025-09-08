@@ -14,7 +14,7 @@ import type {
   TokenResponse,
   CreateUserResponse,
   CreatePolicyResponse,
-  PackageType
+  PackageType,
 } from '@/shared/types/openapi-generated.types';
 
 // ===== INTERFACES DE SERVICIO =====
@@ -39,8 +39,19 @@ export interface PackageService {
   getNpmPackage(name: string): Promise<NpmPackageMetadata>;
   publishNpmPackage(name: string, metadata: NpmPublishMetadata): Promise<void>;
   downloadNpmTarball(packageName: string, fileName: string): Promise<Blob>;
-  getMavenArtifact(groupId: string, artifactId: string, version: string, fileName: string): Promise<Blob>;
-  uploadMavenArtifact(groupId: string, artifactId: string, version: string, fileName: string, content: Blob): Promise<void>;
+  getMavenArtifact(
+    groupId: string,
+    artifactId: string,
+    version: string,
+    fileName: string
+  ): Promise<Blob>;
+  uploadMavenArtifact(
+    groupId: string,
+    artifactId: string,
+    version: string,
+    fileName: string,
+    content: Blob
+  ): Promise<void>;
   getPypiSimpleIndex(packageName: string): Promise<string>;
   downloadPypiPackage(fileName: string): Promise<Blob>;
   uploadPypiPackage(formData: FormData): Promise<void>;
@@ -60,7 +71,10 @@ export interface UserService {
   getAll(): Promise<User[]>;
   create(user: CreateUserData): Promise<User>;
   getAttributes(userId: string): Promise<UserAttributes>;
-  updateAttributes(userId: string, attributes: UserAttributes): Promise<UserAttributes>;
+  updateAttributes(
+    userId: string,
+    attributes: UserAttributes
+  ): Promise<UserAttributes>;
 }
 
 export interface PolicyService {
@@ -206,15 +220,19 @@ class RepositoryServiceImpl implements RepositoryService {
     try {
       const response = await openAPIClient.listRepositories({
         limit: options?.limit || 20,
-        offset: options?.offset || 0
+        offset: options?.offset || 0,
       });
 
       return {
         ...response,
-        hasMore: (response.total || 0) > ((response.items?.length || 0) + (options?.offset || 0)),
-        nextOffset: ((response.items?.length || 0) + (options?.offset || 0)) < (response.total || 0) 
-          ? (response.items?.length || 0) + (options?.offset || 0) 
-          : undefined
+        hasMore:
+          (response.total || 0) >
+          (response.items?.length || 0) + (options?.offset || 0),
+        nextOffset:
+          (response.items?.length || 0) + (options?.offset || 0) <
+          (response.total || 0)
+            ? (response.items?.length || 0) + (options?.offset || 0)
+            : undefined,
       };
     } catch (error) {
       console.error('Error fetching repositories:', error);
@@ -235,7 +253,7 @@ class RepositoryServiceImpl implements RepositoryService {
     try {
       return await openAPIClient.createRepository({
         name: data.name,
-        description: data.description
+        description: data.description,
       });
     } catch (error) {
       console.error('Error creating repository:', error);
@@ -245,10 +263,13 @@ class RepositoryServiceImpl implements RepositoryService {
 
   async update(id: string, data: UpdateRepositoryData): Promise<Repository> {
     try {
-      return await openAPIClient.updateRepository({ id }, {
-        name: data.name,
-        description: data.description
-      });
+      return await openAPIClient.updateRepository(
+        { id },
+        {
+          name: data.name,
+          description: data.description,
+        }
+      );
     } catch (error) {
       console.error('Error updating repository:', error);
       throw new Error('Failed to update repository');
@@ -268,10 +289,13 @@ class RepositoryServiceImpl implements RepositoryService {
     try {
       const allRepos = await this.getAll({ limit: 100 });
       // Filtrar por tipo basado en el nombre o descripción
-      return allRepos.items?.filter(repo => 
-        repo.name?.toLowerCase().includes(type.toLowerCase()) ||
-        repo.description?.toLowerCase().includes(type.toLowerCase())
-      ) || [];
+      return (
+        allRepos.items?.filter(
+          repo =>
+            repo.name?.toLowerCase().includes(type.toLowerCase()) ||
+            repo.description?.toLowerCase().includes(type.toLowerCase())
+        ) || []
+      );
     } catch (error) {
       console.error('Error fetching repositories by type:', error);
       throw new Error('Failed to fetch repositories by type');
@@ -285,7 +309,7 @@ class SearchServiceImpl implements SearchService {
       return await openAPIClient.searchArtifacts({
         q: query,
         limit: options?.limit || 20,
-        offset: options?.offset || 0
+        offset: options?.offset || 0,
       });
     } catch (error) {
       console.error('Error searching artifacts:', error);
@@ -308,7 +332,11 @@ class SearchServiceImpl implements SearchService {
   async getPopularPackages(limit: number = 10): Promise<PackageResult[]> {
     try {
       const results = await this.search('popular', { limit });
-      return results.results?.sort((a, b) => (b.downloads || 0) - (a.downloads || 0)).slice(0, limit) || [];
+      return (
+        results.results
+          ?.sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
+          .slice(0, limit) || []
+      );
     } catch (error) {
       console.error('Error getting popular packages:', error);
       throw new Error('Failed to get popular packages');
@@ -318,11 +346,15 @@ class SearchServiceImpl implements SearchService {
   async getRecentPackages(limit: number = 10): Promise<PackageResult[]> {
     try {
       const results = await this.search('recent', { limit });
-      return results.results?.sort((a, b) => {
-        const dateA = new Date(a.lastModified || 0);
-        const dateB = new Date(b.lastModified || 0);
-        return dateB.getTime() - dateA.getTime();
-      }).slice(0, limit) || [];
+      return (
+        results.results
+          ?.sort((a, b) => {
+            const dateA = new Date(a.lastModified || 0);
+            const dateB = new Date(b.lastModified || 0);
+            return dateB.getTime() - dateA.getTime();
+          })
+          .slice(0, limit) || []
+      );
     } catch (error) {
       console.error('Error getting recent packages:', error);
       throw new Error('Failed to get recent packages');
@@ -340,7 +372,10 @@ class PackageServiceImpl implements PackageService {
     }
   }
 
-  async publishNpmPackage(name: string, metadata: NpmPublishMetadata): Promise<void> {
+  async publishNpmPackage(
+    name: string,
+    metadata: NpmPublishMetadata
+  ): Promise<void> {
     try {
       await openAPIClient.publishNpmPackage({ packageName: name }, metadata);
     } catch (error) {
@@ -349,7 +384,10 @@ class PackageServiceImpl implements PackageService {
     }
   }
 
-  async downloadNpmTarball(packageName: string, fileName: string): Promise<Blob> {
+  async downloadNpmTarball(
+    packageName: string,
+    fileName: string
+  ): Promise<Blob> {
     try {
       return await openAPIClient.downloadNpmTarball({ packageName, fileName });
     } catch (error) {
@@ -358,18 +396,37 @@ class PackageServiceImpl implements PackageService {
     }
   }
 
-  async getMavenArtifact(groupId: string, artifactId: string, version: string, fileName: string): Promise<Blob> {
+  async getMavenArtifact(
+    groupId: string,
+    artifactId: string,
+    version: string,
+    fileName: string
+  ): Promise<Blob> {
     try {
-      return await openAPIClient.downloadMaven({ groupId, artifactId, version, fileName });
+      return await openAPIClient.downloadMaven({
+        groupId,
+        artifactId,
+        version,
+        fileName,
+      });
     } catch (error) {
       console.error('Error downloading maven artifact:', error);
       throw new Error('Failed to download maven artifact');
     }
   }
 
-  async uploadMavenArtifact(groupId: string, artifactId: string, version: string, fileName: string, content: Blob): Promise<void> {
+  async uploadMavenArtifact(
+    groupId: string,
+    artifactId: string,
+    version: string,
+    fileName: string,
+    content: Blob
+  ): Promise<void> {
     try {
-      await openAPIClient.uploadMaven({ groupId, artifactId, version, fileName }, content);
+      await openAPIClient.uploadMaven(
+        { groupId, artifactId, version, fileName },
+        content
+      );
     } catch (error) {
       console.error('Error uploading maven artifact:', error);
       throw new Error('Failed to upload maven artifact');
@@ -413,49 +470,58 @@ class AuthServiceImpl implements AuthService {
       // Simular autenticación con el backend
       // En producción, esto llamaría a un endpoint de autenticación
       await this.mockDelay(500);
-      
+
       // Validación básica
       if (!credentials.username || !credentials.password) {
         return {
           success: false,
-          error: 'Username and password are required'
+          error: 'Username and password are required',
         };
       }
 
       // Mock autenticación exitosa
-      if (credentials.username === 'admin' && credentials.password === 'admin123') {
+      if (
+        credentials.username === 'admin' &&
+        credentials.password === 'admin123'
+      ) {
         const user: CurrentUser = {
           id: 'user-123',
           username: 'admin',
           email: 'admin@example.com',
           role: 'admin',
-          permissions: ['read:repositories', 'write:repositories', 'read:artifacts', 'write:artifacts'],
+          permissions: [
+            'read:repositories',
+            'write:repositories',
+            'read:artifacts',
+            'write:artifacts',
+          ],
           attributes: {
             department: 'engineering',
-            team: 'platform'
-          }
+            team: 'platform',
+          },
         };
 
         this.currentUser = user;
-        this.currentToken = 'mock-jwt-token-' + Math.random().toString(36).substring(2, 15);
+        this.currentToken =
+          'mock-jwt-token-' + Math.random().toString(36).substring(2, 15);
 
         return {
           success: true,
-          user: user,
-          token: this.currentToken
+          user,
+          token: this.currentToken,
         };
       }
 
       // Mock autenticación fallida
       return {
         success: false,
-        error: 'Invalid username or password'
+        error: 'Invalid username or password',
       };
     } catch (error) {
       console.error('Error during login:', error);
       return {
         success: false,
-        error: 'Login failed'
+        error: 'Login failed',
       };
     }
   }
@@ -512,19 +578,20 @@ class AuthServiceImpl implements AuthService {
     if (!this.currentToken || !this.currentUser) {
       return {
         success: false,
-        error: 'No valid session'
+        error: 'No valid session',
       };
     }
 
     // Simular refresh de token
     await this.mockDelay(300);
-    
-    this.currentToken = 'mock-refreshed-token-' + Math.random().toString(36).substring(2, 15);
-    
+
+    this.currentToken =
+      'mock-refreshed-token-' + Math.random().toString(36).substring(2, 15);
+
     return {
       success: true,
       user: this.currentUser,
-      token: this.currentToken
+      token: this.currentToken,
     };
   }
 
@@ -542,14 +609,14 @@ class UserServiceImpl implements UserService {
           id: 'user-1',
           username: 'john.doe',
           email: 'john.doe@example.com',
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
         },
         {
           id: 'user-2',
           username: 'jane.smith',
           email: 'jane.smith@example.com',
-          createdAt: new Date().toISOString()
-        }
+          createdAt: new Date().toISOString(),
+        },
       ];
 
       return mockUsers.map(user => ({
@@ -559,7 +626,9 @@ class UserServiceImpl implements UserService {
         role: 'user',
         status: 'active' as const,
         createdAt: user.createdAt!,
-        lastLoginAt: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString()
+        lastLoginAt: new Date(
+          Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000
+        ).toISOString(),
       }));
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -573,7 +642,7 @@ class UserServiceImpl implements UserService {
         username: user.username,
         email: user.email,
         password: user.password,
-        attributes: user.attributes
+        attributes: user.attributes,
       });
 
       return {
@@ -582,7 +651,7 @@ class UserServiceImpl implements UserService {
         email: response.email!,
         role: user.role || 'user',
         status: 'active' as const,
-        createdAt: response.createdAt!
+        createdAt: response.createdAt!,
       };
     } catch (error) {
       console.error('Error creating user:', error);
@@ -599,7 +668,10 @@ class UserServiceImpl implements UserService {
     }
   }
 
-  async updateAttributes(userId: string, attributes: UserAttributes): Promise<UserAttributes> {
+  async updateAttributes(
+    userId: string,
+    attributes: UserAttributes
+  ): Promise<UserAttributes> {
     try {
       const response = await openAPIClient.updateUserAttributes(
         { id: userId },
@@ -624,15 +696,15 @@ class PolicyServiceImpl implements PolicyService {
           name: 'developer-policy',
           description: 'Default policy for developers',
           isActive: true,
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
         },
         {
           id: 'policy-2',
           name: 'admin-policy',
           description: 'Full access policy for administrators',
           isActive: true,
-          createdAt: new Date().toISOString()
-        }
+          createdAt: new Date().toISOString(),
+        },
       ];
 
       return mockPolicies.map(policy => ({
@@ -642,7 +714,7 @@ class PolicyServiceImpl implements PolicyService {
         content: '', // No hay campo policy en la respuesta, usar contenido vacío por ahora
         isActive: policy.isActive!,
         createdAt: policy.createdAt!,
-        updatedAt: policy.createdAt // Usar createdAt como updatedAt por ahora
+        updatedAt: policy.createdAt, // Usar createdAt como updatedAt por ahora
       }));
     } catch (error) {
       console.error('Error fetching policies:', error);
@@ -656,7 +728,7 @@ class PolicyServiceImpl implements PolicyService {
         name: policy.name,
         description: policy.description,
         policy: policy.content, // Mapear content a policy
-        isActive: policy.isActive
+        isActive: policy.isActive,
       });
 
       return {
@@ -665,7 +737,7 @@ class PolicyServiceImpl implements PolicyService {
         description: response.description,
         content: policy.content,
         isActive: response.isActive!,
-        createdAt: response.createdAt!
+        createdAt: response.createdAt!,
       };
     } catch (error) {
       console.error('Error creating policy:', error);
@@ -681,7 +753,7 @@ class PolicyServiceImpl implements PolicyService {
         name: policy.name || 'updated-policy',
         description: policy.description,
         policy: policy.content || '',
-        isActive: policy.isActive ?? true
+        isActive: policy.isActive ?? true,
       });
 
       return {
@@ -690,7 +762,7 @@ class PolicyServiceImpl implements PolicyService {
         description: response.description,
         content: policy.content || '',
         isActive: response.isActive!,
-        createdAt: response.createdAt!
+        createdAt: response.createdAt!,
       };
     } catch (error) {
       console.error('Error updating policy:', error);
@@ -732,7 +804,7 @@ export interface UseSearchOptions extends SearchOptions {
 // ===== FUNCIONES DE UTILIDAD =====
 export function createFormData(data: Record<string, any>): FormData {
   const formData = new FormData();
-  
+
   Object.entries(data).forEach(([key, value]) => {
     if (value instanceof File || value instanceof Blob) {
       formData.append(key, value);
@@ -742,7 +814,7 @@ export function createFormData(data: Record<string, any>): FormData {
       formData.append(key, String(value));
     }
   });
-  
+
   return formData;
 }
 
@@ -765,7 +837,7 @@ export function createNpmPublishMetadata(
     repository: options?.repository,
     bugs: options?.bugs,
     homepage: options?.homepage,
-    ...options
+    ...options,
   };
 }
 
@@ -808,12 +880,7 @@ export class APIError extends Error {
   status?: number;
   details?: any;
 
-  constructor(
-    message: string,
-    code?: string,
-    status?: number,
-    details?: any
-  ) {
+  constructor(message: string, code?: string, status?: number, details?: any) {
     super(message);
     this.name = 'APIError';
     this.code = code;
@@ -855,23 +922,23 @@ export function handleAPIError(error: any): APIError {
   if (error instanceof APIError) {
     return error;
   }
-  
+
   if (error?.code === 'NOT_FOUND') {
     return new NotFoundError(error.message);
   }
-  
+
   if (error?.code === 'VALIDATION_ERROR') {
     return new ValidationError(error.message, error.details);
   }
-  
+
   if (error?.code === 'UNAUTHORIZED') {
     return new AuthenticationError(error.message);
   }
-  
+
   if (error?.code === 'FORBIDDEN') {
     return new AuthorizationError(error.message);
   }
-  
+
   return new APIError(
     error?.message || ERROR_MESSAGES.UNKNOWN_ERROR,
     error?.code || 'UNKNOWN_ERROR',
@@ -891,7 +958,7 @@ export const api = {
   utils: {
     createFormData,
     createNpmPublishMetadata,
-    handleAPIError
+    handleAPIError,
   },
   constants: API_CONSTANTS,
   errors: {
@@ -900,8 +967,8 @@ export const api = {
     AuthenticationError,
     AuthorizationError,
     NotFoundError,
-    ERROR_MESSAGES
-  }
+    ERROR_MESSAGES,
+  },
 } as const;
 
 // Tipo para el objeto API completo

@@ -5,12 +5,12 @@
  */
 
 import type { RepositoryPort } from '../ports/RepositoryPort';
-import type { 
-  Repository, 
-  RepositoryFilters, 
+import type {
+  Repository,
+  RepositoryFilters,
   PaginatedResponse,
   CreateRepositoryRequest,
-  UpdateRepositoryRequest 
+  UpdateRepositoryRequest,
 } from '@/shared/types';
 import { openAPIClient } from '@/shared/api/openapi-client';
 import { RepositoryMapper } from '../mappers/RepositoryMapper';
@@ -29,14 +29,16 @@ export class OpenAPIRepositoryAdapter implements RepositoryPort {
   /**
    * Busca repositorios con filtros aplicados
    */
-  async buscarRepositorios(filtros: RepositoryFilters): Promise<PaginatedResponse<Repository>> {
+  async buscarRepositorios(
+    filtros: RepositoryFilters
+  ): Promise<PaginatedResponse<Repository>> {
     try {
       // Convertir filtros del dominio al formato OpenAPI
       const queryParams = this.mapper.filtrosADominioOpenAPI(filtros);
-      
+
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.listRepositories(queryParams);
-      
+
       // Mapear la respuesta al formato del dominio
       return this.mapper.respuestaOpenAPIADominio(resultado);
     } catch (error) {
@@ -52,11 +54,11 @@ export class OpenAPIRepositoryAdapter implements RepositoryPort {
     try {
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.getRepository({ id });
-      
+
       if (!resultado) {
         throw new Error('Repositorio no encontrado');
       }
-      
+
       // Mapear la respuesta al formato del dominio
       return this.mapper.repositorioOpenAPIADominio(resultado);
     } catch (error) {
@@ -72,10 +74,10 @@ export class OpenAPIRepositoryAdapter implements RepositoryPort {
     try {
       // Convertir datos del dominio al formato OpenAPI
       const datosOpenAPI = this.mapper.solicitudCreacionADominioOpenAPI(datos);
-      
+
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.createRepository(datosOpenAPI);
-      
+
       // Mapear la respuesta al formato del dominio
       return this.mapper.repositorioOpenAPIADominio(resultado);
     } catch (error) {
@@ -88,16 +90,20 @@ export class OpenAPIRepositoryAdapter implements RepositoryPort {
    * Actualiza un repositorio existente
    */
   async actualizarRepositorio(
-    id: string, 
+    id: string,
     datos: UpdateRepositoryRequest
   ): Promise<Repository> {
     try {
       // Convertir datos del dominio al formato OpenAPI
-      const datosOpenAPI = this.mapper.solicitudActualizacionADominioOpenAPI(datos);
-      
+      const datosOpenAPI =
+        this.mapper.solicitudActualizacionADominioOpenAPI(datos);
+
       // Llamar al cliente OpenAPI
-      const resultado = await openAPIClient.updateRepository({ id }, datosOpenAPI);
-      
+      const resultado = await openAPIClient.updateRepository(
+        { id },
+        datosOpenAPI
+      );
+
       // Mapear la respuesta al formato del dominio
       return this.mapper.repositorioOpenAPIADominio(resultado);
     } catch (error) {

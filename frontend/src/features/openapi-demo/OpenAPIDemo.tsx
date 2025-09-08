@@ -4,16 +4,16 @@
  */
 
 import React, { useState } from 'react';
-import { 
-  useRepositories, 
-  useSearch, 
-  usePopularPackages, 
+import {
+  useRepositories,
+  useSearch,
+  usePopularPackages,
   useRecentPackages,
   useAuth,
   useTokens,
   useCreateToken,
   useUsers,
-  usePolicies 
+  usePolicies,
 } from '@/shared/hooks/use-openapi';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -36,73 +36,57 @@ export function OpenAPIDemo(): React.ReactElement {
   const [newTokenName, setNewTokenName] = useState('');
 
   // ===== HOOKS DE REPOSITORIOS =====
-  const { 
-    data: repositoriesData, 
-    isLoading: reposLoading, 
+  const {
+    data: repositoriesData,
+    isLoading: reposLoading,
     isError: reposError,
-    error: reposErrorData 
+    error: reposErrorData,
   } = useRepositories({ limit: 10 });
 
   // ===== HOOKS DE BÚSQUEDA =====
-  const { 
-    data: searchResults, 
-    isLoading: searchLoading, 
+  const {
+    data: searchResults,
+    isLoading: searchLoading,
     isError: searchError,
-    error: searchErrorData 
-  } = useSearch(searchQuery, { 
-    limit: 10, 
-    type: selectedType === 'all' ? undefined : selectedType as PackageType 
+    error: searchErrorData,
+  } = useSearch(searchQuery, {
+    limit: 10,
+    type: selectedType === 'all' ? undefined : (selectedType as PackageType),
   });
 
-  const { 
-    data: popularPackages, 
-    isLoading: popularLoading 
-  } = usePopularPackages(5);
+  const { data: popularPackages, isLoading: popularLoading } =
+    usePopularPackages(5);
 
-  const { 
-    data: recentPackages, 
-    isLoading: recentLoading 
-  } = useRecentPackages(5);
+  const { data: recentPackages, isLoading: recentLoading } =
+    useRecentPackages(5);
 
   // ===== HOOKS DE AUTENTICACIÓN =====
-  const { 
-    user, 
-    isAuthenticated, 
+  const {
+    user,
+    isAuthenticated,
     isLoading: authLoading,
     login,
-    logout 
+    logout,
   } = useAuth();
 
   // ===== HOOKS DE TOKENS =====
-  const { 
-    data: tokens, 
-    isLoading: tokensLoading 
-  } = useTokens();
+  const { data: tokens, isLoading: tokensLoading } = useTokens();
 
-  const { 
-    mutate: createToken, 
-    isPending: creatingToken 
-  } = useCreateToken();
+  const { mutate: createToken, isPending: creatingToken } = useCreateToken();
 
   // ===== HOOKS DE USUARIOS Y POLÍTICAS =====
-  const { 
-    data: users, 
-    isLoading: usersLoading 
-  } = useUsers();
+  const { data: users, isLoading: usersLoading } = useUsers();
 
-  const { 
-    data: policies, 
-    isLoading: policiesLoading 
-  } = usePolicies();
+  const { data: policies, isLoading: policiesLoading } = usePolicies();
 
   // ===== HANDLERS =====
 
   const handleLogin = async () => {
-    const result = await login({ 
-      username: 'admin', 
-      password: 'admin123' 
+    const result = await login({
+      username: 'admin',
+      password: 'admin123',
     });
-    
+
     if (result.success) {
       toast.success('Login successful!');
     } else {
@@ -122,19 +106,21 @@ export function OpenAPIDemo(): React.ReactElement {
     }
 
     createToken(
-      { 
-        name: newTokenName, 
+      {
+        name: newTokenName,
         scopes: ['read:repositories', 'write:artifacts'],
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 días
+        expiresAt: new Date(
+          Date.now() + 30 * 24 * 60 * 60 * 1000
+        ).toISOString(), // 30 días
       },
       {
         onSuccess: () => {
           toast.success('Token created successfully!');
           setNewTokenName('');
         },
-        onError: (error) => {
+        onError: error => {
           toast.error(error.message || 'Failed to create token');
-        }
+        },
       }
     );
   };
@@ -158,15 +144,19 @@ export function OpenAPIDemo(): React.ReactElement {
       {/* ===== SECCIÓN DE AUTENTICACIÓN ===== */}
       <Card className="p-6">
         <h2 className="text-xl font-semibold mb-4">Authentication</h2>
-        
+
         {authLoading ? (
           <Spinner size="sm" />
         ) : isAuthenticated ? (
           <div className="space-y-4">
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <p className="text-green-800 font-medium">✅ Authenticated as {user?.username}</p>
+              <p className="text-green-800 font-medium">
+                ✅ Authenticated as {user?.username}
+              </p>
               <p className="text-green-600 text-sm">Role: {user?.role}</p>
-              <p className="text-green-600 text-sm">Permissions: {user?.permissions.join(', ')}</p>
+              <p className="text-green-600 text-sm">
+                Permissions: {user?.permissions.join(', ')}
+              </p>
             </div>
             <Button onClick={handleLogout} variant="outline">
               Logout
@@ -176,7 +166,9 @@ export function OpenAPIDemo(): React.ReactElement {
           <div className="space-y-4">
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
               <p className="text-yellow-800">🔒 Not authenticated</p>
-              <p className="text-yellow-600 text-sm">Use admin/admin123 to login</p>
+              <p className="text-yellow-600 text-sm">
+                Use admin/admin123 to login
+              </p>
             </div>
             <Button onClick={handleLogin} variant="primary">
               Login as Admin
@@ -188,7 +180,7 @@ export function OpenAPIDemo(): React.ReactElement {
       {/* ===== SECCIÓN DE REPOSITORIOS ===== */}
       <Card className="p-6">
         <h2 className="text-xl font-semibold mb-4">Repositories</h2>
-        
+
         {reposLoading ? (
           <Spinner size="sm" />
         ) : reposError ? (
@@ -200,8 +192,11 @@ export function OpenAPIDemo(): React.ReactElement {
             <p className="text-gray-600 mb-4">
               Total repositories: {repositoriesData?.total || 0}
             </p>
-            {repositoriesData?.items?.map((repo) => (
-              <div key={repo.id} className="border border-gray-200 rounded-lg p-4">
+            {repositoriesData?.items?.map(repo => (
+              <div
+                key={repo.id}
+                className="border border-gray-200 rounded-lg p-4"
+              >
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="font-medium text-gray-900">{repo.name}</h3>
@@ -210,7 +205,9 @@ export function OpenAPIDemo(): React.ReactElement {
                       Created: {new Date(repo.createdAt).toLocaleDateString()}
                     </p>
                   </div>
-                  <Badge variant="secondary">{repo.id.substring(0, 8)}...</Badge>
+                  <Badge variant="secondary">
+                    {repo.id.substring(0, 8)}...
+                  </Badge>
                 </div>
               </div>
             ))}
@@ -221,18 +218,20 @@ export function OpenAPIDemo(): React.ReactElement {
       {/* ===== SECCIÓN DE BÚSQUEDA ===== */}
       <Card className="p-6">
         <h2 className="text-xl font-semibold mb-4">Package Search</h2>
-        
+
         <div className="space-y-4 mb-6">
           <Input
             placeholder="Search packages (e.g., react, junit, requests)..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={e => setSearchQuery(e.target.value)}
             className="w-full"
           />
-          
+
           <Select
             value={selectedType}
-            onValueChange={(value) => setSelectedType(value as PackageType | 'all')}
+            onValueChange={value =>
+              setSelectedType(value as PackageType | 'all')
+            }
           >
             <option value="all">All Types</option>
             <option value="npm">npm</option>
@@ -247,13 +246,16 @@ export function OpenAPIDemo(): React.ReactElement {
           <div className="text-red-600">
             Error searching: {searchErrorData?.message}
           </div>
-        ) : searchResults && searchResults.results && searchResults.results.length > 0 ? (
+        ) : searchResults?.results && searchResults.results.length > 0 ? (
           <div className="space-y-3">
             <p className="text-gray-600 mb-4">
               Found {searchResults.total} packages
             </p>
-            {searchResults.results.map((pkg) => (
-              <div key={`${pkg.type}-${pkg.name}`} className="border border-gray-200 rounded-lg p-4">
+            {searchResults.results.map(pkg => (
+              <div
+                key={`${pkg.type}-${pkg.name}`}
+                className="border border-gray-200 rounded-lg p-4"
+              >
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
@@ -263,13 +265,18 @@ export function OpenAPIDemo(): React.ReactElement {
                     </div>
                     <p className="text-gray-600 text-sm">{pkg.description}</p>
                     <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-                      <span>📥 {pkg.downloads?.toLocaleString()} downloads</span>
+                      <span>
+                        📥 {pkg.downloads?.toLocaleString()} downloads
+                      </span>
                       <span>⭐ Score: {(pkg.score || 0).toFixed(2)}</span>
-                      <span>📅 {new Date(pkg.lastModified || '').toLocaleDateString()}</span>
+                      <span>
+                        📅{' '}
+                        {new Date(pkg.lastModified || '').toLocaleDateString()}
+                      </span>
                     </div>
                     {pkg.keywords && pkg.keywords.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
-                        {pkg.keywords.slice(0, 3).map((keyword) => (
+                        {pkg.keywords.slice(0, 3).map(keyword => (
                           <Badge key={keyword} variant="secondary" size="sm">
                             {keyword}
                           </Badge>
@@ -278,7 +285,9 @@ export function OpenAPIDemo(): React.ReactElement {
                     )}
                   </div>
                   <div className="text-right">
-                    <Badge variant="secondary">{pkg.license || 'Unknown'}</Badge>
+                    <Badge variant="secondary">
+                      {pkg.license || 'Unknown'}
+                    </Badge>
                   </div>
                 </div>
               </div>
@@ -303,11 +312,16 @@ export function OpenAPIDemo(): React.ReactElement {
             <Spinner size="sm" />
           ) : (
             <div className="space-y-3">
-              {popularPackages?.map((pkg) => (
-                <div key={`${pkg.type}-${pkg.name}`} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+              {popularPackages?.map(pkg => (
+                <div
+                  key={`${pkg.type}-${pkg.name}`}
+                  className="flex justify-between items-center p-3 bg-gray-50 rounded-lg"
+                >
                   <div>
                     <p className="font-medium text-gray-900">{pkg.name}</p>
-                    <p className="text-xs text-gray-600">{pkg.type} • {pkg.downloads?.toLocaleString()} downloads</p>
+                    <p className="text-xs text-gray-600">
+                      {pkg.type} • {pkg.downloads?.toLocaleString()} downloads
+                    </p>
                   </div>
                   <Badge variant="secondary">v{pkg.latestVersion}</Badge>
                 </div>
@@ -322,11 +336,17 @@ export function OpenAPIDemo(): React.ReactElement {
             <Spinner size="sm" />
           ) : (
             <div className="space-y-3">
-              {recentPackages?.map((pkg) => (
-                <div key={`${pkg.type}-${pkg.name}`} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+              {recentPackages?.map(pkg => (
+                <div
+                  key={`${pkg.type}-${pkg.name}`}
+                  className="flex justify-between items-center p-3 bg-gray-50 rounded-lg"
+                >
                   <div>
                     <p className="font-medium text-gray-900">{pkg.name}</p>
-                    <p className="text-xs text-gray-600">{pkg.type} • {new Date(pkg.lastModified || '').toLocaleDateString()}</p>
+                    <p className="text-xs text-gray-600">
+                      {pkg.type} •{' '}
+                      {new Date(pkg.lastModified || '').toLocaleDateString()}
+                    </p>
                   </div>
                   <Badge variant="secondary">v{pkg.latestVersion}</Badge>
                 </div>
@@ -340,17 +360,17 @@ export function OpenAPIDemo(): React.ReactElement {
       {isAuthenticated && (
         <Card className="p-6">
           <h2 className="text-xl font-semibold mb-4">API Tokens</h2>
-          
+
           <div className="mb-6">
             <div className="flex gap-2">
               <Input
                 placeholder="Token name"
                 value={newTokenName}
-                onChange={(e) => setNewTokenName(e.target.value)}
+                onChange={e => setNewTokenName(e.target.value)}
                 className="flex-1"
               />
-              <Button 
-                onClick={handleCreateToken} 
+              <Button
+                onClick={handleCreateToken}
                 disabled={creatingToken || !newTokenName.trim()}
                 variant="primary"
               >
@@ -364,19 +384,26 @@ export function OpenAPIDemo(): React.ReactElement {
           ) : (
             <div className="space-y-3">
               {tokens && tokens.length > 0 ? (
-                tokens.map((token) => (
-                  <div key={token.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                tokens.map(token => (
+                  <div
+                    key={token.id}
+                    className="flex justify-between items-center p-3 bg-gray-50 rounded-lg"
+                  >
                     <div>
                       <p className="font-medium text-gray-900">{token.name}</p>
                       <p className="text-xs text-gray-600">
-                        Created: {new Date(token.createdAt || '').toLocaleDateString()}
+                        Created:{' '}
+                        {new Date(token.createdAt || '').toLocaleDateString()}
                       </p>
                       <p className="text-xs text-gray-600">
-                        Expires: {token.expiresAt ? new Date(token.expiresAt).toLocaleDateString() : 'Never'}
+                        Expires:{' '}
+                        {token.expiresAt
+                          ? new Date(token.expiresAt).toLocaleDateString()
+                          : 'Never'}
                       </p>
                       {token.scopes && token.scopes.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {token.scopes.map((scope) => (
+                          {token.scopes.map(scope => (
                             <Badge key={scope} variant="secondary" size="sm">
                               {scope}
                             </Badge>
@@ -384,7 +411,9 @@ export function OpenAPIDemo(): React.ReactElement {
                         </div>
                       )}
                     </div>
-                    <Badge variant="secondary">{token.token?.substring(0, 8)}...</Badge>
+                    <Badge variant="secondary">
+                      {token.token?.substring(0, 8)}...
+                    </Badge>
                   </div>
                 ))
               ) : (
@@ -407,14 +436,25 @@ export function OpenAPIDemo(): React.ReactElement {
             ) : (
               <div className="space-y-3">
                 {users && users.length > 0 ? (
-                  users.map((user) => (
-                    <div key={user.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                  users.map(user => (
+                    <div
+                      key={user.id}
+                      className="flex justify-between items-center p-3 bg-gray-50 rounded-lg"
+                    >
                       <div>
-                        <p className="font-medium text-gray-900">{user.username}</p>
+                        <p className="font-medium text-gray-900">
+                          {user.username}
+                        </p>
                         <p className="text-xs text-gray-600">{user.email}</p>
-                        <p className="text-xs text-gray-600">Role: {user.role}</p>
+                        <p className="text-xs text-gray-600">
+                          Role: {user.role}
+                        </p>
                       </div>
-                      <Badge variant={user.status === 'active' ? 'success' : 'secondary'}>
+                      <Badge
+                        variant={
+                          user.status === 'active' ? 'success' : 'secondary'
+                        }
+                      >
                         {user.status}
                       </Badge>
                     </div>
@@ -435,17 +475,24 @@ export function OpenAPIDemo(): React.ReactElement {
             ) : (
               <div className="space-y-3">
                 {policies && policies.length > 0 ? (
-                  policies.map((policy) => (
+                  policies.map(policy => (
                     <div key={policy.id} className="p-3 bg-gray-50 rounded-lg">
                       <div className="flex justify-between items-start mb-2">
-                        <h3 className="font-medium text-gray-900">{policy.name}</h3>
-                        <Badge variant={policy.isActive ? 'success' : 'secondary'}>
+                        <h3 className="font-medium text-gray-900">
+                          {policy.name}
+                        </h3>
+                        <Badge
+                          variant={policy.isActive ? 'success' : 'secondary'}
+                        >
                           {policy.isActive ? 'Active' : 'Inactive'}
                         </Badge>
                       </div>
-                      <p className="text-sm text-gray-600">{policy.description}</p>
+                      <p className="text-sm text-gray-600">
+                        {policy.description}
+                      </p>
                       <p className="text-xs text-gray-500 mt-1">
-                        Created: {new Date(policy.createdAt).toLocaleDateString()}
+                        Created:{' '}
+                        {new Date(policy.createdAt).toLocaleDateString()}
                       </p>
                     </div>
                   ))
@@ -462,18 +509,26 @@ export function OpenAPIDemo(): React.ReactElement {
 
       {/* ===== INFORMACIÓN DE CONTRACT FIRST ===== */}
       <Card className="p-6 bg-blue-50 border-blue-200">
-        <h2 className="text-xl font-semibold mb-4 text-blue-900">Contract First Pattern</h2>
+        <h2 className="text-xl font-semibold mb-4 text-blue-900">
+          Contract First Pattern
+        </h2>
         <div className="space-y-3 text-blue-800">
           <p>✅ All API calls are based on the OpenAPI 3.0.3 contract</p>
-          <p>✅ Mock responses follow the exact schema defined in the contract</p>
+          <p>
+            ✅ Mock responses follow the exact schema defined in the contract
+          </p>
           <p>✅ TypeScript types are generated from the OpenAPI schemas</p>
-          <p>✅ When the real backend is ready, just change the client implementation</p>
+          <p>
+            ✅ When the real backend is ready, just change the client
+            implementation
+          </p>
           <p>✅ Zero breaking changes - the contract is the source of truth</p>
         </div>
         <div className="mt-4 p-3 bg-blue-100 rounded-lg">
           <p className="text-sm text-blue-700">
-            <strong>Next Steps:</strong> When the Rust backend is ready, simply replace the mock client 
-            with the real HTTP client. All components will continue to work without changes!
+            <strong>Next Steps:</strong> When the Rust backend is ready, simply
+            replace the mock client with the real HTTP client. All components
+            will continue to work without changes!
           </p>
         </div>
       </Card>
@@ -494,14 +549,16 @@ export function OpenAPIDemoCompact(): React.ReactElement {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-4">
           <h3 className="font-semibold text-gray-900 mb-2">Repositories</h3>
-          <p className="text-2xl font-bold text-blue-600">{repositories?.total || 0}</p>
+          <p className="text-2xl font-bold text-blue-600">
+            {repositories?.total || 0}
+          </p>
           <p className="text-sm text-gray-600">Total repositories</p>
         </Card>
-        
+
         <Card className="p-4">
           <h3 className="font-semibold text-gray-900 mb-2">Popular Packages</h3>
           <div className="space-y-1">
-            {popularPackages?.slice(0, 3).map((pkg) => (
+            {popularPackages?.slice(0, 3).map(pkg => (
               <div key={pkg.name} className="flex justify-between text-sm">
                 <span>{pkg.name}</span>
                 <Badge variant="secondary">{pkg.type}</Badge>
@@ -509,11 +566,11 @@ export function OpenAPIDemoCompact(): React.ReactElement {
             ))}
           </div>
         </Card>
-        
+
         <Card className="p-4">
           <h3 className="font-semibold text-gray-900 mb-2">Recent Packages</h3>
           <div className="space-y-1">
-            {recentPackages?.slice(0, 3).map((pkg) => (
+            {recentPackages?.slice(0, 3).map(pkg => (
               <div key={pkg.name} className="flex justify-between text-sm">
                 <span>{pkg.name}</span>
                 <Badge variant="secondary">{pkg.type}</Badge>
@@ -522,7 +579,7 @@ export function OpenAPIDemoCompact(): React.ReactElement {
           </div>
         </Card>
       </div>
-      
+
       <div className="text-center text-sm text-gray-500">
         Powered by OpenAPI Contract First Pattern
       </div>

@@ -14,15 +14,15 @@ class UserService {
     try {
       // Usar el adaptador para obtener usuarios de servicios mock mejorados
       const legacyUsers = await mockAdapter.getUsers();
-      
+
       // Convertir formato legacy al formato esperado
       return legacyUsers.map(user => ({
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
-        status: user.status as "Active" | "Inactive",
-        organization: user.organization
+        status: user.status as 'Active' | 'Inactive',
+        organization: user.organization,
       }));
     } catch (error) {
       console.error('Error in enhanced getUsers service:', error);
@@ -34,7 +34,7 @@ class UserService {
           email: 'john.doe@example.com',
           role: 'Admin',
           status: 'Active',
-          organization: 'Hodei Inc.'
+          organization: 'Hodei Inc.',
         },
         {
           id: 'user-2',
@@ -42,8 +42,8 @@ class UserService {
           email: 'jane.smith@example.com',
           role: 'User',
           status: 'Active',
-          organization: 'Hodei Inc.'
-        }
+          organization: 'Hodei Inc.',
+        },
       ];
     }
   }
@@ -52,14 +52,14 @@ class UserService {
     try {
       // Usar el adaptador para crear usuario
       const newUser = await mockAdapter.createUser(data);
-      
+
       return {
         id: newUser.id,
         name: newUser.name,
         email: newUser.email,
         role: newUser.role,
-        status: newUser.status as "Active" | "Inactive",
-        organization: newUser.organization
+        status: newUser.status as 'Active' | 'Inactive',
+        organization: newUser.organization,
       };
     } catch (error) {
       console.error('Error in enhanced createUser service:', error);
@@ -67,7 +67,7 @@ class UserService {
       return {
         id: `user-${Date.now()}`,
         ...data,
-        organization: 'Hodei Inc.'
+        organization: 'Hodei Inc.',
       };
     }
   }
@@ -82,7 +82,7 @@ class UserService {
         email: data.email || '',
         role: data.role || '',
         status: data.status || 'Inactive',
-        organization: 'Hodei Inc.'
+        organization: 'Hodei Inc.',
       };
     } catch (error) {
       console.error('Error in enhanced updateUser service:', error);
@@ -94,12 +94,12 @@ class UserService {
     try {
       // Usar el adaptador para obtener perfil
       const profile = await mockAdapter.getMyProfile();
-      
+
       return {
         id: profile.id,
         name: profile.name,
         email: profile.email,
-        organization: profile.organization
+        organization: profile.organization,
       };
     } catch (error) {
       console.error('Error in enhanced getMyProfile service:', error);
@@ -108,7 +108,7 @@ class UserService {
         id: 'user-123',
         name: 'John Doe',
         email: 'john.doe@example.com',
-        organization: 'Hodei Inc.'
+        organization: 'Hodei Inc.',
       };
     }
   }
@@ -120,7 +120,7 @@ class UserService {
       return {
         id: 'user-123',
         ...data,
-        organization: 'Hodei Inc.'
+        organization: 'Hodei Inc.',
       };
     } catch (error) {
       console.error('Error in enhanced updateMyProfile service:', error);

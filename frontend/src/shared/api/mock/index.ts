@@ -8,5 +8,5 @@ export const apiService = {
   repositories: repositoryServiceMock,
   artifacts: artifactServiceMock,
   search: searchServiceMock,
-  auth: authServiceMock
+  auth: authServiceMock,
 };

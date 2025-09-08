@@ -4,7 +4,11 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import type { Repository, RepositoryFilters, PaginatedResponse } from '@/shared/types';
+import type {
+  Repository,
+  RepositoryFilters,
+  PaginatedResponse,
+} from '@/shared/types';
 import { useRepositoryService } from './useRepositoryService';
 import { QUERY_KEYS } from '@/shared/constants';
 
@@ -21,7 +25,7 @@ export function useRepositoryList(filters: RepositoryFilters) {
     staleTime: 5 * 60 * 1000, // 5 minutos
     gcTime: 10 * 60 * 1000, // 10 minutos (nuevo nombre de cacheTime)
     retry: 2,
-    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+    retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 }
 
@@ -68,12 +72,15 @@ export function useRepositoriesByType(type: Repository['type']) {
 export function useRepositoryMetrics() {
   const repositoryService = useRepositoryService();
 
-  return useQuery<{
-    total: number;
-    porTipo: Record<Repository['type'], number>;
-    activos: number;
-    inactivos: number;
-  }, Error>({
+  return useQuery<
+    {
+      total: number;
+      porTipo: Record<Repository['type'], number>;
+      activos: number;
+      inactivos: number;
+    },
+    Error
+  >({
     queryKey: ['repositories', 'metrics'],
     queryFn: () => repositoryService.obtenerMetricasRepositorios(),
     staleTime: 10 * 60 * 1000, // 10 minutos

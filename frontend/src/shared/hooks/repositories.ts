@@ -1,13 +1,19 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, useCallback } from 'react';
-import type { RepositoryFilters, PaginatedResponse, Repository } from '@/shared/types';
+import type {
+  RepositoryFilters,
+  PaginatedResponse,
+  Repository,
+} from '@/shared/types';
 import { QUERY_KEYS } from '@/shared/constants';
 
 // Mock API functions - replace with actual API calls
-const fetchRepositories = async (filters: RepositoryFilters): Promise<PaginatedResponse<Repository>> => {
+const fetchRepositories = async (
+  filters: RepositoryFilters
+): Promise<PaginatedResponse<Repository>> => {
   // Simulate API delay
   await new Promise(resolve => setTimeout(resolve, 500));
-  
+
   // Mock data
   const mockRepositories: Repository[] = [
     {
@@ -49,7 +55,7 @@ const fetchRepositories = async (filters: RepositoryFilters): Promise<PaginatedR
 const fetchRepository = async (id: string): Promise<{ data: Repository }> => {
   // Simulate API delay
   await new Promise(resolve => setTimeout(resolve, 300));
-  
+
   // Mock data
   const mockRepository: Repository = {
     id,
@@ -85,12 +91,15 @@ export const useRepository = (id: string) => {
 export const useRepositoryFilters = (initialFilters: RepositoryFilters) => {
   const [filters, setFilters] = useState<RepositoryFilters>(initialFilters);
 
-  const updateFilter = useCallback(<K extends keyof RepositoryFilters>(
-    key: K,
-    value: RepositoryFilters[K]
-  ) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-  }, []);
+  const updateFilter = useCallback(
+    <K extends keyof RepositoryFilters>(
+      key: K,
+      value: RepositoryFilters[K]
+    ) => {
+      setFilters(prev => ({ ...prev, [key]: value }));
+    },
+    []
+  );
 
   const clearFilters = useCallback(() => {
     setFilters(initialFilters);

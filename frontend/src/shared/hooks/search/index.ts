@@ -9,7 +9,7 @@ export {
   useSearchSuggestions,
   usePopularPackages,
   useRecentPackages,
-  useAdvancedSearch
+  useAdvancedSearch,
 } from './useSearchQueries';
 
 // Servicio - Nueva arquitectura Clean Code
@@ -22,5 +22,5 @@ export { SEARCH_QUERY_KEYS } from './searchQueryKeys';
 export type {
   SearchResults,
   PackageResult,
-  SearchArtifactsParams
+  SearchArtifactsParams,
 } from '@/shared/types/openapi-generated.types';

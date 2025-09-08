@@ -3,11 +3,11 @@
  * Sigue principios SOLID y Clean Code
  */
 
-import type { 
+import type {
   ArtifactUploadResponse,
   PresignedUrlResponse,
   UploadArtifactBody,
-  GetArtifactParams
+  GetArtifactParams,
 } from '@/shared/types/openapi-generated.types';
 import type { ArtifactPort } from './ports/ArtifactPort.js';
 
@@ -46,8 +46,8 @@ export class ArtifactService {
 
     try {
       const body: UploadArtifactBody = {
-        file: file,
-        metadata: JSON.stringify(metadata)
+        file,
+        metadata: JSON.stringify(metadata),
       };
 
       return await this.artifactPort.uploadArtifact(body);
@@ -71,7 +71,7 @@ export class ArtifactService {
     try {
       const params: GetArtifactParams = {
         id,
-        presigned: presigned
+        presigned,
       };
 
       return await this.artifactPort.getArtifact(params);
@@ -86,7 +86,7 @@ export class ArtifactService {
    */
   async getPresignedUrl(id: string): Promise<PresignedUrlResponse> {
     const result = await this.getArtifact(id, true);
-    
+
     if (result instanceof Blob) {
       throw new Error('Expected a presigned URL, but received a blob');
     }
@@ -99,7 +99,7 @@ export class ArtifactService {
    */
   async downloadArtifact(id: string): Promise<Blob> {
     const result = await this.getArtifact(id, false);
-    
+
     if (!(result instanceof Blob)) {
       throw new Error('Expected a blob, but received a presigned URL');
     }
@@ -130,19 +130,29 @@ export class ArtifactService {
 
     // Validate allowed extensions
     const allowedExtensions = [
-      '.jar', '.war', '.ear', '.pom',     // Maven
-      '.tgz', '.tar.gz',                  // NPM
-      '.whl', '.egg', '.zip'              // PyPI
+      '.jar',
+      '.war',
+      '.ear',
+      '.pom', // Maven
+      '.tgz',
+      '.tar.gz', // NPM
+      '.whl',
+      '.egg',
+      '.zip', // PyPI
     ];
 
-    const extension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+    const extension = file.name
+      .toLowerCase()
+      .substring(file.name.lastIndexOf('.'));
     if (!allowedExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
-      errors.push(`File type not allowed. Valid extensions: ${allowedExtensions.join(', ')}`);
+      errors.push(
+        `File type not allowed. Valid extensions: ${allowedExtensions.join(', ')}`
+      );
     }
 
     return {
       valid: errors.length === 0,
-      errors
+      errors,
     };
   }
 
@@ -151,29 +161,40 @@ export class ArtifactService {
    */
   getPackageType(filename: string): 'maven' | 'npm' | 'pypi' | 'unknown' {
     const name = filename.toLowerCase();
-    
-    if (name.endsWith('.jar') || name.endsWith('.war') ||
-        name.endsWith('.ear') || name.endsWith('.pom')) {
+
+    if (
+      name.endsWith('.jar') ||
+      name.endsWith('.war') ||
+      name.endsWith('.ear') ||
+      name.endsWith('.pom')
+    ) {
       return 'maven';
     }
-    
+
     if (name.endsWith('.tgz') || name.endsWith('.tar.gz')) {
       return 'npm';
     }
-    
-    if (name.endsWith('.whl') || name.endsWith('.egg') || name.endsWith('.zip')) {
+
+    if (
+      name.endsWith('.whl') ||
+      name.endsWith('.egg') ||
+      name.endsWith('.zip')
+    ) {
       return 'pypi';
     }
-    
+
     return 'unknown';
   }
 
   /**
    * Generate standard metadata for an artifact
    */
-  generateMetadata(file: File, type?: 'maven' | 'npm' | 'pypi'): Record<string, any> {
+  generateMetadata(
+    file: File,
+    type?: 'maven' | 'npm' | 'pypi'
+  ): Record<string, any> {
     const detectedType = type || this.getPackageType(file.name);
-    
+
     return {
       filename: file.name,
       size: file.size,
@@ -181,7 +202,7 @@ export class ArtifactService {
       packageType: detectedType,
       uploadedAt: new Date().toISOString(),
       checksum: 'pending', // Will be calculated on server
-      originalName: file.name
+      originalName: file.name,
     };
   }
 }

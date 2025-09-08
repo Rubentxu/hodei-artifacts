@@ -22,3 +22,48 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Testing files and directories
+playwright-report/
+test-screenshots/
+test-results/
+tests/
+*.png
+test-*.js
+test-*.ts
+playwright.config.js
+test-e2e.js
+test-esm.js
+test-integration*.js
+test-routes*.js
+test-simple.js
+
+# Test configuration files
+vitest.config.ts
+tsconfig.vitest.json
+
+# Test setup files
+src/__tests__/
+src/**/__tests__/
+src/shared/test/
+src/shared/test/mocks/
+
+# Report files
+ARREGLOS_FINALES.md
+ESTABILIDAD_FINAL.md
+ASDF_TROUBLESHOOTING.md
+SOLUTION_LOCAL.md
+FIXES_SUMMARY.md
+verificar-arreglos.sh
+diagnose-nodejs.sh
+setup-nodejs.sh
+
+# Coverage reports
+coverage/
+*.lcov
+.nyc_output/
+
+# E2E test artifacts
+e2e/
+playwright-report/
+test-results/

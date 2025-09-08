@@ -4,7 +4,10 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import type { SearchResults, PackageResult } from '@/shared/types/openapi-generated.types';
+import type {
+  SearchResults,
+  PackageResult,
+} from '@/shared/types/openapi-generated.types';
 import { useSearchService } from './useSearchService';
 import { SEARCH_QUERY_KEYS } from './searchQueryKeys';
 
@@ -12,11 +15,14 @@ import { SEARCH_QUERY_KEYS } from './searchQueryKeys';
  * Hook para buscar paquetes/artefactos
  * Principio de Responsabilidad Única: Solo maneja la búsqueda
  */
-export function useSearchPackages(query: string, options?: {
-  limit?: number;
-  offset?: number;
-  type?: 'maven' | 'npm' | 'pypi';
-}) {
+export function useSearchPackages(
+  query: string,
+  options?: {
+    limit?: number;
+    offset?: number;
+    type?: 'maven' | 'npm' | 'pypi';
+  }
+) {
   const searchService = useSearchService();
 
   return useQuery<SearchResults, Error>({
@@ -50,7 +56,10 @@ export function useSearchSuggestions(query: string) {
  * Hook para obtener paquetes populares
  * Principio de Responsabilidad Única: Solo maneja paquetes populares
  */
-export function usePopularPackages(limit: number = 10, type?: 'maven' | 'npm' | 'pypi') {
+export function usePopularPackages(
+  limit: number = 10,
+  type?: 'maven' | 'npm' | 'pypi'
+) {
   const searchService = useSearchService();
 
   return useQuery<PackageResult[], Error>({
@@ -66,7 +75,10 @@ export function usePopularPackages(limit: number = 10, type?: 'maven' | 'npm' | 
  * Hook para obtener paquetes recientes
  * Principio de Responsabilidad Única: Solo maneja paquetes recientes
  */
-export function useRecentPackages(limit: number = 10, type?: 'maven' | 'npm' | 'pypi') {
+export function useRecentPackages(
+  limit: number = 10,
+  type?: 'maven' | 'npm' | 'pypi'
+) {
   const searchService = useSearchService();
 
   return useQuery<PackageResult[], Error>({

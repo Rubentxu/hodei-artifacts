@@ -4,12 +4,12 @@
  * Siguiendo el principio de Inversión de Dependencias (DIP) de SOLID
  */
 
-import type { 
+import type {
   TokenRequest,
   TokenResponse,
   TokenInfo,
   ListTokensParams,
-  TokenParams
+  TokenParams,
 } from '@/shared/types/openapi-generated.types';
 
 /**

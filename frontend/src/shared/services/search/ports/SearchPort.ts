@@ -4,7 +4,10 @@
  * Siguiendo el principio de Inversión de Dependencias (DIP) de SOLID
  */
 
-import type { SearchArtifactsParams, SearchResults } from '@/shared/types/openapi-generated.types';
+import type {
+  SearchArtifactsParams,
+  SearchResults,
+} from '@/shared/types/openapi-generated.types';
 
 /**
  * Puerto que define las operaciones de acceso a datos para búsqueda

@@ -4,7 +4,10 @@
  */
 
 import React from 'react';
-import { OpenAPIDemo, OpenAPIDemoCompact } from '@/features/openapi-demo/OpenAPIDemo';
+import {
+  OpenAPIDemo,
+  OpenAPIDemoCompact,
+} from '@/features/openapi-demo/OpenAPIDemo';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -29,7 +32,8 @@ export function OpenAPIDemoPage(): React.ReactElement {
                   OpenAPI Contract First Demo
                 </h1>
                 <p className="mt-2 text-gray-600">
-                  Complete implementation following the OpenAPI 3.0.3 contract specification
+                  Complete implementation following the OpenAPI 3.0.3 contract
+                  specification
                 </p>
               </div>
               <div className="flex items-center space-x-4">
@@ -60,11 +64,7 @@ export function OpenAPIDemoPage(): React.ReactElement {
 
       {/* Contenido principal */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {viewMode === 'full' ? (
-          <OpenAPIDemo />
-        ) : (
-          <OpenAPIDemoCompact />
-        )}
+        {viewMode === 'full' ? <OpenAPIDemo /> : <OpenAPIDemoCompact />}
       </div>
 
       {/* Footer informativo */}
@@ -114,9 +114,9 @@ export function OpenAPIDemoPage(): React.ReactElement {
                 🎉 Contract First Implementation Complete!
               </h3>
               <p className="text-blue-800 text-sm">
-                The frontend is now ready to connect to the real Rust backend. 
-                When the backend is available, simply replace the mock client implementation 
-                and all functionality will work seamlessly.
+                The frontend is now ready to connect to the real Rust backend.
+                When the backend is available, simply replace the mock client
+                implementation and all functionality will work seamlessly.
               </p>
             </Card>
           </div>
@@ -137,23 +137,37 @@ export function ContractFirstInfo(): React.ReactElement {
           OpenAPI Contract First Pattern
         </h2>
         <p className="text-gray-700 mb-6 max-w-3xl mx-auto">
-          This implementation follows the Contract First pattern, where the OpenAPI specification 
-          serves as the single source of truth for the API contract between frontend and backend.
+          This implementation follows the Contract First pattern, where the
+          OpenAPI specification serves as the single source of truth for the API
+          contract between frontend and backend.
         </p>
-        
+
         <div className="grid md:grid-cols-2 gap-6 text-left">
           <div>
-            <h3 className="font-semibold text-gray-900 mb-3">📋 Contract Components</h3>
+            <h3 className="font-semibold text-gray-900 mb-3">
+              📋 Contract Components
+            </h3>
             <ul className="space-y-2 text-sm text-gray-600">
-              <li>• <code>openapi.yaml</code> - Main contract specification</li>
-              <li>• <code>paths/</code> - Individual endpoint definitions</li>
-              <li>• <code>components/schemas/</code> - Data models and types</li>
-              <li>• <code>components/responses.yaml</code> - Standardized responses</li>
+              <li>
+                • <code>openapi.yaml</code> - Main contract specification
+              </li>
+              <li>
+                • <code>paths/</code> - Individual endpoint definitions
+              </li>
+              <li>
+                • <code>components/schemas/</code> - Data models and types
+              </li>
+              <li>
+                • <code>components/responses.yaml</code> - Standardized
+                responses
+              </li>
             </ul>
           </div>
-          
+
           <div>
-            <h3 className="font-semibold text-gray-900 mb-3">🔄 Implementation Flow</h3>
+            <h3 className="font-semibold text-gray-900 mb-3">
+              🔄 Implementation Flow
+            </h3>
             <ul className="space-y-2 text-sm text-gray-600">
               <li>1. Define contract in OpenAPI YAML</li>
               <li>2. Generate TypeScript types from schemas</li>
@@ -177,7 +191,7 @@ export function ImplementationComparison(): React.ReactElement {
       <h2 className="text-xl font-semibold text-gray-900 mb-4">
         Mock vs Real Implementation Comparison
       </h2>
-      
+
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -224,7 +238,7 @@ export function ImplementationComparison(): React.ReactElement {
                 Controlled error scenarios
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                Real error conditions
+                Real error conditions
               </td>
             </tr>
             <tr>

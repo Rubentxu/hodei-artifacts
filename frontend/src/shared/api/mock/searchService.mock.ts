@@ -1,4 +1,8 @@
-import type { SearchResults, PackageResult, SearchQuery } from '@/shared/types/openapi.types';
+import type {
+  SearchResults,
+  PackageResult,
+  SearchQuery,
+} from '@/shared/types/openapi.types';
 
 // Mock data para resultados de búsqueda
 const mockSearchResults: PackageResult[] = [
@@ -11,7 +15,7 @@ const mockSearchResults: PackageResult[] = [
     repositoryName: 'npm-public',
     packageType: 'npm',
     createdAt: '2024-01-15T10:30:00Z',
-    downloadCount: 1234567
+    downloadCount: 1234567,
   },
   {
     id: 'package-002',
@@ -22,7 +26,7 @@ const mockSearchResults: PackageResult[] = [
     repositoryName: 'maven-central',
     packageType: 'maven',
     createdAt: '2024-01-16T14:20:00Z',
-    downloadCount: 456789
+    downloadCount: 456789,
   },
   {
     id: 'package-003',
@@ -33,7 +37,7 @@ const mockSearchResults: PackageResult[] = [
     repositoryName: 'pypi-internal',
     packageType: 'pypi',
     createdAt: '2024-01-17T09:15:00Z',
-    downloadCount: 234567
+    downloadCount: 234567,
   },
   {
     id: 'package-004',
@@ -44,7 +48,7 @@ const mockSearchResults: PackageResult[] = [
     repositoryName: 'npm-public',
     packageType: 'npm',
     createdAt: '2024-01-18T16:45:00Z',
-    downloadCount: 890123
+    downloadCount: 890123,
   },
   {
     id: 'package-005',
@@ -55,83 +59,84 @@ const mockSearchResults: PackageResult[] = [
     repositoryName: 'maven-central',
     packageType: 'maven',
     createdAt: '2024-01-19T11:30:00Z',
-    downloadCount: 345678
-  }
+    downloadCount: 345678,
+  },
 ];
 
 export const searchServiceMock = {
   async searchPackages(query: SearchQuery): Promise<SearchResults> {
     await new Promise(resolve => setTimeout(resolve, 800)); // Simular búsqueda
-    
+
     let results = [...mockSearchResults];
-    
+
     // Filtrar por query
     if (query.q) {
       const searchTerm = query.q.toLowerCase();
-      results = results.filter(pkg => 
-        pkg.name.toLowerCase().includes(searchTerm) ||
-        pkg.description?.toLowerCase().includes(searchTerm)
+      results = results.filter(
+        pkg =>
+          pkg.name.toLowerCase().includes(searchTerm) ||
+          pkg.description?.toLowerCase().includes(searchTerm)
       );
     }
-    
+
     // Filtrar por tipo
     if (query.type) {
       results = results.filter(pkg => pkg.packageType === query.type);
     }
-    
+
     // Filtrar por repositoryId
     if (query.repositoryId) {
       results = results.filter(pkg => pkg.repositoryId === query.repositoryId);
     }
-    
+
     // Ordenar
     if (query.sortBy) {
       results.sort((a, b) => {
         const aVal = a[query.sortBy as keyof PackageResult];
         const bVal = b[query.sortBy as keyof PackageResult];
-        
+
         if (typeof aVal === 'string' && typeof bVal === 'string') {
-          return query.sortOrder === 'desc' 
+          return query.sortOrder === 'desc'
             ? bVal.localeCompare(aVal)
             : aVal.localeCompare(bVal);
         }
-        
+
         if (typeof aVal === 'number' && typeof bVal === 'number') {
           return query.sortOrder === 'desc' ? bVal - aVal : aVal - bVal;
         }
-        
+
         return 0;
       });
     }
-    
+
     // Paginación
     const page = query.page || 1;
     const limit = query.limit || 10;
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
-    
+
     const paginatedResults = results.slice(startIndex, endIndex);
-    
+
     return {
       total: results.length,
-      items: paginatedResults
+      items: paginatedResults,
     };
   },
 
   async getSearchSuggestions(query: string): Promise<string[]> {
     await new Promise(resolve => setTimeout(resolve, 300));
-    
+
     const allPackages = mockSearchResults.map(pkg => pkg.name);
-    const suggestions = allPackages.filter(name => 
-      name.toLowerCase().startsWith(query.toLowerCase())
-    ).slice(0, 5);
-    
+    const suggestions = allPackages
+      .filter(name => name.toLowerCase().startsWith(query.toLowerCase()))
+      .slice(0, 5);
+
     return suggestions;
   },
 
   async getPopularPackages(limit: number = 10): Promise<PackageResult[]> {
     await new Promise(resolve => setTimeout(resolve, 400));
-    
+
     return [...mockSearchResults]
       .sort((a, b) => b.downloadCount - a.downloadCount)
       .slice(0, limit);
@@ -139,9 +144,12 @@ export const searchServiceMock = {
 
   async getRecentPackages(limit: number = 10): Promise<PackageResult[]> {
     await new Promise(resolve => setTimeout(resolve, 400));
-    
+
     return [...mockSearchResults]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )
       .slice(0, limit);
-  }
+  },
 };

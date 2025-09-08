@@ -75,7 +75,10 @@ const RepositoryForm = ({
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       <div className="space-y-2">
-        <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+        <label
+          htmlFor="name"
+          className="block text-sm font-medium text-gray-700"
+        >
           Repository Name *
         </label>
         <Input
@@ -114,12 +117,16 @@ const RepositoryForm = ({
           }`}
         />
         {errors.description && (
-          <p className="mt-1 text-sm text-red-600">{errors.description.message}</p>
+          <p className="mt-1 text-sm text-red-600">
+            {errors.description.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">Type *</label>
+        <label className="block text-sm font-medium text-gray-700">
+          Type *
+        </label>
         <Controller
           name="type"
           control={control}

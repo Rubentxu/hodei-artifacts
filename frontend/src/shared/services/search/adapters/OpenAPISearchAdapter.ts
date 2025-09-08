@@ -5,7 +5,10 @@
  */
 
 import type { SearchPort } from '../ports/SearchPort';
-import type { SearchArtifactsParams, SearchResults } from '@/shared/types/openapi-generated.types';
+import type {
+  SearchArtifactsParams,
+  SearchResults,
+} from '@/shared/types/openapi-generated.types';
 import { openAPIClient } from '@/shared/api/openapi-client';
 
 /**
@@ -19,7 +22,7 @@ export class OpenAPISearchAdapter implements SearchPort {
     try {
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.searchArtifacts(params);
-      
+
       // El resultado ya está en el formato correcto según el contrato OpenAPI
       return resultado;
     } catch (error) {

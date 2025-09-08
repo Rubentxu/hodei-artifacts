@@ -4,11 +4,11 @@
  * Siguiendo el principio de Inversión de Dependencias (DIP) de SOLID
  */
 
-import type { 
+import type {
   ArtifactUploadResponse,
   PresignedUrlResponse,
   UploadArtifactBody,
-  GetArtifactParams
+  GetArtifactParams,
 } from '@/shared/types/openapi-generated.types';
 
 /**

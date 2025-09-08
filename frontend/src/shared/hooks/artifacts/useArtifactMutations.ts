@@ -4,9 +4,9 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { 
+import type {
   ArtifactUploadResponse,
-  UploadArtifactBody
+  UploadArtifactBody,
 } from '@/shared/types/openapi-generated.types';
 import { useArtifactService } from './useArtifactService';
 import { ARTIFACT_QUERY_KEYS } from './artifactQueryKeys';
@@ -26,13 +26,13 @@ export function useUploadArtifact() {
         JSON.parse(body.metadata)
       );
     },
-    onSuccess: (data) => {
+    onSuccess: data => {
       // Invalidate artifact cache
       queryClient.invalidateQueries({ queryKey: ARTIFACT_QUERY_KEYS.LIST() });
-      
+
       console.log('Artifact uploaded successfully:', data);
     },
-    onError: (error) => {
+    onError: error => {
       console.error('Error uploading artifact:', error);
     },
   });
@@ -49,7 +49,7 @@ export function useValidateArtifact() {
     mutationFn: async (file: File) => {
       return artifactService.validateFile(file);
     },
-    onError: (error) => {
+    onError: error => {
       console.error('Error validating file:', error);
     },
   });
@@ -66,7 +66,7 @@ export function useAnalyzePackageType() {
     mutationFn: async (filename: string) => {
       return artifactService.getPackageType(filename);
     },
-    onError: (error) => {
+    onError: error => {
       console.error('Error analyzing package type:', error);
     },
   });
@@ -79,11 +79,15 @@ export function useAnalyzePackageType() {
 export function useGenerateArtifactMetadata() {
   const artifactService = useArtifactService();
 
-  return useMutation<Record<string, any>, Error, { file: File; type?: 'maven' | 'npm' | 'pypi' }>({
+  return useMutation<
+    Record<string, any>,
+    Error,
+    { file: File; type?: 'maven' | 'npm' | 'pypi' }
+  >({
     mutationFn: async ({ file, type }) => {
       return artifactService.generateMetadata(file, type);
     },
-    onError: (error) => {
+    onError: error => {
       console.error('Error generating metadata:', error);
     },
   });

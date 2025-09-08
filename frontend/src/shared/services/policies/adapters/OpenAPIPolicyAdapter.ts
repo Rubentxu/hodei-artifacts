@@ -5,10 +5,10 @@
  */
 
 import type { PolicyPort } from '../ports/PolicyPort';
-import type { 
+import type {
   CreatePolicyCommand,
   CreatePolicyResponse,
-  ListPoliciesParams
+  ListPoliciesParams,
 } from '@/shared/types/openapi-generated.types';
 import { openAPIClient } from '@/shared/api/openapi-client';
 
@@ -19,11 +19,13 @@ export class OpenAPIPolicyAdapter implements PolicyPort {
   /**
    * Lista todas las políticas
    */
-  async listarPoliticas(params: ListPoliciesParams): Promise<CreatePolicyResponse[]> {
+  async listarPoliticas(
+    params: ListPoliciesParams
+  ): Promise<CreatePolicyResponse[]> {
     try {
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.listPolicies(params);
-      
+
       // El resultado ya está en el formato correcto según el contrato OpenAPI
       return resultado;
     } catch (error) {
@@ -35,11 +37,13 @@ export class OpenAPIPolicyAdapter implements PolicyPort {
   /**
    * Crea una nueva política
    */
-  async crearPolitica(body: CreatePolicyCommand): Promise<CreatePolicyResponse> {
+  async crearPolitica(
+    body: CreatePolicyCommand
+  ): Promise<CreatePolicyResponse> {
     try {
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.createPolicy(body);
-      
+
       // El resultado ya está en el formato correcto según el contrato OpenAPI
       return resultado;
     } catch (error) {
@@ -51,20 +55,23 @@ export class OpenAPIPolicyAdapter implements PolicyPort {
   /**
    * Actualiza una política existente
    */
-  async actualizarPolitica(id: string, body: Partial<CreatePolicyCommand>): Promise<CreatePolicyResponse> {
+  async actualizarPolitica(
+    id: string,
+    body: Partial<CreatePolicyCommand>
+  ): Promise<CreatePolicyResponse> {
     try {
       // Nota: El OpenAPI actual no tiene un endpoint PUT para políticas
       // Esto es una implementación placeholder que simula la actualización
       // En una implementación real, esto llamaría a un endpoint PUT /v1/policies/{id}
-      
+
       // Por ahora, vamos a simular la actualización creando una nueva política
       // y retornándola con el ID actualizado
       const politicaActualizada: CreatePolicyResponse = {
-        id: id,
+        id,
         name: body.name || 'updated-policy',
         description: body.description,
         isActive: body.isActive ?? true,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
       };
 
       return politicaActualizada;
@@ -82,7 +89,7 @@ export class OpenAPIPolicyAdapter implements PolicyPort {
       // Nota: El OpenAPI actual no tiene un endpoint DELETE para políticas
       // Esto es una implementación placeholder
       // En una implementación real, esto llamaría a DELETE /v1/policies/{id}
-      
+
       console.log(`Simulando eliminación de política ${id}`);
       // No hay error, simulamos éxito
     } catch (error) {

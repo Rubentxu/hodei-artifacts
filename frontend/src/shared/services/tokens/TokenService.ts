@@ -3,12 +3,12 @@
  * Sigue principios SOLID y Clean Code
  */
 
-import type { 
+import type {
   TokenRequest,
   TokenResponse,
   TokenInfo,
   ListTokensParams,
-  TokenParams
+  TokenParams,
 } from '@/shared/types/openapi-generated.types';
 import type { TokenPort } from './ports/TokenPort.js';
 
@@ -102,7 +102,10 @@ export class TokenService {
       const params: TokenParams = { tokenId };
       return await this.tokenPort.obtenerToken(params);
     } catch (error) {
-      console.error(`Error al obtener información del token ${tokenId}:`, error);
+      console.error(
+        `Error al obtener información del token ${tokenId}:`,
+        error
+      );
       throw new Error('No se pudo obtener la información del token');
     }
   }
@@ -134,7 +137,7 @@ export class TokenService {
 
     const fechaExpiracion = new Date(token.expiresAt);
     const ahora = new Date();
-    
+
     return fechaExpiracion <= ahora;
   }
 
@@ -148,10 +151,10 @@ export class TokenService {
 
     const fechaExpiracion = new Date(token.expiresAt);
     const ahora = new Date();
-    
+
     const diferenciaMs = fechaExpiracion.getTime() - ahora.getTime();
     const diferenciaDias = Math.ceil(diferenciaMs / (1000 * 60 * 60 * 24));
-    
+
     return diferenciaDias;
   }
 
@@ -159,14 +162,15 @@ export class TokenService {
    * Genera un token seguro y único
    */
   generarTokenSeguro(): string {
-    const caracteres = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const caracteres =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     const longitud = 32;
     let token = '';
-    
+
     for (let i = 0; i < longitud; i++) {
       token += caracteres.charAt(Math.floor(Math.random() * caracteres.length));
     }
-    
+
     return `hodei_${token}`;
   }
 
@@ -183,7 +187,7 @@ export class TokenService {
       'write:maven',
       'read:npm',
       'write:npm',
-      'admin'
+      'admin',
     ];
 
     return scopes.filter(scope => scopesValidos.includes(scope));
@@ -192,20 +196,24 @@ export class TokenService {
   /**
    * Genera scopes recomendados basados en el uso
    */
-  generarScopesRecomendados(tipoUso: 'lectura' | 'escritura' | 'admin' = 'lectura'): string[] {
+  generarScopesRecomendados(
+    tipoUso: 'lectura' | 'escritura' | 'admin' = 'lectura'
+  ): string[] {
     switch (tipoUso) {
       case 'lectura':
         return ['read:repositories', 'read:artifacts'];
-      
+
       case 'escritura':
         return [
-          'read:repositories', 'write:repositories',
-          'read:artifacts', 'write:artifacts'
+          'read:repositories',
+          'write:repositories',
+          'read:artifacts',
+          'write:artifacts',
         ];
-      
+
       case 'admin':
         return ['admin'];
-      
+
       default:
         return ['read:repositories'];
     }
@@ -234,7 +242,7 @@ export class TokenService {
       estaExpirado,
       diasHastaExpiracion,
       scopes: token.scopes || [],
-      esTokenAdmin
+      esTokenAdmin,
     };
   }
 

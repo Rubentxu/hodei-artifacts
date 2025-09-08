@@ -17,7 +17,7 @@ const PoliciesSimple = () => {
     name: '',
     description: '',
     policy: '',
-    isActive: true
+    isActive: true,
   });
 
   // Estado de políticas (simulado por ahora)
@@ -27,22 +27,22 @@ const PoliciesSimple = () => {
       name: 'Usuario Estándar',
       description: 'Permite acceso de lectura a repositorios públicos',
       isActive: true,
-      createdAt: '2024-01-15T10:30:00Z'
+      createdAt: '2024-01-15T10:30:00Z',
     },
     {
       id: '2',
       name: 'Desarrollador',
       description: 'Permite gestión completa de repositorios',
       isActive: true,
-      createdAt: '2024-01-14T15:45:00Z'
+      createdAt: '2024-01-14T15:45:00Z',
     },
     {
       id: '3',
       name: 'Administrador',
       description: 'Acceso completo al sistema',
       isActive: false,
-      createdAt: '2024-01-13T09:20:00Z'
-    }
+      createdAt: '2024-01-13T09:20:00Z',
+    },
   ]);
 
   const handleCreatePolicy = () => {
@@ -53,20 +53,20 @@ const PoliciesSimple = () => {
 
     console.log('Creando política:', newPolicy);
     alert('Política creada exitosamente (simulado)');
-    
+
     // Limpiar formulario
     setNewPolicy({
       name: '',
       description: '',
       policy: '',
-      isActive: true
+      isActive: true,
     });
     setShowCreateForm(false);
   };
 
   const getStatusColor = (isActive: boolean) => {
-    return isActive 
-      ? 'bg-green-100 text-green-800' 
+    return isActive
+      ? 'bg-green-100 text-green-800'
       : 'bg-gray-100 text-gray-800';
   };
 
@@ -92,7 +92,9 @@ const PoliciesSimple = () => {
         <Card className="p-6">
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">Create New Policy</h3>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Create New Policy
+              </h3>
               <Button
                 variant="ghost"
                 size="sm"
@@ -111,7 +113,9 @@ const PoliciesSimple = () => {
                   </label>
                   <Input
                     value={newPolicy.name}
-                    onChange={(e) => setNewPolicy(prev => ({ ...prev, name: e.target.value }))}
+                    onChange={e =>
+                      setNewPolicy(prev => ({ ...prev, name: e.target.value }))
+                    }
                     placeholder="E.g: Standard User"
                     className="w-full"
                   />
@@ -123,7 +127,12 @@ const PoliciesSimple = () => {
                   </label>
                   <Input
                     value={newPolicy.description}
-                    onChange={(e) => setNewPolicy(prev => ({ ...prev, description: e.target.value }))}
+                    onChange={e =>
+                      setNewPolicy(prev => ({
+                        ...prev,
+                        description: e.target.value,
+                      }))
+                    }
                     placeholder="Describe the purpose of this policy"
                     className="w-full"
                   />
@@ -134,10 +143,18 @@ const PoliciesSimple = () => {
                     type="checkbox"
                     id="isActive"
                     checked={newPolicy.isActive}
-                    onChange={(e) => setNewPolicy(prev => ({ ...prev, isActive: e.target.checked }))}
+                    onChange={e =>
+                      setNewPolicy(prev => ({
+                        ...prev,
+                        isActive: e.target.checked,
+                      }))
+                    }
                     className="rounded border-gray-300"
                   />
-                  <label htmlFor="isActive" className="text-sm font-medium text-gray-700">
+                  <label
+                    htmlFor="isActive"
+                    className="text-sm font-medium text-gray-700"
+                  >
                     Activate policy immediately
                   </label>
                 </div>
@@ -151,7 +168,12 @@ const PoliciesSimple = () => {
                   </label>
                   <textarea
                     value={newPolicy.policy}
-                    onChange={(e) => setNewPolicy(prev => ({ ...prev, policy: e.target.value }))}
+                    onChange={e =>
+                      setNewPolicy(prev => ({
+                        ...prev,
+                        policy: e.target.value,
+                      }))
+                    }
                     placeholder="Write your Cedar policy here..."
                     className="w-full h-64 font-mono text-sm border border-gray-300 rounded-md p-3"
                     rows={12}
@@ -183,8 +205,11 @@ const PoliciesSimple = () => {
 
       {/* Policy List */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {policies.map((policy) => (
-          <Card key={policy.id} className="p-6 hover:shadow-lg transition-shadow">
+        {policies.map(policy => (
+          <Card
+            key={policy.id}
+            className="p-6 hover:shadow-lg transition-shadow"
+          >
             <div className="space-y-4">
               {/* Header */}
               <div className="flex items-start justify-between">
@@ -193,7 +218,9 @@ const PoliciesSimple = () => {
                     <Shield className="w-5 h-5 text-blue-600" />
                   </div>
                   <div>
-                    <h4 className="font-semibold text-gray-900">{policy.name}</h4>
+                    <h4 className="font-semibold text-gray-900">
+                      {policy.name}
+                    </h4>
                     <Badge className={getStatusColor(policy.isActive)}>
                       {getStatusText(policy.isActive)}
                     </Badge>
@@ -236,10 +263,13 @@ const PoliciesSimple = () => {
             <Shield className="w-6 h-6 text-blue-600" />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">About Cedar</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              About Cedar
+            </h3>
             <p className="text-sm text-gray-600 mb-4">
-              Cedar is a policy language developed by AWS that allows defining authorization rules
-              declaratively. Cedar policies determine who can do what on which resources.
+              Cedar is a policy language developed by AWS that allows defining
+              authorization rules declaratively. Cedar policies determine who
+              can do what on which resources.
             </p>
             <div className="flex gap-2">
               <Button size="sm" variant="outline">

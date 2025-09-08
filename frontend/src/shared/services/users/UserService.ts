@@ -3,14 +3,14 @@
  * Sigue principios SOLID y Clean Code
  */
 
-import type { 
+import type {
   CreateUserCommand,
   CreateUserResponse,
   UpdateUserAttributesCommand,
   UpdateUserAttributesResponse,
   ListUsersParams,
   UserAttributesParams,
-  UpdateUserAttributesBody
+  UpdateUserAttributesBody,
 } from '@/shared/types/openapi-generated.types';
 import type { UserPort } from './ports/UserPort';
 
@@ -58,7 +58,9 @@ export class UserService {
     // Validate username format
     const usernameRegex = /^[a-zA-Z0-9_-]+$/;
     if (!usernameRegex.test(command.username)) {
-      throw new Error('Username can only contain letters, numbers, hyphens and underscores');
+      throw new Error(
+        'Username can only contain letters, numbers, hyphens and underscores'
+      );
     }
 
     if (!command.email || command.email.trim().length === 0) {
@@ -78,7 +80,9 @@ export class UserService {
     // Validate password strength
     const passwordErrors = this.validatePasswordStrength(command.password);
     if (passwordErrors.length > 0) {
-      throw new Error(`Password does not meet requirements: ${passwordErrors.join(', ')}`);
+      throw new Error(
+        `Password does not meet requirements: ${passwordErrors.join(', ')}`
+      );
     }
 
     try {
@@ -92,7 +96,9 @@ export class UserService {
   /**
    * Get user attributes
    */
-  async getUserAttributes(userId: string): Promise<UpdateUserAttributesResponse> {
+  async getUserAttributes(
+    userId: string
+  ): Promise<UpdateUserAttributesResponse> {
     if (!userId || userId.trim().length === 0) {
       throw new Error('User ID is required');
     }
@@ -124,7 +130,7 @@ export class UserService {
     try {
       const params: UserAttributesParams = { id: userId };
       const body: UpdateUserAttributesBody = command;
-      
+
       return await this.userPort.updateUserAttributes(params, body);
     } catch (error) {
       console.error(`Error updating user attributes ${userId}:`, error);
@@ -171,13 +177,13 @@ export class UserService {
   generateSuggestedUsername(email: string): string {
     const parts = email.split('@');
     const usernameBase = parts[0];
-    
+
     // Clean username from disallowed characters
     const cleanUsername = usernameBase
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, '')
       .substring(0, 50);
-    
+
     return cleanUsername || 'user';
   }
 
@@ -209,8 +215,8 @@ export class UserService {
       preferences: {
         theme: 'light',
         language: 'en',
-        notifications: true
-      }
+        notifications: true,
+      },
     };
   }
 
@@ -227,7 +233,9 @@ export class UserService {
   } {
     const creationDate = new Date(user.createdAt || new Date());
     const now = new Date();
-    const daysSinceCreation = Math.floor((now.getTime() - creationDate.getTime()) / (1000 * 60 * 60 * 24));
+    const daysSinceCreation = Math.floor(
+      (now.getTime() - creationDate.getTime()) / (1000 * 60 * 60 * 24)
+    );
 
     return {
       id: user.id || '',
@@ -235,7 +243,7 @@ export class UserService {
       email: user.email || '',
       isActive: true, // By default, new users are active
       creationDate,
-      daysSinceCreation
+      daysSinceCreation,
     };
   }
 }

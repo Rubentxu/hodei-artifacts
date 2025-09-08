@@ -3,19 +3,19 @@
  * Sigue el patrón Mapper para mantener separación de responsabilidades
  */
 
-import type { 
-  Repository, 
-  RepositoryFilters, 
+import type {
+  Repository,
+  RepositoryFilters,
   PaginatedResponse,
   CreateRepositoryRequest,
-  UpdateRepositoryRequest 
+  UpdateRepositoryRequest,
 } from '@/shared/types';
 import type {
   Repository as OpenAPIRepository,
   RepositoryListResponse,
   ListRepositoriesParams,
   CreateRepositoryBody,
-  UpdateRepositoryBody
+  UpdateRepositoryBody,
 } from '@/shared/types/openapi-generated.types';
 
 /**
@@ -28,25 +28,27 @@ export class RepositoryMapper {
   filtrosADominioOpenAPI(filtros: RepositoryFilters): ListRepositoriesParams {
     return {
       limit: filtros.limit || 10,
-      offset: filtros.page ? (filtros.page - 1) * (filtros.limit || 10) : 0
+      offset: filtros.page ? (filtros.page - 1) * (filtros.limit || 10) : 0,
     };
   }
 
   /**
    * Convierte una respuesta OpenAPI al formato del dominio
    */
-  respuestaOpenAPIADominio(respuesta: RepositoryListResponse): PaginatedResponse<Repository> {
+  respuestaOpenAPIADominio(
+    respuesta: RepositoryListResponse
+  ): PaginatedResponse<Repository> {
     const items = respuesta.items || [];
     const total = respuesta.total || 0;
     const limit = 10; // Valor por defecto ya que no viene en la respuesta
-    
+
     return {
       data: items.map(repo => this.repositorioOpenAPIADominio(repo)),
-      total: total,
+      total,
       page: 1, // Valor por defecto
-      limit: limit,
+      limit,
       hasNext: items.length < total,
-      hasPrev: false
+      hasPrev: false,
     };
   }
 
@@ -64,27 +66,31 @@ export class RepositoryMapper {
       packageCount: 0, // Valor por defecto
       size: 0, // Valor por defecto
       lastUpdated: repo.createdAt,
-      url: `https://api.repo-manager.com/v2/repositories/${repo.id}` // URL por defecto
+      url: `https://api.repo-manager.com/v2/repositories/${repo.id}`, // URL por defecto
     };
   }
 
   /**
    * Convierte datos de creación del dominio al formato OpenAPI
    */
-  solicitudCreacionADominioOpenAPI(datos: CreateRepositoryRequest): CreateRepositoryBody {
+  solicitudCreacionADominioOpenAPI(
+    datos: CreateRepositoryRequest
+  ): CreateRepositoryBody {
     return {
       name: datos.name,
-      description: datos.description
+      description: datos.description,
     };
   }
 
   /**
    * Convierte datos de actualización del dominio al formato OpenAPI
    */
-  solicitudActualizacionADominioOpenAPI(datos: UpdateRepositoryRequest): UpdateRepositoryBody {
+  solicitudActualizacionADominioOpenAPI(
+    datos: UpdateRepositoryRequest
+  ): UpdateRepositoryBody {
     return {
       name: datos.name,
-      description: datos.description
+      description: datos.description,
     };
   }
 

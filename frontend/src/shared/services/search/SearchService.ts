@@ -3,10 +3,10 @@
  * Sigue principios SOLID y Clean Code
  */
 
-import type { 
-  SearchResults, 
+import type {
+  SearchResults,
   PackageResult,
-  SearchArtifactsParams 
+  SearchArtifactsParams,
 } from '@/shared/types/openapi-generated.types';
 import type { SearchPort } from './ports/SearchPort.js';
 
@@ -44,7 +44,7 @@ export class SearchService {
       const params: SearchArtifactsParams = {
         q: query.trim(),
         limit: opciones?.limite || 20,
-        offset: opciones?.offset || 0
+        offset: opciones?.offset || 0,
       };
 
       return await this.searchPort.buscarArtifatos(params);
@@ -90,9 +90,9 @@ export class SearchService {
 
     try {
       // Buscar con query vacía para obtener paquetes populares
-      const resultados = await this.buscarPaquetes('', { 
+      const resultados = await this.buscarPaquetes('', {
         limite: limite * 3, // Buscar más para filtrar
-        tipo 
+        tipo,
       });
 
       // Filtrar y ordenar por descargas
@@ -121,9 +121,9 @@ export class SearchService {
 
     try {
       // Buscar con query vacía para obtener paquetes recientes
-      const resultados = await this.buscarPaquetes('', { 
+      const resultados = await this.buscarPaquetes('', {
         limite: limite * 2, // Buscar más para filtrar
-        tipo 
+        tipo,
       });
 
       // Filtrar y ordenar por fecha de modificación
@@ -161,34 +161,36 @@ export class SearchService {
     try {
       // Buscar con la query principal
       const resultados = await this.buscarPaquetes(criterios.query, {
-        limite: 100 // Buscar más para filtrar
+        limite: 100, // Buscar más para filtrar
       });
 
       // Aplicar filtros adicionales
       let paquetesFiltrados = resultados.results || [];
 
       if (criterios.tipo) {
-        paquetesFiltrados = paquetesFiltrados.filter(pkg => pkg.type === criterios.tipo);
+        paquetesFiltrados = paquetesFiltrados.filter(
+          pkg => pkg.type === criterios.tipo
+        );
       }
 
       if (criterios.licencia) {
-        paquetesFiltrados = paquetesFiltrados.filter(pkg => 
+        paquetesFiltrados = paquetesFiltrados.filter(pkg =>
           pkg.license?.toLowerCase().includes(criterios.licencia!.toLowerCase())
         );
       }
 
       if (criterios.mantenedor) {
-        paquetesFiltrados = paquetesFiltrados.filter(pkg => 
-          pkg.maintainers?.some(m => 
+        paquetesFiltrados = paquetesFiltrados.filter(pkg =>
+          pkg.maintainers?.some(m =>
             m.toLowerCase().includes(criterios.mantenedor!.toLowerCase())
           )
         );
       }
 
       if (criterios.palabrasClave && criterios.palabrasClave.length > 0) {
-        paquetesFiltrados = paquetesFiltrados.filter(pkg => 
-          criterios.palabrasClave!.some(palabra => 
-            pkg.keywords?.some(k => 
+        paquetesFiltrados = paquetesFiltrados.filter(pkg =>
+          criterios.palabrasClave!.some(palabra =>
+            pkg.keywords?.some(k =>
               k.toLowerCase().includes(palabra.toLowerCase())
             )
           )
@@ -196,8 +198,8 @@ export class SearchService {
       }
 
       if (criterios.minDescargas) {
-        paquetesFiltrados = paquetesFiltrados.filter(pkg => 
-          (pkg.downloads || 0) >= criterios.minDescargas!
+        paquetesFiltrados = paquetesFiltrados.filter(
+          pkg => (pkg.downloads || 0) >= criterios.minDescargas!
         );
       }
 
@@ -215,15 +217,26 @@ export class SearchService {
    */
   private generarSugerenciasMock(query: string): string[] {
     const paquetesComunes = [
-      'react', 'vue', 'angular', 'svelte',
-      'express', 'fastify', 'nestjs',
-      'lodash', 'moment', 'axios',
-      'junit', 'spring-boot', 'hibernate',
-      'requests', 'flask', 'django'
+      'react',
+      'vue',
+      'angular',
+      'svelte',
+      'express',
+      'fastify',
+      'nestjs',
+      'lodash',
+      'moment',
+      'axios',
+      'junit',
+      'spring-boot',
+      'hibernate',
+      'requests',
+      'flask',
+      'django',
     ];
 
     const queryLower = query.toLowerCase();
-    
+
     return paquetesComunes
       .filter(pkg => pkg.toLowerCase().includes(queryLower))
       .slice(0, 5);

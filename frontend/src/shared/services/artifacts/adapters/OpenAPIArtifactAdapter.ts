@@ -5,11 +5,11 @@
  */
 
 import type { ArtifactPort } from '../ports/ArtifactPort';
-import type { 
+import type {
   ArtifactUploadResponse,
   PresignedUrlResponse,
   UploadArtifactBody,
-  GetArtifactParams
+  GetArtifactParams,
 } from '@/shared/types/openapi-generated.types';
 import { openAPIClient } from '@/shared/api/openapi-client';
 
@@ -20,11 +20,15 @@ export class OpenAPIArtifactAdapter implements ArtifactPort {
   /**
    * Upload an artifact to the repository
    */
-  async uploadArtifact(body: UploadArtifactBody): Promise<ArtifactUploadResponse> {
+  async uploadArtifact(
+    body: UploadArtifactBody
+  ): Promise<ArtifactUploadResponse> {
     try {
       // Call OpenAPI client
-      const result = await openAPIClient.uploadArtifact(this.createFormData(body));
-      
+      const result = await openAPIClient.uploadArtifact(
+        this.createFormData(body)
+      );
+
       // Result is already in correct format according to OpenAPI contract
       return result;
     } catch (error) {
@@ -36,11 +40,13 @@ export class OpenAPIArtifactAdapter implements ArtifactPort {
   /**
    * Get an artifact by its ID
    */
-  async getArtifact(params: GetArtifactParams): Promise<Blob | PresignedUrlResponse> {
+  async getArtifact(
+    params: GetArtifactParams
+  ): Promise<Blob | PresignedUrlResponse> {
     try {
       // Call OpenAPI client
       const result = await openAPIClient.getArtifact(params);
-      
+
       // Result is already in correct format according to OpenAPI contract
       return result;
     } catch (error) {
@@ -54,13 +60,13 @@ export class OpenAPIArtifactAdapter implements ArtifactPort {
    */
   private createFormData(body: UploadArtifactBody): FormData {
     const formData = new FormData();
-    
+
     // Agregar el archivo
     formData.append('file', body.file);
-    
+
     // Agregar los metadatos como string JSON
     formData.append('metadata', body.metadata);
-    
+
     return formData;
   }
 }

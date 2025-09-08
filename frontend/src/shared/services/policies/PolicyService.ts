@@ -3,10 +3,10 @@
  * Sigue principios SOLID y Clean Code
  */
 
-import type { 
+import type {
   CreatePolicyCommand,
   CreatePolicyResponse,
-  ListPoliciesParams
+  ListPoliciesParams,
 } from '@/shared/types/openapi-generated.types';
 import type { PolicyPort } from './ports/PolicyPort.js';
 
@@ -37,18 +37,24 @@ export class PolicyService {
   /**
    * Crea una nueva política
    */
-  async crearPolitica(comando: CreatePolicyCommand): Promise<CreatePolicyResponse> {
+  async crearPolitica(
+    comando: CreatePolicyCommand
+  ): Promise<CreatePolicyResponse> {
     // Validaciones de negocio
     if (!comando.name || comando.name.trim().length === 0) {
       throw new Error('El nombre de la política es requerido');
     }
 
     if (comando.name.length < 3) {
-      throw new Error('El nombre de la política debe tener al menos 3 caracteres');
+      throw new Error(
+        'El nombre de la política debe tener al menos 3 caracteres'
+      );
     }
 
     if (comando.name.length > 100) {
-      throw new Error('El nombre de la política no puede exceder 100 caracteres');
+      throw new Error(
+        'El nombre de la política no puede exceder 100 caracteres'
+      );
     }
 
     if (!comando.policy || comando.policy.trim().length === 0) {
@@ -58,7 +64,9 @@ export class PolicyService {
     // Validar sintaxis básica de Cedar (ejemplo simple)
     const erroresSintaxis = this.validarSintaxisCedar(comando.policy);
     if (erroresSintaxis.length > 0) {
-      throw new Error(`Errores de sintaxis en la política: ${erroresSintaxis.join(', ')}`);
+      throw new Error(
+        `Errores de sintaxis en la política: ${erroresSintaxis.join(', ')}`
+      );
     }
 
     try {
@@ -81,7 +89,7 @@ export class PolicyService {
       // Obtener la política actual (esto requeriría un método getPolicy en el puerto)
       // Por ahora, asumimos que la política existe y la actualizamos
       const politicaActualizada = await this.policyPort.actualizarPolitica(id, {
-        isActive: true
+        isActive: true,
       });
 
       return politicaActualizada;
@@ -101,7 +109,7 @@ export class PolicyService {
 
     try {
       const politicaActualizada = await this.policyPort.actualizarPolitica(id, {
-        isActive: false
+        isActive: false,
       });
 
       return politicaActualizada;
@@ -132,18 +140,25 @@ export class PolicyService {
    */
   private validarSintaxisCedar(policy: string): string[] {
     const errores: string[] = [];
-    
+
     // Validaciones básicas de sintaxis Cedar
-    const lineas = policy.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-    
+    const lineas = policy
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+
     for (let i = 0; i < lineas.length; i++) {
       const linea = lineas[i];
-      
+
       // Verificar que las líneas terminen con punto y coma
-      if (!linea.endsWith(';') && !linea.startsWith('//') && !linea.startsWith('/*')) {
+      if (
+        !linea.endsWith(';') &&
+        !linea.startsWith('//') &&
+        !linea.startsWith('/*')
+      ) {
         errores.push(`Línea ${i + 1}: Falta punto y coma`);
       }
-      
+
       // Verificar estructura básica de permitir/denegar
       if (linea.includes('permit') || linea.includes('forbid')) {
         if (!linea.includes('when')) {
@@ -151,22 +166,26 @@ export class PolicyService {
         }
       }
     }
-    
+
     // Validar que haya al menos una regla permitir o forbid
     const tienePermitir = lineas.some(linea => linea.includes('permit'));
     const tieneForbid = lineas.some(linea => linea.includes('forbid'));
-    
+
     if (!tienePermitir && !tieneForbid) {
-      errores.push('La política debe contener al menos una regla permitir o forbid');
+      errores.push(
+        'La política debe contener al menos una regla permitir o forbid'
+      );
     }
-    
+
     return errores;
   }
 
   /**
    * Genera una plantilla de política Cedar básica
    */
-  generarPlantillaPolitica(tipo: 'usuario' | 'repositorio' | 'admin' = 'usuario'): string {
+  generarPlantillaPolitica(
+    tipo: 'usuario' | 'repositorio' | 'admin' = 'usuario'
+  ): string {
     switch (tipo) {
       case 'usuario':
         return `// Política de acceso para usuarios estándar
@@ -179,7 +198,7 @@ when {
   resource.type == "repository" && 
   resource.visibility == "public"
 };`;
-      
+
       case 'repositorio':
         return `// Política de acceso para gestión de repositorios
 permit(
@@ -191,7 +210,7 @@ when {
   resource.type == "repository" && 
   principal.role == "developer"
 };`;
-      
+
       case 'admin':
         return `// Política de acceso completo para administradores
 permit(
@@ -202,7 +221,7 @@ permit(
 when {
   principal.role == "admin"
 };`;
-      
+
       default:
         return `// Plantilla básica de política
 permit(
@@ -229,37 +248,43 @@ when {
     const recursos: string[] = [];
     const condiciones: string[] = [];
     let tipo: 'permit' | 'forbid' = 'permit';
-    
+
     const lineas = policy.split('\n').map(line => line.trim());
-    
+
     for (const linea of lineas) {
       if (linea.includes('permit')) tipo = 'permit';
       if (linea.includes('forbid')) tipo = 'forbid';
-      
+
       // Extraer acciones
       if (linea.includes('action')) {
         const match = linea.match(/Action::"([^"]+)"/g);
         if (match) {
-          acciones.push(...match.map(m => m.replace(/Action::"/g, '').replace(/"/g, '')));
+          acciones.push(
+            ...match.map(m => m.replace(/Action::"/g, '').replace(/"/g, ''))
+          );
         }
       }
-      
+
       // Extraer condiciones básicas
       if (linea.includes('when')) {
         const condicionStart = lineas.indexOf(linea);
-        const condicionEnd = lineas.findIndex((l, i) => i > condicionStart && l.includes('};'));
+        const condicionEnd = lineas.findIndex(
+          (l, i) => i > condicionStart && l.includes('};')
+        );
         if (condicionEnd > -1) {
           const condicionLines = lineas.slice(condicionStart + 1, condicionEnd);
-          condiciones.push(...condicionLines.map(l => l.trim()).filter(l => l.length > 0));
+          condiciones.push(
+            ...condicionLines.map(l => l.trim()).filter(l => l.length > 0)
+          );
         }
       }
     }
-    
+
     return {
       acciones: [...new Set(acciones)], // Eliminar duplicados
       recursos: [...new Set(recursos)],
       condiciones,
-      tipo
+      tipo,
     };
   }
 }

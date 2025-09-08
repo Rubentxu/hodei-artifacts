@@ -1,5 +1,15 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronUp, ChevronDown, Search, Filter, Download, Eye, Edit, Trash2, MoreVertical } from 'lucide-react';
+import {
+  ChevronUp,
+  ChevronDown,
+  Search,
+  Filter,
+  Download,
+  Eye,
+  Edit,
+  Trash2,
+  MoreVertical,
+} from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card } from '@/components/ui/Card';
@@ -57,8 +67,8 @@ export function DataTableEnhanced<T extends Record<string, any>>({
   pagination = true,
   pageSize = 10,
   loading = false,
-  emptyMessage = "No data available",
-  className
+  emptyMessage = 'No data available',
+  className,
 }: DataTableEnhancedProps<T>) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{
@@ -68,7 +78,9 @@ export function DataTableEnhanced<T extends Record<string, any>>({
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>(
+    {}
+  );
 
   // Procesar datos con búsqueda, ordenamiento y filtros
   const processedData = useMemo(() => {
@@ -79,7 +91,10 @@ export function DataTableEnhanced<T extends Record<string, any>>({
       filteredData = filteredData.filter(row =>
         columns.some(column => {
           const value = row[column.key];
-          return value?.toString().toLowerCase().includes(searchTerm.toLowerCase());
+          return value
+            ?.toString()
+            .toLowerCase()
+            .includes(searchTerm.toLowerCase());
         })
       );
     }
@@ -89,7 +104,10 @@ export function DataTableEnhanced<T extends Record<string, any>>({
       if (filterValue) {
         filteredData = filteredData.filter(row => {
           const value = row[key];
-          return value?.toString().toLowerCase().includes(filterValue.toLowerCase());
+          return value
+            ?.toString()
+            .toLowerCase()
+            .includes(filterValue.toLowerCase());
         });
       }
     });
@@ -99,10 +117,10 @@ export function DataTableEnhanced<T extends Record<string, any>>({
       filteredData.sort((a, b) => {
         const aValue = a[sortConfig.key!];
         const bValue = b[sortConfig.key!];
-        
+
         if (aValue === null || aValue === undefined) return 1;
         if (bValue === null || bValue === undefined) return -1;
-        
+
         if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
         if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
@@ -115,7 +133,7 @@ export function DataTableEnhanced<T extends Record<string, any>>({
   // Paginación
   const paginatedData = useMemo(() => {
     if (!pagination) return processedData;
-    
+
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
     return processedData.slice(startIndex, endIndex);
@@ -138,7 +156,9 @@ export function DataTableEnhanced<T extends Record<string, any>>({
     if (selectedRows.size === paginatedData.length) {
       setSelectedRows(new Set());
     } else {
-      setSelectedRows(new Set(paginatedData.map((_, index) => index.toString())));
+      setSelectedRows(
+        new Set(paginatedData.map((_, index) => index.toString()))
+      );
     }
   };
 
@@ -155,19 +175,21 @@ export function DataTableEnhanced<T extends Record<string, any>>({
   const handleColumnFilter = (columnKey: string, value: string) => {
     setColumnFilters(prev => ({
       ...prev,
-      [columnKey]: value
+      [columnKey]: value,
     }));
   };
 
   const handleExport = () => {
     const csvContent = [
       columns.map(col => col.header).join(','),
-      ...processedData.map(row => 
-        columns.map(col => {
-          const value = row[col.key];
-          return col.render ? `"${col.render(value, row)}"` : `"${value}"`;
-        }).join(',')
-      )
+      ...processedData.map(row =>
+        columns
+          .map(col => {
+            const value = row[col.key];
+            return col.render ? `"${col.render(value, row)}"` : `"${value}"`;
+          })
+          .join(',')
+      ),
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -181,19 +203,21 @@ export function DataTableEnhanced<T extends Record<string, any>>({
 
   const getSortIcon = (column: DataTableColumn<T>) => {
     if (!sortable || !column.sortable) return null;
-    
+
     if (sortConfig.key !== column.key) {
       return <ChevronUp className="w-4 h-4 text-gray-400" />;
     }
-    
-    return sortConfig.direction === 'asc' 
-      ? <ChevronUp className="w-4 h-4 text-blue-600" />
-      : <ChevronDown className="w-4 h-4 text-blue-600" />;
+
+    return sortConfig.direction === 'asc' ? (
+      <ChevronUp className="w-4 h-4 text-blue-600" />
+    ) : (
+      <ChevronDown className="w-4 h-4 text-blue-600" />
+    );
   };
 
   if (loading) {
     return (
-      <Card className={cn("p-8", className)}>
+      <Card className={cn('p-8', className)}>
         <div className="flex items-center justify-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
         </div>
@@ -202,16 +226,20 @@ export function DataTableEnhanced<T extends Record<string, any>>({
   }
 
   return (
-    <Card className={cn("overflow-hidden", className)}>
+    <Card className={cn('overflow-hidden', className)}>
       {/* Header */}
       {(title || searchable || exportable) && (
         <div className="p-6 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <div>
-              {title && <h3 className="text-lg font-semibold text-gray-900">{title}</h3>}
-              {subtitle && <p className="text-sm text-gray-600 mt-1">{subtitle}</p>}
+              {title && (
+                <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+              )}
+              {subtitle && (
+                <p className="text-sm text-gray-600 mt-1">{subtitle}</p>
+              )}
             </div>
-            
+
             <div className="flex items-center space-x-2">
               {exportable && (
                 <Button
@@ -236,7 +264,7 @@ export function DataTableEnhanced<T extends Record<string, any>>({
                   type="text"
                   placeholder="Search..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={e => setSearchTerm(e.target.value)}
                   className="pl-10"
                 />
               </div>
@@ -259,20 +287,24 @@ export function DataTableEnhanced<T extends Record<string, any>>({
       {showFilters && filterable && (
         <div className="p-4 bg-gray-50 border-b border-gray-200">
           <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {columns.filter(col => col.filterable).map((column) => (
-              <div key={String(column.key)}>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {column.header}
-                </label>
-                <Input
-                  type="text"
-                  placeholder={`Filter ${column.header}...`}
-                  value={columnFilters[String(column.key)] || ''}
-                  onChange={(e) => handleColumnFilter(String(column.key), e.target.value)}
-                  className="text-sm"
-                />
-              </div>
-            ))}
+            {columns
+              .filter(col => col.filterable)
+              .map(column => (
+                <div key={String(column.key)}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {column.header}
+                  </label>
+                  <Input
+                    type="text"
+                    placeholder={`Filter ${column.header}...`}
+                    value={columnFilters[String(column.key)] || ''}
+                    onChange={e =>
+                      handleColumnFilter(String(column.key), e.target.value)
+                    }
+                    className="text-sm"
+                  />
+                </div>
+              ))}
           </div>
         </div>
       )}
@@ -286,29 +318,36 @@ export function DataTableEnhanced<T extends Record<string, any>>({
                 <th className="px-6 py-3 text-left">
                   <input
                     type="checkbox"
-                    checked={selectedRows.size === paginatedData.length && paginatedData.length > 0}
+                    checked={
+                      selectedRows.size === paginatedData.length &&
+                      paginatedData.length > 0
+                    }
                     onChange={handleSelectAll}
                     className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                   />
                 </th>
               )}
-              {columns.map((column) => (
+              {columns.map(column => (
                 <th
                   key={String(column.key)}
                   className={cn(
-                    "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                    column.align === 'center' && "text-center",
-                    column.align === 'right' && "text-right",
-                    sortable && column.sortable && "cursor-pointer hover:bg-gray-100"
+                    'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider',
+                    column.align === 'center' && 'text-center',
+                    column.align === 'right' && 'text-right',
+                    sortable &&
+                      column.sortable &&
+                      'cursor-pointer hover:bg-gray-100'
                   )}
                   onClick={() => handleSort(column)}
                   style={{ width: column.width }}
                 >
-                  <div className={cn(
-                    "flex items-center",
-                    column.align === 'center' && "justify-center",
-                    column.align === 'right' && "justify-end"
-                  )}>
+                  <div
+                    className={cn(
+                      'flex items-center',
+                      column.align === 'center' && 'justify-center',
+                      column.align === 'right' && 'justify-end'
+                    )}
+                  >
                     {column.header}
                     {sortable && column.sortable && (
                       <span className="ml-1">{getSortIcon(column)}</span>
@@ -328,8 +367,8 @@ export function DataTableEnhanced<T extends Record<string, any>>({
               <tr
                 key={index}
                 className={cn(
-                  "hover:bg-gray-50 transition-colors",
-                  selectedRows.has(index.toString()) && "bg-blue-50"
+                  'hover:bg-gray-50 transition-colors',
+                  selectedRows.has(index.toString()) && 'bg-blue-50'
                 )}
               >
                 {selectable && (
@@ -342,39 +381,43 @@ export function DataTableEnhanced<T extends Record<string, any>>({
                     />
                   </td>
                 )}
-                {columns.map((column) => (
+                {columns.map(column => (
                   <td
                     key={String(column.key)}
                     className={cn(
-                      "px-6 py-4 whitespace-nowrap text-sm text-gray-900",
-                      column.align === 'center' && "text-center",
-                      column.align === 'right' && "text-right"
+                      'px-6 py-4 whitespace-nowrap text-sm text-gray-900',
+                      column.align === 'center' && 'text-center',
+                      column.align === 'right' && 'text-right'
                     )}
                   >
-                    {column.render 
+                    {column.render
                       ? column.render(row[column.key], row)
-                      : row[column.key]?.toString() || '-'
-                    }
+                      : row[column.key]?.toString() || '-'}
                   </td>
                 ))}
                 {actions.length > 0 && (
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     <div className="flex items-center space-x-2">
-                      {actions.filter(action => !action.showInMenu).map((action, actionIndex) => (
-                        <Button
-                          key={actionIndex}
-                          variant={action.variant || 'ghost'}
-                          size="sm"
-                          onClick={() => action.onClick(row)}
-                          className={cn(
-                            action.color === 'danger' && "text-red-600 hover:text-red-700",
-                            action.color === 'success' && "text-green-600 hover:text-green-700",
-                            action.color === 'warning' && "text-yellow-600 hover:text-yellow-700"
-                          )}
-                        >
-                          {action.icon}
-                        </Button>
-                      ))}
+                      {actions
+                        .filter(action => !action.showInMenu)
+                        .map((action, actionIndex) => (
+                          <Button
+                            key={actionIndex}
+                            variant={action.variant || 'ghost'}
+                            size="sm"
+                            onClick={() => action.onClick(row)}
+                            className={cn(
+                              action.color === 'danger' &&
+                                'text-red-600 hover:text-red-700',
+                              action.color === 'success' &&
+                                'text-green-600 hover:text-green-700',
+                              action.color === 'warning' &&
+                                'text-yellow-600 hover:text-yellow-700'
+                            )}
+                          >
+                            {action.icon}
+                          </Button>
+                        ))}
                       {actions.some(action => action.showInMenu) && (
                         <div className="relative group">
                           <Button variant="ghost" size="sm">
@@ -382,16 +425,18 @@ export function DataTableEnhanced<T extends Record<string, any>>({
                           </Button>
                           <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10">
                             <div className="py-1">
-                              {actions.filter(action => action.showInMenu).map((action, actionIndex) => (
-                                <button
-                                  key={actionIndex}
-                                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2"
-                                  onClick={() => action.onClick(row)}
-                                >
-                                  {action.icon}
-                                  <span>{action.label}</span>
-                                </button>
-                              ))}
+                              {actions
+                                .filter(action => action.showInMenu)
+                                .map((action, actionIndex) => (
+                                  <button
+                                    key={actionIndex}
+                                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2"
+                                    onClick={() => action.onClick(row)}
+                                  >
+                                    {action.icon}
+                                    <span>{action.label}</span>
+                                  </button>
+                                ))}
                             </div>
                           </div>
                         </div>
@@ -411,12 +456,13 @@ export function DataTableEnhanced<T extends Record<string, any>>({
           <div className="text-gray-400 mb-4">
             <Search className="w-12 h-12 mx-auto" />
           </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">{emptyMessage}</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">
+            {emptyMessage}
+          </h3>
           <p className="text-gray-600">
-            {searchTerm || Object.keys(columnFilters).length > 0 
-              ? "Try adjusting your search or filters"
-              : "No data to display"
-            }
+            {searchTerm || Object.keys(columnFilters).length > 0
+              ? 'Try adjusting your search or filters'
+              : 'No data to display'}
           </p>
         </div>
       )}
@@ -425,7 +471,9 @@ export function DataTableEnhanced<T extends Record<string, any>>({
       {pagination && totalPages > 1 && (
         <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
           <div className="text-sm text-gray-700">
-            Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, processedData.length)} of {processedData.length} results
+            Showing {(currentPage - 1) * pageSize + 1} to{' '}
+            {Math.min(currentPage * pageSize, processedData.length)} of{' '}
+            {processedData.length} results
           </div>
           <div className="flex items-center space-x-2">
             <Button
@@ -466,7 +514,9 @@ export function DataTableEnhanced<T extends Record<string, any>>({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              onClick={() =>
+                setCurrentPage(Math.min(totalPages, currentPage + 1))
+              }
               disabled={currentPage === totalPages}
             >
               Next

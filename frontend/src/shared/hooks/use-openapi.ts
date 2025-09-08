@@ -4,7 +4,12 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient, QueryClient } from '@tanstack/react-query';
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  QueryClient,
+} from '@tanstack/react-query';
 import type {
   Repository,
   PackageResult,
@@ -13,7 +18,7 @@ import type {
   CreateUserResponse,
   CreatePolicyResponse,
   PackageType,
-  NpmPackageMetadata
+  NpmPackageMetadata,
 } from '@/shared/types/openapi-generated.types';
 import {
   repositoryService,
@@ -36,7 +41,7 @@ import {
   type NpmPublishMetadata,
   type TokenRequest,
   type User,
-  type Policy
+  type Policy,
 } from '@/shared/api/openapi-service';
 import { API_CONSTANTS, ERROR_MESSAGES } from '@/shared/api/openapi-service';
 
@@ -132,7 +137,9 @@ const queryClient = new QueryClient({
 
 // ===== HOOKS DE REPOSITORIOS =====
 
-export function useRepositories(options?: RepositoryOptions & { enabled?: boolean }) {
+export function useRepositories(
+  options?: RepositoryOptions & { enabled?: boolean }
+) {
   return useQuery({
     queryKey: ['repositories', options],
     queryFn: () => repositoryService.getAll(options),
@@ -151,7 +158,7 @@ export function useRepository(id: string, options?: { enabled?: boolean }) {
 
 export function useCreateRepository() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (data: CreateRepositoryData) => repositoryService.create(data),
     onSuccess: () => {
@@ -163,9 +170,9 @@ export function useCreateRepository() {
 
 export function useUpdateRepository() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UpdateRepositoryData }) => 
+    mutationFn: ({ id, data }: { id: string; data: UpdateRepositoryData }) =>
       repositoryService.update(id, data),
     onSuccess: (_, variables) => {
       // Invalidar caché del repositorio específico
@@ -178,7 +185,7 @@ export function useUpdateRepository() {
 
 export function useDeleteRepository() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (id: string) => repositoryService.delete(id),
     onSuccess: () => {
@@ -189,7 +196,10 @@ export function useDeleteRepository() {
   });
 }
 
-export function useRepositoriesByType(type: PackageType, options?: RepositoryOptions) {
+export function useRepositoriesByType(
+  type: PackageType,
+  options?: RepositoryOptions
+) {
   return useQuery({
     queryKey: ['repositories', 'by-type', type, options],
     queryFn: () => repositoryService.getByType(type),
@@ -199,9 +209,12 @@ export function useRepositoriesByType(type: PackageType, options?: RepositoryOpt
 
 // ===== HOOKS DE BÚSQUEDA =====
 
-export function useSearch(query: string, options?: SearchOptions & { debounceMs?: number }) {
+export function useSearch(
+  query: string,
+  options?: SearchOptions & { debounceMs?: number }
+) {
   const debouncedQuery = useDebounce(query, options?.debounceMs || 300);
-  
+
   return useQuery({
     queryKey: ['search', debouncedQuery, options],
     queryFn: () => searchService.search(debouncedQuery, options),
@@ -209,9 +222,12 @@ export function useSearch(query: string, options?: SearchOptions & { debounceMs?
   });
 }
 
-export function useSearchSuggestions(query: string, options?: { debounceMs?: number }) {
+export function useSearchSuggestions(
+  query: string,
+  options?: { debounceMs?: number }
+) {
   const debouncedQuery = useDebounce(query, options?.debounceMs || 300);
-  
+
   return useQuery({
     queryKey: ['search-suggestions', debouncedQuery],
     queryFn: () => searchService.getSuggestions(debouncedQuery),
@@ -257,21 +273,24 @@ export function useAuth() {
     checkAuth();
   }, []);
 
-  const login = useCallback(async (credentials: LoginCredentials): Promise<AuthResult> => {
-    try {
-      const result = await authService.login(credentials);
-      if (result.success && result.user) {
-        setUser(result.user);
+  const login = useCallback(
+    async (credentials: LoginCredentials): Promise<AuthResult> => {
+      try {
+        const result = await authService.login(credentials);
+        if (result.success && result.user) {
+          setUser(result.user);
+        }
+        return result;
+      } catch (error) {
+        console.error('Error during login:', error);
+        return {
+          success: false,
+          error: 'Login failed',
+        };
       }
-      return result;
-    } catch (error) {
-      console.error('Error during login:', error);
-      return {
-        success: false,
-        error: 'Login failed'
-      };
-    }
-  }, []);
+    },
+    []
+  );
 
   const logout = useCallback(async (): Promise<void> => {
     try {
@@ -293,7 +312,7 @@ export function useAuth() {
       console.error('Error refreshing token:', error);
       return {
         success: false,
-        error: 'Token refresh failed'
+        error: 'Token refresh failed',
       };
     }
   }, []);
@@ -318,7 +337,7 @@ export function useTokens() {
 
 export function useCreateToken() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (request: TokenRequest) => authService.createToken(request),
     onSuccess: () => {
@@ -329,7 +348,7 @@ export function useCreateToken() {
 
 export function useDeleteToken() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (tokenId: string) => authService.deleteToken(tokenId),
     onSuccess: () => {
@@ -350,7 +369,7 @@ export function useUsers() {
 
 export function useCreateUser() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (user: CreateUserData) => userService.create(user),
     onSuccess: () => {
@@ -369,12 +388,19 @@ export function useUserAttributes(userId: string) {
 
 export function useUpdateUserAttributes() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
-    mutationFn: ({ userId, attributes }: { userId: string; attributes: UserAttributes }) =>
-      userService.updateAttributes(userId, attributes),
+    mutationFn: ({
+      userId,
+      attributes,
+    }: {
+      userId: string;
+      attributes: UserAttributes;
+    }) => userService.updateAttributes(userId, attributes),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['user-attributes', variables.userId] });
+      queryClient.invalidateQueries({
+        queryKey: ['user-attributes', variables.userId],
+      });
     },
   });
 }
@@ -391,7 +417,7 @@ export function usePolicies() {
 
 export function useCreatePolicy() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (policy: CreatePolicyData) => policyService.create(policy),
     onSuccess: () => {
@@ -402,7 +428,7 @@ export function useCreatePolicy() {
 
 export function useUpdatePolicy() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: ({ id, policy }: { id: string; policy: UpdatePolicyData }) =>
       policyService.update(id, policy),
@@ -414,7 +440,7 @@ export function useUpdatePolicy() {
 
 export function useDeletePolicy() {
   const queryClient = useQueryClient();
-  
+
   return useMutation({
     mutationFn: (id: string) => policyService.delete(id),
     onSuccess: () => {
@@ -435,15 +461,25 @@ export function useNpmPackage(name: string, options?: { enabled?: boolean }) {
 
 export function usePublishNpmPackage() {
   return useMutation({
-    mutationFn: ({ name, metadata }: { name: string; metadata: NpmPublishMetadata }) =>
-      packageService.publishNpmPackage(name, metadata),
+    mutationFn: ({
+      name,
+      metadata,
+    }: {
+      name: string;
+      metadata: NpmPublishMetadata;
+    }) => packageService.publishNpmPackage(name, metadata),
   });
 }
 
 export function useDownloadNpmTarball() {
   return useMutation({
-    mutationFn: ({ packageName, fileName }: { packageName: string; fileName: string }) =>
-      packageService.downloadNpmTarball(packageName, fileName),
+    mutationFn: ({
+      packageName,
+      fileName,
+    }: {
+      packageName: string;
+      fileName: string;
+    }) => packageService.downloadNpmTarball(packageName, fileName),
   });
 }
 
@@ -494,7 +530,7 @@ export function useLoadingState<T>(
   const execute = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-    
+
     try {
       const result = await asyncFunction();
       setData(result);
@@ -534,7 +570,9 @@ export function useInfiniteQuery<T>(
       setHasMore(result.hasMore);
       setPage(prev => prev + 1);
     } catch (err) {
-      setError(err instanceof Error ? err : new Error('Failed to load more data'));
+      setError(
+        err instanceof Error ? err : new Error('Failed to load more data')
+      );
     } finally {
       setIsLoading(false);
     }

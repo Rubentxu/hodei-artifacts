@@ -381,17 +381,18 @@ export type CreatePolicyBody = CreatePolicyCommand;
 export const PackageType = {
   MAVEN: 'maven',
   NPM: 'npm',
-  PYPI: 'pypi'
+  PYPI: 'pypi',
 } as const;
 
-export type PackageType = typeof PackageType[keyof typeof PackageType];
+export type PackageType = (typeof PackageType)[keyof typeof PackageType];
 
 export const ArtifactStatus = {
   ACCEPTED: 'accepted',
-  DUPLICATE: 'duplicate'
+  DUPLICATE: 'duplicate',
 } as const;
 
-export type ArtifactStatus = typeof ArtifactStatus[keyof typeof ArtifactStatus];
+export type ArtifactStatus =
+  (typeof ArtifactStatus)[keyof typeof ArtifactStatus];
 
 // ===== TIPOS DE UTILIDAD =====
 export interface PaginatedResponse<T> {

@@ -4,10 +4,10 @@
  * Siguiendo el principio de Inversión de Dependencias (DIP) de SOLID
  */
 
-import type { 
+import type {
   CreatePolicyCommand,
   CreatePolicyResponse,
-  ListPoliciesParams
+  ListPoliciesParams,
 } from '@/shared/types/openapi-generated.types';
 
 /**
@@ -28,7 +28,10 @@ export interface PolicyPort {
   /**
    * Actualiza una política existente
    */
-  actualizarPolitica(id: string, body: Partial<CreatePolicyCommand>): Promise<CreatePolicyResponse>;
+  actualizarPolitica(
+    id: string,
+    body: Partial<CreatePolicyCommand>
+  ): Promise<CreatePolicyResponse>;
 
   /**
    * Elimina una política

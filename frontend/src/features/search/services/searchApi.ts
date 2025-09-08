@@ -8,12 +8,12 @@ class SearchService {
     try {
       // Usar el adaptador para obtener datos de servicios mock mejorados
       const legacyResponse = await mockAdapter.search(filters);
-      
+
       // Convertir respuesta legacy al formato esperado por los componentes actuales
       return {
         results: legacyResponse.results,
         total: legacyResponse.total,
-        facets: legacyResponse.facets
+        facets: legacyResponse.facets,
       };
     } catch (error) {
       console.error('Error in enhanced search service:', error);
@@ -29,14 +29,14 @@ class SearchService {
             version: '18.2.0',
             size: 2300000,
             license: 'MIT',
-            popularity: 45000
-          }
+            popularity: 45000,
+          },
         ],
         total: 1,
         facets: {
           type: [{ value: 'npm', count: 1 }],
-          repository: [{ value: 'npm-public', count: 1 }]
-        }
+          repository: [{ value: 'npm-public', count: 1 }],
+        },
       };
     }
   }

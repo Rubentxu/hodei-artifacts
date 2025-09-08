@@ -13,18 +13,18 @@ export const toast = {
       setTimeout(() => alert(`✅ Success: ${message}`), 100);
     }
   },
-  
+
   error: (message: string) => {
     console.error(`❌ ERROR: ${message}`);
     if (typeof window !== 'undefined' && window.alert) {
       setTimeout(() => alert(`❌ Error: ${message}`), 100);
     }
   },
-  
+
   info: (message: string) => {
     console.log(`ℹ️ INFO: ${message}`);
   },
-  
+
   warning: (message: string) => {
     console.warn(`⚠️ WARNING: ${message}`);
   },
@@ -35,7 +35,7 @@ export function useNotifications() {
   return {
     notifications: [],
     removeNotification: () => {},
-    clear: () => {}
+    clear: () => {},
   };
 }
 

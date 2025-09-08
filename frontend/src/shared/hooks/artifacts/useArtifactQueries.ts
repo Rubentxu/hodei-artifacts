@@ -4,9 +4,9 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import type { 
+import type {
   ArtifactUploadResponse,
-  PresignedUrlResponse
+  PresignedUrlResponse,
 } from '@/shared/types/openapi-generated.types';
 import { useArtifactService } from './useArtifactService';
 import { ARTIFACT_QUERY_KEYS } from './artifactQueryKeys';
@@ -15,7 +15,10 @@ import { ARTIFACT_QUERY_KEYS } from './artifactQueryKeys';
  * Hook to get artifact information
  * Single Responsibility Principle: Only handles artifact queries
  */
-export function useArtifactInfo(artifactId: string, presigned: boolean = false) {
+export function useArtifactInfo(
+  artifactId: string,
+  presigned: boolean = false
+) {
   const artifactService = useArtifactService();
 
   return useQuery<Blob | PresignedUrlResponse, Error>({

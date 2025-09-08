@@ -2,12 +2,12 @@ import { repositoryServiceMock } from './mock/repositoryService.mock';
 import { searchServiceMock } from './mock/searchService.mock';
 import { authServiceMock } from './mock/authService.mock';
 import { artifactServiceMock } from './mock/artifactService.mock';
-import type { 
-  Repository, 
-  RepositoryListResponse, 
-  SearchResults, 
+import type {
+  Repository,
+  RepositoryListResponse,
+  SearchResults,
   PackageResult,
-  SearchQuery
+  SearchQuery,
 } from '@/shared/types/openapi.types';
 
 // Adaptador para mantener compatibilidad con APIs existentes mientras se migran a servicios mock mejorados
@@ -61,11 +61,11 @@ export const mockAdapter = {
         page: filters.page || 1,
         limit: filters.limit || 20,
         sortBy: 'name',
-        sortOrder: 'asc'
+        sortOrder: 'asc',
       };
 
       const results = await searchServiceMock.searchPackages(searchQuery);
-      
+
       // Convertir resultados modernos a formato legacy
       const legacyResults: LegacySearchResult[] = results.items.map(item => ({
         id: item.id,
@@ -76,37 +76,43 @@ export const mockAdapter = {
         version: item.version,
         size: 0, // No tenemos este dato en el mock, usar valor por defecto
         license: 'MIT', // Valor por defecto
-        popularity: item.downloadCount
+        popularity: item.downloadCount,
       }));
 
       // Generar facets desde los resultados
-      const typeFacets = legacyResults.reduce((acc, item) => {
-        const existing = acc.find(f => f.value === item.type);
-        if (existing) {
-          existing.count++;
-        } else {
-          acc.push({ value: item.type, count: 1 });
-        }
-        return acc;
-      }, [] as Array<{ value: string; count: number }>);
+      const typeFacets = legacyResults.reduce(
+        (acc, item) => {
+          const existing = acc.find(f => f.value === item.type);
+          if (existing) {
+            existing.count++;
+          } else {
+            acc.push({ value: item.type, count: 1 });
+          }
+          return acc;
+        },
+        [] as Array<{ value: string; count: number }>
+      );
 
-      const repoFacets = legacyResults.reduce((acc, item) => {
-        const existing = acc.find(f => f.value === item.repository);
-        if (existing) {
-          existing.count++;
-        } else {
-          acc.push({ value: item.repository, count: 1 });
-        }
-        return acc;
-      }, [] as Array<{ value: string; count: number }>);
+      const repoFacets = legacyResults.reduce(
+        (acc, item) => {
+          const existing = acc.find(f => f.value === item.repository);
+          if (existing) {
+            existing.count++;
+          } else {
+            acc.push({ value: item.repository, count: 1 });
+          }
+          return acc;
+        },
+        [] as Array<{ value: string; count: number }>
+      );
 
       return {
         results: legacyResults,
         total: results.total,
         facets: {
           type: typeFacets,
-          repository: repoFacets
-        }
+          repository: repoFacets,
+        },
       };
     } catch (error) {
       console.error('Error in search adapter:', error);
@@ -122,14 +128,14 @@ export const mockAdapter = {
             version: '18.2.0',
             size: 2300000,
             license: 'MIT',
-            popularity: 45000
-          }
+            popularity: 45000,
+          },
         ],
         total: 1,
         facets: {
           type: [{ value: 'npm', count: 1 }],
-          repository: [{ value: 'npm-public', count: 1 }]
-        }
+          repository: [{ value: 'npm-public', count: 1 }],
+        },
       };
     }
   },
@@ -154,7 +160,7 @@ export const mockAdapter = {
           email: 'john.doe@example.com',
           role: 'Admin',
           status: 'Active',
-          organization: 'Hodei Inc.'
+          organization: 'Hodei Inc.',
         },
         {
           id: 'user-2',
@@ -162,8 +168,8 @@ export const mockAdapter = {
           email: 'jane.smith@example.com',
           role: 'User',
           status: 'Active',
-          organization: 'Hodei Inc.'
-        }
+          organization: 'Hodei Inc.',
+        },
       ];
     } catch (error) {
       console.error('Error in getUsers adapter:', error);
@@ -180,7 +186,7 @@ export const mockAdapter = {
         email: data.email || '',
         role: data.role || 'User',
         status: 'Active',
-        organization: 'Hodei Inc.'
+        organization: 'Hodei Inc.',
       };
     } catch (error) {
       console.error('Error in createUser adapter:', error);
@@ -195,7 +201,7 @@ export const mockAdapter = {
         id: 'user-123',
         name: 'John Doe',
         email: 'john.doe@example.com',
-        organization: 'Hodei Inc.'
+        organization: 'Hodei Inc.',
       };
     } catch (error) {
       console.error('Error in getMyProfile adapter:', error);
@@ -203,7 +209,7 @@ export const mockAdapter = {
         id: 'user-123',
         name: 'John Doe',
         email: 'john.doe@example.com',
-        organization: 'Hodei Inc.'
+        organization: 'Hodei Inc.',
       };
     }
   },
@@ -236,8 +242,13 @@ export const mockAdapter = {
       console.error('Error in getArtifacts adapter:', error);
       return [];
     }
-  }
+  },
 };
 
 // Exportar también los servicios mock modernos para uso en nuevos componentes
-export { repositoryServiceMock, searchServiceMock, authServiceMock, artifactServiceMock };
+export {
+  repositoryServiceMock,
+  searchServiceMock,
+  authServiceMock,
+  artifactServiceMock,
+};

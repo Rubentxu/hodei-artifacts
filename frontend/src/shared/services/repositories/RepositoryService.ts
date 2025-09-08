@@ -3,12 +3,12 @@
  * Sigue principios SOLID y Clean Code
  */
 
-import type { 
-  Repository, 
-  RepositoryFilters, 
+import type {
+  Repository,
+  RepositoryFilters,
   PaginatedResponse,
   CreateRepositoryRequest,
-  UpdateRepositoryRequest 
+  UpdateRepositoryRequest,
 } from '@/shared/types';
 import type { RepositoryPort } from './ports/RepositoryPort';
 
@@ -52,11 +52,9 @@ export class RepositoryService {
   /**
    * Crea un nuevo repositorio con validaciones de negocio
    */
-  async crearRepositorio(
-    datos: CreateRepositoryRequest
-  ): Promise<Repository> {
+  async crearRepositorio(datos: CreateRepositoryRequest): Promise<Repository> {
     this.validarDatosRepositorio(datos);
-    
+
     try {
       return await this.repositoryPort.crearRepositorio(datos);
     } catch (error) {
@@ -77,7 +75,7 @@ export class RepositoryService {
     }
 
     this.validarActualizacionRepositorio(datos);
-    
+
     try {
       return await this.repositoryPort.actualizarRepositorio(id, datos);
     } catch (error) {
@@ -115,7 +113,7 @@ export class RepositoryService {
     try {
       const resultado = await this.repositoryPort.buscarRepositorios({
         type: [tipo],
-        limit: 100 // Límite razonable para obtener todos los de un tipo
+        limit: 100, // Límite razonable para obtener todos los de un tipo
       });
 
       return resultado.data;
@@ -137,21 +135,21 @@ export class RepositoryService {
     try {
       // Obtener todos los repositorios para calcular métricas
       const todosRepositorios = await this.repositoryPort.buscarRepositorios({
-        limit: 1000 // Límite alto para obtener todos
+        limit: 1000, // Límite alto para obtener todos
       });
 
       const repositorios = todosRepositorios.data;
-      
+
       const metricas = {
         total: repositorios.length,
         porTipo: {
           maven: 0,
           npm: 0,
           pypi: 0,
-          docker: 0
+          docker: 0,
         },
         activos: 0,
-        inactivos: 0
+        inactivos: 0,
       };
 
       repositorios.forEach(repo => {
@@ -159,12 +157,13 @@ export class RepositoryService {
         if (repo.type in metricas.porTipo) {
           metricas.porTipo[repo.type]++;
         }
-        
+
         // Contar activos/inactivos basado en la fecha de actualización
         const diasDesdeActualizacion = Math.floor(
-          (Date.now() - new Date(repo.lastUpdated).getTime()) / (1000 * 60 * 60 * 24)
+          (Date.now() - new Date(repo.lastUpdated).getTime()) /
+            (1000 * 60 * 60 * 24)
         );
-        
+
         if (diasDesdeActualizacion < 30) {
           metricas.activos++;
         } else {
@@ -198,23 +197,34 @@ export class RepositoryService {
     }
 
     if (!/^[a-zA-Z0-9-_]+$/.test(datos.name)) {
-      throw new Error('El nombre solo puede contener letras, números, guiones y guiones bajos');
+      throw new Error(
+        'El nombre solo puede contener letras, números, guiones y guiones bajos'
+      );
     }
 
     if (!datos.type) {
       throw new Error('El tipo de repositorio es requerido');
     }
 
-    const tiposValidos: Repository['type'][] = ['maven', 'npm', 'pypi', 'docker'];
+    const tiposValidos: Repository['type'][] = [
+      'maven',
+      'npm',
+      'pypi',
+      'docker',
+    ];
     if (!tiposValidos.includes(datos.type)) {
-      throw new Error(`Tipo de repositorio inválido. Debe ser uno de: ${tiposValidos.join(', ')}`);
+      throw new Error(
+        `Tipo de repositorio inválido. Debe ser uno de: ${tiposValidos.join(', ')}`
+      );
     }
   }
 
   /**
    * Valida los datos para actualizar un repositorio
    */
-  private validarActualizacionRepositorio(datos: UpdateRepositoryRequest): void {
+  private validarActualizacionRepositorio(
+    datos: UpdateRepositoryRequest
+  ): void {
     if (datos.name !== undefined) {
       if (datos.name.trim().length === 0) {
         throw new Error('El nombre del repositorio no puede estar vacío');
@@ -229,7 +239,9 @@ export class RepositoryService {
       }
 
       if (!/^[a-zA-Z0-9-_]+$/.test(datos.name)) {
-        throw new Error('El nombre solo puede contener letras, números, guiones y guiones bajos');
+        throw new Error(
+          'El nombre solo puede contener letras, números, guiones y guiones bajos'
+        );
       }
     }
   }
@@ -240,9 +252,14 @@ export class RepositoryService {
  * Define el contrato que deben implementar los adaptadores de datos
  */
 export interface RepositoryPort {
-  buscarRepositorios(filtros: RepositoryFilters): Promise<PaginatedResponse<Repository>>;
+  buscarRepositorios(
+    filtros: RepositoryFilters
+  ): Promise<PaginatedResponse<Repository>>;
   obtenerRepositorio(id: string): Promise<Repository>;
   crearRepositorio(datos: CreateRepositoryRequest): Promise<Repository>;
-  actualizarRepositorio(id: string, datos: UpdateRepositoryRequest): Promise<Repository>;
+  actualizarRepositorio(
+    id: string,
+    datos: UpdateRepositoryRequest
+  ): Promise<Repository>;
   eliminarRepositorio(id: string): Promise<void>;
 }

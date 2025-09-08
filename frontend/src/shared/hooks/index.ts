@@ -9,8 +9,8 @@ export {
   useCreateRepository,
   useUpdateRepository,
   useDeleteRepository,
-  useRepositoryService
-} from './repositories';
+  useRepositoryService,
+} from './repositories/index';
 
 // Search hooks (Clean Code architecture)
 export {
@@ -20,8 +20,12 @@ export {
   useRecentPackages,
   useAdvancedSearch,
   useSearchService,
-  SEARCH_QUERY_KEYS
+  SEARCH_QUERY_KEYS,
 } from './search';
 
 // Legacy hooks (for backward compatibility during migration)
-export { useRepositories, useRepository, useRepositoryFilters } from './repositories';
+export {
+  useRepositories,
+  useRepository,
+  useRepositoryFilters,
+} from './repositories/index';

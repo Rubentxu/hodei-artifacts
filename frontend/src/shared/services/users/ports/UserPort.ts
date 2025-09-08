@@ -4,14 +4,14 @@
  * Siguiendo el principio de Inversión de Dependencias (DIP) de SOLID
  */
 
-import type { 
+import type {
   CreateUserCommand,
   CreateUserResponse,
   UpdateUserAttributesCommand,
   UpdateUserAttributesResponse,
   ListUsersParams,
   UserAttributesParams,
-  UpdateUserAttributesBody
+  UpdateUserAttributesBody,
 } from '@/shared/types/openapi-generated.types';
 
 /**
@@ -32,7 +32,9 @@ export interface UserPort {
   /**
    * Get user attributes
    */
-  getUserAttributes(params: UserAttributesParams): Promise<UpdateUserAttributesResponse>;
+  getUserAttributes(
+    params: UserAttributesParams
+  ): Promise<UpdateUserAttributesResponse>;
 
   /**
    * Update user attributes

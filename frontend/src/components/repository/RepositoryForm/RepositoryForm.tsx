@@ -34,7 +34,7 @@ const RepositoryForm = ({
     control,
     formState: { errors },
   } = useForm<NewRepository | UpdateRepository>({
-    defaultValues: repository || {
+    defaultValues: repository ?? {
       name: '',
       description: '',
       type: 'maven',
@@ -75,21 +75,25 @@ const RepositoryForm = ({
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       <div className="space-y-2">
-        <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+        <label
+          htmlFor="name"
+          className="block text-sm font-medium text-gray-700"
+        >
           Repository Name *
         </label>
         <Input
           id="name"
-          {...register('name', { 
+          {...register('name', {
             required: 'Repository name is required',
             minLength: {
               value: 3,
-              message: 'Repository name must be at least 3 characters'
+              message: 'Repository name must be at least 3 characters',
             },
             pattern: {
               value: /^[a-zA-Z0-9][a-zA-Z0-9-_]*[a-zA-Z0-9]$/,
-              message: 'Repository name can only contain letters, numbers, hyphens, and underscores'
-            }
+              message:
+                'Repository name can only contain letters, numbers, hyphens, and underscores',
+            },
           })}
           placeholder="my-repository"
           disabled={isSubmitting}
@@ -124,12 +128,16 @@ const RepositoryForm = ({
           }`}
         />
         {errors.description && (
-          <p className="mt-1 text-sm text-red-600">{errors.description.message}</p>
+          <p className="mt-1 text-sm text-red-600">
+            {errors.description.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">Type *</label>
+        <label className="block text-sm font-medium text-gray-700">
+          Type *
+        </label>
         <Controller
           name="type"
           control={control}

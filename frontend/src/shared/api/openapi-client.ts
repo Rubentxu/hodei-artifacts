@@ -46,7 +46,7 @@ import type {
   ListPoliciesParams,
   CreatePolicyBody,
   PackageType,
-  ArtifactStatus
+  ArtifactStatus,
 } from '@/shared/types/openapi-generated.types';
 
 // ===== CONFIGURACIÓN DEL CLIENTE =====
@@ -56,45 +56,59 @@ const API_VERSION = 'v2.1.0';
 // Interfaz para el cliente API
 export interface OpenAPIClient {
   // REPOSITORIES
-  listRepositories(params?: ListRepositoriesParams): Promise<RepositoryListResponse>;
+  listRepositories(
+    params?: ListRepositoriesParams
+  ): Promise<RepositoryListResponse>;
   createRepository(body: CreateRepositoryRequest): Promise<Repository>;
   getRepository(params: RepositoryParams): Promise<Repository>;
-  updateRepository(params: RepositoryParams, body: UpdateRepositoryRequest): Promise<Repository>;
+  updateRepository(
+    params: RepositoryParams,
+    body: UpdateRepositoryRequest
+  ): Promise<Repository>;
   deleteRepository(params: RepositoryParams): Promise<void>;
-  
+
   // ARTIFACTS
   uploadArtifact(body: FormData): Promise<ArtifactUploadResponse>;
-  getArtifact(params: { id: string; presigned?: boolean }): Promise<Blob | PresignedUrlResponse>;
-  
+  getArtifact(params: {
+    id: string;
+    presigned?: boolean;
+  }): Promise<Blob | PresignedUrlResponse>;
+
   // SEARCH
   searchArtifacts(params: SearchArtifactsParams): Promise<SearchResults>;
-  
+
   // MAVEN REPOSITORY
   downloadMaven(params: DownloadMavenParams): Promise<Blob>;
   uploadMaven(params: DownloadMavenParams, body: Blob): Promise<UploadResponse>;
-  
+
   // NPM REGISTRY
   getNpmPackage(params: GetNpmPackageParams): Promise<NpmPackageMetadata>;
-  publishNpmPackage(params: GetNpmPackageParams, body: NpmPublishRequest): Promise<NpmPublishResponse>;
+  publishNpmPackage(
+    params: GetNpmPackageParams,
+    body: NpmPublishRequest
+  ): Promise<NpmPublishResponse>;
   downloadNpmTarball(params: DownloadNpmTarballParams): Promise<Blob>;
-  
+
   // PYPI REPOSITORY
   getPypiSimpleIndex(params: GetPypiSimpleParams): Promise<string>;
   downloadPypiPackage(params: DownloadPypiPackageParams): Promise<Blob>;
   uploadPypiPackage(body: FormData): Promise<UploadResponse>;
-  
+
   // AUTHENTICATION
   listTokens(params?: ListTokensParams): Promise<TokenResponse[]>;
   createToken(body: TokenRequest): Promise<TokenResponse>;
   getToken(params: TokenParams): Promise<TokenInfo>;
   deleteToken(params: TokenParams): Promise<void>;
-  
+
   // USERS
   listUsers(params?: ListUsersParams): Promise<CreateUserResponse[]>;
   createUser(body: CreateUserCommand): Promise<CreateUserResponse>;
   getUserAttributes(params: UserAttributesParams): Promise<Record<string, any>>;
-  updateUserAttributes(params: UserAttributesParams, body: UpdateUserAttributesBody): Promise<UpdateUserAttributesResponse>;
-  
+  updateUserAttributes(
+    params: UserAttributesParams,
+    body: UpdateUserAttributesBody
+  ): Promise<UpdateUserAttributesResponse>;
+
   // POLICIES
   listPolicies(params?: ListPoliciesParams): Promise<CreatePolicyResponse[]>;
   createPolicy(body: CreatePolicyBody): Promise<CreatePolicyResponse>;
@@ -103,16 +117,20 @@ export interface OpenAPIClient {
 // ===== IMPLEMENTACIÓN DEL CLIENTE CON MOCK CONTRACT FIRST =====
 
 class OpenAPIClientImpl implements OpenAPIClient {
-  private mockDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  private mockDelay = (ms: number) =>
+    new Promise(resolve => setTimeout(resolve, ms));
 
   // ===== MÉTODOS AUXILIARES PARA MOCK DATA =====
 
   private generateId(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(
+      /[xy]/g,
+      function (c) {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      }
+    );
   }
 
   private getCurrentTimestamp(): string {
@@ -121,52 +139,57 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   // ===== REPOSITORIES =====
 
-  async listRepositories(params?: ListRepositoriesParams): Promise<RepositoryListResponse> {
+  async listRepositories(
+    params?: ListRepositoriesParams
+  ): Promise<RepositoryListResponse> {
     await this.mockDelay(200); // Simular latencia de red
-    
+
     const limit = params?.limit || 20;
     const offset = params?.offset || 0;
-    
+
     // Mock data basada en el contrato OpenAPI
     const mockRepositories: Repository[] = [
       {
         id: this.generateId(),
         name: 'npm-public',
         description: 'Public npm registry mirror',
-        createdAt: this.getCurrentTimestamp()
+        createdAt: this.getCurrentTimestamp(),
       },
       {
         id: this.generateId(),
         name: 'maven-central',
         description: 'Maven Central repository proxy',
-        createdAt: this.getCurrentTimestamp()
+        createdAt: this.getCurrentTimestamp(),
       },
       {
         id: this.generateId(),
         name: 'pypi-official',
         description: 'Official PyPI repository',
-        createdAt: this.getCurrentTimestamp()
+        createdAt: this.getCurrentTimestamp(),
       },
       {
         id: this.generateId(),
         name: 'private-npm',
         description: 'Private npm packages',
-        createdAt: this.getCurrentTimestamp()
-      }
+        createdAt: this.getCurrentTimestamp(),
+      },
     ];
 
     return {
       total: mockRepositories.length,
-      items: mockRepositories.slice(offset, offset + limit)
+      items: mockRepositories.slice(offset, offset + limit),
     };
   }
 
   async createRepository(body: CreateRepositoryRequest): Promise<Repository> {
     await this.mockDelay(300);
-    
+
     // Validación básica según el contrato
     if (!body.name || body.name.trim().length === 0) {
-      throw this.createApiError('VALIDATION_ERROR', 'Repository name is required');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Repository name is required'
+      );
     }
 
     // Simular conflicto si el nombre ya existe
@@ -178,19 +201,19 @@ class OpenAPIClientImpl implements OpenAPIClient {
       id: this.generateId(),
       name: body.name,
       description: body.description,
-      createdAt: this.getCurrentTimestamp()
+      createdAt: this.getCurrentTimestamp(),
     };
   }
 
   async getRepository(params: RepositoryParams): Promise<Repository> {
     await this.mockDelay(150);
-    
+
     // Mock data para un repositorio específico
     const mockRepository: Repository = {
       id: params.id,
       name: 'example-repo',
       description: 'Example repository for testing',
-      createdAt: '2024-01-15T10:30:00Z'
+      createdAt: '2024-01-15T10:30:00Z',
     };
 
     // Simular not found para ciertos IDs
@@ -201,30 +224,36 @@ class OpenAPIClientImpl implements OpenAPIClient {
     return mockRepository;
   }
 
-  async updateRepository(params: RepositoryParams, body: UpdateRepositoryRequest): Promise<Repository> {
+  async updateRepository(
+    params: RepositoryParams,
+    body: UpdateRepositoryRequest
+  ): Promise<Repository> {
     await this.mockDelay(250);
-    
+
     // Validación según contrato
     if (body.name && body.name.trim().length === 0) {
-      throw this.createApiError('VALIDATION_ERROR', 'Repository name cannot be empty');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Repository name cannot be empty'
+      );
     }
 
     return {
       id: params.id,
       name: body.name || 'updated-repo',
       description: body.description || 'Updated description',
-      createdAt: '2024-01-15T10:30:00Z'
+      createdAt: '2024-01-15T10:30:00Z',
     };
   }
 
   async deleteRepository(params: RepositoryParams): Promise<void> {
     await this.mockDelay(200);
-    
+
     // Simular not found para ciertos IDs
     if (params.id === '00000000-0000-0000-0000-000000000000') {
       throw this.createApiError('NOT_FOUND', 'Repository not found');
     }
-    
+
     // Éxito - no retorna contenido (204)
     return;
   }
@@ -233,13 +262,16 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   async uploadArtifact(body: FormData): Promise<ArtifactUploadResponse> {
     await this.mockDelay(500); // Upload lleva más tiempo
-    
+
     // Simular validación de form data
     const file = body.get('file');
     const metadata = body.get('metadata');
-    
+
     if (!file || !metadata) {
-      throw this.createApiError('VALIDATION_ERROR', 'File and metadata are required');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'File and metadata are required'
+      );
     }
 
     // Simular duplicado si el archivo ya existe
@@ -248,25 +280,28 @@ class OpenAPIClientImpl implements OpenAPIClient {
       return {
         id: this.generateId(),
         status: 'duplicate',
-        repositoryId: this.generateId()
+        repositoryId: this.generateId(),
       };
     }
 
     return {
       id: this.generateId(),
       status: 'accepted',
-      repositoryId: this.generateId()
+      repositoryId: this.generateId(),
     };
   }
 
-  async getArtifact(params: { id: string; presigned?: boolean }): Promise<Blob | PresignedUrlResponse> {
+  async getArtifact(params: {
+    id: string;
+    presigned?: boolean;
+  }): Promise<Blob | PresignedUrlResponse> {
     await this.mockDelay(200);
-    
+
     if (params.presigned) {
       // Retornar URL presignada
       return {
         url: `${API_BASE_URL}/artifacts/${params.id}/download?token=mock-presigned-token`,
-        expiresAt: new Date(Date.now() + 3600000).toISOString() // 1 hora
+        expiresAt: new Date(Date.now() + 3600000).toISOString(), // 1 hora
       };
     } else {
       // Retornar blob binario
@@ -279,7 +314,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   async searchArtifacts(params: SearchArtifactsParams): Promise<SearchResults> {
     await this.mockDelay(300);
-    
+
     if (!params.q || params.q.trim().length === 0) {
       throw this.createApiError('VALIDATION_ERROR', 'Search query is required');
     }
@@ -297,7 +332,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
         maintainers: ['facebook', 'react-team'],
         keywords: ['react', 'javascript', 'ui', 'frontend'],
         license: 'MIT',
-        score: 0.95
+        score: 0.95,
       },
       {
         type: 'maven',
@@ -310,7 +345,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
         maintainers: ['junit-team'],
         keywords: ['testing', 'java', 'unit-test'],
         license: 'EPL-2.0',
-        score: 0.88
+        score: 0.88,
       },
       {
         type: 'pypi',
@@ -323,14 +358,15 @@ class OpenAPIClientImpl implements OpenAPIClient {
         maintainers: ['psf', 'kennethreitz'],
         keywords: ['http', 'python', 'api', 'rest'],
         license: 'Apache-2.0',
-        score: 0.92
-      }
+        score: 0.92,
+      },
     ];
 
     // Filtrar por query
-    const filteredPackages = mockPackages.filter(pkg => 
-      pkg.name?.toLowerCase().includes(params.q.toLowerCase()) ||
-      pkg.description?.toLowerCase().includes(params.q.toLowerCase())
+    const filteredPackages = mockPackages.filter(
+      pkg =>
+        pkg.name?.toLowerCase().includes(params.q.toLowerCase()) ||
+        pkg.description?.toLowerCase().includes(params.q.toLowerCase())
     );
 
     const limit = params.limit || 20;
@@ -338,9 +374,9 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
     return {
       total: filteredPackages.length,
-      limit: limit,
-      offset: offset,
-      results: filteredPackages.slice(offset, offset + limit)
+      limit,
+      offset,
+      results: filteredPackages.slice(offset, offset + limit),
     };
   }
 
@@ -348,17 +384,20 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   async downloadMaven(params: DownloadMavenParams): Promise<Blob> {
     await this.mockDelay(400);
-    
+
     // Validación de parámetros según el contrato
     const groupIdPattern = /^[a-zA-Z0-9._-]+$/;
     const artifactIdPattern = /^[a-zA-Z0-9._-]+$/;
     const versionPattern = /^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$/;
-    
+
     if (!groupIdPattern.test(params.groupId)) {
       throw this.createApiError('VALIDATION_ERROR', 'Invalid groupId format');
     }
     if (!artifactIdPattern.test(params.artifactId)) {
-      throw this.createApiError('VALIDATION_ERROR', 'Invalid artifactId format');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Invalid artifactId format'
+      );
     }
     if (!versionPattern.test(params.version)) {
       throw this.createApiError('VALIDATION_ERROR', 'Invalid version format');
@@ -371,16 +410,22 @@ class OpenAPIClientImpl implements OpenAPIClient {
 // Version: ${params.version}
 // File: ${params.fileName}
 `;
-    
+
     return new Blob([mockMavenContent], { type: 'application/java-archive' });
   }
 
-  async uploadMaven(params: DownloadMavenParams, body: Blob): Promise<UploadResponse> {
+  async uploadMaven(
+    params: DownloadMavenParams,
+    body: Blob
+  ): Promise<UploadResponse> {
     await this.mockDelay(600);
-    
+
     // Validaciones
     if (body.size === 0) {
-      throw this.createApiError('VALIDATION_ERROR', 'Artifact content is required');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Artifact content is required'
+      );
     }
 
     // Simular duplicado
@@ -389,7 +434,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
         id: this.generateId(),
         status: 'duplicate',
         message: 'Artifact already exists',
-        url: `${API_BASE_URL}/maven2/${params.groupId}/${params.artifactId}/${params.version}/${params.fileName}`
+        url: `${API_BASE_URL}/maven2/${params.groupId}/${params.artifactId}/${params.version}/${params.fileName}`,
       };
     }
 
@@ -397,19 +442,25 @@ class OpenAPIClientImpl implements OpenAPIClient {
       id: this.generateId(),
       status: 'accepted',
       message: 'Artifact uploaded successfully',
-      url: `${API_BASE_URL}/maven2/${params.groupId}/${params.artifactId}/${params.version}/${params.fileName}`
+      url: `${API_BASE_URL}/maven2/${params.groupId}/${params.artifactId}/${params.version}/${params.fileName}`,
     };
   }
 
   // ===== NPM REGISTRY =====
 
-  async getNpmPackage(params: GetNpmPackageParams): Promise<NpmPackageMetadata> {
+  async getNpmPackage(
+    params: GetNpmPackageParams
+  ): Promise<NpmPackageMetadata> {
     await this.mockDelay(250);
-    
+
     // Validación de nombre de paquete npm
-    const npmPackagePattern = /^(@[a-z0-9-~][a-z0-9-._~]*)?[a-z0-9-~][a-z0-9-._~]*$/;
+    const npmPackagePattern =
+      /^(@[a-z0-9-~][a-z0-9-._~]*)?[a-z0-9-~][a-z0-9-._~]*$/;
     if (!npmPackagePattern.test(params.packageName)) {
-      throw this.createApiError('VALIDATION_ERROR', 'Invalid npm package name format');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Invalid npm package name format'
+      );
     }
 
     // Mock metadata de paquete npm
@@ -417,7 +468,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
       name: params.packageName,
       'dist-tags': {
         latest: '1.2.3',
-        beta: '2.0.0-beta.1'
+        beta: '2.0.0-beta.1',
       },
       versions: {
         '1.2.3': {
@@ -427,56 +478,66 @@ class OpenAPIClientImpl implements OpenAPIClient {
           main: 'index.js',
           scripts: {
             test: 'jest',
-            build: 'tsc'
+            build: 'tsc',
           },
           dependencies: {
-            'lodash': '^4.17.21'
+            lodash: '^4.17.21',
           },
           devDependencies: {
-            'jest': '^29.0.0',
-            'typescript': '^5.0.0'
+            jest: '^29.0.0',
+            typescript: '^5.0.0',
           },
           keywords: ['mock', 'test'],
           license: 'MIT',
-          maintainers: [{
-            name: 'mock-user',
-            email: 'mock@example.com'
-          }],
+          maintainers: [
+            {
+              name: 'mock-user',
+              email: 'mock@example.com',
+            },
+          ],
           dist: {
             tarball: `${API_BASE_URL}/${params.packageName}/-/package-1.2.3.tgz`,
             shasum: 'mock-shasum-12345',
-            integrity: 'sha512-mock-integrity-hash'
-          }
-        }
+            integrity: 'sha512-mock-integrity-hash',
+          },
+        },
       },
       time: {
         '1.2.3': '2024-01-15T10:30:00Z',
-        '1.2.2': '2024-01-10T08:20:00Z'
+        '1.2.2': '2024-01-10T08:20:00Z',
       },
-      maintainers: [{
-        name: 'mock-maintainer',
-        email: 'maintainer@example.com'
-      }],
+      maintainers: [
+        {
+          name: 'mock-maintainer',
+          email: 'maintainer@example.com',
+        },
+      ],
       description: `Mock npm package ${params.packageName} for testing`,
       keywords: ['mock', 'test', 'npm'],
       license: 'MIT',
       repository: {
         type: 'git',
-        url: `https://github.com/mock/${params.packageName}.git`
+        url: `https://github.com/mock/${params.packageName}.git`,
       },
       bugs: {
-        url: `https://github.com/mock/${params.packageName}/issues`
+        url: `https://github.com/mock/${params.packageName}/issues`,
       },
-      homepage: `https://github.com/mock/${params.packageName}#readme`
+      homepage: `https://github.com/mock/${params.packageName}#readme`,
     };
   }
 
-  async publishNpmPackage(params: GetNpmPackageParams, body: NpmPublishRequest): Promise<NpmPublishResponse> {
+  async publishNpmPackage(
+    params: GetNpmPackageParams,
+    body: NpmPublishRequest
+  ): Promise<NpmPublishResponse> {
     await this.mockDelay(400);
-    
+
     // Validaciones según el contrato
     if (!body.name || !body.version) {
-      throw this.createApiError('VALIDATION_ERROR', 'Package name and version are required');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Package name and version are required'
+      );
     }
 
     // Simular conflicto si el paquete ya existe
@@ -487,24 +548,27 @@ class OpenAPIClientImpl implements OpenAPIClient {
     return {
       success: true,
       id: this.generateId(),
-      message: `Package ${body.name}@${body.version} published successfully`
+      message: `Package ${body.name}@${body.version} published successfully`,
     };
   }
 
   async downloadNpmTarball(params: DownloadNpmTarballParams): Promise<Blob> {
     await this.mockDelay(300);
-    
+
     // Validación de nombre de archivo
     const tarballPattern = /^.+\.tgz$/;
     if (!tarballPattern.test(params.fileName)) {
-      throw this.createApiError('VALIDATION_ERROR', 'Invalid tarball filename format');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Invalid tarball filename format'
+      );
     }
 
     // Mock tarball content
     const mockTarballContent = `Mock npm tarball content for ${params.packageName}/${params.fileName}`;
-    
+
     return new Blob([mockTarballContent], {
-      type: 'application/gzip'
+      type: 'application/gzip',
     });
   }
 
@@ -512,7 +576,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   async getPypiSimpleIndex(params: GetPypiSimpleParams): Promise<string> {
     await this.mockDelay(200);
-    
+
     // Mock PyPI simple index (HTML)
     return `<!DOCTYPE html>
 <html>
@@ -529,32 +593,37 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   async downloadPypiPackage(params: DownloadPypiPackageParams): Promise<Blob> {
     await this.mockDelay(350);
-    
+
     // Mock wheel or sdist content
     const mockPackageContent = `Mock PyPI package content for ${params.fileName}`;
-    
-    return new Blob([mockPackageContent], { 
-      type: params.fileName.endsWith('.whl') ? 'application/octet-stream' : 'application/gzip'
+
+    return new Blob([mockPackageContent], {
+      type: params.fileName.endsWith('.whl')
+        ? 'application/octet-stream'
+        : 'application/gzip',
     });
   }
 
   async uploadPypiPackage(body: FormData): Promise<UploadResponse> {
     await this.mockDelay(500);
-    
+
     // Validación básica del form data
     const name = body.get('name');
     const version = body.get('version');
     const content = body.get('content');
-    
+
     if (!name || !version || !content) {
-      throw this.createApiError('VALIDATION_ERROR', 'Name, version and content are required');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Name, version and content are required'
+      );
     }
 
     return {
       id: this.generateId(),
       status: 'accepted',
       message: `Package ${name}@${version} uploaded successfully`,
-      url: `${API_BASE_URL}/packages/${name}-${version}-py3-none-any.whl`
+      url: `${API_BASE_URL}/packages/${name}-${version}-py3-none-any.whl`,
     };
   }
 
@@ -562,30 +631,34 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   async listTokens(params?: ListTokensParams): Promise<TokenResponse[]> {
     await this.mockDelay(200);
-    
+
     return [
       {
         id: this.generateId(),
         name: 'development-token',
         token: 'mock-api-token-12345',
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 días
+        expiresAt: new Date(
+          Date.now() + 30 * 24 * 60 * 60 * 1000
+        ).toISOString(), // 30 días
         scopes: ['read:repositories', 'write:artifacts'],
-        createdAt: this.getCurrentTimestamp()
+        createdAt: this.getCurrentTimestamp(),
       },
       {
         id: this.generateId(),
         name: 'ci-token',
         token: 'mock-api-token-67890',
-        expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(), // 90 días
+        expiresAt: new Date(
+          Date.now() + 90 * 24 * 60 * 60 * 1000
+        ).toISOString(), // 90 días
         scopes: ['read:repositories', 'read:artifacts'],
-        createdAt: this.getCurrentTimestamp()
-      }
+        createdAt: this.getCurrentTimestamp(),
+      },
     ];
   }
 
   async createToken(body: TokenRequest): Promise<TokenResponse> {
     await this.mockDelay(300);
-    
+
     if (!body.name || body.name.trim().length === 0) {
       throw this.createApiError('VALIDATION_ERROR', 'Token name is required');
     }
@@ -593,34 +666,37 @@ class OpenAPIClientImpl implements OpenAPIClient {
     return {
       id: this.generateId(),
       name: body.name,
-      token: 'mock-generated-token-' + Math.random().toString(36).substring(2, 15),
-      expiresAt: body.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      token:
+        'mock-generated-token-' + Math.random().toString(36).substring(2, 15),
+      expiresAt:
+        body.expiresAt ||
+        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       scopes: body.scopes || ['read:repositories'],
-      createdAt: this.getCurrentTimestamp()
+      createdAt: this.getCurrentTimestamp(),
     };
   }
 
   async getToken(params: TokenParams): Promise<TokenInfo> {
     await this.mockDelay(150);
-    
+
     return {
       id: params.tokenId,
       name: 'mock-token-name',
       expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString(),
       scopes: ['read:repositories', 'write:artifacts'],
       createdAt: this.getCurrentTimestamp(),
-      lastUsedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() // Hace 2 horas
+      lastUsedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // Hace 2 horas
     };
   }
 
   async deleteToken(params: TokenParams): Promise<void> {
     await this.mockDelay(200);
-    
+
     // Simular not found para ciertos IDs
     if (params.tokenId === '00000000-0000-0000-0000-000000000000') {
       throw this.createApiError('NOT_FOUND', 'Token not found');
     }
-    
+
     return;
   }
 
@@ -628,28 +704,31 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   async listUsers(params?: ListUsersParams): Promise<CreateUserResponse[]> {
     await this.mockDelay(250);
-    
+
     return [
       {
         id: this.generateId(),
         username: 'john.doe',
         email: 'john.doe@example.com',
-        createdAt: this.getCurrentTimestamp()
+        createdAt: this.getCurrentTimestamp(),
       },
       {
         id: this.generateId(),
         username: 'jane.smith',
         email: 'jane.smith@example.com',
-        createdAt: this.getCurrentTimestamp()
-      }
+        createdAt: this.getCurrentTimestamp(),
+      },
     ];
   }
 
   async createUser(body: CreateUserCommand): Promise<CreateUserResponse> {
     await this.mockDelay(350);
-    
+
     if (!body.username || !body.email || !body.password) {
-      throw this.createApiError('VALIDATION_ERROR', 'Username, email and password are required');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Username, email and password are required'
+      );
     }
 
     // Validación básica de email
@@ -662,61 +741,71 @@ class OpenAPIClientImpl implements OpenAPIClient {
       id: this.generateId(),
       username: body.username,
       email: body.email,
-      createdAt: this.getCurrentTimestamp()
+      createdAt: this.getCurrentTimestamp(),
     };
   }
 
-  async getUserAttributes(params: UserAttributesParams): Promise<Record<string, any>> {
+  async getUserAttributes(
+    params: UserAttributesParams
+  ): Promise<Record<string, any>> {
     await this.mockDelay(200);
-    
+
     return {
       role: 'developer',
       department: 'engineering',
       team: 'platform',
-      permissions: ['read:repositories', 'write:artifacts']
+      permissions: ['read:repositories', 'write:artifacts'],
     };
   }
 
-  async updateUserAttributes(params: UserAttributesParams, body: UpdateUserAttributesBody): Promise<UpdateUserAttributesResponse> {
+  async updateUserAttributes(
+    params: UserAttributesParams,
+    body: UpdateUserAttributesBody
+  ): Promise<UpdateUserAttributesResponse> {
     await this.mockDelay(300);
-    
+
     return {
       id: params.id,
       username: 'john.doe',
       email: 'john.doe@example.com',
       attributes: body.attributes || {},
-      updatedAt: this.getCurrentTimestamp()
+      updatedAt: this.getCurrentTimestamp(),
     };
   }
 
   // ===== POLICIES =====
 
-  async listPolicies(params?: ListPoliciesParams): Promise<CreatePolicyResponse[]> {
+  async listPolicies(
+    params?: ListPoliciesParams
+  ): Promise<CreatePolicyResponse[]> {
     await this.mockDelay(200);
-    
+
     return [
       {
         id: this.generateId(),
         name: 'developer-policy',
         description: 'Default policy for developers',
         isActive: true,
-        createdAt: this.getCurrentTimestamp()
+        createdAt: this.getCurrentTimestamp(),
       },
       {
         id: this.generateId(),
         name: 'admin-policy',
         description: 'Full access policy for administrators',
         isActive: true,
-        createdAt: this.getCurrentTimestamp()
-      }
+        createdAt: this.getCurrentTimestamp(),
+      },
     ];
   }
 
   async createPolicy(body: CreatePolicyBody): Promise<CreatePolicyResponse> {
     await this.mockDelay(400);
-    
+
     if (!body.name || !body.policy) {
-      throw this.createApiError('VALIDATION_ERROR', 'Policy name and content are required');
+      throw this.createApiError(
+        'VALIDATION_ERROR',
+        'Policy name and content are required'
+      );
     }
 
     return {
@@ -724,7 +813,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
       name: body.name,
       description: body.description,
       isActive: body.isActive ?? true,
-      createdAt: this.getCurrentTimestamp()
+      createdAt: this.getCurrentTimestamp(),
     };
   }
 
@@ -735,7 +824,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
       code,
       message,
       timestamp: this.getCurrentTimestamp(),
-      success: false
+      success: false,
     } as ApiError;
   }
 }
@@ -744,21 +833,21 @@ class OpenAPIClientImpl implements OpenAPIClient {
 export const openAPIClient = new OpenAPIClientImpl();
 
 // ===== TIPOS DE UTILIDAD PARA EL CLIENTE =====
-export type OpenAPIResponse<T> = {
+export interface OpenAPIResponse<T> {
   data: T;
   status: number;
   headers: Record<string, string>;
-};
+}
 
-export type OpenAPIError = {
+export interface OpenAPIError {
   error: ApiError;
   status: number;
   headers: Record<string, string>;
-};
+}
 
 // ===== FUNCIONES DE UTILIDAD =====
 export function isOpenAPIError(response: any): response is OpenAPIError {
-  return response && response.error && !response.data;
+  return response?.error && !response.data;
 }
 
 export function getErrorMessage(error: ApiError): string {
@@ -783,7 +872,7 @@ export const API_ENDPOINTS = {
   TOKEN_BY_ID: '/auth/tokens/:tokenId',
   USERS: '/v1/users',
   USER_ATTRIBUTES: '/v1/users/:id/attributes',
-  POLICIES: '/v1/policies'
+  POLICIES: '/v1/policies',
 } as const;
 
 export const API_SCOPES = {
@@ -795,7 +884,7 @@ export const API_SCOPES = {
   WRITE_MAVEN: 'write:maven',
   READ_NPM: 'read:npm',
   WRITE_NPM: 'write:npm',
-  ADMIN: 'admin'
+  ADMIN: 'admin',
 } as const;
 
 // ===== CONFIGURACIÓN DE MOCK =====
@@ -819,14 +908,18 @@ export class MockDataGenerator {
       id: this.generateId(),
       name: name || `repo-${Math.random().toString(36).substring(2, 8)}`,
       description: `Repository for ${name || 'testing'}`,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
     };
   }
 
-  static generatePackageResult(name?: string, type?: PackageType): PackageResult {
-    const packageName = name || `package-${Math.random().toString(36).substring(2, 8)}`;
+  static generatePackageResult(
+    name?: string,
+    type?: PackageType
+  ): PackageResult {
+    const packageName =
+      name || `package-${Math.random().toString(36).substring(2, 8)}`;
     const packageType = type || 'npm';
-    
+
     return {
       type: packageType,
       name: packageName,
@@ -838,16 +931,19 @@ export class MockDataGenerator {
       maintainers: ['mock-user', 'test-user'],
       keywords: ['mock', 'test', packageType],
       license: 'MIT',
-      score: Math.random()
+      score: Math.random(),
     };
   }
 
   static generateId(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(
+      /[xy]/g,
+      function (c) {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      }
+    );
   }
 }
 

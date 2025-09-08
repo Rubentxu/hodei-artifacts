@@ -7,7 +7,7 @@
 export {
   useArtifactInfo,
   useArtifactPresignedUrl,
-  useArtifactDownload
+  useArtifactDownload,
 } from './useArtifactQueries';
 
 // Mutations (escritura de datos) - Nueva arquitectura Clean Code
@@ -15,7 +15,7 @@ export {
   useUploadArtifact,
   useValidateArtifact,
   useAnalyzePackageType,
-  useGenerateArtifactMetadata
+  useGenerateArtifactMetadata,
 } from './useArtifactMutations';
 
 // Servicio - Nueva arquitectura Clean Code
@@ -28,5 +28,5 @@ export { ARTIFACT_QUERY_KEYS } from './artifactQueryKeys';
 export type {
   ArtifactUploadResponse,
   PresignedUrlResponse,
-  UploadArtifactBody
+  UploadArtifactBody,
 } from '@/shared/types/openapi-generated.types';

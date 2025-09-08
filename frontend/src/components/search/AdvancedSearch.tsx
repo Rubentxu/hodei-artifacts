@@ -12,14 +12,17 @@ interface AdvancedSearchProps {
   onLoadingChange?: (loading: boolean) => void;
 }
 
-const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoadingChange }) => {
+const AdvancedSearch: React.FC<AdvancedSearchProps> = ({
+  onSearchResults,
+  onLoadingChange,
+}) => {
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState({
     type: '',
     repositoryId: '',
     dateRange: '',
     sortBy: 'name' as const,
-    sortOrder: 'asc' as const
+    sortOrder: 'asc' as const,
   });
   const [showFilters, setShowFilters] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -31,7 +34,7 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
     { id: '550e8400-e29b-41d4-a716-446655440001', name: 'maven-central' },
     { id: '550e8400-e29b-41d4-a716-446655440002', name: 'npm-public' },
     { id: '550e8400-e29b-41d4-a716-446655440003', name: 'pypi-internal' },
-    { id: '550e8400-e29b-41d4-a716-446655440004', name: 'docker-registry' }
+    { id: '550e8400-e29b-41d4-a716-446655440004', name: 'docker-registry' },
   ];
 
   useEffect(() => {
@@ -66,7 +69,7 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
         sortBy: filters.sortBy,
         sortOrder: filters.sortOrder,
         page: 1,
-        limit: 20
+        limit: 20,
       };
 
       const results = await searchServiceMock.searchPackages(searchQuery);
@@ -93,7 +96,7 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
       repositoryId: '',
       dateRange: '',
       sortBy: 'name',
-      sortOrder: 'asc'
+      sortOrder: 'asc',
     });
   };
 
@@ -111,10 +114,10 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
                 type="text"
                 placeholder="Search packages by name, description, or content..."
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={e => setQuery(e.target.value)}
                 onFocus={() => query.length > 2 && setShowSuggestions(true)}
                 onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                onKeyPress={e => e.key === 'Enter' && handleSearch()}
                 className="pl-10 pr-4 py-3 w-full"
               />
             </div>
@@ -166,7 +169,9 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
       {showFilters && (
         <Card className="p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">Advanced Filters</h3>
+            <h3 className="text-lg font-semibold text-gray-900">
+              Advanced Filters
+            </h3>
             <Button
               variant="ghost"
               size="sm"
@@ -186,7 +191,7 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
               </label>
               <select
                 value={filters.type}
-                onChange={(e) => setFilters({ ...filters, type: e.target.value })}
+                onChange={e => setFilters({ ...filters, type: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <option value="">All Types</option>
@@ -204,11 +209,13 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
               </label>
               <select
                 value={filters.repositoryId}
-                onChange={(e) => setFilters({ ...filters, repositoryId: e.target.value })}
+                onChange={e =>
+                  setFilters({ ...filters, repositoryId: e.target.value })
+                }
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <option value="">All Repositories</option>
-                {repositories.map((repo) => (
+                {repositories.map(repo => (
                   <option key={repo.id} value={repo.id}>
                     {repo.name}
                   </option>
@@ -223,7 +230,9 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
               </label>
               <select
                 value={filters.sortBy}
-                onChange={(e) => setFilters({ ...filters, sortBy: e.target.value as any })}
+                onChange={e =>
+                  setFilters({ ...filters, sortBy: e.target.value as any })
+                }
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <option value="name">Name</option>
@@ -239,7 +248,9 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
               </label>
               <select
                 value={filters.sortOrder}
-                onChange={(e) => setFilters({ ...filters, sortOrder: e.target.value as any })}
+                onChange={e =>
+                  setFilters({ ...filters, sortOrder: e.target.value as any })
+                }
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500"
               >
                 <option value="asc">Ascending</option>
@@ -254,7 +265,10 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
               <div className="flex items-center space-x-2 flex-wrap">
                 <span className="text-sm text-gray-600">Active filters:</span>
                 {filters.type && (
-                  <Badge variant="secondary" className="flex items-center space-x-1">
+                  <Badge
+                    variant="secondary"
+                    className="flex items-center space-x-1"
+                  >
                     <span>Type: {filters.type}</span>
                     <button
                       onClick={() => setFilters({ ...filters, type: '' })}
@@ -265,10 +279,21 @@ const AdvancedSearch: React.FC<AdvancedSearchProps> = ({ onSearchResults, onLoad
                   </Badge>
                 )}
                 {filters.repositoryId && (
-                  <Badge variant="secondary" className="flex items-center space-x-1">
-                    <span>Repository: {repositories.find(r => r.id === filters.repositoryId)?.name}</span>
+                  <Badge
+                    variant="secondary"
+                    className="flex items-center space-x-1"
+                  >
+                    <span>
+                      Repository:{' '}
+                      {
+                        repositories.find(r => r.id === filters.repositoryId)
+                          ?.name
+                      }
+                    </span>
                     <button
-                      onClick={() => setFilters({ ...filters, repositoryId: '' })}
+                      onClick={() =>
+                        setFilters({ ...filters, repositoryId: '' })
+                      }
                       className="ml-1 hover:text-gray-700"
                     >
                       <X className="w-3 h-3" />

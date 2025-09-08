@@ -20,7 +20,10 @@ const PoliciesPageSkeleton: React.FC = () => {
       <Card className="p-6">
         <div className="space-y-4">
           {[...Array(5)].map((_, index) => (
-            <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
+            <div
+              key={index}
+              className="flex items-center justify-between p-4 border rounded-lg"
+            >
               <div className="flex items-center gap-4">
                 <Skeleton className="h-10 w-10 rounded-full" />
                 <div className="space-y-2">

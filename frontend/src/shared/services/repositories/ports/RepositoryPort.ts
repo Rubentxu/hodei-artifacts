@@ -4,12 +4,12 @@
  * Siguiendo el principio de Inversión de Dependencias (DIP) de SOLID
  */
 
-import type { 
-  Repository, 
-  RepositoryFilters, 
+import type {
+  Repository,
+  RepositoryFilters,
   PaginatedResponse,
   CreateRepositoryRequest,
-  UpdateRepositoryRequest 
+  UpdateRepositoryRequest,
 } from '@/shared/types';
 
 /**
@@ -20,7 +20,9 @@ export interface RepositoryPort {
   /**
    * Busca repositorios con filtros aplicados
    */
-  buscarRepositorios(filtros: RepositoryFilters): Promise<PaginatedResponse<Repository>>;
+  buscarRepositorios(
+    filtros: RepositoryFilters
+  ): Promise<PaginatedResponse<Repository>>;
 
   /**
    * Obtiene un repositorio específico por su ID
@@ -35,7 +37,10 @@ export interface RepositoryPort {
   /**
    * Actualiza un repositorio existente
    */
-  actualizarRepositorio(id: string, datos: UpdateRepositoryRequest): Promise<Repository>;
+  actualizarRepositorio(
+    id: string,
+    datos: UpdateRepositoryRequest
+  ): Promise<Repository>;
 
   /**
    * Elimina un repositorio por su ID

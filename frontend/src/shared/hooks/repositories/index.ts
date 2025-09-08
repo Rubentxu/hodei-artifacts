@@ -8,14 +8,14 @@ export {
   useRepositoryList,
   useRepositoryById,
   useRepositoriesByType,
-  useRepositoryMetrics
+  useRepositoryMetrics,
 } from './useRepositoryQueries';
 
 // Mutations (escritura de datos) - Nueva arquitectura Clean Code
 export {
   useCreateRepository,
   useUpdateRepository,
-  useDeleteRepository
+  useDeleteRepository,
 } from './useRepositoryMutations';
 
 // Servicio - Nueva arquitectura Clean Code
@@ -25,7 +25,7 @@ export { useRepositoryService } from './useRepositoryService';
 export {
   useRepositories,
   useRepository,
-  useRepositoryFilters
+  useRepositoryFilters,
 } from './legacyAdapter';
 
 // Tipos
@@ -34,5 +34,5 @@ export type {
   Repository,
   PaginatedResponse,
   CreateRepositoryRequest,
-  UpdateRepositoryRequest
+  UpdateRepositoryRequest,
 } from '@/shared/types';

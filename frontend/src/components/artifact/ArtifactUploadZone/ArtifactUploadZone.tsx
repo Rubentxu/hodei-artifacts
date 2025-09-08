@@ -144,7 +144,7 @@ const ArtifactUploadZone = ({
   const uploadFile = useCallback(
     async (uploadFile: UploadFile) => {
       const { artifactsApi } = await import('@/shared/api/artifacts');
-      
+
       setFiles(prev =>
         prev.map(f =>
           f.id === uploadFile.id ? { ...f, status: 'uploading' } : f

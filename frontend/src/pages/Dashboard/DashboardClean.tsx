@@ -8,28 +8,43 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { 
-  useRepositoryList, 
-  usePopularPackages, 
+import {
+  useRepositoryList,
+  usePopularPackages,
   useRecentPackages,
-  useRepositoryMetrics 
+  useRepositoryMetrics,
 } from '@/shared/hooks';
 import type { Repository } from '@/shared/types';
 import type { PackageResult } from '@/shared/types/openapi-generated.types';
-import { TrendingUp, Package, Users, HardDrive, Download, Clock, Activity } from 'lucide-react';
+import {
+  TrendingUp,
+  Package,
+  Users,
+  HardDrive,
+  Download,
+  Clock,
+  Activity,
+} from 'lucide-react';
 
 const DashboardClean = () => {
   const [totalDownloads, setTotalDownloads] = useState(0);
-  
+
   // Usar los nuevos hooks Clean Code
-  const { data: repositoriesData, isLoading: reposLoading, error: reposError } = useRepositoryList({
+  const {
+    data: repositoriesData,
+    isLoading: reposLoading,
+    error: reposError,
+  } = useRepositoryList({
     limit: 10,
-    page: 1
+    page: 1,
   });
-  
-  const { data: popularPackagesData, isLoading: popularLoading } = usePopularPackages(5);
-  const { data: recentPackagesData, isLoading: recentLoading } = useRecentPackages(5);
-  const { data: metricsData, isLoading: metricsLoading } = useRepositoryMetrics();
+
+  const { data: popularPackagesData, isLoading: popularLoading } =
+    usePopularPackages(5);
+  const { data: recentPackagesData, isLoading: recentLoading } =
+    useRecentPackages(5);
+  const { data: metricsData, isLoading: metricsLoading } =
+    useRepositoryMetrics();
 
   const repositories = repositoriesData?.data || [];
   const popularPackages = popularPackagesData || [];
@@ -39,7 +54,7 @@ const DashboardClean = () => {
   useEffect(() => {
     if (popularPackages.length > 0 || recentPackages.length > 0) {
       const total = [...popularPackages, ...recentPackages].reduce(
-        (sum, pkg) => sum + (pkg.downloads || 0), 
+        (sum, pkg) => sum + (pkg.downloads || 0),
         0
       );
       setTotalDownloads(total);
@@ -84,11 +99,23 @@ const DashboardClean = () => {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center">
         <div className="text-red-500 mb-4">
-          <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <svg
+            className="w-12 h-12 mx-auto"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">Error Loading Dashboard</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">
+          Error Loading Dashboard
+        </h3>
         <p className="text-gray-600 mb-4">{reposError.message}</p>
         <Button onClick={() => window.location.reload()} variant="outline">
           Try Again
@@ -121,8 +148,12 @@ const DashboardClean = () => {
         <Card className="p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Total Repositories</p>
-              <p className="text-3xl font-bold text-gray-900">{repositories.length}</p>
+              <p className="text-sm font-medium text-gray-600">
+                Total Repositories
+              </p>
+              <p className="text-3xl font-bold text-gray-900">
+                {repositories.length}
+              </p>
             </div>
             <div className="p-3 bg-blue-100 rounded-full">
               <HardDrive className="w-6 h-6 text-blue-600" />
@@ -138,8 +169,12 @@ const DashboardClean = () => {
         <Card className="p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Total Downloads</p>
-              <p className="text-3xl font-bold text-gray-900">{totalDownloads.toLocaleString()}</p>
+              <p className="text-sm font-medium text-gray-600">
+                Total Downloads
+              </p>
+              <p className="text-3xl font-bold text-gray-900">
+                {totalDownloads.toLocaleString()}
+              </p>
             </div>
             <div className="p-3 bg-green-100 rounded-full">
               <Download className="w-6 h-6 text-green-600" />
@@ -155,8 +190,12 @@ const DashboardClean = () => {
         <Card className="p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Popular Packages</p>
-              <p className="text-3xl font-bold text-gray-900">{popularPackages.length}</p>
+              <p className="text-sm font-medium text-gray-600">
+                Popular Packages
+              </p>
+              <p className="text-3xl font-bold text-gray-900">
+                {popularPackages.length}
+              </p>
             </div>
             <div className="p-3 bg-purple-100 rounded-full">
               <Package className="w-6 h-6 text-purple-600" />
@@ -171,8 +210,12 @@ const DashboardClean = () => {
         <Card className="p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-gray-600">Recent Activity</p>
-              <p className="text-3xl font-bold text-gray-900">{recentPackages.length}</p>
+              <p className="text-sm font-medium text-gray-600">
+                Recent Activity
+              </p>
+              <p className="text-3xl font-bold text-gray-900">
+                {recentPackages.length}
+              </p>
             </div>
             <div className="p-3 bg-orange-100 rounded-full">
               <Clock className="w-6 h-6 text-orange-600" />
@@ -192,7 +235,9 @@ const DashboardClean = () => {
           <Card>
             <div className="p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">Repositories</h3>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Repositories
+                </h3>
                 <Button variant="outline" size="sm">
                   View All
                 </Button>
@@ -201,18 +246,27 @@ const DashboardClean = () => {
             <div className="p-6">
               <div className="space-y-4">
                 {repositories.map((repo: Repository) => (
-                  <div key={repo.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+                  <div
+                    key={repo.id}
+                    className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                  >
                     <div className="flex items-center space-x-3">
                       <div className="p-2 bg-blue-100 rounded-lg">
                         <HardDrive className="w-5 h-5 text-blue-600" />
                       </div>
                       <div>
-                        <h4 className="font-medium text-gray-900">{repo.name}</h4>
-                        <p className="text-sm text-gray-600">{repo.description}</p>
+                        <h4 className="font-medium text-gray-900">
+                          {repo.name}
+                        </h4>
+                        <p className="text-sm text-gray-600">
+                          {repo.description}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <Badge variant="secondary">{repo.lastUpdated.split('T')[0]}</Badge>
+                      <Badge variant="secondary">
+                        {repo.lastUpdated.split('T')[0]}
+                      </Badge>
                       <Button variant="ghost" size="sm">
                         →
                       </Button>
@@ -228,17 +282,26 @@ const DashboardClean = () => {
         <div className="space-y-6">
           <Card>
             <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Popular Packages</h3>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Popular Packages
+              </h3>
             </div>
             <div className="p-6">
               <div className="space-y-4">
-                {popularPackages.map((pkg) => (
-                  <div key={`${pkg.name}-${pkg.type}`} className="flex items-center justify-between">
+                {popularPackages.map(pkg => (
+                  <div
+                    key={`${pkg.name}-${pkg.type}`}
+                    className="flex items-center justify-between"
+                  >
                     <div className="flex items-center space-x-3">
                       {getPackageTypeIcon(pkg.type || '')}
                       <div>
-                        <h4 className="font-medium text-gray-900">{pkg.name}</h4>
-                        <p className="text-sm text-gray-600">{pkg.latestVersion}</p>
+                        <h4 className="font-medium text-gray-900">
+                          {pkg.name}
+                        </h4>
+                        <p className="text-sm text-gray-600">
+                          {pkg.latestVersion}
+                        </p>
                       </div>
                     </div>
                     <Badge className={getPackageTypeColor(pkg.type || '')}>
@@ -252,17 +315,26 @@ const DashboardClean = () => {
 
           <Card>
             <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Recent Activity</h3>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Recent Activity
+              </h3>
             </div>
             <div className="p-6">
               <div className="space-y-4">
-                {recentPackages.map((pkg) => (
-                  <div key={`${pkg.name}-${pkg.type}-recent`} className="flex items-center justify-between">
+                {recentPackages.map(pkg => (
+                  <div
+                    key={`${pkg.name}-${pkg.type}-recent`}
+                    className="flex items-center justify-between"
+                  >
                     <div className="flex items-center space-x-3">
                       {getPackageTypeIcon(pkg.type || '')}
                       <div>
-                        <h4 className="font-medium text-gray-900">{pkg.name}</h4>
-                        <p className="text-sm text-gray-600">{pkg.lastModified?.split('T')[0]}</p>
+                        <h4 className="font-medium text-gray-900">
+                          {pkg.name}
+                        </h4>
+                        <p className="text-sm text-gray-600">
+                          {pkg.lastModified?.split('T')[0]}
+                        </p>
                       </div>
                     </div>
                     <Badge className={getPackageTypeColor(pkg.type || '')}>

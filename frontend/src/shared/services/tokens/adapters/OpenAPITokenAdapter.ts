@@ -5,12 +5,12 @@
  */
 
 import type { TokenPort } from '../ports/TokenPort';
-import type { 
+import type {
   TokenRequest,
   TokenResponse,
   TokenInfo,
   ListTokensParams,
-  TokenParams
+  TokenParams,
 } from '@/shared/types/openapi-generated.types';
 import { openAPIClient } from '@/shared/api/openapi-client';
 
@@ -25,7 +25,7 @@ export class OpenAPITokenAdapter implements TokenPort {
     try {
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.listTokens(params);
-      
+
       // El resultado ya está en el formato correcto según el contrato OpenAPI
       return resultado;
     } catch (error) {
@@ -41,7 +41,7 @@ export class OpenAPITokenAdapter implements TokenPort {
     try {
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.createToken(body);
-      
+
       // El resultado ya está en el formato correcto según el contrato OpenAPI
       return resultado;
     } catch (error) {
@@ -57,11 +57,14 @@ export class OpenAPITokenAdapter implements TokenPort {
     try {
       // Llamar al cliente OpenAPI
       const resultado = await openAPIClient.getToken(params);
-      
+
       // El resultado ya está en el formato correcto según el contrato OpenAPI
       return resultado;
     } catch (error) {
-      console.error(`Error al obtener información del token ${params.tokenId}:`, error);
+      console.error(
+        `Error al obtener información del token ${params.tokenId}:`,
+        error
+      );
       throw new Error('Error al obtener información del token');
     }
   }
@@ -73,7 +76,7 @@ export class OpenAPITokenAdapter implements TokenPort {
     try {
       // Llamar al cliente OpenAPI
       await openAPIClient.deleteToken(params);
-      
+
       // No hay resultado que retornar para DELETE
     } catch (error) {
       console.error(`Error al eliminar token ${params.tokenId}:`, error);

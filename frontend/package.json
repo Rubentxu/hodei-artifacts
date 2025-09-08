@@ -11,8 +11,6 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "type-check": "tsc --noEmit",
-    "test": "vitest",
-    "test:coverage": "vitest --coverage",
     "preview": "vite preview",
     "prepare": "husky"
   },
@@ -50,11 +48,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",
-    "@playwright/test": "^1.55.0",
     "@tailwindcss/postcss": "^4.1.12",
-    "@testing-library/jest-dom": "^6.8.0",
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^24.3.0",
     "@types/prismjs": "^1.26.5",
     "@types/react": "^19.1.10",
@@ -72,18 +66,11 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.3.0",
     "husky": "^9.1.7",
-    "jest-axe": "^10.0.0",
-    "jsdom": "^26.1.0",
-    "lint-staged": "^16.1.5",
-    "msw": "^2.10.5",
-    "openapi-typescript": "^7.9.1",
     "postcss": "^8.5.6",
     "prettier": "^3.6.2",
-    "puppeteer": "^24.19.0",
     "tailwindcss": "^4.1.12",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.39.1",
-    "vite": "^7.1.2",
-    "vitest": "^3.2.4"
+    "vite": "^7.1.2"
   }
 }

@@ -11,9 +11,7 @@ import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Checkbox } from '@/components/ui/Checkbox';
-import { 
-  usePolicyService 
-} from '@/shared/hooks';
+import { usePolicyService } from '@/shared/hooks';
 import { Shield, Plus, Edit, Trash2, Eye, Download } from 'lucide-react';
 
 const Policies = () => {
@@ -22,7 +20,7 @@ const Policies = () => {
     name: '',
     description: '',
     policy: '',
-    isActive: true
+    isActive: true,
   });
 
   const policyService = usePolicyService();
@@ -34,22 +32,22 @@ const Policies = () => {
       name: 'Usuario Estándar',
       description: 'Permite acceso de lectura a repositorios públicos',
       isActive: true,
-      createdAt: '2024-01-15T10:30:00Z'
+      createdAt: '2024-01-15T10:30:00Z',
     },
     {
       id: '2',
       name: 'Desarrollador',
       description: 'Permite gestión completa de repositorios',
       isActive: true,
-      createdAt: '2024-01-14T15:45:00Z'
+      createdAt: '2024-01-14T15:45:00Z',
     },
     {
       id: '3',
       name: 'Administrador',
       description: 'Acceso completo al sistema',
       isActive: false,
-      createdAt: '2024-01-13T09:20:00Z'
-    }
+      createdAt: '2024-01-13T09:20:00Z',
+    },
   ]);
 
   const handleCreatePolicy = useCallback(async () => {
@@ -61,16 +59,16 @@ const Policies = () => {
     try {
       // Aquí iría la llamada al servicio
       console.log('Creando política:', newPolicy);
-      
+
       // Limpiar formulario
       setNewPolicy({
         name: '',
         description: '',
         policy: '',
-        isActive: true
+        isActive: true,
       });
       setShowCreateForm(false);
-      
+
       // Mostrar mensaje de éxito
       alert('Política creada exitosamente');
     } catch (error) {
@@ -79,17 +77,20 @@ const Policies = () => {
     }
   }, [newPolicy]);
 
-  const handleGenerateTemplate = useCallback((type: 'usuario' | 'repositorio' | 'admin') => {
-    const template = policyService.generarPlantillaPolitica(type);
-    setNewPolicy(prev => ({
-      ...prev,
-      policy: template
-    }));
-  }, [policyService]);
+  const handleGenerateTemplate = useCallback(
+    (type: 'usuario' | 'repositorio' | 'admin') => {
+      const template = policyService.generarPlantillaPolitica(type);
+      setNewPolicy(prev => ({
+        ...prev,
+        policy: template,
+      }));
+    },
+    [policyService]
+  );
 
   const getStatusColor = (isActive: boolean) => {
-    return isActive 
-      ? 'bg-green-100 text-green-800' 
+    return isActive
+      ? 'bg-green-100 text-green-800'
       : 'bg-gray-100 text-gray-800';
   };
 
@@ -115,7 +116,9 @@ const Policies = () => {
         <Card className="p-6">
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">Crear Nueva Política</h3>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Crear Nueva Política
+              </h3>
               <Button
                 variant="ghost"
                 size="sm"
@@ -134,7 +137,9 @@ const Policies = () => {
                   </label>
                   <Input
                     value={newPolicy.name}
-                    onChange={(e) => setNewPolicy(prev => ({ ...prev, name: e.target.value }))}
+                    onChange={e =>
+                      setNewPolicy(prev => ({ ...prev, name: e.target.value }))
+                    }
                     placeholder="Ej: Usuario Estándar"
                     className="w-full"
                   />
@@ -146,7 +151,12 @@ const Policies = () => {
                   </label>
                   <Input
                     value={newPolicy.description}
-                    onChange={(e) => setNewPolicy(prev => ({ ...prev, description: e.target.value }))}
+                    onChange={e =>
+                      setNewPolicy(prev => ({
+                        ...prev,
+                        description: e.target.value,
+                      }))
+                    }
                     placeholder="Describe el propósito de esta política"
                     className="w-full"
                   />
@@ -157,9 +167,14 @@ const Policies = () => {
                     id="isActive"
                     checked={newPolicy.isActive}
                     checked={newPolicy.isActive}
-                    onCheckedChange={(checked) => setNewPolicy(prev => ({ ...prev, isActive: checked }))}
+                    onCheckedChange={checked =>
+                      setNewPolicy(prev => ({ ...prev, isActive: checked }))
+                    }
                   />
-                  <label htmlFor="isActive" className="text-sm font-medium text-gray-700">
+                  <label
+                    htmlFor="isActive"
+                    className="text-sm font-medium text-gray-700"
+                  >
                     Activar política inmediatamente
                   </label>
                 </div>
@@ -203,7 +218,12 @@ const Policies = () => {
                   </label>
                   <Textarea
                     value={newPolicy.policy}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setNewPolicy(prev => ({ ...prev, policy: e.target.value }))}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                      setNewPolicy(prev => ({
+                        ...prev,
+                        policy: e.target.value,
+                      }))
+                    }
                     placeholder="Escribe tu política Cedar aquí..."
                     className="w-full h-64 font-mono text-sm"
                     rows={12}
@@ -235,8 +255,11 @@ const Policies = () => {
 
       {/* Lista de Políticas */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {policies.map((policy) => (
-          <Card key={policy.id} className="p-6 hover:shadow-lg transition-shadow">
+        {policies.map(policy => (
+          <Card
+            key={policy.id}
+            className="p-6 hover:shadow-lg transition-shadow"
+          >
             <div className="space-y-4">
               {/* Encabezado */}
               <div className="flex items-start justify-between">
@@ -245,7 +268,9 @@ const Policies = () => {
                     <Shield className="w-5 h-5 text-blue-600" />
                   </div>
                   <div>
-                    <h4 className="font-semibold text-gray-900">{policy.name}</h4>
+                    <h4 className="font-semibold text-gray-900">
+                      {policy.name}
+                    </h4>
                     <Badge className={getStatusColor(policy.isActive)}>
                       {getStatusText(policy.isActive)}
                     </Badge>
@@ -288,10 +313,13 @@ const Policies = () => {
             <Shield className="w-6 h-6 text-blue-600" />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Acerca de Cedar</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              Acerca de Cedar
+            </h3>
             <p className="text-sm text-gray-600 mb-4">
-              Cedar es un lenguaje de política desarrollado por AWS que permite definir reglas de autorización
-              de manera declarativa. Las políticas Cedar determinan quién puede hacer qué en qué recursos.
+              Cedar es un lenguaje de política desarrollado por AWS que permite
+              definir reglas de autorización de manera declarativa. Las
+              políticas Cedar determinan quién puede hacer qué en qué recursos.
             </p>
             <div className="flex gap-2">
               <Button size="sm" variant="outline">

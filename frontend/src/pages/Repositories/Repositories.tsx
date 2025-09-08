@@ -91,11 +91,7 @@ const Repositories = () => {
             </select>
           </div>
           <div>
-            <Button
-              onClick={clearFilters}
-              variant="outline"
-              className="w-full"
-            >
+            <Button onClick={clearFilters} variant="outline" className="w-full">
               Clear Filters
             </Button>
           </div>
@@ -175,14 +171,18 @@ const Repositories = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => showInfo('Info', 'View functionality coming soon!')}
+                      onClick={() =>
+                        showInfo('Info', 'View functionality coming soon!')
+                      }
                     >
                       View
                     </Button>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => showInfo('Info', 'Edit functionality coming soon!')}
+                      onClick={() =>
+                        showInfo('Info', 'Edit functionality coming soon!')
+                      }
                     >
                       Edit
                     </Button>
@@ -202,7 +202,7 @@ const Repositories = () => {
             No repositories found
           </h3>
           <p className="text-gray-600 mb-6">
-            {(filters.search || filters.type?.length)
+            {filters.search || filters.type?.length
               ? 'Try adjusting your search criteria or filters.'
               : 'Get started by creating your first repository.'}
           </p>
@@ -217,7 +217,9 @@ const Repositories = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <Card className="p-6 max-w-md w-full">
             <h3 className="text-lg font-semibold mb-4">Create Repository</h3>
-            <p className="text-gray-600 mb-4">Repository creation coming soon...</p>
+            <p className="text-gray-600 mb-4">
+              Repository creation coming soon...
+            </p>
             <div className="flex justify-end gap-2">
               <Button
                 variant="outline"

@@ -5,7 +5,11 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import type { Repository, RepositoryFilters, PaginatedResponse } from '@/shared/types';
+import type {
+  Repository,
+  RepositoryFilters,
+  PaginatedResponse,
+} from '@/shared/types';
 import { useRepositoryService } from './useRepositoryService';
 import { QUERY_KEYS } from '@/shared/constants';
 
@@ -53,7 +57,7 @@ export function useRepositoryFilters(initialFilters: RepositoryFilters) {
   // Por ahora, retornar un mock simple que mantenga compatibilidad
   // En el futuro, esto puede ser reemplazado por un estado más sofisticado
   const filters = initialFilters;
-  
+
   const updateFilter = <K extends keyof RepositoryFilters>(
     key: K,
     value: RepositoryFilters[K]
