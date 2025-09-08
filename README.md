@@ -5,27 +5,27 @@
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-openapi.yaml-blue)](docs/openapi/openapi.yaml)
 [![API Docs](https://img.shields.io/badge/docs-API%20Docs-blueviolet)](https://<org>.github.io/<repo>/)
 
-Repositorio de artefactos de nueva generación, nativo en Rust, orientado a alto rendimiento, seguridad de la cadena de suministro y escalabilidad. Inspirado en Nexus/Artifactory, diseñado como monolito modular evolutivo con Vertical Slice Architecture (VSA), Arquitectura Hexagonal y Event-Driven Architecture (EDA).
+Next‑generation artifact repository, Rust‑native, focused on high performance, software supply‑chain security, and scalability. Inspired by Nexus/Artifactory, designed as an evolutionary modular monolith using Vertical Slice Architecture (VSA), Hexagonal Architecture, and Event‑Driven Architecture (EDA).
 
-> Índice de documentación: [docs/README.md](docs/README.md). Documentación fuente: [docs/prd.md](docs/prd.md), [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md), [docs/domain.md](docs/domain.md), [docs/feature-style-guide.md](docs/feature-style-guide.md).
+> Documentation index: [docs/README.md](docs/README.md). Source docs: [docs/prd.md](docs/prd.md), [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md), [docs/domain.md](docs/domain.md), [docs/feature-style-guide.md](docs/feature-style-guide.md).
 
-## Características clave
+## Key features
 
-- Alto rendimiento (Tokio, Rust) y latencias objetivo p95/p99 definidas en PRD.
-- Almacenamiento de binarios en S3/MinIO y metadatos en MongoDB.
-- Búsqueda embebida (Tantivy) y análisis de dependencias (roadmap).
-- Seguridad by design: ABAC con Cedar, SBOM, firma y auditoría.
-- Contract-first: `docs/openapi/openapi.yaml` como fuente de verdad de APIs.
-- Observabilidad: métricas Prometheus, tracing (OpenTelemetry), logs estructurados.
+- High performance (Tokio, Rust) with PRD‑defined p95/p99 latency targets.
+- Binary storage on S3/MinIO and metadata in MongoDB.
+- Embedded search (Tantivy) and dependency analysis (roadmap).
+- Security by design: ABAC with Cedar, SBOM, signing, and auditing.
+- Contract‑first: `openapi.yaml` as the single source of truth for APIs.
+- Observability: Prometheus metrics, tracing (OpenTelemetry), structured logs.
 
-## Empezar con la documentación
+## Getting started with docs
 
-1. Lee el PRD: [docs/prd.md](docs/prd.md)
-2. Revisa el modelo de dominio: [docs/domain.md](docs/domain.md)
-3. Profundiza en arquitectura: [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md)
-4. Para implementar features: [docs/feature-style-guide.md](docs/feature-style-guide.md)
+1. Read the PRD: [docs/prd.md](docs/prd.md)
+2. Review the domain model: [docs/domain.md](docs/domain.md)
+3. Dive into architecture: [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md)
+4. To implement features: [docs/feature-style-guide.md](docs/feature-style-guide.md)
 
-## Vista de arquitectura (alto nivel)
+## High‑level architecture
 
 ```mermaid
 graph TB
@@ -33,23 +33,9 @@ graph TB
         CI[CI/CD]
         DEV[Developers]
         SEC[Security Tools]
-        WEB[Web Users]
     end
 
-    subgraph "Frontend (React)"
-        UI[React SPA]
-        subgraph "Features"
-            F1[Auth]
-            F2[Repositories]
-            F3[Artifacts]
-            F4[Search]
-            F5[Users]
-        end
-        STORE[State Management]
-        HOOKS[Custom Hooks]
-    end
-
-    subgraph "Hodei Artifacts Backend"
+    subgraph "Hodei Artifacts"
         API[API Gateway]
         subgraph "Slices (VSA)"
             S1[Artifact Ingest]
@@ -61,16 +47,10 @@ graph TB
         end
         KAFKA[Kafka]
         MONGO[MongoDB]
-        S3STORAGE[S3/MinIO]
+        S3[S3/MinIO]
         CACHE[Redis]
     end
 
-    WEB --> UI
-    UI --> F1 & F2 & F3 & F4 & F5
-    F1 & F2 & F3 & F4 & F5 --> HOOKS
-    HOOKS --> STORE
-    HOOKS --> API
-    
     CI & DEV & SEC --> API
     API --> S1 & S2 & S3 & S4 & S5 & S6
     S1 --> KAFKA
@@ -79,397 +59,255 @@ graph TB
     KAFKA --> S3
     KAFKA --> S4
     S1 & S2 & S3 & S4 & S5 & S6 --> MONGO
-    S1 & S2 --> S3STORAGE
+    S1 & S2 --> S3
     API --> CACHE
 ```
 
-### Arquitectura Backend
-- Organización por slices verticales con puertos/adaptadores (Hexagonal)
-- Comunicación asíncrona vía eventos (Kafka) entre slices
+- Vertical slices with ports/adapters (Hexagonal).
+- Asynchronous event communication (Kafka) across slices.
 
-### Arquitectura Frontend
-- **Component-Based Architecture** con Atomic Design (atoms, molecules, organisms)
-- **Feature-Based Organization** por dominio de negocio (auth, repositories, artifacts)
-- **State Management** híbrido: Zustand (global) + React Query (servidor)
-- **Custom Hooks** para lógica de negocio reutilizable
-
-## Estructura del repositorio (monorepo)
+## Repository structure (monorepo)
 
 ```
 crates/
-  shared/        # Tipos/errores/utilidades compartidas (DTOs, tipos comunes)
-  artifact/      # BC de artefactos (subida/descarga/metadatos/eventos)
-  repository/    # Puertos/adaptadores de acceso a datos (Mongo, contratos comunes)
-  supply-chain/  # (WIP) SBOM, attestations, verificación de cadena (SLSA, in‑toto)
-  search/        # BC de búsqueda e indexación (Tantivy)
-  security/      # (WIP) ABAC, firmas, cumplimiento y verificaciones
-  analytics/     # (WIP) analítica/seguridad
-  integration/   # Utilidades y escenarios de tests de integración multi-crate
-  distribution/  # (WIP) distribución/CDN
-  iam/           # (WIP) identidades y políticas ABAC
-  infra-mongo/   # Cliente/helpers MongoDB y utilidades de test
-src/             # binario principal y bootstrap (axum, wiring)
-frontend/        # aplicación React con arquitectura moderna
-  src/
-    app/         # configuración global (providers, router)
-    components/  # design system (atoms, molecules, organisms)
-    features/    # organización por dominio (auth, repositories, artifacts)
-    pages/       # route components
-    shared/      # hooks, stores, utils, types compartidos
-docs/            # PRD, arquitectura, guías, catálogo de eventos
-e2e/             # tests end-to-end con Playwright (APIs + UI)
-openapi.yaml     # contrato de APIs síncronas
+  shared/        # Shared types/errors/utilities (DTOs, common domain types)
+  artifact/      # Artifact BC (upload/download/metadata/events)
+  repository/    # Data access ports/adapters (Mongo, shared repository contracts)
+  supply-chain/  # (WIP) SBOM, attestations, chain verification (SLSA, in‑toto)
+  search/        # Search & indexing BC (Tantivy)
+  security/      # (WIP) ABAC, signing, compliance and verifications
+  analytics/     # (WIP) analytics/security
+  integration/   # Integration testing utilities and shared E2E scenarios
+  distribution/  # (WIP) distribution/CDN
+  iam/           # (WIP) identities & ABAC policies
+  infra-mongo/   # MongoDB client/helpers and testing utilities
+src/             # main binary and bootstrap (axum, wiring)
+docs/            # PRD, architecture, guides, event catalog
+e2e/             # end‑to‑end tests with Playwright (APIs)
+openapi.yaml     # synchronous API contract
 ```
 
-- Detalles por crate: ver los README en cada carpeta (`crates/*/README*.md`).
+- Per‑crate details: see the README in each folder (`crates/*/README*.md`).
 
 ## Crates
 
-- __shared__: Tipos, errores y utilidades compartidas para consistencia transversal. Ruta: `crates/shared/`.
-- __artifact__: Gestión de artefactos binarios: subida, descarga, metadatos, idempotencia y publicación de eventos. Ruta: `crates/artifact/`.
-- __repository__: Abstracciones y adaptadores de acceso a datos (MongoDB y contratos de repositorio). Ruta: `crates/repository/`.
-- __supply-chain__: (WIP) Cadena de suministro: SBOM, attestations, provenance y verificaciones (SLSA/in‑toto en roadmap). Ruta: `crates/supply-chain/`.
-- __search__: Búsqueda e indexación con Tantivy; APIs de consulta y gestión de índices; consumo de eventos de `artifact`. Ruta: `crates/search/`.
-- __security__: (WIP) Seguridad: ABAC con Cedar, validación de firmas (Cosign en roadmap), verificación de SBOM/attestations. Ruta: `crates/security/`.
-- __analytics__: (WIP) Analítica y seguridad avanzada. Ruta: `crates/analytics/`.
-- __integration__: Testing de integración y helpers E2E reutilizables entre crates. Ruta: `crates/integration/`.
-- __distribution__: (WIP) Distribución/CDN. Ruta: `crates/distribution/`.
-- __iam__: (WIP) Identidades, roles y políticas ABAC. Ruta: `crates/iam/`.
-- __infra-mongo__: Infraestructura MongoDB: cliente, helpers y utilidades de test (`test-util`). Ruta: `crates/infra-mongo/`.
+- __shared__: Shared types, errors and utilities for cross‑cutting consistency. Path: `crates/shared/`.
+- __artifact__: Binary artifact management: upload, download, metadata, idempotency and event publishing. Path: `crates/artifact/`.
+- __repository__: Data access abstractions and adapters (MongoDB and repository contracts). Path: `crates/repository/`.
+- __supply-chain__: (WIP) Software supply chain: SBOM, attestations, provenance and verification (SLSA/in‑toto on roadmap). Path: `crates/supply-chain/`.
+- __search__: Search and indexing with Tantivy; query APIs and index management; consumes `artifact` events. Path: `crates/search/`.
+- __security__: (WIP) Security: ABAC with Cedar, signature validation (Cosign on roadmap), SBOM/attestation verification. Path: `crates/security/`.
+- __analytics__: (WIP) Analytics and advanced security. Path: `crates/analytics/`.
+- __integration__: Integration testing and reusable E2E helpers across crates. Path: `crates/integration/`.
+- __distribution__: (WIP) Distribution/CDN. Path: `crates/distribution/`.
+- __iam__: (WIP) Identities, roles and ABAC policies. Path: `crates/iam/`.
+- __infra-mongo__: MongoDB infrastructure: client, helpers and testing utilities (`test-util`). Path: `crates/infra-mongo/`.
 
-## Requisitos
+## Requirements
 
-### Backend
-- Rust estable reciente
-- Docker + Docker Compose (para dependencias locales)
-- MongoDB, MinIO y Kafka (recomendado lanzar con Testcontainers en tests)
+- Recent stable Rust
+- Docker + Docker Compose (for local deps)
+- MongoDB, MinIO and Kafka (recommended via Testcontainers in tests)
 
-### Frontend
-- Node.js 18+ y npm
-- Browser moderno con soporte ES2022
+## Getting started (development)
 
-### Desarrollo
-- Git
-- Playwright (para tests E2E)
-- Opcional: Storybook para desarrollo de componentes
-
-## Puesta en marcha (desarrollo)
-
-### Backend (Rust)
-1. Clonar e instalar toolchain Rust y cargo
-2. Construir:
+1. Clone and install Rust toolchain.
+2. Build:
    ```bash
    cargo build
    ```
-3. Ejecutar tests (unit + integración):
+3. Run tests (unit + integration):
    ```bash
    cargo test
    ```
-4. Ejecutar binario (servicio HTTP):
+4. Run the binary (HTTP service):
    ```bash
    cargo run
    ```
 
-### Solución de problemas de Testcontainers en distribuciones Linux (Deepin, Ubuntu, etc.)
+### Troubleshooting Testcontainers on Linux (Deepin, Ubuntu, etc.)
 
-Si experimentas errores de `StartupTimeout` al ejecutar los tests de integración, es muy probable que se deba a la configuración de tu motor de contenedores, especialmente en distribuciones que han empezado a adoptar **Podman**.
+If you experience `StartupTimeout` errors when running integration tests, it is very likely due to your container engine setup, especially on distributions that have started to adopt **Podman**.
 
-#### Contexto: Docker vs. Podman
+#### Background: Docker vs. Podman
 
-Históricamente, Docker ha sido el estándar de facto. Sin embargo, por razones de seguridad y arquitectura (Podman no requiere un demonio o *daemon*), distribuciones más modernas están migrando o dando soporte prioritario a Podman. Este es el caso de:
+Historically, Docker has been the de facto standard. However, for security and architectural reasons (Podman does not require a daemon), more modern distributions are migrating to or giving priority support to Podman. This is the case for:
 
-- **Deepin (v23+):** Usa Podman como motor por defecto, lo que puede crear conflictos si Docker está instalado o si las herramientas esperan un socket de Docker por defecto.
-- **Derivados de RHEL (Fedora, CentOS):** Han adoptado Podman como su motor principal.
-- **Ubuntu/Debian:** Aunque no tienen un motor por defecto, Podman está disponible en sus repositorios oficiales y su popularidad está creciendo.
+- **Deepin (v23+):** Uses Podman as the default engine, which can create conflicts if Docker is installed or if tools expect a Docker socket by default.
+- **RHEL derivatives (Fedora, CentOS):** Have adopted Podman as their main engine.
+- **Ubuntu/Debian:** Although they do not have a default engine, Podman is available in their official repositories and its popularity is growing.
 
-`testcontainers-rs` busca por defecto el socket de Docker, y si no lo encuentra o hay un conflicto con un servicio de Podman, los tests pueden fallar con timeouts.
+`testcontainers-rs` looks for the Docker socket by default, and if it is not found or if there is a conflict with a Podman service, the tests may fail with timeouts.
 
-#### Solución: Configurar `testcontainers-rs` para usar Podman
+#### Solution: Configure `testcontainers-rs` to use Podman
 
-La solución más limpia y recomendada es configurar `testcontainers-rs` para que use Podman directamente.
+The cleanest and recommended solution is to configure `testcontainers-rs` to use Podman directly.
 
-1.  **Habilita el servicio de API de Podman:**
-    Este comando inicia un servicio que "escucha" peticiones de API, de forma similar a como lo hace el demonio de Docker.
+1.  **Enable the Podman API service:**
+    This command starts a service that listens for API requests, similar to how the Docker daemon does.
     ```bash
     podman system service --time=0 &
     ```
 
-2.  **Crea un fichero de configuración para `testcontainers-rs`:**
-    Crea el fichero `~/.testcontainers.properties` y añade el siguiente contenido. Esto le indica a la librería la ruta del socket de Podman y cómo gestionar el contenedor de limpieza (Ryuk):
+2.  **Create a configuration file for `testcontainers-rs`:**
+    Create the file `~/.testcontainers.properties` and add the following content to tell the library the path to the Podman socket and how to manage the cleanup container (Ryuk):
     ```properties
     docker.host=unix://${XDG_RUNTIME_DIR}/podman/podman.sock
     ryuk.container.privileged=true
     ```
 
-Con esta configuración, los tests deberían ejecutarse correctamente usando Podman como motor de contenedores, evitando los conflictos y timeouts.
+With this configuration, the tests should run correctly using Podman as the container engine, avoiding conflicts and timeouts.
 
-### Frontend (React)
-1. Navegar al directorio frontend:
-   ```bash
-   cd frontend
-   ```
-2. Instalar dependencias:
-   ```bash
-   npm install
-   ```
-3. Ejecutar en modo desarrollo:
-   ```bash
-   npm run dev
-   ```
-4. Ejecutar tests:
-   ```bash
-   npm test
-   ```
-5. Construir para producción:
-   ```bash
-   npm run build
-   ```
+- Integration tests use `testcontainers`; no local services required if you run tests.
+ 
+## How to run tests
 
-### Storybook (Design System)
-```bash
-cd frontend
-npm run storybook
-```
+### Backend (Rust)
 
-- Tests de integración backend usan `testcontainers`; no necesitas servicios locales si usas los tests
-- Frontend se conecta por defecto al backend en `http://localhost:8080`
+#### Unit Testing Strategy
 
-## Cómo ejecutar los tests
+To ensure fast feedback and agile development, we prioritize exhaustive unit tests for business logic (`use_case`) and API endpoints (`api`). These tests must mock all external dependencies (repositories, storage, event publishers) to ensure complete isolation and fast execution.
 
-Para acelerar la ejecución de los tests en Rust y optimizar el flujo de trabajo, se recomienda encarecidamente el uso del `Makefile` proporcionado en la raíz del proyecto. Este `Makefile` integra herramientas como `cargo-nextest` y `sccache` para minimizar las recompilaciones y paralelizar la ejecución de los tests.
+- **Location**: Unit tests are located alongside the code they test, in files with the `_test.rs` suffix (e.g., `use_case_test.rs`, `api_test.rs`).
+- **Mocks**: We use mocks for all interfaces (traits/ports) that interact with the infrastructure.
+- **Execution**: You can run unit tests for a specific crate as follows:
+  ```bash
+  cargo test -p <crate_name> --lib
+  ```
+  Or for a specific module:
+  ```bash
+  cargo test -p <crate_name> <module_test_name>
+  ```
 
-### 1. Configuración Inicial (Una sola vez)
+#### Integration Tests (Rust)
 
-Antes de usar el `Makefile`, realiza esta configuración inicial:
+Integration tests validate the interaction between components and with real infrastructure (Docker containers). They are slower but crucial for verifying the complete flow.
 
-*   **Instalar `cargo-nextest` y `sccache`:**
-    ```bash
-    make install-tools
-    ```
-    Este comando instalará `cargo-nextest` (un corredor de tests más rápido) y `sccache` (una caché de compilación).
+- **Location**: They are located in the `tests/` folder of each crate (e.g., `crates/artifact/tests/it_upload_artifact.rs`).
+- **Execution**: To run only integration tests (which require Docker/Podman), use:
+  ```bash
+  cargo test -p <crate_name> --features integration -- --ignored
+  ```
+  (Note: the `--ignored` flag is necessary because these tests are marked with `#[ignore]` so they don't run by default).
 
-*   **Configurar tu Shell para `sccache`:**
-    ```bash
-    make setup-env
-    ```
-    Este comando imprimirá instrucciones. Debes añadir la línea `export RUSTC_WRAPPER=$(which sccache)` a tu archivo de configuración de shell (ej. `~/.bashrc`, `~/.zshrc`, o `~/.profile`) y luego reiniciar tu terminal o ejecutar `source` el archivo. Esto asegura que `sccache` se use automáticamente para todas las compilaciones de Rust, incluyendo los tests.
+#### General Test Execution
 
-*   **Opcional: Configurar Enlazador más Rápido (Solo Linux):**
-    El comando `make setup-env` también proporciona instrucciones para configurar `lld` como un enlazador más rápido en tu archivo `.cargo/config.toml`. Esto es opcional pero recomendado para proyectos grandes en Linux.
-
-### 2. Ejecución de Tests con Makefile
-
-Puedes ejecutar tests para todo el workspace o para un crate específico.
-
-*   **Ejecutar Tests Unitarios (para todo el workspace o el directorio actual):**
-    ```bash
-    make test-unit
-    ```
-
-*   **Ejecutar Tests Unitarios para un Crate Específico:**
-    ```bash
-    make test-unit CRATE=artifact
-    # Reemplaza 'artifact' con el nombre de tu crate (ej. 'iam', 'repository')
-    ```
-
-*   **Ejecutar Tests de Integración (para todo el workspace o el directorio actual):**
-    ```bash
-    make test-integration
-    ```
-    *   **Nota:** Docker debe estar ejecutándose para los tests de integración.
-
-*   **Ejecutar Tests de Integración para un Crate Específico:**
-    ```bash
-    make test-integration CRATE=artifact
-    # Reemplaza 'artifact' con el nombre de tu crate
-    ```
-
-*   **Ejecutar Todos los Tests (Unitarios y de Integración) para todo el workspace:**
-    ```bash
-    make test-all
-    ```
-
-*   **Ejecutar Todos los Tests (Unitarios y de Integración) para un Crate Específico:**
-    ```bash
-    make test-all CRATE=artifact
-    ```
-
-### 3. Personalizar el Nivel de Logging
-
-Puedes controlar la verbosidad de la salida de los tests usando la variable `RUST_LOG_LEVEL`:
-
-*   **Ejecutar tests con logs de depuración:**
-    ```bash
-    make test-unit RUST_LOG_LEVEL=debug
-    make test-integration CRATE=artifact RUST_LOG_LEVEL=trace
-    ```
-    Los niveles comunes incluyen `error`, `warn`, `info`, `debug`, `trace`.
-
-### 4. Limpiar Artefactos de Compilación
-
-Para realizar una limpieza completa y eliminar todos los artefactos compilados:
-
-```bash
-make clean
-```
-
-### 5. Ayuda
-
-Para ver un resumen de todos los comandos y variables disponibles:
-
-```bash
-make help
-```
-
-### 6. Ejecución de Tests con `cargo test` (Alternativa)
-
-Aunque se recomienda el `Makefile` para una ejecución más rápida, aquí se detallan los comandos estándar de `cargo test` para referencia:
-
-*   **Todos los tests (unitarios + integración):**
-    ```bash
-    cargo test
-    ```
-*   **Ver salida/logs del test:**
-    ```bash
-    RUST_LOG=info cargo test -- --nocapture
-    ```
-*   **Ejecutar por crate:**
-    ```bash
-    cargo test -p <nombre_crate>
-    ```
-*   **Solo unit tests (lib/bin) en todo el workspace:**
-    ```bash
-    cargo test --lib --bins
-    ```
-*   **Solo tests de integración (carpeta `tests/`):**
+- __All tests (unit + integration)__:
+  ```bash
+  cargo test
+  ```
+- __Show test output/logs__:
+  ```bash
+  RUST_LOG=info cargo test -- --nocapture
+  ```
+- __Run per crate__:
+  ```bash
+  cargo test -p <crate_name>
+  ```
+- __Unit tests only (lib/bin) across workspace__:
+  ```bash
+  cargo test --lib --bins
+  ```
+- __Integration tests only (folder `tests/`)__::
     ```bash
     cargo test --tests
     ```
-*   **Solo doc tests:**
+  - Doc tests only:
     ```bash
     cargo test --doc
     ```
-*   **Filtrar por nombre de test:**
+  - Filter by test name:
     ```bash
-    cargo test <patron>
+    cargo test <pattern>
     ```
-*   **Solo un fichero de integración concreto (dentro de un crate):**
+  - A specific integration test file (inside a crate):
     ```bash
-    cargo test -p <nombre_crate> --test <fichero_sin_.rs>
+    cargo test -p <crate_name> --test <file_without_.rs>
     ```
+  - (Optional) Using nextest:
+    ```bash
+    cargo nextest run
+    ```
+    - Equivalents: `cargo nextest run --tests`, `--lib`, `-p <crate>`
 
-### Frontend (React)
-- __Tests unitarios y de integración__:
-  ```bash
-  cd frontend
-  npm test
-  ```
-- __Tests con coverage__:
-  ```bash
-  npm run test:coverage
-  ```
-- __Tests de componentes con Storybook__:
-  ```bash
-  npm run test-storybook
-  ```
-
-### End-to-End (Playwright)
-- __Tests de API__ en `e2e/api/`:
+- __End-to-End (Playwright)__ in `e2e/`:
   ```bash
   cd e2e
   npm ci
   npx playwright install --with-deps
-  npx playwright test api/
-  ```
-- __Tests de UI__ en `e2e/ui/`:
-  ```bash
-  npx playwright test ui/
-  ```
-- __Todos los tests E2E__:
-  ```bash
   npx playwright test
   ```
-  - Define `BASE_URL` si tu servicio HTTP no usa el valor por defecto del config
-  - Define `FRONTEND_URL` para tests de UI (por defecto: `http://localhost:5173`)
+  - Set `BASE_URL` if your HTTP service doesn't use the default from config.
 
 ## APIs
 
-- Contrato principal: `docs/openapi/openapi.yaml`.
-- Handlers en `src/infrastructure/api.rs` y slices en `crates/*/features`.
-- Especificación modular: `docs/openapi/openapi.yaml`.
-- Documentación HTML (GitHub Pages): https://<org>.github.io/<repo>/
+- Primary contract: `docs/openapi/openapi.yaml`.
+- Handlers in `src/infrastructure/api.rs` and slices in `crates/*/features`.
+ - Modular spec: `docs/openapi/openapi.yaml`.
+ - HTML documentation (GitHub Pages): https://<org>.github.io/<repo>/
 
-### Enlaces rápidos (endpoints principales)
+### Quick links (key endpoints)
 
-- Repositorios
-  - `GET /v1/repositories` — Listar repositorios
-  - `POST /v1/repositories` — Crear repositorio
-  - `GET /v1/repositories/{id}` — Obtener repositorio
-  - `PUT /v1/repositories/{id}` — Actualizar repositorio
-  - `DELETE /v1/repositories/{id}` — Eliminar repositorio
-- Artefactos
-  - `POST /v1/artifacts` — Subir artefacto (multipart)
-  - `GET /v1/artifacts/{id}` — Descargar artefacto o URL presignada (`?presigned=true`)
-- Búsqueda
-  - `GET /v1/search` — Búsqueda básica (`q`, `limit`, `offset`)
-- Ecosistemas
+- Repositories
+  - `GET /v1/repositories` — List repositories
+  - `POST /v1/repositories` — Create repository
+  - `GET /v1/repositories/{id}` — Get repository
+  - `PUT /v1/repositories/{id}` — Update repository
+  - `DELETE /v1/repositories/{id}` — Delete repository
+- Artifacts
+  - `POST /v1/artifacts` — Upload artifact (multipart)
+  - `GET /v1/artifacts/{id}` — Download artifact or presigned URL (`?presigned=true`)
+- Search
+  - `GET /v1/search` — Basic search (`q`, `limit`, `offset`)
+- Ecosystems
   - Maven
-    - `GET /v1/maven/{groupId}/{artifactId}/{version}/{artifactFile}` — Descargar JAR/POM
+    - `GET /v1/maven/{groupId}/{artifactId}/{version}/{artifactFile}` — Download JAR/POM
     - `GET /v1/maven/metadata?groupId=..&artifactId=..` — maven-metadata.xml
   - npm
-    - `GET /v1/npm/{package}` — Metadata paquete
-    - `GET /v1/npm/{package}/-/{tarball}` — Descargar tarball
+    - `GET /v1/npm/{package}` — Package metadata
+    - `GET /v1/npm/{package}/-/{tarball}` — Download tarball
   - PyPI
-    - `GET /v1/pypi/{package}/json` — Metadata paquete
-    - `GET /v1/pypi/{package}/{version}/json` — Metadata versión
-    - `GET /v1/pypi/{package}/{version}/download?file=...` — Descargar distribución
+    - `GET /v1/pypi/{package}/json` — Package metadata
+    - `GET /v1/pypi/{package}/{version}/json` — Version metadata
+    - `GET /v1/pypi/{package}/{version}/download?file=...` — Download distribution
 
-## Seguridad
+## Security
 
-- ABAC con Cedar (políticas y PEP en API Gateway).
-- SBOM, firma con Cosign (roadmap), `cargo-audit` en CI.
+- ABAC with Cedar (policies and PEP at API Gateway).
+- SBOM, signing with Cosign (roadmap), `cargo-audit` in CI.
 
-## Observabilidad
+## Observability
 
-- Endpoint `/metrics` (Prometheus).
-- Trazas y logs con `tracing` + OpenTelemetry.
+- `/metrics` endpoint (Prometheus).
+- Traces and logs with `tracing` + OpenTelemetry.
 
-## Contribución
+## Contributing
 
-- Convenciones y estilo: `docs/feature-style-guide.md`, `docs/commits.md`, `docs/rust-best-practices.md`.
-- Pull Requests: seguir PRD `docs/prd.md` y tareas `docs/implementation-tasks.md`.
+- Conventions and style: `docs/feature-style-guide.md`, `docs/commits.md`, `docs/rust-best-practices.md`.
+- Pull Requests: follow PRD `docs/prd.md` and tasks `docs/implementation-tasks.md`.
 
-## Roadmap (extracto)
+## Roadmap (excerpt)
 
-- Fase 1: Ingesta/Recuperación, formatos Maven/npm, auth básica.
-- Fase 2: Seguridad y análisis de dependencias, dashboard, eventos.
-- Fase 3: SSO/Federación, despliegue cloud-native avanzado, más formatos.
+- Phase 1: Ingest/Retrieve, Maven/npm formats, basic auth.
+- Phase 2: Security & dependency analysis, dashboard, events.
+- Phase 3: SSO/Federation, advanced cloud‑native deploy, more formats.
 
-Ver detalles en `docs/plan.md` y `docs/epicas.md`.
+See `docs/plan.md` and `docs/epicas.md` for details.
 
-## Licencia
+## License
 
-MIT. Ver archivo `LICENSE` en la raíz del repositorio.
+MIT. See the `LICENSE` file at the repository root.
 
-## Recursos
+## Resources
 
-### Documentación General
-- Índice de documentación: [docs/README.md](docs/README.md)
-- PRD: [docs/prd.md](docs/prd.md) — Requisitos de producto y objetivos
-- Arquitectura: [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md) — Especificaciones técnicas completas
-- Dominio: [docs/domain.md](docs/domain.md) — Modelo de dominio y entidades
-- Épicas: [docs/epicas.md](docs/epicas.md) — Roadmap y features
-- Catálogo de eventos: [docs/evento-catalog.md](docs/evento-catalog.md) — 120+ eventos y contratos
+- Documentation index: [docs/README.md](docs/README.md)
+- PRD: [docs/prd.md](docs/prd.md) — Product requirements and objectives
+- Architecture: [docs/arquitectura-sistema.md](docs/arquitectura-sistema.md) — Technical specifications
+- Domain: [docs/domain.md](docs/domain.md) — Domain model and entities
+- Epics: [docs/epicas.md](docs/epicas.md) — Roadmap and features
+- Event catalog: [docs/evento-catalog.md](docs/evento-catalog.md) — 120+ events and contracts
+- Feature implementation guide: [docs/feature-style-guide.md](docs/feature-style-guide.md) — VSA + Hexagonal patterns
+- Testing: [docs/testing-organization.md](docs/testing-organization.md) — Strategy & org; [docs/test-containers.md](docs/test-containers.md) — Testcontainers usage
 
-### Documentación Backend
-- Guía de implementación de features: [docs/feature-style-guide.md](docs/feature-style-guide.md) — Patrones VSA + Hexagonal
-- Testing: [docs/testing-organization.md](docs/testing-organization.md) — Estrategia y organización; [docs/test-containers.md](docs/test-containers.md) — Uso de Testcontainers
-
-### Documentación Frontend
-- Arquitectura Frontend: [docs/frontend/architecture.md](docs/frontend/architecture.md) — Patrones React modernos
-- Estructura del Proyecto: [docs/frontend/project-structure.md](docs/frontend/project-structure.md) — Organización por features
-- Biblioteca de Componentes: [docs/frontend/component-library.md](docs/frontend/component-library.md) — Design System
-- Integración con APIs: [docs/frontend/api-integration.md](docs/frontend/api-integration.md) — React Query + TypeScript
-
-CI relevante:
+Relevant CI:
 - OpenAPI Drift check: .github/workflows/openapi-drift.yml
