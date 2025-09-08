@@ -14,13 +14,13 @@ use bytes::Bytes;
 use serde_json::from_str;
 use sha2::{Sha256, Digest};
 
-use super::{
+use crate::features::upload_artifact::{
     dto::{UploadArtifactCommand, UploadArtifactMetadata, UploadArtifactResponse},
-    use_case::UploadArtifactUseCase,
     error::UploadArtifactError,
     di::UploadArtifactDIContainer,
 };
 use shared::enums::HashAlgorithm;
+use crate::features::upload_artifact::use_case::UploadArtifactUseCase;
 
 pub struct UploadArtifactEndpoint {
     use_case: Arc<UploadArtifactUseCase>,
@@ -114,7 +114,9 @@ impl UploadArtifactEndpoint {
                         UploadArtifactError::RepositoryError(_) => StatusCode::INTERNAL_SERVER_ERROR,
                         UploadArtifactError::StorageError(_) => StatusCode::INTERNAL_SERVER_ERROR,
                         UploadArtifactError::EventError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                        UploadArtifactError::EventPublishError(_) => StatusCode::INTERNAL_SERVER_ERROR,
                         UploadArtifactError::AlreadyExistsError(_) => StatusCode::CONFLICT,
+                        UploadArtifactError::BadRequest(_) => StatusCode::BAD_REQUEST,
                     };
                     (status_code, e.to_string()).into_response()
                 }

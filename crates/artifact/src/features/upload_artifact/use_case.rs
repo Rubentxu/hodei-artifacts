@@ -3,16 +3,16 @@ use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use std::path::Path;
+use tokio::fs;
 
 use crate::domain::{
-    events::{ArtifactEvent, PackageVersionPublished},
     package_version::{ArtifactStatus, PackageMetadata, PackageVersion},
     physical_artifact::PhysicalArtifact,
 };
 use crate::features::upload_artifact::{
     dto::{UploadArtifactCommand, UploadArtifactResponse},
     error::UploadArtifactError,
-    ports::{ArtifactStorage, EventPublisher, PortResult, UploadArtifactRepository},
+    ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository},
 };
 use shared::{
     enums::{ArtifactRole, ArtifactType, HashAlgorithm},
@@ -20,29 +20,24 @@ use shared::{
     lifecycle::Lifecycle,
     models::{ArtifactReference, ContentHash},
 };
-use futures::stream::Stream;
-use shared::models::{PackageCoordinates, ArtifactReference, ContentHash, PackageVersion};
-use crate::domain::events::ArtifactEvent;
-use crate::domain::events::ArtifactEvent::*;
-use crate::domain::error::DomainError;
-use uuid::Uuid;
+use crate::domain::events::{ArtifactEvent, PackageVersionPublished};
 
 pub struct UploadArtifactUseCase {
-    repository: Arc<dyn UploadArtifactRepository>,
+    repository: Arc<dyn ArtifactRepository>,
     storage: Arc<dyn ArtifactStorage>,
-    publisher: Arc<dyn EventPublisher>,
+    event_publisher: Arc<dyn EventPublisher>,
 }
 
 impl UploadArtifactUseCase {
     pub fn new(
-        repository: Arc<dyn UploadArtifactRepository>,
+        repository: Arc<dyn ArtifactRepository>,
         storage: Arc<dyn ArtifactStorage>,
-        publisher: Arc<dyn EventPublisher>,
+        event_publisher: Arc<dyn EventPublisher>,
     ) -> Self {
         Self {
             repository,
             storage,
-            publisher,
+            event_publisher,
         }
     }
 
@@ -161,23 +156,38 @@ impl UploadArtifactUseCase {
             publisher_hrn: UserId::from_hrn(package_version.lifecycle.created_by),
             at: OffsetDateTime::now_utc(),
         });
-        self.publisher.publish(&event).await.map_err(|e| {
+        self.event_publisher.publish(&event).await.map_err(|e| {
             tracing::error!("Event publish error: {:?}", e);
             e
         })?;
 
         // 7. Return response
-        Ok(UploadArtifactResponse { hrn: hrn.to_string() })
+        Ok(UploadArtifactResponse { hrn: hrn.to_string(), url: None })
     }
 
     pub async fn execute_from_temp_file(
         &self,
         command: UploadArtifactCommand,
         temp_file_path: &Path,
-        computed_sha256_hex: &str,
+        precomputed_checksum: Option<String>,
     ) -> PortResult<UploadArtifactResponse> {
         tracing::info!("Executing use case from temp file");
-        let content_hash_str = computed_sha256_hex.to_string();
+
+        let content_hash_str = match precomputed_checksum {
+            Some(checksum) => {
+                tracing::debug!("Using precomputed checksum: {}", checksum);
+                checksum
+            }
+            None => {
+                tracing::debug!("Calculating checksum from temp file");
+                let file_content = fs::read(temp_file_path).await.map_err(|e| {
+                    UploadArtifactError::StorageError(format!("Failed to read temp file: {}", e))
+                })?;
+                let mut hasher = Sha256::new();
+                hasher.update(&file_content);
+                hex::encode(hasher.finalize())
+            }
+        };
         tracing::debug!("Content hash: {}", content_hash_str);
 
         // 1. Check for existing physical artifact
@@ -282,150 +292,11 @@ impl UploadArtifactUseCase {
             publisher_hrn: UserId::from_hrn(package_version.lifecycle.created_by),
             at: OffsetDateTime::now_utc(),
         });
-        self.publisher.publish(&event).await.map_err(|e| {
+        self.event_publisher.publish(&event).await.map_err(|e| {
             tracing::error!("Event publish error: {:?}", e);
-            e
+            UploadArtifactError::EventPublishError(e.to_string())
         })?;
 
-        Ok(UploadArtifactResponse { hrn: hrn.to_string() })
+        Ok(UploadArtifactResponse { hrn: hrn.to_string(), url: None })
     }
-}
-
-// Implementing resumable upload functionality
-impl UploadArtifactUseCase {
-    pub async fn execute_from_stream(&self, package_coords: PackageCoordinates, stream: impl Stream<Item = Result<Bytes, anyhow::Error>> + Send + Sync + 'static) -> Result<ArtifactUploaded, DomainError> {
-        // Generate upload ID
-        let upload_id = Uuid::new_v4().to_string();
-        
-        // Track progress
-        let mut total_bytes = 0;
-        let mut chunk_number = 0;
-        let mut progress_reported = 0;
-        
-        // Process stream of chunks
-        let mut stream = stream.chunks(10); // Process in chunks of 10 items
-        
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| DomainError::StorageError(e.to_string()))?;
-            
-            // Increment chunk counter
-            chunk_number += 1;
-            
-            // Save chunk
-            self.storage.save_chunk(&upload_id, chunk_number, chunk).await?;
-            
-            // Update total bytes
-            total_bytes += chunk.len() as u64;
-            
-            // Calculate progress percentage
-            let progress = (total_bytes * 100) / package_coords.size;
-            
-            // Report progress every 5% or when complete
-            if progress - progress_reported >= 5 || progress == 100 {
-                progress_reported = progress;
-                
-                // Publish progress event
-                self.publisher.publish(&ArtifactEvent::UploadProgressUpdated {
-                    upload_id: upload_id.clone(),
-                    progress,
-                    bytes_uploaded: total_bytes,
-                    total_bytes: package_coords.size,
-                }).await?;
-            }
-        }
-        
-        // Assemble chunks into final artifact
-        let final_path = self.storage.assemble_to_path(&upload_id, chunk_number).await?;
-        
-        // Create artifact reference
-        let artifact_ref = ArtifactReference {
-            artifact_hrn: format!("hrn:artifact:{}", upload_id),
-            artifact_type: "generic".to_string(),
-            role: "primary".to_string(),
-            package_coordinates: package_coords.clone(),
-            path: final_path.to_str().unwrap().to_string(),
-        };
-        
-        // Create uploaded event
-        let event = ArtifactEvent::ArtifactUploaded {
-            artifact: artifact_ref.clone(),
-        };
-        
-        // Publish event
-        self.publisher.publish(&event).await?;
-        
-        Ok(ArtifactUploaded {
-            artifact: artifact_ref,
-            upload_id,
-        })
-    }
-}
-        let mut total_bytes = 0;
-        let mut chunk_number = 0;
-        let mut progress_reported = 0;
-        
-        // Process stream of chunks
-        let mut stream = stream.chunks(10); // Process in chunks of 10 items
-        
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| DomainError::StorageError(e.to_string()))?;
-            
-            // Increment chunk counter
-            chunk_number += 1;
-            
-            // Save chunk
-            self.storage.save_chunk(&upload_id, chunk_number, chunk).await?;
-            
-            // Update total bytes
-            total_bytes += chunk.len() as u64;
-            
-            // Calculate progress percentage
-            let progress = (total_bytes * 100) / package_coords.size;
-            
-            // Report progress every 5% or when complete
-            if progress - progress_reported >= 5 || progress == 100 {
-                progress_reported = progress;
-                
-                // Publish progress event
-                self.event_publisher.publish(&ArtifactEvent::UploadProgressUpdated {
-                    upload_id: upload_id.clone(),
-                    progress,
-                    bytes_uploaded: total_bytes,
-                    total_bytes: package_coords.size,
-                }).await?;
-            }
-        }
-        
-        // Assemble chunks into final artifact
-        let final_path = self.storage.assemble_to_path(&upload_id, chunk_number).await?;
-        
-        // Create artifact reference
-        let artifact_ref = ArtifactReference {
-            artifact_hrn: format!("hrn:artifact:{}", upload_id),
-            artifact_type: "generic".to_string(),
-            role: "primary".to_string(),
-            package_coordinates: package_coords.clone(),
-            path: final_path.to_str().unwrap().to_string(),
-        };
-        
-        // Create uploaded event
-        let event = ArtifactEvent::ArtifactUploaded {
-            artifact: artifact_ref.clone(),
-        };
-        
-        // Publish event
-        self.event_publisher.publish(&event).await?;
-        
-        Ok(ArtifactUploaded {
-            artifact: artifact_ref,
-            upload_id,
-        })
-    }
-}
-
-// Defining ArtifactUploaded struct
-#[derive(Debug, Clone)]
-pub struct ArtifactUploaded {
-    pub artifact: ArtifactReference,
-    pub upload_id: String,
 }

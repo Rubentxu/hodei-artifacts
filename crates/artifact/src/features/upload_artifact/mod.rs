@@ -9,8 +9,11 @@ pub mod use_case_chunks;
 
 #[cfg(test)]
 pub mod test_adapter;
+#[cfg(test)]
 mod use_case_test;
+#[cfg(test)]
 mod api_test;
+#[cfg(test)]
 mod use_case_chunks_test;
 
 // Expose only the public parts of the feature.

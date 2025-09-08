@@ -7,6 +7,7 @@ use aws_sdk_s3::{
     operation::put_object::PutObjectError,
     primitives::ByteStream,
 };
+use sha2::{Sha256, Digest};
 use lapin::{
     options::{BasicPublishOptions, ExchangeDeclareOptions},
     types::FieldTable,
@@ -21,7 +22,7 @@ use mongodb::{
 use serde_json::to_string;
 use std::path::{Path, PathBuf};
 use std::io::ErrorKind;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
 
 use crate::domain::{
     events::ArtifactEvent,
@@ -29,7 +30,7 @@ use crate::domain::{
     physical_artifact::PhysicalArtifact,
 };
 use super::error::UploadArtifactError;
-use super::ports::{ArtifactStorage, EventPublisher, PortResult, UploadArtifactRepository};
+use super::ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository, ChunkedUploadStorage};
 
 // --- ArtifactStorage: S3 ---
 pub struct S3ArtifactStorage {
@@ -77,7 +78,7 @@ impl ArtifactStorage for S3ArtifactStorage {
     }
 }
 
-// --- UploadArtifactRepository: MongoDB ---
+// --- ArtifactRepository: MongoDB ---
 pub struct MongoDbRepository {
     db: Database,
 }
@@ -93,7 +94,7 @@ impl MongoDbRepository {
 }
 
 #[async_trait]
-impl UploadArtifactRepository for MongoDbRepository {
+impl ArtifactRepository for MongoDbRepository {
     async fn save_package_version(&self, package_version: &PackageVersion) -> PortResult<()> {
         let collection = self.db.collection("package_versions");
         let doc = mongodb::bson::to_document(package_version).map_err(|e| UploadArtifactError::RepositoryError(e.to_string()))?;
@@ -212,3 +213,73 @@ impl ArtifactStorage for LocalFsArtifactStorage {
     }
 }
 
+// --- ChunkedUploadStorage: Local filesystem ---
+pub struct LocalFsChunkedUploadStorage {
+    temp_dir: PathBuf,
+}
+
+impl LocalFsChunkedUploadStorage {
+    pub fn new(temp_dir: PathBuf) -> Self {
+        Self { temp_dir }
+    }
+
+    fn get_upload_dir(&self, upload_id: &str) -> PathBuf {
+        self.temp_dir.join(upload_id)
+    }
+}
+
+#[async_trait]
+impl ChunkedUploadStorage for LocalFsChunkedUploadStorage {
+    async fn save_chunk(&self, upload_id: &str, chunk_number: usize, data: bytes::Bytes) -> Result<(), UploadArtifactError> {
+        let upload_dir = self.get_upload_dir(upload_id);
+        tokio::fs::create_dir_all(&upload_dir).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to create chunk directory: {}", e)))?;
+
+        let chunk_path = upload_dir.join(format!("{}", chunk_number));
+        let mut file = tokio::fs::File::create(&chunk_path).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to create chunk file: {}", e)))?;
+        file.write_all(&data).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to write to chunk file: {}", e)))?;
+
+        Ok(())
+    }
+
+    async fn get_received_chunks_count(&self, upload_id: &str) -> Result<usize, UploadArtifactError> {
+        let upload_dir = self.get_upload_dir(upload_id);
+        if !upload_dir.exists() {
+            return Ok(0);
+        }
+        let mut read_dir = tokio::fs::read_dir(upload_dir).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to read chunk directory: {}", e)))?;
+        let mut count = 0;
+        while let Some(_) = read_dir.next_entry().await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to iterate chunk directory: {}", e)))? {
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    async fn assemble_chunks(&self, upload_id: &str, total_chunks: usize, file_name: &str) -> Result<(PathBuf, String), UploadArtifactError> {
+        let upload_dir = self.get_upload_dir(upload_id);
+        let final_path = self.temp_dir.join(file_name);
+        let mut final_file = tokio::fs::File::create(&final_path).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to create assembled file: {}", e)))?;
+        let mut hasher = sha2::Sha256::new();
+
+        for i in 1..=total_chunks {
+            let chunk_path = upload_dir.join(format!("{}", i));
+            let chunk_data = tokio::fs::read(&chunk_path).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to read chunk file {}: {}", i, e)))?;
+
+            // Update hash
+            hasher.update(&chunk_data);
+
+            // Write to final file
+            final_file.write_all(&chunk_data).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to write chunk {}: {}", i, e)))?;
+        }
+
+        let hash = hex::encode(hasher.finalize());
+        Ok((final_path, hash))
+    }
+
+    async fn cleanup(&self, upload_id: &str) -> Result<(), UploadArtifactError> {
+        let upload_dir = self.get_upload_dir(upload_id);
+        if upload_dir.exists() {
+            tokio::fs::remove_dir_all(upload_dir).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to clean up chunk directory: {}", e)))?;
+        }
+        Ok(())
+    }
+}

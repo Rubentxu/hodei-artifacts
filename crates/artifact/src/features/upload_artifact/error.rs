@@ -11,6 +11,12 @@ pub enum UploadArtifactError {
     #[error("Event error: {0}")]
     EventError(String),
 
+    #[error("Event publish error: {0}")]
+    EventPublishError(String),
+
     #[error("Artifact already exists: {0}")]
     AlreadyExistsError(String),
+
+    #[error("Bad request: {0}")]
+    BadRequest(String),
 }

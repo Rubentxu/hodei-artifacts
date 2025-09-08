@@ -14,7 +14,7 @@ mod tests {
         test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher},
         error::UploadArtifactError,
     };
-    use crate::features::upload_artifact::ports::UploadArtifactRepository;
+    use crate::features::upload_artifact::ports::ArtifactRepository;
     use shared::{
         assert_log_contains,
         enums::HashAlgorithm,
@@ -303,8 +303,13 @@ mod tests {
         let content = Bytes::from_static(b"bleh!!");
         // Act
         let result = use_case.execute(command, content).await;
-        // Assert: success despite event error
-        assert!(result.is_ok());
-        assert_log_contains!(tracing::Level::ERROR, "EventError");
+        // Assert: failure due to event error
+        assert!(result.is_err());
+        if let Err(e) = result {
+            match e {
+                UploadArtifactError::EventError(_) => {}, // Expected
+                _ => panic!("Expected EventError, got {:?}", e)
+            }
+        }
     }
 }

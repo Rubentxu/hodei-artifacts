@@ -1,29 +1,33 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use shared::models::PackageCoordinates;
 use shared::enums::HashAlgorithm;
 
-/// Command to upload an artifact.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct UploadArtifactMetadata {
+    pub coordinates: PackageCoordinates,
+    pub file_name: String,
+    pub checksum: Option<String>,
+    pub checksum_algorithm: Option<HashAlgorithm>,
+}
+
+#[derive(Debug, Clone)]
 pub struct UploadArtifactCommand {
     pub coordinates: PackageCoordinates,
     pub file_name: String,
     pub content_length: u64,
 }
 
-/// Minimal metadata received in the multipart form (without content_length).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UploadArtifactMetadata {
-    pub coordinates: PackageCoordinates,
-    pub file_name: String,
-    /// Optional checksum hex string provided by client for integrity validation.
-    pub checksum: Option<String>,
-    /// Optional algorithm, default assumed Sha256 if checksum is provided without algorithm.
-    pub checksum_algorithm: Option<HashAlgorithm>,
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UploadArtifactResponse {
+    pub hrn: String,
+    pub url: Option<String>,
 }
 
-/// Response after a successful upload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UploadArtifactResponse {
-    /// The unique Hodei Resource Name for the new package version.
-    pub hrn: String,
+#[derive(Debug, Clone)]
+pub struct UploadArtifactChunkCommand {
+    pub upload_id: String,
+    pub chunk_number: usize,
+    pub total_chunks: usize,
+    pub file_name: String,
+    pub coordinates: Option<PackageCoordinates>, // Coordinates might be sent with the first chunk or separately
 }

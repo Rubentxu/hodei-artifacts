@@ -8,7 +8,8 @@ use crate::domain::{
     physical_artifact::PhysicalArtifact,
     events::ArtifactEvent,
 };
-use super::ports::{UploadArtifactRepository, ArtifactStorage, EventPublisher, PortResult};
+use super::ports::{ArtifactRepository, ArtifactStorage, EventPublisher, PortResult};
+use std::path::Path;
 use super::error::UploadArtifactError;
 
 pub struct MockArtifactRepository {
@@ -38,7 +39,7 @@ impl MockArtifactRepository {
 }
 
 #[async_trait]
-impl UploadArtifactRepository for MockArtifactRepository {
+impl ArtifactRepository for MockArtifactRepository {
     async fn save_package_version(&self, package_version: &PackageVersion) -> PortResult<()> {
         if *self.should_fail_save_package_version.lock().unwrap() {
             tracing::error!("Mock save_package_version failed");
@@ -90,6 +91,15 @@ impl ArtifactStorage for MockArtifactStorage {
             return Err(UploadArtifactError::StorageError("Mock upload failed".to_string()));
         }
         tracing::debug!("Uploading content with hash: {}", content_hash);
+        Ok(format!("s3://mock-bucket/{}", content_hash))
+    }
+
+    async fn upload_from_path(&self, _path: &Path, content_hash: &str) -> PortResult<String> {
+        if *self.should_fail_upload.lock().unwrap() {
+            tracing::error!("Mock upload_from_path failed");
+            return Err(UploadArtifactError::StorageError("Mock upload_from_path failed".to_string()));
+        }
+        tracing::debug!("Uploading content from path with hash: {}", content_hash);
         Ok(format!("s3://mock-bucket/{}", content_hash))
     }
 }
