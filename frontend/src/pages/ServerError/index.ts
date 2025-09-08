@@ -1,1 +1,1 @@
-export { ServerError } from './ServerError';
+export { default as ServerError } from './ServerError';

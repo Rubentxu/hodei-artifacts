@@ -1,10 +1,8 @@
 import { useState } from 'react';
-import { notificationService } from '@/shared/stores/notification.store';
 import { useParams, Navigate } from 'react-router-dom';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { RepositoryDetailSkeleton } from '@/components/repository';
-import { useRepository } from '@/shared/hooks/repositories';
+import { useRepository } from '@/shared/hooks';
 import type { RepositoryType } from '@/shared/types';
 
 interface Tab {
@@ -20,7 +18,7 @@ const tabs: Tab[] = [
   { id: 'activity', label: 'Activity', icon: '📊' },
 ];
 
-export const RepositoryDetail = () => {
+const RepositoryDetail = () => {
   const { id } = useParams<{ id: string }>();
   const [activeTab, setActiveTab] = useState('artifacts');
 
@@ -31,7 +29,17 @@ export const RepositoryDetail = () => {
   }
 
   if (isLoading) {
-    return <RepositoryDetailSkeleton />;
+    return (
+      <div className="p-6">
+        <Card className="p-6">
+          <div className="animate-pulse">
+            <div className="h-8 bg-gray-200 rounded w-1/3 mb-4"></div>
+            <div className="h-4 bg-gray-200 rounded w-2/3 mb-2"></div>
+            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+          </div>
+        </Card>
+      </div>
+    );
   }
 
   if (error) {
@@ -117,10 +125,10 @@ export const RepositoryDetail = () => {
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      notificationService.success('Copied!', 'Text copied to clipboard', 2000);
+      alert('Copied to clipboard!');
     } catch (error) {
       console.warn('Failed to copy to clipboard:', error);
-      notificationService.error('Copy Failed', 'Failed to copy to clipboard');
+      alert('Failed to copy to clipboard');
     }
   };
 
@@ -175,7 +183,7 @@ export const RepositoryDetail = () => {
                   Description
                 </label>
                 <textarea
-                  value={repository.data.description}
+                  value={repository.data.description || ''}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md"
                   rows={3}
                   readOnly
@@ -325,3 +333,5 @@ export const RepositoryDetail = () => {
     </div>
   );
 };
+
+export default RepositoryDetail;

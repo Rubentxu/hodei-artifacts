@@ -1,5 +1,5 @@
 import React from 'react';
-import { cn } from '../../../shared/utils';
+import { cn } from '@/shared/utils';
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
   variant?: 'default' | 'secondary' | 'success' | 'danger' | 'warning' | 'info';

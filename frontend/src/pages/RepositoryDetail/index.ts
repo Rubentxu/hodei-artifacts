@@ -1,1 +1,1 @@
-export { RepositoryDetail } from './RepositoryDetail';
+export { default as RepositoryDetail } from './RepositoryDetail';

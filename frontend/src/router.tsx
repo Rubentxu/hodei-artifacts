@@ -1,16 +1,19 @@
 import { createBrowserRouter } from 'react-router-dom';
 
-// Direct imports
-import Login from '@/pages/Login/Login';
-import Dashboard from '@/pages/Dashboard/Dashboard';
-import Repositories from '@/pages/Repositories/Repositories';
-import RepositoryDetail from '@/pages/RepositoryDetail/RepositoryDetail';
-import NotFound from '@/pages/NotFound/NotFound';
-import SearchPage from '@/pages/search/SearchPage';
-import ProfilePage from '@/pages/profile/ProfilePage';
-import TokensPage from '@/pages/settings/tokens/TokensPage';
-import UsersPage from '@/pages/admin/users/UsersPage';
-import PoliciesPage from '@/pages/settings/policies/PoliciesPage';
+// Import from index files for consistency
+import { Login } from '@/pages/Login';
+import { Dashboard } from '@/pages/Dashboard';
+import { Repositories } from '@/pages/Repositories';
+import { RepositoryDetail } from '@/pages/RepositoryDetail';
+import { NotFound } from '@/pages/NotFound';
+import { SearchPage } from '@/pages/search';
+import { ProfilePage } from '@/pages/profile';
+import { TokensPage } from '@/pages/settings/tokens';
+import { UsersPage } from '@/pages/admin/users';
+import { PoliciesPage } from '@/pages/settings/policies';
+import { OpenAPIDemoPage } from '@/pages/OpenAPIDemoPage';
+import Artifacts from '@/pages/Artifacts/Artifacts';
+import PoliciesSimple from '@/pages/Policies/PoliciesSimple';
 
 import { MainLayout } from '@/components/templates/MainLayout';
 
@@ -39,6 +42,14 @@ export const router = createBrowserRouter([
         element: <SearchPage />,
       },
       {
+        path: '/artifacts',
+        element: <Artifacts />,
+      },
+      {
+        path: '/policies',
+        element: <PoliciesSimple />,
+      },
+      {
         path: '/profile',
         element: <ProfilePage />,
       },
@@ -53,6 +64,10 @@ export const router = createBrowserRouter([
       {
         path: '/settings/policies',
         element: <PoliciesPage />,
+      },
+      {
+        path: '/openapi-demo',
+        element: <OpenAPIDemoPage />,
       },
     ],
   },

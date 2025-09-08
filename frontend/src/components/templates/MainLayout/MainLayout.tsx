@@ -1,16 +1,16 @@
 import React from 'react';
 import { Outlet } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
-// import { Sidebar } from '../../layout/sidebar'; // Placeholder
+import { NotificationProvider } from '@/components/providers/NotificationProvider';
 
 const MainLayout = () => {
   return (
-    <div className="min-h-screen bg-background">
-      {/* <Sidebar /> */}
+    <div className="min-h-screen bg-gray-50">
       <Header />
-      <main className="container mx-auto p-8">
+      <main className="container mx-auto p-6">
         <Outlet />
       </main>
+      <NotificationProvider />
     </div>
   );
 };

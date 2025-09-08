@@ -8,7 +8,7 @@ import { useAuth } from '@/shared/stores/auth.store';
 import { authApi } from '@/shared/api/auth';
 import { useNotifications } from '@/shared/stores/ui.store';
 
-export const Login = () => {
+const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
@@ -191,3 +191,5 @@ export const Login = () => {
     </div>
   );
 };
+
+export default Login;

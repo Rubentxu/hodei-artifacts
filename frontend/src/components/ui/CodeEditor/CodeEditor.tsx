@@ -78,4 +78,4 @@ const CodeEditor = ({
   );
 };
 
-export { CodeEditor };
+export default CodeEditor;
