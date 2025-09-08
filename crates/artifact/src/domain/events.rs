@@ -15,6 +15,17 @@ pub enum ArtifactEvent {
   PackageVersionDeleted(PackageVersionDeleted),
   /// El estado de una versión de paquete ha cambiado (ej. a Quarantined).
   PackageVersionStatusChanged(PackageVersionStatusChanged),
+  /// Progreso de subida de un artefacto reanudable (emitido periódicamente o por chunk).
+  UploadProgressUpdated {
+      upload_id: String,
+      progress: u64,
+      bytes_uploaded: u64,
+      total_bytes: u64,
+  },
+  /// Se ha completado la subida de un artefacto
+  ArtifactUploaded {
+      artifact: ArtifactReference,
+  },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,3 +54,4 @@ pub struct PackageVersionStatusChanged {
   pub changed_by: Hrn,
   pub at: OffsetDateTime,
 }
+

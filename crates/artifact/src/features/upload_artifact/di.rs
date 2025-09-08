@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use super::{
-    adapter::{S3ArtifactStorage, MongoDbRepository, RabbitMqEventPublisher},
+    adapter::{S3ArtifactStorage, MongoDbRepository, RabbitMqEventPublisher, LocalChunkedUploadStorage},
     ports::{UploadArtifactRepository, ArtifactStorage, EventPublisher},
-    use_case::UploadArtifactUseCase,
+    use_case::{UploadArtifactUseCase, UploadArtifactChunkUseCase},
     api::UploadArtifactEndpoint,
 };
 use aws_config::SdkConfig;
@@ -38,7 +38,18 @@ impl UploadArtifactDIContainer {
         let storage = Arc::new(S3ArtifactStorage::new(sdk_config, s3_bucket.to_string()));
         let publisher = Arc::new(RabbitMqEventPublisher::new(amqp_url, exchange).await.unwrap());
 
-        Self::new(repository, storage, publisher)
+        // Primary use case
+        let use_case = Arc::new(UploadArtifactUseCase::new(repository.clone(), storage.clone(), publisher.clone()));
+
+        // Resumable upload support
+        let chunk_dir = std::env::var("HODEI_UPLOAD_CHUNKS_DIR").unwrap_or_else(|_| "/tmp/upload_chunks".to_string());
+        let chunk_storage = Arc::new(LocalChunkedUploadStorage::new(chunk_dir));
+        let chunk_use_case = Arc::new(UploadArtifactChunkUseCase::new(chunk_storage.clone(), publisher.clone()));
+
+        // Endpoint with resumable
+        let endpoint = Arc::new(UploadArtifactEndpoint::with_resumable(use_case.clone(), chunk_use_case, chunk_storage));
+
+        Self { endpoint }
     }
 
     /// Convenience function for wiring up mock dependencies for testing.

@@ -1,36 +1,37 @@
 use async_trait::async_trait;
 use bytes::Bytes;
+use aws_config::SdkConfig;
 use aws_sdk_s3::{
     Client as S3Client,
     error::SdkError,
     operation::put_object::PutObjectError,
     primitives::ByteStream,
 };
-use aws_config::SdkConfig;
-use mongodb::{
-    Client as MongoClient,
-    Database,
-    options::ClientOptions,
-    bson::doc,
-};
 use lapin::{
     options::{BasicPublishOptions, ExchangeDeclareOptions},
     types::FieldTable,
     BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind,
 };
+use mongodb::{
+    bson::doc,
+    options::ClientOptions,
+    Client as MongoClient,
+    Database,
+};
 use serde_json::to_string;
+use std::path::{Path, PathBuf};
+use std::io::ErrorKind;
+use tokio::io::AsyncWriteExt;
 
 use crate::domain::{
     events::ArtifactEvent,
     package_version::PackageVersion,
     physical_artifact::PhysicalArtifact,
 };
-use super::ports::{ArtifactStorage, EventPublisher, UploadArtifactRepository, PortResult};
 use super::error::UploadArtifactError;
+use super::ports::{ArtifactStorage, EventPublisher, PortResult, UploadArtifactRepository};
 
-// --- Production Adapters ---
-
-/// Concrete implementation of the ArtifactStorage port using AWS S3.
+// --- ArtifactStorage: S3 ---
 pub struct S3ArtifactStorage {
     client: S3Client,
     bucket_name: String,
@@ -48,13 +49,26 @@ impl S3ArtifactStorage {
 #[async_trait]
 impl ArtifactStorage for S3ArtifactStorage {
     async fn upload(&self, content: Bytes, content_hash: &str) -> PortResult<String> {
-        let stream = ByteStream::from(content.clone());
+        let stream = ByteStream::from(content);
         self.client
             .put_object()
             .bucket(&self.bucket_name)
             .key(content_hash)
             .body(stream)
-            .content_length(content.len() as i64)
+            .send()
+            .await
+            .map_err(|e: SdkError<PutObjectError>| UploadArtifactError::StorageError(e.to_string()))?;
+
+        Ok(format!("s3://{}/{}", self.bucket_name, content_hash))
+    }
+
+    async fn upload_from_path(&self, path: &Path, content_hash: &str) -> PortResult<String> {
+        let stream = ByteStream::from_path(path).await.map_err(|e| UploadArtifactError::StorageError(e.to_string()))?;
+        self.client
+            .put_object()
+            .bucket(&self.bucket_name)
+            .key(content_hash)
+            .body(stream)
             .send()
             .await
             .map_err(|e: SdkError<PutObjectError>| UploadArtifactError::StorageError(e.to_string()))?;
@@ -63,8 +77,7 @@ impl ArtifactStorage for S3ArtifactStorage {
     }
 }
 
-
-/// Concrete implementation of the UploadArtifactRepository port using MongoDB.
+// --- UploadArtifactRepository: MongoDB ---
 pub struct MongoDbRepository {
     db: Database,
 }
@@ -73,8 +86,9 @@ impl MongoDbRepository {
     pub async fn new(connection_string: &str, db_name: &str) -> mongodb::error::Result<Self> {
         let client_options = ClientOptions::parse(connection_string).await?;
         let client = MongoClient::with_options(client_options)?;
-        let db = client.database(db_name);
-        Ok(Self { db })
+        Ok(Self {
+            db: client.database(db_name),
+        })
     }
 }
 
@@ -108,7 +122,7 @@ impl UploadArtifactRepository for MongoDbRepository {
     }
 }
 
-/// Concrete implementation of the EventPublisher port using RabbitMQ.
+// --- EventPublisher: RabbitMQ ---
 pub struct RabbitMqEventPublisher {
     #[allow(dead_code)]
     connection: Connection,
@@ -120,7 +134,7 @@ impl RabbitMqEventPublisher {
     pub async fn new(amqp_url: &str, exchange: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let connection = Connection::connect(amqp_url, ConnectionProperties::default()).await?;
         let channel = connection.create_channel().await?;
-        
+
         // Declare the exchange
         channel.exchange_declare(
             exchange,
@@ -128,7 +142,7 @@ impl RabbitMqEventPublisher {
             ExchangeDeclareOptions::default(),
             FieldTable::default(),
         ).await?;
-        
+
         Ok(Self {
             connection,
             channel,
@@ -141,7 +155,7 @@ impl RabbitMqEventPublisher {
 impl EventPublisher for RabbitMqEventPublisher {
     async fn publish(&self, event: &ArtifactEvent) -> PortResult<()> {
         let payload = to_string(event).map_err(|e| UploadArtifactError::EventError(e.to_string()))?;
-        
+
         self.channel.basic_publish(
             &self.exchange,
             "artifact.uploaded",
@@ -150,92 +164,51 @@ impl EventPublisher for RabbitMqEventPublisher {
             BasicProperties::default(),
         ).await
         .map_err(|e| UploadArtifactError::EventError(e.to_string()))?;
-        
+
         Ok(())
     }
 }
 
+// --- ArtifactStorage: Local filesystem ---
+pub struct LocalFsArtifactStorage {
+    base_dir: PathBuf,
+}
 
-// --- Test Adapters ---
-
-#[cfg(test)]
-pub mod test {
-    use async_trait::async_trait;
-    use bytes::Bytes;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
-
-    use crate::domain::{
-        package_version::PackageVersion,
-        physical_artifact::PhysicalArtifact,
-        events::ArtifactEvent,
-    };
-    use super::super::ports::{UploadArtifactRepository, ArtifactStorage, EventPublisher, PortResult};
-
-    pub struct MockArtifactRepository {
-        physical_artifacts: Mutex<HashMap<String, PhysicalArtifact>>,
-        package_versions: Mutex<HashMap<String, PackageVersion>>,
-    }
-
-    impl MockArtifactRepository {
-        pub fn new() -> Self {
-            Self {
-                physical_artifacts: Mutex::new(HashMap::new()),
-                package_versions: Mutex::new(HashMap::new()),
-            }
-        }
-
-        pub async fn count_physical_artifacts(&self) -> usize {
-            self.physical_artifacts.lock().unwrap().len()
-        }
-
-        pub async fn count_package_versions(&self) -> usize {
-            self.package_versions.lock().unwrap().len()
+impl LocalFsArtifactStorage {
+    pub fn new<P: Into<PathBuf>>(base_dir: P) -> Self {
+        Self {
+            base_dir: base_dir.into(),
         }
     }
 
-    #[async_trait]
-    impl UploadArtifactRepository for MockArtifactRepository {
-        async fn save_package_version(&self, package_version: &PackageVersion) -> PortResult<()> {
-            self.package_versions.lock().unwrap().insert(package_version.hrn.to_string(), package_version.clone());
-            Ok(())
-        }
-
-        async fn save_physical_artifact(&self, physical_artifact: &PhysicalArtifact) -> PortResult<()> {
-            self.physical_artifacts.lock().unwrap().insert(physical_artifact.content_hash.value.clone(), physical_artifact.clone());
-            Ok(())
-        }
-
-        async fn find_physical_artifact_by_hash(&self, hash: &str) -> PortResult<Option<PhysicalArtifact>> {
-            let artifact = self.physical_artifacts.lock().unwrap().get(hash).cloned();
-            Ok(artifact)
-        }
-    }
-
-    pub struct MockArtifactStorage;
-
-    #[async_trait]
-    impl ArtifactStorage for MockArtifactStorage {
-        async fn upload(&self, _content: Bytes, content_hash: &str) -> PortResult<String> {
-            Ok(format!("s3://mock-bucket/{}", content_hash))
-        }
-    }
-
-    pub struct MockEventPublisher {
-        pub events: Arc<Mutex<Vec<ArtifactEvent>>>
-    }
-    
-    impl MockEventPublisher {
-        pub fn new() -> Self {
-            Self { events: Arc::new(Mutex::new(Vec::new())) }
-        }
-    }
-
-    #[async_trait]
-    impl EventPublisher for MockEventPublisher {
-        async fn publish(&self, event: &ArtifactEvent) -> PortResult<()> {
-            self.events.lock().unwrap().push(event.clone());
-            Ok(())
-        }
+    fn target_path(&self, content_hash: &str) -> PathBuf {
+        self.base_dir.join(content_hash)
     }
 }
+
+#[async_trait]
+impl ArtifactStorage for LocalFsArtifactStorage {
+    async fn upload(&self, content: Bytes, content_hash: &str) -> PortResult<String> {
+        let path = self.target_path(content_hash);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| UploadArtifactError::StorageError(e.to_string()))?;
+        }
+        tokio::fs::write(&path, content).await.map_err(|e| UploadArtifactError::StorageError(e.to_string()))?;
+        Ok(format!("file://{}", path.display()))
+    }
+
+    async fn upload_from_path(&self, path: &Path, content_hash: &str) -> PortResult<String> {
+        let dst = self.target_path(content_hash);
+        if let Some(parent) = dst.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| UploadArtifactError::StorageError(e.to_string()))?;
+        }
+        match tokio::fs::rename(path, &dst).await {
+            Ok(_) => {}
+            Err(_) => {
+                tokio::fs::copy(path, &dst).await.map_err(|e| UploadArtifactError::StorageError(e.to_string()))?;
+            }
+        }
+        Ok(format!("file://{}", dst.display()))
+    }
+}
+

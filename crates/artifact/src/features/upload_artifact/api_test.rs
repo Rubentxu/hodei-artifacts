@@ -4,7 +4,7 @@ mod tests {
     use axum::{
         body::Body,
         extract::{Multipart, FromRequest},
-        http::{Request, StatusCode},
+        http::{Request, StatusCode, HeaderMap},
         response::IntoResponse,
         Extension,
     };
@@ -44,7 +44,7 @@ mod tests {
         let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
 
         // Act
-        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), multipart).await;
+        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), HeaderMap::new(), multipart).await;
 
         // Assert - convert to Response to access status and body
         let response = response.into_response();
@@ -94,7 +94,7 @@ mod tests {
         let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
 
         // Act
-        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), multipart).await;
+        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), HeaderMap::new(), multipart).await;
 
         // Assert - convert to Response first
         let response = response.into_response();
@@ -145,7 +145,7 @@ mod tests {
         let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
 
         // Act
-        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), multipart).await;
+        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), HeaderMap::new(), multipart).await;
 
         // Assert - convert to Response first
         let response = response.into_response();
@@ -181,7 +181,7 @@ mod tests {
         let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
 
         // Act
-        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), multipart).await;
+        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), HeaderMap::new(), multipart).await;
 
         // Assert - convert to Response first
         let response = response.into_response();
@@ -221,7 +221,7 @@ mod tests {
         let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
 
         // Act
-        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), multipart).await;
+        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), HeaderMap::new(), multipart).await;
 
         // Assert - convert to Response first
         let response = response.into_response();
@@ -260,7 +260,7 @@ mod tests {
         let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
 
         // Act
-        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), multipart).await;
+        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), HeaderMap::new(), multipart).await;
 
         // Assert - convert to Response first
         let response = response.into_response();
@@ -297,7 +297,7 @@ mod tests {
         let multipart = Multipart::from_request(request, &mut extractor_config).await.unwrap();
 
         // Act
-        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), multipart).await;
+        let response = UploadArtifactEndpoint::upload_artifact(Extension(Arc::new(endpoint)), HeaderMap::new(), multipart).await;
 
         // Assert
         let response = response.into_response();

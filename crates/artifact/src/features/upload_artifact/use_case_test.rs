@@ -265,7 +265,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_upload_storage_error_should_fail() {
+    async fn test_upload_storage_error() {
         // Arrange
         use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
@@ -273,40 +273,21 @@ mod tests {
         let storage = Arc::new(MockArtifactStorage::new());
         *storage.should_fail_upload.lock().unwrap() = true;
         let publisher = Arc::new(MockEventPublisher::new());
-        
-        let use_case = UploadArtifactUseCase::new(
-            repo.clone(),
-            storage.clone(),
-            publisher.clone(),
-        );
-
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
         let command = UploadArtifactCommand {
-            coordinates: PackageCoordinates {
-                namespace: Some("com.example".to_string()),
-                name: "storage-error-artifact".to_string(),
-                version: "1.0.0".to_string(),
-                qualifiers: Default::default(),
-            },
-            file_name: "test.bin".to_string(),
-            content_length: 12,
+            coordinates: PackageCoordinates { namespace: Some("com.example".to_string()), name: "err-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() },
+            file_name: "err.bin".to_string(), content_length: 4
         };
-        let content = Bytes::from_static(b"test content");
-
+        let content = Bytes::from_static(b"fail");
         // Act
         let result = use_case.execute(command, content).await;
-
         // Assert
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(matches!(e, UploadArtifactError::StorageError(_)));
-        }
-        
-        // Verify error logging
+        assert!(matches!(result, Err(UploadArtifactError::StorageError(_))));
         assert_log_contains!(tracing::Level::ERROR, "StorageError");
     }
 
     #[tokio::test]
-    async fn test_upload_event_publisher_error_should_fail() {
+    async fn test_upload_event_error_does_not_block_success() {
         // Arrange
         use shared::testing::tracing_utils::setup_test_tracing;
         let _guard = setup_test_tracing();
@@ -314,35 +295,16 @@ mod tests {
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
         *publisher.should_fail_publish.lock().unwrap() = true;
-        
-        let use_case = UploadArtifactUseCase::new(
-            repo.clone(),
-            storage.clone(),
-            publisher.clone(),
-        );
-
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
         let command = UploadArtifactCommand {
-            coordinates: PackageCoordinates {
-                namespace: Some("com.example".to_string()),
-                name: "publisher-error-artifact".to_string(),
-                version: "1.0.0".to_string(),
-                qualifiers: Default::default(),
-            },
-            file_name: "test.bin".to_string(),
-            content_length: 12,
+            coordinates: PackageCoordinates { namespace: Some("com.example".to_string()), name: "noevent-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() },
+            file_name: "noevent.bin".to_string(), content_length: 6
         };
-        let content = Bytes::from_static(b"test content");
-
+        let content = Bytes::from_static(b"bleh!!");
         // Act
         let result = use_case.execute(command, content).await;
-
-        // Assert
-        assert!(result.is_err());
-        if let Err(e) = result {
-            assert!(matches!(e, UploadArtifactError::EventError(_)));
-        }
-        
-        // Verify error logging
+        // Assert: success despite event error
+        assert!(result.is_ok());
         assert_log_contains!(tracing::Level::ERROR, "EventError");
     }
 }

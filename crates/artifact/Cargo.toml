@@ -9,6 +9,9 @@ integration = []
 auth = []
 
 [dependencies]
+uuid = "0.8"
+anyhow = "1.0"
+futures = "0.3"
 async-trait = { workspace = true }
 bytes = { workspace = true }
 sha2 = { workspace = true }
@@ -27,6 +30,7 @@ mongodb = { workspace = true }
 lapin = { workspace = true }
 cedar-policy = { workspace = true }
 tracing = { workspace = true }
+tempfile = "3"
 
 # Workspace dependencies
 shared = { path = "../shared" }

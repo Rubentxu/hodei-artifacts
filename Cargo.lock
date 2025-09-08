@@ -143,6 +143,7 @@ checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
 name = "artifact"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -162,6 +163,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shared",
+ "tempfile",
  "testcontainers",
  "thiserror 2.0.16",
  "time",
@@ -170,6 +172,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-test",
+ "uuid 0.8.2",
 ]
 
 [[package]]
@@ -463,7 +466,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "tracing",
- "uuid",
+ "uuid 1.18.0",
 ]
 
 [[package]]
@@ -1132,7 +1135,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "time",
- "uuid",
+ "uuid 1.18.0",
 ]
 
 [[package]]
@@ -2268,7 +2271,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
+ "uuid 1.18.0",
 ]
 
 [[package]]
@@ -3177,7 +3180,7 @@ dependencies = [
  "tokio-rustls 0.26.2",
  "tokio-util",
  "typed-builder",
- "uuid",
+ "uuid 1.18.0",
  "webpki-roots 0.26.11",
 ]
 
@@ -4564,7 +4567,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-test",
- "uuid",
+ "uuid 1.18.0",
 ]
 
 [[package]]
@@ -5429,6 +5432,12 @@ name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+
+[[package]]
+name = "uuid"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
 
 [[package]]
 name = "uuid"
