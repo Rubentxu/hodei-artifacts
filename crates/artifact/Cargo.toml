@@ -31,6 +31,8 @@ lapin = { workspace = true }
 cedar-policy = { workspace = true }
 tracing = { workspace = true }
 tempfile = "3"
+quick-xml = { version = "0.31", features = ["serialize"] }
+serde-xml-rs = "0.6"
 
 # Workspace dependencies
 shared = { path = "../shared" }

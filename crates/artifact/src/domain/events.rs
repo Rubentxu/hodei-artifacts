@@ -2,7 +2,7 @@
 
 use shared::hrn::{Hrn, RepositoryId, UserId};
 use shared::models::{PackageCoordinates, ArtifactReference};
-use crate::domain::package_version::ArtifactStatus;
+use crate::domain::package_version::{ArtifactStatus, PackageMetadata};
 use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 
@@ -26,6 +26,8 @@ pub enum ArtifactEvent {
   ArtifactUploaded {
       artifact: ArtifactReference,
   },
+  /// Metadatos enriquecidos para una versión de paquete
+  ArtifactMetadataEnriched(ArtifactMetadataEnriched),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +54,14 @@ pub struct PackageVersionStatusChanged {
   pub old_status: ArtifactStatus,
   pub new_status: ArtifactStatus,
   pub changed_by: Hrn,
+  pub at: OffsetDateTime,
+}
+
+/// Metadatos enriquecidos para una versión de paquete
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactMetadataEnriched {
+  pub package_version_hrn: Hrn,
+  pub extracted_metadata: PackageMetadata,
   pub at: OffsetDateTime,
 }
 

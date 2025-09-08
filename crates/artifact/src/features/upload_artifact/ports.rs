@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
+use shared::hrn::Hrn;
 
 use super::error::UploadArtifactError;
 use crate::domain::physical_artifact::PhysicalArtifact;
-use crate::domain::package_version::PackageVersion;
+use crate::domain::package_version::{PackageVersion, PackageMetadata, ArtifactDependency};
 use crate::domain::events::ArtifactEvent;
 
 // Define a type alias for the Result type used in ports
@@ -15,6 +16,18 @@ pub trait ArtifactRepository: Send + Sync {
     async fn find_physical_artifact_by_hash(&self, hash: &str) -> PortResult<Option<PhysicalArtifact>>;
     async fn save_physical_artifact(&self, artifact: &PhysicalArtifact) -> PortResult<()>;
     async fn save_package_version(&self, package_version: &PackageVersion) -> PortResult<()>;
+    
+    /// Update package metadata and dependencies for an existing package version
+    async fn update_package_metadata(
+        &self, 
+        _hrn: &Hrn, 
+        _metadata: PackageMetadata, 
+        _dependencies: Vec<ArtifactDependency>
+    ) -> PortResult<()> {
+        // Default implementation that returns an error
+        // Implementations should override this method
+        Err(UploadArtifactError::RepositoryError("update_package_metadata not implemented".to_string()))
+    }
 }
 
 #[async_trait]
