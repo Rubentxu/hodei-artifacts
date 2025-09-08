@@ -21,10 +21,10 @@ use shared::{
     models::{ArtifactReference, ContentHash},
 };
 use futures::stream::Stream;
-use shared::models::{PackageCoordinates, ArtifactReference};
-use crate::domain::error::DomainError;
+use shared::models::{PackageCoordinates, ArtifactReference, ContentHash, PackageVersion};
 use crate::domain::events::ArtifactEvent;
 use crate::domain::events::ArtifactEvent::*;
+use crate::domain::error::DomainError;
 use uuid::Uuid;
 
 pub struct UploadArtifactUseCase {
@@ -325,6 +325,68 @@ impl UploadArtifactUseCase {
                 progress_reported = progress;
                 
                 // Publish progress event
+                self.publisher.publish(&ArtifactEvent::UploadProgressUpdated {
+                    upload_id: upload_id.clone(),
+                    progress,
+                    bytes_uploaded: total_bytes,
+                    total_bytes: package_coords.size,
+                }).await?;
+            }
+        }
+        
+        // Assemble chunks into final artifact
+        let final_path = self.storage.assemble_to_path(&upload_id, chunk_number).await?;
+        
+        // Create artifact reference
+        let artifact_ref = ArtifactReference {
+            artifact_hrn: format!("hrn:artifact:{}", upload_id),
+            artifact_type: "generic".to_string(),
+            role: "primary".to_string(),
+            package_coordinates: package_coords.clone(),
+            path: final_path.to_str().unwrap().to_string(),
+        };
+        
+        // Create uploaded event
+        let event = ArtifactEvent::ArtifactUploaded {
+            artifact: artifact_ref.clone(),
+        };
+        
+        // Publish event
+        self.publisher.publish(&event).await?;
+        
+        Ok(ArtifactUploaded {
+            artifact: artifact_ref,
+            upload_id,
+        })
+    }
+}
+        let mut total_bytes = 0;
+        let mut chunk_number = 0;
+        let mut progress_reported = 0;
+        
+        // Process stream of chunks
+        let mut stream = stream.chunks(10); // Process in chunks of 10 items
+        
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| DomainError::StorageError(e.to_string()))?;
+            
+            // Increment chunk counter
+            chunk_number += 1;
+            
+            // Save chunk
+            self.storage.save_chunk(&upload_id, chunk_number, chunk).await?;
+            
+            // Update total bytes
+            total_bytes += chunk.len() as u64;
+            
+            // Calculate progress percentage
+            let progress = (total_bytes * 100) / package_coords.size;
+            
+            // Report progress every 5% or when complete
+            if progress - progress_reported >= 5 || progress == 100 {
+                progress_reported = progress;
+                
+                // Publish progress event
                 self.event_publisher.publish(&ArtifactEvent::UploadProgressUpdated {
                     upload_id: upload_id.clone(),
                     progress,
@@ -339,6 +401,9 @@ impl UploadArtifactUseCase {
         
         // Create artifact reference
         let artifact_ref = ArtifactReference {
+            artifact_hrn: format!("hrn:artifact:{}", upload_id),
+            artifact_type: "generic".to_string(),
+            role: "primary".to_string(),
             package_coordinates: package_coords.clone(),
             path: final_path.to_str().unwrap().to_string(),
         };
