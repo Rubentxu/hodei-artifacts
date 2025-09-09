@@ -7,6 +7,7 @@ use super::error::UploadArtifactError;
 use crate::domain::physical_artifact::PhysicalArtifact;
 use crate::domain::package_version::{PackageVersion, PackageMetadata, ArtifactDependency};
 use crate::domain::events::ArtifactEvent;
+use super::dto::UploadArtifactCommand;
 
 // Define a type alias for the Result type used in ports
 pub type PortResult<T> = Result<T, UploadArtifactError>;
@@ -47,4 +48,10 @@ pub trait ChunkedUploadStorage: Send + Sync {
     async fn get_received_chunks_count(&self, upload_id: &str) -> Result<usize, UploadArtifactError>;
     async fn assemble_chunks(&self, upload_id: &str, total_chunks: usize, file_name: &str) -> Result<(PathBuf, String), UploadArtifactError>;
     async fn cleanup(&self, upload_id: &str) -> Result<(), UploadArtifactError>;
+}
+
+/// Hook de validación pre-commit. Devuelve Ok(()) si todo es válido; Err(vec_de_errores) si no.
+#[async_trait]
+pub trait ArtifactValidator: Send + Sync {
+    async fn validate(&self, command: &UploadArtifactCommand, content: &Bytes) -> Result<(), Vec<String>>;
 }

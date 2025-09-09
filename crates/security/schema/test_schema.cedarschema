@@ -1,0 +1,40 @@
+{
+    "": {
+        "entityTypes": {
+            "User": {
+                "shape": {
+                    "type": "Record",
+                    "attributes": {
+                        "name": { "type": "String" },
+                        "email": { "type": "String" },
+                        "active": { "type": "Boolean" }
+                    }
+                }
+            },
+            "Repository": {
+                "shape": {
+                    "type": "Record",
+                    "attributes": {
+                        "name": { "type": "String" },
+                        "owner": { "type": "Entity", "name": "User" },
+                        "public": { "type": "Boolean" }
+                    }
+                }
+            }
+        },
+        "actions": {
+            "ReadRepository": {
+                "appliesTo": {
+                    "principalTypes": ["User"],
+                    "resourceTypes": ["Repository"]
+                }
+            },
+            "WriteRepository": {
+                "appliesTo": {
+                    "principalTypes": ["User"],
+                    "resourceTypes": ["Repository"]
+                }
+            }
+        }
+    }
+}

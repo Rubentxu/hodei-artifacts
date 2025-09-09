@@ -29,6 +29,7 @@ mod tests {
         #[async_trait]
         impl PolicyUpdateValidator for Validator {
             async fn validate_syntax(&self, content: &str) -> Result<ValidationResult, IamError>;
+            async fn validate_semantics(&self, content: &str) -> Result<(), IamError>;
         }
     }
 
@@ -61,6 +62,11 @@ mod tests {
             .expect_validate_syntax()
             .times(1)
             .returning(|_| Ok(ValidationResult::valid()));
+
+        mock_validator
+            .expect_validate_semantics()
+            .times(1)
+            .returning(|_| Ok(()));
 
         mock_updater
             .expect_update()

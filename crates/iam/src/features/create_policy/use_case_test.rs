@@ -92,6 +92,14 @@ mod tests {
                 Ok(ValidationResult::valid())
             }
         }
+
+        async fn validate_semantics(&self, _content: &str) -> Result<(), IamError> {
+            if self.should_fail {
+                Err(IamError::validation_error("Mock semantic validation error".to_string()))
+            } else {
+                Ok(())
+            }
+        }
     }
 
     struct MockEventPublisher {

@@ -81,12 +81,24 @@ impl PolicyValidator for CedarPolicyValidator {
     async fn validate_syntax(&self, content: &str) -> Result<ValidationResult, IamError> {
         self.validate_policy_syntax(content).await
     }
+
+    async fn validate_semantics(&self, _content: &str) -> Result<(), IamError> {
+        // Basic implementation - semantic validation is handled by the adapter
+        // This is just to satisfy the trait requirement
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl PolicyUpdateValidator for CedarPolicyValidator {
     async fn validate_syntax(&self, content: &str) -> Result<ValidationResult, IamError> {
         self.validate_policy_syntax(content).await
+    }
+
+    async fn validate_semantics(&self, _content: &str) -> Result<(), IamError> {
+        // Basic implementation - semantic validation is handled by the adapter
+        // This is just to satisfy the trait requirement
+        Ok(())
     }
 }
 

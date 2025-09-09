@@ -11,7 +11,7 @@ mod tests {
     use crate::features::upload_artifact::{
         use_case::UploadArtifactUseCase,
         dto::UploadArtifactCommand,
-        test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher},
+        test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator},
         error::UploadArtifactError,
     };
     use crate::features::upload_artifact::ports::ArtifactRepository;
@@ -30,11 +30,13 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        
+        let validator = Arc::new(MockArtifactValidator::new());
+
         let use_case = UploadArtifactUseCase::new(
             repo.clone(),
             storage.clone(),
             publisher.clone(),
+            validator.clone(),
         );
 
         let command = UploadArtifactCommand {
@@ -78,6 +80,7 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
+        let validator = Arc::new(MockArtifactValidator::new());
 
         // Pre-populate the repo with an existing physical artifact
         let existing_content = Bytes::from_static(b"existing content");
@@ -103,6 +106,7 @@ mod tests {
             repo.clone(),
             storage.clone(),
             publisher.clone(),
+            validator.clone(),
         );
 
         let command = UploadArtifactCommand {
@@ -143,11 +147,13 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        
+        let validator = Arc::new(MockArtifactValidator::new());
+
         let use_case = UploadArtifactUseCase::new(
             repo.clone(),
             storage.clone(),
             publisher.clone(),
+            validator.clone(),
         );
 
         let command = UploadArtifactCommand {
@@ -183,11 +189,13 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        
+        let validator = Arc::new(MockArtifactValidator::new());
+
         let use_case = UploadArtifactUseCase::new(
             repo.clone(),
             storage.clone(),
             publisher.clone(),
+            validator.clone(),
         );
 
         let command = UploadArtifactCommand {
@@ -232,11 +240,13 @@ mod tests {
         *repo.should_fail_save_physical_artifact.lock().unwrap() = true;
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        
+        let validator = Arc::new(MockArtifactValidator::new());
+
         let use_case = UploadArtifactUseCase::new(
             repo.clone(),
             storage.clone(),
             publisher.clone(),
+            validator.clone(),
         );
 
         let command = UploadArtifactCommand {
@@ -273,7 +283,8 @@ mod tests {
         let storage = Arc::new(MockArtifactStorage::new());
         *storage.should_fail_upload.lock().unwrap() = true;
         let publisher = Arc::new(MockEventPublisher::new());
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let validator = Arc::new(MockArtifactValidator::new());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let command = UploadArtifactCommand {
             coordinates: PackageCoordinates { namespace: Some("com.example".to_string()), name: "err-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() },
             file_name: "err.bin".to_string(), content_length: 4
@@ -295,7 +306,8 @@ mod tests {
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
         *publisher.should_fail_publish.lock().unwrap() = true;
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let validator = Arc::new(MockArtifactValidator::new());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let command = UploadArtifactCommand {
             coordinates: PackageCoordinates { namespace: Some("com.example".to_string()), name: "noevent-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() },
             file_name: "noevent.bin".to_string(), content_length: 6
@@ -310,6 +322,36 @@ mod tests {
                 UploadArtifactError::EventError(_) => {}, // Expected
                 _ => panic!("Expected EventError, got {:?}", e)
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_validation_failure_emits_event_and_returns_400() {
+        use shared::testing::tracing_utils::setup_test_tracing;
+        let _guard = setup_test_tracing();
+        let repo = Arc::new(MockArtifactRepository::new());
+        let storage = Arc::new(MockArtifactStorage::new());
+        let publisher = Arc::new(MockEventPublisher::new());
+        let validator = Arc::new(MockArtifactValidator::new());
+        *validator.should_fail.lock().unwrap() = true;
+        *validator.errors.lock().unwrap() = vec!["Too large".into(), "Missing license".into()];
+
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
+        let command = UploadArtifactCommand {
+            coordinates: PackageCoordinates { namespace: Some("com.example".into()), name: "bad".into(), version: "0.0.1".into(), qualifiers: Default::default() },
+            file_name: "bad.bin".into(),
+            content_length: 3,
+        };
+        let content = Bytes::from_static(b"bad");
+
+        let result = use_case.execute(command, content).await;
+        assert!(matches!(result, Err(UploadArtifactError::ValidationFailed(_))));
+        // One event should be published (ArtifactValidationFailed), but it is not enforced here by type; check variants count
+        let evs = publisher.events.lock().unwrap();
+        assert_eq!(evs.len(), 1);
+        match &evs[0] {
+            crate::domain::events::ArtifactEvent::ArtifactValidationFailed(_) => {}
+            other => panic!("Expected ArtifactValidationFailed, got {:?}", other),
         }
     }
 }

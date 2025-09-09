@@ -28,6 +28,8 @@ pub enum ArtifactEvent {
   },
   /// Metadatos enriquecidos para una versión de paquete
   ArtifactMetadataEnriched(ArtifactMetadataEnriched),
+  /// Fallo de validación previo al commit
+  ArtifactValidationFailed(ArtifactValidationFailed),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,3 +67,10 @@ pub struct ArtifactMetadataEnriched {
   pub at: OffsetDateTime,
 }
 
+/// Evento de fallo de validación de artefacto previo a commit
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactValidationFailed {
+  pub coordinates: PackageCoordinates,
+  pub errors: Vec<String>,
+  pub at: OffsetDateTime,
+}

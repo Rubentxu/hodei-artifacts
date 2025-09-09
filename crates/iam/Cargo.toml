@@ -9,6 +9,7 @@ serde_json = { workspace = true }
 time = { workspace = true }
 cedar-policy = { workspace = true }
 shared = { path = "../shared" }
+security = { path = "../security" }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
@@ -17,6 +18,8 @@ axum = { workspace = true }
 uuid = { workspace = true }
 regex = "1.0"
 tracing = { workspace = true }
+chrono = { workspace = true }
+tower = { workspace = true }
 
 [dev-dependencies]
 mockall = "0.12"

@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::path::PathBuf;
 
 use super::{
-    adapter::{S3ArtifactStorage, MongoDbRepository, RabbitMqEventPublisher, LocalFsChunkedUploadStorage},
-    ports::{ArtifactRepository, ArtifactStorage, EventPublisher, ChunkedUploadStorage},
+    adapter::{S3ArtifactStorage, MongoDbRepository, RabbitMqEventPublisher, LocalFsChunkedUploadStorage, NoopArtifactValidator},
+    ports::{ArtifactRepository, ArtifactStorage, EventPublisher, ChunkedUploadStorage, ArtifactValidator},
     use_case::UploadArtifactUseCase,
     use_case_chunks::UploadArtifactChunkUseCase,
     api::UploadArtifactEndpoint,
@@ -24,8 +24,9 @@ impl UploadArtifactDIContainer {
         storage: Arc<dyn ArtifactStorage + Send + Sync>,
         publisher: Arc<dyn EventPublisher + Send + Sync>,
         chunked_storage: Arc<dyn ChunkedUploadStorage + Send + Sync>,
+        validator: Arc<dyn ArtifactValidator + Send + Sync>,
     ) -> Self {
-        let use_case = Arc::new(UploadArtifactUseCase::new(repository, storage, publisher.clone()));
+        let use_case = Arc::new(UploadArtifactUseCase::new(repository, storage, publisher.clone(), validator));
         let chunk_use_case = Arc::new(UploadArtifactChunkUseCase::new(chunked_storage, use_case.clone(), publisher));
         let endpoint = Arc::new(UploadArtifactEndpoint::new(use_case.clone()));
 
@@ -49,20 +50,24 @@ impl UploadArtifactDIContainer {
         let chunk_dir = std::env::var("HODEI_UPLOAD_CHUNKS_DIR").unwrap_or_else(|_| "/tmp/upload_chunks".to_string());
         let chunk_storage = Arc::new(LocalFsChunkedUploadStorage::new(PathBuf::from(chunk_dir)));
 
-        Self::new(repository, storage, publisher, chunk_storage)
+        // Default validator (no-op) for MVP
+        let validator = Arc::new(NoopArtifactValidator);
+
+        Self::new(repository, storage, publisher, chunk_storage, validator)
     }
 
     /// Convenience function for wiring up mock dependencies for testing.
     #[cfg(test)]
-    pub fn for_testing() -> (Self, Arc<super::test_adapter::MockArtifactRepository>, Arc<super::test_adapter::MockArtifactStorage>, Arc<super::test_adapter::MockEventPublisher>) {
-        use super::test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher};
+    pub fn for_testing() -> (Self, Arc<super::test_adapter::MockArtifactRepository>, Arc<super::test_adapter::MockArtifactStorage>, Arc<super::test_adapter::MockEventPublisher>, Arc<super::test_adapter::MockArtifactValidator>) {
+        use super::test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator};
 
         let repository = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
+        let validator = Arc::new(MockArtifactValidator::new());
         // Mock chunked storage would be needed here, but it's not defined yet
         let chunked_storage = Arc::new(LocalFsChunkedUploadStorage::new(PathBuf::from("/tmp/test_chunks")));
 
-        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage), repository, storage, publisher)
+        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone()), repository, storage, publisher, validator)
     }
 }

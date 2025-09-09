@@ -1,7 +1,7 @@
 use tracing::{info, error, debug, info_span};
 use axum::{
     body::Body,
-    extract::{Multipart, FromRequest},
+    extract::Multipart,
     response::{IntoResponse, Json},
     http::{StatusCode, Request},
     Extension,
@@ -15,7 +15,7 @@ use serde_json::from_str;
 use sha2::{Sha256, Digest};
 
 use crate::features::upload_artifact::{
-    dto::{UploadArtifactCommand, UploadArtifactMetadata, UploadArtifactResponse},
+    dto::{UploadArtifactCommand, UploadArtifactMetadata},
     error::UploadArtifactError,
     di::UploadArtifactDIContainer,
 };
@@ -117,6 +117,7 @@ impl UploadArtifactEndpoint {
                         UploadArtifactError::EventPublishError(_) => StatusCode::INTERNAL_SERVER_ERROR,
                         UploadArtifactError::AlreadyExistsError(_) => StatusCode::CONFLICT,
                         UploadArtifactError::BadRequest(_) => StatusCode::BAD_REQUEST,
+                        UploadArtifactError::ValidationFailed(_) => StatusCode::BAD_REQUEST,
                     };
                     (status_code, e.to_string()).into_response()
                 }
@@ -129,7 +130,7 @@ impl UploadArtifactEndpoint {
 }
 
 // Simple auth middleware: requires Authorization: Bearer <token> unless HODEI_AUTH_DISABLED=true
-async fn auth_middleware(mut req: Request<Body>, next: Next) -> impl IntoResponse {
+async fn auth_middleware(req: Request<Body>, next: Next) -> impl IntoResponse {
     // Test bypass via header
     if let Some(bypass) = req.headers().get("X-Test-Bypass-Auth") {
         if bypass.to_str().ok().map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false) {

@@ -8,7 +8,7 @@ use crate::domain::{
     physical_artifact::PhysicalArtifact,
     events::ArtifactEvent,
 };
-use super::ports::{ArtifactRepository, ArtifactStorage, EventPublisher, PortResult};
+use super::ports::{ArtifactRepository, ArtifactStorage, EventPublisher, PortResult, ArtifactValidator};
 use std::path::Path;
 use super::error::UploadArtifactError;
 
@@ -127,6 +127,27 @@ impl EventPublisher for MockEventPublisher {
         }
         tracing::debug!("Publishing event: {:?}", event);
         self.events.lock().unwrap().push(event.clone());
+        Ok(())
+    }
+}
+
+pub struct MockArtifactValidator {
+    pub should_fail: Mutex<bool>,
+    pub errors: Mutex<Vec<String>>,
+}
+
+impl MockArtifactValidator {
+    pub fn new() -> Self {
+        Self { should_fail: Mutex::new(false), errors: Mutex::new(vec!["validation failed".to_string()]) }
+    }
+}
+
+#[async_trait]
+impl ArtifactValidator for MockArtifactValidator {
+    async fn validate(&self, _command: &crate::features::upload_artifact::dto::UploadArtifactCommand, _content: &Bytes) -> Result<(), Vec<String>> {
+        if *self.should_fail.lock().unwrap() {
+            return Err(self.errors.lock().unwrap().clone());
+        }
         Ok(())
     }
 }

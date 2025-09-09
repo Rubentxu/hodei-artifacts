@@ -23,11 +23,15 @@ e2e/test-results/
 *.copilot*
 CLAUDE.md
 GEMINI.md
+QWEN.md
+AGENTS.md
 AI_CONFIG.md
 LLM_SETTINGS.*
 *.clinerules*    
 *.web-bundles*
 .lingma/
+.kiro/specs
+.kiro
 
 
 

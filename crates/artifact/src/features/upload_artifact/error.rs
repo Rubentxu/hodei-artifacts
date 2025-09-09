@@ -19,4 +19,7 @@ pub enum UploadArtifactError {
 
     #[error("Bad request: {0}")]
     BadRequest(String),
+
+    #[error("Validation failed: {0}")]
+    ValidationFailed(String),
 }

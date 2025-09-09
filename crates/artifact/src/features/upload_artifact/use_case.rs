@@ -12,7 +12,7 @@ use crate::domain::{
 use crate::features::upload_artifact::{
     dto::{UploadArtifactCommand, UploadArtifactResponse},
     error::UploadArtifactError,
-    ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository},
+    ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository, ArtifactValidator},
 };
 use shared::{
     enums::{ArtifactRole, ArtifactType, HashAlgorithm},
@@ -20,12 +20,13 @@ use shared::{
     lifecycle::Lifecycle,
     models::{ArtifactReference, ContentHash},
 };
-use crate::domain::events::{ArtifactEvent, PackageVersionPublished};
+use crate::domain::events::{ArtifactEvent, PackageVersionPublished, ArtifactValidationFailed};
 
 pub struct UploadArtifactUseCase {
     repository: Arc<dyn ArtifactRepository>,
     storage: Arc<dyn ArtifactStorage>,
     event_publisher: Arc<dyn EventPublisher>,
+    validator: Arc<dyn ArtifactValidator>,
 }
 
 impl UploadArtifactUseCase {
@@ -33,11 +34,13 @@ impl UploadArtifactUseCase {
         repository: Arc<dyn ArtifactRepository>,
         storage: Arc<dyn ArtifactStorage>,
         event_publisher: Arc<dyn EventPublisher>,
+        validator: Arc<dyn ArtifactValidator>,
     ) -> Self {
         Self {
             repository,
             storage,
             event_publisher,
+            validator,
         }
     }
 
@@ -47,6 +50,22 @@ impl UploadArtifactUseCase {
         content: Bytes,
     ) -> PortResult<UploadArtifactResponse> {
         tracing::info!("Executing use case");
+
+        // 0. Pre-commit validation
+        if let Err(errors) = self.validator.validate(&command, &content).await {
+            tracing::warn!(?errors, "Artifact validation failed");
+            // Publish event (non-blocking on publish failure)
+            let event = ArtifactEvent::ArtifactValidationFailed(ArtifactValidationFailed {
+                coordinates: command.coordinates.clone(),
+                errors: errors.clone(),
+                at: OffsetDateTime::now_utc(),
+            });
+            if let Err(e) = self.event_publisher.publish(&event).await {
+                tracing::error!(error = %e, "Failed to publish ArtifactValidationFailed event");
+            }
+            return Err(UploadArtifactError::ValidationFailed(errors.join(", ")));
+        }
+
         // 1. Calculate checksum
         let mut hasher = Sha256::new();
         hasher.update(&content);
@@ -173,6 +192,23 @@ impl UploadArtifactUseCase {
     ) -> PortResult<UploadArtifactResponse> {
         tracing::info!("Executing use case from temp file");
 
+        // 0. Pre-commit validation reading from temp file
+        let file_content = fs::read(temp_file_path).await.map_err(|e| {
+            UploadArtifactError::StorageError(format!("Failed to read temp file: {}", e))
+        })?;
+        if let Err(errors) = self.validator.validate(&command, &Bytes::from(file_content.clone())).await {
+            tracing::warn!(?errors, "Artifact validation failed (temp file)");
+            let event = ArtifactEvent::ArtifactValidationFailed(ArtifactValidationFailed {
+                coordinates: command.coordinates.clone(),
+                errors: errors.clone(),
+                at: OffsetDateTime::now_utc(),
+            });
+            if let Err(e) = self.event_publisher.publish(&event).await {
+                tracing::error!(error = %e, "Failed to publish ArtifactValidationFailed event");
+            }
+            return Err(UploadArtifactError::ValidationFailed(errors.join(", ")));
+        }
+
         let content_hash_str = match precomputed_checksum {
             Some(checksum) => {
                 tracing::debug!("Using precomputed checksum: {}", checksum);
@@ -180,9 +216,6 @@ impl UploadArtifactUseCase {
             }
             None => {
                 tracing::debug!("Calculating checksum from temp file");
-                let file_content = fs::read(temp_file_path).await.map_err(|e| {
-                    UploadArtifactError::StorageError(format!("Failed to read temp file: {}", e))
-                })?;
                 let mut hasher = Sha256::new();
                 hasher.update(&file_content);
                 hex::encode(hasher.finalize())

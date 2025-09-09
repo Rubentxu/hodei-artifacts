@@ -53,7 +53,7 @@ impl UpdatePolicyUseCase {
         }
 
         if let Some(content) = &command.content {
-            // Validate new content
+            // Validate new content syntax
             let validation_result = self.validator.validate_syntax(content).await?;
             if !validation_result.is_valid {
                 return Err(IamError::validation_error(
@@ -62,6 +62,14 @@ impl UpdatePolicyUseCase {
                         .to_string(),
                 ));
             }
+
+            // Validate new content semantics
+            self.validator.validate_semantics(content).await?;
+
+            // Note: For compatibility validation, we could add a check here
+            // to ensure the new policy doesn't break existing functionality
+            // This would require additional business logic based on requirements
+
             existing_policy.content = content.clone();
         }
 

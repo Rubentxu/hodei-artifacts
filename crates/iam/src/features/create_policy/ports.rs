@@ -21,6 +21,19 @@ pub trait PolicyCreator: Send + Sync {
 pub trait PolicyValidator: Send + Sync {
     /// Validate Cedar policy syntax
     async fn validate_syntax(&self, content: &str) -> Result<ValidationResult, IamError>;
+    
+    /// Validate Cedar policy semantics against schema
+    async fn validate_semantics(&self, content: &str) -> Result<(), IamError>;
+}
+
+/// Port for semantic policy validation specific to create_policy feature
+#[async_trait]
+pub trait CreatePolicySemanticValidator: Send + Sync {
+    /// Validate policy semantics against Cedar schema
+    async fn validate_semantics(&self, policy: &str) -> Result<(), IamError>;
+    
+    /// Validate policy against schema and return detailed validation result
+    async fn validate_against_schema(&self, policy: &str) -> Result<ValidationResult, IamError>;
 }
 
 /// Port for publishing events specific to create_policy feature

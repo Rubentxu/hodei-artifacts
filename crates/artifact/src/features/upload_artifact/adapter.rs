@@ -7,7 +7,7 @@ use aws_sdk_s3::{
     operation::put_object::PutObjectError,
     primitives::ByteStream,
 };
-use sha2::{Sha256, Digest};
+use sha2::Digest;
 use lapin::{
     options::{BasicPublishOptions, ExchangeDeclareOptions},
     types::FieldTable,
@@ -21,8 +21,7 @@ use mongodb::{
 };
 use serde_json::to_string;
 use std::path::{Path, PathBuf};
-use std::io::ErrorKind;
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::io::AsyncWriteExt;
 
 use crate::domain::{
     events::ArtifactEvent,
@@ -31,6 +30,7 @@ use crate::domain::{
 };
 use super::error::UploadArtifactError;
 use super::ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository, ChunkedUploadStorage};
+use super::ports::ArtifactValidator;
 
 // --- ArtifactStorage: S3 ---
 pub struct S3ArtifactStorage {
@@ -166,6 +166,16 @@ impl EventPublisher for RabbitMqEventPublisher {
         ).await
         .map_err(|e| UploadArtifactError::EventError(e.to_string()))?;
 
+        Ok(())
+    }
+}
+
+// Validador por defecto (no-op)
+pub struct NoopArtifactValidator;
+
+#[async_trait]
+impl ArtifactValidator for NoopArtifactValidator {
+    async fn validate(&self, _command: &crate::features::upload_artifact::dto::UploadArtifactCommand, _content: &Bytes) -> Result<(), Vec<String>> {
         Ok(())
     }
 }

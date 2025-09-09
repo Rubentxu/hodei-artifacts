@@ -1,0 +1,143 @@
+{
+  "Hodei": {
+    "entityTypes": {
+      "User": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "hrn": { "type": "String" },
+            "name": { "type": "String" },
+            "email": { "type": "String" },
+            "role": { "type": "String" },
+            "department": { "type": "String", "required": false },
+            "active": { "type": "Boolean" }
+          }
+        }
+      },
+      "Organization": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "hrn": { "type": "String" },
+            "name": { "type": "String" },
+            "domain": { "type": "String" },
+            "active": { "type": "Boolean" },
+            "settings": { "type": "Record", "attributes": {} }
+          }
+        }
+      },
+      "Repository": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "hrn": { "type": "String" },
+            "name": { "type": "String" },
+            "organization": { "type": "Entity", "name": "Organization" },
+            "visibility": { "type": "String" },
+            "created_at": { "type": "String" },
+            "updated_at": { "type": "String" }
+          }
+        }
+      },
+      "PhysicalArtifact": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "hrn": { "type": "String" },
+            "content_hash": { "type": "String" },
+            "size": { "type": "Long" },
+            "content_type": { "type": "String" },
+            "created_at": { "type": "String" }
+          }
+        }
+      },
+      "Policy": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "hrn": { "type": "String" },
+            "name": { "type": "String" },
+            "description": { "type": "String", "required": false },
+            "content": { "type": "String" },
+            "status": { "type": "String" },
+            "version": { "type": "Long" }
+          }
+        }
+      },
+      "ServiceAccount": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "hrn": { "type": "String" },
+            "name": { "type": "String" },
+            "description": { "type": "String", "required": false },
+            "permissions": { "type": "Set", "element": { "type": "String" } },
+            "active": { "type": "Boolean" }
+          }
+        }
+      }
+    },
+    "actions": {
+      "ReadRepository": {
+        "appliesTo": {
+          "principalTypes": ["User", "ServiceAccount"],
+          "resourceTypes": ["Repository"]
+        }
+      },
+      "WriteRepository": {
+        "appliesTo": {
+          "principalTypes": ["User", "ServiceAccount"],
+          "resourceTypes": ["Repository"]
+        }
+      },
+      "DeleteRepository": {
+        "appliesTo": {
+          "principalTypes": ["User", "ServiceAccount"],
+          "resourceTypes": ["Repository"]
+        }
+      },
+      "CreateRepository": {
+        "appliesTo": {
+          "principalTypes": ["User", "ServiceAccount"],
+          "resourceTypes": ["Organization"]
+        }
+      },
+      "ReadArtifact": {
+        "appliesTo": {
+          "principalTypes": ["User", "ServiceAccount"],
+          "resourceTypes": ["PhysicalArtifact"]
+        }
+      },
+      "WriteArtifact": {
+        "appliesTo": {
+          "principalTypes": ["User", "ServiceAccount"],
+          "resourceTypes": ["PhysicalArtifact"]
+        }
+      },
+      "ManageUsers": {
+        "appliesTo": {
+          "principalTypes": ["User"],
+          "resourceTypes": ["Organization"]
+        }
+      },
+      "ManagePolicies": {
+        "appliesTo": {
+          "principalTypes": ["User", "ServiceAccount"],
+          "resourceTypes": ["Organization", "Policy"]
+        }
+      },
+      "AdminAccess": {
+        "appliesTo": {
+          "principalTypes": ["User"],
+          "resourceTypes": ["Organization", "Repository", "PhysicalArtifact", "Policy", "User"]
+        }
+      },
+      "SystemAccess": {
+        "appliesTo": {
+          "principalTypes": ["ServiceAccount"],
+          "resourceTypes": ["Organization", "Repository", "PhysicalArtifact", "Policy", "User"]
+        }
+      }
+    }
+  }
+}

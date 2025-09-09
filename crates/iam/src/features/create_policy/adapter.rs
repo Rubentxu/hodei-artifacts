@@ -11,6 +11,7 @@ use mongodb::{bson::doc, Collection, Database};
 use shared::hrn::PolicyId;
 use std::sync::Arc;
 
+
 /// Adapter that implements PolicyCreator using MongoDB directly
 pub struct MongoPolicyCreatorAdapter {
     collection: Collection<Policy>,
@@ -46,7 +47,7 @@ impl PolicyCreator for MongoPolicyCreatorAdapter {
     }
 }
 
-/// Adapter that implements PolicyValidator using CedarPolicyValidator
+/// Adapter that implements PolicyValidator using CedarPolicyValidator with comprehensive validation
 pub struct CedarPolicyValidatorAdapter {
     validator: Arc<CedarPolicyValidator>,
 }
@@ -55,12 +56,61 @@ impl CedarPolicyValidatorAdapter {
     pub fn new(validator: Arc<CedarPolicyValidator>) -> Self {
         Self { validator }
     }
+
+
+
+    /// Perform comprehensive Cedar validation using all Cedar capabilities
+    async fn validate_policy_semantics(&self, content: &str) -> Result<(), IamError> {
+        use security::ComprehensiveCedarValidator;
+
+        let validator = ComprehensiveCedarValidator::new()
+            .map_err(|e| IamError::validation_error(format!("Failed to create validator: {}", e)))?;
+
+        let result = validator.validate_policy_comprehensive(content).await
+            .map_err(|e| IamError::validation_error(format!("Validation failed: {}", e)))?;
+
+        if !result.is_valid {
+            // Create detailed error message with all validation failures
+            let mut error_parts = Vec::new();
+            
+            if !result.hrn_errors.is_empty() {
+                error_parts.push(format!("HRN errors: {}", result.hrn_errors.join(", ")));
+            }
+            
+            if !result.syntax_errors.is_empty() {
+                error_parts.push(format!("Syntax errors: {}", result.syntax_errors.join(", ")));
+            }
+            
+            if !result.semantic_errors.is_empty() {
+                error_parts.push(format!("Semantic errors: {}", result.semantic_errors.join(", ")));
+            }
+            
+            let error_message = if error_parts.is_empty() {
+                "Policy validation failed".to_string()
+            } else {
+                error_parts.join("; ")
+            };
+            
+            return Err(IamError::validation_error(error_message));
+        }
+
+        // Log warnings if any (but don't fail validation)
+        if !result.warnings.is_empty() {
+            tracing::warn!("Policy validation warnings: {}", result.warnings.join(", "));
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl PolicyValidator for CedarPolicyValidatorAdapter {
     async fn validate_syntax(&self, content: &str) -> Result<ValidationResult, IamError> {
         self.validator.validate_syntax(content).await
+    }
+
+    async fn validate_semantics(&self, content: &str) -> Result<(), IamError> {
+        self.validate_policy_semantics(content).await
     }
 }
 

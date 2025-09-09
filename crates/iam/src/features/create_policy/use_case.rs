@@ -45,15 +45,18 @@ impl CreatePolicyUseCase {
             ));
         }
 
-        // 3. Generate policy ID
+        // 3. Validate Cedar policy semantics against schema
+        self.validator.validate_semantics(&command.content).await?;
+
+        // 4. Generate policy ID
         let policy_id = self.generate_policy_id(&command.name)?;
 
-        // 4. Check if policy already exists
+        // 5. Check if policy already exists
         if self.creator.exists(&policy_id).await? {
             return Err(IamError::PolicyAlreadyExists(policy_id));
         }
 
-        // 5. Create domain entity
+        // 6. Create domain entity
         let now = OffsetDateTime::now_utc();
         let policy = Policy {
             id: policy_id,
@@ -71,15 +74,15 @@ impl CreatePolicyUseCase {
             },
         };
 
-        // 6. Persist policy
+        // 7. Persist policy
         let created_policy = self.creator.create(policy).await?;
 
-        // 7. Publish domain event
+        // 8. Publish domain event
         self.event_publisher
             .publish_policy_created(&created_policy)
             .await?;
 
-        // 8. Return response
+        // 9. Return response
         Ok(CreatePolicyResponse::new(created_policy))
     }
 
@@ -172,23 +175,37 @@ mod tests {
     }
 
     struct MockPolicyValidator {
-        should_fail: bool,
+        should_fail_syntax: bool,
+        should_fail_semantics: bool,
     }
 
     impl MockPolicyValidator {
         fn new() -> Self {
-            Self { should_fail: false }
+            Self { 
+                should_fail_syntax: false,
+                should_fail_semantics: false,
+            }
         }
 
-        fn with_failure() -> Self {
-            Self { should_fail: true }
+        fn with_syntax_failure() -> Self {
+            Self { 
+                should_fail_syntax: true,
+                should_fail_semantics: false,
+            }
+        }
+
+        fn with_semantic_failure() -> Self {
+            Self { 
+                should_fail_syntax: false,
+                should_fail_semantics: true,
+            }
         }
     }
 
     #[async_trait]
     impl PolicyValidator for MockPolicyValidator {
         async fn validate_syntax(&self, _content: &str) -> Result<ValidationResult, IamError> {
-            if self.should_fail {
+            if self.should_fail_syntax {
                 Ok(ValidationResult::invalid(vec![ValidationError {
                     message: "Mock validation error".to_string(),
                     line: Some(1),
@@ -196,6 +213,14 @@ mod tests {
                 }]))
             } else {
                 Ok(ValidationResult::valid())
+            }
+        }
+
+        async fn validate_semantics(&self, _content: &str) -> Result<(), IamError> {
+            if self.should_fail_semantics {
+                Err(IamError::validation_error("Mock semantic validation error".to_string()))
+            } else {
+                Ok(())
             }
         }
     }
@@ -293,9 +318,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_policy_validation_failure() {
+    async fn test_create_policy_syntax_validation_failure() {
         let creator = Arc::new(MockPolicyCreator::new());
-        let validator = Arc::new(MockPolicyValidator::with_failure());
+        let validator = Arc::new(MockPolicyValidator::with_syntax_failure());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
         
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
@@ -315,6 +340,32 @@ mod tests {
                 assert_eq!(errors[0].message, "Mock validation error");
             }
             _ => panic!("Expected PolicyValidationFailed error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_semantic_validation_failure() {
+        let creator = Arc::new(MockPolicyCreator::new());
+        let validator = Arc::new(MockPolicyValidator::with_semantic_failure());
+        let event_publisher = Arc::new(MockPolicyEventPublisher::new());
+        
+        let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
+        
+        let command = CreatePolicyCommand::new(
+            "Test Policy".to_string(),
+            "permit(principal == UnknownEntity::\"alice\", action == ReadArtifact, resource);".to_string(),
+            "user_123".to_string(),
+        );
+
+        let result = use_case.execute(command).await;
+        
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            IamError::PolicyValidationFailed { errors } => {
+                assert_eq!(errors.len(), 1);
+                assert!(errors[0].message.contains("Mock semantic validation error"));
+            }
+            other => panic!("Expected PolicyValidationFailed error, got: {:?}", other),
         }
     }
 
