@@ -1,3 +1,5 @@
-//! Infrastructure implementations for IAM crate
+// crates/iam/src/infrastructure/mod.rs
 
-pub mod cedar_adapter;
+pub mod errors;
+pub mod events;
+pub mod validation;

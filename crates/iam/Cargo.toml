@@ -5,6 +5,18 @@ edition = "2024"
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 time = { workspace = true }
 cedar-policy = { workspace = true }
 shared = { path = "../shared" }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+mongodb = { workspace = true }
+axum = { workspace = true }
+uuid = { workspace = true }
+regex = "1.0"
+tracing = { workspace = true }
+
+[dev-dependencies]
+mockall = "0.12"

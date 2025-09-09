@@ -156,3 +156,44 @@ fn is_valid_organization_name(name: &str) -> bool {
     // Check if name contains only allowed characters
     name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
+
+impl PolicyId {
+    /// Create a new PolicyId from a string
+    pub fn new(id: &str) -> Result<Self, HrnError> {
+        let hrn = if id.starts_with("hrn:") {
+            Hrn::new(id)?
+        } else {
+            Hrn::new(&format!("hrn:hodei:iam:global:policy/{}", id))?
+        };
+        Ok(PolicyId(hrn))
+    }
+
+    /// Create a PolicyId from an existing Hrn
+    pub fn from_hrn(hrn: Hrn) -> Self {
+        PolicyId(hrn)
+    }
+
+    /// Get the underlying Hrn
+    pub fn hrn(&self) -> &Hrn {
+        &self.0
+    }
+
+    /// Get the policy name from the HRN
+    pub fn name(&self) -> Option<&str> {
+        self.0.0.split('/').last()
+    }
+}
+
+impl std::fmt::Display for PolicyId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for PolicyId {
+    type Err = HrnError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
