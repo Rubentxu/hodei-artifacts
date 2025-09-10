@@ -344,4 +344,14 @@ mod tests {
     fn test_parse_blob_path() {
         let parser = DockerPathParser::new();
         
-        let path = "/v2/library/nginx/blobs/sha256:123
+        let path = "/v2/library/nginx/blobs/sha256:1234567890abcdef";
+        let info = parser.parse_path(path).unwrap();
+        
+        assert_eq!(info.namespace, "library");
+        assert_eq!(info.repository, "nginx");
+        assert_eq!(info.digest, Some("sha256:1234567890abcdef".to_string()));
+        assert!(!info.is_manifest);
+        assert!(info.is_blob);
+        assert!(info.coordinates.is_some());
+    }
+}

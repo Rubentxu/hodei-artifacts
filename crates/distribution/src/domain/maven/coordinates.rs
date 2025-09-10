@@ -175,21 +175,22 @@ impl MavenCoordinates {
             ));
         }
         
-        if group_id.starts_with('.') || group_id.ends_with('.') || 
+        if group_id.starts_with('.') || group_id.ends_with('.') ||
            group_id.starts_with('-') || group_id.ends_with('-') {
             return Err(MavenValidationError::InvalidGroupId(
                 "Group ID cannot start or end with '.' or '-'".to_string()
             ));
         }
         
-        if group_id.contains("..") || group_id.contains("--") || 
-           group_id.contains(".-") || group_id.contains("-.")) {
+        if group_id.contains("..") || group_id.contains("--") ||
+           group_id.contains(".-") || group_id.contains("-.") {
             return Err(MavenValidationError::InvalidGroupId(
                 "Group ID cannot contain consecutive special characters".to_string()
             ));
         }
         
         Ok(())
+    }
     }
     
     pub fn validate_artifact_id(artifact_id: &str) -> Result<(), MavenValidationError> {
@@ -259,7 +260,6 @@ impl MavenCoordinates {
         }
         
         Ok(())
-    }
 }
 
 impl fmt::Display for MavenCoordinates {
