@@ -4,3 +4,24 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# Core dependencies
+tantivy = "0.25.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+
+# Shared dependencies
+shared = { path = "../shared" }
+
+# Infrastructure dependencies (for adapters)
+mongodb = { workspace = true }
+lapin = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }

@@ -1,50 +1,57 @@
-// crates/shared/src/hrn.rs
-
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
+use uuid::Uuid;
 
-#[derive(Debug, thiserror::Error)]
-pub enum HrnError {
-    #[error("Invalid HRN format: {0}")]
-    InvalidFormat(String),
-}
-
-/// Un HRN (Hodei Resource Name) validado, modelado a partir de los ARN de AWS.
-/// Es el identificador canónico, único y global para cualquier recurso en Hodei.
-/// El campo interno es privado para forzar la creación a través de constructores que garantizan la validez.
+/// HRN (Hodei Resource Name) - Un identificador único universal para recursos en Hodei.
+/// 
+/// Formato: hrn:hodei:{service}:{namespace}:{resource-type}/{resource-id}[/{sub-resource-type}/{sub-resource-id}]*
+/// 
+/// Ejemplos:
+/// - hrn:hodei:iam::organization/acme
+/// - hrn:hodei:artifact::repository/npm-registry/package/react/18.2.0
+/// - hrn:hodei:security::sbom/npm-registry/package/react/18.2.0/sha256-abc123
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Hrn(String);
+pub struct Hrn(pub String);
 
 impl Hrn {
-    /// Construye un nuevo HRN, validando su formato.
-    pub fn new(input: &str) -> Result<Self, HrnError> {
+    pub fn new(s: &str) -> Result<Self, HrnError> {
         // Basic validation
-        if !input.starts_with("hrn:") {
-            return Err(HrnError::InvalidFormat(input.to_string()));
+        if !s.starts_with("hrn:hodei:") {
+            return Err(HrnError::InvalidFormat);
         }
         
-        // Validate HRN structure
-        let parts: Vec<&str> = input.split(':').collect();
-        if parts.len() < 5 {
-            return Err(HrnError::InvalidFormat(input.to_string()));
-        }
-        
-        // Validate organization name format (only for organization HRNs)
-        if input.starts_with("hrn:hodei:iam::system:organization/") {
-            if let Some(org_part) = input.split("organization/").nth(1) {
-                let org_name = org_part.split('/').next().unwrap_or("");
-                if !is_valid_organization_name(org_name) {
-                    return Err(HrnError::InvalidFormat(input.to_string()));
-                }
+        // Validate organization name if it's an organization HRN
+        if s.starts_with("hrn:hodei:iam::system:organization/")
+            && let Some(org_part) = s.split("organization/").nth(1) {
+            let org_name = org_part.split('/').next().unwrap_or("");
+            if !is_valid_organization_name(org_name) {
+                return Err(HrnError::InvalidOrganizationName(org_name.to_string()));
             }
         }
         
-        Ok(Self(input.to_string()))
+        Ok(Hrn(s.to_string()))
     }
-
-    /// Devuelve el HRN como un string slice.
+    
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+    
+    /// Extrae el nombre de la organización del HRN si es un HRN de organización.
+    /// Devuelve None si no es un HRN de organización.
+    pub fn organization_name(&self) -> Option<&str> {
+        if self.0.starts_with("hrn:hodei:iam::system:organization/") {
+            self.0.split("organization/").nth(1)?.split('/').next()
+        } else {
+            None
+        }
+    }
+    
+    /// Extrae el ID del recurso del HRN.
+    /// Para un HRN como "hrn:hodei:artifact::repository/npm-registry/package/react/18.2.0",
+    /// esto devolvería "18.2.0".
+    pub fn resource_id(&self) -> Option<&str> {
+        self.0.split('/').next_back()
     }
 }
 
@@ -54,146 +61,222 @@ impl fmt::Display for Hrn {
     }
 }
 
-// --- Tipos de ID fuertemente tipados para seguridad de tipos en todo el sistema ---
-
-
-/// Identificador para una `Organization`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct OrganizationId(pub Hrn);
-
-impl OrganizationId {
-    pub fn new(name: &str) -> Result<Self, HrnError> {
-        let hrn_str = format!("hrn:hodei:iam::system:organization/{}", name);
-        Ok(Self(Hrn::new(&hrn_str)?))
+impl FromStr for Hrn {
+    type Err = HrnError;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Hrn::new(s)
     }
 }
 
-/// Identificador para un `Repository`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RepositoryId(pub Hrn);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HrnError {
+    InvalidFormat,
+    InvalidOrganizationName(String),
+}
 
-impl RepositoryId {
-    pub fn new(org_id: &OrganizationId, repo_name: &str) -> Result<Self, HrnError> {
-        // Extract organization name from organization HRN
-        let org_hrn = org_id.0.as_str();
-        let org_name = org_hrn.split("organization/").nth(1).unwrap_or("");
-        
-        let hrn_str = format!("hrn:hodei:artifact::system:repository/{}/{}", org_name, repo_name);
-        Ok(Self(Hrn::new(&hrn_str)?))
+impl fmt::Display for HrnError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HrnError::InvalidFormat => write!(f, "Invalid HRN format"),
+            HrnError::InvalidOrganizationName(name) => write!(f, "Invalid organization name: {}", name),
+        }
     }
 }
 
-/// Identificador para una `PackageVersion`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PackageVersionId(pub Hrn);
+impl std::error::Error for HrnError {}
 
-/// Identificador para un `PhysicalArtifact`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PhysicalArtifactId(pub Hrn);
-
-impl PhysicalArtifactId {
-    pub fn new(content_hash: &str) -> Result<Self, HrnError> {
-        let hrn_str = format!("hrn:hodei:artifact::system:physical-artifact/sha256-{}", content_hash);
-        Ok(Self(Hrn::new(&hrn_str)?))
-    }
-}
-
-/// Identificador para un `User`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct UserId(pub Hrn);
-
-impl UserId {
-    pub fn new_system_user() -> Self {
-        Self(Hrn("hrn:hodei:iam::system:user/system".to_string()))
-    }
-
-    /// Creates a UserId from an existing Hrn.
-    /// This is useful when you have a Hrn that represents a user and need to convert it to UserId.
-    pub fn from_hrn(hrn: Hrn) -> Self {
-        Self(hrn)
-    }
-}
-
-/// Identificador para una `ApiKey`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ApiKeyId(pub Hrn);
-
-/// Identificador para una `Policy` o `RetentionPolicy`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PolicyId(pub Hrn);
-
-/// Identificador para una `PublicKey` usada en firmas.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PublicKeyId(pub Hrn);
-
-/// Identificador para una `Attestation`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AttestationId(pub Hrn);
-
-/// Identificador para un `SecurityScanResult`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ScanResultId(pub Hrn);
-
-/// Identificador para una `VulnerabilityDefinition`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct VulnerabilityDefinitionId(pub Hrn);
-
-/// Identificador para una `VulnerabilityOccurrence`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct VulnerabilityOccurrenceId(pub Hrn);
-
-/// Identificador para un `StorageBackend`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct StorageBackendId(pub Hrn);
-
-/// Validates if a string is a valid organization name.
-/// Organization names should only contain alphanumeric characters, dots, and hyphens.
+/// Valida que un nombre de organización cumpla con las restricciones:
+/// - Solo caracteres alfanuméricos, guiones y guiones bajos
+/// - Longitud entre 1 y 63 caracteres
+/// - No puede comenzar ni terminar con guión o guión bajo
 fn is_valid_organization_name(name: &str) -> bool {
     if name.is_empty() || name.len() > 63 {
         return false;
     }
     
-    // Check if name contains only allowed characters
-    name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    let chars: Vec<char> = name.chars().collect();
+    
+    // No puede comenzar ni terminar con guión o guión bajo
+    if chars.first() == Some(&'-') || chars.first() == Some(&'_') ||
+       chars.last() == Some(&'-') || chars.last() == Some(&'_') {
+        return false;
+    }
+    
+    // Solo caracteres alfanuméricos, guiones y guiones bajos
+    name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
+
+/// Macro para crear HRNs de manera conveniente.
+/// 
+/// Ejemplo:
+/// ```
+/// # use shared::hrn::{hrn, Hrn};
+/// let org_hrn = hrn!("iam", "", "organization/acme");
+/// assert_eq!(org_hrn.as_str(), "hrn:hodei:iam::organization/acme");
+/// ```
+#[macro_export]
+macro_rules! hrn {
+    ($service:expr, $namespace:expr, $resource_path:expr) => {
+        $crate::hrn::Hrn::new(&format!("hrn:hodei:{}:{}:{}", $service, $namespace, $resource_path)).unwrap()
+    };
+}
+
+/// HRN para identificar organizaciones.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OrganizationId(pub Hrn);
+
+impl OrganizationId {
+    pub fn new(name: &str) -> Result<Self, HrnError> {
+        let hrn = Hrn::new(&format!("hrn:hodei:iam::system:organization/{}", name))?;
+        Ok(OrganizationId(hrn))
+    }
+    
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+    
+    pub fn name(&self) -> Option<&str> {
+        self.0.organization_name()
+    }
+}
+
+/// HRN para identificar repositorios.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RepositoryId(pub Hrn);
+
+impl RepositoryId {
+    pub fn new(org_id: &OrganizationId, name: &str) -> Result<Self, HrnError> {
+        let hrn = Hrn::new(&format!("{}/repository/{}", org_id.as_str(), name))?;
+        Ok(RepositoryId(hrn))
+    }
+    
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+/// HRN para identificar artefactos físicos.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PhysicalArtifactId(pub Hrn);
+
+impl PhysicalArtifactId {
+    pub fn new(hash: &str) -> Result<Self, HrnError> {
+        let hrn = Hrn::new(&format!("hrn:hodei:artifact::physical-artifact/{}", hash))?;
+        Ok(PhysicalArtifactId(hrn))
+    }
+    
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+/// HRN para identificar usuarios.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct UserId(pub Hrn);
+
+impl UserId {
+    pub fn new(org_id: &OrganizationId, username: &str) -> Result<Self, HrnError> {
+        let hrn = Hrn::new(&format!("{}/user/{}", org_id.as_str(), username))?;
+        Ok(UserId(hrn))
+    }
+    
+    /// Crea un HRN para un usuario del sistema.
+    pub fn new_system_user() -> Self {
+        UserId(Hrn("hrn:hodei:iam::system:user/system".to_string()))
+    }
+    
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+/// HRN para identificar grupos.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GroupId(pub Hrn);
+
+impl GroupId {
+    pub fn new(org_id: &OrganizationId, name: &str) -> Result<Self, HrnError> {
+        let hrn = Hrn::new(&format!("{}/group/{}", org_id.as_str(), name))?;
+        Ok(GroupId(hrn))
+    }
+    
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+/// HRN para identificar políticas.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PolicyId(pub Hrn);
 
 impl PolicyId {
-    /// Create a new PolicyId from a string
-    pub fn new(id: &str) -> Result<Self, HrnError> {
-        let hrn = if id.starts_with("hrn:") {
-            Hrn::new(id)?
-        } else {
-            Hrn::new(&format!("hrn:hodei:iam:global:policy/{}", id))?
-        };
+    pub fn new(org_id: &OrganizationId, name: &str) -> Result<Self, HrnError> {
+        let hrn = Hrn::new(&format!("{}/policy/{}", org_id.as_str(), name))?;
         Ok(PolicyId(hrn))
     }
-
-    /// Create a PolicyId from an existing Hrn
-    pub fn from_hrn(hrn: Hrn) -> Self {
-        PolicyId(hrn)
-    }
-
-    /// Get the underlying Hrn
-    pub fn hrn(&self) -> &Hrn {
-        &self.0
-    }
-
-    /// Get the policy name from the HRN
-    pub fn name(&self) -> Option<&str> {
-        self.0.0.split('/').last()
+    
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
     }
 }
 
-impl std::fmt::Display for PolicyId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+/// HRN para identificar sesiones.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionId(pub Hrn);
+
+impl SessionId {
+    pub fn new(_org_id: &OrganizationId, user_id: &UserId) -> Result<Self, HrnError> {
+        let uuid = Uuid::new_v4();
+        let hrn = Hrn::new(&format!("{}/session/{}", user_id.as_str(), uuid))?;
+        Ok(SessionId(hrn))
+    }
+    
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
     }
 }
 
-impl std::str::FromStr for PolicyId {
-    type Err = HrnError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::new(s)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_valid_organization_hrn() {
+        let hrn = Hrn::new("hrn:hodei:iam::system:organization/acme").unwrap();
+        assert_eq!(hrn.as_str(), "hrn:hodei:iam::system:organization/acme");
+        assert_eq!(hrn.organization_name(), Some("acme"));
+    }
+    
+    #[test]
+    fn test_invalid_organization_hrn() {
+        let hrn = Hrn::new("hrn:hodei:iam::system:organization/-invalid-");
+        assert!(hrn.is_err());
+    }
+    
+    #[test]
+    fn test_resource_id_extraction() {
+        let hrn = Hrn::new("hrn:hodei:artifact::repository/npm-registry/package/react/18.2.0").unwrap();
+        assert_eq!(hrn.resource_id(), Some("18.2.0"));
+    }
+    
+    #[test]
+    fn test_organization_id() {
+        let org_id = OrganizationId::new("acme").unwrap();
+        assert_eq!(org_id.as_str(), "hrn:hodei:iam::system:organization/acme");
+        assert_eq!(org_id.name(), Some("acme"));
+    }
+    
+    #[test]
+    fn test_user_id() {
+        let org_id = OrganizationId::new("acme").unwrap();
+        let user_id = UserId::new(&org_id, "john_doe").unwrap();
+        assert_eq!(user_id.as_str(), "hrn:hodei:iam::system:organization/acme/user/john_doe");
+    }
+    
+    #[test]
+    fn test_system_user_id() {
+        let system_user = UserId::new_system_user();
+        assert_eq!(system_user.as_str(), "hrn:hodei:iam::system:user/system");
     }
 }
