@@ -1,8 +1,7 @@
 use std::sync::Arc;
-use async_trait::async_trait;
-use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ProgressResult, ProgressError};
+use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ProgressResult};
 use super::dto::{UploadProgress, UploadStatus, UpdateProgressCommand};
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 /// Servicio principal para gestión de progreso de subidas
 #[derive(Clone)]
@@ -172,6 +171,7 @@ impl UploadProgressService {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use crate::features::upload_artifact::upload_progress::ProgressError;
     use async_trait::async_trait;
 
     #[derive(Default)]

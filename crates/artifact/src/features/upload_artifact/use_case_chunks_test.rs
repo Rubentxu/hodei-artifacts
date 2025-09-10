@@ -46,7 +46,7 @@ mod tests {
         let artifact_use_case = Arc::new(UploadArtifactUseCase::new(repo, artifact_storage, publisher.clone(), validator));
         let progress_container = UploadProgressDIContainer::for_testing();
         let progress_service = progress_container.service;
-        let use_case = UploadArtifactChunkUseCase::new(storage.clone(), artifact_use_case, publisher.clone(), progress_service);
+        let use_case = UploadArtifactChunkUseCase::new(storage.clone(), artifact_use_case, publisher.clone(), Arc::new(progress_service));
         
         // First chunk
         let command1 = crate::features::upload_artifact::dto::UploadArtifactChunkCommand {
@@ -80,7 +80,7 @@ mod tests {
             }),
         };
         
-        let response2 = use_case.execute(command2, Bytes::from("bar")).await;
+        let _response2 = use_case.execute(command2, Bytes::from("bar")).await;
         // This might succeed or fail depending on the mock setup, but the important thing
         // is that the method signature is correct
     }

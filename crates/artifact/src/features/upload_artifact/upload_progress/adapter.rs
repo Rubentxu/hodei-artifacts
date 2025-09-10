@@ -2,7 +2,7 @@
 //! Incluye implementaciones para testing y desarrollo
 
 use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ProgressResult, ProgressError};
-use super::dto::{UploadProgress, UpdateProgressCommand, UploadStatus};
+use super::dto::{UploadProgress, UpdateProgressCommand};
 use async_trait::async_trait;
 use std::sync::Mutex;
 
