@@ -70,7 +70,7 @@ test-artifact-all: test-artifact-unit test-artifact-integration
 # Run batch upload specific tests
 test-batch-upload:
 	@echo "Running batch upload tests..."
-	@RUST_LOG=$(RUST_LOG_LEVEL) cargo test --lib --test "*batch*" -p artifact --nocapture
+	@RUST_LOG=$(RUST_LOG_LEVEL) cargo test --lib --test "*batch*" -p artifact -- --nocapture
 
 # --- Utility Targets ---
 

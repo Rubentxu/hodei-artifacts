@@ -1,13 +1,11 @@
 use tracing::{info, error, debug, info_span};
 use axum::{
     body::Body,
-    extract::{Multipart, State, FromRequestParts},
+    extract::{Multipart, FromRequestParts},
     response::{IntoResponse, Json},
     http::{StatusCode, Request, request::Parts},
     Extension,
-    Router,
-    routing::post,
-    middleware::{self, Next},
+    middleware::Next,
 };
 use std::sync::Arc;
 use bytes::Bytes;
@@ -17,7 +15,6 @@ use sha2::{Sha256, Digest};
 use crate::features::upload_artifact::{
     dto::{UploadArtifactCommand, UploadArtifactMetadata},
     error::UploadArtifactError,
-    di::UploadArtifactDIContainer,
 };
 use shared::enums::HashAlgorithm;
 use crate::features::upload_artifact::use_case::UploadArtifactUseCase;
@@ -130,6 +127,7 @@ impl UploadArtifactEndpoint {
 }
 
 // Simple auth middleware: requires Authorization: Bearer <token> unless HODEI_AUTH_DISABLED=true
+#[allow(dead_code)]
 async fn auth_middleware(req: Request<Body>, next: Next) -> impl IntoResponse {
     // Test bypass via header
     if let Some(bypass) = req.headers().get("X-Test-Bypass-Auth") {
@@ -168,7 +166,7 @@ impl FromRequestParts<Arc<UploadArtifactEndpoint>> for UserIdentity {
     type Rejection = (StatusCode, String);
 
     async fn from_request_parts(
-        parts: &mut Parts,
+        _parts: &mut Parts,
         _state: &Arc<UploadArtifactEndpoint>,
     ) -> Result<Self, Self::Rejection> {
         // For development/demo purposes, use a mock user identity

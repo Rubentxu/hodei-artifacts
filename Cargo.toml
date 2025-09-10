@@ -55,6 +55,8 @@ tokio = { version = "^1.38", features = ["full"] }
 tokio-util = { version = "0.7" }
 tracing = { version = "^0.1" }
 uuid = { version = "1.8.0", features = ["v4", "serde"] } # Using latest stable
+mockall = "0.11.0"
+wiremock = "0.5"
 
 # Additional dependencies for centralized version management
 url = "2.5.0"

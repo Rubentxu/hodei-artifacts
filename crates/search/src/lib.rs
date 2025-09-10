@@ -5,3 +5,4 @@ pub mod features {
     pub mod advanced_query;
     pub mod full_text_search;
 }
+

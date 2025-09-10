@@ -78,6 +78,6 @@ impl UploadArtifactDIContainer {
         let progress_container = UploadProgressDIContainer::for_testing();
         let progress_service = progress_container.service;
 
-        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone(), progress_service), repository, storage, publisher, validator)
+        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone(), Arc::new(progress_service)), repository, storage, publisher, validator)
     }
 }

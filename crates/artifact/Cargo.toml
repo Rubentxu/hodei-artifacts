@@ -10,6 +10,8 @@ auth = []
 
 upload_batch = []
 
+production = []
+
 [dependencies]
 uuid = "0.8"
 anyhow = "1.0"

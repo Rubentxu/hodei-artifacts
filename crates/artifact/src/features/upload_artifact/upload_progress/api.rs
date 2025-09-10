@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::{
     UploadProgressService, UploadProgressResponse, UploadProgress,
-    ProgressError, ProgressResult
+    ProgressError
 };
 use crate::features::upload_artifact::api::UserIdentity;
 
@@ -210,11 +210,9 @@ pub struct SubscribeRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::extract::Request;
-    use axum::http;
     use std::sync::Arc;
     use crate::features::upload_artifact::api::MockUserIdentity;
-    use crate::features::upload_artifact::upload_progress::service::tests::{MockProgressStorage, MockEventPublisher, MockRealtimeNotifier};
+    use crate::features::upload_artifact::upload_progress::adapter::test::{MockProgressStorage, MockEventPublisher, MockRealtimeNotifier};
 
     #[tokio::test]
     async fn test_get_progress_authorized() {
@@ -223,20 +221,20 @@ mod tests {
         let realtime_notifier = Arc::new(MockRealtimeNotifier::default());
         
         let service = UploadProgressService::new(storage.clone(), event_publisher, realtime_notifier);
-        let api = UploadProgressApi::new(service);
+        let api = UploadProgressApi::new(service.clone());
 
         // Crear sesión de prueba
         service.create_session("test-user-123".to_string(), 1000).await.unwrap();
 
-        let user = MockUserIdentity::new("test-user");
+        let user = MockUserIdentity::new();
         let response = UploadProgressApi::get_progress(
             State(api.clone()),
             user,
             Path("test-user-123".to_string()),
         ).await;
 
-        let (status, _) = response.into_response().into_parts();
-        assert_eq!(status, StatusCode::OK);
+        let response = (*response).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
     }
 
     #[tokio::test]
@@ -246,19 +244,19 @@ mod tests {
         let realtime_notifier = Arc::new(MockRealtimeNotifier::default());
         
         let service = UploadProgressService::new(storage.clone(), event_publisher, realtime_notifier);
-        let api = UploadProgressApi::new(service);
+        let api = UploadProgressApi::new(service.clone());
 
         // Crear sesión de prueba
         service.create_session("other-user-456".to_string(), 1000).await.unwrap();
 
-        let user = MockUserIdentity::new("test-user");
+        let user = MockUserIdentity::new();
         let response = UploadProgressApi::get_progress(
             State(api.clone()),
             user,
             Path("other-user-456".to_string()),
         ).await;
 
-        let (status, _) = response.into_response().into_parts();
-        assert_eq!(status, StatusCode::FORBIDDEN);
+        let response = (*response).into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
     }
 }

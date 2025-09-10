@@ -1,0 +1,510 @@
+// Cedar Schema Definition for Hodei System
+// This schema defines all valid entities, actions, and attributes for comprehensive policy validation
+// All entities are identified by HRNs (Hodei Resource Names)
+
+namespace Hodei {
+    // IAM Domain Entities
+    entity User = {
+        "hrn": String,
+        "name": String,
+        "email": String,
+        "role": String,
+        "department"?: String,
+        "active": Bool,
+    };
+
+    entity Policy = {
+        "hrn": String,
+        "name": String,
+        "description"?: String,
+        "content": String,
+        "status": String,
+        "version": Long,
+    };
+
+    entity ApiKey = {
+        "hrn": String,
+        "name": String,
+        "user": User,
+        "permissions": Set<String>,
+        "expires_at"?: String,
+        "active": Bool,
+    };
+
+    entity ServiceAccount = {
+        "hrn": String,
+        "name": String,
+        "description"?: String,
+        "permissions": Set<String>,
+        "active": Bool,
+    };
+
+    // Organization Domain Entities
+    entity Organization = {
+        "hrn": String,
+        "name": String,
+        "domain": String,
+        "active": Bool,
+        "settings": Record<String, String>,
+    };
+
+    entity Team = {
+        "hrn": String,
+        "name": String,
+        "organization": Organization,
+        "description"?: String,
+        "members": Set<User>,
+    };
+
+    entity Membership = {
+        "hrn": String,
+        "user": User,
+        "organization": Organization,
+        "role": String,
+        "active": Bool,
+    };
+
+    // Artifact Domain Entities
+    entity Repository = {
+        "hrn": String,
+        "name": String,
+        "organization": Organization,
+        "visibility": String,
+        "created_at": String,
+        "updated_at": String,
+    };
+
+    entity PhysicalArtifact = {
+        "hrn": String,
+        "content_hash": String,
+        "size": Long,
+        "content_type": String,
+        "created_at": String,
+    };
+
+    entity PackageVersion = {
+        "hrn": String,
+        "repository": Repository,
+        "version": String,
+        "artifacts": Set<PhysicalArtifact>,
+        "created_at": String,
+    };
+
+    entity ArtifactMetadata = {
+        "hrn": String,
+        "artifact": PhysicalArtifact,
+        "metadata": Record<String, String>,
+        "tags": Set<String>,
+    };
+
+    // Configuration Domain Entities
+    entity Configuration = {
+        "hrn": String,
+        "name": String,
+        "organization": Organization,
+        "content": String,
+        "version": Long,
+    };
+
+    entity ConfigTemplate = {
+        "hrn": String,
+        "name": String,
+        "template": String,
+        "variables": Set<String>,
+    };
+
+    entity ConfigVersion = {
+        "hrn": String,
+        "configuration": Configuration,
+        "version": Long,
+        "content": String,
+        "created_at": String,
+    };
+
+    // Events Domain Entities
+    entity Event = {
+        "hrn": String,
+        "type": String,
+        "source": String,
+        "timestamp": String,
+        "data": Record<String, String>,
+    };
+
+    entity EventStream = {
+        "hrn": String,
+        "name": String,
+        "organization": Organization,
+        "filters": Set<String>,
+    };
+
+    entity EventSubscription = {
+        "hrn": String,
+        "stream": EventStream,
+        "subscriber": String,
+        "active": Bool,
+    };
+
+    // Analytics Domain Entities
+    entity Metric = {
+        "hrn": String,
+        "name": String,
+        "type": String,
+        "value": String,
+        "timestamp": String,
+    };
+
+    entity Dashboard = {
+        "hrn": String,
+        "name": String,
+        "organization": Organization,
+        "widgets": Set<String>,
+        "public": Bool,
+    };
+
+    entity Report = {
+        "hrn": String,
+        "name": String,
+        "type": String,
+        "data": String,
+        "generated_at": String,
+    };
+
+    entity Alert = {
+        "hrn": String,
+        "name": String,
+        "condition": String,
+        "severity": String,
+        "active": Bool,
+    };
+
+    // Supply Chain Domain Entities
+    entity Attestation = {
+        "hrn": String,
+        "artifact": PhysicalArtifact,
+        "type": String,
+        "signature": String,
+        "created_at": String,
+    };
+
+    entity PublicKey = {
+        "hrn": String,
+        "key_id": String,
+        "algorithm": String,
+        "public_key": String,
+        "active": Bool,
+    };
+
+    entity ScanResult = {
+        "hrn": String,
+        "artifact": PhysicalArtifact,
+        "scanner": String,
+        "results": String,
+        "scanned_at": String,
+    };
+
+    entity VulnerabilityDefinition = {
+        "hrn": String,
+        "cve_id": String,
+        "severity": String,
+        "description": String,
+        "published_at": String,
+    };
+
+    entity VulnerabilityOccurrence = {
+        "hrn": String,
+        "artifact": PhysicalArtifact,
+        "vulnerability": VulnerabilityDefinition,
+        "detected_at": String,
+    };
+
+    entity ProvenanceRecord = {
+        "hrn": String,
+        "artifact": PhysicalArtifact,
+        "build_info": String,
+        "source_repo": Repository,
+        "created_at": String,
+    };
+
+    // Storage Domain Entities
+    entity StorageBackend = {
+        "hrn": String,
+        "name": String,
+        "type": String,
+        "configuration": String,
+        "active": Bool,
+    };
+
+    entity StorageBucket = {
+        "hrn": String,
+        "name": String,
+        "backend": StorageBackend,
+        "organization": Organization,
+        "public": Bool,
+    };
+
+    entity StoragePolicy = {
+        "hrn": String,
+        "name": String,
+        "rules": String,
+        "active": Bool,
+    };
+
+    // Monitoring Domain Entities
+    entity Monitor = {
+        "hrn": String,
+        "name": String,
+        "target": String,
+        "checks": Set<String>,
+        "active": Bool,
+    };
+
+    entity HealthCheck = {
+        "hrn": String,
+        "name": String,
+        "endpoint": String,
+        "interval": Long,
+        "active": Bool,
+    };
+
+    entity LogStream = {
+        "hrn": String,
+        "name": String,
+        "source": String,
+        "filters": Set<String>,
+    };
+
+    // Actions for IAM Domain
+    action CreateUser appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Organization]
+    };
+
+    action ReadUser appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [User]
+    };
+
+    action UpdateUser appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [User]
+    };
+
+    action DeleteUser appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [User]
+    };
+
+    action ManagePolicies appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Organization, Policy]
+    };
+
+    action ManageApiKeys appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [User, ApiKey]
+    };
+
+    // Actions for Organization Domain
+    action CreateOrganization appliesTo {
+        principal: [User],
+        resource: [Organization]
+    };
+
+    action ManageOrganization appliesTo {
+        principal: [User],
+        resource: [Organization]
+    };
+
+    action ManageTeams appliesTo {
+        principal: [User],
+        resource: [Organization, Team]
+    };
+
+    action ManageMemberships appliesTo {
+        principal: [User],
+        resource: [Organization, Membership]
+    };
+
+    // Actions for Artifact Domain
+    action CreateRepository appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Organization]
+    };
+
+    action ReadRepository appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Repository]
+    };
+
+    action WriteRepository appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Repository]
+    };
+
+    action DeleteRepository appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Repository]
+    };
+
+    action ReadArtifact appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [PhysicalArtifact, PackageVersion]
+    };
+
+    action WriteArtifact appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Repository, PhysicalArtifact]
+    };
+
+    action DeleteArtifact appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [PhysicalArtifact, PackageVersion]
+    };
+
+    action ManageMetadata appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [ArtifactMetadata]
+    };
+
+    // Actions for Configuration Domain
+    action ReadConfiguration appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Configuration, ConfigTemplate]
+    };
+
+    action WriteConfiguration appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Configuration, ConfigTemplate]
+    };
+
+    action ManageConfigVersions appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Configuration, ConfigVersion]
+    };
+
+    // Actions for Events Domain
+    action PublishEvent appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [EventStream]
+    };
+
+    action ReadEvent appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Event, EventStream]
+    };
+
+    action ManageEventStreams appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Organization, EventStream]
+    };
+
+    action ManageSubscriptions appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [EventStream, EventSubscription]
+    };
+
+    // Actions for Analytics Domain
+    action ReadMetrics appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Metric, Dashboard]
+    };
+
+    action CreateDashboard appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Organization]
+    };
+
+    action ManageDashboards appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Dashboard]
+    };
+
+    action GenerateReports appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Organization, Report]
+    };
+
+    action ManageAlerts appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Alert]
+    };
+
+    // Actions for Supply Chain Domain
+    action CreateAttestation appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [PhysicalArtifact]
+    };
+
+    action ReadAttestation appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Attestation]
+    };
+
+    action ManageKeys appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [PublicKey]
+    };
+
+    action RunScans appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [PhysicalArtifact]
+    };
+
+    action ReadScanResults appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [ScanResult, VulnerabilityOccurrence]
+    };
+
+    action ManageProvenance appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [ProvenanceRecord]
+    };
+
+    // Actions for Storage Domain
+    action ManageStorage appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [StorageBackend, StorageBucket]
+    };
+
+    action ReadStorage appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [StorageBucket]
+    };
+
+    action WriteStorage appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [StorageBucket]
+    };
+
+    // Actions for Monitoring Domain
+    action CreateMonitor appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Organization]
+    };
+
+    action ReadMonitor appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Monitor, HealthCheck]
+    };
+
+    action ManageMonitors appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [Monitor, HealthCheck]
+    };
+
+    action ReadLogs appliesTo {
+        principal: [User, ServiceAccount],
+        resource: [LogStream]
+    };
+
+    // Administrative Actions
+    action AdminAccess appliesTo {
+        principal: [User],
+        resource: [Organization, User, Repository, PhysicalArtifact, Policy, Configuration, Event, Metric, Attestation, StorageBackend, Monitor]
+    };
+
+    action SystemAccess appliesTo {
+        principal: [ServiceAccount],
+        resource: [Organization, User, Repository, PhysicalArtifact, Policy, Configuration, Event, Metric, Attestation, StorageBackend, Monitor]
+    };
+}

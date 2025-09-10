@@ -1,5 +1,5 @@
 use axum::{
-    routing::{post, get, delete, IntoMakeService},
+    routing::{post, get, delete, put, IntoMakeService},
     Router,
     Extension,
     handler::Handler,
@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use artifact::features::upload_artifact::{UploadArtifactDIContainer, api::UploadArtifactEndpoint};
 use artifact::features::upload_artifact::upload_progress::{UploadProgressDIContainer, api::UploadProgressApi};
 use iam::features::validate_policy::{ValidatePolicyDIContainer, api::ValidatePolicyApi};
+use repository::create_repository_api_module;
 
 #[tokio::main]
 async fn main() {
@@ -37,8 +38,18 @@ async fn main() {
         .expect("Failed to create ValidatePolicyDIContainer");
     let validate_policy_api = validate_policy_container.api;
 
+    // --- Repository CRUD Endpoints ---
+    let repository_api_module = create_repository_api_module(
+        mongodb::Client::with_uri_str("mongodb://localhost:27017")
+            .await
+            .expect("Failed to connect to MongoDB")
+            .database("hodei")
+    );
+    let repository_router = repository_api_module.create_router();
+
     // --- Create and combine Axum routers ---
     let app = Router::new()
+        // Artifact endpoints
         .route(
             "/artifacts",
             post(UploadArtifactEndpoint::upload_artifact),
@@ -63,6 +74,8 @@ async fn main() {
             "/policies/validate",
             post(ValidatePolicyApi::handle),
         )
+        // Repository CRUD endpoints
+        .nest("/api/v1", repository_router)
         .layer(Extension(upload_artifact_api))
         .layer(Extension(upload_progress_api))
         .layer(Extension(validate_policy_api));
