@@ -1,0 +1,12 @@
+feat(security): implement SBOM generation feature
+
+- Complete implementation of story 6.2 for SBOM generation
+- Add generate_sbom feature with event-driven SBOM generation
+- Create domain models for Sbom and SbomFormat
+- Define ports for SBOM generator and repository
+- Implement adapters for Syft and S3/MongoDB storage
+- Add comprehensive unit tests with mocks
+- Add integration test with simulated environment
+- Update story documentation with completion status
+
+Closes #6.2
