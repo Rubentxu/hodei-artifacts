@@ -15,7 +15,7 @@ mod tests {
     use crate::features::upload_artifact::api::UploadArtifactEndpoint;
     use crate::features::upload_artifact::{
         use_case::UploadArtifactUseCase,
-        test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher},
+        test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator},
         
     };
 
@@ -26,11 +26,12 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
+        let validator = Arc::new(MockArtifactValidator::new());
         
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
-        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")
@@ -76,8 +77,9 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
+        let validator = Arc::new(MockArtifactValidator::new());
         
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
         let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
@@ -114,13 +116,14 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
+        let validator = Arc::new(MockArtifactValidator::new());
         
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
         let metadata = json!({
             "coordinates": {
-                "namespace": "com.example",
+                "namespace": "example",
                 "name": "test-artifact",
                 "version": "1.0.0",
                 "qualifiers": {}
@@ -163,11 +166,12 @@ mod tests {
         *repo.should_fail_save_physical_artifact.lock().unwrap() = true;
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
+        let validator = Arc::new(MockArtifactValidator::new());
         
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
-        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")
@@ -203,11 +207,12 @@ mod tests {
         let storage = Arc::new(MockArtifactStorage::new());
         *storage.should_fail_upload.lock().unwrap() = true;
         let publisher = Arc::new(MockEventPublisher::new());
+        let validator = Arc::new(MockArtifactValidator::new());
         
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
-        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")
@@ -242,11 +247,12 @@ mod tests {
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
         *publisher.should_fail_publish.lock().unwrap() = true;
+        let validator = Arc::new(MockArtifactValidator::new());
         
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
-        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")
@@ -280,11 +286,12 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone());
+        let validator = Arc::new(MockArtifactValidator::new());
+        let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
         // Provide wrong checksum deliberately
-        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"com.example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\",\"checksum\":\"deadbeef\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
+        let form_data = "--boundary\r\nContent-Disposition: form-data; name=\"metadata\"\r\n\r\n{\"coordinates\":{\"namespace\":\"example\",\"name\":\"test-artifact\",\"version\":\"1.0.0\",\"qualifiers\":{}},\"file_name\":\"test.bin\",\"checksum\":\"deadbeef\"}\r\n--boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.bin\"\r\nContent-Type: application/octet-stream\r\n\r\ntest content\r\n--boundary--\r\n";
 
         let request = Request::builder()
             .method("POST")

@@ -23,7 +23,7 @@ impl ComprehensiveCedarValidator {
     }
 
     /// Create a comprehensive validator with custom schema loader
-    pub fn with_schema_loader(schema_loader: Arc<dyn SchemaLoader>) -> Result<Self, SecurityError> {
+    pub fn with_schema_loader(_schema_loader: Arc<dyn SchemaLoader>) -> Result<Self, SecurityError> {
         // For now, we'll create a new enhanced validator
         // In the future, we could make EnhancedCedarValidator use the SchemaLoader port
         let enhanced_validator = EnhancedCedarValidator::new()?;

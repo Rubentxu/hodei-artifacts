@@ -1,6 +1,6 @@
 // crates/security/src/domain/scan_result.rs
 
-use shared::hrn::{Hrn, OrganizationId, PackageVersionId, VulnerabilityOccurrenceId};
+use shared::hrn::{Hrn, OrganizationId};
 use shared::lifecycle::Lifecycle;
 use serde::{Serialize, Deserialize};
 
@@ -16,7 +16,7 @@ pub struct SecurityScanResult {
     pub organization_hrn: OrganizationId,
     
     /// El HRN del `PackageVersion` que fue escaneado.
-    pub package_version_hrn: PackageVersionId,
+    pub package_version_hrn: Hrn,
 
     /// El nombre de la herramienta de escaneo utilizada (ej. "Trivy", "Snyk").
     pub scanner_name: String,
@@ -31,7 +31,7 @@ pub struct SecurityScanResult {
     pub summary: ScanSummary,
 
     /// Lista de HRNs a las `VulnerabilityOccurrence` encontradas en este escaneo.
-    pub occurrences: Vec<VulnerabilityOccurrenceId>,
+    pub occurrences: Vec<Hrn>,
     
     /// Información de auditoría y ciclo de vida.
     pub lifecycle: Lifecycle,

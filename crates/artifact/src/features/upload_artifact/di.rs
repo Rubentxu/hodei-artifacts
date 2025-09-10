@@ -8,6 +8,7 @@ use super::{
     use_case_chunks::UploadArtifactChunkUseCase,
     api::UploadArtifactEndpoint,
 };
+use crate::features::upload_artifact::upload_progress::{UploadProgressService, UploadProgressDIContainer};
 use aws_config::SdkConfig;
 
 /// The Dependency Injection container for the Upload Artifact feature.
@@ -25,9 +26,10 @@ impl UploadArtifactDIContainer {
         publisher: Arc<dyn EventPublisher + Send + Sync>,
         chunked_storage: Arc<dyn ChunkedUploadStorage + Send + Sync>,
         validator: Arc<dyn ArtifactValidator + Send + Sync>,
+        progress_service: Arc<UploadProgressService>,
     ) -> Self {
         let use_case = Arc::new(UploadArtifactUseCase::new(repository, storage, publisher.clone(), validator));
-        let chunk_use_case = Arc::new(UploadArtifactChunkUseCase::new(chunked_storage, use_case.clone(), publisher));
+        let chunk_use_case = Arc::new(UploadArtifactChunkUseCase::new(chunked_storage, use_case.clone(), publisher, progress_service));
         let endpoint = Arc::new(UploadArtifactEndpoint::new(use_case.clone()));
 
         Self { endpoint, use_case, chunk_use_case }
@@ -53,7 +55,11 @@ impl UploadArtifactDIContainer {
         // Default validator (no-op) for MVP
         let validator = Arc::new(NoopArtifactValidator);
 
-        Self::new(repository, storage, publisher, chunk_storage, validator)
+        // Progress service para desarrollo (en memoria)
+        let progress_container = UploadProgressDIContainer::for_development();
+        let progress_service = progress_container.service;
+
+        Self::new(repository, storage, publisher, chunk_storage, validator, progress_service)
     }
 
     /// Convenience function for wiring up mock dependencies for testing.
@@ -68,6 +74,10 @@ impl UploadArtifactDIContainer {
         // Mock chunked storage would be needed here, but it's not defined yet
         let chunked_storage = Arc::new(LocalFsChunkedUploadStorage::new(PathBuf::from("/tmp/test_chunks")));
 
-        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone()), repository, storage, publisher, validator)
+        // Progress service para testing
+        let progress_container = UploadProgressDIContainer::for_testing();
+        let progress_service = progress_container.service;
+
+        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone(), progress_service), repository, storage, publisher, validator)
     }
 }

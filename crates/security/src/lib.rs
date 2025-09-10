@@ -4,6 +4,9 @@ pub mod domain;
 pub mod features;
 pub mod infrastructure;
 
+#[cfg(test)]
+mod test_cedar_parsing;
+
 // Re-export commonly used types
 pub use domain::authorization::{
     AuthorizationDecision, Principal, Resource, Action, Context, AttributeValue

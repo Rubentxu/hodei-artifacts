@@ -1,7 +1,7 @@
 use tracing::{info, error, debug, info_span};
 use axum::{
     body::Body,
-    extract::Multipart,
+    extract::{Multipart, State},
     response::{IntoResponse, Json},
     http::{StatusCode, Request},
     Extension,
@@ -158,11 +158,5 @@ async fn auth_middleware(req: Request<Body>, next: Next) -> impl IntoResponse {
     unauthorized()
 }
 
-pub fn setup_app(app: Router, di: UploadArtifactDIContainer) -> Router {
-    app.route(
-        "/artifacts",
-        post(UploadArtifactEndpoint::upload_artifact),
-    )
-    .layer(Extension(di.endpoint.clone()))
-    .layer(middleware::from_fn(auth_middleware))
-}
+
+

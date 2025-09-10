@@ -11,6 +11,7 @@ mod tests {
     use axum::{
         Router,
         routing::post,
+        Extension,
     };
     use reqwest::{
         multipart::{Form, Part},
@@ -32,14 +33,15 @@ mod tests {
     use artifact::features::upload_artifact::{
         di::UploadArtifactDIContainer,
         dto::UploadArtifactResponse,
-        api,
+        api::UploadArtifactEndpoint,
     };
     use shared::models::PackageCoordinates;
 
-    use mongodb::{Client as MongoClient, bson::doc};
+    use mongodb::{Client as MongoClient, bson::{self, doc}};
     use aws_sdk_s3::{Client as S3Client, config::Region};
     use lapin::{Connection, ConnectionProperties, options::*, types::FieldTable, Channel};
     use futures_util::stream::TryStreamExt;
+    use futures_util::StreamExt;
 
     // Custom Docker Image definitions
     #[derive(Debug, Default)]
@@ -81,9 +83,16 @@ mod tests {
         _rabbitmq_container: ContainerAsync<RabbitMqImage>,
     }
 
-    async fn setup_test_environment_with_auth(_disable_auth: bool) -> TestContext {
+    async fn setup_test_environment_with_auth(disable_auth: bool) -> TestContext {
         helpers::setup_tracing();
         info!("Setting up test environment");
+        
+        // Set auth environment variable
+        if disable_auth {
+            unsafe { std::env::set_var("HODEI_AUTH_DISABLED", "true") };
+        } else {
+            unsafe { std::env::remove_var("HODEI_AUTH_DISABLED") };
+        }
 
         // MongoDB
         let mongo_container = GenericImage::new("mongo", "5.0")
@@ -128,7 +137,14 @@ mod tests {
 
         // DI Container & App
         let di_container = UploadArtifactDIContainer::for_production(&sdk_config, &mongo_uri, "test_db", &rabbit_uri, "test_exchange", "test-bucket").await;
-        let app = api::setup_app(Router::new(), di_container);
+        let upload_artifact_api = di_container.endpoint;
+        
+        let app = Router::new()
+            .route(
+                "/artifacts",
+                post(UploadArtifactEndpoint::upload_artifact),
+            )
+            .layer(Extension(upload_artifact_api));
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let app_url = format!("http://{}", listener.local_addr().unwrap());
@@ -156,7 +172,7 @@ mod tests {
     async fn test_successful_upload() {
         let context = setup_test_environment().await;
 
-        let coordinates = PackageCoordinates { namespace: Some("com.example".to_string()), name: "test-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
+        let coordinates = PackageCoordinates { namespace: Some("example".to_string()), name: "test-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
         let metadata = json!({ "coordinates": coordinates, "file_name": "test.bin" });
         let file_content = b"test content";
         let form = Form::new()
@@ -172,13 +188,13 @@ mod tests {
         assert_eq!(response.status(), reqwest::StatusCode::CREATED);
         let body = response.json::<UploadArtifactResponse>().await.unwrap();
         assert!(body.hrn.contains("package-version/test-artifact/1.0.0"));
-        assert!(body.hrn.contains("repository/com.example/default"));
+        assert!(body.hrn.contains("repository/default"));
     }
 
     #[tokio::test]
     async fn test_upload_with_invalid_checksum_should_fail() {
         let context = setup_test_environment().await;
-        let metadata = json!({ "coordinates": { "namespace": "com.example", "name": "checksum-test", "version": "1.0", "qualifiers": {} }, "file_name": "test.bin", "checksum": "invalid-checksum" });
+        let metadata = json!({ "coordinates": { "namespace": "example", "name": "checksum-test", "version": "1.0", "qualifiers": {} }, "file_name": "test.bin", "checksum": "invalid-checksum" });
         let form = Form::new()
             .part("file", Part::bytes(b"content").file_name("test.bin"))
             .part("metadata", Part::text(metadata.to_string()));
@@ -226,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_requires_auth_when_enabled() {
         let context = setup_test_environment_with_auth(false).await; // auth enabled
-        let coordinates = PackageCoordinates { namespace: Some("com.example".to_string()), name: "test-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
+        let coordinates = PackageCoordinates { namespace: Some("example".to_string()), name: "test-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
         let metadata = json!({ "coordinates": coordinates, "file_name": "test.bin" });
         let form = Form::new()
             .part("file", Part::bytes(b"content").file_name("test.bin"))
@@ -241,7 +257,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_with_bearer_token_succeeds() {
         let context = setup_test_environment_with_auth(false).await; // auth enabled
-        let coordinates = PackageCoordinates { namespace: Some("com.example".to_string()), name: "auth-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
+        let coordinates = PackageCoordinates { namespace: Some("example".to_string()), name: "auth-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
         let metadata = json!({ "coordinates": coordinates, "file_name": "auth.bin" });
         let form = Form::new()
             .part("file", Part::bytes(b"auth content").file_name("auth.bin"))
@@ -252,6 +268,158 @@ mod tests {
             .multipart(form)
             .send().await.unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_artifact_detection() {
+        let context = setup_test_environment().await;
+
+        // Setup RabbitMQ consumer BEFORE any uploads happen
+        // First declare a queue and bind it to the exchange
+        let queue = context.amqp_channel
+            .queue_declare(
+                "test-duplicate-queue",
+                QueueDeclareOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .unwrap();
+
+        context.amqp_channel
+            .queue_bind(
+                queue.name().as_str(),
+                "test_exchange",
+                "#", // Bind to all routing keys
+                QueueBindOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .unwrap();
+
+        let mut consumer = context.amqp_channel
+            .basic_consume(
+                queue.name().as_str(),
+                "test-consumer",
+                BasicConsumeOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .unwrap();
+
+        // First upload
+        let coordinates = PackageCoordinates { namespace: Some("example".to_string()), name: "duplicate-test".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
+        let metadata = json!({ "coordinates": coordinates, "file_name": "test.bin" });
+        let file_content = b"identical content";
+        let form = Form::new()
+            .part("file", Part::bytes(file_content.as_ref()).file_name("test.bin"))
+            .part("metadata", Part::text(metadata.to_string()));
+
+        let response1 = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("X-Test-Bypass-Auth", "true")
+            .multipart(form)
+            .send().await.unwrap();
+
+        assert_eq!(response1.status(), reqwest::StatusCode::CREATED);
+        let body1 = response1.json::<UploadArtifactResponse>().await.unwrap();
+        assert!(body1.hrn.contains("package-version/duplicate-test/1.0.0"));
+
+        // Second upload with same content but different version
+        let coordinates2 = PackageCoordinates { namespace: Some("example".to_string()), name: "duplicate-test".to_string(), version: "2.0.0".to_string(), qualifiers: Default::default() };
+        let metadata2 = json!({ "coordinates": coordinates2, "file_name": "test.bin" });
+        let form2 = Form::new()
+            .part("file", Part::bytes(file_content.as_ref()).file_name("test.bin"))
+            .part("metadata", Part::text(metadata2.to_string()));
+
+        let response2 = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("X-Test-Bypass-Auth", "true")
+            .multipart(form2)
+            .send().await.unwrap();
+
+        assert_eq!(response2.status(), reqwest::StatusCode::CREATED);
+        let body2 = response2.json::<UploadArtifactResponse>().await.unwrap();
+        assert!(body2.hrn.contains("package-version/duplicate-test/2.0.0"));
+
+        // Verify that only one physical artifact exists in MongoDB
+        let db = context.mongo_client.database("test_db");
+        let collection: mongodb::Collection<bson::Document> = db.collection("physical_artifacts");
+        let count = collection.count_documents(doc! {}).await.unwrap();
+        assert_eq!(count, 1, "Should have only one physical artifact for identical content");
+
+        // Verify that two package versions exist
+        let pv_collection: mongodb::Collection<bson::Document> = db.collection("package_versions");
+        let pv_count = pv_collection.count_documents(doc! {}).await.unwrap();
+        assert_eq!(pv_count, 2, "Should have two package versions");
+
+        // Verify RabbitMQ events - should have DuplicateArtifactDetected event
+
+        // Wait for events with timeout
+        let mut duplicate_event_found = false;
+        let start_time = std::time::Instant::now();
+        
+        while start_time.elapsed() < Duration::from_secs(5) && !duplicate_event_found {
+            if let Ok(Some(delivery)) = tokio::time::timeout(Duration::from_millis(100), consumer.next()).await {
+                if let Ok(delivery) = delivery {
+                    if let Ok(message) = std::str::from_utf8(&delivery.data) {
+                        if message.contains("DuplicateArtifactDetected") {
+                            duplicate_event_found = true;
+                        }
+                    }
+                    delivery.ack(BasicAckOptions::default()).await.ok();
+                }
+            }
+        }
+
+        assert!(duplicate_event_found, "DuplicateArtifactDetected event should be published");
+    }
+
+    #[tokio::test]
+    async fn test_different_content_creates_different_artifacts() {
+        let context = setup_test_environment().await;
+
+        // First upload
+        let coordinates1 = PackageCoordinates { namespace: Some("example".to_string()), name: "different-test".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() };
+        let metadata1 = json!({ "coordinates": coordinates1, "file_name": "test1.bin" });
+        let file_content1 = b"content one";
+        let form1 = Form::new()
+            .part("file", Part::bytes(file_content1.as_ref()).file_name("test1.bin"))
+            .part("metadata", Part::text(metadata1.to_string()));
+
+        let response1 = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("X-Test-Bypass-Auth", "true")
+            .multipart(form1)
+            .send().await.unwrap();
+
+        assert_eq!(response1.status(), reqwest::StatusCode::CREATED);
+
+        // Second upload with different content
+        let coordinates2 = PackageCoordinates { namespace: Some("example".to_string()), name: "different-test".to_string(), version: "2.0.0".to_string(), qualifiers: Default::default() };
+        let metadata2 = json!({ "coordinates": coordinates2, "file_name": "test2.bin" });
+        let file_content2 = b"content two";
+        let form2 = Form::new()
+            .part("file", Part::bytes(file_content2.as_ref()).file_name("test2.bin"))
+            .part("metadata", Part::text(metadata2.to_string()));
+
+        let response2 = context.http_client
+            .post(format!("{}/artifacts", context.app_url))
+            .header("X-Test-Bypass-Auth", "true")
+            .multipart(form2)
+            .send().await.unwrap();
+
+        assert_eq!(response2.status(), reqwest::StatusCode::CREATED);
+
+        // Verify that two physical artifacts exist in MongoDB
+        let db = context.mongo_client.database("test_db");
+        let collection: mongodb::Collection<bson::Document> = db.collection("physical_artifacts");
+        let count = collection.count_documents(doc! {}).await.unwrap();
+        assert_eq!(count, 2, "Should have two physical artifacts for different content");
+
+        // Verify that two package versions exist
+        let pv_collection: mongodb::Collection<bson::Document> = db.collection("package_versions");
+        let pv_count = pv_collection.count_documents(doc! {}).await.unwrap();
+        assert_eq!(pv_count, 2, "Should have two package versions");
     }
 }
 

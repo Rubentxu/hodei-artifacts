@@ -1,6 +1,6 @@
 // crates/security/src/domain/events.rs
 
-use shared::hrn::{Hrn, PackageVersionId, ScanResultId};
+use shared::hrn::Hrn;
 use shared::enums::VulnerabilitySeverity;
 use crate::domain::scan_result::ScanSummary;
 use serde::{Serialize, Deserialize};
@@ -25,15 +25,15 @@ pub enum SecurityEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanRequested {
-    pub package_version_hrn: PackageVersionId,
+    pub package_version_hrn: Hrn,
     pub requested_by: Hrn,
     pub at: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanCompleted {
-    pub hrn: ScanResultId,
-    pub package_version_hrn: PackageVersionId,
+    pub hrn: Hrn,
+    pub package_version_hrn: Hrn,
     pub summary: ScanSummary,
     pub at: OffsetDateTime,
 }
@@ -41,7 +41,7 @@ pub struct ScanCompleted {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CriticalVulnerabilityFound {
     pub occurrence_hrn: Hrn,
-    pub package_version_hrn: PackageVersionId,
+    pub package_version_hrn: Hrn,
     pub vulnerability_id: String, // ej. "CVE-2021-44228"
     pub severity: VulnerabilitySeverity, // Siempre será 'Critical'
     pub at: OffsetDateTime,

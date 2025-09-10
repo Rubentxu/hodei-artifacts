@@ -13,12 +13,12 @@ use super::{
 
 /// Adapter for reading artifact content from storage
 pub struct StorageArtifactContentReader {
-    storage: Arc<dyn ArtifactStorage>,
+    // storage: Arc<dyn ArtifactStorage>,
 }
 
 impl StorageArtifactContentReader {
-    pub fn new(storage: Arc<dyn ArtifactStorage>) -> Self {
-        Self { storage }
+    pub fn new(_storage: Arc<dyn ArtifactStorage>) -> Self {
+        Self {}
     }
 }
 
@@ -34,12 +34,12 @@ impl ArtifactContentReader for StorageArtifactContentReader {
 
 /// Adapter for updating package metadata in repository
 pub struct RepositoryMetadataUpdater {
-    repository: Arc<dyn ArtifactRepository>,
+    // repository: Arc<dyn ArtifactRepository>,
 }
 
 impl RepositoryMetadataUpdater {
-    pub fn new(repository: Arc<dyn ArtifactRepository>) -> Self {
-        Self { repository }
+    pub fn new(_repository: Arc<dyn ArtifactRepository>) -> Self {
+        Self {}
     }
 }
 

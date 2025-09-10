@@ -21,6 +21,9 @@ pub enum ArtifactEvent {
       progress: u64,
       bytes_uploaded: u64,
       total_bytes: u64,
+      percentage: u8,
+      status: String,
+      estimated_seconds_remaining: Option<u64>,
   },
   /// Se ha completado la subida de un artefacto
   ArtifactUploaded {
@@ -30,6 +33,8 @@ pub enum ArtifactEvent {
   ArtifactMetadataEnriched(ArtifactMetadataEnriched),
   /// Fallo de validación previo al commit
   ArtifactValidationFailed(ArtifactValidationFailed),
+  /// Se ha detectado un artefacto duplicado (mismo contenido hash)
+  DuplicateArtifactDetected(DuplicateArtifactDetected),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,5 +77,20 @@ pub struct ArtifactMetadataEnriched {
 pub struct ArtifactValidationFailed {
   pub coordinates: PackageCoordinates,
   pub errors: Vec<String>,
+  pub at: OffsetDateTime,
+}
+
+/// Evento de detección de artefacto duplicado
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateArtifactDetected {
+  /// Hash del contenido que ya existe
+  pub content_hash: String,
+  /// HRN del artefacto físico existente
+  pub existing_physical_artifact_hrn: String,
+  /// Coordenadas del nuevo paquete que referencia el artefacto existente
+  pub new_package_coordinates: PackageCoordinates,
+  /// Tamaño del artefacto en bytes
+  pub size_in_bytes: u64,
+  /// Momento de la detección
   pub at: OffsetDateTime,
 }

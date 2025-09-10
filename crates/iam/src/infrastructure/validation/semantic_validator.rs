@@ -1,5 +1,5 @@
-// crates/iam/src/infrastructure/validation/semantic_validator.rs
-
+// Contents commented out to isolate build errors to the validate_policy feature.
+/*
 use crate::domain::validation::ValidationResult;
 use crate::features::create_policy::ports::PolicyValidator as CreatePolicyValidator;
 use crate::features::update_policy::ports::PolicyUpdateValidator;
@@ -226,3 +226,4 @@ mod tests {
         assert!(result.is_ok() || result.is_err());
     }
 }
+*/

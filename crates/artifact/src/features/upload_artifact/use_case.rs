@@ -20,7 +20,7 @@ use shared::{
     lifecycle::Lifecycle,
     models::{ArtifactReference, ContentHash},
 };
-use crate::domain::events::{ArtifactEvent, PackageVersionPublished, ArtifactValidationFailed};
+use crate::domain::events::{ArtifactEvent, PackageVersionPublished, ArtifactValidationFailed, DuplicateArtifactDetected};
 
 pub struct UploadArtifactUseCase {
     repository: Arc<dyn ArtifactRepository>,
@@ -77,6 +77,21 @@ impl UploadArtifactUseCase {
         let physical_artifact_hrn = match self.repository.find_physical_artifact_by_hash(&content_hash_str).await {
             Ok(Some(existing)) => {
                 tracing::debug!("Found existing physical artifact");
+                
+                // Publish DuplicateArtifactDetected event
+                tracing::debug!("Publishing DuplicateArtifactDetected event");
+                let duplicate_event = ArtifactEvent::DuplicateArtifactDetected(DuplicateArtifactDetected {
+                    content_hash: content_hash_str.clone(),
+                    existing_physical_artifact_hrn: existing.hrn.to_string(),
+                    new_package_coordinates: command.coordinates.clone(),
+                    size_in_bytes: command.content_length,
+                    at: OffsetDateTime::now_utc(),
+                });
+                
+                if let Err(e) = self.event_publisher.publish(&duplicate_event).await {
+                    tracing::warn!(error = %e, "Failed to publish DuplicateArtifactDetected event");
+                }
+                
                 existing.hrn
             }
             Ok(None) => {
@@ -172,7 +187,7 @@ impl UploadArtifactUseCase {
             repository_hrn: package_version.repository_hrn,
             coordinates: package_version.coordinates.clone(),
             artifacts: package_version.artifacts.clone(),
-            publisher_hrn: UserId::from_hrn(package_version.lifecycle.created_by),
+            publisher_hrn: UserId(package_version.lifecycle.created_by.clone()),
             at: OffsetDateTime::now_utc(),
         });
         self.event_publisher.publish(&event).await.map_err(|e| {
@@ -227,6 +242,21 @@ impl UploadArtifactUseCase {
         let physical_artifact_hrn = match self.repository.find_physical_artifact_by_hash(&content_hash_str).await {
             Ok(Some(existing)) => {
                 tracing::debug!("Found existing physical artifact");
+                
+                // Publish DuplicateArtifactDetected event
+                tracing::debug!("Publishing DuplicateArtifactDetected event");
+                let duplicate_event = ArtifactEvent::DuplicateArtifactDetected(DuplicateArtifactDetected {
+                    content_hash: content_hash_str.clone(),
+                    existing_physical_artifact_hrn: existing.hrn.to_string(),
+                    new_package_coordinates: command.coordinates.clone(),
+                    size_in_bytes: command.content_length,
+                    at: OffsetDateTime::now_utc(),
+                });
+                
+                if let Err(e) = self.event_publisher.publish(&duplicate_event).await {
+                    tracing::warn!(error = %e, "Failed to publish DuplicateArtifactDetected event");
+                }
+                
                 existing.hrn
             }
             Ok(None) => {
@@ -322,7 +352,7 @@ impl UploadArtifactUseCase {
             repository_hrn: package_version.repository_hrn,
             coordinates: package_version.coordinates.clone(),
             artifacts: package_version.artifacts.clone(),
-            publisher_hrn: UserId::from_hrn(package_version.lifecycle.created_by),
+            publisher_hrn: UserId(package_version.lifecycle.created_by.clone()),
             at: OffsetDateTime::now_utc(),
         });
         self.event_publisher.publish(&event).await.map_err(|e| {

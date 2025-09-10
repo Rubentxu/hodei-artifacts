@@ -1,3 +1,25 @@
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use bytes::Bytes;
+    use tempfile;
+
+    use crate::features::upload_artifact::{
+        use_case_chunks::UploadArtifactChunkUseCase,
+        test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator},
+        adapter::LocalFsChunkedUploadStorage,
+        use_case::UploadArtifactUseCase,
+        ports::ChunkedUploadStorage,
+    };
+
+    #[tokio::test]
+    async fn test_chunk_storage_basic_operations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = LocalFsChunkedUploadStorage::new(tmp.path().to_path_buf());
+        
+        // Save first chunk
+        storage.save_chunk("test", 1, Bytes::from("foo")).await.unwrap();
+        // Save second chunk
         storage.save_chunk("test", 2, Bytes::from("bar")).await.unwrap();
         // Get received chunks count
         let count = storage.get_received_chunks_count("test").await.unwrap();
@@ -19,7 +41,8 @@
         let publisher = Arc::new(MockEventPublisher::new());
         let repo = Arc::new(MockArtifactRepository::new());
         let artifact_storage = Arc::new(MockArtifactStorage::new());
-        let artifact_use_case = Arc::new(UploadArtifactUseCase::new(repo, artifact_storage, publisher.clone()));
+        let validator = Arc::new(MockArtifactValidator::new());
+        let artifact_use_case = Arc::new(UploadArtifactUseCase::new(repo, artifact_storage, publisher.clone(), validator));
         let use_case = UploadArtifactChunkUseCase::new(storage.clone(), artifact_use_case, publisher.clone());
         
         // First chunk
@@ -29,7 +52,7 @@
             total_chunks: 2,
             file_name: "test.bin".to_string(),
             coordinates: Some(crate::domain::package_version::PackageCoordinates {
-                namespace: Some("com.example".to_string()),
+                namespace: Some("example".to_string()),
                 name: "test-artifact".to_string(),
                 version: "1.0.0".to_string(),
                 qualifiers: Default::default(),
@@ -47,7 +70,7 @@
             total_chunks: 2,
             file_name: "test.bin".to_string(),
             coordinates: Some(crate::domain::package_version::PackageCoordinates {
-                namespace: Some("com.example".to_string()),
+                namespace: Some("example".to_string()),
                 name: "test-artifact".to_string(),
                 version: "1.0.0".to_string(),
                 qualifiers: Default::default(),

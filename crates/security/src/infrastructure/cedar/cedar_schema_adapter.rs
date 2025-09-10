@@ -2,8 +2,7 @@
 
 use crate::application::ports::{
     SchemaLoader, PolicySchema, SchemaBasedValidator, SchemaCacheStats, SchemaMetadata,
-    SchemaValidationResult, SchemaValidationError, SchemaValidationWarning, SchemaErrorType,
-    EntityReference, ActionReference, PolicyLocation
+    SchemaValidationResult, SchemaValidationError, SchemaValidationWarning, SchemaErrorType
 };
 use crate::infrastructure::errors::SecurityError;
 use cedar_policy::{Schema, Policy, PolicySet, Validator, ValidationMode};

@@ -41,7 +41,7 @@ mod tests {
 
         let command = UploadArtifactCommand {
             coordinates: PackageCoordinates {
-                namespace: Some("com.example".to_string()),
+                namespace: Some("example".to_string()),
                 name: "test-artifact".to_string(),
                 version: "1.0.0".to_string(),
                 qualifiers: Default::default(),
@@ -58,7 +58,7 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.hrn.contains("package-version/test-artifact/1.0.0"));
-        assert!(response.hrn.contains("com.example"));
+        assert!(response.hrn.contains("example"));
         
         // Verify side-effects
         assert_eq!(repo.count_physical_artifacts().await, 1);
@@ -111,7 +111,7 @@ mod tests {
 
         let command = UploadArtifactCommand {
             coordinates: PackageCoordinates {
-                namespace: Some("com.example".to_string()),
+                namespace: Some("example".to_string()),
                 name: "test-artifact".to_string(),
                 version: "2.0.0".to_string(), // New version
                 qualifiers: Default::default(),
@@ -121,22 +121,41 @@ mod tests {
         };
 
         // Act
-        let result = use_case.execute(command, existing_content).await;
+        let result = use_case.execute(command, existing_content.clone()).await;
 
         // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.hrn.contains("package-version/test-artifact/2.0.0"));
-        assert!(response.hrn.contains("com.example"));
+        assert!(response.hrn.contains("example"));
 
         // Verify side-effects
         assert_eq!(repo.count_physical_artifacts().await, 1); // No new physical artifact
         assert_eq!(repo.count_package_versions().await, 1); // One new package version
-        assert_eq!(publisher.events.lock().unwrap().len(), 1);
+        
+        // Verify that both PackageVersionPublished and DuplicateArtifactDetected events were published
+        let events = publisher.events.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        
+        // Check that DuplicateArtifactDetected event was published
+        let duplicate_events: Vec<_> = events.iter()
+            .filter_map(|event| match event {
+                crate::domain::events::ArtifactEvent::DuplicateArtifactDetected(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(duplicate_events.len(), 1);
+        let duplicate_event = &duplicate_events[0];
+        assert_eq!(duplicate_event.content_hash, hash_str);
+        assert_eq!(duplicate_event.existing_physical_artifact_hrn, physical_artifact.hrn.to_string());
+        assert_eq!(duplicate_event.new_package_coordinates.name, "test-artifact");
+        assert_eq!(duplicate_event.new_package_coordinates.version, "2.0.0");
+        assert_eq!(duplicate_event.size_in_bytes, existing_content.len() as u64);
         
         // Verify tracing logs and spans
         assert_log_contains!(tracing::Level::DEBUG, "Finding physical artifact by hash:");
         assert_log_contains!(tracing::Level::DEBUG, "Found existing physical artifact");
+        assert_log_contains!(tracing::Level::DEBUG, "Publishing DuplicateArtifactDetected event");
     }
 
     #[tokio::test]
@@ -200,7 +219,7 @@ mod tests {
 
         let command = UploadArtifactCommand {
             coordinates: PackageCoordinates {
-                namespace: Some("com.example".to_string()),
+                namespace: Some("example".to_string()),
                 name: "empty-artifact".to_string(),
                 version: "1.0.0".to_string(),
                 qualifiers: Default::default(),
@@ -217,7 +236,7 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.hrn.contains("package-version/empty-artifact/1.0.0"));
-        assert!(response.hrn.contains("com.example"));
+        assert!(response.hrn.contains("example"));
         
         // Verify side-effects
         assert_eq!(repo.count_physical_artifacts().await, 1);
@@ -251,7 +270,7 @@ mod tests {
 
         let command = UploadArtifactCommand {
             coordinates: PackageCoordinates {
-                namespace: Some("com.example".to_string()),
+                namespace: Some("example".to_string()),
                 name: "repo-error-artifact".to_string(),
                 version: "1.0.0".to_string(),
                 qualifiers: Default::default(),
@@ -286,7 +305,7 @@ mod tests {
         let validator = Arc::new(MockArtifactValidator::new());
         let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let command = UploadArtifactCommand {
-            coordinates: PackageCoordinates { namespace: Some("com.example".to_string()), name: "err-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() },
+            coordinates: PackageCoordinates { namespace: Some("example".to_string()), name: "err-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() },
             file_name: "err.bin".to_string(), content_length: 4
         };
         let content = Bytes::from_static(b"fail");
@@ -309,7 +328,7 @@ mod tests {
         let validator = Arc::new(MockArtifactValidator::new());
         let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let command = UploadArtifactCommand {
-            coordinates: PackageCoordinates { namespace: Some("com.example".to_string()), name: "noevent-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() },
+            coordinates: PackageCoordinates { namespace: Some("example".to_string()), name: "noevent-artifact".to_string(), version: "1.0.0".to_string(), qualifiers: Default::default() },
             file_name: "noevent.bin".to_string(), content_length: 6
         };
         let content = Bytes::from_static(b"bleh!!");
@@ -338,7 +357,7 @@ mod tests {
 
         let use_case = UploadArtifactUseCase::new(repo.clone(), storage.clone(), publisher.clone(), validator.clone());
         let command = UploadArtifactCommand {
-            coordinates: PackageCoordinates { namespace: Some("com.example".into()), name: "bad".into(), version: "0.0.1".into(), qualifiers: Default::default() },
+            coordinates: PackageCoordinates { namespace: Some("example".into()), name: "bad".into(), version: "0.0.1".into(), qualifiers: Default::default() },
             file_name: "bad.bin".into(),
             content_length: 3,
         };

@@ -8,6 +8,7 @@ use super::{
     error::UploadArtifactError,
     ports::{ChunkedUploadStorage, EventPublisher},
     use_case::UploadArtifactUseCase,
+    upload_progress::{UploadProgressService, dto::{UploadStatus, UpdateProgressCommand}},
 };
 use crate::domain::events::ArtifactEvent;
 
@@ -21,6 +22,7 @@ pub struct UploadArtifactChunkUseCase {
     chunked_storage: Arc<dyn ChunkedUploadStorage + Send + Sync>,
     artifact_use_case: Arc<UploadArtifactUseCase>,
     event_publisher: Arc<dyn EventPublisher + Send + Sync>,
+    progress_service: Arc<UploadProgressService>,
 }
 
 impl UploadArtifactChunkUseCase {
@@ -28,8 +30,9 @@ impl UploadArtifactChunkUseCase {
         chunked_storage: Arc<dyn ChunkedUploadStorage + Send + Sync>,
         artifact_use_case: Arc<UploadArtifactUseCase>,
         event_publisher: Arc<dyn EventPublisher + Send + Sync>,
+        progress_service: Arc<UploadProgressService>,
     ) -> Self {
-        Self { chunked_storage, artifact_use_case, event_publisher }
+        Self { chunked_storage, artifact_use_case, event_publisher, progress_service }
     }
 
     pub async fn execute(
@@ -48,11 +51,31 @@ impl UploadArtifactChunkUseCase {
 
         debug!("Executing UploadArtifactChunkUseCase for chunk {} of {}", command.chunk_number, command.total_chunks);
 
+        // Crear sesión de progreso si es el primer chunk
+        if command.chunk_number == 1 {
+            if let Err(e) = self.progress_service.create_session(
+                command.upload_id.clone(),
+                command.total_chunks as u64
+            ).await {
+                error!("Failed to create progress session for upload_id {}: {}", command.upload_id, e);
+            }
+        }
+
         self.chunked_storage.save_chunk(&command.upload_id, command.chunk_number, chunk_data).await?;
         info!("Chunk {} saved for upload_id {}", command.chunk_number, command.upload_id);
 
         let received_chunks = self.chunked_storage.get_received_chunks_count(&command.upload_id).await?;
         debug!("Received {} of {} chunks for upload_id {}", received_chunks, command.total_chunks, command.upload_id);
+
+        // Actualizar progreso
+        if let Err(e) = self.progress_service.update_progress(UpdateProgressCommand {
+            upload_id: command.upload_id.clone(),
+            bytes_transferred: received_chunks as u64,
+            total_bytes: command.total_chunks as u64,
+            status: UploadStatus::InProgress,
+        }).await {
+            error!("Failed to update progress for upload_id {}: {}", command.upload_id, e);
+        }
 
         if received_chunks == command.total_chunks {
             info!("All chunks received for upload_id {}. Assembling file.", command.upload_id);
@@ -71,6 +94,20 @@ impl UploadArtifactChunkUseCase {
 
             // Delegate to the main use case with the pre-calculated checksum
             let result = self.artifact_use_case.execute_from_temp_file(cmd, &temp_file_path, Some(checksum)).await;
+
+            // Actualizar progreso basado en el resultado
+            match &result {
+                Ok(_) => {
+                    if let Err(e) = self.progress_service.mark_completed(&command.upload_id).await {
+                        error!("Failed to mark upload as completed for upload_id {}: {}", command.upload_id, e);
+                    }
+                }
+                Err(error) => {
+                    if let Err(e) = self.progress_service.mark_failed(&command.upload_id, &error.to_string()).await {
+                        error!("Failed to mark upload as failed for upload_id {}: {}", command.upload_id, e);
+                    }
+                }
+            }
 
             // Cleanup temporary files
             self.chunked_storage.cleanup(&command.upload_id).await?;
