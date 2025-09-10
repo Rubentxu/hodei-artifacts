@@ -18,10 +18,11 @@ futures = { workspace = true }
 chrono = { workspace = true }
 mongodb = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
+axum = { workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }
-testcontainers = { workspace = true }
-testcontainers-modules = { workspace = true }
+testcontainers = { workspace = true, features = ["blocking"] }
+testcontainers-modules = { workspace = true, features = ["mongo"] }
 wiremock = { workspace = true }
 serde_json = { workspace = true }
