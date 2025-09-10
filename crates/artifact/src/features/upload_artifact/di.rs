@@ -59,7 +59,7 @@ impl UploadArtifactDIContainer {
         let progress_container = UploadProgressDIContainer::for_development();
         let progress_service = progress_container.service;
 
-        Self::new(repository, storage, publisher, chunk_storage, validator, progress_service)
+        Self::new(repository, storage, publisher, chunk_storage, validator, progress_service.into())
     }
 
     /// Convenience function for wiring up mock dependencies for testing.

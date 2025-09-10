@@ -4,7 +4,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -12,7 +12,7 @@ use super::{
     UploadProgressService, UploadProgressResponse, UploadProgress,
     ProgressError, ProgressResult
 };
-use crate::features::upload_artifact::api::extractors::UserIdentity;
+use crate::features::upload_artifact::api::UserIdentity;
 
 /// API endpoints para el seguimiento de progreso de subidas
 #[derive(Clone)]
@@ -30,15 +30,15 @@ impl UploadProgressApi {
         State(api): State<Self>,
         user: UserIdentity,
         Path(upload_id): Path<String>,
-    ) -> impl IntoResponse {
+    ) -> Box<dyn IntoResponse> {
         info!(upload_id = %upload_id, user_id = %user.user_id, "Getting upload progress");
 
-        match api.service.get_progress(&upload_id).await {
+        let result: Result<UploadProgressResponse, ProgressErrorResponse> = match api.service.get_progress(&upload_id).await {
             Ok(progress) => {
                 // Verificar que el usuario tiene acceso a este progreso
                 if !is_user_authorized(&progress, &user.user_id) {
                     warn!(upload_id = %upload_id, user_id = %user.user_id, "Unauthorized access to upload progress");
-                    return (StatusCode::FORBIDDEN, Json(ProgressErrorResponse::unauthorized()));
+                    return Box::new((StatusCode::FORBIDDEN, Json(ProgressErrorResponse::unauthorized())));
                 }
 
                 let response = UploadProgressResponse {
@@ -48,19 +48,28 @@ impl UploadProgressApi {
                 };
 
                 info!(upload_id = %upload_id, percentage = progress.percentage, "Progress retrieved successfully");
-                (StatusCode::OK, Json(response))
+                Ok(response)
             }
             Err(ProgressError::SessionNotFound(_)) => {
                 warn!(upload_id = %upload_id, "Upload session not found");
-                (StatusCode::NOT_FOUND, Json(ProgressErrorResponse::not_found()))
+                Err(ProgressErrorResponse::not_found())
             }
             Err(ProgressError::AccessDenied(_)) => {
                 warn!(upload_id = %upload_id, user_id = %user.user_id, "Access denied to upload progress");
-                (StatusCode::FORBIDDEN, Json(ProgressErrorResponse::unauthorized()))
+                Err(ProgressErrorResponse::unauthorized())
             }
             Err(error) => {
                 warn!(upload_id = %upload_id, error = %error, "Error getting upload progress");
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(ProgressErrorResponse::internal_error()))
+                Err(ProgressErrorResponse::internal_error())
+            }
+        };
+
+        match result {
+            Ok(response) => Box::new((StatusCode::OK, Json(response))),
+            Err(error_response) => match error_response.error.as_str() {
+                "NOT_FOUND" => Box::new((StatusCode::NOT_FOUND, Json(error_response))),
+                "UNAUTHORIZED" => Box::new((StatusCode::FORBIDDEN, Json(error_response))),
+                _ => Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))),
             }
         }
     }
@@ -69,7 +78,7 @@ impl UploadProgressApi {
     pub async fn list_sessions(
         State(api): State<Self>,
         user: UserIdentity,
-    ) -> impl IntoResponse {
+    ) -> Box<dyn IntoResponse> {
         info!(user_id = %user.user_id, "Listing all upload sessions");
 
         // TODO: Verificar permisos de administrador
@@ -80,43 +89,43 @@ impl UploadProgressApi {
         match api.service.list_sessions().await {
             Ok(sessions) => {
                 info!(session_count = sessions.len(), "Sessions listed successfully");
-                (StatusCode::OK, Json(sessions))
+                Box::new((StatusCode::OK, Json(sessions)))
             }
             Err(error) => {
                 warn!(error = %error, "Error listing upload sessions");
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(ProgressErrorResponse::internal_error()))
+                Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(ProgressErrorResponse::internal_error())))
             }
         }
     }
 
-    /// Suscribir cliente a updates de una subida específica (WebSocket)
+    /// Suscribir cliente to updates de una subida específica (WebSocket)
     pub async fn subscribe_client(
         State(api): State<Self>,
         user: UserIdentity,
         Path(upload_id): Path<String>,
-    ) -> impl IntoResponse {
+    ) -> Box<dyn IntoResponse> {
         info!(upload_id = %upload_id, user_id = %user.user_id, "Subscribing client to upload progress");
 
         // Generar ID único de cliente para la suscripción
-        let client_id = Uuid::new_v4().to_string();
+        let client_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap().to_string();
 
         match api.service.subscribe_client(&upload_id, &client_id).await {
-            Ok(_) => {
+            Ok(()) => {
                 info!(upload_id = %upload_id, client_id = %client_id, "Client subscribed successfully");
                 let response = SubscribeResponse {
-                    client_id,
-                    upload_id,
+                    client_id: client_id.clone(),
+                    upload_id: upload_id.clone(),
                     websocket_url: format!("ws://localhost:3000/uploads/{}/progress/ws", upload_id),
                 };
-                (StatusCode::OK, Json(response))
+                Box::new((StatusCode::OK, Json(response)))
             }
             Err(ProgressError::SessionNotFound(_)) => {
                 warn!(upload_id = %upload_id, "Upload session not found for subscription");
-                (StatusCode::NOT_FOUND, Json(ProgressErrorResponse::not_found()))
+                Box::new((StatusCode::NOT_FOUND, Json(ProgressErrorResponse::not_found())))
             }
             Err(error) => {
                 warn!(upload_id = %upload_id, error = %error, "Error subscribing client");
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(ProgressErrorResponse::internal_error()))
+                Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(ProgressErrorResponse::internal_error())))
             }
         }
     }
@@ -126,17 +135,17 @@ impl UploadProgressApi {
         State(api): State<Self>,
         user: UserIdentity,
         Path(client_id): Path<String>,
-    ) -> impl IntoResponse {
+    ) -> Box<dyn IntoResponse> {
         info!(client_id = %client_id, user_id = %user.user_id, "Unsubscribing client from upload progress");
 
         match api.service.unsubscribe_client(&client_id).await {
-            Ok(_) => {
+            Ok(()) => {
                 info!(client_id = %client_id, "Client unsubscribed successfully");
-                (StatusCode::NO_CONTENT, ())
+                Box::new((StatusCode::NO_CONTENT, ()))
             }
             Err(error) => {
                 warn!(client_id = %client_id, error = %error, "Error unsubscribing client");
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(ProgressErrorResponse::internal_error()))
+                Box::new((StatusCode::INTERNAL_SERVER_ERROR, Json(ProgressErrorResponse::internal_error())))
             }
         }
     }
@@ -203,8 +212,9 @@ mod tests {
     use super::*;
     use axum::extract::Request;
     use axum::http;
-    use tower::ServiceExt;
-    use crate::features::upload_artifact::api::extractors::MockUserIdentity;
+    use std::sync::Arc;
+    use crate::features::upload_artifact::api::MockUserIdentity;
+    use crate::features::upload_artifact::upload_progress::service::tests::{MockProgressStorage, MockEventPublisher, MockRealtimeNotifier};
 
     #[tokio::test]
     async fn test_get_progress_authorized() {
@@ -219,13 +229,14 @@ mod tests {
         service.create_session("test-user-123".to_string(), 1000).await.unwrap();
 
         let user = MockUserIdentity::new("test-user");
-        let response = api.get_progress(
-            State::new(api),
+        let response = UploadProgressApi::get_progress(
+            State(api.clone()),
             user,
             Path("test-user-123".to_string()),
         ).await;
 
-        assert_eq!(response.0, StatusCode::OK);
+        let (status, _) = response.into_response().into_parts();
+        assert_eq!(status, StatusCode::OK);
     }
 
     #[tokio::test]
@@ -241,12 +252,13 @@ mod tests {
         service.create_session("other-user-456".to_string(), 1000).await.unwrap();
 
         let user = MockUserIdentity::new("test-user");
-        let response = api.get_progress(
-            State::new(api),
+        let response = UploadProgressApi::get_progress(
+            State(api.clone()),
             user,
             Path("other-user-456".to_string()),
         ).await;
 
-        assert_eq!(response.0, StatusCode::FORBIDDEN);
+        let (status, _) = response.into_response().into_parts();
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 }

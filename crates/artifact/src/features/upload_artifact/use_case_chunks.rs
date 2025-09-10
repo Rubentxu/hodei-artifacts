@@ -126,6 +126,9 @@ impl UploadArtifactChunkUseCase {
                     progress: progress_percentage as u64,
                     bytes_uploaded: received_chunks as u64,
                     total_bytes: command.total_chunks as u64,
+                    percentage: progress_percentage,
+                    status: "InProgress".to_string(),
+                    estimated_seconds_remaining: None,
                 };
                 self.event_publisher.publish(&event).await?;
             }

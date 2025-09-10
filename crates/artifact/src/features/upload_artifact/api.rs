@@ -1,9 +1,9 @@
 use tracing::{info, error, debug, info_span};
 use axum::{
     body::Body,
-    extract::{Multipart, State},
+    extract::{Multipart, State, FromRequestParts},
     response::{IntoResponse, Json},
-    http::{StatusCode, Request},
+    http::{StatusCode, Request, request::Parts},
     Extension,
     Router,
     routing::post,
@@ -156,6 +156,41 @@ async fn auth_middleware(req: Request<Body>, next: Next) -> impl IntoResponse {
         }
     }
     unauthorized()
+}
+
+#[derive(Debug, Clone)]
+pub struct UserIdentity {
+    pub user_id: String,
+    pub username: String,
+}
+
+impl FromRequestParts<Arc<UploadArtifactEndpoint>> for UserIdentity {
+    type Rejection = (StatusCode, String);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &Arc<UploadArtifactEndpoint>,
+    ) -> Result<Self, Self::Rejection> {
+        // For development/demo purposes, use a mock user identity
+        // In production, this would extract from JWT token or session
+        Ok(UserIdentity {
+            user_id: "test-user-123".to_string(),
+            username: "testuser".to_string(),
+        })
+    }
+}
+
+#[cfg(test)]
+pub struct MockUserIdentity;
+
+#[cfg(test)]
+impl MockUserIdentity {
+    pub fn new() -> UserIdentity {
+        UserIdentity {
+            user_id: "mock-user-456".to_string(),
+            username: "mockuser".to_string(),
+        }
+    }
 }
 
 

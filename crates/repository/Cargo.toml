@@ -9,4 +9,9 @@ serde_json = { workspace = true }
 url = { workspace = true } # As defined in domain model
 cedar-policy = { workspace = true }
 time = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+mongodb = { workspace = true }
+tracing = { workspace = true }
+axum = { workspace = true }
 shared = { path = "../shared" }

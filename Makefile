@@ -67,6 +67,11 @@ test-artifact-integration:
 test-artifact-all: test-artifact-unit test-artifact-integration
 	@echo "All artifact tests completed."
 
+# Run batch upload specific tests
+test-batch-upload:
+	@echo "Running batch upload tests..."
+	@RUST_LOG=$(RUST_LOG_LEVEL) cargo test --lib --test "*batch*" -p artifact --nocapture
+
 # --- Utility Targets ---
 
 .PHONY: clean

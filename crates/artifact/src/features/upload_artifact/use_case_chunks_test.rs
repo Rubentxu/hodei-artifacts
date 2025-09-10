@@ -10,6 +10,7 @@ mod tests {
         adapter::LocalFsChunkedUploadStorage,
         use_case::UploadArtifactUseCase,
         ports::ChunkedUploadStorage,
+        upload_progress::UploadProgressDIContainer,
     };
 
     #[tokio::test]
@@ -43,7 +44,9 @@ mod tests {
         let artifact_storage = Arc::new(MockArtifactStorage::new());
         let validator = Arc::new(MockArtifactValidator::new());
         let artifact_use_case = Arc::new(UploadArtifactUseCase::new(repo, artifact_storage, publisher.clone(), validator));
-        let use_case = UploadArtifactChunkUseCase::new(storage.clone(), artifact_use_case, publisher.clone());
+        let progress_container = UploadProgressDIContainer::for_testing();
+        let progress_service = progress_container.service;
+        let use_case = UploadArtifactChunkUseCase::new(storage.clone(), artifact_use_case, publisher.clone(), progress_service);
         
         // First chunk
         let command1 = crate::features::upload_artifact::dto::UploadArtifactChunkCommand {

@@ -4,6 +4,7 @@ use super::{
     ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier},
     service::UploadProgressService,
     api::UploadProgressApi,
+    ProgressError, ProgressResult, UploadProgress, UpdateProgressCommand,
 };
 
 /// Contenedor de inyección de dependencias para la feature de progress tracking

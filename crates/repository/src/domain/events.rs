@@ -10,6 +10,7 @@ use time::OffsetDateTime;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RepositoryEvent {
     RepositoryCreated(RepositoryCreated),
+    RepositoryUpdated(RepositoryUpdated),
     RepositoryDeleted(RepositoryDeleted),
     RetentionPolicyApplied(RetentionPolicyApplied),
 }
@@ -21,6 +22,17 @@ pub struct RepositoryCreated {
     pub repo_type: RepositoryType,
     pub format: Ecosystem,
     pub organization_hrn: OrganizationId,
+    pub at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepositoryUpdated {
+    pub hrn: RepositoryId,
+    pub name: String,
+    pub repo_type: RepositoryType,
+    pub format: Ecosystem,
+    pub organization_hrn: OrganizationId,
+    pub updated_by: Hrn,
     pub at: OffsetDateTime,
 }
 
