@@ -1,53 +1,35 @@
 use thiserror::Error;
 use std::fmt;
 
-/// Custom error types for full-text search functionality
 #[derive(Error, Debug)]
 pub enum FullTextSearchError {
-    #[error("Failed to index artifact: {0}")]
-    IndexingError(String),
+    #[error("Search index error: {0}")]
+    SearchIndexError(String),
     
-    #[error("Failed to search artifacts: {0}")]
-    SearchError(String),
+    #[error("Repository error: {0}")]
+    RepositoryError(String),
     
-    #[error("Invalid search query: {0}")]
-    InvalidQueryError(String),
+    #[error("Event publishing error: {0}")]
+    EventPublishingError(String),
     
-    #[error("Tokenizer configuration error: {0}")]
-    TokenizerError(String),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
     
-    #[error("Scoring calculation error: {0}")]
-    ScoringError(String),
+    #[error("Search timeout error")]
+    TimeoutError,
     
-    #[error("Index schema error: {0}")]
-    SchemaError(String),
+    #[error("Authentication error: {0}")]
+    AuthenticationError(String),
     
-    #[error("Batch indexing error: {0}")]
-    BatchIndexingError(String),
+    #[error("Query too complex error")]
+    QueryTooComplexError,
     
-    #[error("Language detection error: {0}")]
-    LanguageDetectionError(String),
+    #[error("Unmatched parentheses error")]
+    UnmatchedParenthesesError,
     
-    #[error("Query parsing error: {0}")]
-    QueryParsingError(String),
-    
-    #[error("Internal search engine error: {0}")]
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
-impl fmt::Display for FullTextSearchError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            FullTextSearchError::IndexingError(msg) => write!(f, "Failed to index artifact: {}", msg),
-            FullTextSearchError::SearchError(msg) => write!(f, "Failed to search artifacts: {}", msg),
-            FullTextSearchError::InvalidQueryError(msg) => write!(f, "Invalid search query: {}", msg),
-            FullTextSearchError::TokenizerError(msg) => write!(f, "Tokenizer configuration error: {}", msg),
-            FullTextSearchError::ScoringError(msg) => write!(f, "Scoring calculation error: {}", msg),
-            FullTextSearchError::SchemaError(msg) => write!(f, "Index schema error: {}", msg),
-            FullTextSearchError::BatchIndexingError(msg) => write!(f, "Batch indexing error: {}", msg),
-            FullTextSearchError::LanguageDetectionError(msg) => write!(f, "Language detection error: {}", msg),
-            FullTextSearchError::QueryParsingError(msg) => write!(f, "Query parsing error: {}", msg),
-            FullTextSearchError::InternalError(msg) => write!(f, "Internal search engine error: {}", msg),
-        }
-    }
-}
+// Note: We don't need to implement Display manually since we're using thiserror
+// which automatically implements it for us based on the #[error(...)] attributes

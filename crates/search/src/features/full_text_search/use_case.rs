@@ -1,123 +1,80 @@
 use std::sync::Arc;
 use tracing::{info, debug, error};
+
 use crate::features::full_text_search::{
-    ports::{SearchEnginePort, IndexerPort},
-    dto::{FullTextSearchQuery, FullTextSearchResults, IndexedArtifact},
+    dto::{SearchQuery, SearchResults, ArtifactDocument},
     error::FullTextSearchError,
+    ports::{SearchIndexPort, ArtifactRepositoryPort, EventPublisherPort},
 };
 
-/// Use case for full-text search functionality
 pub struct FullTextSearchUseCase {
-    search_engine: Arc<dyn SearchEnginePort>,
-    indexer: Arc<dyn IndexerPort>,
+    search_index: Arc<dyn SearchIndexPort>,
+    artifact_repository: Arc<dyn ArtifactRepositoryPort>,
+    event_publisher: Arc<dyn EventPublisherPort>,
 }
 
 impl FullTextSearchUseCase {
     pub fn new(
-        search_engine: Arc<dyn SearchEnginePort>,
-        indexer: Arc<dyn IndexerPort>,
+        search_index: Arc<dyn SearchIndexPort>,
+        artifact_repository: Arc<dyn ArtifactRepositoryPort>,
+        event_publisher: Arc<dyn EventPublisherPort>,
     ) -> Self {
         Self {
-            search_engine,
-            indexer,
+            search_index,
+            artifact_repository,
+            event_publisher,
         }
     }
 
-    /// Execute a full-text search query
-    pub async fn execute(
-        &self,
-        query: FullTextSearchQuery,
-    ) -> Result<FullTextSearchResults, FullTextSearchError> {
+    pub async fn execute(&self, query: SearchQuery) -> Result<SearchResults, FullTextSearchError> {
         info!(query = %query.q, "Executing full-text search");
         
-        // Validate query
-        if query.q.trim().is_empty() {
-            return Err(FullTextSearchError::InvalidQueryError(
-                "Search query cannot be empty".to_string()
-            ));
+        // Normalize query to be case-insensitive
+        let normalized_query = query.q.to_lowercase();
+        let search_query = SearchQuery {
+            q: normalized_query.clone(),
+            page: query.page,
+            page_size: query.page_size,
+            language: query.language,
+            fields: query.fields,
+        };
+        
+        // Handle empty search case
+        let results = if normalized_query.is_empty() {
+            debug!("Empty search query, returning all artifacts");
+            let page = query.page.unwrap_or(1);
+            let page_size = query.page_size.unwrap_or(20);
+            self.search_index.get_all_artifacts(page, page_size).await?
+        } else {
+            debug!(query = %normalized_query, "Performing search with query");
+            self.search_index.search(&search_query).await?
+        };
+        
+        // Publish search event
+        if let Err(e) = self.event_publisher
+            .publish_search_query_executed(&normalized_query, results.total_count)
+            .await
+        {
+            error!(error = %e, "Failed to publish search query executed event");
+            // We don't return an error here as the search itself was successful
         }
         
-        // Perform search
-        let results = self.search_engine.search(&query).await?;
-        
-        // Log search performance
-        debug!(
-            query_time_ms = results.query_time_ms,
-            result_count = results.total_count,
-            max_score = results.max_score,
-            "Search completed"
-        );
-        
-        info!(result_count = results.total_count, "Full-text search completed successfully");
+        info!(result_count = results.total_count, "Search completed successfully");
         Ok(results)
     }
     
-    /// Index a single artifact
-    pub async fn index_artifact(
-        &self,
-        artifact: IndexedArtifact,
-    ) -> Result<(), FullTextSearchError> {
-        debug!(artifact_id = %artifact.id, "Indexing artifact");
+    pub async fn index_artifact(&self, artifact: &ArtifactDocument) -> Result<(), FullTextSearchError> {
+        debug!(artifact_id = %artifact.id, "Indexing artifact in full-text search");
         
-        self.indexer.index_artifact(&artifact).await?;
+        self.search_index.index_artifact(artifact).await?;
         
         info!(artifact_id = %artifact.id, "Artifact indexed successfully");
         Ok(())
     }
     
-    /// Index multiple artifacts in batch
-    pub async fn index_artifacts_batch(
-        &self,
-        artifacts: Vec<IndexedArtifact>,
-    ) -> Result<(), FullTextSearchError> {
-        debug!(artifact_count = artifacts.len(), "Indexing artifacts batch");
+    pub async fn get_all_artifacts(&self, page: usize, page_size: usize) -> Result<SearchResults, FullTextSearchError> {
+        debug!(page = page, page_size = page_size, "Getting all artifacts");
         
-        if artifacts.is_empty() {
-            return Ok(());
-        }
-        
-        let result = self.indexer.index_artifacts_batch(&artifacts).await?;
-        
-        info!(
-            indexed_count = result.indexed_count,
-            failed_count = result.failed_count,
-            "Batch indexing completed"
-        );
-        
-        if result.failed_count > 0 {
-            error!(failed_count = result.failed_count, "Some artifacts failed to index");
-            // We don't return an error here as partial success is acceptable
-        }
-        
-        Ok(())
-    }
-    
-    /// Get search suggestions for a partial query
-    pub async fn get_suggestions(
-        &self,
-        partial_query: &str,
-        limit: usize,
-    ) -> Result<Vec<String>, FullTextSearchError> {
-        debug!(partial_query = %partial_query, limit = limit, "Getting search suggestions");
-        
-        let suggestions = self.search_engine.get_suggestions(partial_query, limit).await?;
-        
-        info!(suggestion_count = suggestions.len(), "Suggestions retrieved successfully");
-        Ok(suggestions)
-    }
-    
-    /// Get search engine statistics
-    pub async fn get_stats(&self) -> Result<crate::features::full_text_search::ports::SearchStats, FullTextSearchError> {
-        debug!("Getting search engine statistics");
-        
-        let stats = self.search_engine.get_stats().await?;
-        
-        info!(
-            total_documents = stats.total_documents,
-            index_size_bytes = stats.index_size_bytes,
-            "Search engine statistics retrieved"
-        );
-        
-        Ok(stats)
+        self.search_index.get_all_artifacts(page, page_size).await
     }
 }

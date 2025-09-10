@@ -1,246 +1,190 @@
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use tokio::sync::Mutex;
+
 use crate::features::full_text_search::{
-    ports::{
-        SearchEnginePort, IndexerPort, TokenizerPort, ScorerPort,
-        SearchStats, BatchIndexingResult, ReindexingResult, Token,
-    },
-    dto::{FullTextSearchQuery, FullTextSearchResults, IndexedArtifact},
+    dto::{SearchQuery, SearchResults, ArtifactDocument},
     error::FullTextSearchError,
+    ports::{SearchIndexPort, ArtifactRepositoryPort, EventPublisherPort, ScorerPort},
 };
 
-/// Mock search engine adapter for testing
+/// Mock search index adapter for testing
 #[derive(Debug, Clone)]
-pub struct MockSearchEngineAdapter {
-    pub search_results: Arc<RwLock<Option<FullTextSearchResults>>>,
-    pub suggestions: Arc<RwLock<Vec<String>>>,
-    pub stats: Arc<RwLock<Option<SearchStats>>>,
-    pub should_fail: bool,
+pub struct MockSearchIndexAdapter {
+    pub artifacts: Arc<RwLock<Vec<ArtifactDocument>>>,
 }
 
-impl MockSearchEngineAdapter {
+impl MockSearchIndexAdapter {
     pub fn new() -> Self {
         Self {
-            search_results: Arc::new(RwLock::new(None)),
-            suggestions: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(None)),
-            should_fail: false,
+            artifacts: Arc::new(RwLock::new(Vec::new())),
         }
     }
     
-    pub fn with_results(mut self, results: FullTextSearchResults) -> Self {
-        let mut search_results = self.search_results.write().unwrap();
-        *search_results = Some(results);
-        self
-    }
-    
-    pub fn with_should_fail(mut self, should_fail: bool) -> Self {
-        self.should_fail = should_fail;
-        self
+    pub async fn add_test_artifact(&self, artifact: ArtifactDocument) {
+        let mut artifacts = self.artifacts.write().unwrap();
+        artifacts.push(artifact);
     }
 }
 
 #[async_trait]
-impl SearchEnginePort for MockSearchEngineAdapter {
+impl SearchIndexPort for MockSearchIndexAdapter {
     async fn search(
         &self,
-        _query: &FullTextSearchQuery,
-    ) -> Result<FullTextSearchResults, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::SearchError("Mock search failure".to_string()));
-        }
+        query: &SearchQuery,
+    ) -> Result<SearchResults, FullTextSearchError> {
+        let artifacts = self.artifacts.read().unwrap();
         
-        let search_results = self.search_results.read().unwrap();
-        match &*search_results {
-            Some(results) => Ok(results.clone()),
-            None => Ok(FullTextSearchResults::new(
-                Vec::new(),
-                0,
-                1,
-                20,
-                10,
-                0.0,
-            )),
-        }
-    }
-    
-    async fn get_suggestions(
-        &self,
-        _partial_query: &str,
-        _limit: usize,
-    ) -> Result<Vec<String>, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::SearchError("Mock suggestions failure".to_string()));
-        }
+        // Filter artifacts based on query
+        let filtered: Vec<ArtifactDocument> = if query.q.is_empty() {
+            artifacts.clone()
+        } else {
+            let query_lower = query.q.to_lowercase();
+            artifacts.iter()
+                .filter(|artifact| {
+                    artifact.name.to_lowercase().contains(&query_lower) ||
+                    artifact.version.to_lowercase().contains(&query_lower)
+                })
+                .cloned()
+                .collect()
+        };
         
-        let suggestions = self.suggestions.read().unwrap();
-        Ok(suggestions.clone())
-    }
-    
-    async fn get_stats(&self) -> Result<SearchStats, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::SearchError("Mock stats failure".to_string()));
-        }
+        // Apply pagination
+        let page = query.page.unwrap_or(1);
+        let page_size = query.page_size.unwrap_or(20);
+        let offset = (page - 1) * page_size;
+        let total_count = filtered.len();
         
-        let stats = self.stats.read().unwrap();
-        match &*stats {
-            Some(stats) => Ok(stats.clone()),
-            None => Ok(SearchStats {
-                total_documents: 0,
-                total_terms: 0,
-                average_document_length: 0.0,
-                index_size_bytes: 0,
-                last_indexed_at: None,
-            }),
-        }
-    }
-}
-
-/// Mock indexer adapter for testing
-#[derive(Debug, Clone)]
-pub struct MockIndexerAdapter {
-    pub indexed_artifacts: Arc<RwLock<Vec<IndexedArtifact>>>,
-    pub should_fail: bool,
-}
-
-impl MockIndexerAdapter {
-    pub fn new() -> Self {
-        Self {
-            indexed_artifacts: Arc::new(RwLock::new(Vec::new())),
-            should_fail: false,
-        }
+        let paginated = if offset < total_count {
+            let end = std::cmp::min(offset + page_size, total_count);
+            filtered[offset..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        
+        Ok(SearchResults::new(paginated, total_count, page, page_size))
     }
     
-    pub fn with_should_fail(mut self, should_fail: bool) -> Self {
-        self.should_fail = should_fail;
-        self
-    }
-    
-    pub fn get_indexed_artifacts(&self) -> Vec<IndexedArtifact> {
-        let artifacts = self.indexed_artifacts.read().unwrap();
-        artifacts.clone()
-    }
-}
-
-#[async_trait]
-impl IndexerPort for MockIndexerAdapter {
     async fn index_artifact(
         &self,
-        artifact: &IndexedArtifact,
+        artifact: &ArtifactDocument,
     ) -> Result<(), FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::IndexingError("Mock indexing failure".to_string()));
-        }
-        
-        let mut artifacts = self.indexed_artifacts.write().unwrap();
+        let mut artifacts = self.artifacts.write().unwrap();
         artifacts.push(artifact.clone());
         Ok(())
     }
     
-    async fn index_artifacts_batch(
+    async fn get_all_artifacts(
         &self,
-        artifacts: &[IndexedArtifact],
-    ) -> Result<BatchIndexingResult, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::BatchIndexingError("Mock batch indexing failure".to_string()));
+        page: usize,
+        page_size: usize,
+    ) -> Result<SearchResults, FullTextSearchError> {
+        let artifacts = self.artifacts.read().unwrap();
+        let total_count = artifacts.len();
+        
+        let offset = (page - 1) * page_size;
+        let paginated = if offset < total_count {
+            let end = std::cmp::min(offset + page_size, total_count);
+            artifacts[offset..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        
+        Ok(SearchResults::new(paginated, total_count, page, page_size))
+    }
+}
+
+/// Mock artifact repository adapter for testing
+#[derive(Debug, Clone)]
+pub struct MockArtifactRepositoryAdapter {
+    pub artifacts: Arc<RwLock<HashMap<String, ArtifactDocument>>>,
+}
+
+impl MockArtifactRepositoryAdapter {
+    pub fn new() -> Self {
+        Self {
+            artifacts: Arc::new(RwLock::new(HashMap::new())),
         }
-        
-        let mut indexed_artifacts = self.indexed_artifacts.write().unwrap();
-        indexed_artifacts.extend(artifacts.iter().cloned());
-        
-        Ok(BatchIndexingResult {
-            indexed_count: artifacts.len(),
-            failed_count: 0,
-            errors: Vec::new(),
-            duration_ms: 100,
-        })
     }
     
-    async fn delete_artifact(
+    pub async fn add_test_artifact(&self, artifact: ArtifactDocument) {
+        let mut artifacts = self.artifacts.write().unwrap();
+        artifacts.insert(artifact.id.clone(), artifact);
+    }
+}
+
+#[async_trait]
+impl ArtifactRepositoryPort for MockArtifactRepositoryAdapter {
+    async fn get_artifact_by_id(
         &self,
-        _artifact_id: &str,
-    ) -> Result<(), FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::IndexingError("Mock deletion failure".to_string()));
-        }
+        id: &str,
+    ) -> Result<Option<ArtifactDocument>, FullTextSearchError> {
+        let artifacts = self.artifacts.read().unwrap();
+        Ok(artifacts.get(id).cloned())
+    }
+    
+    async fn list_all_artifacts(
+        &self,
+        page: usize,
+        page_size: usize,
+    ) -> Result<(Vec<ArtifactDocument>, usize), FullTextSearchError> {
+        let artifacts = self.artifacts.read().unwrap();
+        let all_artifacts: Vec<ArtifactDocument> = artifacts.values().cloned().collect();
+        let total_count = all_artifacts.len();
         
+        let offset = (page - 1) * page_size;
+        let paginated = if offset < total_count {
+            let end = std::cmp::min(offset + page_size, total_count);
+            all_artifacts[offset..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        
+        Ok((paginated, total_count))
+    }
+}
+
+/// Mock event publisher adapter for testing
+#[derive(Debug, Clone)]
+pub struct MockEventPublisherAdapter {
+    pub events: Arc<RwLock<Vec<String>>>,
+}
+
+impl MockEventPublisherAdapter {
+    pub fn new() -> Self {
+        Self {
+            events: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+    
+    pub async fn get_published_events(&self) -> Vec<String> {
+        let events = self.events.read().unwrap();
+        events.clone()
+    }
+}
+
+#[async_trait]
+impl EventPublisherPort for MockEventPublisherAdapter {
+    async fn publish_search_query_executed(
+        &self,
+        query: &str,
+        result_count: usize,
+    ) -> Result<(), FullTextSearchError> {
+        let event = format!("SearchQueryExecuted: query='{}', result_count={}", query, result_count);
+        let mut events = self.events.write().unwrap();
+        events.push(event);
         Ok(())
     }
     
-    async fn reindex_all(&self) -> Result<ReindexingResult, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::BatchIndexingError("Mock reindexing failure".to_string()));
-        }
-        
-        Ok(ReindexingResult {
-            total_processed: 0,
-            successful: 0,
-            failed: 0,
-            duration_ms: 100,
-        })
-    }
-}
-
-/// Mock tokenizer adapter for testing
-#[derive(Debug, Clone)]
-pub struct MockTokenizerAdapter {
-    pub tokens: Arc<RwLock<Vec<Token>>>,
-    pub language: Arc<RwLock<String>>,
-    pub should_fail: bool,
-}
-
-impl MockTokenizerAdapter {
-    pub fn new() -> Self {
-        Self {
-            tokens: Arc::new(RwLock::new(Vec::new())),
-            language: Arc::new(RwLock::new("en".to_string())),
-            should_fail: false,
-        }
-    }
-    
-    pub fn with_tokens(mut self, tokens: Vec<Token>) -> Self {
-        let mut mock_tokens = self.tokens.write().unwrap();
-        *mock_tokens = tokens;
-        self
-    }
-    
-    pub fn with_language(mut self, language: &str) -> Self {
-        let mut mock_language = self.language.write().unwrap();
-        *mock_language = language.to_string();
-        self
-    }
-    
-    pub fn with_should_fail(mut self, should_fail: bool) -> Self {
-        self.should_fail = should_fail;
-        self
-    }
-}
-
-impl TokenizerPort for MockTokenizerAdapter {
-    fn tokenize(&self, _text: &str) -> Result<Vec<Token>, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::TokenizerError("Mock tokenization failure".to_string()));
-        }
-        
-        let tokens = self.tokens.read().unwrap();
-        Ok(tokens.clone())
-    }
-    
-    fn detect_language(&self, _text: &str) -> Result<String, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::LanguageDetectionError("Mock language detection failure".to_string()));
-        }
-        
-        let language = self.language.read().unwrap();
-        Ok(language.clone())
-    }
-    
-    fn stem_tokens(&self, tokens: &[Token], _language: &str) -> Result<Vec<Token>, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::TokenizerError("Mock stemming failure".to_string()));
-        }
-        
-        Ok(tokens.to_vec())
+    async fn publish_search_result_clicked(
+        &self,
+        artifact_id: &str,
+    ) -> Result<(), FullTextSearchError> {
+        let event = format!("SearchResultClicked: artifact_id='{}'", artifact_id);
+        let mut events = self.events.write().unwrap();
+        events.push(event);
+        Ok(())
     }
 }
 
@@ -248,49 +192,43 @@ impl TokenizerPort for MockTokenizerAdapter {
 #[derive(Debug, Clone)]
 pub struct MockScorerAdapter {
     pub scores: Arc<RwLock<Vec<f32>>>,
-    pub should_fail: bool,
 }
 
 impl MockScorerAdapter {
     pub fn new() -> Self {
         Self {
             scores: Arc::new(RwLock::new(Vec::new())),
-            should_fail: false,
         }
     }
     
-    pub fn with_scores(mut self, scores: Vec<f32>) -> Self {
+    pub async fn add_test_scores(&self, scores: Vec<f32>) {
         let mut mock_scores = self.scores.write().unwrap();
-        *mock_scores = scores;
-        self
-    }
-    
-    pub fn with_should_fail(mut self, should_fail: bool) -> Self {
-        self.should_fail = should_fail;
-        self
+        mock_scores.extend(scores);
     }
 }
 
+#[async_trait]
 impl ScorerPort for MockScorerAdapter {
-    fn calculate_score(
+    async fn calculate_score(
         &self,
         _query_terms: &[String],
         _document_terms: &[String],
         _document_length: usize,
     ) -> Result<f32, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::ScoringError("Mock scoring failure".to_string()));
-        }
-        
         let scores = self.scores.read().unwrap();
         Ok(*scores.first().unwrap_or(&1.0))
     }
     
-    fn normalize_scores(&self, scores: &[f32]) -> Result<Vec<f32>, FullTextSearchError> {
-        if self.should_fail {
-            return Err(FullTextSearchError::ScoringError("Mock normalization failure".to_string()));
-        }
-        
+    async fn normalize_scores(&self, scores: &[f32]) -> Result<Vec<f32>, FullTextSearchError> {
         Ok(scores.to_vec())
+    }
+    
+    async fn rank_results(
+        &self,
+        results: &mut SearchResults,
+    ) -> Result<(), FullTextSearchError> {
+        // For testing, we'll just sort by score descending
+        results.artifacts.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(())
     }
 }

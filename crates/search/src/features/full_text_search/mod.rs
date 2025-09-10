@@ -4,16 +4,23 @@
 //! and metadata, providing advanced search functionality with relevance ranking
 //! using the BM25 algorithm.
 
+pub mod adapter;
+pub mod api;
+pub mod di;
+pub mod dto;
+pub mod error;
+pub mod event_adapter;
 pub mod indexing;
 pub mod integration;
+pub mod ports;
+pub mod repository_adapter;
 pub mod scoring;
-pub mod error;
-pub mod dto;
+pub mod test_utils;
+pub mod use_case;
+
+#[cfg(test)]
 pub mod full_text_search_test;
 
 // Expose only the public parts of the feature.
-pub use indexing::FullTextIndexer;
-pub use integration::FullTextSearchIntegration;
-pub use scoring::BM25Scorer;
-pub use error::FullTextSearchError;
-pub use dto::{FullTextSearchQuery, FullTextSearchResults, IndexedArtifact};
+// Note: We're not re-exporting anything from this feature since it's still in development
+// and we want to maintain clean boundaries between features

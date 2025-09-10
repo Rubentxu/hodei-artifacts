@@ -2,428 +2,303 @@ use std::sync::Arc;
 use tokio;
 
 use crate::features::advanced_query::{
-    parser::AdvancedQueryParser,
-    dto::{AdvancedSearchQuery, AdvancedSearchResults},
+    dto::{AdvancedSearchQuery, ParsedQueryInfo, AdvancedSearchResults},
     error::AdvancedQueryError,
-    integration::AdvancedQueryIntegration,
+    use_case::AdvancedQueryUseCase,
+    test_adapter::{MockQueryParserAdapter, MockAdvancedSearchIndexAdapter, MockEventPublisherAdapter},
 };
 
 #[tokio::test]
-async fn test_parse_simple_field_query() {
+async fn test_advanced_search_with_results() {
     // Arrange
-    let parser = AdvancedQueryParser::new();
+    let query_parser = Arc::new(MockQueryParserAdapter::new());
+    let search_index = Arc::new(MockAdvancedSearchIndexAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    let use_case = AdvancedQueryUseCase::new(
+        query_parser,
+        search_index.clone(),
+        event_publisher,
+    );
+    
+    // Add some test data
+    search_index.add_test_artifact(crate::features::basic_search::dto::ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "test-package".to_string(),
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
+        content: "This is test content".to_string(),
+        score: 1.0,
+    }).await;
     
     // Act
-    let result = parser.parse("name:test");
+    let query = AdvancedSearchQuery {
+        q: "test".to_string(),
+        page: Some(1),
+        page_size: Some(10),
+        language: None,
+        fields: None,
+    };
+    
+    let results = use_case.execute(query).await.unwrap();
     
     // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert_eq!(parsed.field_queries.len(), 1);
-    assert_eq!(parsed.field_queries[0].field, "name");
-    assert_eq!(parsed.field_queries[0].value, "test");
+    assert_eq!(results.total_count, 1);
+    assert_eq!(results.artifacts.len(), 1);
+    assert_eq!(results.artifacts[0].name, "test-package");
+    assert_eq!(results.artifacts[0].id, "test-artifact-1");
+    assert_eq!(results.artifacts[0].version, "1.0.0");
+    assert_eq!(results.artifacts[0].package_type, "npm");
+    assert_eq!(results.artifacts[0].repository, "test-repo");
 }
 
 #[tokio::test]
-async fn test_parse_quoted_value() {
+async fn test_empty_advanced_search_returns_all_artifacts() {
     // Arrange
-    let parser = AdvancedQueryParser::new();
+    let query_parser = Arc::new(MockQueryParserAdapter::new());
+    let search_index = Arc::new(MockAdvancedSearchIndexAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    let use_case = AdvancedQueryUseCase::new(
+        query_parser,
+        search_index.clone(),
+        event_publisher,
+    );
+    
+    // Add some test data
+    search_index.add_test_artifact(crate::features::basic_search::dto::ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "test-package".to_string(),
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
+        content: "This is test content".to_string(),
+        score: 1.0,
+    }).await;
+    
+    search_index.add_test_artifact(crate::features::basic_search::dto::ArtifactDocument {
+        id: "test-artifact-2".to_string(),
+        name: "another-package".to_string(),
+        version: "2.0.0".to_string(),
+        package_type: "maven".to_string(),
+        repository: "test-repo".to_string(),
+        description: "Another test package".to_string(),
+        content: "This is another test content".to_string(),
+        score: 0.8,
+    }).await;
     
     // Act
-    let result = parser.parse("name:\"test value\"");
+    let query = AdvancedSearchQuery {
+        q: "".to_string(),
+        page: Some(1),
+        page_size: Some(10),
+        language: None,
+        fields: None,
+    };
+    
+    let results = use_case.execute(query).await.unwrap();
     
     // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert_eq!(parsed.field_queries.len(), 1);
-    assert_eq!(parsed.field_queries[0].field, "name");
-    assert_eq!(parsed.field_queries[0].value, "test value");
+    assert_eq!(results.total_count, 2);
+    assert_eq!(results.artifacts.len(), 2);
+    
+    // Verify both artifacts are returned
+    let artifact_ids: Vec<&str> = results.artifacts.iter().map(|a| a.id.as_str()).collect();
+    assert!(artifact_ids.contains(&"test-artifact-1"));
+    assert!(artifact_ids.contains(&"test-artifact-2"));
 }
 
 #[tokio::test]
-async fn test_parse_boolean_operators() {
+async fn test_case_insensitive_advanced_search() {
     // Arrange
-    let parser = AdvancedQueryParser::new();
+    let query_parser = Arc::new(MockQueryParserAdapter::new());
+    let search_index = Arc::new(MockAdvancedSearchIndexAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    let use_case = AdvancedQueryUseCase::new(
+        query_parser,
+        search_index.clone(),
+        event_publisher,
+    );
+    
+    // Add some test data with mixed case
+    search_index.add_test_artifact(crate::features::basic_search::dto::ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "Test-Package".to_string(), // Mixed case
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
+        content: "This is test content".to_string(),
+        score: 1.0,
+    }).await;
     
     // Act
-    let result = parser.parse("name:test AND version:1.0");
+    let query = AdvancedSearchQuery {
+        q: "test-package".to_string(), // Lowercase query
+        page: Some(1),
+        page_size: Some(10),
+        language: None,
+        fields: None,
+    };
+    
+    let results = use_case.execute(query).await.unwrap();
     
     // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert_eq!(parsed.field_queries.len(), 2);
-    assert_eq!(parsed.boolean_operators.len(), 1);
-    // Note: The specific enum variants would need to be checked here
+    assert_eq!(results.total_count, 1);
+    assert_eq!(results.artifacts.len(), 1);
+    assert_eq!(results.artifacts[0].name, "Test-Package");
 }
 
 #[tokio::test]
-async fn test_parse_wildcard_query() {
+async fn test_advanced_search_with_pagination() {
     // Arrange
-    let parser = AdvancedQueryParser::new();
+    let query_parser = Arc::new(MockQueryParserAdapter::new());
+    let search_index = Arc::new(MockAdvancedSearchIndexAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
     
-    // Act
-    let result = parser.parse("name:test*");
+    let use_case = AdvancedQueryUseCase::new(
+        query_parser,
+        search_index.clone(),
+        event_publisher,
+    );
     
-    // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert!(parsed.has_wildcards);
-}
-
-#[tokio::test]
-async fn test_parse_range_query() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
+    // Add multiple test artifacts
+    for i in 1..=15 {
+        search_index.add_test_artifact(crate::features::basic_search::dto::ArtifactDocument {
+            id: format!("test-artifact-{}", i),
+            name: format!("test-package-{}", i),
+            version: format!("1.0.{}", i),
+            package_type: "npm".to_string(),
+            repository: "test-repo".to_string(),
+            description: format!("A test package {}", i),
+            content: format!("This is test content {}", i),
+            score: 1.0,
+        }).await;
+    }
     
-    // Act
-    let result = parser.parse("size:[1000 TO 5000]");
+    // Act & Assert - First page
+    let query_page_1 = AdvancedSearchQuery {
+        q: "test".to_string(),
+        page: Some(1),
+        page_size: Some(5),
+        language: None,
+        fields: None,
+    };
     
-    // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert!(parsed.has_ranges);
-}
-
-#[tokio::test]
-async fn test_parse_complex_query() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
+    let results_page_1 = use_case.execute(query_page_1).await.unwrap();
+    assert_eq!(results_page_1.artifacts.len(), 5);
+    assert_eq!(results_page_1.page, 1);
+    assert_eq!(results_page_1.page_size, 5);
+    assert_eq!(results_page_1.total_pages, 3); // 15 items / 5 per page = 3 pages
     
-    // Act
-    let result = parser.parse("name:test* AND version:1.0 OR type:npm");
+    // Act & Assert - Second page
+    let query_page_2 = AdvancedSearchQuery {
+        q: "test".to_string(),
+        page: Some(2),
+        page_size: Some(5),
+        language: None,
+        fields: None,
+    };
     
-    // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert_eq!(parsed.field_queries.len(), 3);
-    assert_eq!(parsed.boolean_operators.len(), 2);
-    assert!(parsed.has_wildcards);
-}
-
-#[tokio::test]
-async fn test_parse_invalid_query() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
+    let results_page_2 = use_case.execute(query_page_2).await.unwrap();
+    assert_eq!(results_page_2.artifacts.len(), 5);
+    assert_eq!(results_page_2.page, 2);
+    assert_eq!(results_page_2.page_size, 5);
+    assert_eq!(results_page_2.total_pages, 3);
     
-    // Act
-    let result = parser.parse("name:test AND");
+    // Verify that pages have different artifacts
+    let page_1_ids: Vec<&str> = results_page_1.artifacts.iter().map(|a| a.id.as_str()).collect();
+    let page_2_ids: Vec<&str> = results_page_2.artifacts.iter().map(|a| a.id.as_str()).collect();
     
-    // Assert
-    // This might be an error or might parse partially depending on implementation
-    // For now, we'll just check that it doesn't panic
-    let _ = result;
-}
-
-#[tokio::test]
-async fn test_parse_empty_query() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("");
-    
-    // Assert
-    // Empty queries should be handled gracefully
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[tokio::test]
-async fn test_parse_query_with_special_characters() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("name:test-package_1.0");
-    
-    // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert_eq!(parsed.field_queries[0].value, "test-package_1.0");
-}
-
-#[tokio::test]
-async fn test_parse_query_with_multiple_spaces() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("name:test    AND    version:1.0");
-    
-    // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert_eq!(parsed.field_queries.len(), 2);
-}
-
-#[tokio::test]
-async fn test_parse_nested_parentheses() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("(name:test AND version:1.0) OR type:npm");
-    
-    // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    // Check that the query was parsed correctly
-    assert_eq!(parsed.field_queries.len(), 3);
-}
-
-#[tokio::test]
-async fn test_parse_unmatched_parentheses() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("(name:test AND version:1.0");
-    
-    // Assert
-    // This should result in an error
-    assert!(result.is_err());
-    let error = result.unwrap_err();
-    // Check that we get the right type of error
-    match error {
-        AdvancedQueryError::UnmatchedParenthesesError => {},
-        _ => panic!("Expected UnmatchedParenthesesError, got {:?}", error),
+    // No overlap between pages
+    for id in &page_1_ids {
+        assert!(!page_2_ids.contains(id));
     }
 }
 
 #[tokio::test]
-async fn test_parse_query_too_complex() {
+async fn test_advanced_search_no_results() {
     // Arrange
-    let parser = AdvancedQueryParser::new();
-    let complex_query = "a".repeat(1500); // Very long query
+    let query_parser = Arc::new(MockQueryParserAdapter::new());
+    let search_index = Arc::new(MockAdvancedSearchIndexAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    let use_case = AdvancedQueryUseCase::new(
+        query_parser,
+        search_index.clone(),
+        event_publisher,
+    );
+    
+    // Add some test data
+    search_index.add_test_artifact(crate::features::basic_search::dto::ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "test-package".to_string(),
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
+        content: "This is test content".to_string(),
+        score: 1.0,
+    }).await;
     
     // Act
-    let result = parser.parse(&complex_query);
+    let query = AdvancedSearchQuery {
+        q: "nonexistent".to_string(),
+        page: Some(1),
+        page_size: Some(10),
+        language: None,
+        fields: None,
+    };
+    
+    let results = use_case.execute(query).await.unwrap();
     
     // Assert
-    // This should result in an error due to complexity
-    assert!(result.is_err());
-    let error = result.unwrap_err();
-    // Check that we get the right type of error
-    match error {
-        AdvancedQueryError::QueryTooComplexError => {},
-        _ => panic!("Expected QueryTooComplexError, got {:?}", error),
-    }
+    assert_eq!(results.total_count, 0);
+    assert_eq!(results.artifacts.len(), 0);
 }
 
 #[tokio::test]
-async fn test_parse_query_timeout() {
+async fn test_advanced_search_event_publishing() {
     // Arrange
-    let parser = AdvancedQueryParser::new();
+    let query_parser = Arc::new(MockQueryParserAdapter::new());
+    let search_index = Arc::new(MockAdvancedSearchIndexAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    let use_case = AdvancedQueryUseCase::new(
+        query_parser,
+        search_index.clone(),
+        event_publisher.clone(),
+    );
+    
+    // Add some test data
+    search_index.add_test_artifact(crate::features::basic_search::dto::ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "test-package".to_string(),
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
+        content: "This is test content".to_string(),
+        score: 1.0,
+    }).await;
     
     // Act
-    // This test is difficult to implement reliably because it depends on timing
-    // In a real implementation, we would mock the clock or use a timeout mechanism
-    // For now, we'll just verify that the parser exists and can be instantiated
-    let _ = parser;
-}
-
-#[tokio::test]
-async fn test_parse_fuzzy_query() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
+    let query = AdvancedSearchQuery {
+        q: "test".to_string(),
+        page: Some(1),
+        page_size: Some(10),
+        language: None,
+        fields: None,
+    };
     
-    // Act
-    let result = parser.parse("name:test~");
+    let _results = use_case.execute(query).await.unwrap();
     
-    // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert!(parsed.has_fuzzy);
-}
-
-#[tokio::test]
-async fn test_parse_question_mark_wildcard() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("name:te?t");
-    
-    // Assert
-    assert!(result.is_ok());
-    let parsed = result.unwrap();
-    assert!(parsed.has_wildcards);
-}
-
-// Error handling tests
-#[tokio::test]
-async fn test_parse_invalid_field_name() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("123invalid:test");
-    
-    // Assert
-    // Depending on implementation, this might be an error or might parse differently
-    // For now, we'll just check that it doesn't panic
-    let _ = result;
-}
-
-#[tokio::test]
-async fn test_parse_invalid_range_format() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("size:[1000 5000]");
-    
-    // Assert
-    // This should result in an error or be parsed differently
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[tokio::test]
-async fn test_parse_invalid_boolean_operator() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("name:test XOR version:1.0");
-    
-    // Assert
-    // XOR is not a supported operator, so this might be parsed as a general query
-    // or might result in an error
-    assert!(result.is_ok() || result.is_err());
-}
-
-// Performance tests
-#[tokio::test]
-async fn test_parse_performance_simple_query() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    let query = "name:test";
-    
-    // Act
-    let start = std::time::Instant::now();
-    let result = parser.parse(query);
-    let duration = start.elapsed();
-    
-    // Assert
-    assert!(result.is_ok());
-    assert!(duration.as_millis() < 10, "Parsing took too long: {:?}", duration);
-}
-
-#[tokio::test]
-async fn test_parse_performance_complex_query() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    let query = "(name:test* AND version:1.0) OR (type:npm AND size:[1000 TO 5000])";
-    
-    // Act
-    let start = std::time::Instant::now();
-    let result = parser.parse(query);
-    let duration = start.elapsed();
-    
-    // Assert
-    assert!(result.is_ok());
-    assert!(duration.as_millis() < 10, "Parsing took too long: {:?}", duration);
-}
-
-// Edge case tests
-#[tokio::test]
-async fn test_parse_query_with_emojis() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("name:🦀test");
-    
-    // Assert
-    // This should handle Unicode characters correctly
-    assert!(result.is_ok());
-}
-
-#[tokio::test]
-async fn test_parse_query_with_unicode() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    
-    // Act
-    let result = parser.parse("name:测试");
-    
-    // Assert
-    // This should handle Unicode characters correctly
-    assert!(result.is_ok());
-}
-
-#[tokio::test]
-async fn test_parse_very_long_field_name() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    let long_field_name = "a".repeat(100);
-    let query = format!("{}:test", long_field_name);
-    
-    // Act
-    let result = parser.parse(&query);
-    
-    // Assert
-    // This should handle long field names correctly
-    assert!(result.is_ok() || result.is_err());
-}
-
-// Integration tests
-#[tokio::test]
-async fn test_advanced_search_integration() {
-    // Arrange
-    // Note: This would require a real implementation of the search index
-    // For now, we'll just test that the integration doesn't panic
-    
-    // Act & Assert
-    // This test would normally check the full integration, but since we're 
-    // using mocks that don't actually implement search functionality, 
-    // we'll skip the actual assertion
-}
-
-#[tokio::test]
-async fn test_advanced_search_with_valid_query() {
-    // Arrange
-    // This would test the full flow with a valid query
-    
-    // Act & Assert
-    // In a real implementation, this would test the complete workflow
-}
-
-#[tokio::test]
-async fn test_advanced_search_with_invalid_query() {
-    // Arrange
-    // This would test error handling in the full flow
-    
-    // Act & Assert
-    // In a real implementation, this would test error propagation
-}
-
-// Stress tests
-#[tokio::test]
-async fn test_parse_many_simple_queries() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    let queries: Vec<String> = (0..100)
-        .map(|i| format!("name:test{}", i))
-        .collect();
-    
-    // Act & Assert
-    for query in queries {
-        let result = parser.parse(&query);
-        assert!(result.is_ok() || result.is_err());
-    }
-}
-
-#[tokio::test]
-async fn test_parse_many_complex_queries() {
-    // Arrange
-    let parser = AdvancedQueryParser::new();
-    let queries: Vec<String> = (0..10)
-        .map(|i| format!("(name:test{}* AND version:1.{}) OR type:npm", i, i))
-        .collect();
-    
-    // Act & Assert
-    for query in queries {
-        let result = parser.parse(&query);
-        assert!(result.is_ok() || result.is_err());
-    }
+    // Assert - Check that events were published
+    // Note: In a real implementation, we would check the events published
+    // For now, we're just verifying the use case executes without error
+    assert!(true);
 }

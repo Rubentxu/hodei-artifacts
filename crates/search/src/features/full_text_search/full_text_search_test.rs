@@ -2,29 +2,53 @@ use std::sync::Arc;
 use tokio;
 
 use crate::features::full_text_search::{
-    dto::{FullTextSearchQuery, FullTextSearchResults, IndexedArtifact, ArtifactMetadata},
-    test_utils::{MockSearchEngineAdapter, MockIndexerAdapter},
+    dto::{SearchQuery, SearchResults, ArtifactDocument},
     use_case::FullTextSearchUseCase,
-    ports::{SearchEnginePort, IndexerPort},
+    test_utils::{MockSearchIndexAdapter, MockArtifactRepositoryAdapter, MockEventPublisherAdapter},
     error::FullTextSearchError,
 };
 
 #[tokio::test]
 async fn test_full_text_search_with_results() {
     // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new());
+    let search_index = Arc::new(MockSearchIndexAdapter::new());
+    let artifact_repository = Arc::new(MockArtifactRepositoryAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    // Add some test data
+    search_index.add_test_artifact(ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "test-package".to_string(),
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
+        content: "This is test content".to_string(),
+        score: 1.0,
+    }).await;
+    
+    search_index.add_test_artifact(ArtifactDocument {
+        id: "test-artifact-2".to_string(),
+        name: "another-package".to_string(),
+        version: "2.0.0".to_string(),
+        package_type: "maven".to_string(),
+        repository: "test-repo".to_string(),
+        description: "Another test package".to_string(),
+        content: "This is another test content".to_string(),
+        score: 0.8,
+    }).await;
     
     let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
+        search_index.clone(),
+        artifact_repository,
+        event_publisher,
     );
     
     // Act
-    let query = FullTextSearchQuery {
+    let query = SearchQuery {
         q: "test".to_string(),
         page: Some(1),
-        page_size: Some(20),
+        page_size: Some(10),
         language: None,
         fields: None,
     };
@@ -32,305 +56,228 @@ async fn test_full_text_search_with_results() {
     let results = use_case.execute(query).await.unwrap();
     
     // Assert
-    assert_eq!(results.total_count, 0);
-    assert_eq!(results.artifacts.len(), 0);
-    assert_eq!(results.page, 1);
-    assert_eq!(results.page_size, 20);
+    assert_eq!(results.total_count, 2);
+    assert_eq!(results.artifacts.len(), 2);
+    assert_eq!(results.artifacts[0].name, "test-package");
+    assert_eq!(results.artifacts[1].name, "another-package");
 }
 
 #[tokio::test]
-async fn test_full_text_search_empty_query() {
+async fn test_empty_search_returns_all_artifacts() {
     // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new());
+    let search_index = Arc::new(MockSearchIndexAdapter::new());
+    let artifact_repository = Arc::new(MockArtifactRepositoryAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    // Add some test data
+    search_index.add_test_artifact(ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "test-package".to_string(),
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
+        content: "This is test content".to_string(),
+        score: 1.0,
+    }).await;
+    
+    search_index.add_test_artifact(ArtifactDocument {
+        id: "test-artifact-2".to_string(),
+        name: "another-package".to_string(),
+        version: "2.0.0".to_string(),
+        package_type: "maven".to_string(),
+        repository: "test-repo".to_string(),
+        description: "Another test package".to_string(),
+        content: "This is another test content".to_string(),
+        score: 0.8,
+    }).await;
     
     let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
+        search_index.clone(),
+        artifact_repository,
+        event_publisher,
     );
     
     // Act
-    let query = FullTextSearchQuery {
+    let query = SearchQuery {
         q: "".to_string(),
         page: Some(1),
-        page_size: Some(20),
+        page_size: Some(10),
         language: None,
         fields: None,
     };
     
-    let result = use_case.execute(query).await;
+    let results = use_case.execute(query).await.unwrap();
     
     // Assert
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        FullTextSearchError::InvalidQueryError(_) => {},
-        _ => panic!("Expected InvalidQueryError"),
-    }
+    assert_eq!(results.total_count, 2);
+    assert_eq!(results.artifacts.len(), 2);
 }
 
 #[tokio::test]
-async fn test_full_text_search_whitespace_only_query() {
+async fn test_case_insensitive_search() {
     // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new());
+    let search_index = Arc::new(MockSearchIndexAdapter::new());
+    let artifact_repository = Arc::new(MockArtifactRepositoryAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
     
-    let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
-    );
-    
-    // Act
-    let query = FullTextSearchQuery {
-        q: "   ".to_string(),
-        page: Some(1),
-        page_size: Some(20),
-        language: None,
-        fields: None,
-    };
-    
-    let result = use_case.execute(query).await;
-    
-    // Assert
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        FullTextSearchError::InvalidQueryError(_) => {},
-        _ => panic!("Expected InvalidQueryError"),
-    }
-}
-
-#[tokio::test]
-async fn test_index_single_artifact() {
-    // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new());
-    
-    let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
-    );
-    
-    let artifact = IndexedArtifact {
+    // Add some test data with mixed case
+    search_index.add_test_artifact(ArtifactDocument {
         id: "test-artifact-1".to_string(),
+        name: "Test-Package".to_string(), // Mixed case
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
         content: "This is test content".to_string(),
-        metadata: ArtifactMetadata {
-            name: "test-package".to_string(),
-            version: "1.0.0".to_string(),
-            description: "A test package".to_string(),
-            package_type: "npm".to_string(),
-            repository: "test-repo".to_string(),
-            tags: vec!["test".to_string(), "package".to_string()],
-            authors: vec!["test-author".to_string()],
-            licenses: vec!["MIT".to_string()],
-            keywords: vec!["test".to_string(), "example".to_string()],
-        },
-        language: "en".to_string(),
-        indexed_at: chrono::Utc::now(),
-    };
-    
-    // Act
-    let result = use_case.index_artifact(artifact.clone()).await;
-    
-    // Assert
-    assert!(result.is_ok());
-    
-    // Verify the artifact was indexed
-    let indexed_artifacts = indexer.get_indexed_artifacts();
-    assert_eq!(indexed_artifacts.len(), 1);
-    assert_eq!(indexed_artifacts[0].id, artifact.id);
-    assert_eq!(indexed_artifacts[0].content, artifact.content);
-}
-
-#[tokio::test]
-async fn test_index_batch_artifacts() {
-    // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new());
+        score: 1.0,
+    }).await;
     
     let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
-    );
-    
-    let artifacts = vec![
-        IndexedArtifact {
-            id: "test-artifact-1".to_string(),
-            content: "This is test content 1".to_string(),
-            metadata: ArtifactMetadata {
-                name: "test-package-1".to_string(),
-                version: "1.0.0".to_string(),
-                description: "A test package 1".to_string(),
-                package_type: "npm".to_string(),
-                repository: "test-repo".to_string(),
-                tags: vec!["test".to_string(), "package".to_string()],
-                authors: vec!["test-author".to_string()],
-                licenses: vec!["MIT".to_string()],
-                keywords: vec!["test".to_string(), "example".to_string()],
-            },
-            language: "en".to_string(),
-            indexed_at: chrono::Utc::now(),
-        },
-        IndexedArtifact {
-            id: "test-artifact-2".to_string(),
-            content: "This is test content 2".to_string(),
-            metadata: ArtifactMetadata {
-                name: "test-package-2".to_string(),
-                version: "2.0.0".to_string(),
-                description: "A test package 2".to_string(),
-                package_type: "maven".to_string(),
-                repository: "test-repo".to_string(),
-                tags: vec!["test".to_string(), "package".to_string()],
-                authors: vec!["test-author".to_string()],
-                licenses: vec!["Apache-2.0".to_string()],
-                keywords: vec!["test".to_string(), "example".to_string()],
-            },
-            language: "en".to_string(),
-            indexed_at: chrono::Utc::now(),
-        },
-    ];
-    
-    // Act
-    let result = use_case.index_artifacts_batch(artifacts.clone()).await;
-    
-    // Assert
-    assert!(result.is_ok());
-    
-    // Verify the artifacts were indexed
-    let indexed_artifacts = indexer.get_indexed_artifacts();
-    assert_eq!(indexed_artifacts.len(), 2);
-    assert_eq!(indexed_artifacts[0].id, artifacts[0].id);
-    assert_eq!(indexed_artifacts[1].id, artifacts[1].id);
-}
-
-#[tokio::test]
-async fn test_index_empty_batch_artifacts() {
-    // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new());
-    
-    let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
-    );
-    
-    let artifacts = vec![];
-    
-    // Act
-    let result = use_case.index_artifacts_batch(artifacts).await;
-    
-    // Assert
-    assert!(result.is_ok());
-    
-    // Verify no artifacts were indexed
-    let indexed_artifacts = indexer.get_indexed_artifacts();
-    assert_eq!(indexed_artifacts.len(), 0);
-}
-
-#[tokio::test]
-async fn test_get_suggestions() {
-    // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new());
-    
-    let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
+        search_index.clone(),
+        artifact_repository,
+        event_publisher,
     );
     
     // Act
-    let result = use_case.get_suggestions("test", 10).await;
-    
-    // Assert
-    assert!(result.is_ok());
-    let suggestions = result.unwrap();
-    assert_eq!(suggestions.len(), 0); // Mock returns empty suggestions
-}
-
-#[tokio::test]
-async fn test_get_stats() {
-    // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new());
-    
-    let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
-    );
-    
-    // Act
-    let result = use_case.get_stats().await;
-    
-    // Assert
-    assert!(result.is_ok());
-    let stats = result.unwrap();
-    assert_eq!(stats.total_documents, 0); // Mock returns zero stats
-}
-
-#[tokio::test]
-async fn test_search_engine_failure() {
-    // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new().with_should_fail(true));
-    let indexer = Arc::new(MockIndexerAdapter::new());
-    
-    let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
-    );
-    
-    // Act
-    let query = FullTextSearchQuery {
-        q: "test".to_string(),
+    let query = SearchQuery {
+        q: "test-package".to_string(), // Lowercase query
         page: Some(1),
-        page_size: Some(20),
+        page_size: Some(10),
         language: None,
         fields: None,
     };
     
-    let result = use_case.execute(query).await;
+    let results = use_case.execute(query).await.unwrap();
     
     // Assert
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        FullTextSearchError::SearchError(_) => {},
-        _ => panic!("Expected SearchError"),
-    }
+    assert_eq!(results.total_count, 1);
+    assert_eq!(results.artifacts.len(), 1);
+    assert_eq!(results.artifacts[0].name, "Test-Package");
 }
 
 #[tokio::test]
-async fn test_indexer_failure() {
+async fn test_search_with_numbers() {
     // Arrange
-    let search_engine = Arc::new(MockSearchEngineAdapter::new());
-    let indexer = Arc::new(MockIndexerAdapter::new().with_should_fail(true));
+    let search_index = Arc::new(MockSearchIndexAdapter::new());
+    let artifact_repository = Arc::new(MockArtifactRepositoryAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    // Add some test data with numbers
+    search_index.add_test_artifact(ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "package123".to_string(),
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A numbered package".to_string(),
+        content: "This is numbered content 123".to_string(),
+        score: 1.0,
+    }).await;
     
     let use_case = FullTextSearchUseCase::new(
-        search_engine.clone() as Arc<dyn SearchEnginePort>,
-        indexer.clone() as Arc<dyn IndexerPort>,
+        search_index.clone(),
+        artifact_repository,
+        event_publisher,
     );
     
-    let artifact = IndexedArtifact {
-        id: "test-artifact-1".to_string(),
-        content: "This is test content".to_string(),
-        metadata: ArtifactMetadata {
-            name: "test-package".to_string(),
-            version: "1.0.0".to_string(),
-            description: "A test package".to_string(),
-            package_type: "npm".to_string(),
-            repository: "test-repo".to_string(),
-            tags: vec!["test".to_string(), "package".to_string()],
-            authors: vec!["test-author".to_string()],
-            licenses: vec!["MIT".to_string()],
-            keywords: vec!["test".to_string(), "example".to_string()],
-        },
-        language: "en".to_string(),
-        indexed_at: chrono::Utc::now(),
+    // Act
+    let query = SearchQuery {
+        q: "123".to_string(),
+        page: Some(1),
+        page_size: Some(10),
+        language: None,
+        fields: None,
     };
     
-    // Act
-    let result = use_case.index_artifact(artifact).await;
+    let results = use_case.execute(query).await.unwrap();
     
     // Assert
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        FullTextSearchError::IndexingError(_) => {},
-        _ => panic!("Expected IndexingError"),
-    }
+    assert_eq!(results.total_count, 1);
+    assert_eq!(results.artifacts.len(), 1);
+    assert_eq!(results.artifacts[0].name, "package123");
+}
+
+#[tokio::test]
+async fn test_search_version_exact_match() {
+    // Arrange
+    let search_index = Arc::new(MockSearchIndexAdapter::new());
+    let artifact_repository = Arc::new(MockArtifactRepositoryAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    // Add some test data
+    search_index.add_test_artifact(ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "test-package".to_string(),
+        version: "2.1.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package".to_string(),
+        content: "This is test content".to_string(),
+        score: 1.0,
+    }).await;
+    
+    let use_case = FullTextSearchUseCase::new(
+        search_index.clone(),
+        artifact_repository,
+        event_publisher,
+    );
+    
+    // Act
+    let query = SearchQuery {
+        q: "2.1.0".to_string(),
+        page: Some(1),
+        page_size: Some(10),
+        language: None,
+        fields: None,
+    };
+    
+    let results = use_case.execute(query).await.unwrap();
+    
+    // Assert
+    assert_eq!(results.total_count, 1);
+    assert_eq!(results.artifacts.len(), 1);
+    assert_eq!(results.artifacts[0].version, "2.1.0");
+}
+
+#[tokio::test]
+async fn test_search_with_special_characters() {
+    // Arrange
+    let search_index = Arc::new(MockSearchIndexAdapter::new());
+    let artifact_repository = Arc::new(MockArtifactRepositoryAdapter::new());
+    let event_publisher = Arc::new(MockEventPublisherAdapter::new());
+    
+    // Add some test data with special characters
+    search_index.add_test_artifact(ArtifactDocument {
+        id: "test-artifact-1".to_string(),
+        name: "test-package-with-dashes".to_string(),
+        version: "1.0.0".to_string(),
+        package_type: "npm".to_string(),
+        repository: "test-repo".to_string(),
+        description: "A test package with dashes".to_string(),
+        content: "This is test content with dashes".to_string(),
+        score: 1.0,
+    }).await;
+    
+    let use_case = FullTextSearchUseCase::new(
+        search_index.clone(),
+        artifact_repository,
+        event_publisher,
+    );
+    
+    // Act
+    let query = SearchQuery {
+        q: "test-package-with-dashes".to_string(),
+        page: Some(1),
+        page_size: Some(10),
+        language: None,
+        fields: None,
+    };
+    
+    let results = use_case.execute(query).await.unwrap();
+    
+    // Assert
+    assert_eq!(results.total_count, 1);
+    assert_eq!(results.artifacts.len(), 1);
+    assert_eq!(results.artifacts[0].name, "test-package-with-dashes");
 }

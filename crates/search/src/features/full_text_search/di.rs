@@ -1,56 +1,61 @@
 use std::sync::Arc;
+use tracing::{info, debug, error};
+
 use crate::features::full_text_search::{
     use_case::FullTextSearchUseCase,
-    ports::{SearchEnginePort, IndexerPort},
-    adapters::TantivySearchEngineAdapter,
+    ports::{SearchIndexPort, ArtifactRepositoryPort, EventPublisherPort},
+    adapter::TantivySearchAdapter,
+    repository_adapter::InMemoryArtifactRepositoryAdapter,
+    event_adapter::LoggingEventPublisherAdapter,
 };
 
-/// Dependency Injection container for Full-Text Search feature
+/// The Dependency Injection container for the Full-Text Search feature.
 pub struct FullTextSearchDIContainer {
     pub use_case: Arc<FullTextSearchUseCase>,
 }
 
 impl FullTextSearchDIContainer {
-    /// Create a new DI container with the specified dependencies
+    /// Wires up the dependencies for this feature.
     pub fn new(
-        search_engine: Arc<dyn SearchEnginePort>,
-        indexer: Arc<dyn IndexerPort>,
+        search_index: Arc<dyn SearchIndexPort>,
+        artifact_repository: Arc<dyn ArtifactRepositoryPort>,
+        event_publisher: Arc<dyn EventPublisherPort>,
     ) -> Self {
         let use_case = Arc::new(FullTextSearchUseCase::new(
-            search_engine.clone(),
-            indexer.clone(),
+            search_index,
+            artifact_repository,
+            event_publisher,
         ));
 
         Self { use_case }
     }
 
-    /// Create a DI container for production use with Tantivy adapter
+    /// Convenience function for wiring up production dependencies.
     pub fn for_production() -> Result<Self, Box<dyn std::error::Error>> {
-        let tantivy_adapter = Arc::new(TantivySearchEngineAdapter::new()?);
-        
-        let search_engine = tantivy_adapter.clone() as Arc<dyn SearchEnginePort>;
-        let indexer = tantivy_adapter.clone() as Arc<dyn IndexerPort>;
+        let search_index = Arc::new(TantivySearchAdapter::new()?);
+        let artifact_repository = Arc::new(InMemoryArtifactRepositoryAdapter::new());
+        let event_publisher = Arc::new(LoggingEventPublisherAdapter::new());
 
-        Ok(Self::new(search_engine, indexer))
+        Ok(Self::new(search_index, artifact_repository, event_publisher))
     }
 
-    /// Create a DI container for testing with mock dependencies
+    /// Convenience function for wiring up mock dependencies for testing.
     #[cfg(test)]
-    pub fn for_testing() -> (
-        Self,
-        Arc<crate::features::full_text_search::test_utils::MockSearchEngineAdapter>,
-        Arc<crate::features::full_text_search::test_utils::MockIndexerAdapter>,
-    ) {
-        use crate::features::full_text_search::test_utils::{MockSearchEngineAdapter, MockIndexerAdapter};
-        
-        let search_engine = Arc::new(MockSearchEngineAdapter::new());
-        let indexer = Arc::new(MockIndexerAdapter::new());
+    pub fn for_testing() -> (Self, 
+        Arc<crate::features::full_text_search::test_utils::MockSearchIndexAdapter>, 
+        Arc<crate::features::full_text_search::test_utils::MockArtifactRepositoryAdapter>,
+        Arc<crate::features::full_text_search::test_utils::MockEventPublisherAdapter>) {
+        use crate::features::full_text_search::test_utils::{MockSearchIndexAdapter, MockArtifactRepositoryAdapter, MockEventPublisherAdapter};
+        let search_index = Arc::new(MockSearchIndexAdapter::new());
+        let artifact_repository = Arc::new(MockArtifactRepositoryAdapter::new());
+        let event_publisher = Arc::new(MockEventPublisherAdapter::new());
 
         let container = Self::new(
-            search_engine.clone(),
-            indexer.clone(),
+            search_index.clone(),
+            artifact_repository.clone(),
+            event_publisher.clone(),
         );
 
-        (container, search_engine, indexer)
+        (container, search_index, artifact_repository, event_publisher)
     }
 }
