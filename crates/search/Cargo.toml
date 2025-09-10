@@ -25,4 +25,8 @@ lapin = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 testcontainers = { workspace = true }
-testcontainers-modules = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["mongo"] }
+
+[features]
+default = []
+testcontainers-full = ["testcontainers-modules/mongo"]
