@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use security::features::generate_sbom::{
-        adapter::{SyftSbomGenerator, S3SbomRepository},
+        adapter::{SyftSbomGenerator, S3SbomRepository, MongoArtifactRetriever},
         use_case::GenerateSbomUseCase,
         api::SbomGenerationEventHandler,
     };
@@ -16,8 +16,9 @@ mod tests {
         // Arrange
         let generator = Arc::new(SyftSbomGenerator::new());
         let repository = Arc::new(S3SbomRepository::new());
+        let artifact_retriever = Arc::new(MongoArtifactRetriever::new());
         
-        let use_case = Arc::new(GenerateSbomUseCase::new(generator, repository));
+        let use_case = Arc::new(GenerateSbomUseCase::new(generator, repository, artifact_retriever));
         let event_handler = SbomGenerationEventHandler::new(use_case);
         
         let artifact_ref = ArtifactReference {

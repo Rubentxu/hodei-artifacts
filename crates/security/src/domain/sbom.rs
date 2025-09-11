@@ -1,14 +1,15 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use shared::hrn::Hrn;
 
 /// Representa un Software Bill of Materials (SBOM) generado para un artefacto.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sbom {
-    /// ID único del SBOM.
-    pub id: String,
+    /// ID único del SBOM en formato HRN.
+    pub id: Hrn,
     
     /// ID del artefacto al que pertenece este SBOM.
-    pub artifact_id: String,
+    pub artifact_id: Hrn,
     
     /// Formato del SBOM.
     pub format: SbomFormat,
@@ -22,8 +23,26 @@ pub struct Sbom {
     /// Fecha y hora de creación del SBOM.
     pub created_at: DateTime<Utc>,
     
-    /// Metadatos del SBOM.
-    pub metadata: SbomMetadata,
+    /// Herramientas utilizadas para generar el SBOM.
+    pub tools: Vec<ToolInformation>,
+    
+    /// Autores del SBOM.
+    pub authors: Vec<ContactInformation>,
+    
+    /// Número de serie del documento SBOM.
+    pub serial_number: String,
+    
+    /// Nombre del documento SBOM.
+    pub document_name: String,
+    
+    /// Espacio de nombres del documento SBOM.
+    pub document_namespace: String,
+    
+    /// Referencias externas del SBOM.
+    pub external_references: Vec<ExternalReference>,
+    
+    /// Licencia de los datos del SBOM.
+    pub data_license: String,
 }
 
 /// Formatos soportados para SBOM.
@@ -36,15 +55,24 @@ pub enum SbomFormat {
     SPDX,
 }
 
-/// Metadatos de un SBOM.
+/// Información sobre las herramientas utilizadas para generar el SBOM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SbomMetadata {
-    /// Herramienta utilizada para generar el SBOM.
-    pub generator: String,
-    
-    /// Versión de la herramienta.
-    pub generator_version: String,
-    
-    /// Número de componentes en el SBOM.
-    pub component_count: u32,
+pub struct ToolInformation {
+    pub vendor: String,
+    pub name: String,
+    pub version: String,
+}
+
+/// Información de contacto.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContactInformation {
+    pub name: String,
+    pub email: String,
+}
+
+/// Referencia externa.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalReference {
+    pub url: String,
+    pub r#type: String,
 }
