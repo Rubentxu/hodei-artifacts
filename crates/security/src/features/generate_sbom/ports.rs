@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use crate::domain::sbom::{Sbom, SbomFormat};
 use artifact::domain::physical_artifact::PhysicalArtifact;
+use shared::hrn::PhysicalArtifactId;
 
 // Puerto para un generador de SBOM.
 #[async_trait]
@@ -12,7 +13,13 @@ pub trait ISbomGenerator: Send + Sync {
 #[async_trait]
 pub trait ISbomRepository: Send + Sync {
     async fn save(&self, sbom: &Sbom) -> Result<(), SbomRepositoryError>;
-    async fn get_by_artifact_id(&self, artifact_id: &str) -> Result<Option<Sbom>, SbomRepositoryError>;
+    async fn get_by_artifact_id(&self, artifact_id: &PhysicalArtifactId) -> Result<Option<Sbom>, SbomRepositoryError>;
+}
+
+// Puerto para obtener artefactos físicos.
+#[async_trait]
+pub trait IArtifactRetriever: Send + Sync {
+    async fn get_physical_artifact(&self, artifact_id: &PhysicalArtifactId) -> Result<PhysicalArtifact, SbomGenerationError>;
 }
 
 // Errores específicos de generación de SBOM
@@ -23,6 +30,12 @@ pub enum SbomGenerationError {
     
     #[error("Unsupported format: {0}")]
     UnsupportedFormat(String),
+    
+    #[error("Artifact not found: {0}")]
+    ArtifactNotFound(String),
+    
+    #[error("Repository error: {0}")]
+    RepositoryError(String),
 }
 
 // Errores específicos del repositorio de SBOM

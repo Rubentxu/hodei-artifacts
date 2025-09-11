@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use security::features::generate_sbom::{
-        adapter::{SyftSbomGenerator, S3SbomRepository, MongoArtifactRetriever},
-        use_case::GenerateSbomUseCase,
-        api::SbomGenerationEventHandler,
+    use security::features::sign_artifact::{
+        adapter::{Sha256ArtifactHasher, FileKeyProvider, MongoSignatureRepository},
+        use_case::SignArtifactUseCase,
+        api::ArtifactSigningEventHandler,
     };
     use artifact::domain::events::ArtifactEvent;
     use std::sync::Arc;
@@ -12,14 +12,17 @@ mod tests {
     use shared::hrn::PhysicalArtifactId;
 
     #[tokio::test]
-    async fn test_sbom_generation_integration() {
+    async fn test_artifact_signing_integration() {
         // Arrange
-        let generator = Arc::new(SyftSbomGenerator::new());
-        let repository = Arc::new(S3SbomRepository::new());
-        let artifact_retriever = Arc::new(MongoArtifactRetriever::new());
+        let hasher = Arc::new(Sha256ArtifactHasher::new());
+        let key_provider = Arc::new(FileKeyProvider::new(
+            "/tmp/test_signing.key".to_string(),
+            "test-key-1".to_string()
+        ));
+        let repository = Arc::new(MongoSignatureRepository::new());
         
-        let use_case = Arc::new(GenerateSbomUseCase::new(generator, repository, artifact_retriever));
-        let event_handler = SbomGenerationEventHandler::new(use_case);
+        let use_case = Arc::new(SignArtifactUseCase::new(hasher, key_provider, repository));
+        let event_handler = ArtifactSigningEventHandler::new(use_case);
         
         let artifact_ref = ArtifactReference {
             artifact_hrn: PhysicalArtifactId::new("hrn:hodei:artifact:us-east-1:123456789012:physical-artifact/sha256-abcd1234").unwrap(),
@@ -35,7 +38,7 @@ mod tests {
         // En este test de integración básico, simplemente verificamos que
         // el manejador de eventos se ejecute sin errores.
         // En una implementación real, podríamos verificar que se haya
-        // generado y guardado un SBOM.
+        // generado y guardado una firma.
         assert!(true);
     }
 }

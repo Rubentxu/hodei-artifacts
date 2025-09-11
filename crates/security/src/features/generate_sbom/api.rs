@@ -14,12 +14,14 @@ impl SbomGenerationEventHandler {
     // Este método será llamado por el consumidor de Kafka/RabbitMQ
     pub async fn handle(&self, event: &ArtifactEvent) {
         if let ArtifactEvent::ArtifactUploaded { artifact } = event {
+            tracing::info!("Processing SBOM generation for artifact: {:?}", artifact.artifact_hrn);
+            
             match self.use_case.execute(artifact).await {
                 Ok(sbom) => {
                     tracing::info!("Successfully generated SBOM {} for artifact {}", sbom.id, sbom.artifact_id);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to generate SBOM for artifact: {}", e);
+                    tracing::error!("Failed to generate SBOM for artifact {:?}: {}", artifact.artifact_hrn, e);
                 }
             }
         }

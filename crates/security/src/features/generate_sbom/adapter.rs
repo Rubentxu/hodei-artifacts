@@ -1,7 +1,8 @@
 use async_trait::async_trait;
-use crate::domain::sbom::{Sbom, SbomFormat, SbomMetadata};
-use crate::features::generate_sbom::ports::{ISbomGenerator, ISbomRepository, SbomGenerationError, SbomRepositoryError};
+use crate::domain::sbom::{Sbom, SbomFormat, ToolInformation};
+use crate::features::generate_sbom::ports::{ISbomGenerator, ISbomRepository, IArtifactRetriever, SbomGenerationError, SbomRepositoryError};
 use artifact::domain::physical_artifact::PhysicalArtifact;
+use shared::hrn::{PhysicalArtifactId, Hrn};
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -56,17 +57,25 @@ impl ISbomGenerator for SyftSbomGenerator {
 }"#.to_string();
         
         let sbom = Sbom {
-            id: Uuid::new_v4().to_string(),
-            artifact_id: artifact.hrn.to_string(),
+            id: Hrn::new(&format!("hrn:hodei:security:us-east-1:123456789012:sbom/{}", Uuid::new_v4())).unwrap(),
+            artifact_id: artifact.hrn.clone(),
             format: SbomFormat::CycloneDX,
             spec_version: "1.4".to_string(),
             content: sbom_content,
             created_at: Utc::now(),
-            metadata: SbomMetadata {
-                generator: "syft".to_string(),
-                generator_version: "0.78.0".to_string(),
-                component_count: 1,
-            },
+            tools: vec![
+                ToolInformation {
+                    vendor: "anchore".to_string(),
+                    name: "syft".to_string(),
+                    version: "0.78.0".to_string(),
+                }
+            ],
+            authors: vec![],
+            serial_number: format!("urn:uuid:{}", Uuid::new_v4()),
+            document_name: "artifact-sbom".to_string(),
+            document_namespace: format!("https://hodei.dev/sbom/{}", Uuid::new_v4()),
+            external_references: vec![],
+            data_license: "CC0-1.0".to_string(),
         };
         
         Ok(sbom)
@@ -91,20 +100,40 @@ impl ISbomRepository for S3SbomRepository {
         // 3. Actualizar la referencia al SBOM en los metadatos del artefacto
         
         // Por ahora, solo simulamos la operación
-        println!("Saving SBOM {} for artifact {} to S3 and MongoDB", sbom.id, sbom.artifact_id);
+        tracing::info!("Saving SBOM {} for artifact {} to S3 and MongoDB", sbom.id, sbom.artifact_id);
         
         Ok(())
     }
     
-    async fn get_by_artifact_id(&self, artifact_id: &str) -> Result<Option<Sbom>, SbomRepositoryError> {
+    async fn get_by_artifact_id(&self, artifact_id: &PhysicalArtifactId) -> Result<Option<Sbom>, SbomRepositoryError> {
         // En una implementación real, aquí se recuperaría el SBOM:
         // 1. Consultar MongoDB para obtener los metadatos del SBOM
         // 2. Recuperar el contenido del SBOM de S3
         // 3. Construir y devolver el objeto SBOM
         
         // Por ahora, solo simulamos que no se encuentra el SBOM
-        println!("Retrieving SBOM for artifact {} from S3 and MongoDB", artifact_id);
+        tracing::info!("Retrieving SBOM for artifact {} from S3 and MongoDB", artifact_id.as_str());
         
         Ok(None)
+    }
+}
+
+// Adaptador para obtener artefactos físicos del repositorio de artefactos
+pub struct MongoArtifactRetriever;
+
+impl MongoArtifactRetriever {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+#[async_trait]
+impl IArtifactRetriever for MongoArtifactRetriever {
+    async fn get_physical_artifact(&self, artifact_id: &PhysicalArtifactId) -> Result<PhysicalArtifact, SbomGenerationError> {
+        // En una implementación real, aquí se haría una llamada al repositorio de artefactos
+        // para obtener el artefacto físico con el ID especificado.
+        
+        // Por ahora, simulamos que no encontramos el artefacto
+        Err(SbomGenerationError::ArtifactNotFound(format!("Artifact with ID {} not found", artifact_id.as_str())))
     }
 }
