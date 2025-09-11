@@ -46,6 +46,7 @@ pub trait EventPublisher: Send + Sync {
 pub trait ChunkedUploadStorage: Send + Sync {
     async fn save_chunk(&self, upload_id: &str, chunk_number: usize, data: bytes::Bytes) -> Result<(), UploadArtifactError>;
     async fn get_received_chunks_count(&self, upload_id: &str) -> Result<usize, UploadArtifactError>;
+    async fn get_received_chunk_numbers(&self, upload_id: &str) -> Result<Vec<usize>, UploadArtifactError>;
     async fn assemble_chunks(&self, upload_id: &str, total_chunks: usize, file_name: &str) -> Result<(PathBuf, String), UploadArtifactError>;
     async fn cleanup(&self, upload_id: &str) -> Result<(), UploadArtifactError>;
 }
@@ -54,4 +55,23 @@ pub trait ChunkedUploadStorage: Send + Sync {
 #[async_trait]
 pub trait ArtifactValidator: Send + Sync {
     async fn validate(&self, command: &UploadArtifactCommand, content: &Bytes) -> Result<(), Vec<String>>;
+}
+
+/// Validador de versiones para artefactos
+#[async_trait]
+pub trait VersionValidator: Send + Sync {
+    async fn validate_version(&self, version_str: &str) -> Result<(), String>;
+    async fn parse_version(&self, version_str: &str) -> Result<ParsedVersion, String>;
+}
+
+/// Información detallada sobre una versión parseada
+#[derive(Debug, Clone)]
+pub struct ParsedVersion {
+    pub original: String,
+    pub major: u64,
+    pub minor: u64,
+    pub patch: u64,
+    pub prerelease: Option<String>,
+    pub build_metadata: Option<String>,
+    pub is_snapshot: bool,
 }

@@ -1,3 +1,5 @@
+// crates/artifact/src/features/upload_artifact/upload_progress/dto.rs
+
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -125,4 +127,26 @@ fn current_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Información sobre un chunk recibido
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReceivedChunkInfo {
+    /// Número del chunk (1-indexed)
+    pub chunk_number: usize,
+    /// Tamaño del chunk en bytes
+    pub size: u64,
+}
+
+/// Response para consultas de chunks recibidos
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReceivedChunksResponse {
+    /// ID único de la subida
+    pub upload_id: String,
+    /// Total de chunks esperados
+    pub total_chunks: usize,
+    /// Lista de chunks recibidos con su información
+    pub received_chunks: Vec<ReceivedChunkInfo>,
+    /// Números de los chunks recibidos (para fácil consulta)
+    pub received_chunk_numbers: Vec<usize>,
 }

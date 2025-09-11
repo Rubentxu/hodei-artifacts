@@ -12,7 +12,7 @@ use crate::domain::{
 use crate::features::upload_artifact::{
     dto::{UploadArtifactCommand, UploadArtifactResponse},
     error::UploadArtifactError,
-    ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository, ArtifactValidator},
+    ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository, ArtifactValidator, VersionValidator, ParsedVersion},
 };
 use shared::{
     enums::{ArtifactRole, ArtifactType, HashAlgorithm},
@@ -27,6 +27,7 @@ pub struct UploadArtifactUseCase {
     storage: Arc<dyn ArtifactStorage>,
     event_publisher: Arc<dyn EventPublisher>,
     validator: Arc<dyn ArtifactValidator>,
+    version_validator: Arc<dyn VersionValidator>,
 }
 
 impl UploadArtifactUseCase {
@@ -35,12 +36,14 @@ impl UploadArtifactUseCase {
         storage: Arc<dyn ArtifactStorage>,
         event_publisher: Arc<dyn EventPublisher>,
         validator: Arc<dyn ArtifactValidator>,
+        version_validator: Arc<dyn VersionValidator>,
     ) -> Self {
         Self {
             repository,
             storage,
             event_publisher,
             validator,
+            version_validator,
         }
     }
 
@@ -64,6 +67,21 @@ impl UploadArtifactUseCase {
                 tracing::error!(error = %e, "Failed to publish ArtifactValidationFailed event");
             }
             return Err(UploadArtifactError::ValidationFailed(errors.join(", ")));
+        }
+
+        // 0.1. Validación de versión (nueva)
+        if let Err(e) = self.version_validator.validate_version(&command.coordinates.version).await {
+            tracing::warn!(error = %e, "Version validation failed");
+            // Publish event (non-blocking on publish failure)
+            let event = ArtifactEvent::ArtifactValidationFailed(ArtifactValidationFailed {
+                coordinates: command.coordinates.clone(),
+                errors: vec![e],
+                at: OffsetDateTime::now_utc(),
+            });
+            if let Err(publish_error) = self.event_publisher.publish(&event).await {
+                tracing::error!(error = %publish_error, "Failed to publish ArtifactValidationFailed event");
+            }
+            return Err(e);
         }
 
         // 1. Calculate checksum
@@ -222,6 +240,21 @@ impl UploadArtifactUseCase {
                 tracing::error!(error = %e, "Failed to publish ArtifactValidationFailed event");
             }
             return Err(UploadArtifactError::ValidationFailed(errors.join(", ")));
+        }
+
+        // 0.1. Validación de versión (nueva)
+        if let Err(e) = self.version_validator.validate_version(&command.coordinates.version).await {
+            tracing::warn!(error = %e, "Version validation failed (temp file)");
+            // Publish event (non-blocking on publish failure)
+            let event = ArtifactEvent::ArtifactValidationFailed(ArtifactValidationFailed {
+                coordinates: command.coordinates.clone(),
+                errors: vec![e],
+                at: OffsetDateTime::now_utc(),
+            });
+            if let Err(publish_error) = self.event_publisher.publish(&event).await {
+                tracing::error!(error = %publish_error, "Failed to publish ArtifactValidationFailed event");
+            }
+            return Err(UploadArtifactError::ValidationFailed(format!("Version validation failed: {}", e)));
         }
 
         let content_hash_str = match precomputed_checksum {

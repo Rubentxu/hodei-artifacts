@@ -3,12 +3,16 @@ use std::path::PathBuf;
 
 use super::{
     adapter::{S3ArtifactStorage, MongoDbRepository, RabbitMqEventPublisher, LocalFsChunkedUploadStorage, NoopArtifactValidator},
-    ports::{ArtifactRepository, ArtifactStorage, EventPublisher, ChunkedUploadStorage, ArtifactValidator},
+    ports::{ArtifactRepository, ArtifactStorage, EventPublisher, ChunkedUploadStorage, ArtifactValidator, VersionValidator},
     use_case::UploadArtifactUseCase,
     use_case_chunks::UploadArtifactChunkUseCase,
     api::UploadArtifactEndpoint,
 };
-use crate::features::upload_artifact::upload_progress::{UploadProgressService, UploadProgressDIContainer};
+
+// Import the default version validator
+#[cfg(not(test))]
+use super::adapter::DefaultVersionValidator;
+use crate::features::upload_progress::{UploadProgressService, UploadProgressDIContainer};
 use aws_config::SdkConfig;
 
 /// The Dependency Injection container for the Upload Artifact feature.
@@ -27,8 +31,9 @@ impl UploadArtifactDIContainer {
         chunked_storage: Arc<dyn ChunkedUploadStorage + Send + Sync>,
         validator: Arc<dyn ArtifactValidator + Send + Sync>,
         progress_service: Arc<UploadProgressService>,
+        version_validator: Arc<dyn VersionValidator + Send + Sync>,
     ) -> Self {
-        let use_case = Arc::new(UploadArtifactUseCase::new(repository, storage, publisher.clone(), validator));
+        let use_case = Arc::new(UploadArtifactUseCase::new(repository, storage, publisher.clone(), validator, version_validator));
         let chunk_use_case = Arc::new(UploadArtifactChunkUseCase::new(chunked_storage, use_case.clone(), publisher, progress_service));
         let endpoint = Arc::new(UploadArtifactEndpoint::new(use_case.clone()));
 
@@ -59,13 +64,16 @@ impl UploadArtifactDIContainer {
         let progress_container = UploadProgressDIContainer::for_development();
         let progress_service = progress_container.service;
 
-        Self::new(repository, storage, publisher, chunk_storage, validator, progress_service.into())
+        // Versioning validator
+        let version_validator = Arc::new(DefaultVersionValidator::new());
+
+        Self::new(repository, storage, publisher, chunk_storage, validator, progress_service.into(), version_validator)
     }
 
     /// Convenience function for wiring up mock dependencies for testing.
     #[cfg(test)]
-    pub fn for_testing() -> (Self, Arc<super::test_adapter::MockArtifactRepository>, Arc<super::test_adapter::MockArtifactStorage>, Arc<super::test_adapter::MockEventPublisher>, Arc<super::test_adapter::MockArtifactValidator>) {
-        use super::test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator};
+    pub fn for_testing() -> (Self, Arc<super::test_adapter::MockArtifactRepository>, Arc<super::test_adapter::MockArtifactStorage>, Arc<super::test_adapter::MockEventPublisher>, Arc<super::test_adapter::MockArtifactValidator>, Arc<super::test_adapter::MockVersionValidator>) {
+        use super::test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator, MockVersionValidator};
 
         let repository = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());
@@ -78,6 +86,9 @@ impl UploadArtifactDIContainer {
         let progress_container = UploadProgressDIContainer::for_testing();
         let progress_service = progress_container.service;
 
-        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone(), Arc::new(progress_service)), repository, storage, publisher, validator)
+        // Versioning validator para testing
+        let versioning_validator = Arc::new(MockVersionValidator::new());
+
+        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone(), Arc::new(progress_service), versioning_validator.clone()), repository, storage, publisher, validator, versioning_validator)
     }
 }
