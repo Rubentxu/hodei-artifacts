@@ -19,7 +19,7 @@ use crate::features::index_text_documents::{
         DocumentIndexerPort, TextAnalyzerPort, IndexHealthMonitorPort,
         IndexSchemaManagerPort, DocumentValidatorPort,
     },
-    error::{IndexDocumentError, IndexDocumentResult, WithContext, ErrorContext},
+    error::{IndexDocumentError, IndexDocumentResult, WithContext, ErrorContext, ToIndexDocumentError},
 };
 
 /// Use case for managing document indexing operations
@@ -68,8 +68,8 @@ impl IndexDocumentUseCase {
         // Step 1: Validate document before processing
         debug!("Validating document");
         let validation_result = self.validator.validate_document(&command)
-            .with_context(ErrorContext::new("validate_document").with_resource_id(&command.artifact_id))
-            .await?;
+            .await
+            .to_index_document_error()?;
         
         if !validation_result.is_valid {
             let error_msg = format!("Document validation failed: {:?}", validation_result.errors);
@@ -81,8 +81,8 @@ impl IndexDocumentUseCase {
         if !command.force_reindex {
             debug!("Checking for duplicate content");
             let is_duplicate = self.validator.check_duplicate_content(&command.content)
-                .with_context(ErrorContext::new("check_duplicate_content").with_resource_id(&command.artifact_id))
-                .await?;
+                .await
+                .to_index_document_error()?;
             
             if is_duplicate {
                 warn!("Duplicate content detected for artifact: {}", command.artifact_id);
@@ -95,8 +95,8 @@ impl IndexDocumentUseCase {
         // Step 3: Check index health before processing
         debug!("Checking index health");
         let health = self.health_monitor.check_index_health()
-            .with_context(ErrorContext::new("check_index_health"))
-            .await?;
+            .await
+            .to_index_document_error()?;
         
         if health.status != super::ports::HealthStatus::Healthy {
             warn!("Index health check returned status: {:?}", health.status);
@@ -117,15 +117,15 @@ impl IndexDocumentUseCase {
         };
         
         let analysis_result = self.analyzer.analyze_text(analyze_command)
-            .with_context(ErrorContext::new("analyze_text").with_resource_id(&command.artifact_id))
-            .await?;
+            .await
+            .to_index_document_error()?;
 
         // Step 5: Index the document
         debug!("Indexing document");
         let start_time = std::time::Instant::now();
         let mut indexing_result = self.indexer.index_document(command)
-            .with_context(ErrorContext::new("index_document"))
-            .await?;
+            .await
+            .to_index_document_error()?;
         
         let indexing_time_ms = start_time.elapsed().as_millis() as u64;
         indexing_result.indexing_time_ms = indexing_time_ms;
@@ -144,7 +144,7 @@ impl IndexDocumentUseCase {
         if indexing_time_ms > 1000 {
             warn!(
                 artifact_id = %indexing_result.document_id,
-                indexing_time_ms = indexing_time.indexing_time_ms,
+                indexing_time_ms = indexing_time_ms,
                 "Document indexing took longer than expected"
             );
         }
@@ -256,8 +256,8 @@ impl IndexDocumentUseCase {
         
         // Check if document exists
         let exists = self.indexer.document_exists(&command.document_id)
-            .with_context(ErrorContext::new("document_exists").with_resource_id(&command.document_id))
-            .await?;
+            .await
+            .to_index_document_error()?;
         
         if !exists {
             warn!("Document not found for removal: {}", command.document_id);
@@ -271,8 +271,8 @@ impl IndexDocumentUseCase {
         // Remove the document
         debug!("Removing document from index");
         let mut result = self.indexer.remove_document(command)
-            .with_context(ErrorContext::new("remove_document"))
-            .await?;
+            .await
+            .to_index_document_error()?;
         
         result.removal_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -296,8 +296,8 @@ impl IndexDocumentUseCase {
 
         debug!("Executing query: {:?}", query);
         let result = self.indexer.get_indexed_documents(query)
-            .with_context(ErrorContext::new("get_indexed_documents"))
-            .await?;
+            .await
+            .to_index_document_error()?;
 
         info!(
             total_count = result.total_count,
@@ -356,8 +356,8 @@ impl IndexDocumentUseCase {
     pub async fn get_index_health(&self) -> IndexDocumentResult<super::ports::IndexHealth> {
         debug!("Getting index health status");
         self.health_monitor.check_index_health()
-            .with_context(ErrorContext::new("get_index_health"))
             .await
+            .to_index_document_error()?
     }
 
     /// Get index statistics
@@ -365,8 +365,8 @@ impl IndexDocumentUseCase {
     pub async fn get_index_stats(&self) -> IndexDocumentResult<super::ports::IndexStats> {
         debug!("Getting index statistics");
         self.health_monitor.get_index_stats()
-            .with_context(ErrorContext::new("get_index_stats"))
             .await
+            .to_index_document_error()?
     }
 }
 
@@ -437,6 +437,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use crate::features::index_text_documents::dto::*;
+    use crate::features::index_text_documents::error::{IndexError, AnalysisError, TokenizationError, StemmingError, StopWordError, LanguageDetectionError, HealthError, StatsError, MetricsError, MemoryError, OptimizationError, SchemaError, ValidationError, DuplicateError};
+    use crate::features::index_text_documents::ports;
 
     // Mock implementations for testing
     struct MockDocumentIndexer;
@@ -520,47 +522,52 @@ mod tests {
     
     #[async_trait]
     impl IndexHealthMonitorPort for MockHealthMonitor {
-        async fn check_index_health(&self) -> Result<super::ports::IndexHealth, HealthError> {
-            Ok(super::ports::IndexHealth {
-                status: super::ports::HealthStatus::Healthy,
-                document_count: 100,
-                index_size_bytes: 1024,
-                memory_usage_bytes: 512,
+        async fn check_index_health(&self) -> Result<ports::IndexHealth, HealthError> {
+            Ok(ports::IndexHealth {
+                status: ports::HealthStatus::Healthy,
+                document_count: 1000,
+                index_size_bytes: 1024000,
+                memory_usage_bytes: 512000,
                 last_updated: Utc::now(),
                 details: vec![],
             })
         }
         
-        async fn get_index_stats(&self) -> Result<super::ports::IndexStats, StatsError> {
-            Ok(super::ports::IndexStats {
-                total_documents: 100,
-                total_terms: 1000,
-                avg_terms_per_document: 10.0,
-                index_size_bytes: 1024,
-                memory_usage_bytes: 512,
-                segment_count: 1,
-                created_at: Utc::now(),
-                last_optimized_at: None,
+        async fn get_index_stats(&self) -> Result<ports::IndexStats, StatsError> {
+            Ok(ports::IndexStats {
+                total_documents: 1000,
+                total_tokens: 50000,
+                index_size_bytes: 1024000,
+                memory_usage_bytes: 512000,
+                last_updated: Utc::now(),
+                indexing_rate_docs_per_second: 100.0,
+                query_latency_ms_p99: 25.0,
+                cache_hit_rate: 0.85,
             })
         }
         
-        async fn get_indexing_performance_metrics(&self, _time_range: super::ports::TimeRange) -> Result<super::ports::IndexingMetrics, MetricsError> {
-            Ok(super::ports::IndexingMetrics {
-                avg_indexing_time_ms: 10.0,
-                total_operations: 100,
-                successful_operations: 99,
-                failed_operations: 1,
-                operations_per_second: 10.0,
-                p99_latency_ms: 15.0,
+        async fn get_indexing_performance_metrics(&self, _time_range: ports::TimeRange) -> Result<ports::IndexingMetrics, MetricsError> {
+            Ok(ports::IndexingMetrics {
+                total_documents_indexed: 1000,
+                total_indexing_time_ms: 5000,
+                average_indexing_time_ms: 5.0,
+                indexing_throughput_docs_per_second: 200.0,
+                peak_memory_usage_bytes: 1024000,
+                average_memory_usage_bytes: 512000,
+                error_count: 0,
+                warning_count: 2,
+                last_updated: Utc::now(),
             })
         }
         
-        async fn get_memory_usage(&self) -> Result<super::ports::MemoryUsage, MemoryError> {
-            Ok(super::ports::MemoryUsage {
-                current_usage_bytes: 512,
-                peak_usage_bytes: 1024,
-                memory_limit_bytes: 2048,
-                usage_percentage: 25.0,
+        async fn get_memory_usage(&self) -> Result<ports::MemoryUsage, MemoryError> {
+            Ok(ports::MemoryUsage {
+                heap_used_bytes: 512000,
+                heap_total_bytes: 1024000,
+                rss_bytes: 768000,
+                external_bytes: 256000,
+                array_buffers_bytes: 128000,
+                last_updated: Utc::now(),
             })
         }
         
@@ -573,16 +580,17 @@ mod tests {
     
     #[async_trait]
     impl IndexSchemaManagerPort for MockSchemaManager {
-        async fn create_schema(&self, _config: super::ports::SchemaConfig) -> Result<super::ports::SchemaInfo, SchemaError> {
-            Ok(super::ports::SchemaInfo {
-                name: "test".to_string(),
-                version: "1.0".to_string(),
+        async fn create_schema(&self, _config: ports::SchemaConfig) -> Result<ports::SchemaInfo, SchemaError> {
+            Ok(ports::SchemaInfo {
+                schema_id: "test-schema".to_string(),
+                name: "Test Schema".to_string(),
+                version: "1.0.0".to_string(),
                 fields: vec![],
-                settings: super::ports::IndexSettings {
+                settings: ports::IndexSettings {
                     number_of_shards: 1,
                     number_of_replicas: 0,
-                    refresh_interval: "1s".to_string(),
-                    analysis: super::ports::AnalysisSettings {
+                    refresh_interval: "30s".to_string(),
+                    analysis: ports::AnalysisSettings {
                         analyzers: vec![],
                         tokenizers: vec![],
                         filters: vec![],
@@ -593,31 +601,14 @@ mod tests {
             })
         }
         
-        async fn get_schema(&self) -> Result<super::ports::SchemaInfo, SchemaError> {
-            self.create_schema(super::ports::SchemaConfig {
+        async fn add_field(&self, _field_config: ports::FieldConfig) -> Result<ports::FieldInfo, SchemaError> {
+            Ok(ports::FieldInfo {
                 name: "test".to_string(),
-                fields: vec![],
-                settings: super::ports::IndexSettings {
-                    number_of_shards: 1,
-                    number_of_replicas: 0,
-                    refresh_interval: "1s".to_string(),
-                    analysis: super::ports::AnalysisSettings {
-                        analyzers: vec![],
-                        tokenizers: vec![],
-                        filters: vec![],
-                    },
-                },
-            }).await
-        }
-        
-        async fn add_field(&self, _field_config: super::ports::FieldConfig) -> Result<super::ports::FieldInfo, SchemaError> {
-            Ok(super::ports::FieldInfo {
-                name: "test".to_string(),
-                field_type: super::ports::FieldType::Text,
+                field_type: ports::FieldType::Text,
                 indexed: true,
                 stored: true,
                 required: false,
-                options: super::ports::FieldOptions {
+                options: ports::FieldOptions {
                     tokenize: true,
                     stem: true,
                     store_term_vectors: false,
@@ -626,27 +617,28 @@ mod tests {
             })
         }
         
-        async fn update_field(&self, _field_name: &str, _field_config: super::ports::FieldConfig) -> Result<super::ports::FieldInfo, SchemaError> {
-            self.add_field(super::ports::FieldConfig {
+        async fn update_field(&self, _field_name: &str, _field_config: ports::FieldConfig) -> Result<ports::FieldInfo, SchemaError> {
+            self.add_field(ports::FieldConfig {
                 name: "test".to_string(),
-                field_type: super::ports::FieldType::Text,
+                field_type: ports::FieldType::Text,
                 indexed: true,
                 stored: true,
                 required: false,
-                options: super::ports::FieldOptions {
+                options: ports::FieldOptions {
                     tokenize: true,
                     stem: true,
                     store_term_vectors: false,
                     analyzer: None,
                 },
-            }).await
+            })
         }
         
-        async fn validate_schema(&self) -> Result<super::ports::SchemaValidationResult, SchemaError> {
-            Ok(super::ports::SchemaValidationResult {
+        async fn validate_schema(&self) -> Result<ports::SchemaValidationResult, SchemaError> {
+            Ok(ports::SchemaValidationResult {
                 is_valid: true,
                 errors: vec![],
                 warnings: vec![],
+                recommendations: vec![],
             })
         }
     }
@@ -655,28 +647,32 @@ mod tests {
     
     #[async_trait]
     impl DocumentValidatorPort for MockDocumentValidator {
-        async fn validate_document(&self, _command: &IndexDocumentCommand) -> Result<super::ports::ValidationResult, ValidationError> {
-            Ok(super::ports::ValidationResult {
+        async fn validate_document(&self, _command: &IndexDocumentCommand) -> Result<ports::ValidationResult, ValidationError> {
+            Ok(ports::ValidationResult {
                 is_valid: true,
                 errors: vec![],
                 warnings: vec![],
+                score: 1.0,
             })
         }
         
-        async fn validate_metadata(&self, _metadata: &ArtifactMetadata) -> Result<super::ports::MetadataValidationResult, ValidationError> {
-            Ok(super::ports::MetadataValidationResult {
+        async fn validate_metadata(&self, _metadata: &ArtifactMetadata) -> Result<ports::MetadataValidationResult, ValidationError> {
+            Ok(ports::MetadataValidationResult {
                 is_valid: true,
                 errors: vec![],
                 warnings: vec![],
+                recommendations: vec![],
             })
         }
         
-        async fn validate_content(&self, _content: &str) -> Result<super::ports::ContentValidationResult, ValidationError> {
-            Ok(super::ports::ContentValidationResult {
+        async fn validate_content(&self, _content: &str) -> Result<ports::ContentValidationResult, ValidationError> {
+            Ok(ports::ContentValidationResult {
                 is_valid: true,
-                content_length: 10,
                 errors: vec![],
                 warnings: vec![],
+                content_type: "text/plain".to_string(),
+                detected_language: Some("en".to_string()),
+                confidence: 0.95,
             })
         }
         

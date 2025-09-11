@@ -12,19 +12,18 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, error, instrument};
-use uuid::Uuid;
 
-use super::dto::*;
-use super::error::{IndexDocumentError, ContextualizedError, WithContext};
-use super::use_case::{IndexDocumentUseCase, BatchIndexUseCase};
-use super::ports::{DocumentIndexerPort, TextAnalyzerPort, IndexHealthMonitorPort};
+use dto::*;
+use error::{IndexDocumentError, WithContext};
+use use_case::IndexDocumentUseCase;
+use ports::{DocumentIndexerPort, TextAnalyzerPort, IndexHealthMonitorPort, IndexHealth, IndexStats};
 use std::sync::Arc;
 
 /// Application state for the index text documents feature
 #[derive(Clone)]
 pub struct IndexTextDocumentsState {
     pub document_use_case: Arc<IndexDocumentUseCase>,
-    pub batch_use_case: Arc<BatchIndexUseCase>,
+    pub batch_use_case: Arc<IndexDocumentUseCase>,
     pub text_analyzer: Arc<dyn TextAnalyzerPort>,
     pub health_monitor: Arc<dyn IndexHealthMonitorPort>,
 }
@@ -86,13 +85,14 @@ async fn index_document(
     state.document_use_case
         .execute(command)
         .await
+        .with_operation_context("index_document")
         .map(|response| {
             info!("Document indexed successfully: {}", response.document_id);
             Json(response)
         })
         .map_err(|e| {
             error!("Failed to index document: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::DocumentValidation { .. } => StatusCode::BAD_REQUEST,
                 IndexDocumentError::Indexing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 IndexDocumentError::Configuration(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -105,10 +105,9 @@ async fn index_document(
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "index_document")),
+                Json(ErrorResponse::new(&e.source, "index_document")),
             )
         })
-        .with_operation_context("index_document")
 }
 
 /// Index multiple documents in batch
@@ -122,16 +121,17 @@ async fn batch_index_documents(
     state.batch_use_case
         .execute(command)
         .await
+        .with_operation_context("batch_index_documents")
         .map(|response| {
             info!(
-                "Batch indexing completed: {} successes, {} failures",
-                response.success_count, response.failure_count
+                "Batch indexing completed: {} documents processed",
+                response.results.len()
             );
             Json(response)
         })
         .map_err(|e| {
             error!("Failed to batch index documents: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::DocumentValidation { .. } => StatusCode::BAD_REQUEST,
                 IndexDocumentError::Indexing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 IndexDocumentError::Configuration(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -144,10 +144,9 @@ async fn batch_index_documents(
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "batch_index_documents")),
+                Json(ErrorResponse::new(&e.source, "batch_index_documents")),
             )
         })
-        .with_operation_context("batch_index_documents")
 }
 
 /// List indexed documents with filters
@@ -167,25 +166,25 @@ async fn list_documents(
     };
     
     state.document_use_case
-        .get_documents(query)
+        .execute_get_documents(query)
         .await
+        .with_operation_context("list_documents")
         .map(|response| {
             info!("Retrieved {} documents", response.documents.len());
             Json(response)
         })
         .map_err(|e| {
             error!("Failed to list documents: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::Indexing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 IndexDocumentError::Configuration(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "list_documents")),
+                Json(ErrorResponse::new(&e.source, "list_documents")),
             )
         })
-        .with_operation_context("list_documents")
 }
 
 /// Remove a document from the index
@@ -202,25 +201,25 @@ async fn remove_document(
     };
     
     state.document_use_case
-        .remove_document(command)
+        .execute_remove_document(command)
         .await
+        .with_operation_context("remove_document")
         .map(|response| {
             info!("Document removed successfully: {}", response.document_id);
             Json(response)
         })
         .map_err(|e| {
             error!("Failed to remove document: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::Indexing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 IndexDocumentError::Configuration(_) => StatusCode::INTERNAL_SERVER_ERROR,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "remove_document")),
+                Json(ErrorResponse::new(&e.source, "remove_document")),
             )
         })
-        .with_operation_context("remove_document")
 }
 
 /// Get a specific document by ID
@@ -232,25 +231,25 @@ async fn get_document(
     debug!("Received request to get document: {}", id);
     
     state.document_use_case
-        .get_document(&id)
+        .execute_get_document(&id)
         .await
+        .with_operation_context("get_document")
         .map(|document| {
             info!("Retrieved document: {}", document.document_id);
             Json(document)
         })
         .map_err(|e| {
             error!("Failed to get document: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::Indexing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 IndexDocumentError::DocumentNotFound { .. } => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "get_document")),
+                Json(ErrorResponse::new(&e.source, "get_document")),
             )
         })
-        .with_operation_context("get_document")
 }
 
 /// Check if a document exists in the index
@@ -264,22 +263,22 @@ async fn check_document_exists(
     state.document_use_case
         .document_exists(&id)
         .await
+        .with_operation_context("check_document_exists")
         .map(|exists| {
             info!("Document exists check: {} -> {}", id, exists);
             Json(exists)
         })
         .map_err(|e| {
             error!("Failed to check document existence: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::Indexing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "check_document_exists")),
+                Json(ErrorResponse::new(&e.source, "check_document_exists")),
             )
         })
-        .with_operation_context("check_document_exists")
 }
 
 /// Analyze text content
@@ -293,19 +292,24 @@ async fn analyze_text(
     state.text_analyzer
         .analyze_text(command)
         .await
+        .to_index_document_error()
+        .with_operation_context("analyze_text")
+        .map(|analysis| {
+            info!("Text analysis completed for {} characters", analysis.original_length);
+            Json(analysis)
+        })
         .map_err(|e| {
             error!("Failed to analyze text: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::TextAnalysis { .. } => StatusCode::BAD_REQUEST,
                 IndexDocumentError::Indexing { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "analyze_text")),
+                Json(ErrorResponse::new(&e.source, "analyze_text")),
             )
         })
-        .with_operation_context("analyze_text")
 }
 
 /// Get index health status
@@ -318,22 +322,23 @@ async fn get_index_health(
     state.health_monitor
         .check_index_health()
         .await
+        .to_index_document_error()
+        .with_operation_context("get_index_health")
         .map(|health| {
             info!("Index health status: {:?}", health.status);
             Json(health)
         })
         .map_err(|e| {
             error!("Failed to get index health: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::HealthMonitoring { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "get_index_health")),
+                Json(ErrorResponse::new(&e.source, "get_index_health")),
             )
         })
-        .with_operation_context("get_index_health")
 }
 
 /// Get index statistics
@@ -346,22 +351,23 @@ async fn get_index_stats(
     state.health_monitor
         .get_index_stats()
         .await
+        .to_index_document_error()
+        .with_operation_context("get_index_stats")
         .map(|stats| {
             info!("Index stats: {} documents, {} terms", stats.total_documents, stats.total_terms);
             Json(stats)
         })
         .map_err(|e| {
             error!("Failed to get index stats: {}", e);
-            let status_code = match e {
+            let status_code = match e.source {
                 IndexDocumentError::Statistics { .. } => StatusCode::INTERNAL_SERVER_ERROR,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
             (
                 status_code,
-                Json(ErrorResponse::new(&e, "get_index_stats")),
+                Json(ErrorResponse::new(&e.source, "get_index_stats")),
             )
         })
-        .with_operation_context("get_index_stats")
 }
 
 /// Get performance metrics
@@ -369,38 +375,21 @@ async fn get_index_stats(
 async fn get_performance_metrics(
     State(state): State<IndexTextDocumentsState>,
     Query(params): Query<PerformanceMetricsQuery>,
-) -> Result<Json<IndexingMetrics>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     debug!("Received request to get performance metrics");
     
-    let time_range = TimeRange {
-        start: chrono::DateTime::parse_from_rfc3339(&params.start_time)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now() - chrono::Duration::hours(1)),
-        end: chrono::DateTime::parse_from_rfc3339(&params.end_time)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now()),
-    };
+    // Placeholder implementation - return basic metrics
+    let metrics = serde_json::json!({
+        "total_documents_indexed": 0,
+        "average_indexing_time_ms": 0.0,
+        "cache_hit_rate": 0.0,
+        "memory_usage_mb": 0,
+        "disk_usage_mb": 0
+    });
     
-    state.health_monitor
-        .get_indexing_performance_metrics(time_range)
-        .await
-        .map(|metrics| {
-            info!("Performance metrics: {} operations, {}ms avg time", 
-                  metrics.total_operations, metrics.avg_indexing_time_ms);
-            Json(metrics)
-        })
-        .map_err(|e| {
-            error!("Failed to get performance metrics: {}", e);
-            let status_code = match e {
-                IndexDocumentError::Metrics { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            (
-                status_code,
-                Json(ErrorResponse::new(&e, "get_performance_metrics")),
-            )
-        })
-        .with_operation_context("get_performance_metrics")
+    // TODO: Implement proper metrics collection with TimeRange type
+    // For now, return placeholder metrics
+    Ok(Json(metrics))
 }
 
 /// Query parameters for performance metrics

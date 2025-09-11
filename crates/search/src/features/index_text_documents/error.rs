@@ -167,7 +167,7 @@ pub enum IndexDocumentError {
 }
 
 /// Re-export the specific error types from the ports module for convenience
-pub use super::ports::{
+pub use ports::{
     IndexError,
     AnalysisError,
     TokenizationError,
@@ -290,6 +290,42 @@ impl<T> ToIndexDocumentError<T> for Result<T, serde_json::Error> {
 impl<T> ToIndexDocumentError<T> for Result<T, std::io::Error> {
     fn to_index_document_error(self) -> IndexDocumentResult<T> {
         self.map_err(|e| IndexDocumentError::storage(format!("IO error: {}", e)))
+    }
+}
+
+impl<T> ToIndexDocumentError<T> for Result<T, ValidationError> {
+    fn to_index_document_error(self) -> IndexDocumentResult<T> {
+        self.map_err(|e| IndexDocumentError::DocumentValidation { source: e })
+    }
+}
+
+impl<T> ToIndexDocumentError<T> for Result<T, DuplicateError> {
+    fn to_index_document_error(self) -> IndexDocumentResult<T> {
+        self.map_err(|e| IndexDocumentError::DuplicateDetection { source: e })
+    }
+}
+
+impl<T> ToIndexDocumentError<T> for Result<T, HealthError> {
+    fn to_index_document_error(self) -> IndexDocumentResult<T> {
+        self.map_err(|e| IndexDocumentError::HealthMonitoring { source: e })
+    }
+}
+
+impl<T> ToIndexDocumentError<T> for Result<T, AnalysisError> {
+    fn to_index_document_error(self) -> IndexDocumentResult<T> {
+        self.map_err(|e| IndexDocumentError::TextAnalysis { source: e })
+    }
+}
+
+impl<T> ToIndexDocumentError<T> for Result<T, IndexError> {
+    fn to_index_document_error(self) -> IndexDocumentResult<T> {
+        self.map_err(|e| IndexDocumentError::Indexing { source: e })
+    }
+}
+
+impl<T> ToIndexDocumentError<T> for Result<T, StatsError> {
+    fn to_index_document_error(self) -> IndexDocumentResult<T> {
+        self.map_err(|e| IndexDocumentError::Statistics { source: e })
     }
 }
 

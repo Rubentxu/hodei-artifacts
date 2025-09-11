@@ -187,13 +187,13 @@ impl From<crate::domain::repository::RepositoryConfig> for RepositoryConfigRespo
                     remote_authentication: proxy.remote_authentication.map(|auth| auth.into()),
                 })
             },
-            crate::domain::repository::RepositoryConfig::Virtual(virtual) => {
+            crate::domain::repository::RepositoryConfig::Virtual(r#virtual) => {
                 RepositoryConfigResponse::Virtual(VirtualConfigResponse {
-                    aggregated_repositories: virtual.aggregated_repositories
+                    aggregated_repositories: r#virtual.aggregated_repositories
                         .iter()
                         .map(|repo_id| repo_id.as_str().to_string())
                         .collect(),
-                    resolution_order: virtual.resolution_order.into(),
+                    resolution_order: r#virtual.resolution_order.into(),
                 })
             },
         }

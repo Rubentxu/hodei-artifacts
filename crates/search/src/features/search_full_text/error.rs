@@ -4,6 +4,7 @@
 //! established in the project. Each error is specific and provides meaningful context.
 
 use thiserror::Error;
+use ports::ConfigError;
 
 /// Comprehensive error type for the Full Text Search feature
 #[derive(Debug, Error)]
@@ -226,7 +227,7 @@ pub enum FullTextSearchError {
 }
 
 /// Re-export the specific error types from the ports module for convenience
-pub use super::ports::{
+pub use ports::{
     SearchError,
     SuggestionError,
     FacetError,
@@ -246,10 +247,8 @@ pub use super::ports::{
     HealthError,
     PatternError,
     IndexError,
-    ConfigError,
-    MaintenanceError,
-    SegmentError,
-    MergeError,
+    // ConfigError is defined in ports.rs to avoid conflicts
+    // MaintenanceError, SegmentError, MergeError are defined in error.rs
 };
 
 /// Result type for the Full Text Search feature
@@ -672,3 +671,93 @@ mod tests {
         }
     }
 }
+
+// Index operation result types - these are now defined in ports.rs to avoid conflicts
+// Use the types from ports.rs instead
+
+// Additional error types for index management
+#[derive(Debug, thiserror::Error)]
+pub enum RebuildError {
+    #[error("Index rebuild failed: {0}")]
+    RebuildFailed(String),
+    #[error("Index lock acquisition failed: {0}")]
+    LockAcquisitionFailed(String),
+    #[error("Insufficient disk space for rebuild")]
+    InsufficientDiskSpace,
+    #[error("Rebuild interrupted")]
+    RebuildInterrupted,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ClearError {
+    #[error("Index clear failed: {0}")]
+    ClearFailed(String),
+    #[error("Index is locked")]
+    IndexLocked,
+    #[error("Clear operation interrupted")]
+    ClearInterrupted,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("Index validation failed: {0}")]
+    ValidationFailed(String),
+    #[error("Index corruption detected")]
+    IndexCorrupted,
+    #[error("Schema validation failed: {0}")]
+    SchemaValidationFailed(String),
+}
+
+// ConfigError is defined in ports.rs to avoid conflicts
+
+#[derive(Debug, thiserror::Error)]
+pub enum MaintenanceError {
+    #[error("Maintenance task failed: {0}")]
+    MaintenanceFailed(String),
+    #[error("Task not supported: {0}")]
+    TaskNotSupported(String),
+    #[error("Maintenance interrupted")]
+    MaintenanceInterrupted,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SegmentError {
+    #[error("Segment operation failed: {0}")]
+    SegmentOperationFailed(String),
+    #[error("Segment not found: {0}")]
+    SegmentNotFound(String),
+    #[error("Segment merge failed: {0}")]
+    SegmentMergeFailed(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MergeError {
+    #[error("Merge operation failed: {0}")]
+    MergeFailed(String),
+    #[error("Merge policy violation: {0}")]
+    MergePolicyViolation(String),
+    #[error("Merge interrupted")]
+    MergeInterrupted,
+}
+
+// Convert to FullTextSearchError for consistent handling
+impl From<RebuildError> for FullTextSearchError {
+    fn from(err: RebuildError) -> Self {
+        FullTextSearchError::IndexOperations { source: IndexError::Rebuild { source: err } }
+    }
+}
+
+impl From<ClearError> for FullTextSearchError {
+    fn from(err: ClearError) -> Self {
+        FullTextSearchError::IndexOperations { source: IndexError::Clear { source: err } }
+    }
+}
+
+impl From<ValidationError> for FullTextSearchError {
+    fn from(err: ValidationError) -> Self {
+        FullTextSearchError::IndexOperations { source: IndexError::Validate { source: err } }
+    }
+}
+
+// Note: ConfigError is defined in ports.rs to avoid conflict
+// Note: MaintenanceError, SegmentError, and MergeError already have #[from] attributes in the enum

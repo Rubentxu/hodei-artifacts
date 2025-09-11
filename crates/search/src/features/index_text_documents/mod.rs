@@ -18,10 +18,13 @@ pub use api::*;
 pub use di::*;
 
 // Re-export use cases
-pub use use_case::{IndexDocumentUseCase, BatchIndexUseCase};
+pub use use_case::IndexDocumentUseCase;
 
 // Re-export DI container and configuration
 pub use di::{IndexTextDocumentsDIContainer, IndexTextDocumentsDIContainerBuilder, IndexTextDocumentsConfig};
+
+// Re-export ports
+pub use ports::*;
 
 // Feature initialization function
 pub fn initialize_feature() -> Result<IndexTextDocumentsDIContainer, IndexDocumentError> {

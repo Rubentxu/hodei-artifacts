@@ -5,7 +5,8 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use super::dto::*;
+use dto::*;
+use error::*;
 
 /// Port for full-text search operations
 /// 
@@ -51,6 +52,15 @@ pub trait QueryAnalyzerPort: Send + Sync {
     
     /// Rewrite a query for better results (e.g., stemming, synonym expansion)
     async fn rewrite_query(&self, parsed_query: ParsedQuery) -> Result<RewrittenQuery, RewriteError>;
+    
+    /// Calculate query complexity score
+    fn calculate_complexity(&self, parsed_query: &ParsedQuery, query_terms: &QueryTerms) -> f32;
+    
+    /// Generate query optimizations
+    fn generate_optimizations(&self, parsed_query: &ParsedQuery, query_terms: &QueryTerms) -> Vec<QueryOptimization>;
+    
+    /// Classify query type
+    fn classify_query_type(&self, parsed_query: &ParsedQuery) -> QueryType;
 }
 
 /// Port for relevance scoring and ranking
@@ -122,8 +132,20 @@ pub trait SearchPerformanceMonitorPort: Send + Sync {
 /// This port handles index operations like optimization, maintenance, and configuration.
 #[async_trait]
 pub trait SearchIndexManagerPort: Send + Sync {
+    /// Get index statistics
+    async fn get_index_stats(&self) -> Result<IndexStats, IndexError>;
+    
     /// Optimize the search index
-    async fn optimize_index(&self) -> Result<OptimizationResult, IndexError>;
+    async fn optimize_index(&self) -> Result<OptimizationResult, OptimizationError>;
+    
+    /// Rebuild the search index
+    async fn rebuild_index(&self) -> Result<RebuildResult, RebuildError>;
+    
+    /// Clear the search index
+    async fn clear_index(&self) -> Result<ClearResult, ClearError>;
+    
+    /// Validate the search index
+    async fn validate_index(&self) -> Result<ValidationResult, ValidationError>;
     
     /// Get index configuration
     async fn get_index_config(&self) -> Result<IndexConfig, ConfigError>;
@@ -368,7 +390,27 @@ pub enum IndexError {
     
     #[error("Index corruption detected")]
     IndexCorrupted,
+    
+    #[error("Index rebuild failed: {source}")]
+    Rebuild {
+        #[from]
+        source: crate::features::search_full_text::error::RebuildError,
+    },
+    
+    #[error("Index clear failed: {source}")]
+    Clear {
+        #[from]
+        source: crate::features::search_full_text::error::ClearError,
+    },
+    
+    #[error("Index validation failed: {source}")]
+    Validate {
+        #[from]
+        source: crate::features::search_full_text::error::ValidationError,
+    },
 }
+
+// Error types (MaintenanceError, SegmentError, MergeError) are defined in error.rs
 
 /// Error types for configuration
 #[derive(Debug, Clone, thiserror::Error)]
@@ -378,36 +420,12 @@ pub enum ConfigError {
     
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
-}
-
-/// Error types for maintenance
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum MaintenanceError {
-    #[error("Maintenance task failed: {0}")]
-    MaintenanceTaskFailed(String),
     
-    #[error("Maintenance operation timeout")]
-    Timeout,
-}
-
-/// Error types for segments
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum SegmentError {
-    #[error("Segment operation failed: {0}")]
-    SegmentOperationFailed(String),
+    #[error("Configuration not found: {0}")]
+    ConfigNotFound(String),
     
-    #[error("Segment not found: {0}")]
-    SegmentNotFound(String),
-}
-
-/// Error types for merging
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum MergeError {
-    #[error("Segment merge failed: {0}")]
-    MergeFailed(String),
-    
-    #[error("Merge operation timeout")]
-    Timeout,
+    #[error("Configuration update failed: {0}")]
+    ConfigUpdateFailed(String),
 }
 
 // Request/Response types for various operations
@@ -824,4 +842,26 @@ pub struct MergeResult {
     pub segments_created: usize,
     pub size_reduction_bytes: i64,
     pub time_taken_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RebuildResult {
+    pub success: bool,
+    pub documents_processed: usize,
+    pub rebuild_time_ms: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClearResult {
+    pub success: bool,
+    pub documents_removed: usize,
+    pub clear_time_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidationResult {
+    pub is_valid: bool,
+    pub issues: Vec<String>,
+    pub validation_time_ms: u64,
 }

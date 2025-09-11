@@ -27,8 +27,7 @@ impl SignArtifactUseCase {
         
         // 1. Calcular el digest del artefacto
         // En una implementación real, se pasaría el artefacto físico al hasher
-        // TODO: Actually get the physical artifact and pass it to the hasher
-        // For now, we simulate the digest calculation
+        // Simulamos un digest
         let digest = vec![0u8; 32]; // 32 bytes para SHA-256 (simulated)
         
         // 2. Obtener la clave de firma

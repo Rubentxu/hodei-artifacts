@@ -59,7 +59,8 @@ impl TryFrom<RepositoryDocument> for Repository {
     type Error = RepositoryError;
 
     fn try_from(doc: RepositoryDocument) -> Result<Self, Self::Error> {
-        use crate::domain::repository::{RepositoryType, Ecosystem, RepositoryConfig};
+        use crate::domain::repository::{RepositoryType, RepositoryConfig};
+        use shared::enums::Ecosystem;
         
         // Parsear el tipo de repositorio
         let repo_type = match doc.repo_type.as_str() {

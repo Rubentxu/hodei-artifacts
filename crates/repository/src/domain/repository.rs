@@ -1,6 +1,6 @@
 // crates/repository/src/domain/repository.rs
 
-use shared::hrn::{Hrn, OrganizationId, RepositoryId, StorageBackendId};
+use shared::hrn::{Hrn, OrganizationId, RepositoryId};
 use shared::lifecycle::Lifecycle;
 use shared::enums::Ecosystem;
 use serde::{Serialize, Deserialize};
@@ -33,7 +33,7 @@ pub struct Repository {
     pub config: RepositoryConfig,
     
     /// HRN del backend de almacenamiento donde se guardarán los binarios.
-    pub storage_backend_hrn: StorageBackendId,
+    pub storage_backend_hrn: Hrn,
 
     /// Información de auditoría y ciclo de vida.
     pub lifecycle: Lifecycle,

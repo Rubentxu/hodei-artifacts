@@ -4,15 +4,16 @@
 //! index text documents feature, supporting multiple environments and testing.
 
 use std::sync::Arc;
-use super::ports::*;
-use super::use_case::*;
-use super::adapter::*;
-use super::api::*;
+use ports::*;
+use use_case::*;
+use adapter::*;
+use api::*;
+use error::*;
 
 /// Dependency injection container for index text documents feature
 pub struct IndexTextDocumentsDIContainer {
     pub document_use_case: Arc<IndexDocumentUseCase>,
-    pub batch_use_case: Arc<BatchIndexUseCase>,
+    pub batch_use_case: Arc<IndexDocumentUseCase>,
     pub text_analyzer: Arc<dyn TextAnalyzerPort>,
     pub health_monitor: Arc<dyn IndexHealthMonitorPort>,
     pub state: IndexTextDocumentsState,
@@ -67,7 +68,7 @@ impl IndexTextDocumentsDIContainer {
     /// Create container for testing environment
     #[cfg(test)]
     pub fn for_testing() -> Self {
-        use super::adapter::test::*;
+        use adapter::test::*;
         
         let document_indexer = Arc::new(MockDocumentIndexer::new());
         let text_analyzer = Arc::new(MockTextAnalyzer::new());
@@ -98,7 +99,7 @@ impl IndexTextDocumentsDIContainer {
     }
     
     /// Get a reference to the batch use case
-    pub fn batch_use_case(&self) -> &Arc<BatchIndexUseCase> {
+    pub fn batch_use_case(&self) -> &Arc<IndexDocumentUseCase> {
         &self.batch_use_case
     }
     
@@ -213,7 +214,7 @@ impl IndexTextDocumentsDIContainerBuilder {
     /// Build with testing defaults
     #[cfg(test)]
     pub fn build_with_testing_defaults(self) -> IndexTextDocumentsDIContainer {
-        use super::adapter::test::*;
+        use adapter::test::*;
         
         let document_indexer = self.document_indexer
             .unwrap_or_else(|| Arc::new(MockDocumentIndexer::new()));

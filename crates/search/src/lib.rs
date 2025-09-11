@@ -1,8 +1,7 @@
 // Search Crate
 
 pub mod features {
-    pub mod basic_search;
-    pub mod advanced_query;
-    pub mod full_text_search;
+    pub mod index_text_documents;
+    pub mod search_full_text;
 }
 
