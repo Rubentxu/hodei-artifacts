@@ -30,5 +30,7 @@ pub use infrastructure::{
     UnifiedRepositoryAdapter,
     RepositoryApiModule,
     create_repository_api_module,
-    create_repository_api_module_for_testing,
 };
+
+#[cfg(test)]
+pub use infrastructure::create_repository_api_module_for_testing;

@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use std::sync::{Arc, RwLock};
 use tantivy::{
     collector::TopDocs,
+    doc,
     query::{Query, QueryParser},
     schema::*,
     tokenizer::{TokenizerManager, SimpleTokenizer},
@@ -15,9 +16,9 @@ use tantivy::{
 use tracing::{debug, info, error, warn};
 use serde_json;
 
-use super::ports::*;
-use super::dto::*;
-use super::error::{IndexDocumentError, ToIndexDocumentError};
+use ports::*;
+use dto::*;
+use error::{IndexDocumentError, ToIndexDocumentError};
 
 /// Tantivy-based document indexer adapter
 pub struct TantivyDocumentIndexer {
@@ -532,7 +533,7 @@ impl DocumentIndexSchema {
     }
     
     pub fn to_document(&self, command: &IndexDocumentCommand) -> TantivyDocument {
-        tantivy::doc! {
+        doc! {
             self.artifact_id_field => command.artifact_id.clone(),
             self.content_field => command.content.clone(),
             self.title_field => command.metadata.title.clone().unwrap_or_default(),
@@ -600,7 +601,7 @@ impl DocumentIndexSchema {
 /// Mock implementations for testing
 #[cfg(test)]
 pub mod test {
-    use super::*;
+        use super::*;
     use std::collections::HashMap;
     
     pub struct MockDocumentIndexer {

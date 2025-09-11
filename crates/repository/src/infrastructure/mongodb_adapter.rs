@@ -7,7 +7,8 @@ use tracing::{debug, error, info, warn, instrument};
 
 use shared::hrn::{RepositoryId, OrganizationId, UserId};
 use crate::domain::{RepositoryResult, RepositoryError};
-use crate::domain::repository::{Repository, RepositoryType, Ecosystem, RepositoryConfig, HostedConfig, ProxyConfig, VirtualConfig, DeploymentPolicy, CacheSettings, ProxyAuth, ResolutionOrder};
+use crate::domain::repository::{Repository, RepositoryType, RepositoryConfig, HostedConfig, ProxyConfig, VirtualConfig, DeploymentPolicy, CacheSettings, ProxyAuth, ResolutionOrder};
+use shared::enums::Ecosystem;
 
 /// Adaptador MongoDB unificado para todas las operaciones CRUD de repositorios
 pub struct MongoDbRepositoryAdapter {

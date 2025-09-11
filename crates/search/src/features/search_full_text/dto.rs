@@ -452,7 +452,7 @@ pub struct ExecutionPlanNode {
 pub use crate::features::index_text_documents::dto::ArtifactMetadata;
 
 /// Reuse index stats from index_text_documents
-pub use crate::features::index_text_documents::dto::IndexStats;
+pub use crate::features::index_text_documents::ports::IndexStats;
 
 impl Default for FullTextSearchQuery {
     fn default() -> Self {

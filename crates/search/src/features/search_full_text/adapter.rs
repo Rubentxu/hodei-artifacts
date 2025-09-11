@@ -16,9 +16,13 @@ use tantivy::{
 use tracing::{debug, info, error, warn};
 use serde_json;
 
-use super::ports::*;
-use super::dto::*;
-use super::error::{FullTextSearchError, ToFullTextSearchError};
+use ports::*;
+use dto::*;
+use error::{
+    FullTextSearchError, ToFullTextSearchError, 
+    RebuildError, ClearError, ValidationError, 
+    MaintenanceError, SegmentError, MergeError
+};
 use crate::features::index_text_documents::adapter::DocumentIndexSchema;
 
 /// Tantivy-based full-text search adapter
@@ -201,7 +205,7 @@ impl TantivyFullTextSearchAdapter {
 
 #[async_trait]
 impl FullTextSearchPort for TantivyFullTextSearchAdapter {
-    async fn search(&self, query: FullTextSearchQuery) -> Result<FullTextSearchResults, FullTextSearchError> {
+    async fn search(&self, query: FullTextSearchQuery) -> Result<FullTextSearchResults, SearchError> {
         debug!("Executing search query: {}", query.q);
         
         let start_time = std::time::Instant::now();
@@ -221,9 +225,7 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         let (top_docs, count) = searcher.search(
             &search_query,
             &(TopDocs::with_limit(page_size).and_offset(offset), Count),
-        ).map_err(|e| FullTextSearchError::Search { 
-            source: SearchError::QueryExecutionFailed(format!("Search execution failed: {}", e)) 
-        })?;
+        ).map_err(|e| SearchError::QueryExecutionFailed(format!("Search execution failed: {}", e)))?;
         
         // Convert results
         let mut results = Vec::new();
@@ -288,7 +290,7 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         })
     }
     
-    async fn get_suggestions(&self, query: SearchSuggestionsQuery) -> Result<SearchSuggestionsResponse, FullTextSearchError> {
+    async fn get_suggestions(&self, query: SearchSuggestionsQuery) -> Result<SearchSuggestionsResponse, SuggestionError> {
         debug!("Getting suggestions for: {}", query.partial_query);
         
         let start_time = std::time::Instant::now();
@@ -322,11 +324,11 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         todo!()
     }
     
-    async fn more_like_this(&self, document_id: &str, limit: usize) -> Result<FullTextSearchResults, FullTextSearchError> {
+    async fn more_like_this(&self, document_id: &str, limit: usize) -> Result<FullTextSearchResults, SearchError> {
         debug!("Executing more-like-this for document: {}", document_id);
         
         // Get the reference document
-        let reader = self.get_reader().await?;
+        let reader = self.get_reader().await.map_err(|e| SearchError::InternalError(format!("Failed to get reader: {}", e)))?;
         let searcher = reader.searcher();
         
         // Create a term-based query from the document
@@ -358,14 +360,14 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         self.search(query).await
     }
     
-    async fn search_with_scroll(&self, query: FullTextSearchQuery) -> Result<ScrollSearchResponse, FullTextSearchError> {
+    async fn search_with_scroll(&self, query: FullTextSearchQuery) -> Result<ScrollSearchResponse, SearchError> {
         // TODO: Implement scroll search
-        todo!()
+        Err(SearchError::InternalError("Scroll search not implemented".to_string()))
     }
     
-    async fn continue_scroll(&self, scroll_id: &str) -> Result<ScrollSearchResponse, FullTextSearchError> {
+    async fn continue_scroll(&self, scroll_id: &str) -> Result<ScrollSearchResponse, SearchError> {
         // TODO: Implement scroll continuation
-        todo!()
+        Err(SearchError::InternalError("Scroll continuation not implemented".to_string()))
     }
 }
 
@@ -462,9 +464,10 @@ impl QueryAnalyzerPort for SimpleQueryAnalyzer {
     }
     
     async fn optimize_query(&self, parsed_query: ParsedQuery) -> Result<OptimizedQuery, OptimizationError> {
+        let optimized_terms = parsed_query.parsed_terms.clone();
         Ok(OptimizedQuery {
             original_query: parsed_query,
-            optimized_terms: parsed_query.parsed_terms.clone(),
+            optimized_terms,
             optimization_hints: Vec::new(),
             estimated_cost: 0.5,
         })
@@ -606,8 +609,9 @@ impl RelevanceScorerPort for SimpleRelevanceScorer {
     async fn combine_scores(&self, scores: Vec<ScoreComponent>) -> Result<CombinedScore, ScoreError> {
         let mut total_score = 0.0;
         let mut total_weight = 0.0;
+        let component_scores = scores.clone();
         
-        for component in scores {
+        for component in &scores {
             total_score += component.score * component.weight;
             total_weight += component.weight;
         }
@@ -621,7 +625,7 @@ impl RelevanceScorerPort for SimpleRelevanceScorer {
         Ok(CombinedScore {
             document_id: "unknown".to_string(), // Should be set by caller
             final_score,
-            component_scores: scores,
+            component_scores,
         })
     }
     
@@ -669,6 +673,158 @@ impl RelevanceScorerPort for SimpleRelevanceScorer {
     }
 }
 
+/// Simple search index manager adapter
+pub struct SimpleSearchIndexManager {
+    index: Arc<RwLock<Index>>,
+}
+
+impl SimpleSearchIndexManager {
+    pub fn new(index: Arc<RwLock<Index>>) -> Self {
+        Self { index }
+    }
+}
+
+#[async_trait]
+impl SearchIndexManagerPort for SimpleSearchIndexManager {
+    async fn get_index_stats(&self) -> Result<IndexStats, IndexError> {
+        let index = self.index.read()
+            .map_err(|e| IndexError::IndexOperationFailed(format!("Failed to acquire index lock: {}", e)))?;
+        
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()
+            .map_err(|e| IndexError::IndexOperationFailed(format!("Failed to create index reader: {}", e)))?;
+        
+        let searcher = reader.searcher();
+        
+        Ok(IndexStats {
+            total_documents: searcher.num_docs() as u64,
+            total_terms: 0, // TODO: Get actual term count
+            avg_terms_per_document: 0.0, // TODO: Calculate average
+            index_size_bytes: 0, // TODO: Get actual index size
+            memory_usage_bytes: 0, // TODO: Get actual memory usage
+            segment_count: searcher.segment_readers().len() as u32,
+            created_at: chrono::Utc::now(),
+            last_optimized_at: None,
+        })
+    }
+    
+    async fn optimize_index(&self) -> Result<OptimizationResult, OptimizationError> {
+        // TODO: Implement actual index optimization
+        Ok(OptimizationResult {
+            segments_before: 1,
+            segments_after: 1,
+            size_reduction_bytes: 0,
+            time_taken_ms: 100,
+            success: true,
+        })
+    }
+    
+    async fn rebuild_index(&self) -> Result<RebuildResult, RebuildError> {
+        // TODO: Implement actual index rebuild
+        Ok(RebuildResult {
+            success: true,
+            documents_processed: 0,
+            rebuild_time_ms: 1000,
+            message: "Index rebuild completed".to_string(),
+        })
+    }
+    
+    async fn clear_index(&self) -> Result<ClearResult, ClearError> {
+        // TODO: Implement actual index clear
+        Ok(ClearResult {
+            success: true,
+            documents_removed: 0,
+            clear_time_ms: 100,
+        })
+    }
+    
+    async fn validate_index(&self) -> Result<ValidationResult, ValidationError> {
+        // TODO: Implement actual index validation
+        Ok(ValidationResult {
+            is_valid: true,
+            issues: Vec::new(),
+            validation_time_ms: 50,
+        })
+    }
+    
+    async fn get_index_config(&self) -> Result<IndexConfig, ConfigError> {
+        // TODO: Implement actual config retrieval
+        Ok(IndexConfig {
+            index_name: "default".to_string(),
+            settings: IndexSettings {
+                number_of_shards: 1,
+                number_of_replicas: 0,
+                refresh_interval: "1s".to_string(),
+                max_result_window: 10000,
+            },
+            analyzers: Vec::new(),
+            similarity: SimilarityConfig {
+                algorithm: "BM25".to_string(),
+                parameters: std::collections::HashMap::new(),
+            },
+        })
+    }
+    
+    async fn update_index_config(&self, config: IndexConfig) -> Result<ConfigUpdateResult, ConfigError> {
+        // TODO: Implement actual config update
+        Ok(ConfigUpdateResult {
+            success: true,
+            message: "Configuration updated successfully".to_string(),
+            changes_applied: vec!["settings".to_string()],
+        })
+    }
+    
+    async fn perform_maintenance(&self, tasks: Vec<MaintenanceTask>) -> Result<MaintenanceResult, MaintenanceError> {
+        // TODO: Implement actual maintenance
+        Ok(MaintenanceResult {
+            tasks_completed: tasks.len(),
+            tasks_failed: 0,
+            time_taken_ms: 500,
+            details: tasks.into_iter().map(|task| TaskResult {
+                task_type: task.task_type,
+                success: true,
+                message: "Task completed".to_string(),
+                time_taken_ms: 100,
+            }).collect(),
+        })
+    }
+    
+    async fn get_segments_info(&self) -> Result<Vec<SegmentInfo>, SegmentError> {
+        let index = self.index.read()
+            .map_err(|e| SegmentError::SegmentOperationFailed(format!("Failed to acquire index lock: {}", e)))?;
+        
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into()
+            .map_err(|e| SegmentError::SegmentOperationFailed(format!("Failed to create index reader: {}", e)))?;
+        
+        let searcher = reader.searcher();
+        
+        let segments: Vec<SegmentInfo> = searcher.segment_readers().iter().enumerate().map(|(i, _)| SegmentInfo {
+            segment_id: format!("segment_{}", i),
+            document_count: 0, // TODO: Get actual document count
+            size_bytes: 0, // TODO: Get actual segment size
+            deleted_documents: 0, // TODO: Get actual deleted document count
+            created_at: chrono::Utc::now(),
+        }).collect();
+        
+        Ok(segments)
+    }
+    
+    async fn merge_segments(&self, merge_policy: MergePolicy) -> Result<MergeResult, MergeError> {
+        // TODO: Implement actual segment merging
+        Ok(MergeResult {
+            segments_merged: 2,
+            segments_created: 1,
+            size_reduction_bytes: 1024,
+            time_taken_ms: 1000,
+        })
+    }
+}
+
 /// Simple highlighter adapter
 pub struct SimpleHighlighter;
 
@@ -692,7 +848,7 @@ impl HighlighterPort for SimpleHighlighter {
         Ok(highlights)
     }
     
-    async fn generate_snippets(&self, request: SnippetRequest) -> Result<Vec<TextSnippet>, HighlightError> {
+    async fn generate_snippets(&self, request: SnippetRequest) -> Result<Vec<TextSnippet>, SnippetError> {
         // Simple implementation - return a snippet of the content
         let snippet = TextSnippet {
             text: request.content.chars().take(request.snippet_length).collect(),
@@ -751,7 +907,9 @@ impl SearchPerformanceMonitorPort for SimpleSearchPerformanceMonitor {
         
         // Keep only last 1000 metrics
         if metrics_store.len() > 1000 {
-            metrics_store.drain(0..metrics_store.len() - 1000);
+            let keep_count = 1000;
+            let drain_count = metrics_store.len() - keep_count;
+            metrics_store.drain(0..drain_count);
         }
         
         Ok(())

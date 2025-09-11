@@ -1,4 +1,4 @@
-pub mod application;
+// Distribution Crate
 pub mod domain;
 pub mod features;
 pub mod infrastructure;

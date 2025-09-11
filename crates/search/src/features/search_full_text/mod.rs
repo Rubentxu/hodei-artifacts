@@ -14,6 +14,7 @@ pub mod di;
 // Re-export commonly used types for easier access
 pub use dto::*;
 pub use error::*;
+pub use ports::*;
 pub use api::*;
 pub use di::*;
 
@@ -194,6 +195,7 @@ mod tests {
 // Integration helper functions
 pub mod integration {
     use super::*;
+    use axum::{Json, extract::Query};
     
     /// Create Axum routes for the search feature
     pub fn create_routes() -> axum::Router {

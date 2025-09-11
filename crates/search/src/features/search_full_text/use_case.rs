@@ -8,10 +8,11 @@ use std::collections::HashMap;
 use tokio::sync::Semaphore;
 use futures::future::try_join_all;
 use tracing::{debug, info, warn, error, instrument};
+use async_trait::async_trait;
 
-use super::dto::*;
-use super::ports::*;
-use super::error::{FullTextSearchError, ToFullTextSearchError, WithContext};
+use dto::*;
+use ports::*;
+use error::{FullTextSearchError, ToFullTextSearchError, WithContext};
 
 /// Use case for executing full-text searches
 pub struct FullTextSearchUseCase {
