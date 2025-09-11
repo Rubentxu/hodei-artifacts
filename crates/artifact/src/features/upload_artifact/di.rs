@@ -13,6 +13,7 @@ use super::{
 #[cfg(not(test))]
 use super::adapter::DefaultVersionValidator;
 use crate::features::upload_progress::{UploadProgressService, UploadProgressDIContainer};
+use crate::features::content_type_detection::{ContentTypeDetectionService, ContentTypeDetectionDIContainer};
 use aws_config::SdkConfig;
 
 /// The Dependency Injection container for the Upload Artifact feature.
@@ -32,8 +33,9 @@ impl UploadArtifactDIContainer {
         validator: Arc<dyn ArtifactValidator + Send + Sync>,
         progress_service: Arc<UploadProgressService>,
         version_validator: Arc<dyn VersionValidator + Send + Sync>,
+        content_type_service: Arc<ContentTypeDetectionService>,
     ) -> Self {
-        let use_case = Arc::new(UploadArtifactUseCase::new(repository, storage, publisher.clone(), validator, version_validator));
+        let use_case = Arc::new(UploadArtifactUseCase::new(repository, storage, publisher.clone(), validator, version_validator, content_type_service));
         let chunk_use_case = Arc::new(UploadArtifactChunkUseCase::new(chunked_storage, use_case.clone(), publisher, progress_service));
         let endpoint = Arc::new(UploadArtifactEndpoint::new(use_case.clone()));
 
@@ -67,7 +69,11 @@ impl UploadArtifactDIContainer {
         // Versioning validator
         let version_validator = Arc::new(DefaultVersionValidator::new());
 
-        Self::new(repository, storage, publisher, chunk_storage, validator, progress_service.into(), version_validator)
+        // Content-Type detection service
+        let content_type_container = ContentTypeDetectionDIContainer::new();
+        let content_type_service = content_type_container.service;
+
+        Self::new(repository, storage, publisher, chunk_storage, validator, progress_service.into(), version_validator, content_type_service)
     }
 
     /// Convenience function for wiring up mock dependencies for testing.
@@ -89,6 +95,10 @@ impl UploadArtifactDIContainer {
         // Versioning validator para testing
         let versioning_validator = Arc::new(MockVersionValidator::new());
 
-        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone(), Arc::new(progress_service), versioning_validator.clone()), repository, storage, publisher, validator, versioning_validator)
+        // Content-Type detection service para testing
+        let content_type_container = ContentTypeDetectionDIContainer::new();
+        let content_type_service = content_type_container.service;
+
+        (Self::new(repository.clone(), storage.clone(), publisher.clone(), chunked_storage, validator.clone(), Arc::new(progress_service), versioning_validator.clone(), content_type_service), repository, storage, publisher, validator, versioning_validator)
     }
 }

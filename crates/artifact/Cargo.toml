@@ -38,6 +38,7 @@ tempfile = "3"
 quick-xml = { version = "0.31", features = ["serialize"] }
 serde-xml-rs = "0.6"
 semver = "1.0"
+infer = { workspace = true }
 
 # Workspace dependencies
 shared = { path = "../shared" }

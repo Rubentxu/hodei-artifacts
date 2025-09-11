@@ -32,6 +32,9 @@ pub struct PhysicalArtifact {
     /// Ubicación en el backend de almacenamiento (ej. `s3://my-bucket/cas/sha256/abc...`).
     pub storage_location: String,
     
+    /// Tipo MIME detectado del contenido (ej. `application/java-archive`, `application/octet-stream`).
+    pub mime_type: String,
+    
     /// Información de auditoría y ciclo de vida (útil para la recolección de basura).
     pub lifecycle: Lifecycle,
 }

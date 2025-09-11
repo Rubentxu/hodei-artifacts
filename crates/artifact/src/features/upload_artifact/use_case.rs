@@ -14,6 +14,7 @@ use crate::features::upload_artifact::{
     error::UploadArtifactError,
     ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository, ArtifactValidator, VersionValidator, ParsedVersion},
 };
+use crate::features::content_type_detection::service::ContentTypeDetectionService;
 use shared::{
     enums::{ArtifactRole, ArtifactType, HashAlgorithm},
     hrn::{Hrn, OrganizationId, RepositoryId, PhysicalArtifactId, UserId},
@@ -28,6 +29,7 @@ pub struct UploadArtifactUseCase {
     event_publisher: Arc<dyn EventPublisher>,
     validator: Arc<dyn ArtifactValidator>,
     version_validator: Arc<dyn VersionValidator>,
+    content_type_service: Arc<ContentTypeDetectionService>,
 }
 
 impl UploadArtifactUseCase {
@@ -37,6 +39,7 @@ impl UploadArtifactUseCase {
         event_publisher: Arc<dyn EventPublisher>,
         validator: Arc<dyn ArtifactValidator>,
         version_validator: Arc<dyn VersionValidator>,
+        content_type_service: Arc<ContentTypeDetectionService>,
     ) -> Self {
         Self {
             repository,
@@ -44,6 +47,7 @@ impl UploadArtifactUseCase {
             event_publisher,
             validator,
             version_validator,
+            content_type_service,
         }
     }
 
@@ -91,6 +95,19 @@ impl UploadArtifactUseCase {
         let content_hash_str = hex::encode(hash_bytes);
         tracing::debug!("Content hash: {}", content_hash_str);
 
+        // 1.1. Detect content type using magic numbers and extension
+        let content_type_result = self.content_type_service.detect_content_type(
+            content.clone(),
+            Some(&command.file_name),
+            None, // No client-provided content type in this flow
+        ).await.map_err(|e| {
+            tracing::warn!("Content type detection failed: {}", e);
+            UploadArtifactError::ValidationFailed(format!("Content type detection failed: {}", e))
+        })?;
+        
+        let detected_mime_type = content_type_result.detected_mime_type;
+        tracing::debug!("Detected MIME type: {}", detected_mime_type);
+
         // 2. Check for existing physical artifact
         let physical_artifact_hrn = match self.repository.find_physical_artifact_by_hash(&content_hash_str).await {
             Ok(Some(existing)) => {
@@ -133,6 +150,7 @@ impl UploadArtifactUseCase {
                     size_in_bytes: command.content_length,
                     checksums: std::collections::HashMap::new(),
                     storage_location,
+                    mime_type: detected_mime_type.clone(),
                     lifecycle: Lifecycle::new(UserId::new_system_user().0),
                 };
                 self.repository.save_physical_artifact(&new_physical_artifact).await.map_err(|e| {
@@ -271,6 +289,19 @@ impl UploadArtifactUseCase {
         };
         tracing::debug!("Content hash: {}", content_hash_str);
 
+        // 1.1. Detect content type using magic numbers and extension
+        let content_type_result = self.content_type_service.detect_content_type(
+            Bytes::from(file_content.clone()),
+            Some(&command.file_name),
+            None, // No client-provided content type in this flow
+        ).await.map_err(|e| {
+            tracing::warn!("Content type detection failed: {}", e);
+            UploadArtifactError::ValidationFailed(format!("Content type detection failed: {}", e))
+        })?;
+        
+        let detected_mime_type = content_type_result.detected_mime_type;
+        tracing::debug!("Detected MIME type: {}", detected_mime_type);
+
         // 1. Check for existing physical artifact
         let physical_artifact_hrn = match self.repository.find_physical_artifact_by_hash(&content_hash_str).await {
             Ok(Some(existing)) => {
@@ -313,6 +344,7 @@ impl UploadArtifactUseCase {
                     size_in_bytes: command.content_length,
                     checksums: std::collections::HashMap::new(),
                     storage_location,
+                    mime_type: detected_mime_type.clone(),
                     lifecycle: Lifecycle::new(UserId::new_system_user().0),
                 };
                 self.repository.save_physical_artifact(&new_physical_artifact).await.map_err(|e| {
