@@ -8,4 +8,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 time = { workspace = true }
 cedar-policy = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true, features = ["serde"] }
+artifact = { path = "../artifact" }
 shared = { path = "../shared" }
+
+[dev-dependencies]
+mockall = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }

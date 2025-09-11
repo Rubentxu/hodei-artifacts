@@ -1,6 +1,6 @@
 // crates/supply-chain/src/domain/attestation.rs
 
-use shared::hrn::{Hrn, OrganizationId, PackageVersionId, PublicKeyId};
+use shared::hrn::{Hrn, OrganizationId};
 use shared::lifecycle::Lifecycle;
 use serde::{Serialize, Deserialize};
 
@@ -16,7 +16,7 @@ pub struct Attestation {
     pub organization_hrn: OrganizationId,
 
     /// El HRN del `PackageVersion` al que se refiere esta prueba.
-    pub subject_hrn: PackageVersionId,
+    pub subject_hrn: Hrn,
 
     /// El tipo de prueba contenida en el predicado (SBOM, SLSA, etc.).
     pub predicate_type: AttestationType,
@@ -36,7 +36,7 @@ pub struct Attestation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Signature {
     /// El HRN de la `PublicKey` utilizada para generar esta firma.
-    pub key_hrn: PublicKeyId,
+    pub key_hrn: Hrn,
     
     /// El algoritmo de firma utilizado (ej. "rsassa-pss-sha256").
     pub algorithm: String,
@@ -48,10 +48,11 @@ pub struct Signature {
 /// Tipos de atestaciones soportados por el sistema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttestationType {
-    SbomCycloneDxV1_5Json,
-    SbomSpdxV2_3Json,
-    SlsaProvenanceV1_0,
-    CosignSignature,
-    GenericSignature, // Para otros tipos de firma
+    /// Software Bill of Materials - Lista de ingredientes de software.
+    Sbom,
+    /// Supply Chain Levels for Software Artifacts - Niveles de seguridad de la cadena de suministro.
+    Slsa,
+    /// Otros tipos de atestaciones personalizadas.
+    Custom,
 }
 
