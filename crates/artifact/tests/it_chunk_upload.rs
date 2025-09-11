@@ -44,9 +44,9 @@ async fn test_chunked_upload_storage_happy_path() -> Result<(), UploadArtifactEr
     assert!(chunk2_path.exists());
     assert!(chunk3_path.exists());
     
-    let chunk1_content = fs::read(&chunk1_path).await?;
-    let chunk2_content = fs::read(&chunk2_path).await?;
-    let chunk3_content = fs::read(&chunk3_path).await?;
+    let chunk1_content = tokio::fs::read(&chunk1_path).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to read chunk1: {}", e)))?;
+    let chunk2_content = tokio::fs::read(&chunk2_path).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to read chunk2: {}", e)))?;
+    let chunk3_content = tokio::fs::read(&chunk3_path).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to read chunk3: {}", e)))?;
     
     assert_eq!(chunk1_content, chunk1_data);
     assert_eq!(chunk2_content, chunk2_data);
@@ -57,7 +57,7 @@ async fn test_chunked_upload_storage_happy_path() -> Result<(), UploadArtifactEr
     
     // Verificar que el archivo ensamblado existe y tiene el contenido correcto
     assert!(assembled_path.exists());
-    let assembled_content = fs::read(&assembled_path).await?;
+    let assembled_content = tokio::fs::read(&assembled_path).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to read assembled file: {}", e)))?;
     let expected_content = [chunk1_data, chunk2_data, chunk3_data].concat();
     assert_eq!(assembled_content, expected_content);
     
@@ -155,7 +155,7 @@ async fn test_chunked_upload_storage_chunk_overwrite() -> Result<(), UploadArtif
     // Verificar que el contenido es el último que se guardó
     let upload_dir = temp_dir.path().join(upload_id);
     let chunk_path = upload_dir.join("1");
-    let chunk_content = fs::read(&chunk_path).await?;
+    let chunk_content = tokio::fs::read(&chunk_path).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to read chunk: {}", e)))?;
     assert_eq!(chunk_content, chunk_data_v2);
     
     // Limpiar

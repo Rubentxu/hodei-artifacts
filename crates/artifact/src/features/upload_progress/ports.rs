@@ -1,12 +1,10 @@
 // crates/artifact/src/features/upload_artifact/upload_progress/ports.rs
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use std::path::PathBuf;
-use std::collections::HashMap;
 
-use super::dto::{UploadProgress, UploadStatus, UpdateProgressCommand, ReceivedChunksResponse, ReceivedChunkInfo};
-use super::error::ProgressError;
+use super::dto::{UploadProgress, UpdateProgressCommand, ReceivedChunkInfo};
+use crate::features::upload_progress::ProgressError;
 
 /// Tipo de resultado para los ports de progress tracking
 pub type ProgressResult<T> = Result<T, ProgressError>;
@@ -94,30 +92,3 @@ pub enum ChunkStorageError {
     AssemblyError(String),
 }
 
-/// Implementación por defecto para el trait ChunkedUploadStorage
-#[async_trait]
-impl ChunkedUploadStorage for dyn ChunkedUploadStorage + '_ {
-    async fn save_chunk(&self, upload_id: &str, chunk_number: usize, data: bytes::Bytes) -> Result<(), ProgressError> {
-        self.save_chunk(upload_id, chunk_number, data).await
-    }
-    
-    async fn get_received_chunks_count(&self, upload_id: &str) -> Result<usize, ProgressError> {
-        self.get_received_chunks_count(upload_id).await
-    }
-    
-    async fn get_received_chunk_numbers(&self, upload_id: &str) -> Result<Vec<usize>, ProgressError> {
-        self.get_received_chunk_numbers(upload_id).await
-    }
-    
-    async fn get_received_chunks_info(&self, upload_id: &str) -> Result<Vec<ReceivedChunkInfo>, ProgressError> {
-        self.get_received_chunks_info(upload_id).await
-    }
-    
-    async fn assemble_chunks(&self, upload_id: &str, total_chunks: usize, file_name: &str) -> Result<(PathBuf, String), ProgressError> {
-        self.assemble_chunks(upload_id, total_chunks, file_name).await
-    }
-    
-    async fn cleanup(&self, upload_id: &str) -> Result<(), ProgressError> {
-        self.cleanup(upload_id).await
-    }
-}

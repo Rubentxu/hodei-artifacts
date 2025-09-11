@@ -264,6 +264,24 @@ impl ChunkedUploadStorage for LocalFsChunkedUploadStorage {
         Ok(count)
     }
 
+    async fn get_received_chunk_numbers(&self, upload_id: &str) -> Result<Vec<usize>, UploadArtifactError> {
+        let upload_dir = self.get_upload_dir(upload_id);
+        if !upload_dir.exists() {
+            return Ok(vec![]);
+        }
+        let mut read_dir = tokio::fs::read_dir(upload_dir).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to read chunk directory: {}", e)))?;
+        let mut chunk_numbers = Vec::new();
+        while let Some(entry) = read_dir.next_entry().await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to iterate chunk directory: {}", e)))? {
+            if let Some(file_name) = entry.file_name().to_str() {
+                if let Ok(chunk_number) = file_name.parse::<usize>() {
+                    chunk_numbers.push(chunk_number);
+                }
+            }
+        }
+        chunk_numbers.sort();
+        Ok(chunk_numbers)
+    }
+
     async fn assemble_chunks(&self, upload_id: &str, total_chunks: usize, file_name: &str) -> Result<(PathBuf, String), UploadArtifactError> {
         let upload_dir = self.get_upload_dir(upload_id);
         let final_path = self.temp_dir.join(file_name);

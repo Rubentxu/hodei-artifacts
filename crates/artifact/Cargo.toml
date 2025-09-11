@@ -13,7 +13,7 @@ upload_batch = []
 production = []
 
 [dependencies]
-uuid = "0.8"
+uuid = { workspace = true }
 anyhow = "1.0"
 futures = "0.3"
 async-trait = { workspace = true }
@@ -37,6 +37,7 @@ tracing = { workspace = true }
 tempfile = "3"
 quick-xml = { version = "0.31", features = ["serialize"] }
 serde-xml-rs = "0.6"
+semver = "1.0"
 
 # Workspace dependencies
 shared = { path = "../shared" }

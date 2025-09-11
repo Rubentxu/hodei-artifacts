@@ -4,8 +4,9 @@ use super::{
     ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier},
     service::UploadProgressService,
     api::UploadProgressApi,
-    ProgressError, ProgressResult, UploadProgress, UpdateProgressCommand,
+    ProgressResult, UploadProgress, UpdateProgressCommand,
 };
+use crate::features::upload_progress::ProgressError;
 
 /// Contenedor de inyección de dependencias para la feature de progress tracking
 pub struct UploadProgressDIContainer {
@@ -48,7 +49,7 @@ impl UploadProgressDIContainer {
     /// Método de conveniencia para testing
     #[cfg(test)]
     pub fn for_testing() -> Self {
-        use super::adapter::test::{MockProgressStorage, MockEventPublisher, MockRealtimeNotifier};
+        use crate::features::upload_progress::adapter::test::{MockProgressStorage, MockEventPublisher, MockRealtimeNotifier};
         
         let storage: Arc<dyn ProgressStorage> = 
             Arc::new(MockProgressStorage::default());
@@ -64,7 +65,7 @@ impl UploadProgressDIContainer {
 
     /// Método de conveniencia para desarrollo/local
     pub fn for_development() -> Self {
-        use super::adapter::memory::{MemoryProgressStorage, MemoryEventPublisher, MemoryRealtimeNotifier};
+        use crate::features::upload_progress::adapter::memory::{MemoryProgressStorage, MemoryEventPublisher, MemoryRealtimeNotifier};
         
         let storage: Arc<dyn ProgressStorage> = 
             Arc::new(MemoryProgressStorage::default());

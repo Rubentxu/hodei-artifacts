@@ -1,11 +1,11 @@
 // crates/artifact/src/features/upload_artifact/upload_progress/service.rs
 
 use std::sync::Arc;
-use async_trait::async_trait;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
-use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ChunkedUploadStorage, ProgressResult, ProgressError};
+use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ChunkedUploadStorage, ProgressResult};
 use super::dto::{UploadProgress, UploadStatus, UpdateProgressCommand, ReceivedChunksResponse, ReceivedChunkInfo};
+use crate::features::upload_progress::ProgressError;
 
 /// Servicio principal para gestión de progreso de subidas
 #[derive(Clone)]

@@ -1,7 +1,8 @@
 //! Adaptadores concretos para los ports de progress tracking
 //! Incluye implementaciones para testing y desarrollo
 
-use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ProgressResult, ProgressError};
+use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ProgressResult};
+use crate::features::upload_progress::ProgressError;
 use super::dto::{UploadProgress, UpdateProgressCommand};
 use async_trait::async_trait;
 use std::sync::Mutex;

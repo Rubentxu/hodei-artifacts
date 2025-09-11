@@ -1,0 +1,1 @@
+// Data Transfer Objects for the generate_sbom feature.

@@ -6,7 +6,6 @@ pub mod error;
 pub mod ports;
 pub mod use_case;
 pub mod use_case_chunks;
-pub mod upload_progress;
 
 #[cfg(test)]
 pub mod test_adapter;

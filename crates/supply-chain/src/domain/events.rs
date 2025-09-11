@@ -1,45 +1,31 @@
 // crates/supply-chain/src/domain/events.rs
 
-use shared::hrn::{Hrn, PackageVersionId};
-use crate::domain::attestation::AttestationType;
+use shared::hrn::Hrn;
 use serde::{Serialize, Deserialize};
-use time::OffsetDateTime;
 
 /// Eventos de dominio publicados por el contexto `supply-chain`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SupplyChainEvent {
-    /// Se ha generado y almacenado una nueva atestación para un artefacto.
-    AttestationGenerated(AttestationGenerated),
-
-    /// Se ha verificado la firma de una atestación.
-    SignatureVerified(SignatureVerified),
+    /// Se ha generado una nueva atestación para un artefacto.
+    AttestationGenerated {
+        attestation_hrn: Hrn,
+        subject_hrn: Hrn,
+        attestation_type: String,
+    },
     
-    /// Se ha añadido una nueva clave pública al sistema.
-    PublicKeyAdded(PublicKeyAdded),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttestationGenerated {
-    pub hrn: Hrn,
-    pub subject_hrn: PackageVersionId,
-    pub predicate_type: AttestationType,
-    pub generated_by: Hrn,
-    pub at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SignatureVerified {
-    pub attestation_hrn: Hrn,
-    pub key_hrn: Hrn,
-    pub is_valid: bool,
-    pub verified_by: Hrn,
-    pub at: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PublicKeyAdded {
-    pub hrn: Hrn,
-    pub source: String, // "ManualUpload", "CertificateAuthority"
-    pub added_by: Hrn,
-    pub at: OffsetDateTime,
+    /// Se ha verificado una atestación existente.
+    AttestationVerified {
+        attestation_hrn: Hrn,
+        subject_hrn: Hrn,
+        is_valid: bool,
+        verification_time: chrono::DateTime<chrono::Utc>,
+    },
+    
+    /// Se ha detectado una vulnerabilidad en un componente de una SBOM.
+    SbomVulnerabilityDetected {
+        sbom_hrn: Hrn,
+        component_purl: String,
+        vulnerability_id: String,
+        severity: String,
+    },
 }

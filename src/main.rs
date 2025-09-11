@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 // Import DI containers from the feature crates
 use artifact::features::upload_artifact::{UploadArtifactDIContainer, api::UploadArtifactEndpoint};
-use artifact::features::upload_artifact::upload_progress::{UploadProgressDIContainer, api::UploadProgressApi};
+use artifact::features::upload_progress::{UploadProgressDIContainer, api::UploadProgressApi};
 use iam::features::validate_policy::{ValidatePolicyDIContainer, api::ValidatePolicyApi};
 use repository::create_repository_api_module;
 

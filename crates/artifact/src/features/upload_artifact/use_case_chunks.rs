@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tracing::{info, debug, error, info_span};
+use tracing::{debug, error, info, info_span};
 use tokio::fs;
 use std::path::PathBuf;
 
@@ -8,9 +8,9 @@ use super::{
     error::UploadArtifactError,
     ports::{ChunkedUploadStorage, EventPublisher},
     use_case::UploadArtifactUseCase,
-    upload_progress::{UploadProgressService, dto::{UploadStatus, UpdateProgressCommand}},
 };
 use crate::domain::events::ArtifactEvent;
+use crate::features::upload_progress::{dto::{UpdateProgressCommand, UploadStatus}, UploadProgressService};
 
 #[derive(Debug)]
 pub enum ChunkOutcome {

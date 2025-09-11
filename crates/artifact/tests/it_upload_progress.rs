@@ -2,40 +2,40 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use artifact::features::upload_artifact::{
-    upload_progress::{
-        service::UploadProgressService,
-        ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier},
-        dto::{UploadStatus, UpdateProgressCommand},
-    },
     adapter::LocalFsChunkedUploadStorage,
-    ports::ChunkedUploadStorage,
-    error::UploadArtifactError,
+    ports::ChunkedUploadStorage
+    ,
 };
-use artifact::features::upload_artifact::upload_progress::ports::ProgressError;
+use artifact::features::upload_progress::ports::ProgressError;
+use artifact::features::upload_progress::{
+    dto::{UpdateProgressCommand, UploadStatus},
+    ports::{ProgressEventPublisher, ProgressStorage, RealtimeNotifier},
+    service::UploadProgressService,
+};
 
 // Mocks para las pruebas de integración
 #[derive(Default)]
 struct MockProgressStorage {
-    sessions: std::sync::Mutex<std::collections::HashMap<String, artifact::features::upload_artifact::upload_progress::dto::UploadProgress>>,
+    sessions: std::sync::Mutex<std::collections::HashMap<String, artifact::features::upload_progress::dto::UploadProgress>>,
 }
 
 #[async_trait::async_trait]
 impl ProgressStorage for MockProgressStorage {
-    async fn create_session(&self, progress: artifact::features::upload_artifact::upload_progress::dto::UploadProgress) -> Result<(), artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn create_session(&self, progress: artifact::features::upload_progress::dto::UploadProgress) -> Result<(), artifact::features::upload_progress::ports::ProgressError> {
         self.sessions.lock().unwrap().insert(progress.upload_id.clone(), progress);
         Ok(())
     }
 
-    async fn get_progress(&self, upload_id: &str) -> Result<artifact::features::upload_artifact::upload_progress::dto::UploadProgress, artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn get_progress(&self, upload_id: &str) -> Result<artifact::features::upload_progress::dto::UploadProgress, artifact::features::upload_progress::ports::ProgressError> {
         self.sessions.lock().unwrap().get(upload_id)
             .cloned()
-            .ok_or_else(|| artifact::features::upload_artifact::upload_progress::ports::ProgressError::SessionNotFound(upload_id.to_string()))
+            .ok_or_else(|| artifact::features::upload_progress::ports::ProgressError::SessionNotFound(upload_id.to_string()))
     }
 
-    async fn update_progress(&self, command: artifact::features::upload_artifact::upload_progress::dto::UpdateProgressCommand) -> Result<artifact::features::upload_artifact::upload_progress::dto::UploadProgress, artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn update_progress(&self, command: artifact::features::upload_progress::dto::UpdateProgressCommand) -> Result<artifact::features::upload_progress::dto::UploadProgress, artifact::features::upload_progress::ports::ProgressError> {
         let mut sessions = self.sessions.lock().unwrap();
         let progress = sessions.get_mut(&command.upload_id)
-            .ok_or_else(|| artifact::features::upload_artifact::upload_progress::ports::ProgressError::SessionNotFound(command.upload_id.clone()))?;
+            .ok_or_else(|| artifact::features::upload_progress::ports::ProgressError::SessionNotFound(command.upload_id.clone()))?;
 
         progress.update(command.bytes_transferred, command.total_bytes);
         progress.status = command.status;
@@ -43,12 +43,12 @@ impl ProgressStorage for MockProgressStorage {
         Ok(progress.clone())
     }
 
-    async fn delete_session(&self, upload_id: &str) -> Result<(), artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn delete_session(&self, upload_id: &str) -> Result<(), artifact::features::upload_progress::ports::ProgressError> {
         self.sessions.lock().unwrap().remove(upload_id);
         Ok(())
     }
 
-    async fn list_sessions(&self) -> Result<Vec<artifact::features::upload_artifact::upload_progress::dto::UploadProgress>, artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn list_sessions(&self) -> Result<Vec<artifact::features::upload_progress::dto::UploadProgress>, artifact::features::upload_progress::ports::ProgressError> {
         Ok(self.sessions.lock().unwrap().values().cloned().collect())
     }
 }
@@ -60,17 +60,17 @@ struct MockEventPublisher {
 
 #[async_trait::async_trait]
 impl ProgressEventPublisher for MockEventPublisher {
-    async fn publish_progress_update(&self, _progress: &artifact::features::upload_artifact::upload_progress::dto::UploadProgress) -> Result<(), artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn publish_progress_update(&self, _progress: &artifact::features::upload_progress::dto::UploadProgress) -> Result<(), artifact::features::upload_progress::ports::ProgressError> {
         self.published_events.lock().unwrap().push("progress_update".to_string());
         Ok(())
     }
 
-    async fn publish_upload_completed(&self, upload_id: &str) -> Result<(), artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn publish_upload_completed(&self, upload_id: &str) -> Result<(), artifact::features::upload_progress::ports::ProgressError> {
         self.published_events.lock().unwrap().push(format!("completed_{}", upload_id));
         Ok(())
     }
 
-    async fn publish_upload_failed(&self, upload_id: &str, _error: &str) -> Result<(), artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn publish_upload_failed(&self, upload_id: &str, _error: &str) -> Result<(), artifact::features::upload_progress::ports::ProgressError> {
         self.published_events.lock().unwrap().push(format!("failed_{}", upload_id));
         Ok(())
     }
@@ -84,17 +84,17 @@ struct MockRealtimeNotifier {
 
 #[async_trait::async_trait]
 impl RealtimeNotifier for MockRealtimeNotifier {
-    async fn notify_progress_update(&self, progress: &artifact::features::upload_artifact::upload_progress::dto::UploadProgress) -> Result<(), artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn notify_progress_update(&self, progress: &artifact::features::upload_progress::dto::UploadProgress) -> Result<(), artifact::features::upload_progress::ports::ProgressError> {
         self.notifications.lock().unwrap().push(format!("notify_{}_{}", progress.upload_id, progress.percentage));
         Ok(())
     }
 
-    async fn subscribe(&self, upload_id: &str, client_id: &str) -> Result<(), artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn subscribe(&self, upload_id: &str, client_id: &str) -> Result<(), artifact::features::upload_progress::ports::ProgressError> {
         self.subscriptions.lock().unwrap().push((upload_id.to_string(), client_id.to_string()));
         Ok(())
     }
 
-    async fn unsubscribe(&self, client_id: &str) -> Result<(), artifact::features::upload_artifact::upload_progress::ports::ProgressError> {
+    async fn unsubscribe(&self, client_id: &str) -> Result<(), artifact::features::upload_progress::ports::ProgressError> {
         let mut subscriptions = self.subscriptions.lock().unwrap();
         subscriptions.retain(|(_, cid)| cid != client_id);
         Ok(())

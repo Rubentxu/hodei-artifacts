@@ -5,13 +5,13 @@ mod tests {
     use tempfile;
 
     use crate::features::upload_artifact::{
-        use_case_chunks::UploadArtifactChunkUseCase,
-        test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator},
         adapter::LocalFsChunkedUploadStorage,
-        use_case::UploadArtifactUseCase,
         ports::ChunkedUploadStorage,
-        upload_progress::UploadProgressDIContainer,
+        test_adapter::{MockArtifactRepository, MockArtifactStorage, MockArtifactValidator, MockEventPublisher, MockVersionValidator},
+        use_case::UploadArtifactUseCase,
+        use_case_chunks::UploadArtifactChunkUseCase,
     };
+    use crate::features::upload_progress::UploadProgressDIContainer;
 
     #[tokio::test]
     async fn test_chunk_storage_basic_operations() {
@@ -43,7 +43,13 @@ mod tests {
         let repo = Arc::new(MockArtifactRepository::new());
         let artifact_storage = Arc::new(MockArtifactStorage::new());
         let validator = Arc::new(MockArtifactValidator::new());
-        let artifact_use_case = Arc::new(UploadArtifactUseCase::new(repo, artifact_storage, publisher.clone(), validator));
+        let artifact_use_case = Arc::new(UploadArtifactUseCase::new(
+            repo, 
+            artifact_storage, 
+            publisher.clone(), 
+            validator,
+            Arc::new(MockVersionValidator::new()),
+        ));
         let progress_container = UploadProgressDIContainer::for_testing();
         let progress_service = progress_container.service;
         let use_case = UploadArtifactChunkUseCase::new(storage.clone(), artifact_use_case, publisher.clone(), Arc::new(progress_service));
