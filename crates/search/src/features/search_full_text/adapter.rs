@@ -16,9 +16,9 @@ use tantivy::{
 use tracing::{debug, info, error, warn};
 use serde_json;
 
-use ports::*;
-use dto::*;
-use error::{
+use super::ports::*;
+use super::dto::*;
+use super::error::{
     FullTextSearchError, ToFullTextSearchError, 
     RebuildError, ClearError, ValidationError, 
     MaintenanceError, SegmentError, MergeError

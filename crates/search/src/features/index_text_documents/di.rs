@@ -4,11 +4,11 @@
 //! index text documents feature, supporting multiple environments and testing.
 
 use std::sync::Arc;
-use ports::*;
-use use_case::*;
-use adapter::*;
+use super::ports::*;
+use super::use_case::*;
+use super::adapter::*;
 use api::*;
-use error::*;
+use super::error::*;
 
 /// Dependency injection container for index text documents feature
 pub struct IndexTextDocumentsDIContainer {
@@ -68,7 +68,7 @@ impl IndexTextDocumentsDIContainer {
     /// Create container for testing environment
     #[cfg(test)]
     pub fn for_testing() -> Self {
-        use adapter::test::*;
+        use super::adapter::test::*;
         
         let document_indexer = Arc::new(MockDocumentIndexer::new());
         let text_analyzer = Arc::new(MockTextAnalyzer::new());
@@ -214,7 +214,7 @@ impl IndexTextDocumentsDIContainerBuilder {
     /// Build with testing defaults
     #[cfg(test)]
     pub fn build_with_testing_defaults(self) -> IndexTextDocumentsDIContainer {
-        use adapter::test::*;
+        use super::adapter::test::*;
         
         let document_indexer = self.document_indexer
             .unwrap_or_else(|| Arc::new(MockDocumentIndexer::new()));

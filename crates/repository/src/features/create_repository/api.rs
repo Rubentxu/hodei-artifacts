@@ -61,7 +61,7 @@ impl CreateRepositoryErrorResponse {
 
 /// Punto de entrada de la API para crear repositorios
 pub struct CreateRepositoryEndpoint {
-    use_case: Arc<CreateRepositoryUseCase>,
+    pub use_case: Arc<CreateRepositoryUseCase>,
 }
 
 impl CreateRepositoryEndpoint {
@@ -119,37 +119,15 @@ impl CreateRepositoryEndpoint {
             RepositoryError::InvalidConfiguration(message) => {
                 CreateRepositoryErrorResponse::validation_error(format!("Invalid configuration: {}", message))
             },
-            RepositoryError::RepositoryTypeMismatch { expected, actual } => {
+            RepositoryError::RepositoryTypeMismatch => {
                 CreateRepositoryErrorResponse::validation_error(
-                    format!("Repository type mismatch: expected {}, got {}", expected, actual)
+                    format!("Repository type mismatch")
                 )
             },
             RepositoryError::StorageBackendNotFound(backend) => {
                 CreateRepositoryErrorResponse::not_found(format!("Storage backend '{}' not found", backend))
             },
-            RepositoryError::ReferencedRepositoryNotFound(repo_id) => {
-                CreateRepositoryErrorResponse::not_found(format!("Referenced repository '{}' not found", repo_id))
-            },
-            RepositoryError::Unauthorized(message) => {
-                CreateRepositoryErrorResponse::new("Unauthorized".to_string(), message, None)
-            },
-            RepositoryError::DatabaseError(message) => {
-                CreateRepositoryErrorResponse::internal_error(
-                    "Database operation failed".to_string(),
-                    Some(message)
-                )
-            },
-            RepositoryError::ValidationError(message) => {
-                CreateRepositoryErrorResponse::validation_error(message)
-            },
-            RepositoryError::ConfigurationError(message) => {
-                CreateRepositoryErrorResponse::validation_error(format!("Configuration error: {}", message))
-            },
-            RepositoryError::RepositoryNotEmpty(repo_id) => {
-                CreateRepositoryErrorResponse::conflict(
-                    format!("Repository '{}' is not empty and cannot be deleted", repo_id)
-                )
-            },
+            _ => CreateRepositoryErrorResponse::internal_error("An unexpected error occurred".to_string(), Some(error.to_string())),
         }
     }
 }

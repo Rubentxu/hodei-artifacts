@@ -1,29 +1,29 @@
 //! API endpoints para detección de Content-Type
 
+use std::sync::Arc;
 use axum::{
     extract::{State, Multipart, Json},
     http::StatusCode,
     response::IntoResponse,
 };
 use bytes::Bytes;
-use serde::Deserialize;
 use tracing::{info, warn, debug};
 
 use super::{
-    ContentTypeDetectionService,
-    dto::{ContentTypeDetectionResult, DetectContentTypeCommand, ContentTypeMismatch},
+    use_case::ContentTypeDetectionUseCase,
+    dto::{ContentTypeDetectionResult, DetectContentTypeCommand},
     error::ContentTypeDetectionError,
 };
 
 /// API endpoints para detección de Content-Type
 #[derive(Clone)]
 pub struct ContentTypeDetectionApi {
-    service: Arc<ContentTypeDetectionService>,
+    pub use_case: Arc<ContentTypeDetectionUseCase>,
 }
 
 impl ContentTypeDetectionApi {
-    pub fn new(service: Arc<ContentTypeDetectionService>) -> Self {
-        Self { service }
+    pub fn new(use_case: Arc<ContentTypeDetectionUseCase>) -> Self {
+        Self { use_case }
     }
     
     /// Endpoint para detectar Content-Type desde multipart form data
@@ -53,10 +53,16 @@ impl ContentTypeDetectionApi {
         }
         
         if data.is_empty() {
-            return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("No se proporcionaron datos para análisis")));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "CONTENT_TYPE_DETECTION_ERROR".to_string(),
+                    message: "No se proporcionaron datos para análisis".to_string(),
+                })
+            ).into_response();
         }
         
-        match api.service.detect_content_type(
+        match api.use_case.detect_content_type(
             data,
             filename.as_deref(),
             client_content_type.as_deref(),
@@ -74,10 +80,9 @@ impl ContentTypeDetectionApi {
                     client_provided_mime_type: client_content_type,
                     has_mismatch: result.has_mismatch,
                     confidence: result.confidence,
-                    detection_method: super::dto::DetectionMethod::MagicNumbers,
                 };
                 
-                (StatusCode::OK, Json(api_result))
+                Json(api_result).into_response()
             }
             Err(error) => {
                 warn!(error = %error, "Error en detección de Content-Type");
@@ -88,7 +93,13 @@ impl ContentTypeDetectionApi {
                     _ => StatusCode::INTERNAL_SERVER_ERROR,
                 };
                 
-                (status_code, Json(ErrorResponse::new(&error.to_string())))
+                (
+                    status_code,
+                    Json(ErrorResponse {
+                        error: "CONTENT_TYPE_DETECTION_ERROR".to_string(),
+                        message: error.to_string(),
+                    })
+                ).into_response()
             }
         }
     }
@@ -99,12 +110,18 @@ impl ContentTypeDetectionApi {
         Json(command): Json<DetectContentTypeCommand>,
     ) -> impl IntoResponse {
         if command.data.is_empty() {
-            return (StatusCode::BAD_REQUEST, Json(ErrorResponse::new("Datos vacíos para análisis")));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "CONTENT_TYPE_DETECTION_ERROR".to_string(),
+                    message: "Datos vacíos para análisis".to_string(),
+                })
+            ).into_response();
         }
         
         let data = Bytes::from(command.data);
         
-        match api.service.detect_content_type(
+        match api.use_case.detect_content_type(
             data,
             command.filename.as_deref(),
             command.client_content_type.as_deref(),
@@ -121,10 +138,9 @@ impl ContentTypeDetectionApi {
                     client_provided_mime_type: command.client_content_type,
                     has_mismatch: result.has_mismatch,
                     confidence: result.confidence,
-                    detection_method: super::dto::DetectionMethod::MagicNumbers,
                 };
                 
-                (StatusCode::OK, Json(api_result))
+                Json(api_result).into_response()
             }
             Err(error) => {
                 warn!(error = %error, "Error en detección de Content-Type desde JSON");
@@ -135,7 +151,13 @@ impl ContentTypeDetectionApi {
                     _ => StatusCode::INTERNAL_SERVER_ERROR,
                 };
                 
-                (status_code, Json(ErrorResponse::new(&error.to_string())))
+                (
+                    status_code,
+                    Json(ErrorResponse {
+                        error: "CONTENT_TYPE_DETECTION_ERROR".to_string(),
+                        message: error.to_string(),
+                    })
+                ).into_response()
             }
         }
     }
@@ -146,13 +168,4 @@ impl ContentTypeDetectionApi {
 struct ErrorResponse {
     error: String,
     message: String,
-}
-
-impl ErrorResponse {
-    fn new(message: &str) -> Self {
-        Self {
-            error: "CONTENT_TYPE_DETECTION_ERROR".to_string(),
-            message: message.to_string(),
-        }
-    }
 }

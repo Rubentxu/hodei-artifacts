@@ -35,7 +35,7 @@ pub struct NpmPackageMetadata {
     pub os: Vec<String>,
     pub cpu: Vec<String>,
     pub private: bool,
-    pub publish_config: Option<PublishConfigInfo>,
+    publish_config: Option<PublishConfigInfo>,
     pub dist: Option<DistInfo>,
     pub _id: Option<String>,
     pub _node_version: Option<String>,

@@ -1,7 +1,7 @@
 // crates/iam/src/domain/policy.rs
 
 use serde::{Deserialize, Serialize};
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 use time::OffsetDateTime;
 
 /// Represents a Cedar policy in the IAM system

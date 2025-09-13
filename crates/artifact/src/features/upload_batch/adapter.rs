@@ -141,7 +141,7 @@ pub mod test {
     }
 
     #[async_trait]
-    impl super::ports::BatchTransactionManager for MockTransactionManager {
+    impl crate::features::upload_batch::ports::BatchTransactionManager for MockTransactionManager {
         async fn begin_transaction(&self) -> Result<(), BatchUploadError> {
             *self.transactions_started.lock().unwrap() += 1;
             Ok(())

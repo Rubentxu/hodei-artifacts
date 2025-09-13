@@ -2,7 +2,7 @@
 
 use crate::infrastructure::errors::IamError;
 use serde::{Deserialize, Serialize};
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 
 /// Command to delete a policy
 #[derive(Debug, Clone, Serialize, Deserialize)]

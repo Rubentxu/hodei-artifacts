@@ -5,7 +5,7 @@ use crate::features::get_policy::ports::PolicyReader;
 use crate::infrastructure::errors::IamError;
 use async_trait::async_trait;
 use mongodb::{bson::doc, Collection, Database};
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 use std::sync::Arc;
 
 /// Adapter that implements PolicyReader using MongoDB directly
@@ -24,7 +24,7 @@ impl MongoPolicyReaderAdapter {
 #[async_trait]
 impl PolicyReader for MongoPolicyReaderAdapter {
     async fn get_by_id(&self, id: &PolicyId) -> Result<Option<Policy>, IamError> {
-        let filter = doc! { "_id": id.0.to_string() };
+        let filter = doc! { "_id": id.to_string() };
         
         self.collection
             .find_one(filter)

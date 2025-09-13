@@ -6,14 +6,15 @@
 pub mod adapter;
 pub mod dto;
 pub mod ports;
-pub mod service;
+pub mod use_case;
 pub mod api;
 pub mod di;
 pub mod error;
+pub mod mocks;
 
 // Re-exportar los componentes públicos
 pub use dto::{UploadProgress, UploadStatus, UpdateProgressCommand, UploadProgressResponse, ReceivedChunksResponse, ReceivedChunkInfo};
-pub use service::UploadProgressService;
+pub use use_case::UploadProgressUseCase;
 pub use api::UploadProgressApi;
 pub use ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ProgressResult};
 pub use error::ProgressError;

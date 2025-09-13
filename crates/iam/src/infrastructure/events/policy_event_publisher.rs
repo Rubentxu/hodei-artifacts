@@ -30,7 +30,7 @@ impl PolicyEventPublisher for SimplePolicyEventPublisher {
         // In a real implementation, this would publish to a message bus
         tracing::info!(
             "Policy created event: id={}, name={}, version={}",
-            policy.id.0.to_string(),
+            policy.id.to_string(),
             policy.name,
             policy.metadata.version
         );
@@ -45,7 +45,7 @@ impl PolicyDeleteEventPublisher for SimplePolicyEventPublisher {
         // In a real implementation, this would publish to a message bus
         tracing::info!(
             "Policy deleted event: id={}, name={}, version={}",
-            policy.id.0.to_string(),
+            policy.id.to_string(),
             policy.name,
             policy.metadata.version
         );
@@ -60,7 +60,7 @@ impl PolicyUpdateEventPublisher for SimplePolicyEventPublisher {
         // In a real implementation, this would publish to a message bus
         tracing::info!(
             "Policy updated event: id={}, name={}, old_version={}, new_version={}",
-            new_policy.id.0.to_string(),
+            new_policy.id.to_string(),
             new_policy.name,
             old_policy.metadata.version,
             new_policy.metadata.version

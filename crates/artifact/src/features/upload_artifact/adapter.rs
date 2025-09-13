@@ -1,3 +1,4 @@
+extern crate async_trait;
 use async_trait::async_trait;
 use bytes::Bytes;
 use aws_config::SdkConfig;
@@ -15,7 +16,6 @@ use lapin::{
 };
 use mongodb::{
     bson::doc,
-    options::ClientOptions,
     Client as MongoClient,
     Database,
 };
@@ -84,9 +84,14 @@ pub struct MongoDbRepository {
 }
 
 impl MongoDbRepository {
+    pub fn new_with_client(client: mongodb::Client) -> Self {
+        Self {
+            db: client.database("hodei"),
+        }
+    }
+    
     pub async fn new(connection_string: &str, db_name: &str) -> mongodb::error::Result<Self> {
-        let client_options = ClientOptions::parse(connection_string).await?;
-        let client = MongoClient::with_options(client_options)?;
+        let client = MongoClient::with_uri_str(connection_string).await?;
         Ok(Self {
             db: client.database(db_name),
         })
@@ -309,69 +314,5 @@ impl ChunkedUploadStorage for LocalFsChunkedUploadStorage {
             tokio::fs::remove_dir_all(upload_dir).await.map_err(|e| UploadArtifactError::StorageError(format!("Failed to clean up chunk directory: {}", e)))?;
         }
         Ok(())
-    }
-}
-use async_trait::async_trait;
-use semver::Version;
-
-use crate::features::upload_artifact::ports::{VersionValidator, ParsedVersion};
-
-/// Implementación por defecto del validador de versiones usando la librería semver
-#[derive(Debug, Clone)]
-pub struct DefaultVersionValidator;
-
-impl DefaultVersionValidator {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait]
-impl VersionValidator for DefaultVersionValidator {
-    async fn validate_version(&self, version_str: &str) -> Result<(), String> {
-        // Manejar versiones SNAPSHOT (especialmente para Maven)
-        let is_snapshot = version_str.to_lowercase().ends_with("-snapshot");
-        let version_to_parse = if is_snapshot {
-            &version_str[..version_str.len() - 9] // Remover "-snapshot"
-        } else {
-            version_str
-        };
-        
-        // Parsear la versión usando la librería semver
-        Version::parse(version_to_parse)
-            .map(|_| ())
-            .map_err(|e| format!("Invalid semantic version '{}': {}", version_str, e))
-    }
-
-    async fn parse_version(&self, version_str: &str) -> Result<ParsedVersion, String> {
-        // Manejar versiones SNAPSHOT (especialmente para Maven)
-        let is_snapshot = version_str.to_lowercase().ends_with("-snapshot");
-        let version_to_parse = if is_snapshot {
-            &version_str[..version_str.len() - 9] // Remover "-snapshot"
-        } else {
-            version_str
-        };
-        
-        // Parsear la versión usando la librería semver
-        let version = Version::parse(version_to_parse)
-            .map_err(|e| format!("Invalid semantic version '{}': {}", version_str, e))?;
-        
-        Ok(ParsedVersion {
-            original: version_str.to_string(),
-            major: version.major,
-            minor: version.minor,
-            patch: version.patch,
-            prerelease: if version.pre.is_empty() {
-                None
-            } else {
-                Some(version.pre.as_str().to_string())
-            },
-            build_metadata: if version.build.is_empty() {
-                None
-            } else {
-                Some(version.build.as_str().to_string())
-            },
-            is_snapshot,
-        })
     }
 }

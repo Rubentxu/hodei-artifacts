@@ -13,10 +13,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, error, instrument};
 
-use dto::*;
-use error::{IndexDocumentError, WithContext};
-use use_case::IndexDocumentUseCase;
-use ports::{DocumentIndexerPort, TextAnalyzerPort, IndexHealthMonitorPort, IndexHealth, IndexStats};
+use super::dto::*;
+use super::error::{IndexDocumentError, WithContext};
+use super::use_case::IndexDocumentUseCase;
+use super::ports::{DocumentIndexerPort, TextAnalyzerPort, IndexHealthMonitorPort, IndexHealth, IndexStats};
 use std::sync::Arc;
 
 /// Application state for the index text documents feature

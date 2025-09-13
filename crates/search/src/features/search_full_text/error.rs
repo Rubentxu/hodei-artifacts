@@ -4,7 +4,7 @@
 //! established in the project. Each error is specific and provides meaningful context.
 
 use thiserror::Error;
-use ports::ConfigError;
+use super::ports::ConfigError;
 
 /// Comprehensive error type for the Full Text Search feature
 #[derive(Debug, Error)]
@@ -227,7 +227,7 @@ pub enum FullTextSearchError {
 }
 
 /// Re-export the specific error types from the ports module for convenience
-pub use ports::{
+pub use super::ports::{
     SearchError,
     SuggestionError,
     FacetError,

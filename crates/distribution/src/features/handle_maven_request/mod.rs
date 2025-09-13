@@ -16,5 +16,3 @@ pub mod di;
 
 // Solo exportar lo necesario al exterior
 pub use dto::{MavenGetArtifactRequest, MavenGetArtifactResponse, MavenPutArtifactRequest, MavenPutArtifactResponse};
-pub use api::MavenRequestApi;
-pub use di::MavenRequestDIContainer;

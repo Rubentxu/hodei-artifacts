@@ -54,7 +54,7 @@ pub mod test {
 
     #[derive(Default)]
     pub struct MockEventPublisher {
-        pub published_events: Mutex<Vec<String>>,
+        published_events: Mutex<Vec<String>>,
     }
 
     #[async_trait]

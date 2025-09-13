@@ -12,9 +12,9 @@ use crate::domain::{
 use crate::features::upload_artifact::{
     dto::{UploadArtifactCommand, UploadArtifactResponse},
     error::UploadArtifactError,
-    ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository, ArtifactValidator, VersionValidator, ParsedVersion},
+    ports::{ArtifactStorage, EventPublisher, PortResult, ArtifactRepository, ArtifactValidator, VersionValidator},
 };
-use crate::features::content_type_detection::service::ContentTypeDetectionService;
+use crate::features::content_type_detection::ContentTypeDetectionUseCase;
 use shared::{
     enums::{ArtifactRole, ArtifactType, HashAlgorithm},
     hrn::{Hrn, OrganizationId, RepositoryId, PhysicalArtifactId, UserId},
@@ -29,7 +29,7 @@ pub struct UploadArtifactUseCase {
     event_publisher: Arc<dyn EventPublisher>,
     validator: Arc<dyn ArtifactValidator>,
     version_validator: Arc<dyn VersionValidator>,
-    content_type_service: Arc<ContentTypeDetectionService>,
+    content_type_service: Arc<ContentTypeDetectionUseCase>,
 }
 
 impl UploadArtifactUseCase {
@@ -39,7 +39,7 @@ impl UploadArtifactUseCase {
         event_publisher: Arc<dyn EventPublisher>,
         validator: Arc<dyn ArtifactValidator>,
         version_validator: Arc<dyn VersionValidator>,
-        content_type_service: Arc<ContentTypeDetectionService>,
+        content_type_service: Arc<ContentTypeDetectionUseCase>,
     ) -> Self {
         Self {
             repository,
@@ -75,6 +75,7 @@ impl UploadArtifactUseCase {
 
         // 0.1. Validación de versión (nueva)
         if let Err(e) = self.version_validator.validate_version(&command.coordinates.version).await {
+            let error_msg = e.clone();
             tracing::warn!(error = %e, "Version validation failed");
             // Publish event (non-blocking on publish failure)
             let event = ArtifactEvent::ArtifactValidationFailed(ArtifactValidationFailed {
@@ -85,7 +86,7 @@ impl UploadArtifactUseCase {
             if let Err(publish_error) = self.event_publisher.publish(&event).await {
                 tracing::error!(error = %publish_error, "Failed to publish ArtifactValidationFailed event");
             }
-            return Err(e);
+            return Err(UploadArtifactError::VersioningError(error_msg));
         }
 
         // 1. Calculate checksum
@@ -173,7 +174,7 @@ impl UploadArtifactUseCase {
             tracing::error!("OrganizationId creation error: {:?}", e);
             UploadArtifactError::RepositoryError(e.to_string())
         })?;
-        let repo_id = RepositoryId::new(&org_id, "default").map_err(|e| {
+        let repo_id = RepositoryId::new(org_id.as_str(), "default").map_err(|e| {
             tracing::error!("RepositoryId creation error: {:?}", e);
             UploadArtifactError::RepositoryError(e.to_string())
         })?;
@@ -262,6 +263,7 @@ impl UploadArtifactUseCase {
 
         // 0.1. Validación de versión (nueva)
         if let Err(e) = self.version_validator.validate_version(&command.coordinates.version).await {
+            let error_msg = e.clone();
             tracing::warn!(error = %e, "Version validation failed (temp file)");
             // Publish event (non-blocking on publish failure)
             let event = ArtifactEvent::ArtifactValidationFailed(ArtifactValidationFailed {
@@ -272,7 +274,7 @@ impl UploadArtifactUseCase {
             if let Err(publish_error) = self.event_publisher.publish(&event).await {
                 tracing::error!(error = %publish_error, "Failed to publish ArtifactValidationFailed event");
             }
-            return Err(UploadArtifactError::ValidationFailed(format!("Version validation failed: {}", e)));
+            return Err(UploadArtifactError::ValidationFailed(format!("Version validation failed: {}", error_msg)));
         }
 
         let content_hash_str = match precomputed_checksum {
@@ -367,7 +369,7 @@ impl UploadArtifactUseCase {
             tracing::error!("OrganizationId creation error: {:?}", e);
             UploadArtifactError::RepositoryError(e.to_string())
         })?;
-        let repo_id = RepositoryId::new(&org_id, "default").map_err(|e| {
+        let repo_id = RepositoryId::new(org_id.as_str(), "default").map_err(|e| {
             tracing::error!("RepositoryId creation error: {:?}", e);
             UploadArtifactError::RepositoryError(e.to_string())
         })?;

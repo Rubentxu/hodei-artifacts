@@ -22,4 +22,7 @@ pub enum UploadArtifactError {
 
     #[error("Validation failed: {0}")]
     ValidationFailed(String),
+
+    #[error("Versioning error: {0}")]
+    VersioningError(String),
 }

@@ -120,11 +120,11 @@ pub struct PackageInfo {
     /// ¿Es privado?
     pub private: Option<bool>,
     /// Configuración de publicación
-    pub publish_config: Option<PublishConfigInfo>,
+    publish_config: Option<PublishConfigInfo>,
     /// Dist-tags
     pub dist_tags: HashMap<String, String>,
     /// Tiempo de publicación
-    pub published_at: Option<String>,
+    published_at: Option<String>,
     /// Información de distribución
     pub dist: Option<DistInfo>,
 }

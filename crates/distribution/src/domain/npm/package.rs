@@ -213,7 +213,7 @@ pub struct NpmPackage {
     pub os: Vec<String>,
     pub cpu: Vec<String>,
     pub private: bool,
-    pub publish_config: Option<PublishConfigInfo>,
+    publish_config: Option<PublishConfigInfo>,
 }
 
 /// Información de bugs

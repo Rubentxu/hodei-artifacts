@@ -73,7 +73,7 @@ pub struct NpmPackageMetadataDto {
     /// ¿Es privado?
     pub private: Option<bool>,
     /// Configuración de publicación
-    pub publish_config: Option<PublishConfigDto>,
+    publish_config: Option<PublishConfigDto>,
     /// Dist-tags
     pub dist_tags: std::collections::HashMap<String, String>,
     /// Versiones disponibles

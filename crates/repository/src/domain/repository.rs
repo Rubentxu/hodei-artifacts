@@ -5,6 +5,7 @@ use shared::lifecycle::Lifecycle;
 use shared::enums::Ecosystem;
 use serde::{Serialize, Deserialize};
 use url::Url;
+use std::str::FromStr;
 
 /// Representa un contenedor para artefactos que define políticas de acceso y almacenamiento.
 /// Es el Agregado Raíz principal de este Bounded Context.
@@ -46,6 +47,17 @@ pub enum RepositoryConfig {
     Proxy(ProxyConfig),
     Virtual(VirtualConfig),
 }
+
+impl RepositoryConfig {
+    pub fn get_type(&self) -> RepositoryType {
+        match self {
+            RepositoryConfig::Hosted(_) => RepositoryType::Hosted,
+            RepositoryConfig::Proxy(_) => RepositoryType::Proxy,
+            RepositoryConfig::Virtual(_) => RepositoryType::Virtual,
+        }
+    }
+}
+
 
 /// Configuración para un repositorio de tipo `Hosted`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +112,31 @@ pub enum RepositoryType { Hosted, Proxy, Virtual }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeploymentPolicy { AllowSnapshots, BlockSnapshots, AllowRedeploy, BlockRedeploy }
 
+impl FromStr for DeploymentPolicy {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "AllowSnapshots" => Ok(DeploymentPolicy::AllowSnapshots),
+            "BlockSnapshots" => Ok(DeploymentPolicy::BlockSnapshots),
+            "AllowRedeploy" => Ok(DeploymentPolicy::AllowRedeploy),
+            "BlockRedeploy" => Ok(DeploymentPolicy::BlockRedeploy),
+            _ => Err(()),
+        }
+    }
+}
+
 /// La estrategia de resolución para un repositorio Virtual.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResolutionOrder { FirstFound }
 
+impl FromStr for ResolutionOrder {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "FirstFound" => Ok(ResolutionOrder::FirstFound),
+            _ => Err(()),
+        }
+    }
+}

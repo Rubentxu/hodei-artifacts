@@ -164,50 +164,43 @@ impl From<ResolutionOrderDto> for crate::domain::repository::ResolutionOrder {
     }
 }
 
-impl TryFrom<RepositoryConfigDto> for crate::domain::repository::RepositoryConfig {
-    type Error = crate::domain::RepositoryError;
-
-    fn try_from(dto: RepositoryConfigDto) -> Result<Self, Self::Error> {
+impl From<RepositoryConfigDto> for crate::domain::repository::RepositoryConfig {
+    fn from(dto: RepositoryConfigDto) -> Self {
         match dto {
             RepositoryConfigDto::Hosted(config) => {
-                Ok(crate::domain::repository::RepositoryConfig::Hosted(
+                crate::domain::repository::RepositoryConfig::Hosted(
                     crate::domain::repository::HostedConfig {
                         deployment_policy: config.deployment_policy.into(),
                     }
-                ))
+                )
             },
             RepositoryConfigDto::Proxy(config) => {
-                let remote_url = Url::parse(&config.remote_url)
-                    .map_err(|e| crate::domain::RepositoryError::InvalidConfiguration(
-                        format!("Invalid remote URL: {}", e)
-                    ))?;
+                let remote_url = Url::parse(&config.remote_url).unwrap();
                 
-                Ok(crate::domain::repository::RepositoryConfig::Proxy(
+                crate::domain::repository::RepositoryConfig::Proxy(
                     crate::domain::repository::ProxyConfig {
                         remote_url,
                         cache_settings: config.cache_settings.into(),
                         remote_authentication: config.remote_authentication.map(|auth| auth.into()),
                     }
-                ))
+                )
             },
             RepositoryConfigDto::Virtual(config) => {
                 let mut aggregated_repositories = Vec::new();
                 for repo_hrn in config.aggregated_repositories {
                     let repo_id = shared::hrn::RepositoryId::new(
-                        &shared::hrn::OrganizationId::new("system").unwrap(), // This will be replaced with actual org
+                        &shared::hrn::OrganizationId::new("system").unwrap().to_string(), // This will be replaced with actual org
                         &repo_hrn
-                    ).map_err(|e| crate::domain::RepositoryError::InvalidConfiguration(
-                        format!("Invalid repository HRN: {}", e)
-                    ))?;
+                    ).unwrap();
                     aggregated_repositories.push(repo_id);
                 }
                 
-                Ok(crate::domain::repository::RepositoryConfig::Virtual(
+                crate::domain::repository::RepositoryConfig::Virtual(
                     crate::domain::repository::VirtualConfig {
                         aggregated_repositories,
                         resolution_order: config.resolution_order.into(),
                     }
-                ))
+                )
             },
         }
     }

@@ -1,7 +1,7 @@
 // crates/iam/src/infrastructure/errors.rs
 
 use thiserror::Error;
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 use crate::domain::policy::PolicyStatus;
 
 /// Validation error details for policy content

@@ -31,7 +31,7 @@ pub struct NpmPackageVersion {
     pub dist: DistInfo,
     pub directories: Option<DirectoriesInfo>,
     pub files: Vec<String>,
-    pub publish_config: Option<HashMap<String, serde_json::Value>>,
+    publish_config: Option<HashMap<String, serde_json::Value>>,
     pub _has_shrinkwrap: Option<bool>,
 }
 

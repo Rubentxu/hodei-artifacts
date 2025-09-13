@@ -18,12 +18,22 @@ async fn test_execute_batch_success() {
 
     let commands = vec![
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test1.txt".to_string(),
             content_length: 100,
         },
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test2.txt".to_string(),
             content_length: 200,
         },
@@ -53,7 +63,12 @@ async fn test_execute_batch_partial_failure() {
 
     let commands = vec![
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test1.txt".to_string(),
             content_length: 100,
         },
@@ -79,7 +94,12 @@ async fn test_execute_batch_with_transaction_success() {
 
     let commands = vec![
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test1.txt".to_string(),
             content_length: 100,
         },
@@ -104,7 +124,12 @@ async fn test_execute_batch_with_transaction_failure() {
 
     let commands = vec![
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test1.txt".to_string(),
             content_length: 100,
         },
@@ -148,7 +173,12 @@ async fn test_execute_batch_timeout() {
 
     let commands = vec![
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test1.txt".to_string(),
             content_length: 100,
         },
@@ -172,7 +202,12 @@ async fn test_execute_batch_invalid_input() {
 
     let commands = vec![
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test1.txt".to_string(),
             content_length: 100,
         },
@@ -208,7 +243,12 @@ async fn test_should_rollback_on_critical_failure() {
 
     let commands = vec![
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test1.txt".to_string(),
             content_length: 100,
         },
@@ -244,7 +284,12 @@ async fn test_should_not_rollback_on_non_critical_failure() {
 
     let commands = vec![
         BatchUploadArtifactCommand {
-            coordinates: Default::default(),
+            coordinates: shared::models::PackageCoordinates {
+                namespace: Some("test-org".to_string()),
+                name: "test-package".to_string(),
+                version: "1.0.0".to_string(),
+                qualifiers: Default::default(),
+            },
             file_name: "test1.txt".to_string(),
             content_length: 100,
         },

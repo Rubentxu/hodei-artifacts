@@ -95,7 +95,7 @@ pub struct PackageMetadata {
     pub description: Option<String>,
     pub licenses: Vec<String>,
     pub dependencies: Vec<DependencyInfo>,
-    pub published_at: Option<String>,
+    published_at: Option<String>,
     pub download_url: Option<String>,
 }
 
@@ -112,7 +112,7 @@ pub struct DependencyInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionInfo {
     pub version: String,
-    pub published_at: String,
+    published_at: String,
     pub is_latest: bool,
     pub download_count: u64,
 }

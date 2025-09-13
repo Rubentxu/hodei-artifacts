@@ -167,7 +167,7 @@ pub enum IndexDocumentError {
 }
 
 /// Re-export the specific error types from the ports module for convenience
-pub use ports::{
+pub use super::ports::{
     IndexError,
     AnalysisError,
     TokenizationError,

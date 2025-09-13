@@ -3,7 +3,7 @@
 use crate::domain::policy::Policy;
 use crate::infrastructure::errors::IamError;
 use async_trait::async_trait;
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 
 /// Port for policy deletion operations specific to delete_policy feature
 #[async_trait]

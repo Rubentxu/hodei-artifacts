@@ -15,8 +15,9 @@ mod tests {
     use crate::features::upload_artifact::api::UploadArtifactEndpoint;
     use crate::features::upload_artifact::{
         use_case::UploadArtifactUseCase,
-        test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator, MockVersionValidator},
+        mocks::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator, MockVersionValidator},
     };
+    use crate::features::content_type_detection::{ContentTypeDetectionUseCase, mocks::MockContentTypeDetector};
 
     #[tokio::test]
     #[traced_test]
@@ -27,12 +28,17 @@ mod tests {
         let publisher = Arc::new(MockEventPublisher::new());
         let validator = Arc::new(MockArtifactValidator::new());
         
+        // Create mock content type detection service
+        let content_type_detector = Arc::new(MockContentTypeDetector::new());
+        let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
+        
         let use_case = UploadArtifactUseCase::new(
             repo.clone(), 
             storage.clone(), 
             publisher.clone(), 
             validator.clone(),
             Arc::new(MockVersionValidator::new()),
+            content_type_service,
         );
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
@@ -84,12 +90,17 @@ mod tests {
         let publisher = Arc::new(MockEventPublisher::new());
         let validator = Arc::new(MockArtifactValidator::new());
         
+        // Create mock content type detection service
+        let content_type_detector = Arc::new(MockContentTypeDetector::new());
+        let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
+        
         let use_case = UploadArtifactUseCase::new(
             repo.clone(), 
             storage.clone(), 
             publisher.clone(), 
             validator.clone(),
             Arc::new(MockVersionValidator::new()),
+            content_type_service,
         );
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
@@ -129,12 +140,17 @@ mod tests {
         let publisher = Arc::new(MockEventPublisher::new());
         let validator = Arc::new(MockArtifactValidator::new());
         
+        // Create mock content type detection service
+        let content_type_detector = Arc::new(MockContentTypeDetector::new());
+        let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
+        
         let use_case = UploadArtifactUseCase::new(
             repo.clone(), 
             storage.clone(), 
             publisher.clone(), 
             validator.clone(),
             Arc::new(MockVersionValidator::new()),
+            content_type_service,
         );
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
@@ -185,12 +201,17 @@ mod tests {
         let publisher = Arc::new(MockEventPublisher::new());
         let validator = Arc::new(MockArtifactValidator::new());
         
+        // Create mock content type detection service
+        let content_type_detector = Arc::new(MockContentTypeDetector::new());
+        let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
+        
         let use_case = UploadArtifactUseCase::new(
             repo.clone(), 
             storage.clone(), 
             publisher.clone(), 
             validator.clone(),
             Arc::new(MockVersionValidator::new()),
+            content_type_service,
         );
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
@@ -232,12 +253,17 @@ mod tests {
         let publisher = Arc::new(MockEventPublisher::new());
         let validator = Arc::new(MockArtifactValidator::new());
         
+        // Create mock content type detection service
+        let content_type_detector = Arc::new(MockContentTypeDetector::new());
+        let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
+        
         let use_case = UploadArtifactUseCase::new(
             repo.clone(), 
             storage.clone(), 
             publisher.clone(), 
             validator.clone(),
             Arc::new(MockVersionValidator::new()),
+            content_type_service,
         );
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
@@ -278,12 +304,17 @@ mod tests {
         *publisher.should_fail_publish.lock().unwrap() = true;
         let validator = Arc::new(MockArtifactValidator::new());
         
+        // Create mock content type detection service
+        let content_type_detector = Arc::new(MockContentTypeDetector::new());
+        let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
+        
         let use_case = UploadArtifactUseCase::new(
             repo.clone(), 
             storage.clone(), 
             publisher.clone(), 
             validator.clone(),
             Arc::new(MockVersionValidator::new()),
+            content_type_service,
         );
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 
@@ -322,12 +353,18 @@ mod tests {
         let storage = Arc::new(MockArtifactStorage::new());
         let publisher = Arc::new(MockEventPublisher::new());
         let validator = Arc::new(MockArtifactValidator::new());
+        
+        // Create mock content type detection service
+        let content_type_detector = Arc::new(MockContentTypeDetector::new());
+        let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
+        
         let use_case = UploadArtifactUseCase::new(
             repo.clone(), 
             storage.clone(), 
             publisher.clone(), 
             validator.clone(),
             Arc::new(MockVersionValidator::new()),
+            content_type_service,
         );
         let endpoint = UploadArtifactEndpoint::new(Arc::new(use_case));
 

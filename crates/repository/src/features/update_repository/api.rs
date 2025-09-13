@@ -71,7 +71,7 @@ impl UpdateRepositoryErrorResponse {
 
 /// Punto de entrada de la API para actualizar repositorios
 pub struct UpdateRepositoryEndpoint {
-    use_case: Arc<UpdateRepositoryUseCase>,
+    pub use_case: Arc<UpdateRepositoryUseCase>,
 }
 
 impl UpdateRepositoryEndpoint {
@@ -124,45 +124,7 @@ impl UpdateRepositoryEndpoint {
             RepositoryError::InvalidRepositoryName(message) => {
                 UpdateRepositoryErrorResponse::invalid_request(format!("Invalid repository name: {}", message))
             },
-            RepositoryError::DatabaseError(message) => {
-                UpdateRepositoryErrorResponse::internal_error(
-                    "Database operation failed".to_string(),
-                    Some(message)
-                )
-            },
-            RepositoryError::ValidationError(message) => {
-                UpdateRepositoryErrorResponse::invalid_request(message)
-            },
-            RepositoryError::ConfigurationError(message) => {
-                UpdateRepositoryErrorResponse::invalid_request(format!("Configuration error: {}", message))
-            },
-            RepositoryError::OrganizationNotFound(org_id) => {
-                UpdateRepositoryErrorResponse::not_found(format!("Organization '{}' not found", org_id))
-            },
-            RepositoryError::StorageBackendNotFound(backend) => {
-                UpdateRepositoryErrorResponse::not_found(format!("Storage backend '{}' not found", backend))
-            },
-            RepositoryError::ReferencedRepositoryNotFound(repo_id) => {
-                UpdateRepositoryErrorResponse::not_found(format!("Referenced repository '{}' not found", repo_id))
-            },
-            RepositoryError::RepositoryAlreadyExists(name) => {
-                UpdateRepositoryErrorResponse::conflict(
-                    format!("Repository '{}' already exists", name)
-                )
-            },
-            RepositoryError::RepositoryTypeMismatch { expected, actual } => {
-                UpdateRepositoryErrorResponse::invalid_request(
-                    format!("Repository type mismatch: expected {}, got {}", expected, actual)
-                )
-            },
-            RepositoryError::InvalidConfiguration(message) => {
-                UpdateRepositoryErrorResponse::invalid_request(format!("Invalid configuration: {}", message))
-            },
-            RepositoryError::RepositoryNotEmpty(repo_id) => {
-                UpdateRepositoryErrorResponse::conflict(
-                    format!("Repository '{}' is not empty", repo_id)
-                )
-            },
+            _ => UpdateRepositoryErrorResponse::internal_error("An unexpected error occurred".to_string(), Some(error.to_string())),
         }
     }
 }

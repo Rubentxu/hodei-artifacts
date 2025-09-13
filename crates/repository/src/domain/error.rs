@@ -1,6 +1,7 @@
+
 // crates/repository/src/domain/error.rs
 
-use shared::hrn::{RepositoryId, OrganizationId};
+use shared::hrn::HrnError;
 use thiserror::Error;
 
 /// Errores específicos del dominio de Repository
@@ -21,8 +22,8 @@ pub enum RepositoryError {
     #[error("Invalid repository configuration: {0}")]
     InvalidConfiguration(String),
     
-    #[error("Repository type mismatch: expected {expected}, got {actual}")]
-    RepositoryTypeMismatch { expected: String, actual: String },
+    #[error("Repository type mismatch")]
+    RepositoryTypeMismatch,
     
     #[error("Referenced repository not found: {0}")]
     ReferencedRepositoryNotFound(String),
@@ -44,7 +45,36 @@ pub enum RepositoryError {
     
     #[error("Configuration error: {0}")]
     ConfigurationError(String),
+
+    #[error("HRN error: {0}")]
+    HrnError(String),
 }
+
+impl From<HrnError> for RepositoryError {
+    fn from(err: HrnError) -> Self {
+        RepositoryError::HrnError(err.to_string())
+    }
+}
+
+impl From<mongodb::error::Error> for RepositoryError {
+    fn from(err: mongodb::error::Error) -> Self {
+        RepositoryError::DatabaseError(err.to_string())
+    }
+}
+
+impl From<mongodb::bson::document::ValueAccessError> for RepositoryError {
+    fn from(err: mongodb::bson::document::ValueAccessError) -> Self {
+        RepositoryError::DatabaseError(err.to_string())
+    }
+}
+
+impl From<url::ParseError> for RepositoryError {
+    fn from(err: url::ParseError) -> Self {
+        RepositoryError::InvalidConfiguration(err.to_string())
+    }
+}
+
+
 
 /// Result type para operaciones de Repository
 pub type RepositoryResult<T> = Result<T, RepositoryError>;

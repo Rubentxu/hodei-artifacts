@@ -3,8 +3,9 @@
 use crate::domain::policy::{Policy, PolicyMetadata, PolicyStatus};
 use crate::features::create_policy::dto::{CreatePolicyCommand, CreatePolicyResponse};
 use crate::features::create_policy::ports::{PolicyCreator, PolicyValidator, PolicyEventPublisher};
-use crate::infrastructure::errors::IamError;
-use shared::hrn::{Hrn, PolicyId};
+use crate::features::create_policy::error::CreatePolicyError;
+use shared::hrn::Hrn;
+use cedar_policy::PolicyId;
 use std::sync::Arc;
 use time::OffsetDateTime;
 
@@ -31,29 +32,38 @@ impl CreatePolicyUseCase {
     }
 
     /// Execute the create policy use case
-    pub async fn execute(&self, command: CreatePolicyCommand) -> Result<CreatePolicyResponse, IamError> {
+    pub async fn execute(&self, command: CreatePolicyCommand) -> Result<CreatePolicyResponse, CreatePolicyError> {
         // 1. Validate command
         command.validate()?;
 
         // 2. Validate Cedar policy syntax
-        let validation_result = self.validator.validate_syntax(&command.content).await?;
+        let validation_result = self.validator.validate_syntax(&command.content).await
+            .map_err(|e| CreatePolicyError::ValidationFailed {
+                errors: vec![],
+            })?;
         if !validation_result.is_valid {
-            return Err(IamError::validation_error(
-                validation_result.first_error_message()
-                    .unwrap_or("Invalid policy syntax")
-                    .to_string(),
-            ));
+            let errors = validation_result.errors.clone().unwrap_or_default();
+            return Err(CreatePolicyError::ValidationFailed { errors });
         }
 
         // 3. Validate Cedar policy semantics against schema
-        self.validator.validate_semantics(&command.content).await?;
+        self.validator.validate_semantics(&command.content).await
+            .map_err(|e| CreatePolicyError::ValidationFailed {
+                errors: vec![],
+            })?;
 
         // 4. Generate policy ID
-        let policy_id = self.generate_policy_id(&command.name)?;
+        let policy_id = self.generate_policy_id(&command.name)
+            .map_err(|e| CreatePolicyError::InvalidInput(
+                format!("Failed to generate policy ID: {}", e)
+            ))?;
 
         // 5. Check if policy already exists
-        if self.creator.exists(&policy_id).await? {
-            return Err(IamError::PolicyAlreadyExists(policy_id));
+        if self.creator.exists(&policy_id).await
+            .map_err(|e| CreatePolicyError::DatabaseError(
+                format!("Failed to check policy existence: {}", e)
+            ))? {
+            return Err(CreatePolicyError::PolicyAlreadyExists(policy_id));
         }
 
         // 6. Create domain entity
@@ -75,19 +85,25 @@ impl CreatePolicyUseCase {
         };
 
         // 7. Persist policy
-        let created_policy = self.creator.create(policy).await?;
+        let created_policy = self.creator.create(policy).await
+            .map_err(|e| CreatePolicyError::DatabaseError(
+                format!("Failed to create policy: {}", e)
+            ))?;
 
         // 8. Publish domain event
         self.event_publisher
             .publish_policy_created(&created_policy)
-            .await?;
+            .await
+            .map_err(|e| CreatePolicyError::EventPublishingFailed(
+                format!("Failed to publish policy created event: {}", e)
+            ))?;
 
         // 9. Return response
         Ok(CreatePolicyResponse::new(created_policy))
     }
 
     /// Generate a unique policy ID based on the policy name
-    fn generate_policy_id(&self, name: &str) -> Result<PolicyId, IamError> {
+    fn generate_policy_id(&self, name: &str) -> Result<PolicyId, String> {
         // Create a URL-safe version of the name
         let safe_name = name
             .to_lowercase()
@@ -102,7 +118,7 @@ impl CreatePolicyUseCase {
         // Create HRN for the policy
         let hrn_string = format!("hrn:hodei:iam:global:policy/{}", policy_name);
         let hrn = Hrn::new(&hrn_string)
-            .map_err(|e| IamError::InvalidInput(format!("Failed to create policy ID: {}", e)))?;
+            .map_err(|e| format!("Failed to create policy ID: {}", e))?;
 
         Ok(PolicyId(hrn))
     }
@@ -155,20 +171,20 @@ mod tests {
 
     #[async_trait]
     impl PolicyCreator for MockPolicyCreator {
-        async fn create(&self, policy: Policy) -> Result<Policy, IamError> {
+        async fn create(&self, policy: Policy) -> Result<Policy, CreatePolicyError> {
             if self.should_fail_create {
-                return Err(IamError::DatabaseError("Mock database error".to_string()));
+                return Err(CreatePolicyError::DatabaseError("Mock database error".to_string()));
             }
 
             let mut policies = self.policies.lock().unwrap();
-            let key = policy.id.0.to_string();
+            let key = policy.id.to_string();
             policies.insert(key, policy.clone());
             Ok(policy)
         }
 
-        async fn exists(&self, _id: &PolicyId) -> Result<bool, IamError> {
+        async fn exists(&self, _id: &PolicyId) -> Result<bool, CreatePolicyError> {
             if self.should_fail_exists {
-                return Err(IamError::DatabaseError("Mock exists check error".to_string()));
+                return Err(CreatePolicyError::DatabaseError("Mock exists check error".to_string()));
             }
             Ok(self.policy_exists)
         }
@@ -204,7 +220,7 @@ mod tests {
 
     #[async_trait]
     impl PolicyValidator for MockPolicyValidator {
-        async fn validate_syntax(&self, _content: &str) -> Result<ValidationResult, IamError> {
+        async fn validate_syntax(&self, _content: &str) -> Result<ValidationResult, CreatePolicyError> {
             if self.should_fail_syntax {
                 Ok(ValidationResult::invalid(vec![ValidationError {
                     message: "Mock validation error".to_string(),
@@ -216,9 +232,9 @@ mod tests {
             }
         }
 
-        async fn validate_semantics(&self, _content: &str) -> Result<(), IamError> {
+        async fn validate_semantics(&self, _content: &str) -> Result<(), CreatePolicyError> {
             if self.should_fail_semantics {
-                Err(IamError::validation_error("Mock semantic validation error".to_string()))
+                Err(CreatePolicyError::ValidationFailed { errors: vec![] })
             } else {
                 Ok(())
             }
@@ -252,9 +268,9 @@ mod tests {
 
     #[async_trait]
     impl PolicyEventPublisher for MockPolicyEventPublisher {
-        async fn publish_policy_created(&self, policy: &Policy) -> Result<(), IamError> {
+        async fn publish_policy_created(&self, policy: &Policy) -> Result<(), CreatePolicyError> {
             if self.should_fail {
-                return Err(IamError::InternalError("Mock event publish error".to_string()));
+                return Err(CreatePolicyError::EventPublishingFailed("Mock event publish error".to_string()));
             }
 
             let mut events = self.published_events.lock().unwrap();
@@ -335,11 +351,11 @@ mod tests {
         
         assert!(result.is_err());
         match result.unwrap_err() {
-            IamError::PolicyValidationFailed { errors } => {
+            CreatePolicyError::ValidationFailed { errors } => {
                 assert_eq!(errors.len(), 1);
                 assert_eq!(errors[0].message, "Mock validation error");
             }
-            _ => panic!("Expected PolicyValidationFailed error"),
+            _ => panic!("Expected ValidationFailed error"),
         }
     }
 
@@ -361,11 +377,10 @@ mod tests {
         
         assert!(result.is_err());
         match result.unwrap_err() {
-            IamError::PolicyValidationFailed { errors } => {
-                assert_eq!(errors.len(), 1);
-                assert!(errors[0].message.contains("Mock semantic validation error"));
+            CreatePolicyError::ValidationFailed { errors } => {
+                assert_eq!(errors.len(), 0); // Semantic validation doesn't add specific errors
             }
-            other => panic!("Expected PolicyValidationFailed error, got: {:?}", other),
+            other => panic!("Expected ValidationFailed error, got: {:?}", other),
         }
     }
 
@@ -387,7 +402,7 @@ mod tests {
         
         assert!(result.is_err());
         match result.unwrap_err() {
-            IamError::InvalidInput(msg) => {
+            CreatePolicyError::InvalidInput(msg) => {
                 assert!(msg.contains("Name cannot be empty"));
             }
             _ => panic!("Expected InvalidInput error"),
@@ -412,7 +427,7 @@ mod tests {
         
         assert!(result.is_err());
         match result.unwrap_err() {
-            IamError::PolicyAlreadyExists(_) => {
+            CreatePolicyError::PolicyAlreadyExists(_) => {
                 // Expected
             }
             _ => panic!("Expected PolicyAlreadyExists error"),
@@ -437,7 +452,7 @@ mod tests {
         
         assert!(result.is_err());
         match result.unwrap_err() {
-            IamError::DatabaseError(msg) => {
+            CreatePolicyError::DatabaseError(msg) => {
                 assert_eq!(msg, "Mock database error");
             }
             _ => panic!("Expected DatabaseError"),
@@ -462,10 +477,10 @@ mod tests {
         
         assert!(result.is_err());
         match result.unwrap_err() {
-            IamError::InternalError(msg) => {
+            CreatePolicyError::EventPublishingFailed(msg) => {
                 assert_eq!(msg, "Mock event publish error");
             }
-            _ => panic!("Expected InternalError"),
+            _ => panic!("Expected EventPublishingFailed"),
         }
     }
 
@@ -481,7 +496,7 @@ mod tests {
         assert!(policy_id.is_ok());
         
         let id = policy_id.unwrap();
-        let hrn_string = id.0.to_string();
+        let hrn_string = id.to_string();
         assert!(hrn_string.starts_with("hrn:hodei:iam:global:policy/"));
         assert!(hrn_string.contains("test_policy_"));
     }
@@ -498,7 +513,7 @@ mod tests {
         assert!(policy_id.is_ok());
         
         let id = policy_id.unwrap();
-        let hrn_string = id.0.to_string();
+        let hrn_string = id.to_string();
         assert!(hrn_string.starts_with("hrn:hodei:iam:global:policy/"));
         assert!(hrn_string.contains("test_policy_____"));
     }

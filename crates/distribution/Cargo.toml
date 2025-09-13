@@ -4,3 +4,24 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+uuid = { workspace = true }
+anyhow = "1.0"
+futures = "0.3"
+async-trait = { workspace = true }
+bytes = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tracing = { workspace = true }
+redis = { workspace = true }
+chrono = { workspace = true }
+
+# Workspace dependencies
+shared = { path = "../shared" }
+repository = { path = "../repository" }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+tracing-test = { workspace = true }

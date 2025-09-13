@@ -8,7 +8,7 @@ use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
 use crate::infrastructure::events::policy_event_publisher::SimplePolicyEventPublisher;
 use async_trait::async_trait;
 use mongodb::{bson::doc, Collection, Database};
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 use std::sync::Arc;
 
 
@@ -93,7 +93,7 @@ impl UpdatePolicyAdapter {
 #[async_trait]
 impl PolicyUpdater for UpdatePolicyAdapter {
     async fn get_by_id(&self, id: &PolicyId) -> Result<Option<Policy>, IamError> {
-        let filter = doc! { "_id": id.0.to_string() };
+        let filter = doc! { "_id": id.to_string() };
         
         self.collection
             .find_one(filter)
@@ -102,7 +102,7 @@ impl PolicyUpdater for UpdatePolicyAdapter {
     }
 
     async fn update(&self, policy: Policy) -> Result<Policy, IamError> {
-        let filter = doc! { "_id": policy.id.0.to_string() };
+        let filter = doc! { "_id": policy.id.to_string() };
 
         let result = self
             .collection
@@ -118,7 +118,7 @@ impl PolicyUpdater for UpdatePolicyAdapter {
     }
 
     async fn exists(&self, id: &PolicyId) -> Result<bool, IamError> {
-        let filter = doc! { "_id": id.0.to_string() };
+        let filter = doc! { "_id": id.to_string() };
         let count = self.collection
             .count_documents(filter)
             .await

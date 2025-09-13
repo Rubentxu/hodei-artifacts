@@ -1,7 +1,7 @@
-//! Infrastructure module for distribution crate
 
-pub mod config;
-pub mod errors;
+//! Distribution infrastructure module
+
+pub mod api;
 
 // Re-export commonly used infrastructure types
 pub use config::{DistributionConfig, S3Config, MongoDbConfig, RedisConfig, CedarConfig};

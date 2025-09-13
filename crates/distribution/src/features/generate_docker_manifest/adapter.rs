@@ -428,4 +428,177 @@ impl DockerManifestCache for RedisDockerManifestCache {
                             repository = repository_name,
                             tag = tag,
                             media_type = media_type,
-                            error =
+                            error = %e,
+                            "Failed to cache Docker manifest"
+                        );
+                        Err(DockerCacheError::CacheError(e.to_string()))
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    repository = repository_name,
+                    tag = tag,
+                    media_type = media_type,
+                    error = %e,
+                    "Failed to serialize Docker manifest for caching"
+                );
+                Err(DockerCacheError::SerializationError(e.to_string()))
+            }
+        }
+    }
+
+    /// Invalidar el caché para un manifest específico
+    #[instrument(skip(self))]
+    async fn invalidate_cache(
+        &self,
+        repository_name: &str,
+        tag: &str,
+        media_type: &str,
+    ) -> Result<(), DockerCacheError> {
+        let cache_key = self.generate_cache_key(repository_name, tag, media_type);
+        
+        match self.redis_client.delete(&cache_key).await {
+            Ok(_) => {
+                info!(
+                    repository = repository_name,
+                    tag = tag,
+                    media_type = media_type,
+                    "Successfully invalidated Docker manifest cache"
+                );
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    repository = repository_name,
+                    tag = tag,
+                    media_type = media_type,
+                    error = %e,
+                    "Failed to invalidate Docker manifest cache"
+                );
+                Err(DockerCacheError::CacheError(e.to_string()))
+            }
+        }
+    }
+
+    /// Limpiar el caché para todos los manifests de un repositorio
+    #[instrument(skip(self))]
+    async fn clear_repository_cache(
+        &self,
+        repository_name: &str,
+    ) -> Result<usize, DockerCacheError> {
+        let pattern = format!("docker:manifest:{}:*", repository_name);
+        
+        match self.redis_client.delete_keys(&pattern).await {
+            Ok(count) => {
+                info!(
+                    repository = repository_name,
+                    cleared_keys = count,
+                    "Successfully cleared repository Docker manifest cache"
+                );
+                Ok(count)
+            }
+            Err(e) => {
+                error!(
+                    repository = repository_name,
+                    error = %e,
+                    "Failed to clear repository Docker manifest cache"
+                );
+                Err(DockerCacheError::CacheError(e.to_string()))
+            }
+        }
+    }
+}
+
+/// Caché en memoria para manifests Docker (fallback para desarrollo/testing)
+#[derive(Debug, Default)]
+pub struct InMemoryDockerManifestCache {
+    cache: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, CachedDockerManifest>>>,
+}
+
+impl InMemoryDockerManifestCache {
+    pub fn new() -> Self {
+        Self {
+            cache: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        }
+    }
+
+    fn generate_cache_key(&self, repository_name: &str, tag: &str, media_type: &str) -> String {
+        format!("docker:manifest:{}:{}:{}", repository_name, tag, media_type)
+    }
+}
+
+#[async_trait]
+impl DockerManifestCache for InMemoryDockerManifestCache {
+    #[instrument(skip(self))]
+    async fn get_cached_manifest(
+        &self,
+        repository_name: &str,
+        tag: &str,
+        media_type: &str,
+    ) -> Result<Option<CachedDockerManifest>, DockerCacheError> {
+        let cache_key = self.generate_cache_key(repository_name, tag, media_type);
+        let cache = self.cache.read().await;
+        
+        Ok(cache.get(&cache_key).cloned())
+    }
+
+    #[instrument(skip(self))]
+    async fn cache_manifest(
+        &self,
+        repository_name: &str,
+        tag: &str,
+        manifest: &DockerManifestDto,
+        digest: &str,
+        media_type: &str,
+    ) -> Result<(), DockerCacheError> {
+        let cache_key = self.generate_cache_key(repository_name, tag, media_type);
+        let cached_manifest = CachedDockerManifest {
+            manifest: manifest.clone(),
+            digest: digest.to_string(),
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            media_type: media_type.to_string(),
+        };
+        
+        let mut cache = self.cache.write().await;
+        cache.insert(cache_key, cached_manifest);
+        
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn invalidate_cache(
+        &self,
+        repository_name: &str,
+        tag: &str,
+        media_type: &str,
+    ) -> Result<(), DockerCacheError> {
+        let cache_key = self.generate_cache_key(repository_name, tag, media_type);
+        let mut cache = self.cache.write().await;
+        cache.remove(&cache_key);
+        
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    async fn clear_repository_cache(
+        &self,
+        repository_name: &str,
+    ) -> Result<usize, DockerCacheError> {
+        let pattern = format!("docker:manifest:{}:*", repository_name);
+        let mut cache = self.cache.write().await;
+        
+        let keys_to_remove: Vec<String> = cache
+            .keys()
+            .filter(|key| key.starts_with(&pattern))
+            .cloned()
+            .collect();
+        
+        let count = keys_to_remove.len();
+        for key in keys_to_remove {
+            cache.remove(&key);
+        }
+        
+        Ok(count)
+    }
+}

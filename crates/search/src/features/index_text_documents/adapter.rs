@@ -16,9 +16,9 @@ use tantivy::{
 use tracing::{debug, info, error, warn};
 use serde_json;
 
-use ports::*;
-use dto::*;
-use error::{IndexDocumentError, ToIndexDocumentError};
+use super::ports::*;
+use super::dto::*;
+use super::error::{IndexDocumentError, ToIndexDocumentError};
 
 /// Tantivy-based document indexer adapter
 pub struct TantivyDocumentIndexer {

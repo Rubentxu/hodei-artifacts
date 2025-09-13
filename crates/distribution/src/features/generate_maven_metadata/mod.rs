@@ -33,12 +33,12 @@ pub use api::GenerateMavenMetadataApi;
 pub use di::GenerateMavenMetadataDIContainer;
 
 // Módulos internos
-mod dto;
-mod ports;
-mod use_case;
-mod api;
-mod adapter;
-mod di;
+pub mod dto;
+pub mod ports;
+pub mod use_case;
+pub mod api;
+pub mod adapter;
+pub mod di;
 
 #[cfg(test)]
 mod tests {

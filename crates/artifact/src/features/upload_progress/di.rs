@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::{
     ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier},
-    service::UploadProgressService,
+    use_case::UploadProgressUseCase,
     api::UploadProgressApi,
     ProgressResult, UploadProgress, UpdateProgressCommand,
 };
@@ -11,7 +11,7 @@ use crate::features::upload_progress::ProgressError;
 /// Contenedor de inyección de dependencias para la feature de progress tracking
 pub struct UploadProgressDIContainer {
     pub api: UploadProgressApi,
-    pub service: UploadProgressService,
+    pub use_case: UploadProgressUseCase,
 }
 
 impl UploadProgressDIContainer {
@@ -21,10 +21,10 @@ impl UploadProgressDIContainer {
         event_publisher: Arc<dyn ProgressEventPublisher>,
         realtime_notifier: Arc<dyn RealtimeNotifier>,
     ) -> Self {
-        let service = UploadProgressService::new(storage, event_publisher, realtime_notifier);
-        let api = UploadProgressApi::new(service.clone());
+        let use_case = UploadProgressUseCase::new(storage, event_publisher, realtime_notifier);
+        let api = UploadProgressApi::new(use_case.clone());
         
-        Self { api, service }
+        Self { api, use_case }
     }
 
     /// Método de conveniencia para producción con implementaciones reales
@@ -49,7 +49,7 @@ impl UploadProgressDIContainer {
     /// Método de conveniencia para testing
     #[cfg(test)]
     pub fn for_testing() -> Self {
-        use crate::features::upload_progress::adapter::test::{MockProgressStorage, MockEventPublisher, MockRealtimeNotifier};
+        use super::mocks::{MockProgressStorage, MockEventPublisher, MockRealtimeNotifier};
         
         let storage: Arc<dyn ProgressStorage> = 
             Arc::new(MockProgressStorage::default());

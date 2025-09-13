@@ -1,11 +1,11 @@
 // crates/repository/src/features/update_repository/mod.rs
 
-mod dto;
-mod ports;
-mod use_case;
-mod adapter;
-mod api;
-mod di;
+pub mod dto;
+pub mod ports;
+pub mod use_case;
+
+pub mod api;
+pub mod di;
 
 // Tests unitarios
 #[cfg(test)]

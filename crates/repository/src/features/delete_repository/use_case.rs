@@ -14,10 +14,10 @@ use super::ports::{
 
 /// Caso de uso para eliminar un repositorio
 pub struct DeleteRepositoryUseCase {
-    repository_deleter_port: Arc<dyn RepositoryDeleterPort>,
-    authorization_port: Arc<dyn RepositoryDeleteAuthorizationPort>,
-    artifact_deleter_port: Arc<dyn ArtifactDeleterPort>,
-    event_publisher_port: Arc<dyn RepositoryDeleteEventPublisherPort>,
+    pub repository_deleter_port: Arc<dyn RepositoryDeleterPort>,
+    pub authorization_port: Arc<dyn RepositoryDeleteAuthorizationPort>,
+    pub artifact_deleter_port: Arc<dyn ArtifactDeleterPort>,
+    pub event_publisher_port: Arc<dyn RepositoryDeleteEventPublisherPort>,
 }
 
 impl DeleteRepositoryUseCase {

@@ -5,8 +5,8 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use dto::*;
-use error::*;
+use super::dto::*;
+use super::error::*;
 
 /// Port for full-text search operations
 /// 

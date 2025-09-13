@@ -1,18 +1,61 @@
+
 // crates/repository/src/features/delete_repository/di.rs
 
 use std::sync::Arc;
 use mongodb::Database;
 
+use crate::infrastructure::mongodb_adapter::MongoDbRepositoryAdapter;
 use super::ports::{
     RepositoryDeleterPort, RepositoryDeleteAuthorizationPort, ArtifactDeleterPort,
     RepositoryDeleteEventPublisherPort
 };
 use super::use_case::DeleteRepositoryUseCase;
 use super::api::DeleteRepositoryEndpoint;
-use super::adapter::{
-    MongoDbRepositoryDeleterAdapter, RepositoryDeleteAuthorizationAdapter,
-    ArtifactDeleterAdapter, RepositoryDeleteEventPublisherAdapter
-};
+
+// Mock implementations for ports that are not yet fully implemented
+
+pub struct RepositoryDeleteAuthorizationAdapter;
+
+impl RepositoryDeleteAuthorizationAdapter {
+    pub fn new() -> Self { Self }
+}
+
+#[async_trait::async_trait]
+impl RepositoryDeleteAuthorizationPort for RepositoryDeleteAuthorizationAdapter {
+    async fn can_delete_repository(&self, _user_id: &shared::hrn::UserId, _repository_id: &shared::hrn::RepositoryId) -> crate::domain::RepositoryResult<bool> {
+        Ok(true) // Default to authorized for now
+    }
+}
+
+pub struct ArtifactDeleterAdapter;
+
+impl ArtifactDeleterAdapter {
+    pub fn new() -> Self { Self }
+}
+
+#[async_trait::async_trait]
+impl ArtifactDeleterPort for ArtifactDeleterAdapter {
+    async fn delete_repository_artifacts(&self, _repository_id: &shared::hrn::RepositoryId) -> crate::domain::RepositoryResult<u64> {
+        Ok(0)
+    }
+    async fn count_repository_artifacts(&self, _repository_id: &shared::hrn::RepositoryId) -> crate::domain::RepositoryResult<u64> {
+        Ok(0)
+    }
+}
+
+pub struct RepositoryDeleteEventPublisherAdapter;
+
+impl RepositoryDeleteEventPublisherAdapter {
+    pub fn new() -> Self { Self }
+}
+
+#[async_trait::async_trait]
+impl RepositoryDeleteEventPublisherPort for RepositoryDeleteEventPublisherAdapter {
+    async fn publish_repository_deleted(&self, _repository_id: &shared::hrn::RepositoryId, _deleted_by: &shared::hrn::UserId, _artifact_count: u64, _total_size_bytes: u64) -> crate::domain::RepositoryResult<()> {
+        Ok(())
+    }
+}
+
 
 /// Contenedor de inyección de dependencias para la feature delete_repository
 pub struct DeleteRepositoryDIContainer {
@@ -20,15 +63,16 @@ pub struct DeleteRepositoryDIContainer {
 }
 
 impl DeleteRepositoryDIContainer {
-    /// Constructor flexible que acepta cualquier implementación de los ports
     pub fn new(
-        repository_deleter_port: Arc<dyn RepositoryDeleterPort>,
+        db: Database,
         authorization_port: Arc<dyn RepositoryDeleteAuthorizationPort>,
         artifact_deleter_port: Arc<dyn ArtifactDeleterPort>,
         event_publisher_port: Arc<dyn RepositoryDeleteEventPublisherPort>,
     ) -> Self {
+        let mongo_adapter = Arc::new(MongoDbRepositoryAdapter::new(db));
+        
         let use_case = Arc::new(DeleteRepositoryUseCase::new(
-            repository_deleter_port,
+            mongo_adapter,
             authorization_port,
             artifact_deleter_port,
             event_publisher_port,
@@ -39,11 +83,7 @@ impl DeleteRepositoryDIContainer {
         Self { endpoint }
     }
 
-    /// Constructor para producción con implementaciones MongoDB
     pub fn for_production(db: Database) -> Self {
-        let deleter_adapter: Arc<dyn RepositoryDeleterPort> = 
-            Arc::new(MongoDbRepositoryDeleterAdapter::new(db.clone()));
-        
         let authorization_adapter: Arc<dyn RepositoryDeleteAuthorizationPort> = 
             Arc::new(RepositoryDeleteAuthorizationAdapter::new());
         
@@ -54,35 +94,22 @@ impl DeleteRepositoryDIContainer {
             Arc::new(RepositoryDeleteEventPublisherAdapter::new());
 
         Self::new(
-            deleter_adapter,
+            db,
             authorization_adapter,
             artifact_deleter_adapter,
             event_publisher_adapter,
         )
     }
 
-    /// Constructor para testing con mocks
     #[cfg(test)]
-    pub fn for_testing() -> Self {
-        use super::test_adapter::{
-            MockRepositoryDeleterPort, MockRepositoryDeleteAuthorizationPort,
-            MockArtifactDeleterPort, MockRepositoryDeleteEventPublisherPort
-        };
-
-        let deleter_port: Arc<dyn RepositoryDeleterPort> = 
-            Arc::new(MockRepositoryDeleterPort::new());
-        
-        let authorization_port: Arc<dyn RepositoryDeleteAuthorizationPort> = 
-            Arc::new(MockRepositoryDeleteAuthorizationPort::new());
-        
-        let artifact_deleter_port: Arc<dyn ArtifactDeleterPort> = 
-            Arc::new(MockArtifactDeleterPort::new());
-        
-        let event_publisher_port: Arc<dyn RepositoryDeleteEventPublisherPort> = 
-            Arc::new(MockRepositoryDeleteEventPublisherPort::new());
+    pub async fn for_testing() -> Self {
+        let db = crate::infrastructure::tests::setup_test_database().await.unwrap();
+        let authorization_port = Arc::new(test_adapter::MockRepositoryDeleteAuthorizationPort::new());
+        let artifact_deleter_port = Arc::new(test_adapter::MockArtifactDeleterPort::new());
+        let event_publisher_port = Arc::new(test_adapter::MockRepositoryDeleteEventPublisherPort::new());
 
         Self::new(
-            deleter_port,
+            db,
             authorization_port,
             artifact_deleter_port,
             event_publisher_port,
@@ -90,7 +117,6 @@ impl DeleteRepositoryDIContainer {
     }
 }
 
-/// Adaptadores de prueba para testing
 #[cfg(test)]
 pub mod test_adapter {
     use std::sync::Mutex;
@@ -100,83 +126,13 @@ pub mod test_adapter {
     use crate::domain::repository::Repository;
     use super::super::ports::*;
 
-    /// Mock para RepositoryDeleterPort
-    pub struct MockRepositoryDeleterPort {
-        pub should_fail: Mutex<bool>,
-        pub should_return_none: Mutex<bool>,
-        pub mock_repository: Mutex<Option<Repository>>,
-        pub is_empty: Mutex<bool>,
-    }
-
-    impl MockRepositoryDeleterPort {
-        pub fn new() -> Self {
-            Self {
-                should_fail: Mutex::new(false),
-                should_return_none: Mutex::new(false),
-                mock_repository: Mutex::new(None),
-                is_empty: Mutex::new(true),
-            }
-        }
-
-        pub fn with_repository(repository: Repository) -> Self {
-            Self {
-                should_fail: Mutex::new(false),
-                should_return_none: Mutex::new(false),
-                mock_repository: Mutex::new(Some(repository)),
-                is_empty: Mutex::new(true),
-            }
-        }
-
-        pub fn with_non_empty_repository(repository: Repository) -> Self {
-            Self {
-                should_fail: Mutex::new(false),
-                should_return_none: Mutex::new(false),
-                mock_repository: Mutex::new(Some(repository)),
-                is_empty: Mutex::new(false),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl RepositoryDeleterPort for MockRepositoryDeleterPort {
-        async fn delete_repository(&self, repository_id: &RepositoryId) -> RepositoryResult<()> {
-            if *self.should_fail.lock().unwrap() {
-                return Err(RepositoryError::DatabaseError("Mock database error".to_string()));
-            }
-            Ok(())
-        }
-
-        async fn get_repository_for_deletion(&self, _repository_id: &RepositoryId) -> RepositoryResult<Option<Repository>> {
-            if *self.should_fail.lock().unwrap() {
-                return Err(RepositoryError::DatabaseError("Mock database error".to_string()));
-            }
-            
-            if *self.should_return_none.lock().unwrap() {
-                return Ok(None);
-            }
-            
-            Ok(self.mock_repository.lock().unwrap().clone())
-        }
-
-        async fn is_repository_empty(&self, _repository_id: &RepositoryId) -> RepositoryResult<bool> {
-            if *self.should_fail.lock().unwrap() {
-                return Err(RepositoryError::DatabaseError("Mock database error".to_string()));
-            }
-            
-            Ok(*self.is_empty.lock().unwrap())
-        }
-    }
-
-    /// Mock para RepositoryDeleteAuthorizationPort
     pub struct MockRepositoryDeleteAuthorizationPort {
         pub should_authorize: Mutex<bool>,
     }
 
     impl MockRepositoryDeleteAuthorizationPort {
         pub fn new() -> Self {
-            Self {
-                should_authorize: Mutex::new(true),
-            }
+            Self { should_authorize: Mutex::new(true) }
         }
     }
 
@@ -187,71 +143,27 @@ pub mod test_adapter {
         }
     }
 
-    /// Mock para ArtifactDeleterPort
-    pub struct MockArtifactDeleterPort {
-        pub artifact_count: Mutex<u64>,
-        pub should_fail: Mutex<bool>,
-    }
+    pub struct MockArtifactDeleterPort;
 
     impl MockArtifactDeleterPort {
-        pub fn new() -> Self {
-            Self {
-                artifact_count: Mutex::new(0),
-                should_fail: Mutex::new(false),
-            }
-        }
-
-        pub fn with_artifacts(count: u64) -> Self {
-            Self {
-                artifact_count: Mutex::new(count),
-                should_fail: Mutex::new(false),
-            }
-        }
+        pub fn new() -> Self { Self }
     }
 
     #[async_trait]
     impl ArtifactDeleterPort for MockArtifactDeleterPort {
-        async fn delete_repository_artifacts(&self, _repository_id: &RepositoryId) -> RepositoryResult<u64> {
-            if *self.should_fail.lock().unwrap() {
-                return Err(RepositoryError::DatabaseError("Mock artifact deletion error".to_string()));
-            }
-            
-            let count = *self.artifact_count.lock().unwrap();
-            Ok(count)
-        }
-
-        async fn count_repository_artifacts(&self, _repository_id: &RepositoryId) -> RepositoryResult<u64> {
-            if *self.should_fail.lock().unwrap() {
-                return Err(RepositoryError::DatabaseError("Mock artifact count error".to_string()));
-            }
-            
-            Ok(*self.artifact_count.lock().unwrap())
-        }
+        async fn delete_repository_artifacts(&self, _repository_id: &RepositoryId) -> RepositoryResult<u64> { Ok(0) }
+        async fn count_repository_artifacts(&self, _repository_id: &RepositoryId) -> RepositoryResult<u64> { Ok(0) }
     }
 
-    /// Mock para RepositoryDeleteEventPublisherPort
-    pub struct MockRepositoryDeleteEventPublisherPort {
-        pub published_events: Mutex<Vec<(RepositoryId, UserId, u64, u64)>>,
-    }
+    pub struct MockRepositoryDeleteEventPublisherPort;
 
     impl MockRepositoryDeleteEventPublisherPort {
-        pub fn new() -> Self {
-            Self {
-                published_events: Mutex::new(Vec::new()),
-            }
-        }
+        pub fn new() -> Self { Self }
     }
 
     #[async_trait]
     impl RepositoryDeleteEventPublisherPort for MockRepositoryDeleteEventPublisherPort {
-        async fn publish_repository_deleted(&self, repository_id: &RepositoryId, deleted_by: &UserId, 
-                                           artifact_count: u64, total_size_bytes: u64) -> RepositoryResult<()> {
-            self.published_events.lock().unwrap().push((
-                repository_id.clone(),
-                deleted_by.clone(),
-                artifact_count,
-                total_size_bytes
-            ));
+        async fn publish_repository_deleted(&self, _repository_id: &RepositoryId, _deleted_by: &UserId, _artifact_count: u64, _total_size_bytes: u64) -> RepositoryResult<()> {
             Ok(())
         }
     }

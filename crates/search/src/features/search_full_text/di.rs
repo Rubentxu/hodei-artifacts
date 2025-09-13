@@ -7,12 +7,12 @@ use std::sync::Arc;
 use tantivy::{Index, schema::Schema};
 use tracing::{info, debug, warn, error};
 use async_trait::async_trait;
-use error::*;
+use super::error::*;
 
-use use_case::*;
-use adapter::*;
+use super::use_case::*;
+use super::adapter::*;
 use api::*;
-use ports::{
+use super::ports::{
     FullTextSearchPort, QueryAnalyzerPort, RelevanceScorerPort, HighlighterPort, 
     SearchPerformanceMonitorPort, SearchIndexManagerPort, HealthStatus,
     QueryPatterns, TimeRange, IndexError, ConfigError,
@@ -22,7 +22,7 @@ use ports::{
     IndexSettings, SimilarityConfig, TaskResult,
 };
 use crate::features::index_text_documents::ports::IndexStats;
-use dto::*;
+use super::dto::*;
 use crate::features::index_text_documents::adapter::DocumentIndexSchema;
 
 /// Main DI container for the search_full_text feature

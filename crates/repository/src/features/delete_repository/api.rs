@@ -63,7 +63,7 @@ impl DeleteRepositoryErrorResponse {
 
 /// Punto de entrada de la API para eliminar repositorios
 pub struct DeleteRepositoryEndpoint {
-    use_case: Arc<DeleteRepositoryUseCase>,
+    pub use_case: Arc<DeleteRepositoryUseCase>,
 }
 
 impl DeleteRepositoryEndpoint {
@@ -112,45 +112,12 @@ impl DeleteRepositoryEndpoint {
             RepositoryError::InvalidRepositoryName(message) => {
                 DeleteRepositoryErrorResponse::invalid_request(format!("Invalid repository name: {}", message))
             },
-            RepositoryError::DatabaseError(message) => {
-                DeleteRepositoryErrorResponse::internal_error(
-                    "Database operation failed".to_string(),
-                    Some(message)
-                )
-            },
-            RepositoryError::ValidationError(message) => {
-                DeleteRepositoryErrorResponse::invalid_request(message)
-            },
-            RepositoryError::ConfigurationError(message) => {
-                DeleteRepositoryErrorResponse::invalid_request(format!("Configuration error: {}", message))
-            },
-            RepositoryError::OrganizationNotFound(org_id) => {
-                DeleteRepositoryErrorResponse::not_found(format!("Organization '{}' not found", org_id))
-            },
-            RepositoryError::StorageBackendNotFound(backend) => {
-                DeleteRepositoryErrorResponse::not_found(format!("Storage backend '{}' not found", backend))
-            },
-            RepositoryError::ReferencedRepositoryNotFound(repo_id) => {
-                DeleteRepositoryErrorResponse::not_found(format!("Referenced repository '{}' not found", repo_id))
-            },
-            RepositoryError::RepositoryAlreadyExists(name) => {
-                DeleteRepositoryErrorResponse::conflict(
-                    format!("Repository '{}' already exists", name)
-                )
-            },
-            RepositoryError::RepositoryTypeMismatch { expected, actual } => {
-                DeleteRepositoryErrorResponse::invalid_request(
-                    format!("Repository type mismatch: expected {}, got {}", expected, actual)
-                )
-            },
-            RepositoryError::InvalidConfiguration(message) => {
-                DeleteRepositoryErrorResponse::invalid_request(format!("Invalid configuration: {}", message))
-            },
             RepositoryError::RepositoryNotEmpty(repo_id) => {
                 DeleteRepositoryErrorResponse::not_empty(
                     format!("Repository '{}' is not empty", repo_id)
                 )
             },
+            _ => DeleteRepositoryErrorResponse::internal_error("An unexpected error occurred".to_string(), Some(error.to_string())),
         }
     }
 }

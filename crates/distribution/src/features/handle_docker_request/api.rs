@@ -25,6 +25,33 @@ use super::use_case::{
 
 use super::error::DockerApiError;
 
+/// Query parameters for catalog operations
+#[derive(Deserialize)]
+pub struct CatalogQuery {
+    pub n: Option<usize>,
+    pub last: Option<String>,
+}
+
+/// Query parameters for blob upload operations
+#[derive(Deserialize)]
+pub struct UploadQuery {
+    pub mount: Option<String>,
+    pub from: Option<String>,
+}
+
+/// Query parameters for completing blob uploads
+#[derive(Deserialize)]
+pub struct CompleteUploadQuery {
+    pub digest: String,
+}
+
+/// Query parameters for tags listing
+#[derive(Deserialize)]
+pub struct TagsQuery {
+    pub n: Option<usize>,
+    pub last: Option<String>,
+}
+
 /// Docker Registry V2 API endpoints
 pub struct DockerRegistryApi {
     get_manifest_use_case: Arc<HandleDockerGetManifestUseCase>,
@@ -72,11 +99,6 @@ impl DockerRegistryApi {
     }
 
     /// GET /v2/_catalog - List repositories
-    #[derive(Deserialize)]
-    pub struct CatalogQuery {
-        n: Option<usize>,
-        last: Option<String>,
-    }
 
     #[instrument(skip(self))]
     pub async fn list_repositories(
@@ -257,11 +279,6 @@ impl DockerRegistryApi {
     }
 
     /// POST /v2/{name}/blobs/uploads/ - Start blob upload
-    #[derive(Deserialize)]
-    pub struct UploadQuery {
-        mount: Option<String>,
-        from: Option<String>,
-    }
 
     #[instrument(skip(self))]
     pub async fn start_blob_upload(
@@ -304,10 +321,6 @@ impl DockerRegistryApi {
     }
 
     /// PUT /v2/{name}/blobs/uploads/{uuid}?digest={digest} - Complete blob upload
-    #[derive(Deserialize)]
-    pub struct CompleteUploadQuery {
-        digest: String,
-    }
 
     #[instrument(skip(self, body))]
     pub async fn complete_blob_upload(
@@ -347,11 +360,6 @@ impl DockerRegistryApi {
     }
 
     /// GET /v2/{name}/tags/list - List tags
-    #[derive(Deserialize)]
-    pub struct TagsQuery {
-        n: Option<usize>,
-        last: Option<String>,
-    }
 
     #[instrument(skip(self))]
     pub async fn list_tags(

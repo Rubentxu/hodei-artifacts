@@ -1,11 +1,33 @@
+
 // crates/shared/src/enums.rs
 
 use serde::{Serialize, Deserialize};
+use std::str::FromStr;
 
 /// Ecosistemas de paquetes soportados por el sistema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Ecosystem {
     Maven, Npm, Docker, Oci, Pypi, Nuget, Go, RubyGems, Helm, Generic,
+}
+
+impl FromStr for Ecosystem {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Maven" => Ok(Ecosystem::Maven),
+            "Npm" => Ok(Ecosystem::Npm),
+            "Docker" => Ok(Ecosystem::Docker),
+            "Oci" => Ok(Ecosystem::Oci),
+            "Pypi" => Ok(Ecosystem::Pypi),
+            "Nuget" => Ok(Ecosystem::Nuget),
+            "Go" => Ok(Ecosystem::Go),
+            "RubyGems" => Ok(Ecosystem::RubyGems),
+            "Helm" => Ok(Ecosystem::Helm),
+            "Generic" => Ok(Ecosystem::Generic),
+            _ => Err(()),
+        }
+    }
 }
 
 /// Algoritmos de hash soportados para la verificación de integridad.

@@ -7,10 +7,10 @@ use std::sync::Arc;
 use tracing::{debug, info, warn, error, instrument};
 use serde::{Deserialize, Serialize};
 
-use use_case::*;
-use dto::*;
-use error::{FullTextSearchError, ToFullTextSearchError};
-use ports::*;
+use super::use_case::*;
+use super::dto::*;
+use super::error::{FullTextSearchError, ToFullTextSearchError};
+use super::ports::*;
 
 /// HTTP API for full-text search operations
 pub struct FullTextSearchApi {

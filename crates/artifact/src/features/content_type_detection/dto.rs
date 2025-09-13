@@ -17,20 +17,6 @@ pub struct ContentTypeDetectionResult {
     
     /// Confianza en la detección (0.0 a 1.0)
     pub confidence: f32,
-    
-    /// Método utilizado para la detección
-    pub detection_method: DetectionMethod,
-}
-
-/// Método utilizado para la detección del Content-Type
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub enum DetectionMethod {
-    /// Detección mediante magic numbers (más confiable)
-    MagicNumbers,
-    /// Detección mediante extensión de archivo (menos confiable)
-    FileExtension,
-    /// No se pudo detectar
-    Unknown,
 }
 
 /// Información sobre discrepancia de Content-Type

@@ -3,7 +3,7 @@
 use crate::domain::policy::Policy;
 use crate::infrastructure::errors::IamError;
 use serde::{Deserialize, Serialize};
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 
 /// Command to update an existing policy
 #[derive(Debug, Clone, Serialize, Deserialize)]

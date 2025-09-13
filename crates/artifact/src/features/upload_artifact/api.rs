@@ -115,6 +115,7 @@ impl UploadArtifactEndpoint {
                         UploadArtifactError::AlreadyExistsError(_) => StatusCode::CONFLICT,
                         UploadArtifactError::BadRequest(_) => StatusCode::BAD_REQUEST,
                         UploadArtifactError::ValidationFailed(_) => StatusCode::BAD_REQUEST,
+                        UploadArtifactError::VersioningError(_) => StatusCode::BAD_REQUEST,
                     };
                     (status_code, e.to_string()).into_response()
                 }

@@ -6,5 +6,5 @@ pub mod docker_paths;
 
 // Re-exportar componentes Docker
 pub use docker_handler::DockerFormatHandler;
-pub use docker_manifest::{DockerManifest, DockerManifestGenerator, DockerManifestV2};
+pub use docker_manifest::{DockerManifest, DockerManifestGenerator, DockerManifestV2, DockerManifestList};
 pub use docker_paths::{DockerPathInfo, DockerPathParser};

@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use tokio::fs;
 use tempfile::TempDir;
 use bytes::Bytes;
 
@@ -96,7 +95,7 @@ async fn test_chunked_upload_storage_partial_upload() -> Result<(), UploadArtifa
     assert_eq!(chunk_numbers, vec![1, 3]); // Falta el chunk 2
     
     // Ensamblar los chunks (esto debería funcionar incluso con chunks faltantes)
-    let (assembled_path, hash) = storage.assemble_chunks(upload_id, 3, "partial-file.txt").await?;
+    let (assembled_path, _hash) = storage.assemble_chunks(upload_id, 3, "partial-file.txt").await?;
     
     // Verificar que el archivo ensamblado existe
     assert!(assembled_path.exists());
@@ -118,7 +117,7 @@ async fn test_chunked_upload_storage_empty_upload() -> Result<(), UploadArtifact
     
     // Obtener chunks recibidos de un upload que no existe
     let chunk_numbers = storage.get_received_chunk_numbers(upload_id).await?;
-    assert_eq!(chunk_numbers, vec![]);
+    assert_eq!(chunk_numbers, Vec::<usize>::new());
     
     // Obtener conteo de chunks de un upload que no existe
     let count = storage.get_received_chunks_count(upload_id).await?;

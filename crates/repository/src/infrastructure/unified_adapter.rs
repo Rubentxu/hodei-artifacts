@@ -10,7 +10,7 @@ use crate::domain::{RepositoryResult, RepositoryError};
 use crate::domain::repository::Repository;
 
 // Importar todos los puertos de las features
-use crate::features::create_repository::ports::RepositoryCreatorPort;
+use crate::features::create_repository::ports::{RepositoryCreatorPort, RepositoryExistsPort};
 use crate::features::get_repository::ports::RepositoryReaderPort;
 use crate::features::update_repository::ports::RepositoryUpdaterPort;
 use crate::features::delete_repository::ports::{
@@ -45,12 +45,20 @@ impl RepositoryCreatorPort for UnifiedRepositoryAdapter {
         info!("Creating repository via unified adapter: {}", repository.hrn.as_str());
         self.mongo_adapter.create_repository(repository).await
     }
+}
 
-    #[instrument(skip(self, repository_id))]
-    async fn repository_exists(&self, repository_id: &RepositoryId) -> RepositoryResult<bool> {
-        debug!("Checking if repository exists: {}", repository_id.as_str());
-        let existing = self.mongo_adapter.get_repository(repository_id).await?;
-        Ok(existing.is_some())
+// Implementación para Repository Exists
+#[async_trait]
+impl RepositoryExistsPort for UnifiedRepositoryAdapter {
+    #[instrument(skip(self, organization_id, name))]
+    async fn repository_exists(&self, organization_id: &OrganizationId, name: &str) -> RepositoryResult<bool> {
+        debug!("Checking if repository exists: {} in organization {}", name, organization_id.as_str());
+        
+        // Try to find repository by organization and name
+        let repositories = self.mongo_adapter.list_repositories(organization_id).await?;
+        
+        let exists = repositories.iter().any(|repo| repo.name == name);
+        Ok(exists)
     }
 }
 
@@ -61,12 +69,6 @@ impl RepositoryReaderPort for UnifiedRepositoryAdapter {
     async fn get_repository(&self, repository_id: &RepositoryId) -> RepositoryResult<Option<Repository>> {
         debug!("Getting repository via unified adapter: {}", repository_id.as_str());
         self.mongo_adapter.get_repository(repository_id).await
-    }
-
-    #[instrument(skip(self, organization_id))]
-    async fn list_repositories(&self, organization_id: &OrganizationId) -> RepositoryResult<Vec<Repository>> {
-        debug!("Listing repositories via unified adapter for organization: {}", organization_id.as_str());
-        self.mongo_adapter.list_repositories(organization_id).await
     }
 }
 

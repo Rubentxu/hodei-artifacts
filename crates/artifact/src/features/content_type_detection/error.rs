@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 /// Errores de detección de Content-Type
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ContentTypeDetectionError {
     /// No se pudo detectar el tipo MIME
     #[error("No se pudo detectar el tipo MIME del contenido")]
@@ -23,5 +23,5 @@ pub enum ContentTypeDetectionError {
     
     /// Error de IO
     #[error("Error de IO durante la detección: {0}")]
-    IoError(#[from] std::io::Error),
+    IoError(String),
 }

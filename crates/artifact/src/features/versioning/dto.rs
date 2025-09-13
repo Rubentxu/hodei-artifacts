@@ -1,6 +1,42 @@
 // crates/artifact/src/features/versioning/dto.rs
 
 use serde::{Deserialize, Serialize};
+use shared::hrn::Hrn;
+
+/// Command to validate a version
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidateVersionCommand {
+    /// Package HRN for the version being validated
+    pub package_hrn: Hrn,
+    
+    /// Version string to validate
+    pub version: String,
+    
+    /// Repository HRN (for configuration lookup)
+    pub repository_hrn: Hrn,
+}
+
+/// Result of version validation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionValidationResult {
+    /// Package HRN
+    pub package_hrn: Hrn,
+    
+    /// Original version string
+    pub version: String,
+    
+    /// Whether the version is valid
+    pub is_valid: bool,
+    
+    /// Parsed version information
+    pub parsed_version: Option<ParsedVersion>,
+    
+    /// Validation errors if any
+    pub errors: Vec<String>,
+    
+    /// Validation warnings if any
+    pub warnings: Vec<String>,
+}
 
 /// Configuración para el versionado de artefactos en un repositorio
 #[derive(Debug, Clone, Serialize, Deserialize)]

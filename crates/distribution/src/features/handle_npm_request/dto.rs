@@ -67,7 +67,7 @@ pub struct NpmPutPackageResponse {
     pub version: String,
     pub tarball_url: String,
     pub size_bytes: usize,
-    pub published_at: time::OffsetDateTime,
+    published_at: time::OffsetDateTime,
 }
 
 /// Request para verificar existencia de un paquete (HEAD)

@@ -8,12 +8,12 @@ use tokio_test;
 use tracing_test::traced_test;
 
 use super::*;
-use dto::*;
-use error::*;
-use use_case::*;
+use super::dto::*;
+use super::error::*;
+use super::use_case::*;
 use api::*;
 use di::*;
-use ports::*;
+use super::ports::*;
 
 // Mock implementations for testing
 pub struct MockFullTextSearchAdapter {

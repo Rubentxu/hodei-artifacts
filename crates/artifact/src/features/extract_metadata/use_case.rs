@@ -7,11 +7,11 @@ use super::{
     dto::{ExtractMetadataCommand, MetadataExtractionResult},
     error::MetadataError,
     ports::{LeqNtT4aDY9oM1G5gAWWvB8B39iUobThhe, ArtifactContentReader, MetadataEventPublisher},
-    maven_parser::MavenParser,
-    npm_parser::NpmParser,
+    adapter::MetadataAdapterFactory,
 };
 
 /// Use case for extracting metadata from uploaded artifacts
+#[derive(Clone)]
 pub struct ExtractMetadataUseCase {
     repository: Arc<dyn LeqNtT4aDY9oM1G5gAWWvB8B39iUobThhe>,
     content_reader: Arc<dyn ArtifactContentReader>,
@@ -48,14 +48,18 @@ impl ExtractMetadataUseCase {
         let content_str = String::from_utf8_lossy(&artifact_content);
         
         // Parse metadata based on artifact type
+        let adapter = MetadataAdapterFactory::create_adapter(&command.artifact_type)?;
+        
         let (metadata, dependencies) = match command.artifact_type.as_str() {
-            "maven" => {
+            "maven" | "pom" => {
                 info!("Parsing Maven POM file");
-                self.parse_maven_metadata(&content_str)?
+                let maven_result = adapter.parse(&content_str)?;
+                self.convert_maven_metadata(maven_result.0, maven_result.1)?
             },
-            "npm" => {
+            "npm" | "package.json" => {
                 info!("Parsing NPM package.json file");
-                self.parse_npm_metadata(&content_str)?
+                let npm_result = adapter.parse_npm(&content_str)?;
+                self.convert_npm_metadata(npm_result.0, npm_result.1)?
             },
             _ => {
                 warn!("Unsupported artifact type: {}", command.artifact_type);
@@ -100,11 +104,8 @@ impl ExtractMetadataUseCase {
         })
     }
     
-    /// Parse Maven POM metadata
-    fn parse_maven_metadata(&self, content: &str) -> Result<(PackageMetadata, Vec<ArtifactDependency>), MetadataError> {
-        let parser = MavenParser::new();
-        let parsed_metadata = parser.parse(content)?;
-        
+    /// Convert Maven metadata to domain format
+    fn convert_maven_metadata(&self, parsed_metadata: super::dto::ParsedMavenMetadata, maven_deps: Vec<super::dto::MavenDependency>) -> Result<(PackageMetadata, Vec<ArtifactDependency>), MetadataError> {
         let metadata = PackageMetadata {
             description: parsed_metadata.description,
             licenses: parsed_metadata.licenses,
@@ -116,7 +117,7 @@ impl ExtractMetadataUseCase {
             custom_properties: std::collections::HashMap::new(),
         };
         
-        let dependencies = parsed_metadata.dependencies
+        let dependencies = maven_deps
             .into_iter()
             .map(|dep| ArtifactDependency {
                 coordinates: PackageCoordinates {
@@ -134,11 +135,8 @@ impl ExtractMetadataUseCase {
         Ok((metadata, dependencies))
     }
     
-    /// Parse NPM package.json metadata
-    fn parse_npm_metadata(&self, content: &str) -> Result<(PackageMetadata, Vec<ArtifactDependency>), MetadataError> {
-        let parser = NpmParser::new();
-        let parsed_metadata = parser.parse(content)?;
-        
+    /// Convert NPM metadata to domain format
+    fn convert_npm_metadata(&self, parsed_metadata: super::dto::ParsedNpmMetadata, npm_deps: Vec<super::dto::NpmDependency>) -> Result<(PackageMetadata, Vec<ArtifactDependency>), MetadataError> {
         let metadata = PackageMetadata {
             description: parsed_metadata.description,
             licenses: parsed_metadata.licenses,
@@ -150,7 +148,7 @@ impl ExtractMetadataUseCase {
             custom_properties: std::collections::HashMap::new(),
         };
         
-        let dependencies = parsed_metadata.dependencies
+        let dependencies = npm_deps
             .into_iter()
             .map(|dep| ArtifactDependency {
                 coordinates: PackageCoordinates {

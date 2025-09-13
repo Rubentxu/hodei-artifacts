@@ -40,7 +40,7 @@ impl ExtractMetadataDIContainer {
     /// Create a DI container for testing purposes
     #[cfg(test)]
     pub fn for_testing() -> Self {
-        use crate::features::upload_artifact::test_adapter::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher};
+        use crate::features::upload_artifact::mocks::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher};
         
         let repository = Arc::new(MockArtifactRepository::new());
         let storage = Arc::new(MockArtifactStorage::new());

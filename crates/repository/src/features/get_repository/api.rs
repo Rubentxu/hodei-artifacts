@@ -55,7 +55,7 @@ impl GetRepositoryErrorResponse {
 
 /// Punto de entrada de la API para obtener repositorios
 pub struct GetRepositoryEndpoint {
-    use_case: Arc<GetRepositoryUseCase>,
+    pub use_case: Arc<GetRepositoryUseCase>,
 }
 
 impl GetRepositoryEndpoint {
@@ -102,48 +102,7 @@ impl GetRepositoryEndpoint {
             RepositoryError::InvalidRepositoryName(message) => {
                 GetRepositoryErrorResponse::invalid_request(format!("Invalid repository name: {}", message))
             },
-            RepositoryError::DatabaseError(message) => {
-                GetRepositoryErrorResponse::internal_error(
-                    "Database operation failed".to_string(),
-                    Some(message)
-                )
-            },
-            RepositoryError::ValidationError(message) => {
-                GetRepositoryErrorResponse::invalid_request(message)
-            },
-            RepositoryError::ConfigurationError(message) => {
-                GetRepositoryErrorResponse::invalid_request(format!("Configuration error: {}", message))
-            },
-            RepositoryError::OrganizationNotFound(org_id) => {
-                GetRepositoryErrorResponse::not_found(format!("Organization '{}' not found", org_id))
-            },
-            RepositoryError::StorageBackendNotFound(backend) => {
-                GetRepositoryErrorResponse::not_found(format!("Storage backend '{}' not found", backend))
-            },
-            RepositoryError::ReferencedRepositoryNotFound(repo_id) => {
-                GetRepositoryErrorResponse::not_found(format!("Referenced repository '{}' not found", repo_id))
-            },
-            RepositoryError::RepositoryAlreadyExists(name) => {
-                GetRepositoryErrorResponse::internal_error(
-                    format!("Repository '{}' already exists", name),
-                    None
-                )
-            },
-            RepositoryError::RepositoryTypeMismatch { expected, actual } => {
-                GetRepositoryErrorResponse::internal_error(
-                    format!("Repository type mismatch: expected {}, got {}", expected, actual),
-                    None
-                )
-            },
-            RepositoryError::InvalidConfiguration(message) => {
-                GetRepositoryErrorResponse::invalid_request(format!("Invalid configuration: {}", message))
-            },
-            RepositoryError::RepositoryNotEmpty(repo_id) => {
-                GetRepositoryErrorResponse::internal_error(
-                    format!("Repository '{}' is not empty", repo_id),
-                    None
-                )
-            },
+            _ => GetRepositoryErrorResponse::internal_error("An unexpected error occurred".to_string(), Some(error.to_string())),
         }
     }
 }

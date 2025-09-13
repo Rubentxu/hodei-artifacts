@@ -100,19 +100,21 @@ impl ContentTypeDetector for InferContentTypeDetector {
         detected: &str, 
         provided: Option<&str>
     ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
-        let provided_str = provided.unwrap_or("");
-        let has_mismatch = provided.is_some() && detected != provided_str;
+        let has_mismatch = match provided {
+            Some(p) => detected != p,
+            None => false,
+        };
         
         if has_mismatch {
             warn!(
                 detected = %detected, 
-                provided = %provided_str, 
+                provided = ?provided, 
                 "Discrepancia detectada entre Content-Type proporcionado y detectado"
             );
         } else if provided.is_some() {
             info!(
                 detected = %detected, 
-                provided = %provided_str, 
+                provided = ?provided, 
                 "Content-Type consistente entre proporcionado y detectado"
             );
         }
@@ -139,11 +141,19 @@ pub mod test {
     #[async_trait]
     impl ContentTypeDetector for MockContentTypeDetector {
         async fn detect_from_bytes(&self, _data: Bytes) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
-            self.fixed_result.clone().unwrap_or(Err(ContentTypeDetectionError::DetectionFailed))
+            match &self.fixed_result {
+                Some(Ok(result)) => Ok(result.clone()),
+                Some(Err(error)) => Err(error.clone()),
+                None => Err(ContentTypeDetectionError::DetectionFailed),
+            }
         }
         
         async fn detect_from_extension(&self, _filename: &str) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
-            self.fixed_result.clone().unwrap_or(Err(ContentTypeDetectionError::DetectionFailed))
+            match &self.fixed_result {
+                Some(Ok(result)) => Ok(result.clone()),
+                Some(Err(error)) => Err(error.clone()),
+                None => Err(ContentTypeDetectionError::DetectionFailed),
+            }
         }
         
         async fn validate_consistency(
@@ -151,7 +161,10 @@ pub mod test {
             detected: &str, 
             provided: Option<&str>
         ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
-            let has_mismatch = provided.is_some() && detected != provided.unwrap();
+            let has_mismatch = match provided {
+                Some(p) => detected != p,
+                None => false,
+            };
             
             Ok(ContentTypeDetectionResult {
                 detected_mime_type: detected.to_string(),

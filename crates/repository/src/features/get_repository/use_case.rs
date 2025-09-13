@@ -11,9 +11,9 @@ use super::ports::{RepositoryReaderPort, RepositoryAuthorizationPort, Repository
 
 /// Caso de uso para obtener un repositorio
 pub struct GetRepositoryUseCase {
-    repository_reader_port: Arc<dyn RepositoryReaderPort>,
-    authorization_port: Arc<dyn RepositoryAuthorizationPort>,
-    stats_port: Arc<dyn RepositoryStatsPort>,
+    pub repository_reader_port: Arc<dyn RepositoryReaderPort>,
+    pub authorization_port: Arc<dyn RepositoryAuthorizationPort>,
+    pub stats_port: Arc<dyn RepositoryStatsPort>,
 }
 
 impl GetRepositoryUseCase {
@@ -66,7 +66,7 @@ impl GetRepositoryUseCase {
         info!("Found repository: {}", repository.name);
 
         // 4. Obtener estadísticas del repositorio
-        let stats = self.stats_port.get_repository_stats(&repository_id).await?;
+        let stats = self.repository_reader_port.get_repository_stats(&repository_id).await?;
         
         info!("Repository stats - artifacts: {}, size: {} bytes, downloads: {}", 
                stats.artifact_count, stats.total_size_bytes, stats.total_downloads);

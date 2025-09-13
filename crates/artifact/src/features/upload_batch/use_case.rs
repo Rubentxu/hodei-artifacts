@@ -52,6 +52,7 @@ impl BatchUploadUseCase {
             self.transaction_manager.begin_transaction().await?;
         }
 
+        let total_commands = commands.len();
         let mut results = Vec::new();
         let mut success_count = 0;
         let mut failure_count = 0;
@@ -66,7 +67,7 @@ impl BatchUploadUseCase {
             );
             let _artifact_enter = artifact_span.enter();
 
-            debug!("Processing artifact {} of {}", i + 1, commands.len());
+            debug!("Processing artifact {} of {}", i + 1, total_commands);
 
             match timeout(
                 Duration::from_secs(self.batch_timeout_seconds),
@@ -96,7 +97,7 @@ impl BatchUploadUseCase {
                         self.transaction_manager.rollback_transaction().await?;
                         return Ok(BatchUploadResponse {
                             results,
-                            total_count: commands.len(),
+                            total_count: total_commands,
                             success_count,
                             failure_count,
                             skipped_count,
@@ -128,7 +129,7 @@ impl BatchUploadUseCase {
 
         let response = BatchUploadResponse {
             results,
-            total_count: commands.len(),
+            total_count: total_commands,
             success_count,
             failure_count,
             skipped_count,

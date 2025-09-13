@@ -3,12 +3,12 @@
 use crate::domain::policy::Policy;
 use crate::domain::validation::ValidationResult;
 use crate::features::create_policy::ports::{PolicyCreator, PolicyValidator, PolicyEventPublisher};
-use crate::infrastructure::errors::IamError;
+use crate::features::create_policy::error::CreatePolicyError;
 use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
 use crate::infrastructure::events::policy_event_publisher::SimplePolicyEventPublisher;
 use async_trait::async_trait;
 use mongodb::{bson::doc, Collection, Database};
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 use std::sync::Arc;
 
 
@@ -27,21 +27,21 @@ impl MongoPolicyCreatorAdapter {
 
 #[async_trait]
 impl PolicyCreator for MongoPolicyCreatorAdapter {
-    async fn create(&self, policy: Policy) -> Result<Policy, IamError> {
+    async fn create(&self, policy: Policy) -> Result<Policy, CreatePolicyError> {
         self.collection
             .insert_one(&policy)
             .await
-            .map_err(|e| IamError::DatabaseError(format!("Failed to create policy: {}", e)))?;
+            .map_err(|e| CreatePolicyError::DatabaseError(format!("Failed to create policy: {}", e)))?;
         
         Ok(policy)
     }
 
-    async fn exists(&self, id: &PolicyId) -> Result<bool, IamError> {
-        let filter = doc! { "_id": id.0.to_string() };
+    async fn exists(&self, id: &PolicyId) -> Result<bool, CreatePolicyError> {
+        let filter = doc! { "_id": id.to_string() };
         let count = self.collection
             .count_documents(filter)
             .await
-            .map_err(|e| IamError::DatabaseError(format!("Failed to check policy existence: {}", e)))?;
+            .map_err(|e| CreatePolicyError::DatabaseError(format!("Failed to check policy existence: {}", e)))?;
         
         Ok(count > 0)
     }
@@ -60,14 +60,14 @@ impl CedarPolicyValidatorAdapter {
 
 
     /// Perform comprehensive Cedar validation using all Cedar capabilities
-    async fn validate_policy_semantics(&self, content: &str) -> Result<(), IamError> {
+    async fn validate_policy_semantics(&self, content: &str) -> Result<(), CreatePolicyError> {
         use security::ComprehensiveCedarValidator;
 
         let validator = ComprehensiveCedarValidator::new()
-            .map_err(|e| IamError::validation_error(format!("Failed to create validator: {}", e)))?;
+            .map_err(|e| CreatePolicyError::ValidationFailed { errors: vec![] })?;
 
         let result = validator.validate_policy_comprehensive(content).await
-            .map_err(|e| IamError::validation_error(format!("Validation failed: {}", e)))?;
+            .map_err(|e| CreatePolicyError::ValidationFailed { errors: vec![] })?;
 
         if !result.is_valid {
             // Create detailed error message with all validation failures
@@ -91,7 +91,7 @@ impl CedarPolicyValidatorAdapter {
                 error_parts.join("; ")
             };
             
-            return Err(IamError::validation_error(error_message));
+            return Err(CreatePolicyError::ValidationFailed { errors: vec![] });
         }
 
         // Log warnings if any (but don't fail validation)
@@ -105,11 +105,12 @@ impl CedarPolicyValidatorAdapter {
 
 #[async_trait]
 impl PolicyValidator for CedarPolicyValidatorAdapter {
-    async fn validate_syntax(&self, content: &str) -> Result<ValidationResult, IamError> {
+    async fn validate_syntax(&self, content: &str) -> Result<ValidationResult, CreatePolicyError> {
         self.validator.validate_syntax(content).await
+            .map_err(|e| CreatePolicyError::ValidationFailed { errors: vec![] })
     }
 
-    async fn validate_semantics(&self, content: &str) -> Result<(), IamError> {
+    async fn validate_semantics(&self, content: &str) -> Result<(), CreatePolicyError> {
         self.validate_policy_semantics(content).await
     }
 }
@@ -127,7 +128,8 @@ impl SimplePolicyEventPublisherAdapter {
 
 #[async_trait]
 impl PolicyEventPublisher for SimplePolicyEventPublisherAdapter {
-    async fn publish_policy_created(&self, policy: &Policy) -> Result<(), IamError> {
+    async fn publish_policy_created(&self, policy: &Policy) -> Result<(), CreatePolicyError> {
         self.publisher.publish_policy_created(policy).await
+            .map_err(|e| CreatePolicyError::EventPublishingFailed(format!("Failed to publish policy created event: {}", e)))
     }
 }

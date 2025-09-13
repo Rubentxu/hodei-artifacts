@@ -1,3 +1,4 @@
+
 [package]
 name = "repository"
 version = "0.1.0"
@@ -15,3 +16,8 @@ mongodb = { workspace = true }
 tracing = { workspace = true }
 axum = { workspace = true }
 shared = { path = "../shared" }
+
+[dev-dependencies]
+tokio = { workspace = true }
+uuid = { workspace = true }
+tracing-subscriber = { workspace = true }

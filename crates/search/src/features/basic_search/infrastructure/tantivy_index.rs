@@ -11,7 +11,7 @@ use crate::features::basic_search::{
     error::BasicSearchError,
 };
 
-use {
+use super::{
     tantivy_schema::SearchSchema,
     tantivy_document_mapper::TantivyDocumentMapper,
 };

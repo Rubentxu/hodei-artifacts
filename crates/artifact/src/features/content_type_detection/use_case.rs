@@ -1,24 +1,29 @@
-//! Servicio principal para detección de Content-Type
-//! Coordina la detección mediante magic numbers y validación de consistencia
+//! Caso de uso principal para detección de Content-Type
+//! Cumple con VSA: orquesta la lógica de la feature y delega a puertos segregados.
+//! No contiene lógica de infraestructura ni lógica transversal.
+//! Este archivo implementa el caso de uso de la feature content_type_detection.
 
 use super::ports::{ContentTypeDetector, ContentTypeDetectionResult};
 use super::error::ContentTypeDetectionError;
-use async_trait::async_trait;
 use bytes::Bytes;
 use std::sync::Arc;
 
-/// Servicio principal de detección de Content-Type
+/// Caso de uso principal de detección de Content-Type
+/// - Orquesta la detección y validación de Content-Type.
+/// - Depende solo de puertos definidos en la feature (no acopla a infraestructura).
+/// - No expone detalles de implementación ni lógica transversal.
 #[derive(Clone)]
-pub struct ContentTypeDetectionService {
+pub struct ContentTypeDetectionUseCase {
     detector: Arc<dyn ContentTypeDetector>,
 }
 
-impl ContentTypeDetectionService {
+impl ContentTypeDetectionUseCase {
+    /// Inyección de dependencia por trait (puerto segregado).
     pub fn new(detector: Arc<dyn ContentTypeDetector>) -> Self {
         Self { detector }
     }
-    
-    /// Detecta el Content-Type de un artefacto usando magic numbers como primario
+
+    /// Caso de uso principal: Detecta el Content-Type de un artefacto usando magic numbers como primario
     /// y extensión como fallback. Valida consistencia con el header proporcionado.
     pub async fn detect_content_type(
         &self,
@@ -28,7 +33,7 @@ impl ContentTypeDetectionService {
     ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         // Intentar detección mediante magic numbers (método preferido)
         let magic_result = self.detector.detect_from_bytes(data.clone()).await;
-        
+
         let detected_mime_type = match magic_result {
             Ok(result) => result.detected_mime_type,
             Err(_) => {
@@ -41,11 +46,11 @@ impl ContentTypeDetectionService {
                 }
             }
         };
-        
+
         // Validar consistencia con el header proporcionado
         self.detector.validate_consistency(&detected_mime_type, client_provided_mime_type).await
     }
-    
+
     /// Detecta Content-Type solo mediante magic numbers (sin fallback)
     pub async fn detect_from_magic_numbers(
         &self,
@@ -53,11 +58,11 @@ impl ContentTypeDetectionService {
         client_provided_mime_type: Option<&str>,
     ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         let result = self.detector.detect_from_bytes(data).await?;
-        
+
         // Validar consistencia
         self.detector.validate_consistency(&result.detected_mime_type, client_provided_mime_type).await
     }
-    
+
     /// Detecta Content-Type solo mediante extensión de archivo
     pub async fn detect_from_extension_only(
         &self,
@@ -65,8 +70,9 @@ impl ContentTypeDetectionService {
         client_provided_mime_type: Option<&str>,
     ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         let result = self.detector.detect_from_extension(filename).await?;
-        
+
         // Validar consistencia
         self.detector.validate_consistency(&result.detected_mime_type, client_provided_mime_type).await
     }
 }
+

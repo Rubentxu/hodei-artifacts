@@ -36,5 +36,3 @@ pub trait ContentTypeDetector: Send + Sync {
     ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError>;
 }
 
-/// Tipo de resultado para operaciones de detección de Content-Type
-pub type ContentTypeDetectionResult<T> = std::result::Result<T, ContentTypeDetectionError>;

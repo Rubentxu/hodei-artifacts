@@ -6,7 +6,7 @@ use crate::infrastructure::errors::IamError;
 use crate::infrastructure::events::policy_event_publisher::SimplePolicyEventPublisher;
 use async_trait::async_trait;
 use mongodb::{bson::doc, Collection, Database};
-use shared::hrn::PolicyId;
+use cedar_policy::PolicyId;
 use std::sync::Arc;
 
 /// Adapter that implements PolicyDeleter using MongoDB directly
@@ -27,7 +27,7 @@ impl DeletePolicyAdapter {
 #[async_trait]
 impl PolicyDeleter for DeletePolicyAdapter {
     async fn get_by_id(&self, id: &PolicyId) -> Result<Option<Policy>, IamError> {
-        let filter = doc! { "_id": id.0.to_string() };
+        let filter = doc! { "_id": id.to_string() };
         
         self.collection
             .find_one(filter)
@@ -36,7 +36,7 @@ impl PolicyDeleter for DeletePolicyAdapter {
     }
 
     async fn delete(&self, id: &PolicyId) -> Result<(), IamError> {
-        let filter = doc! { "_id": id.0.to_string() };
+        let filter = doc! { "_id": id.to_string() };
 
         let result = self
             .collection
