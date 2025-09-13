@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{info, error};
 use time::OffsetDateTime;
 use super::{
     dto::{ValidateVersionCommand, VersionValidationResult, VersioningConfig},
@@ -33,7 +33,7 @@ impl VersioningUseCase {
         info!("Validating version {} for package {}", command.version, command.package_hrn);
         
         let mut errors = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         
         // Get versioning configuration for the repository
         let config = self.repository

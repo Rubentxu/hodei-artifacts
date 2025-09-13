@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use axum::{extract::Path, Json, http::StatusCode};
 use tracing::{info, error};
 use serde::{Deserialize, Serialize};
@@ -6,7 +5,6 @@ use shared::hrn::Hrn;
 use super::{
     use_case::VersioningUseCase,
     dto::{ValidateVersionCommand, VersionValidationResult, VersioningConfig},
-    error::VersioningError,
 };
 
 /// API endpoints for versioning functionality

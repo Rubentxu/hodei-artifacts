@@ -5,7 +5,6 @@ use bytes::Bytes;
 use crate::features::upload_artifact::{
     use_case::UploadArtifactUseCase,
     dto::{UploadArtifactCommand, UploadArtifactResponse},
-    error::UploadArtifactError,
 };
 
 use super::{

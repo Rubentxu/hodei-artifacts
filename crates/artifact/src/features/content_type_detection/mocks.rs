@@ -56,7 +56,6 @@ impl ContentTypeDetector for MockContentTypeDetector {
                 match header {
                     b"\x50\x4B\x03\x04" => "application/zip",
                     b"\x1F\x8B\x08\x00" => "application/gzip",
-                    b"PK\x03\x04" => "application/zip",
                     _ => "application/octet-stream",
                 }
             } else {

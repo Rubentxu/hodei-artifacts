@@ -37,7 +37,7 @@ impl UploadArtifactDIContainer {
 
     /// Convenience function for wiring up production dependencies.
     #[cfg(not(test))]
-    pub async fn from_config(config: &SdkConfig, mongo_client: mongodb::Client, rabbit_conn: lapin::Connection, upload_dir: PathBuf) -> Self {
+    pub async fn from_config(config: &SdkConfig, mongo_client: mongodb::Client, _rabbit_conn: lapin::Connection, _upload_dir: PathBuf) -> Self {
         let repository = Arc::new(MongoDbRepository::new_with_client(mongo_client));
         let storage = Arc::new(S3ArtifactStorage::new(config, "hodei-artifacts".to_string()));
 

@@ -1,8 +1,7 @@
 use async_trait::async_trait;
-use std::collections::HashMap;
 use shared::hrn::Hrn;
 use super::{
-    dto::{VersioningConfig, ParsedVersion, ValidateVersionCommand, VersionValidationResult},
+    dto::{VersioningConfig, ParsedVersion},
     error::VersioningError,
 };
 

@@ -1,6 +1,5 @@
 // crates/artifact/src/features/upload_artifact/upload_progress/use_case.rs
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{info, warn};
 

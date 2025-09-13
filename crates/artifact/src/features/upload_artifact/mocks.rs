@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use crate::domain::events::ArtifactEvent;
-use crate::domain::package_version::{PackageVersion, PackageMetadata, ArtifactDependency};
+use crate::domain::package_version::PackageVersion;
 use crate::domain::physical_artifact::PhysicalArtifact;
 use super::ports::{
     ArtifactRepository, ArtifactStorage, EventPublisher, ArtifactValidator, VersionValidator,

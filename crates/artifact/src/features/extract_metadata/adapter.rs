@@ -115,6 +115,7 @@ struct MavenParent {
     group_id: String,
     
     #[serde(rename = "artifactId")]
+    #[allow(dead_code)]
     artifact_id: String,
     
     version: String,
@@ -131,6 +132,7 @@ struct MavenLicenses {
 #[derive(Debug, Clone, serde::Deserialize)]
 struct MavenLicense {
     name: String,
+    #[allow(dead_code)]
     url: Option<String>,
 }
 
@@ -155,6 +157,7 @@ struct MavenDependencyElement {
     scope: Option<String>,
     
     #[serde(rename = "optional")]
+    #[allow(dead_code)]
     optional: Option<String>,
 }
 
@@ -335,12 +338,12 @@ impl MetadataAdapterFactory {
 
 /// Trait for metadata adapters
 pub trait MetadataAdapter: Send + Sync {
-    fn parse(&self, content: &str) -> Result<(ParsedMavenMetadata, Vec<MavenDependency>), MetadataError> {
+    fn parse(&self, _content: &str) -> Result<(ParsedMavenMetadata, Vec<MavenDependency>), MetadataError> {
         // Default implementation returns error
         Err(MetadataError::ParseError("This adapter does not support Maven parsing".to_string()))
     }
     
-    fn parse_npm(&self, content: &str) -> Result<(ParsedNpmMetadata, Vec<NpmDependency>), MetadataError> {
+    fn parse_npm(&self, _content: &str) -> Result<(ParsedNpmMetadata, Vec<NpmDependency>), MetadataError> {
         // Default implementation returns error
         Err(MetadataError::ParseError("This adapter does not support NPM parsing".to_string()))
     }

@@ -8,7 +8,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn, error};
-use std::str::FromStr;
 
 use super::{
     use_case::ExtractMetadataUseCase,
@@ -115,7 +114,7 @@ impl ExtractMetadataApi {
 
     /// Get extracted metadata for a package version
     pub async fn get_metadata(
-        State(api): State<Self>,
+        State(_api): State<Self>,
         user: UserIdentity,
         Path(package_version_hrn): Path<String>,
     ) -> Box<dyn IntoResponse> {

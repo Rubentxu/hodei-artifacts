@@ -8,7 +8,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::{
-    dto::{BatchUploadRequest, BatchUploadResponse, BatchUploadArtifactMetadata, BatchUploadArtifactCommand},
+    dto::{BatchUploadRequest, BatchUploadArtifactMetadata, BatchUploadArtifactCommand},
     error::BatchUploadError,
     use_case::BatchUploadUseCase,
 };

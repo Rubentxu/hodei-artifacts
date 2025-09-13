@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use async_trait::async_trait;
-use tracing::{debug, warn};
+use tracing::debug;
 use semver::Version;
 use super::{
     dto::{VersioningConfig, ParsedVersion},
@@ -19,7 +18,7 @@ pub struct RepositoryVersioningAdapter {
 impl RepositoryVersioningAdapter {
     pub fn new() -> Self {
         let mut configs = HashMap::new();
-        let mut existing_versions = HashMap::new();
+        let existing_versions = HashMap::new();
         
         // Add some default configurations
         configs.insert("default".to_string(), VersioningConfig::default());
@@ -50,7 +49,7 @@ impl VersioningRepository for RepositoryVersioningAdapter {
         }
     }
     
-    async fn save_versioning_config(&self, repository_hrn: &shared::hrn::Hrn, config: &VersioningConfig) -> Result<(), VersioningError> {
+    async fn save_versioning_config(&self, repository_hrn: &shared::hrn::Hrn, _config: &VersioningConfig) -> Result<(), VersioningError> {
         debug!("Saving versioning config for repository: {}", repository_hrn);
         // In a real implementation, this would save to the database
         Ok(())
@@ -113,13 +112,13 @@ impl EventBusVersioningPublisher {
 
 #[async_trait]
 impl VersioningEventPublisher for EventBusVersioningPublisher {
-    async fn publish_version_validated(&self, event: super::ports::VersioningEvent) -> Result<(), VersioningError> {
+    async fn publish_version_validated(&self, _event: super::ports::VersioningEvent) -> Result<(), VersioningError> {
         debug!("Publishing version validated event");
         // In a real implementation, this would publish the event to the event bus
         Ok(())
     }
     
-    async fn publish_version_validation_failed(&self, event: super::ports::VersioningEvent) -> Result<(), VersioningError> {
+    async fn publish_version_validation_failed(&self, _event: super::ports::VersioningEvent) -> Result<(), VersioningError> {
         debug!("Publishing version validation failed event");
         // In a real implementation, this would publish the event to the event bus
         Ok(())

@@ -1,6 +1,5 @@
 // crates/artifact/src/features/extract_metadata/mocks.rs
 
-use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use shared::hrn::Hrn;

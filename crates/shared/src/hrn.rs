@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use uuid::Uuid;
 
 // ... (Hrn, HrnError, is_valid_organization_name, and hrn! macro remain the same)
 

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 
 use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ChunkedUploadStorage, ProgressResult};
-use super::dto::{UploadProgress, UploadStatus, UpdateProgressCommand, ReceivedChunksResponse, ReceivedChunkInfo};
+use super::dto::{UploadProgress, UpdateProgressCommand, ReceivedChunkInfo};
 use crate::features::upload_progress::ProgressError;
 
 #[derive(Default)]

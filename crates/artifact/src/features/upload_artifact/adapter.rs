@@ -185,6 +185,9 @@ impl ArtifactValidator for NoopArtifactValidator {
     }
 }
 
+// Re-exportar el validador del motor de validación
+pub use super::validation_adapter::ValidationEngineArtifactValidator;
+
 // --- ArtifactStorage: Local filesystem ---
 pub struct LocalFsArtifactStorage {
     base_dir: PathBuf,
