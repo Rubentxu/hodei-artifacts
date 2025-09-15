@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 pub struct ContentTypeDetectionResult {
     /// MIME type detectado mediante magic numbers
     pub detected_mime_type: String,
-    
+
     /// MIME type proporcionado por el cliente (header Content-Type)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_provided_mime_type: Option<String>,
-    
+
     /// Indica si hay discrepancia entre el detectado y el proporcionado
     pub has_mismatch: bool,
-    
+
     /// Confianza en la detección (0.0 a 1.0)
     pub confidence: f32,
 }
@@ -24,13 +24,13 @@ pub struct ContentTypeDetectionResult {
 pub struct ContentTypeMismatch {
     /// MIME type detectado
     pub detected: String,
-    
+
     /// MIME type proporcionado
     pub provided: String,
-    
+
     /// Nivel de severidad de la discrepancia
     pub severity: MismatchSeverity,
-    
+
     /// Recomendación de acción
     pub recommendation: String,
 }
@@ -51,11 +51,11 @@ pub enum MismatchSeverity {
 pub struct DetectContentTypeCommand {
     /// Datos del artefacto (primeros bytes)
     pub data: Vec<u8>,
-    
+
     /// Nombre del archivo (opcional, para detección por extensión)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filename: Option<String>,
-    
+
     /// Content-Type proporcionado por el cliente (opcional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_content_type: Option<String>,

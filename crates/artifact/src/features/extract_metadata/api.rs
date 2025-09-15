@@ -7,14 +7,19 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use super::{
-    use_case::ExtractMetadataUseCase,
     dto::{ExtractMetadataCommand, MetadataExtractionResult},
     error::MetadataError,
+    use_case::ExtractMetadataUseCase,
 };
-use crate::features::upload_artifact::api::UserIdentity;
+// Local lightweight identity type to avoid coupling with deleted feature-level APIs
+#[derive(Debug, Clone)]
+pub struct UserIdentity {
+    pub user_id: String,
+    pub username: String,
+}
 
 /// API endpoints for metadata extraction functionality
 #[derive(Clone)]
@@ -65,7 +70,10 @@ impl ExtractMetadataApi {
                     package_version_hrn = %result.package_version_hrn,
                     "Metadata extraction completed successfully"
                 );
-                Box::new((StatusCode::OK, Json(ExtractMetadataResponse::from_result(result))))
+                Box::new((
+                    StatusCode::OK,
+                    Json(ExtractMetadataResponse::from_result(result)),
+                ))
             }
             Err(MetadataError::UnsupportedArtifactType(artifact_type)) => {
                 warn!(artifact_type = %artifact_type, "Unsupported artifact type for metadata extraction");
@@ -127,7 +135,7 @@ impl ExtractMetadataApi {
         // TODO: Implement metadata retrieval
         // This would typically query the repository for stored metadata
         // For now, return a placeholder response
-        
+
         Box::new((
             StatusCode::NOT_IMPLEMENTED,
             Json(MetadataErrorResponse::not_implemented()),
@@ -156,7 +164,8 @@ impl ExtractMetadataResponse {
         Self {
             package_version_hrn: result.package_version_hrn.to_string(),
             metadata: PackageMetadataResponse::from_domain(result.extracted_metadata),
-            dependencies: result.extracted_dependencies
+            dependencies: result
+                .extracted_dependencies
                 .into_iter()
                 .map(DependencyResponse::from_domain)
                 .collect(),
@@ -308,19 +317,17 @@ impl MetadataErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::features::extract_metadata::mocks::{
-        MockPackageMetadataRepository, 
-        MockArtifactContentReader, 
-        MockMetadataEventPublisher
+        MockArtifactContentReader, MockMetadataEventPublisher, MockPackageMetadataRepository,
     };
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_extract_metadata_success() {
         let repository = Arc::new(MockPackageMetadataRepository::default());
         let content_reader = Arc::new(MockArtifactContentReader::default());
         let event_publisher = Arc::new(MockMetadataEventPublisher::default());
-        
+
         let use_case = ExtractMetadataUseCase::new(repository, content_reader, event_publisher);
         let api = ExtractMetadataApi::new(use_case);
 
@@ -340,7 +347,7 @@ mod tests {
         let repository = Arc::new(MockPackageMetadataRepository::default());
         let content_reader = Arc::new(MockArtifactContentReader::default());
         let event_publisher = Arc::new(MockMetadataEventPublisher::default());
-        
+
         let use_case = ExtractMetadataUseCase::new(repository, content_reader, event_publisher);
         let api = ExtractMetadataApi::new(use_case);
 

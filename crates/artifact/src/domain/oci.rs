@@ -1,7 +1,7 @@
 // crates/artifact/src/domain/oci.rs
 
+use serde::{Deserialize, Serialize};
 use shared::models::ContentHash;
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
 /// Representa un manifiesto de imagen OCI, que es la raíz de una imagen de contenedor.

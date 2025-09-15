@@ -1,10 +1,10 @@
-use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
+use std::sync::Arc;
 
 use crate::features::upload_artifact::{
-    use_case::UploadArtifactUseCase,
     dto::{UploadArtifactCommand, UploadArtifactResponse},
+    use_case::UploadArtifactUseCase,
 };
 
 use super::{
@@ -36,7 +36,11 @@ impl BatchArtifactProcessor for SingleArtifactProcessor {
             content_length: command.content_length,
         };
 
-        match self.upload_use_case.execute(upload_command, Bytes::from(content)).await {
+        match self
+            .upload_use_case
+            .execute(upload_command, Bytes::from(content))
+            .await
+        {
             Ok(UploadArtifactResponse { hrn, url }) => Ok(BatchUploadArtifactResponse {
                 hrn,
                 url,
@@ -78,7 +82,6 @@ impl super::ports::BatchTransactionManager for NoopTransactionManager {
 pub mod test {
     use super::*;
     use std::sync::Mutex;
-    use shared::models::PackageCoordinates;
 
     pub struct MockBatchArtifactProcessor {
         pub processed_artifacts: Mutex<Vec<(BatchUploadArtifactCommand, Vec<u8>)>>,
@@ -101,8 +104,11 @@ pub mod test {
             command: BatchUploadArtifactCommand,
             content: Vec<u8>,
         ) -> Result<BatchUploadArtifactResponse, BatchUploadError> {
-            self.processed_artifacts.lock().unwrap().push((command, content.clone()));
-            
+            self.processed_artifacts
+                .lock()
+                .unwrap()
+                .push((command, content.clone()));
+
             if self.should_fail {
                 Ok(BatchUploadArtifactResponse {
                     hrn: "".to_string(),

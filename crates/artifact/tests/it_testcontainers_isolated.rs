@@ -21,7 +21,7 @@ mod tests {
             info!("Container ID: {}", container.id());
             // The container will be stopped and removed automatically when it goes out of scope.
         }
-        
+
         info!("hello-world container test completed successfully");
     }
 }

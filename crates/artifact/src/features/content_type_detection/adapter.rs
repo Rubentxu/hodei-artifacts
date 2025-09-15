@@ -1,13 +1,13 @@
 //! Adaptadores concretos para detección de Content-Type
 //! Implementación principal usando la crate `infer` para magic numbers
 
-use super::ports::{ContentTypeDetector, ContentTypeDetectionResult};
 use super::error::ContentTypeDetectionError;
+use super::ports::{ContentTypeDetectionResult, ContentTypeDetector};
 use async_trait::async_trait;
 use bytes::Bytes;
 use infer::Infer;
 use std::path::Path;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// Adaptador principal que usa la crate `infer` para detección de magic numbers
 #[derive(Default)]
@@ -21,7 +21,7 @@ impl InferContentTypeDetector {
             infer: Infer::new(),
         }
     }
-    
+
     /// Detecta MIME type basado en extensión de archivo (fallback)
     fn detect_from_extension_internal(&self, filename: &str) -> Option<String> {
         let path = Path::new(filename);
@@ -51,17 +51,23 @@ impl InferContentTypeDetector {
 
 #[async_trait]
 impl ContentTypeDetector for InferContentTypeDetector {
-    async fn detect_from_bytes(&self, data: Bytes) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
+    async fn detect_from_bytes(
+        &self,
+        data: Bytes,
+    ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         if data.len() < 256 {
-            warn!(data_len = data.len(), "Datos insuficientes para detección confiable de Content-Type");
+            warn!(
+                data_len = data.len(),
+                "Datos insuficientes para detección confiable de Content-Type"
+            );
             return Err(ContentTypeDetectionError::InsufficientData(256));
         }
-        
+
         match self.infer.get(&data) {
             Some(info) => {
                 let mime_type = info.mime_type();
                 debug!(mime_type = %mime_type, "Content-Type detectado mediante magic numbers");
-                
+
                 Ok(ContentTypeDetectionResult {
                     detected_mime_type: mime_type.to_string(),
                     client_provided_mime_type: None,
@@ -75,12 +81,15 @@ impl ContentTypeDetector for InferContentTypeDetector {
             }
         }
     }
-    
-    async fn detect_from_extension(&self, filename: &str) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
+
+    async fn detect_from_extension(
+        &self,
+        filename: &str,
+    ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         match self.detect_from_extension_internal(filename) {
             Some(mime_type) => {
                 debug!(filename = %filename, mime_type = %mime_type, "Content-Type detectado mediante extensión");
-                
+
                 Ok(ContentTypeDetectionResult {
                     detected_mime_type: mime_type,
                     client_provided_mime_type: None,
@@ -94,31 +103,31 @@ impl ContentTypeDetector for InferContentTypeDetector {
             }
         }
     }
-    
+
     async fn validate_consistency(
-        &self, 
-        detected: &str, 
-        provided: Option<&str>
+        &self,
+        detected: &str,
+        provided: Option<&str>,
     ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         let has_mismatch = match provided {
             Some(p) => detected != p,
             None => false,
         };
-        
+
         if has_mismatch {
             warn!(
-                detected = %detected, 
-                provided = ?provided, 
+                detected = %detected,
+                provided = ?provided,
                 "Discrepancia detectada entre Content-Type proporcionado y detectado"
             );
         } else if provided.is_some() {
             info!(
-                detected = %detected, 
-                provided = ?provided, 
+                detected = %detected,
+                provided = ?provided,
                 "Content-Type consistente entre proporcionado y detectado"
             );
         }
-        
+
         Ok(ContentTypeDetectionResult {
             detected_mime_type: detected.to_string(),
             client_provided_mime_type: provided.map(|s| s.to_string()),
@@ -132,40 +141,46 @@ impl ContentTypeDetector for InferContentTypeDetector {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    
+
     #[derive(Default)]
     pub struct MockContentTypeDetector {
         pub fixed_result: Option<Result<ContentTypeDetectionResult, ContentTypeDetectionError>>,
     }
-    
+
     #[async_trait]
     impl ContentTypeDetector for MockContentTypeDetector {
-        async fn detect_from_bytes(&self, _data: Bytes) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
+        async fn detect_from_bytes(
+            &self,
+            _data: Bytes,
+        ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
             match &self.fixed_result {
                 Some(Ok(result)) => Ok(result.clone()),
                 Some(Err(error)) => Err(error.clone()),
                 None => Err(ContentTypeDetectionError::DetectionFailed),
             }
         }
-        
-        async fn detect_from_extension(&self, _filename: &str) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
+
+        async fn detect_from_extension(
+            &self,
+            _filename: &str,
+        ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
             match &self.fixed_result {
                 Some(Ok(result)) => Ok(result.clone()),
                 Some(Err(error)) => Err(error.clone()),
                 None => Err(ContentTypeDetectionError::DetectionFailed),
             }
         }
-        
+
         async fn validate_consistency(
-            &self, 
-            detected: &str, 
-            provided: Option<&str>
+            &self,
+            detected: &str,
+            provided: Option<&str>,
         ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
             let has_mismatch = match provided {
                 Some(p) => detected != p,
                 None => false,
             };
-            
+
             Ok(ContentTypeDetectionResult {
                 detected_mime_type: detected.to_string(),
                 client_provided_mime_type: provided.map(|s| s.to_string()),

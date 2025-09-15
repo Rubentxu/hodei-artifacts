@@ -1,6 +1,6 @@
-use tracing_subscriber::FmtSubscriber;
-use tracing::Level;
 use std::sync::Once;
+use tracing::Level;
+use tracing_subscriber::FmtSubscriber;
 
 static INIT: Once = Once::new();
 

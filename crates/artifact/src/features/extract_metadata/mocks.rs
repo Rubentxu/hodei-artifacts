@@ -1,19 +1,21 @@
 // crates/artifact/src/features/extract_metadata/mocks.rs
 
+use super::{
+    error::MetadataError,
+    ports::{ArtifactContentReader, LeqNtT4aDY9oM1G5gAWWvB8B39iUobThhe, MetadataEventPublisher},
+};
+use crate::domain::events::ArtifactMetadataEnriched;
+use crate::domain::package_version::{ArtifactDependency, PackageMetadata};
 use async_trait::async_trait;
 use bytes::Bytes;
 use shared::hrn::Hrn;
-use crate::domain::package_version::{PackageMetadata, ArtifactDependency};
-use crate::domain::events::ArtifactMetadataEnriched;
-use super::{
-    error::MetadataError,
-    ports::{LeqNtT4aDY9oM1G5gAWWvB8B39iUobThhe, ArtifactContentReader, MetadataEventPublisher},
-};
 
 /// Mock implementation for package metadata repository
 #[derive(Default)]
 pub struct MockPackageMetadataRepository {
-    stored_metadata: std::sync::Mutex<std::collections::HashMap<String, (PackageMetadata, Vec<ArtifactDependency>)>>,
+    stored_metadata: std::sync::Mutex<
+        std::collections::HashMap<String, (PackageMetadata, Vec<ArtifactDependency>)>,
+    >,
     should_fail: std::sync::atomic::AtomicBool,
 }
 
@@ -23,14 +25,26 @@ impl MockPackageMetadataRepository {
     }
 
     pub fn set_should_fail(&self, should_fail: bool) {
-        self.should_fail.store(should_fail, std::sync::atomic::Ordering::SeqCst);
+        self.should_fail
+            .store(should_fail, std::sync::atomic::Ordering::SeqCst);
     }
 
-    pub fn add_mock_metadata(&self, hrn: &str, metadata: PackageMetadata, dependencies: Vec<ArtifactDependency>) {
-        self.stored_metadata.lock().unwrap().insert(hrn.to_string(), (metadata, dependencies));
+    pub fn add_mock_metadata(
+        &self,
+        hrn: &str,
+        metadata: PackageMetadata,
+        dependencies: Vec<ArtifactDependency>,
+    ) {
+        self.stored_metadata
+            .lock()
+            .unwrap()
+            .insert(hrn.to_string(), (metadata, dependencies));
     }
 
-    pub fn get_stored_metadata(&self, hrn: &str) -> Option<(PackageMetadata, Vec<ArtifactDependency>)> {
+    pub fn get_stored_metadata(
+        &self,
+        hrn: &str,
+    ) -> Option<(PackageMetadata, Vec<ArtifactDependency>)> {
         self.stored_metadata.lock().unwrap().get(hrn).cloned()
     }
 }
@@ -44,11 +58,16 @@ impl LeqNtT4aDY9oM1G5gAWWvB8B39iUobThhe for MockPackageMetadataRepository {
         dependencies: Vec<ArtifactDependency>,
     ) -> Result<(), MetadataError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(MetadataError::RepositoryError("Mock repository error".to_string()));
+            return Err(MetadataError::RepositoryError(
+                "Mock repository error".to_string(),
+            ));
         }
 
         let hrn_str = hrn.to_string();
-        self.stored_metadata.lock().unwrap().insert(hrn_str, (metadata, dependencies));
+        self.stored_metadata
+            .lock()
+            .unwrap()
+            .insert(hrn_str, (metadata, dependencies));
         Ok(())
     }
 }
@@ -66,11 +85,15 @@ impl MockArtifactContentReader {
     }
 
     pub fn set_should_fail(&self, should_fail: bool) {
-        self.should_fail.store(should_fail, std::sync::atomic::Ordering::SeqCst);
+        self.should_fail
+            .store(should_fail, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn add_mock_content(&self, path: &str, content: Bytes) {
-        self.mock_content.lock().unwrap().insert(path.to_string(), content);
+        self.mock_content
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), content);
     }
 
     pub fn add_mock_maven_pom(&self, path: &str) {
@@ -125,13 +148,19 @@ impl MockArtifactContentReader {
 impl ArtifactContentReader for MockArtifactContentReader {
     async fn read_artifact_content(&self, storage_path: &str) -> Result<Bytes, MetadataError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(MetadataError::StorageError("Mock storage error".to_string()));
+            return Err(MetadataError::StorageError(
+                "Mock storage error".to_string(),
+            ));
         }
 
-        self.mock_content.lock().unwrap()
+        self.mock_content
+            .lock()
+            .unwrap()
             .get(storage_path)
             .cloned()
-            .ok_or_else(|| MetadataError::StorageError(format!("Content not found for path: {}", storage_path)))
+            .ok_or_else(|| {
+                MetadataError::StorageError(format!("Content not found for path: {}", storage_path))
+            })
     }
 }
 
@@ -148,7 +177,8 @@ impl MockMetadataEventPublisher {
     }
 
     pub fn set_should_fail(&self, should_fail: bool) {
-        self.should_fail.store(should_fail, std::sync::atomic::Ordering::SeqCst);
+        self.should_fail
+            .store(should_fail, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn get_published_events(&self) -> Vec<ArtifactMetadataEnriched> {
@@ -166,7 +196,10 @@ impl MockMetadataEventPublisher {
 
 #[async_trait]
 impl MetadataEventPublisher for MockMetadataEventPublisher {
-    async fn publish_metadata_enriched(&self, event: ArtifactMetadataEnriched) -> Result<(), MetadataError> {
+    async fn publish_metadata_enriched(
+        &self,
+        event: ArtifactMetadataEnriched,
+    ) -> Result<(), MetadataError> {
         if self.should_fail.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(MetadataError::EventError("Mock event error".to_string()));
         }
@@ -178,8 +211,13 @@ impl MetadataEventPublisher for MockMetadataEventPublisher {
 
 /// Utility for creating test HRNs
 pub fn create_test_hrn(package_name: &str, version: &str) -> Hrn {
-    Hrn::new(&format!("hrn:artifact:example/{}:{}", package_name, version))
-        .expect("Failed to create test HRN")
+   // Ensure HRN starts with the required prefix `hrn:hodei:` so Hrn::new accepts it
+    // Use a simple artifact HRN pattern: hrn:hodei:artifact:global:example:package-version/<name>/<version>
+    Hrn::new(&format!(
+        "hrn:hodei:artifact:global:example:package-version/{}/{}",
+        package_name, version
+    ))
+    .expect("Failed to create test HRN")
 }
 
 /// Utility for creating test package metadata
@@ -223,7 +261,10 @@ mod tests {
         let dependencies = vec![create_test_dependency("dep1", "1.0.0")];
 
         // Store metadata
-        repository.update_package_metadata(&hrn, metadata.clone(), dependencies.clone()).await.unwrap();
+        repository
+            .update_package_metadata(&hrn, metadata.clone(), dependencies.clone())
+            .await
+            .unwrap();
 
         // Retrieve metadata
         let stored = repository.get_stored_metadata(&hrn.to_string());
@@ -263,12 +304,18 @@ mod tests {
         };
 
         // Publish event
-        publisher.publish_metadata_enriched(event.clone()).await.unwrap();
+        publisher
+            .publish_metadata_enriched(event.clone())
+            .await
+            .unwrap();
 
         // Check event was published
         let events = publisher.get_published_events();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].package_version_hrn.to_string(), event.package_version_hrn.to_string());
+        assert_eq!(
+            events[0].package_version_hrn.to_string(),
+            event.package_version_hrn.to_string()
+        );
     }
 
     #[tokio::test]
@@ -280,7 +327,9 @@ mod tests {
         // Test repository error
         repository.set_should_fail(true);
         let hrn = create_test_hrn("test", "1.0.0");
-        let result = repository.update_package_metadata(&hrn, create_test_metadata("test"), vec![]).await;
+        let result = repository
+            .update_package_metadata(&hrn, create_test_metadata("test"), vec![])
+            .await;
         assert!(result.is_err());
 
         // Test reader error

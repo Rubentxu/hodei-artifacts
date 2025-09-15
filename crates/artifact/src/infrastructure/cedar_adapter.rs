@@ -1,6 +1,6 @@
 //! Cedar Policy adapter for PackageVersion resource
 
-use cedar_policy::{EntityUid, EntityTypeName, EntityId, RestrictedExpression};
+use cedar_policy::{EntityId, EntityTypeName, EntityUid, RestrictedExpression};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -26,23 +26,37 @@ impl HodeiResource<EntityUid, RestrictedExpression> for PackageVersion {
 
     fn resource_attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), RestrictedExpression::new_string("package_version".to_string()));
-        attrs.insert("status".to_string(), RestrictedExpression::new_string(format!("{:?}", self.status)));
-        
+        attrs.insert(
+            "type".to_string(),
+            RestrictedExpression::new_string("package_version".to_string()),
+        );
+        attrs.insert(
+            "status".to_string(),
+            RestrictedExpression::new_string(format!("{:?}", self.status)),
+        );
+
         // Convert tags to a set of strings
-        let tags_set = self.tags.iter()
+        let tags_set = self
+            .tags
+            .iter()
             .map(|t| RestrictedExpression::new_string(t.clone()))
             .collect::<Vec<_>>();
         attrs.insert("tags".to_string(), RestrictedExpression::new_set(tags_set));
-        
+
         // Add license information if available
         if !self.metadata.licenses.is_empty() {
-            let licenses_set = self.metadata.licenses.iter()
+            let licenses_set = self
+                .metadata
+                .licenses
+                .iter()
                 .map(|l| RestrictedExpression::new_string(l.clone()))
                 .collect::<Vec<_>>();
-            attrs.insert("licenses".to_string(), RestrictedExpression::new_set(licenses_set));
+            attrs.insert(
+                "licenses".to_string(),
+                RestrictedExpression::new_set(licenses_set),
+            );
         }
-        
+
         attrs
     }
 
@@ -61,7 +75,7 @@ fn create_entity_uid_from_hrn(hrn: &str) -> EntityUid {
         let entity_type = match parts[2] {
             "artifact" => "Artifact",
             "iam" => "IAM",
-            "repository" => "Repository", 
+            "repository" => "Repository",
             "organization" => "Organization",
             _ => "Resource",
         };

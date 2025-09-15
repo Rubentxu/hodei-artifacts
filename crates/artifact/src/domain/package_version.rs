@@ -1,10 +1,10 @@
+use crate::domain::error;
+use serde::{Deserialize, Serialize};
 use shared::hrn::{Hrn, OrganizationId, RepositoryId};
 use shared::lifecycle::Lifecycle;
-pub(crate) use shared::models::{PackageCoordinates, ArtifactReference};
-use serde::{Serialize, Deserialize};
-use time::OffsetDateTime;
+pub(crate) use shared::models::{ArtifactReference, PackageCoordinates};
 use std::collections::HashMap;
-use crate::domain::error;
+use time::OffsetDateTime;
 
 /// La representación de una única versión de un paquete publicado en un repositorio.
 /// Es el Agregado Raíz principal de este Bounded Context.
@@ -45,11 +45,15 @@ pub struct PackageVersion {
     pub oci_manifest_hrn: Option<Hrn>,
 }
 
-
 impl PackageVersion {
     /// Pone en cuarentena un artefacto si está en un estado válido.
     /// Este método encapsula la lógica de negocio para la transición de estado.
-    pub fn quarantine(&mut self, _reason: String, _by: Hrn, _at: OffsetDateTime) -> Result<(), error::DomainError> {
+    pub fn quarantine(
+        &mut self,
+        _reason: String,
+        _by: Hrn,
+        _at: OffsetDateTime,
+    ) -> Result<(), error::DomainError> {
         // ... Lógica para una transición de estado segura
         Ok(())
     }
@@ -74,7 +78,7 @@ pub struct PackageMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactDependency {
     pub coordinates: PackageCoordinates,
-    pub scope: String, // "compile", "runtime", "test", etc.
+    pub scope: String,              // "compile", "runtime", "test", etc.
     pub version_constraint: String, // ej. "^1.2.3", "~4.5.0"
     pub is_optional: bool,
 }
@@ -83,7 +87,15 @@ pub struct ArtifactDependency {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ArtifactStatus {
     Active,
-    Quarantined { reason: String, since: OffsetDateTime },
-    Banned { reason: String, since: OffsetDateTime },
-    Deprecated { successor_hrn: Option<Hrn> },
+    Quarantined {
+        reason: String,
+        since: OffsetDateTime,
+    },
+    Banned {
+        reason: String,
+        since: OffsetDateTime,
+    },
+    Deprecated {
+        successor_hrn: Option<Hrn>,
+    },
 }

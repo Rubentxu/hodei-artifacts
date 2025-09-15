@@ -1,9 +1,9 @@
+use super::error::MetadataError;
+use crate::domain::events::ArtifactMetadataEnriched;
+use crate::domain::package_version::{ArtifactDependency, PackageMetadata};
 use async_trait::async_trait;
 use bytes::Bytes;
 use shared::hrn::Hrn;
-use crate::domain::package_version::{PackageMetadata, ArtifactDependency};
-use crate::domain::events::ArtifactMetadataEnriched;
-use super::error::MetadataError;
 
 /// Repository port for updating package metadata
 #[async_trait]
@@ -25,5 +25,8 @@ pub trait ArtifactContentReader: Send + Sync {
 /// Port for publishing metadata enrichment events
 #[async_trait]
 pub trait MetadataEventPublisher: Send + Sync {
-    async fn publish_metadata_enriched(&self, event: ArtifactMetadataEnriched) -> Result<(), MetadataError>;
+    async fn publish_metadata_enriched(
+        &self,
+        event: ArtifactMetadataEnriched,
+    ) -> Result<(), MetadataError>;
 }

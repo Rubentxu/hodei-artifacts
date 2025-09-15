@@ -2,10 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use tracing::{debug, warn};
 
-use super::{
-    dto::UploadArtifactCommand,
-    ports::ArtifactValidator,
-};
+use super::{dto::UploadArtifactCommand, ports::ArtifactValidator};
 
 /// Validador de artefactos que implementa reglas de validación reales
 pub struct ValidationEngineArtifactValidator {
@@ -71,7 +68,7 @@ impl ValidationEngineArtifactValidator {
     /// Valida la extensión del archivo
     fn validate_file_extension(&self, file_name: &str) -> Result<(), String> {
         let file_name_lower = file_name.to_lowercase();
-        
+
         for blocked_ext in &self.blocked_extensions {
             if file_name_lower.ends_with(blocked_ext) {
                 return Err(format!(
@@ -80,7 +77,7 @@ impl ValidationEngineArtifactValidator {
                 ));
             }
         }
-        
+
         debug!("File extension validation passed for: {}", file_name);
         Ok(())
     }
@@ -95,12 +92,12 @@ impl ValidationEngineArtifactValidator {
         // Validación de magic numbers para detectar tipos de archivo
         if content.len() >= 4 {
             let header = &content[..4];
-            
+
             // Detectar archivos ejecutables (MZ header)
             if header == b"MZ\x90\x00" {
                 return Err("Executable files are not allowed".to_string());
             }
-            
+
             // Detectar scripts potencialmente peligrosos
             if file_name.ends_with(".js") || file_name.ends_with(".py") {
                 let content_str = String::from_utf8_lossy(&content[..content.len().min(1024)]);
@@ -121,17 +118,22 @@ impl ValidationEngineArtifactValidator {
         if command.coordinates.name.is_empty() {
             return Err("Package name cannot be empty".to_string());
         }
-        
+
         if command.coordinates.name.len() > 100 {
             return Err("Package name is too long (max 100 characters)".to_string());
         }
-        
+
         // Validar versión
         if command.coordinates.version.is_empty() {
             return Err("Package version cannot be empty".to_string());
         }
-        
-        if !command.coordinates.version.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '+' || c == '_') {
+
+        if !command
+            .coordinates
+            .version
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '+' || c == '_')
+        {
             return Err("Package version contains invalid characters".to_string());
         }
 
@@ -145,17 +147,20 @@ impl ValidationEngineArtifactValidator {
         if command.file_name.len() > 255 {
             return Err("File name is too long (max 255 characters)".to_string());
         }
-        
+
         // Validar que el nombre de archivo no contenga caracteres peligrosos
-        if command.file_name.contains("..") || command.file_name.contains('/') || command.file_name.contains('\\') {
+        if command.file_name.contains("..")
+            || command.file_name.contains('/')
+            || command.file_name.contains('\\')
+        {
             return Err("File name contains invalid characters".to_string());
         }
-        
+
         // Validar tamaño de contenido
         if command.content_length == 0 {
             return Err("Content length cannot be zero".to_string());
         }
-        
+
         if command.content_length > self.max_file_size as u64 {
             return Err(format!(
                 "Content length {} exceeds maximum allowed size of {} bytes",
@@ -170,9 +175,16 @@ impl ValidationEngineArtifactValidator {
 
 #[async_trait]
 impl ArtifactValidator for ValidationEngineArtifactValidator {
-    async fn validate(&self, command: &UploadArtifactCommand, content: &Bytes) -> Result<(), Vec<String>> {
-        debug!("Starting artifact validation for file: {}", command.file_name);
-        
+    async fn validate(
+        &self,
+        command: &UploadArtifactCommand,
+        content: &Bytes,
+    ) -> Result<(), Vec<String>> {
+        debug!(
+            "Starting artifact validation for file: {}",
+            command.file_name
+        );
+
         let mut errors = Vec::new();
 
         // 1. Validar metadatos del comando

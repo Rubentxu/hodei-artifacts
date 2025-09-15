@@ -3,8 +3,8 @@
 //! No contiene lógica de infraestructura ni lógica transversal.
 //! Este archivo implementa el caso de uso de la feature content_type_detection.
 
-use super::ports::{ContentTypeDetector, ContentTypeDetectionResult};
 use super::error::ContentTypeDetectionError;
+use super::ports::{ContentTypeDetectionResult, ContentTypeDetector};
 use bytes::Bytes;
 use std::sync::Arc;
 
@@ -48,7 +48,9 @@ impl ContentTypeDetectionUseCase {
         };
 
         // Validar consistencia con el header proporcionado
-        self.detector.validate_consistency(&detected_mime_type, client_provided_mime_type).await
+        self.detector
+            .validate_consistency(&detected_mime_type, client_provided_mime_type)
+            .await
     }
 
     /// Detecta Content-Type solo mediante magic numbers (sin fallback)
@@ -60,7 +62,9 @@ impl ContentTypeDetectionUseCase {
         let result = self.detector.detect_from_bytes(data).await?;
 
         // Validar consistencia
-        self.detector.validate_consistency(&result.detected_mime_type, client_provided_mime_type).await
+        self.detector
+            .validate_consistency(&result.detected_mime_type, client_provided_mime_type)
+            .await
     }
 
     /// Detecta Content-Type solo mediante extensión de archivo
@@ -72,7 +76,8 @@ impl ContentTypeDetectionUseCase {
         let result = self.detector.detect_from_extension(filename).await?;
 
         // Validar consistencia
-        self.detector.validate_consistency(&result.detected_mime_type, client_provided_mime_type).await
+        self.detector
+            .validate_consistency(&result.detected_mime_type, client_provided_mime_type)
+            .await
     }
 }
-

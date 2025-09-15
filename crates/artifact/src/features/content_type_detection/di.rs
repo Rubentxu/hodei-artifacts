@@ -19,7 +19,7 @@ impl ContentTypeDetectionDIContainer {
 
         Self { use_case }
     }
-    
+
     /// Crea un contenedor DI con un detector personalizado
     pub fn with_detector(detector: Arc<dyn ContentTypeDetector>) -> Self {
         let use_case = Arc::new(ContentTypeDetectionUseCase::new(detector));

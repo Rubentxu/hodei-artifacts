@@ -1,7 +1,7 @@
-use shared::hrn::Hrn;
-use crate::domain::package_version::{PackageCoordinates, ArtifactReference};
-use crate::domain::events::ArtifactEvent;
+use crate::domain::package_version::PackageCoordinates;
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
+use shared::hrn::Hrn;
 
 /// Command to trigger artifact validation
 pub struct ValidateArtifactCommand {
@@ -21,7 +21,7 @@ pub struct ValidationResult {
 }
 
 /// Validation rule definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationRule {
     pub id: String,
     pub name: String,
@@ -33,19 +33,19 @@ pub struct ValidationRule {
 }
 
 /// Type of validation rule
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ValidationRuleType {
     /// Check that JAR files are signed
     JarSignatureRequired,
-    
+
     /// Check that package.json has a license field
     NpmLicenseRequired,
-    
+
     /// Check file size limits
     SizeLimit { max_size_bytes: u64 },
-    
+
     /// Custom validation rule
-    Custom { 
+    Custom {
         script_path: String,
         parameters: std::collections::HashMap<String, String>,
     },

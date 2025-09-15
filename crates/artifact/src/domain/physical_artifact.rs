@@ -1,10 +1,10 @@
 // crates/artifact/src/domain/physical_artifact.rs
 
+use serde::{Deserialize, Serialize};
+use shared::enums::HashAlgorithm;
 use shared::hrn::{Hrn, OrganizationId};
 use shared::lifecycle::Lifecycle;
 use shared::models::ContentHash;
-use shared::enums::HashAlgorithm;
-use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
 /// Representa un fichero físico, inmutable, almacenado en el backend de almacenamiento.
@@ -31,10 +31,10 @@ pub struct PhysicalArtifact {
 
     /// Ubicación en el backend de almacenamiento (ej. `s3://my-bucket/cas/sha256/abc...`).
     pub storage_location: String,
-    
+
     /// Tipo MIME detectado del contenido (ej. `application/java-archive`, `application/octet-stream`).
     pub mime_type: String,
-    
+
     /// Información de auditoría y ciclo de vida (útil para la recolección de basura).
     pub lifecycle: Lifecycle,
 }

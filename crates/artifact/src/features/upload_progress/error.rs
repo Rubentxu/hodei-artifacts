@@ -6,19 +6,19 @@ use thiserror::Error;
 pub enum ProgressError {
     #[error("Storage error: {0}")]
     StorageError(String),
-    
+
     #[error("Session not found: {0}")]
     SessionNotFound(String),
-    
+
     #[error("Access denied: {0}")]
     AccessDenied(String),
-    
+
     #[error("Invalid chunk number: {0}")]
     InvalidChunkNumber(usize),
-    
+
     #[error("Chunk not found: {0}")]
     ChunkNotFound(String),
-    
+
     #[error("Assembly error: {0}")]
     AssemblyError(String),
 }
@@ -55,7 +55,7 @@ impl ProgressErrorResponse {
             message: "Internal server error".to_string(),
         }
     }
-    
+
     pub fn bad_request(message: &str) -> Self {
         Self {
             error: "BAD_REQUEST".to_string(),

@@ -1,19 +1,15 @@
-use std::sync::Arc;
 use super::{
-    use_case::ValidationEngineUseCase,
     adapter::{
-        StorageArtifactContentReader,
-        RepositoryValidationRuleManager,
-        EventBusValidationPublisher,
-        DefaultValidationRuleExecutor,
+        DefaultValidationRuleExecutor, EventBusValidationPublisher,
+        RepositoryValidationRuleManager, StorageArtifactContentReader,
     },
-    api::ValidationEngineApi,
+    use_case::ValidationEngineUseCase,
 };
+use std::sync::Arc;
 
 /// Dependency injection container for validation engine feature
 pub struct ValidationEngineDIContainer {
     use_case: ValidationEngineUseCase,
-    api: ValidationEngineApi,
 }
 
 impl ValidationEngineDIContainer {
@@ -26,7 +22,7 @@ impl ValidationEngineDIContainer {
         let rule_repository = Arc::new(RepositoryValidationRuleManager::new());
         let event_publisher = Arc::new(EventBusValidationPublisher::new());
         let rule_executor = Arc::new(DefaultValidationRuleExecutor::new());
-        
+
         // Create use case
         let use_case = ValidationEngineUseCase::new(
             rule_repository,
@@ -34,16 +30,10 @@ impl ValidationEngineDIContainer {
             event_publisher,
             rule_executor,
         );
-        
-        // Create API
-        let api = ValidationEngineApi::new(use_case.clone());
-        
-        Self {
-            use_case,
-            api,
-        }
+
+        Self { use_case }
     }
-    
+
     /// Create a new dependency injection container with mock implementations for testing
     pub fn new_with_mocks(
         content_reader: Arc<dyn super::ports::ArtifactContentReader>,
@@ -58,31 +48,15 @@ impl ValidationEngineDIContainer {
             event_publisher,
             rule_executor,
         );
-        
-        // Create API
-        let api = ValidationEngineApi::new(use_case.clone());
-        
-        Self {
-            use_case,
-            api,
-        }
+
+        Self { use_case }
     }
-    
+
     /// Get the validation engine use case
     pub fn use_case(&self) -> &ValidationEngineUseCase {
         &self.use_case
     }
-    
-    /// Get the validation engine API
-    pub fn api(&self) -> &ValidationEngineApi {
-        &self.api
-    }
-    
-    /// Consume the container and return the API
-    pub fn into_api(self) -> ValidationEngineApi {
-        self.api
-    }
-    
+
     /// Consume the container and return the use case
     pub fn into_use_case(self) -> ValidationEngineUseCase {
         self.use_case

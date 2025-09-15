@@ -4,18 +4,19 @@
 //! Implementa tanto polling (REST) como WebSocket para tracking en tiempo real
 
 pub mod adapter;
-pub mod dto;
-pub mod ports;
-pub mod use_case;
-pub mod api;
 pub mod di;
+pub mod dto;
 pub mod error;
 pub mod mocks;
+pub mod ports;
+pub mod use_case;
 
 // Re-exportar los componentes públicos
-pub use dto::{UploadProgress, UploadStatus, UpdateProgressCommand, UploadProgressResponse, ReceivedChunksResponse, ReceivedChunkInfo};
-pub use use_case::UploadProgressUseCase;
-pub use api::UploadProgressApi;
-pub use ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ProgressResult};
-pub use error::ProgressError;
 pub use di::UploadProgressDIContainer;
+pub use dto::{
+    ReceivedChunkInfo, ReceivedChunksResponse, UpdateProgressCommand, UploadProgress,
+    UploadProgressResponse, UploadStatus,
+};
+pub use error::ProgressError;
+pub use ports::{ProgressEventPublisher, ProgressResult, ProgressStorage, RealtimeNotifier};
+pub use use_case::UploadProgressUseCase;

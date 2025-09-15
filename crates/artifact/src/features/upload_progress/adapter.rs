@@ -1,9 +1,9 @@
 //! Adaptadores concretos para los ports de progress tracking
 //! Incluye implementaciones para testing y desarrollo
 
-use super::ports::{ProgressStorage, ProgressEventPublisher, RealtimeNotifier, ProgressResult};
+use super::dto::{UpdateProgressCommand, UploadProgress};
+use super::ports::{ProgressEventPublisher, ProgressResult, ProgressStorage, RealtimeNotifier};
 use crate::features::upload_progress::ProgressError;
-use super::dto::{UploadProgress, UpdateProgressCommand};
 use async_trait::async_trait;
 use std::sync::Mutex;
 
@@ -21,24 +21,34 @@ pub mod test {
     #[async_trait]
     impl ProgressStorage for MockProgressStorage {
         async fn create_session(&self, progress: UploadProgress) -> ProgressResult<()> {
-            self.saved_todos.lock().unwrap().insert(progress.upload_id.clone(), progress);
+            self.saved_todos
+                .lock()
+                .unwrap()
+                .insert(progress.upload_id.clone(), progress);
             Ok(())
         }
 
         async fn get_progress(&self, upload_id: &str) -> ProgressResult<UploadProgress> {
-            self.saved_todos.lock().unwrap().get(upload_id)
+            self.saved_todos
+                .lock()
+                .unwrap()
+                .get(upload_id)
                 .cloned()
                 .ok_or_else(|| ProgressError::SessionNotFound(upload_id.to_string()))
         }
 
-        async fn update_progress(&self, command: UpdateProgressCommand) -> ProgressResult<UploadProgress> {
+        async fn update_progress(
+            &self,
+            command: UpdateProgressCommand,
+        ) -> ProgressResult<UploadProgress> {
             let mut sessions = self.saved_todos.lock().unwrap();
-            let progress = sessions.get_mut(&command.upload_id)
+            let progress = sessions
+                .get_mut(&command.upload_id)
                 .ok_or_else(|| ProgressError::SessionNotFound(command.upload_id.clone()))?;
 
             progress.update(command.bytes_transferred, command.total_bytes);
             progress.status = command.status;
-            
+
             Ok(progress.clone())
         }
 
@@ -60,17 +70,26 @@ pub mod test {
     #[async_trait]
     impl ProgressEventPublisher for MockEventPublisher {
         async fn publish_progress_update(&self, _progress: &UploadProgress) -> ProgressResult<()> {
-            self.published_events.lock().unwrap().push("progress_update".to_string());
+            self.published_events
+                .lock()
+                .unwrap()
+                .push("progress_update".to_string());
             Ok(())
         }
 
         async fn publish_upload_completed(&self, upload_id: &str) -> ProgressResult<()> {
-            self.published_events.lock().unwrap().push(format!("completed_{}", upload_id));
+            self.published_events
+                .lock()
+                .unwrap()
+                .push(format!("completed_{}", upload_id));
             Ok(())
         }
 
         async fn publish_upload_failed(&self, upload_id: &str, _error: &str) -> ProgressResult<()> {
-            self.published_events.lock().unwrap().push(format!("failed_{}", upload_id));
+            self.published_events
+                .lock()
+                .unwrap()
+                .push(format!("failed_{}", upload_id));
             Ok(())
         }
     }
@@ -84,12 +103,18 @@ pub mod test {
     #[async_trait]
     impl RealtimeNotifier for MockRealtimeNotifier {
         async fn notify_progress_update(&self, progress: &UploadProgress) -> ProgressResult<()> {
-            self.notifications.lock().unwrap().push(format!("notify_{}_{}", progress.upload_id, progress.percentage));
+            self.notifications.lock().unwrap().push(format!(
+                "notify_{}_{}",
+                progress.upload_id, progress.percentage
+            ));
             Ok(())
         }
 
         async fn subscribe(&self, upload_id: &str, client_id: &str) -> ProgressResult<()> {
-            self.subscriptions.lock().unwrap().push((upload_id.to_string(), client_id.to_string()));
+            self.subscriptions
+                .lock()
+                .unwrap()
+                .push((upload_id.to_string(), client_id.to_string()));
             Ok(())
         }
 
@@ -115,24 +140,34 @@ pub mod memory {
     #[async_trait]
     impl ProgressStorage for MemoryProgressStorage {
         async fn create_session(&self, progress: UploadProgress) -> ProgressResult<()> {
-            self.sessions.lock().unwrap().insert(progress.upload_id.clone(), progress);
+            self.sessions
+                .lock()
+                .unwrap()
+                .insert(progress.upload_id.clone(), progress);
             Ok(())
         }
 
         async fn get_progress(&self, upload_id: &str) -> ProgressResult<UploadProgress> {
-            self.sessions.lock().unwrap().get(upload_id)
+            self.sessions
+                .lock()
+                .unwrap()
+                .get(upload_id)
                 .cloned()
                 .ok_or_else(|| ProgressError::SessionNotFound(upload_id.to_string()))
         }
 
-        async fn update_progress(&self, command: UpdateProgressCommand) -> ProgressResult<UploadProgress> {
+        async fn update_progress(
+            &self,
+            command: UpdateProgressCommand,
+        ) -> ProgressResult<UploadProgress> {
             let mut sessions = self.sessions.lock().unwrap();
-            let progress = sessions.get_mut(&command.upload_id)
+            let progress = sessions
+                .get_mut(&command.upload_id)
                 .ok_or_else(|| ProgressError::SessionNotFound(command.upload_id.clone()))?;
 
             progress.update(command.bytes_transferred, command.total_bytes);
             progress.status = command.status;
-            
+
             Ok(progress.clone())
         }
 
@@ -155,17 +190,26 @@ pub mod memory {
     #[async_trait]
     impl ProgressEventPublisher for MemoryEventPublisher {
         async fn publish_progress_update(&self, _progress: &UploadProgress) -> ProgressResult<()> {
-            self.published_events.lock().unwrap().push("progress_update".to_string());
+            self.published_events
+                .lock()
+                .unwrap()
+                .push("progress_update".to_string());
             Ok(())
         }
 
         async fn publish_upload_completed(&self, upload_id: &str) -> ProgressResult<()> {
-            self.published_events.lock().unwrap().push(format!("completed_{}", upload_id));
+            self.published_events
+                .lock()
+                .unwrap()
+                .push(format!("completed_{}", upload_id));
             Ok(())
         }
 
         async fn publish_upload_failed(&self, upload_id: &str, _error: &str) -> ProgressResult<()> {
-            self.published_events.lock().unwrap().push(format!("failed_{}", upload_id));
+            self.published_events
+                .lock()
+                .unwrap()
+                .push(format!("failed_{}", upload_id));
             Ok(())
         }
     }
@@ -180,12 +224,18 @@ pub mod memory {
     #[async_trait]
     impl RealtimeNotifier for MemoryRealtimeNotifier {
         async fn notify_progress_update(&self, progress: &UploadProgress) -> ProgressResult<()> {
-            self.notifications.lock().unwrap().push(format!("notify_{}_{}", progress.upload_id, progress.percentage));
+            self.notifications.lock().unwrap().push(format!(
+                "notify_{}_{}",
+                progress.upload_id, progress.percentage
+            ));
             Ok(())
         }
 
         async fn subscribe(&self, upload_id: &str, client_id: &str) -> ProgressResult<()> {
-            self.subscriptions.lock().unwrap().push((upload_id.to_string(), client_id.to_string()));
+            self.subscriptions
+                .lock()
+                .unwrap()
+                .push((upload_id.to_string(), client_id.to_string()));
             Ok(())
         }
 

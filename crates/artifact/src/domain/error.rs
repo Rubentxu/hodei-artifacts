@@ -1,4 +1,3 @@
-
 #[derive(Debug, thiserror::Error)]
 pub enum DomainError {
     #[error("Storage error: {0}")]

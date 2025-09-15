@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use shared::hrn::Hrn;
 use super::{
-    use_case::VersioningUseCase,
-    dto::{ValidateVersionCommand, VersionValidationResult, VersioningConfig},
-    error::VersioningError,
-    ports::{VersioningRepository, VersioningEventPublisher, VersionValidator},
     dto::ParsedVersion,
+    dto::{ValidateVersionCommand, VersioningConfig},
+    error::VersioningError,
+    ports::{VersionValidator, VersioningEventPublisher, VersioningRepository},
+    use_case::VersioningUseCase,
 };
+use shared::hrn::Hrn;
+use std::sync::Arc;
 
 /// Mock implementation for testing
 struct MockVersioningRepository {
@@ -18,37 +18,64 @@ impl MockVersioningRepository {
     fn new() -> Self {
         Self {
             config: VersioningConfig::default(),
+            // Default to having one existing version to match test expectations
             existing_versions: vec!["1.0.0".to_string()],
         }
     }
-    
+
     fn with_config(config: VersioningConfig) -> Self {
         Self {
             config,
-            existing_versions: vec!["1.0.0".to_string()],
+            existing_versions: vec![],
+        }
+    }
+
+    fn with_existing_versions(versions: Vec<String>) -> Self {
+        Self {
+            config: VersioningConfig::default(),
+            existing_versions: versions,
         }
     }
 }
 
 #[async_trait::async_trait]
 impl VersioningRepository for MockVersioningRepository {
-    async fn get_versioning_config(&self, _repository_hrn: &Hrn) -> Result<VersioningConfig, VersioningError> {
+    async fn get_versioning_config(
+        &self,
+        _repository_hrn: &Hrn,
+    ) -> Result<VersioningConfig, VersioningError> {
         Ok(self.config.clone())
     }
-    
-    async fn save_versioning_config(&self, _repository_hrn: &Hrn, _config: &VersioningConfig) -> Result<(), VersioningError> {
+
+    async fn save_versioning_config(
+        &self,
+        _repository_hrn: &Hrn,
+        _config: &VersioningConfig,
+    ) -> Result<(), VersioningError> {
         Ok(())
     }
-    
-    async fn version_exists(&self, _package_hrn: &Hrn, version: &str) -> Result<bool, VersioningError> {
+
+    async fn version_exists(
+        &self,
+        _package_hrn: &Hrn,
+        version: &str,
+    ) -> Result<bool, VersioningError> {
         Ok(self.existing_versions.contains(&version.to_string()))
     }
-    
-    async fn get_existing_versions(&self, _package_hrn: &Hrn) -> Result<Vec<String>, VersioningError> {
+
+    async fn get_existing_versions(
+        &self,
+        _package_hrn: &Hrn,
+    ) -> Result<Vec<String>, VersioningError> {
         Ok(self.existing_versions.clone())
     }
-    
-    async fn snapshot_exists_for_major_minor(&self, _package_hrn: &Hrn, _major: u64, _minor: u64) -> Result<bool, VersioningError> {
+
+    async fn snapshot_exists_for_major_minor(
+        &self,
+        _package_hrn: &Hrn,
+        _major: u64,
+        _minor: u64,
+    ) -> Result<bool, VersioningError> {
         Ok(false)
     }
 }
@@ -58,11 +85,17 @@ struct MockVersioningEventPublisher;
 
 #[async_trait::async_trait]
 impl VersioningEventPublisher for MockVersioningEventPublisher {
-    async fn publish_version_validated(&self, _event: super::ports::VersioningEvent) -> Result<(), VersioningError> {
+    async fn publish_version_validated(
+        &self,
+        _event: super::ports::VersioningEvent,
+    ) -> Result<(), VersioningError> {
         Ok(())
     }
-    
-    async fn publish_version_validation_failed(&self, _event: super::ports::VersioningEvent) -> Result<(), VersioningError> {
+
+    async fn publish_version_validation_failed(
+        &self,
+        _event: super::ports::VersioningEvent,
+    ) -> Result<(), VersioningError> {
         Ok(())
     }
 }
@@ -82,9 +115,11 @@ impl MockVersionValidator {
 impl VersionValidator for MockVersionValidator {
     fn parse_version(&self, version_str: &str) -> Result<ParsedVersion, VersioningError> {
         if !self.should_succeed {
-            return Err(VersioningError::InvalidSemVer("Invalid version".to_string()));
+            return Err(VersioningError::InvalidSemVer(
+                "Invalid version".to_string(),
+            ));
         }
-        
+
         // Simple parsing for testing
         Ok(ParsedVersion {
             original: version_str.to_string(),
@@ -96,10 +131,16 @@ impl VersionValidator for MockVersionValidator {
             is_snapshot: version_str.to_lowercase().ends_with("-snapshot"),
         })
     }
-    
-    fn validate_version(&self, _parsed_version: &ParsedVersion, _config: &VersioningConfig) -> Result<(), VersioningError> {
+
+    fn validate_version(
+        &self,
+        _parsed_version: &ParsedVersion,
+        _config: &VersioningConfig,
+    ) -> Result<(), VersioningError> {
         if !self.should_succeed {
-            return Err(VersioningError::NotSemVerCompliant("Version not compliant".to_string()));
+            return Err(VersioningError::NotSemVerCompliant(
+                "Version not compliant".to_string(),
+            ));
         }
         Ok(())
     }
@@ -111,27 +152,23 @@ async fn test_validate_version_success() {
     let repository = Arc::new(MockVersioningRepository::new());
     let event_publisher = Arc::new(MockVersioningEventPublisher);
     let version_validator = Arc::new(MockVersionValidator::new(true));
-    
-    let use_case = VersioningUseCase::new(
-        repository,
-        event_publisher,
-        version_validator,
-    );
-    
+
+    let use_case = VersioningUseCase::new(repository, event_publisher, version_validator);
+
     let command = ValidateVersionCommand {
         package_hrn: Hrn::new("hrn:artifact:test:package").unwrap(),
-        version: "1.0.0".to_string(),
+        version: "1.0.1".to_string(),
         repository_hrn: Hrn::new("hrn:repository:test").unwrap(),
     };
-    
+
     // Act
     let result = use_case.execute(command).await;
-    
+
     // Assert
     assert!(result.is_ok());
     let validation_result = result.unwrap();
     assert!(validation_result.is_valid);
-    assert_eq!(validation_result.version, "1.0.0");
+    assert_eq!(validation_result.version, "1.0.1");
     assert!(validation_result.parsed_version.is_some());
     assert!(validation_result.errors.is_empty());
 }
@@ -142,22 +179,18 @@ async fn test_validate_version_already_exists() {
     let repository = Arc::new(MockVersioningRepository::new());
     let event_publisher = Arc::new(MockVersioningEventPublisher);
     let version_validator = Arc::new(MockVersionValidator::new(true));
-    
-    let use_case = VersioningUseCase::new(
-        repository,
-        event_publisher,
-        version_validator,
-    );
-    
+
+    let use_case = VersioningUseCase::new(repository, event_publisher, version_validator);
+
     let command = ValidateVersionCommand {
         package_hrn: Hrn::new("hrn:artifact:test:package").unwrap(),
         version: "1.0.0".to_string(), // This version exists in the mock
         repository_hrn: Hrn::new("hrn:repository:test").unwrap(),
     };
-    
+
     // Act
     let result = use_case.execute(command).await;
-    
+
     // Assert
     assert!(result.is_ok());
     let validation_result = result.unwrap();
@@ -172,22 +205,18 @@ async fn test_validate_version_parse_failure() {
     let repository = Arc::new(MockVersioningRepository::new());
     let event_publisher = Arc::new(MockVersioningEventPublisher);
     let version_validator = Arc::new(MockVersionValidator::new(false));
-    
-    let use_case = VersioningUseCase::new(
-        repository,
-        event_publisher,
-        version_validator,
-    );
-    
+
+    let use_case = VersioningUseCase::new(repository, event_publisher, version_validator);
+
     let command = ValidateVersionCommand {
         package_hrn: Hrn::new("hrn:artifact:test:package").unwrap(),
         version: "invalid-version".to_string(),
         repository_hrn: Hrn::new("hrn:repository:test").unwrap(),
     };
-    
+
     // Act
     let result = use_case.execute(command).await;
-    
+
     // Assert
     assert!(result.is_ok());
     let validation_result = result.unwrap();
@@ -202,18 +231,14 @@ async fn test_get_versioning_config() {
     let repository = Arc::new(MockVersioningRepository::new());
     let event_publisher = Arc::new(MockVersioningEventPublisher);
     let version_validator = Arc::new(MockVersionValidator::new(true));
-    
-    let use_case = VersioningUseCase::new(
-        repository,
-        event_publisher,
-        version_validator,
-    );
-    
+
+    let use_case = VersioningUseCase::new(repository, event_publisher, version_validator);
+
     let repository_hrn = Hrn::new("hrn:repository:test").unwrap();
-    
+
     // Act
     let result = use_case.get_versioning_config(&repository_hrn).await;
-    
+
     // Assert
     assert!(result.is_ok());
     let config = result.unwrap();
@@ -226,13 +251,9 @@ async fn test_update_versioning_config() {
     let repository = Arc::new(MockVersioningRepository::new());
     let event_publisher = Arc::new(MockVersioningEventPublisher);
     let version_validator = Arc::new(MockVersionValidator::new(true));
-    
-    let use_case = VersioningUseCase::new(
-        repository,
-        event_publisher,
-        version_validator,
-    );
-    
+
+    let use_case = VersioningUseCase::new(repository, event_publisher, version_validator);
+
     let repository_hrn = Hrn::new("hrn:repository:test").unwrap();
     let config = VersioningConfig {
         strict_semver: true,
@@ -240,10 +261,12 @@ async fn test_update_versioning_config() {
         allowed_prerelease_tags: vec!["beta".to_string()],
         reject_build_metadata: true,
     };
-    
+
     // Act
-    let result = use_case.update_versioning_config(&repository_hrn, &config).await;
-    
+    let result = use_case
+        .update_versioning_config(&repository_hrn, &config)
+        .await;
+
     // Assert
     assert!(result.is_ok());
 }
@@ -254,18 +277,14 @@ async fn test_get_existing_versions() {
     let repository = Arc::new(MockVersioningRepository::new());
     let event_publisher = Arc::new(MockVersioningEventPublisher);
     let version_validator = Arc::new(MockVersionValidator::new(true));
-    
-    let use_case = VersioningUseCase::new(
-        repository,
-        event_publisher,
-        version_validator,
-    );
-    
+
+    let use_case = VersioningUseCase::new(repository, event_publisher, version_validator);
+
     let package_hrn = Hrn::new("hrn:artifact:test:package").unwrap();
-    
+
     // Act
     let result = use_case.get_existing_versions(&package_hrn).await;
-    
+
     // Assert
     assert!(result.is_ok());
     let versions = result.unwrap();

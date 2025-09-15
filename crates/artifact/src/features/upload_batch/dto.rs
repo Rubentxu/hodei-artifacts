@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use shared::models::PackageCoordinates;
 use shared::enums::HashAlgorithm;
+use shared::models::PackageCoordinates;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BatchUploadArtifactMetadata {

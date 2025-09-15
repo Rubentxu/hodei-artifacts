@@ -1,14 +1,14 @@
-use tracing::{info, error, debug, info_span};
 use axum::{
     extract::{Multipart, State},
-    response::{IntoResponse, Json},
     http::StatusCode,
+    response::{IntoResponse, Json},
 };
-use std::sync::Arc;
 use serde_json::json;
+use std::sync::Arc;
+use tracing::{debug, error, info, info_span};
 
 use super::{
-    dto::{BatchUploadRequest, BatchUploadArtifactMetadata, BatchUploadArtifactCommand},
+    dto::{BatchUploadArtifactCommand, BatchUploadArtifactMetadata, BatchUploadRequest},
     error::BatchUploadError,
     use_case::BatchUploadUseCase,
 };
@@ -51,9 +51,15 @@ impl BatchUploadEndpoint {
                 })?;
             } else if name.starts_with("artifact_") {
                 if let Some(metadata) = &metadata {
-                    let index = name.trim_start_matches("artifact_").parse::<usize>().map_err(|_| {
-                        BatchUploadError::InvalidRequest(format!("Invalid artifact field name: {}", name))
-                    })?;
+                    let index = name
+                        .trim_start_matches("artifact_")
+                        .parse::<usize>()
+                        .map_err(|_| {
+                            BatchUploadError::InvalidRequest(format!(
+                                "Invalid artifact field name: {}",
+                                name
+                            ))
+                        })?;
 
                     if index < metadata.artifacts.len() {
                         let artifact_metadata = metadata.artifacts[index].clone();

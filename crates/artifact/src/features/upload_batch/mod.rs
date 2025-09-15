@@ -11,5 +11,7 @@ mod use_case_test;
 
 // Expose only the public parts of the feature.
 pub use di::BatchUploadDIContainer;
-pub use dto::{BatchUploadRequest, BatchUploadResponse, BatchUploadArtifactResponse, BatchUploadStatus};
+pub use dto::{
+    BatchUploadArtifactResponse, BatchUploadRequest, BatchUploadResponse, BatchUploadStatus,
+};
 pub use error::BatchUploadError;

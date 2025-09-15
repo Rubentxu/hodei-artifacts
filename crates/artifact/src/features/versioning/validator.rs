@@ -1,9 +1,9 @@
 // crates/artifact/src/features/versioning/validator.rs
 
-use semver::Version;
 use crate::features::versioning::dto::{ParsedVersion, VersioningConfig};
 use crate::features::versioning::error::VersioningError;
 use crate::features::versioning::policy::VersioningPolicy;
+use semver::Version;
 
 /// Validador de versiones que parsea y valida cadenas de versión según SemVer 2.0.0
 #[derive(Debug, Clone)]
@@ -16,12 +16,12 @@ impl VersionValidator {
     pub fn new(policy: VersioningPolicy) -> Self {
         Self { policy }
     }
-    
+
     /// Crear un nuevo validador con configuración por defecto
     pub fn default() -> Self {
         Self::new(VersioningPolicy::new(VersioningConfig::default()))
     }
-    
+
     /// Parsear una cadena de versión y devolver una estructura ParsedVersion
     pub fn parse_version(&self, version_str: &str) -> Result<ParsedVersion, VersioningError> {
         // Manejar versiones SNAPSHOT (especialmente para Maven)
@@ -31,17 +31,17 @@ impl VersionValidator {
         } else {
             version_str
         };
-        
+
         // Parsear la versión usando la librería semver
         let version = Version::parse(version_to_parse)
             .map_err(|e| VersioningError::InvalidSemVer(format!("{}: {}", version_str, e)))?;
-        
+
         // Si se requiere SemVer estricto, verificar que no haya partes no estándar
         if self.policy.is_strict_semver() {
             // La librería semver de Rust ya sigue SemVer 2.0.0, pero podemos hacer
             // verificaciones adicionales si es necesario
         }
-        
+
         let parsed_version = ParsedVersion {
             original: version_str.to_string(),
             major: version.major,
@@ -59,19 +59,19 @@ impl VersionValidator {
             },
             is_snapshot,
         };
-        
+
         // Validar contra la política
         self.policy.validate_version(&parsed_version)?;
-        
+
         Ok(parsed_version)
     }
-    
+
     /// Validar una cadena de versión según las reglas configuradas
     pub fn validate_version(&self, version_str: &str) -> Result<(), VersioningError> {
         let parsed_version = self.parse_version(version_str)?;
         self.policy.validate_version(&parsed_version)
     }
-    
+
     /// Verificar si una versión ya existe en el repositorio
     /// Esta función requeriría acceso a la capa de datos para verificar
     /// la existencia real de versiones, por ahora solo es un placeholder

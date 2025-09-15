@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use std::sync::Mutex;
 use bytes::Bytes;
+use std::sync::Mutex;
 
 use super::{
     error::ContentTypeDetectionError,
-    ports::{ContentTypeDetector, ContentTypeDetectionResult},
+    ports::{ContentTypeDetectionResult, ContentTypeDetector},
 };
 
 /// Mock para ContentTypeDetector
@@ -41,7 +41,10 @@ impl MockContentTypeDetector {
 
 #[async_trait]
 impl ContentTypeDetector for MockContentTypeDetector {
-    async fn detect_from_bytes(&self, data: Bytes) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
+    async fn detect_from_bytes(
+        &self,
+        data: Bytes,
+    ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         if *self.should_fail.lock().unwrap() {
             return Err(ContentTypeDetectionError::DetectionFailed);
         }
@@ -60,7 +63,8 @@ impl ContentTypeDetector for MockContentTypeDetector {
                 }
             } else {
                 "application/octet-stream"
-            }.to_string();
+            }
+            .to_string();
 
             Ok(ContentTypeDetectionResult {
                 detected_mime_type: content_type,
@@ -71,7 +75,10 @@ impl ContentTypeDetector for MockContentTypeDetector {
         }
     }
 
-    async fn detect_from_extension(&self, filename: &str) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
+    async fn detect_from_extension(
+        &self,
+        filename: &str,
+    ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         if *self.should_fail.lock().unwrap() {
             return Err(ContentTypeDetectionError::DetectionFailed);
         }
@@ -101,7 +108,8 @@ impl ContentTypeDetector for MockContentTypeDetector {
             "bat" => "application/x-bat",
             "ps1" => "application/x-powershell",
             _ => "application/octet-stream",
-        }.to_string();
+        }
+        .to_string();
 
         Ok(ContentTypeDetectionResult {
             detected_mime_type: content_type,
@@ -114,7 +122,7 @@ impl ContentTypeDetector for MockContentTypeDetector {
     async fn validate_consistency(
         &self,
         detected: &str,
-        provided: Option<&str>
+        provided: Option<&str>,
     ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError> {
         if *self.should_fail.lock().unwrap() {
             return Err(ContentTypeDetectionError::DetectionFailed);

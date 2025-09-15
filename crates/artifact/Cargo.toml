@@ -17,7 +17,7 @@ uuid = { workspace = true }
 anyhow = "1.0"
 futures = "0.3"
 async-trait = "0.1.89"
-bytes = { workspace = true }
+bytes = { workspace = true, features = ["serde"] }
 sha2 = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
@@ -40,6 +40,7 @@ serde-xml-rs = "0.6"
 semver = "1.0"
 infer = { workspace = true }
 tower = { version = "0.4", features = ["util"] }
+zip = "0.6"
 
 # Workspace dependencies
 shared = { path = "../shared" }

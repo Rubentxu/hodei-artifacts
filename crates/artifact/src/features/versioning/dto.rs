@@ -8,10 +8,10 @@ use shared::hrn::Hrn;
 pub struct ValidateVersionCommand {
     /// Package HRN for the version being validated
     pub package_hrn: Hrn,
-    
+
     /// Version string to validate
     pub version: String,
-    
+
     /// Repository HRN (for configuration lookup)
     pub repository_hrn: Hrn,
 }
@@ -21,19 +21,19 @@ pub struct ValidateVersionCommand {
 pub struct VersionValidationResult {
     /// Package HRN
     pub package_hrn: Hrn,
-    
+
     /// Original version string
     pub version: String,
-    
+
     /// Whether the version is valid
     pub is_valid: bool,
-    
+
     /// Parsed version information
     pub parsed_version: Option<ParsedVersion>,
-    
+
     /// Validation errors if any
     pub errors: Vec<String>,
-    
+
     /// Validation warnings if any
     pub warnings: Vec<String>,
 }
@@ -43,13 +43,13 @@ pub struct VersionValidationResult {
 pub struct VersioningConfig {
     /// Si es true, solo se permiten versiones que siguen SemVer estricto
     pub strict_semver: bool,
-    
+
     /// Si es true, se permite solo una versión SNAPSHOT por combinación major.minor
     pub allow_only_one_snapshot_per_major_minor: bool,
-    
+
     /// Lista de tags pre-release permitidos (vacío significa todos permitidos)
     pub allowed_prerelease_tags: Vec<String>,
-    
+
     /// Si es true, se rechazan versiones con metadata de build
     pub reject_build_metadata: bool,
 }
@@ -70,22 +70,22 @@ impl Default for VersioningConfig {
 pub struct ParsedVersion {
     /// La versión original como string
     pub original: String,
-    
+
     /// Parte major de la versión
     pub major: u64,
-    
+
     /// Parte minor de la versión
     pub minor: u64,
-    
+
     /// Parte patch de la versión
     pub patch: u64,
-    
+
     /// Tags pre-release si existen
     pub prerelease: Option<String>,
-    
+
     /// Metadata de build si existe
     pub build_metadata: Option<String>,
-    
+
     /// Si es una versión SNAPSHOT (especialmente para Maven)
     pub is_snapshot: bool,
 }

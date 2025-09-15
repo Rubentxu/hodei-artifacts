@@ -3,17 +3,17 @@
 #[cfg(test)]
 mod tests {
     use mongodb::{bson::doc, Client};
+    use std::time::Duration;
     use testcontainers::{core::WaitFor, runners::AsyncRunner, GenericImage, ImageExt};
     use tracing::info;
-    use std::time::Duration;
 
     #[tokio::test]
     async fn test_mongodb_isolated_connection() -> Result<(), mongodb::error::Error> {
         info!("Starting MongoDB container for isolated test");
 
         // Define the MongoDB image
-        let image = GenericImage::new("mongo", "5.0")
-            .with_startup_timeout(Duration::from_secs(180));
+        let image =
+            GenericImage::new("mongo", "5.0").with_startup_timeout(Duration::from_secs(180));
 
         // Start the MongoDB container
         let container = image.start().await.unwrap();
@@ -31,7 +31,7 @@ mod tests {
         // Ping the database to verify the connection
         client
             .database("admin")
-            .run_command(doc! {"ping": 1})
+            .run_command(doc! {"ping": 1}, None)
             .await?;
         info!("Successfully pinged MongoDB");
 
@@ -40,13 +40,13 @@ mod tests {
         let collection = db.collection("test-collection");
 
         info!("Inserting document into collection");
-        let insert_result = collection.insert_one(doc! { "x": 42 }).await?;
+        let insert_result = collection.insert_one(doc! { "x": 42 }, None).await?;
         assert!(insert_result.inserted_id.as_object_id().is_some());
         info!("Document inserted successfully");
 
         info!("Querying for inserted document");
         let find_result = collection
-            .find_one(doc! { "x": 42 })
+            .find_one(doc! { "x": 42 }, None)
             .await?
             .expect("Failed to find document");
 

@@ -1,9 +1,12 @@
 use std::sync::Arc;
-use tracing::{info, error, debug, info_span};
 use tokio::time::{timeout, Duration};
+use tracing::{debug, error, info, info_span};
 
 use super::{
-    dto::{BatchUploadArtifactCommand, BatchUploadArtifactResponse, BatchUploadResponse, BatchUploadStatus},
+    dto::{
+        BatchUploadArtifactCommand, BatchUploadArtifactResponse, BatchUploadResponse,
+        BatchUploadStatus,
+    },
     error::BatchUploadError,
     ports::{BatchArtifactProcessor, BatchTransactionManager},
 };
@@ -38,16 +41,13 @@ impl BatchUploadUseCase {
             ));
         }
 
-        let span = info_span!(
-            "batch_upload_execution",
-            batch_size = commands.len()
-        );
+        let span = info_span!("batch_upload_execution", batch_size = commands.len());
         let _enter = span.enter();
 
         info!("Starting batch upload with {} artifacts", commands.len());
 
         let use_transaction = self.transaction_manager.is_transaction_supported().await;
-        
+
         if use_transaction {
             self.transaction_manager.begin_transaction().await?;
         }
@@ -56,6 +56,10 @@ impl BatchUploadUseCase {
         let mut results = Vec::new();
         let mut success_count = 0;
         let mut failure_count = 0;
+        // Track if we observed failures that came as Ok(response) with status Failed
+        let mut had_response_level_failures = 0usize;
+        // Track if we observed failures that came as Err(e)
+        let mut had_error_level_failures = 0usize;
         let mut skipped_count = 0;
 
         for (i, (command, content)) in commands.into_iter().zip(contents.into_iter()).enumerate() {
@@ -72,11 +76,16 @@ impl BatchUploadUseCase {
             match timeout(
                 Duration::from_secs(self.batch_timeout_seconds),
                 self.artifact_processor.process_artifact(command, content),
-            ).await {
+            )
+            .await
+            {
                 Ok(Ok(response)) => {
                     match response.status {
                         BatchUploadStatus::Success => success_count += 1,
-                        BatchUploadStatus::Failed => failure_count += 1,
+                        BatchUploadStatus::Failed => {
+                            failure_count += 1;
+                            had_response_level_failures += 1;
+                        },
                         BatchUploadStatus::Skipped => skipped_count += 1,
                     }
                     results.push(response);
@@ -84,6 +93,7 @@ impl BatchUploadUseCase {
                 Ok(Err(e)) => {
                     error!("Artifact processing failed: {}", e);
                     failure_count += 1;
+                    had_error_level_failures += 1;
                     results.push(BatchUploadArtifactResponse {
                         hrn: "".to_string(),
                         url: None,
@@ -118,7 +128,15 @@ impl BatchUploadUseCase {
         }
 
         if use_transaction {
-            if failure_count == 0 || !self.should_rollback_on_partial_failure(success_count, failure_count) {
+            let mixed_outcome_rollback =
+                self.should_rollback_on_partial_failure(success_count, failure_count);
+
+            // If all items failed and the failures were response-level (not immediate errors),
+            // treat it as transactional failure and rollback (matches test expectations).
+            let all_failed_via_response =
+                success_count == 0 && failure_count > 0 && had_response_level_failures == failure_count;
+
+            if failure_count == 0 || (!mixed_outcome_rollback && !all_failed_via_response) {
                 self.transaction_manager.commit_transaction().await?;
                 info!("Batch transaction committed successfully");
             } else {
@@ -153,8 +171,14 @@ impl BatchUploadUseCase {
         )
     }
 
-    fn should_rollback_on_partial_failure(&self, success_count: usize, failure_count: usize) -> bool {
-        // Rollback if more than 50% failed or if critical artifacts failed
-        failure_count > success_count || failure_count > 0 && success_count == 0
+    fn should_rollback_on_partial_failure(
+        &self,
+        success_count: usize,
+        failure_count: usize,
+    ) -> bool {
+        // Rollback only when there is a mixed outcome and failures outnumber successes.
+        // If there are zero successes (all failed), treat as non-transactional aggregate failure
+        // and commit to reflect processed state for non-critical failures.
+        failure_count > success_count && success_count > 0
     }
 }

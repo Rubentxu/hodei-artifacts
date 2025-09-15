@@ -1,16 +1,16 @@
+use super::dto::UploadArtifactCommand;
+use super::error::UploadArtifactError;
+use super::ports::{
+    ArtifactRepository, ArtifactStorage, ArtifactValidator, EventPublisher, ParsedVersion,
+    PortResult, VersionValidator,
+};
+use crate::domain::events::ArtifactEvent;
+use crate::domain::package_version::PackageVersion;
+use crate::domain::physical_artifact::PhysicalArtifact;
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use crate::domain::events::ArtifactEvent;
-use crate::domain::package_version::PackageVersion;
-use crate::domain::physical_artifact::PhysicalArtifact;
-use super::ports::{
-    ArtifactRepository, ArtifactStorage, EventPublisher, ArtifactValidator, VersionValidator,
-    ParsedVersion, PortResult,
-};
-use super::dto::UploadArtifactCommand;
-use super::error::UploadArtifactError;
 
 #[derive(Default, Debug)]
 pub struct MockArtifactRepository {
@@ -51,12 +51,18 @@ impl ArtifactRepository for MockArtifactRepository {
                 "Mock save_physical_artifact failed".to_string(),
             ));
         }
-        self.physical_artifacts.lock().unwrap().push(artifact.clone());
+        self.physical_artifacts
+            .lock()
+            .unwrap()
+            .push(artifact.clone());
         Ok(())
     }
 
     async fn save_package_version(&self, package_version: &PackageVersion) -> PortResult<()> {
-        self.package_versions.lock().unwrap().push(package_version.clone());
+        self.package_versions
+            .lock()
+            .unwrap()
+            .push(package_version.clone());
         Ok(())
     }
 }

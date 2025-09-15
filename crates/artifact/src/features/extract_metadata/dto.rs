@@ -1,5 +1,5 @@
+use crate::domain::package_version::{ArtifactDependency, PackageMetadata};
 use shared::hrn::Hrn;
-use crate::domain::package_version::{PackageMetadata, ArtifactDependency};
 
 /// Command to trigger metadata extraction for a package version
 pub struct ExtractMetadataCommand {

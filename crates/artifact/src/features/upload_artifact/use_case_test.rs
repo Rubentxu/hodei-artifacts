@@ -1,8 +1,11 @@
-use bytes::Bytes;
 use crate::domain::package_version::PackageCoordinates;
-use crate::features::upload_artifact::{UploadArtifactCommand, use_case::UploadArtifactUseCase};
+use crate::features::upload_artifact::mocks::{
+    MockArtifactRepository, MockArtifactStorage, MockArtifactValidator, MockEventPublisher,
+    MockVersionValidator,
+};
+use crate::features::upload_artifact::{use_case::UploadArtifactUseCase, UploadArtifactCommand};
+use bytes::Bytes;
 use std::sync::Arc;
-use crate::features::upload_artifact::mocks::{MockArtifactRepository, MockArtifactStorage, MockEventPublisher, MockArtifactValidator, MockVersionValidator};
 
 #[tokio::test]
 async fn test_upload_with_various_valid_version_formats() {
@@ -14,9 +17,11 @@ async fn test_upload_with_various_valid_version_formats() {
     let publisher = Arc::new(MockEventPublisher::new());
     let validator = Arc::new(MockArtifactValidator::new());
     let version_validator = Arc::new(MockVersionValidator::new());
-    
+
     // Create mock content type detection service
-    use crate::features::content_type_detection::{ContentTypeDetectionUseCase, mocks::MockContentTypeDetector};
+    use crate::features::content_type_detection::{
+        mocks::MockContentTypeDetector, ContentTypeDetectionUseCase,
+    };
     let content_type_detector = Arc::new(MockContentTypeDetector::new());
     let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
 
@@ -60,15 +65,29 @@ async fn test_upload_with_various_valid_version_formats() {
         let result = use_case.execute(command, content).await;
 
         // Assert
-        assert!(result.is_ok(), "Failed for {}: {:?}", description, result.err());
+        assert!(
+            result.is_ok(),
+            "Failed for {}: {:?}",
+            description,
+            result.err()
+        );
         let response = result.unwrap();
-        assert!(response.hrn.contains(*version), "HRN should contain version {} for {}", version, description);
+        assert!(
+            response.hrn.contains(*version),
+            "HRN should contain version {} for {}",
+            version,
+            description
+        );
     }
 
     // Verify side-effects
-    assert_eq!(repo.count_physical_artifacts().await, test_cases.len());
+    // Physical artifacts are deduplicated by content hash, since all uploads use the same content
+    assert_eq!(repo.count_physical_artifacts().await, 1);
+    // We still create one package version per upload
     assert_eq!(repo.count_package_versions().await, test_cases.len());
-    assert_eq!(publisher.events.lock().unwrap().len(), test_cases.len());
+    // Events: one PackageVersionPublished per upload + one DuplicateArtifactDetected for each duplicate (all except the first)
+    let expected_events = test_cases.len() * 2 - 1;
+    assert_eq!(publisher.events.lock().unwrap().len(), expected_events);
 }
 
 #[tokio::test]
@@ -81,9 +100,11 @@ async fn test_upload_with_edge_case_versions() {
     let publisher = Arc::new(MockEventPublisher::new());
     let validator = Arc::new(MockArtifactValidator::new());
     let version_validator = Arc::new(MockVersionValidator::new());
-    
+
     // Create mock content type detection service
-    use crate::features::content_type_detection::{ContentTypeDetectionUseCase, mocks::MockContentTypeDetector};
+    use crate::features::content_type_detection::{
+        mocks::MockContentTypeDetector, ContentTypeDetectionUseCase,
+    };
     let content_type_detector = Arc::new(MockContentTypeDetector::new());
     let content_type_service = Arc::new(ContentTypeDetectionUseCase::new(content_type_detector));
 
@@ -122,13 +143,27 @@ async fn test_upload_with_edge_case_versions() {
         let result = use_case.execute(command, content).await;
 
         // Assert
-        assert!(result.is_ok(), "Failed for {}: {:?}", description, result.err());
+        assert!(
+            result.is_ok(),
+            "Failed for {}: {:?}",
+            description,
+            result.err()
+        );
         let response = result.unwrap();
-        assert!(response.hrn.contains(*version), "HRN should contain version {} for {}", version, description);
+        assert!(
+            response.hrn.contains(*version),
+            "HRN should contain version {} for {}",
+            version,
+            description
+        );
     }
 
     // Verify side-effects
-    assert_eq!(repo.count_physical_artifacts().await, edge_cases.len());
+    // Physical artifacts are deduplicated by content hash, since all uploads use the same content
+    assert_eq!(repo.count_physical_artifacts().await, 1);
+    // We still create one package version per upload
     assert_eq!(repo.count_package_versions().await, edge_cases.len());
-    assert_eq!(publisher.events.lock().unwrap().len(), edge_cases.len());
+    // Events: one PackageVersionPublished per upload + one DuplicateArtifactDetected for each duplicate (all except the first)
+    let expected_events = edge_cases.len() * 2 - 1;
+    assert_eq!(publisher.events.lock().unwrap().len(), expected_events);
 }

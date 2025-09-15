@@ -1,33 +1,38 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::path::{Path, PathBuf};
 use shared::hrn::Hrn;
+use std::path::{Path, PathBuf};
 
-use super::error::UploadArtifactError;
-use crate::domain::physical_artifact::PhysicalArtifact;
-use crate::domain::package_version::{PackageVersion, PackageMetadata, ArtifactDependency};
-use crate::domain::events::ArtifactEvent;
 use super::dto::UploadArtifactCommand;
+use super::error::UploadArtifactError;
+use crate::domain::events::ArtifactEvent;
+use crate::domain::package_version::{ArtifactDependency, PackageMetadata, PackageVersion};
+use crate::domain::physical_artifact::PhysicalArtifact;
 
 // Define a type alias for the Result type used in ports
 pub type PortResult<T> = Result<T, UploadArtifactError>;
 
 #[async_trait]
 pub trait ArtifactRepository: Send + Sync {
-    async fn find_physical_artifact_by_hash(&self, hash: &str) -> PortResult<Option<PhysicalArtifact>>;
+    async fn find_physical_artifact_by_hash(
+        &self,
+        hash: &str,
+    ) -> PortResult<Option<PhysicalArtifact>>;
     async fn save_physical_artifact(&self, artifact: &PhysicalArtifact) -> PortResult<()>;
     async fn save_package_version(&self, package_version: &PackageVersion) -> PortResult<()>;
-    
+
     /// Update package metadata and dependencies for an existing package version
     async fn update_package_metadata(
-        &self, 
-        _hrn: &Hrn, 
-        _metadata: PackageMetadata, 
-        _dependencies: Vec<ArtifactDependency>
+        &self,
+        _hrn: &Hrn,
+        _metadata: PackageMetadata,
+        _dependencies: Vec<ArtifactDependency>,
     ) -> PortResult<()> {
         // Default implementation that returns an error
         // Implementations should override this method
-        Err(UploadArtifactError::RepositoryError("update_package_metadata not implemented".to_string()))
+        Err(UploadArtifactError::RepositoryError(
+            "update_package_metadata not implemented".to_string(),
+        ))
     }
 }
 
@@ -44,17 +49,37 @@ pub trait EventPublisher: Send + Sync {
 
 #[async_trait]
 pub trait ChunkedUploadStorage: Send + Sync {
-    async fn save_chunk(&self, upload_id: &str, chunk_number: usize, data: bytes::Bytes) -> Result<(), UploadArtifactError>;
-    async fn get_received_chunks_count(&self, upload_id: &str) -> Result<usize, UploadArtifactError>;
-    async fn get_received_chunk_numbers(&self, upload_id: &str) -> Result<Vec<usize>, UploadArtifactError>;
-    async fn assemble_chunks(&self, upload_id: &str, total_chunks: usize, file_name: &str) -> Result<(PathBuf, String), UploadArtifactError>;
+    async fn save_chunk(
+        &self,
+        upload_id: &str,
+        chunk_number: usize,
+        data: bytes::Bytes,
+    ) -> Result<(), UploadArtifactError>;
+    async fn get_received_chunks_count(
+        &self,
+        upload_id: &str,
+    ) -> Result<usize, UploadArtifactError>;
+    async fn get_received_chunk_numbers(
+        &self,
+        upload_id: &str,
+    ) -> Result<Vec<usize>, UploadArtifactError>;
+    async fn assemble_chunks(
+        &self,
+        upload_id: &str,
+        total_chunks: usize,
+        file_name: &str,
+    ) -> Result<(PathBuf, String), UploadArtifactError>;
     async fn cleanup(&self, upload_id: &str) -> Result<(), UploadArtifactError>;
 }
 
 /// Hook de validación pre-commit. Devuelve Ok(()) si todo es válido; Err(vec_de_errores) si no.
 #[async_trait]
 pub trait ArtifactValidator: Send + Sync {
-    async fn validate(&self, command: &UploadArtifactCommand, content: &Bytes) -> Result<(), Vec<String>>;
+    async fn validate(
+        &self,
+        command: &UploadArtifactCommand,
+        content: &Bytes,
+    ) -> Result<(), Vec<String>>;
 }
 
 /// Validador de versiones para artefactos

@@ -25,4 +25,10 @@ pub enum UploadArtifactError {
 
     #[error("Versioning error: {0}")]
     VersioningError(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Conflict: {0}")]
+    Conflict(String),
 }

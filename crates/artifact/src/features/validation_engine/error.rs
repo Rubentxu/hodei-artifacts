@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::features::upload_artifact::error::UploadArtifactError;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ValidationError {

@@ -1,9 +1,9 @@
-use async_trait::async_trait;
-use shared::hrn::Hrn;
 use super::{
-    dto::{VersioningConfig, ParsedVersion},
+    dto::{ParsedVersion, VersioningConfig},
     error::VersioningError,
 };
+use async_trait::async_trait;
+use shared::hrn::Hrn;
 
 // Define a type alias for the Result type used in ports
 pub type PortResult<T> = Result<T, VersioningError>;
@@ -13,18 +13,27 @@ pub type PortResult<T> = Result<T, VersioningError>;
 pub trait VersioningRepository: Send + Sync {
     /// Get versioning configuration for a repository
     async fn get_versioning_config(&self, repository_hrn: &Hrn) -> PortResult<VersioningConfig>;
-    
+
     /// Save versioning configuration for a repository
-    async fn save_versioning_config(&self, repository_hrn: &Hrn, config: &VersioningConfig) -> PortResult<()>;
-    
+    async fn save_versioning_config(
+        &self,
+        repository_hrn: &Hrn,
+        config: &VersioningConfig,
+    ) -> PortResult<()>;
+
     /// Check if a version already exists for a package
     async fn version_exists(&self, package_hrn: &Hrn, version: &str) -> PortResult<bool>;
-    
+
     /// Get all existing versions for a package
     async fn get_existing_versions(&self, package_hrn: &Hrn) -> PortResult<Vec<String>>;
-    
+
     /// Check if a snapshot version exists for major.minor combination
-    async fn snapshot_exists_for_major_minor(&self, package_hrn: &Hrn, major: u64, minor: u64) -> PortResult<bool>;
+    async fn snapshot_exists_for_major_minor(
+        &self,
+        package_hrn: &Hrn,
+        major: u64,
+        minor: u64,
+    ) -> PortResult<bool>;
 }
 
 /// Port for publishing version validation events
@@ -32,7 +41,7 @@ pub trait VersioningRepository: Send + Sync {
 pub trait VersioningEventPublisher: Send + Sync {
     /// Publish version validated event
     async fn publish_version_validated(&self, event: VersioningEvent) -> PortResult<()>;
-    
+
     /// Publish version validation failed event
     async fn publish_version_validation_failed(&self, event: VersioningEvent) -> PortResult<()>;
 }
@@ -42,9 +51,13 @@ pub trait VersioningEventPublisher: Send + Sync {
 pub trait VersionValidator: Send + Sync {
     /// Parse and validate a version string
     fn parse_version(&self, version_str: &str) -> PortResult<ParsedVersion>;
-    
+
     /// Validate a parsed version against policies
-    fn validate_version(&self, parsed_version: &ParsedVersion, config: &VersioningConfig) -> PortResult<()>;
+    fn validate_version(
+        &self,
+        parsed_version: &ParsedVersion,
+        config: &VersioningConfig,
+    ) -> PortResult<()>;
 }
 
 /// Versioning events
@@ -56,7 +69,7 @@ pub enum VersioningEvent {
         version: String,
         validated_at: time::OffsetDateTime,
     },
-    
+
     /// Event for failed version validation
     VersionValidationFailed {
         package_hrn: Hrn,

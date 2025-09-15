@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use super::{
-    adapter::{SingleArtifactProcessor, NoopTransactionManager},
+    adapter::{NoopTransactionManager, SingleArtifactProcessor},
+    api::BatchUploadEndpoint,
     ports::{BatchArtifactProcessor, BatchTransactionManager},
     use_case::BatchUploadUseCase,
-    api::BatchUploadEndpoint,
 };
 use crate::features::upload_artifact::use_case::UploadArtifactUseCase;
 
@@ -32,13 +32,11 @@ impl BatchUploadDIContainer {
     }
 
     /// Convenience function for wiring up production dependencies.
-    pub fn for_production(
-        upload_use_case: Arc<UploadArtifactUseCase>,
-    ) -> Self {
-        let artifact_processor: Arc<dyn BatchArtifactProcessor> = 
+    pub fn for_production(upload_use_case: Arc<UploadArtifactUseCase>) -> Self {
+        let artifact_processor: Arc<dyn BatchArtifactProcessor> =
             Arc::new(SingleArtifactProcessor::new(upload_use_case));
-        
-        let transaction_manager: Arc<dyn BatchTransactionManager> = 
+
+        let transaction_manager: Arc<dyn BatchTransactionManager> =
             Arc::new(NoopTransactionManager);
 
         Self::new(artifact_processor, transaction_manager, 300) // 5 minute timeout
@@ -47,9 +45,9 @@ impl BatchUploadDIContainer {
     /// Convenience function for wiring up mock dependencies for testing.
     #[cfg(test)]
     pub fn for_testing() -> (
-        Self, 
+        Self,
         Arc<super::adapter::test::MockBatchArtifactProcessor>,
-        Arc<super::adapter::test::MockTransactionManager>
+        Arc<super::adapter::test::MockTransactionManager>,
     ) {
         use super::adapter::test::{MockBatchArtifactProcessor, MockTransactionManager};
 
@@ -68,9 +66,9 @@ impl BatchUploadDIContainer {
     /// Convenience function for wiring up mock dependencies with transaction support.
     #[cfg(test)]
     pub fn for_testing_with_transactions() -> (
-        Self, 
+        Self,
         Arc<super::adapter::test::MockBatchArtifactProcessor>,
-        Arc<super::adapter::test::MockTransactionManager>
+        Arc<super::adapter::test::MockTransactionManager>,
     ) {
         use super::adapter::test::{MockBatchArtifactProcessor, MockTransactionManager};
 

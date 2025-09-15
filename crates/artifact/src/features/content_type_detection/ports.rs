@@ -23,16 +23,21 @@ pub struct ContentTypeDetectionResult {
 #[async_trait]
 pub trait ContentTypeDetector: Send + Sync {
     /// Detecta el MIME type de un chunk de datos usando magic numbers
-    async fn detect_from_bytes(&self, data: Bytes) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError>;
-    
+    async fn detect_from_bytes(
+        &self,
+        data: Bytes,
+    ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError>;
+
     /// Detecta el MIME type de un archivo basado en su extensión (fallback)
-    async fn detect_from_extension(&self, filename: &str) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError>;
-    
+    async fn detect_from_extension(
+        &self,
+        filename: &str,
+    ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError>;
+
     /// Valida si el MIME type detectado es consistente con el proporcionado
     async fn validate_consistency(
-        &self, 
-        detected: &str, 
-        provided: Option<&str>
+        &self,
+        detected: &str,
+        provided: Option<&str>,
     ) -> Result<ContentTypeDetectionResult, ContentTypeDetectionError>;
 }
-

@@ -1,13 +1,10 @@
-use async_trait::async_trait;
-use bytes::Bytes;
-use std::collections::HashMap;
-use shared::hrn::Hrn;
-use crate::domain::package_version::{PackageCoordinates, ArtifactDependency};
-use crate::domain::events::ArtifactEvent;
 use super::{
-    dto::{ValidateArtifactCommand, ValidationResult, ValidationRule, ValidationContext, RuleValidationOutcome},
+    dto::{RuleValidationOutcome, ValidationContext, ValidationRule},
     error::ValidationError,
 };
+use crate::domain::events::ArtifactEvent;
+use async_trait::async_trait;
+use bytes::Bytes;
 
 // Define a type alias for the Result type used in ports
 pub type PortResult<T> = Result<T, ValidationError>;
@@ -16,14 +13,17 @@ pub type PortResult<T> = Result<T, ValidationError>;
 #[async_trait]
 pub trait ValidationRuleRepository: Send + Sync {
     /// Get all active validation rules for a specific artifact type
-    async fn get_active_rules_for_artifact_type(&self, artifact_type: &str) -> PortResult<Vec<ValidationRule>>;
-    
+    async fn get_active_rules_for_artifact_type(
+        &self,
+        artifact_type: &str,
+    ) -> PortResult<Vec<ValidationRule>>;
+
     /// Get a specific validation rule by ID
     async fn get_rule_by_id(&self, rule_id: &str) -> PortResult<Option<ValidationRule>>;
-    
+
     /// Save a validation rule
     async fn save_rule(&self, rule: &ValidationRule) -> PortResult<()>;
-    
+
     /// Delete a validation rule by ID
     async fn delete_rule(&self, rule_id: &str) -> PortResult<()>;
 }
@@ -46,5 +46,9 @@ pub trait ValidationEventPublisher: Send + Sync {
 #[async_trait]
 pub trait ValidationRuleExecutor: Send + Sync {
     /// Execute a validation rule against an artifact
-    async fn execute_rule(&self, rule: &ValidationRule, context: &ValidationContext) -> PortResult<RuleValidationOutcome>;
+    async fn execute_rule(
+        &self,
+        rule: &ValidationRule,
+        context: &ValidationContext,
+    ) -> PortResult<RuleValidationOutcome>;
 }

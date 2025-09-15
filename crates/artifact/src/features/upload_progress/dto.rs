@@ -79,7 +79,7 @@ impl UploadProgress {
             0
         };
         self.last_updated = current_timestamp();
-        
+
         // Calcular ETA simple (podría mejorarse con más datos históricos)
         self.estimated_seconds_remaining = self.calculate_eta();
     }
@@ -105,17 +105,17 @@ impl UploadProgress {
         if self.bytes_transferred == 0 || self.percentage == 0 {
             return None;
         }
-        
+
         let elapsed_time = current_timestamp() - (self.last_updated - 1000); // approx 1s ago
         if elapsed_time == 0 {
             return None;
         }
-        
+
         let bytes_per_second = self.bytes_transferred / elapsed_time;
         if bytes_per_second == 0 {
             return None;
         }
-        
+
         let remaining_bytes = self.total_bytes.saturating_sub(self.bytes_transferred);
         Some(remaining_bytes / bytes_per_second)
     }
