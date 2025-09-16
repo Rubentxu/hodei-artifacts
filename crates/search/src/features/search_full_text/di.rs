@@ -11,7 +11,6 @@ use super::error::*;
 
 use super::use_case::*;
 use super::adapter::*;
-use api::*;
 use super::ports::{
     FullTextSearchPort, QueryAnalyzerPort, RelevanceScorerPort, HighlighterPort, 
     SearchPerformanceMonitorPort, SearchIndexManagerPort, HealthStatus,
@@ -27,7 +26,6 @@ use crate::features::index_text_documents::adapter::DocumentIndexSchema;
 
 /// Main DI container for the search_full_text feature
 pub struct SearchFullTextDIContainer {
-    pub search_api: Arc<FullTextSearchApi>,
     pub search_use_case: Arc<FullTextSearchUseCase>,
     pub suggestions_use_case: Arc<SearchSuggestionsUseCase>,
     pub query_analysis_use_case: Arc<QueryPerformanceUseCase>,
@@ -46,31 +44,23 @@ impl SearchFullTextDIContainer {
         // Create use cases
         let search_use_case = Arc::new(FullTextSearchUseCase::new(
             search_adapter.clone(),
+            query_analyzer.clone(),
             relevance_scorer.clone(),
             highlighter.clone(),
             performance_monitor.clone(),
-            index_manager.clone(),
         ));
         
         let suggestions_use_case = Arc::new(SearchSuggestionsUseCase::new(
             search_adapter.clone(),
+            query_analyzer.clone(),
         ));
         
         let query_analysis_use_case = Arc::new(QueryPerformanceUseCase::new(
             query_analyzer,
-            search_adapter.clone(),
             performance_monitor.clone(),
         ));
         
-        // Create API
-        let search_api = Arc::new(FullTextSearchApi::new(
-            search_use_case.clone(),
-            suggestions_use_case.clone(),
-            query_analysis_use_case.clone(),
-        ));
-        
         Self {
-            search_api,
             search_use_case,
             suggestions_use_case,
             query_analysis_use_case,
@@ -85,7 +75,7 @@ impl SearchFullTextDIContainer {
         
         // Create adapters
         let search_adapter = Arc::new(TantivyFullTextSearchAdapter::new(
-            Arc::new(std::sync::RwLock::new(index)),
+            Arc::new(std::sync::RwLock::new(index.clone())),
             schema.clone(),
         ));
         
@@ -145,11 +135,6 @@ impl SearchFullTextDIContainer {
             info!("Created new Tantivy index at: {}", index_path);
             Ok(index)
         }
-    }
-    
-    /// Get the search API
-    pub fn search_api(&self) -> Arc<FullTextSearchApi> {
-        self.search_api.clone()
     }
     
     /// Get the search use case

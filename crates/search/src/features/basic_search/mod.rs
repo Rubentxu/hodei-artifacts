@@ -1,17 +1,17 @@
 pub mod adapter;
-pub mod api;
 pub mod di;
 pub mod dto;
 pub mod error;
 pub mod event_adapter;
-pub mod infrastructure;
+mod infrastructure;
 pub mod ports;
-pub mod repository_adapter;
-pub mod test_utils;
+pub mod mock;
+// Backward compatibility for existing tests expecting test_utils
+pub mod test_utils { pub use super::mock::*; }
 pub mod use_case;
 
 #[cfg(test)]
-pub mod test_adapter;
+pub mod test_adapter { pub use super::mock::*; }
 #[cfg(test)]
 mod basic_search_test;
 

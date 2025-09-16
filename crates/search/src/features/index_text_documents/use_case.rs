@@ -355,18 +355,20 @@ impl IndexDocumentUseCase {
     #[instrument(skip(self))]
     pub async fn get_index_health(&self) -> IndexDocumentResult<super::ports::IndexHealth> {
         debug!("Getting index health status");
-        self.health_monitor.check_index_health()
+        let health = self.health_monitor.check_index_health()
             .await
-            .to_index_document_error()?
+            .to_index_document_error()?;
+        Ok(health)
     }
 
     /// Get index statistics
     #[instrument(skip(self))]
     pub async fn get_index_stats(&self) -> IndexDocumentResult<super::ports::IndexStats> {
         debug!("Getting index statistics");
-        self.health_monitor.get_index_stats()
+        let stats = self.health_monitor.get_index_stats()
             .await
-            .to_index_document_error()?
+            .to_index_document_error()?;
+        Ok(stats)
     }
 }
 

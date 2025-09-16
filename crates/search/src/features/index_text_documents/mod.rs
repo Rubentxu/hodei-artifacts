@@ -8,13 +8,11 @@ pub mod ports;
 pub mod error;
 pub mod use_case;
 pub mod adapter;
-pub mod api;
 pub mod di;
 
 // Re-export commonly used types and structures
 pub use dto::*;
 pub use error::*;
-pub use api::*;
 pub use di::*;
 
 // Re-export use cases

@@ -2,9 +2,7 @@
 
 use shared::hrn::{Hrn, UserId};
 use shared::lifecycle::{Lifecycle};
-use shared::security::HodeiResource;
 use serde::{Serialize, Deserialize};
-use cedar_policy::{EntityUid, RestrictedExpression};
 use std::str::FromStr;
 use std::collections::HashMap;
 
@@ -57,23 +55,4 @@ pub enum OrganizationStatus {
     PendingDeletion,
 }
 
-/// Implementación del trait `HodeiResource<EntityUid>` para que las organizaciones
-/// puedan ser utilizadas en políticas de autorización con Cedar.
-impl HodeiResource<EntityUid, RestrictedExpression> for Organization {
-    fn resource_id(&self) -> EntityUid {
-        EntityUid::from_str(&self.hrn.as_str()).unwrap()
-    }
-
-    fn resource_attributes(&self) -> HashMap<String, RestrictedExpression> {
-        let mut attrs = HashMap::new();
-        attrs.insert("type".to_string(), RestrictedExpression::new_string("organization".to_string()));
-        attrs.insert("status".to_string(), RestrictedExpression::new_string(format!("{:?}", self.status)));
-        attrs.insert("primary_region".to_string(), RestrictedExpression::new_string(self.primary_region.clone()));
-        attrs
-    }
-
-    fn resource_parents(&self) -> Vec<EntityUid> {
-        // Las organizaciones son la raíz de la jerarquía, no tienen padres.
-        vec![]
-    }
-}
+// Cedar adapter implementation moved to infrastructure/cedar_adapter.rs

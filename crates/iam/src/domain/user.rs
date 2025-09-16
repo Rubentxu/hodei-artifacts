@@ -3,6 +3,7 @@
 use shared::hrn::{Hrn, OrganizationId};
 use shared::lifecycle::Lifecycle;
 use serde::{Serialize, Deserialize};
+use time::OffsetDateTime;
 
 /// Representa a un usuario humano, un principal fundamental en el sistema.
 /// Es un Agregado Raíz.
@@ -33,6 +34,9 @@ pub struct User {
     
     /// Información de auditoría y ciclo de vida.
     pub lifecycle: Lifecycle,
+
+    /// Último instante en que el usuario inició sesión (si se conoce).
+    pub last_login: Option<OffsetDateTime>,
 }
 
 /// Información de perfil de un usuario.

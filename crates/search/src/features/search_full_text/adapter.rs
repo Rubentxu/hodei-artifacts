@@ -52,7 +52,9 @@ impl TantivyFullTextSearchAdapter {
                 .map_err(|e| FullTextSearchError::concurrency(format!("Failed to acquire reader lock: {}", e)))?;
             
             if let Some(reader) = reader.as_ref() {
-                return Ok(reader.reload()?);
+                reader.reload()
+                    .map_err(|e| FullTextSearchError::external_service("Tantivy", e.to_string()))?;
+                return Ok(reader.clone());
             }
         }
         
@@ -113,12 +115,9 @@ impl TantivyFullTextSearchAdapter {
         }
         
         // Add date range filter if provided
-        if let Some(date_range) = &query.date_range {
-            let start_term = Term::from_field_date(self.schema.indexed_at_field, tantivy::DateTime::from_utc(date_range.start));
-            let end_term = Term::from_field_date(self.schema.indexed_at_field, tantivy::DateTime::from_utc(date_range.end));
-            
-            // Note: Tantivy requires a range query implementation
-            // For now, we'll skip this filter
+        if let Some(_date_range) = &query.date_range {
+            // Note: Tantivy requires a proper range query implementation for date fields.
+            // For now, we'll skip applying a date range filter here to avoid type conversion issues.
         }
         
         // Combine all query parts
@@ -128,39 +127,46 @@ impl TantivyFullTextSearchAdapter {
     
     fn convert_tantivy_doc_to_search_result(&self, doc: &TantivyDocument, score: f32, query: &FullTextSearchQuery) -> Result<SearchResult, FullTextSearchError> {
         let document_id = doc.get_first(self.schema.artifact_id_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .ok_or_else(|| FullTextSearchError::Search { 
                 source: SearchError::InternalError("Missing artifact_id field in document".to_string()) 
             })?;
         
         let title = doc.get_first(self.schema.title_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .unwrap_or("");
         
         let description = doc.get_first(self.schema.description_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .unwrap_or("");
         
         let artifact_type = doc.get_first(self.schema.artifact_type_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .unwrap_or("");
         
         let version = doc.get_first(self.schema.version_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .unwrap_or("");
         
         let tags = doc.get_first(self.schema.tags_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .map(|s| s.split(' ').map(|t| t.to_string()).collect())
             .unwrap_or_default();
         
         let language = doc.get_first(self.schema.language_field)
-            .and_then(|v| v.as_text());
+            .and_then(|v| v.as_str());
         
-        let indexed_at = doc.get_first(self.schema.indexed_at_field)
-            .and_then(|v| v.as_date())
-            .map(|dt| dt.into_utc())
-            .unwrap_or_else(|| chrono::Utc::now());
+        let indexed_at = if let Some(dt) = doc.get_first(self.schema.indexed_at_field)
+            .and_then(|v| v.as_datetime()) {
+            let secs = dt.into_utc().unix_timestamp();
+            if let Some(naive) = chrono::NaiveDateTime::from_timestamp_opt(secs, 0) {
+                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
+            } else {
+                chrono::Utc::now()
+            }
+        } else {
+            chrono::Utc::now()
+        };
         
         let metadata = ArtifactMetadata {
             title: Some(title.to_string()),
@@ -210,11 +216,16 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         
         let start_time = std::time::Instant::now();
         
-        let reader = self.get_reader().await?;
+        let reader = self
+            .get_reader()
+            .await
+            .map_err(|e| SearchError::InternalError(e.to_string()))?;
         let searcher = reader.searcher();
         
         // Parse the query
-        let search_query = self.parse_search_query(&query, &searcher)?;
+        let search_query = self
+            .parse_search_query(&query, &searcher)
+            .map_err(|e| SearchError::QueryParseFailed(e.to_string()))?;
         
         // Set up pagination
         let page = query.page.unwrap_or(1);
@@ -296,7 +307,10 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         let start_time = std::time::Instant::now();
         
         // For now, return simple spelling suggestions based on existing terms
-        let reader = self.get_reader().await?;
+        let reader = self
+            .get_reader()
+            .await
+            .map_err(|e| SuggestionError::SuggestionGenerationFailed(e.to_string()))?;
         let searcher = reader.searcher();
         
         // This is a simplified implementation
@@ -311,17 +325,17 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         ];
         
         let query_time_ms = start_time.elapsed().as_millis() as u64;
+        let total = suggestions.len();
         
         Ok(SearchSuggestionsResponse {
             suggestions,
             query_time_ms,
-            total_count: suggestions.len(),
+            total_count: total,
         })
     }
     
-    async fn get_facets(&self, query: FullTextSearchQuery) -> Result<SearchFacets, FacetError> {
-        // TODO: Implement faceting
-        todo!()
+    async fn get_facets(&self, _query: FullTextSearchQuery) -> Result<SearchFacets, FacetError> {
+        Err(FacetError::FacetGenerationFailed("Faceting not implemented".to_string()))
     }
     
     async fn more_like_this(&self, document_id: &str, limit: usize) -> Result<FullTextSearchResults, SearchError> {
@@ -329,11 +343,11 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         
         // Get the reference document
         let reader = self.get_reader().await.map_err(|e| SearchError::InternalError(format!("Failed to get reader: {}", e)))?;
-        let searcher = reader.searcher();
+        let _searcher = reader.searcher();
         
         // Create a term-based query from the document
         // This is a simplified implementation
-        let mut terms = Vec::new();
+        let mut terms: Vec<String> = Vec::new();
         
         // In a real implementation, we would extract significant terms from the document
         // and create a query based on those terms
@@ -360,13 +374,11 @@ impl FullTextSearchPort for TantivyFullTextSearchAdapter {
         self.search(query).await
     }
     
-    async fn search_with_scroll(&self, query: FullTextSearchQuery) -> Result<ScrollSearchResponse, SearchError> {
-        // TODO: Implement scroll search
+    async fn search_with_scroll(&self, _query: FullTextSearchQuery) -> Result<ScrollSearchResponse, SearchError> {
         Err(SearchError::InternalError("Scroll search not implemented".to_string()))
     }
     
-    async fn continue_scroll(&self, scroll_id: &str) -> Result<ScrollSearchResponse, SearchError> {
-        // TODO: Implement scroll continuation
+    async fn continue_scroll(&self, _scroll_id: &str) -> Result<ScrollSearchResponse, SearchError> {
         Err(SearchError::InternalError("Scroll continuation not implemented".to_string()))
     }
 }
@@ -390,10 +402,16 @@ impl QueryAnalyzerPort for SimpleQueryAnalyzer {
         let start_time = std::time::Instant::now();
         
         // Parse the query
-        let parsed_query = self.parse_query(&command.query.q, command.query.search_mode).await?;
+        let parsed_query = self
+            .parse_query(&command.query.q, command.query.search_mode)
+            .await
+            .map_err(|e| AnalysisError::AnalysisFailed(e.to_string()))?;
         
         // Extract terms
-        let query_terms = self.extract_query_terms(&command.query.q, command.query.language.as_deref()).await?;
+        let query_terms = self
+            .extract_query_terms(&command.query.q, command.query.language.as_deref())
+            .await
+            .map_err(|e| AnalysisError::AnalysisFailed(e.to_string()))?;
         
         // Calculate complexity
         let complexity_score = self.calculate_complexity(&parsed_query, &query_terms);
@@ -478,12 +496,13 @@ impl QueryAnalyzerPort for SimpleQueryAnalyzer {
         let normalized_terms: Vec<String> = original_terms.iter().map(|s| s.to_lowercase()).collect();
         
         // Simple stop word detection
-        let stop_words = vec!["the", "a", "an", "and", "or", "but", "in", "on", "at", "to"];
-        let stop_words: Vec<String> = normalized_terms
-            .iter()
-            .filter(|term| stop_words.contains(&term.as_str()))
-            .cloned()
-            .collect();
+        let stop_words_list = ["the", "a", "an", "and", "or", "but", "in", "on", "at", "to"];
+        let mut stop_words: Vec<String> = Vec::new();
+        for s in &normalized_terms {
+            if stop_words_list.iter().any(|w| *w == s.as_str()) {
+                stop_words.push(s.clone());
+            }
+        }
         
         Ok(QueryTerms {
             original_terms,
@@ -495,9 +514,8 @@ impl QueryAnalyzerPort for SimpleQueryAnalyzer {
         })
     }
     
-    async fn rewrite_query(&self, parsed_query: ParsedQuery) -> Result<RewrittenQuery, RewriteError> {
-        // TODO: Implement query rewriting
-        todo!()
+    async fn rewrite_query(&self, _parsed_query: ParsedQuery) -> Result<RewrittenQuery, RewriteError> {
+        Err(RewriteError::RewriteFailed("Query rewriting not implemented".to_string()))
     }
     
     fn calculate_complexity(&self, parsed_query: &ParsedQuery, query_terms: &QueryTerms) -> f32 {
@@ -554,7 +572,7 @@ impl SimpleRelevanceScorer {
 #[async_trait]
 impl RelevanceScorerPort for SimpleRelevanceScorer {
     async fn calculate_score(&self, request: ScoreCalculationRequest) -> Result<RelevanceScore, ScoreError> {
-        let bm25_score = self.calculate_bm25(BM25Request {
+        let bm25_score = self.calculate_bm25_score(BM25Request {
             term_frequency: 1.0,
             document_length: request.document_length,
             avg_document_length: request.avg_document_length,
@@ -564,7 +582,7 @@ impl RelevanceScorerPort for SimpleRelevanceScorer {
             b: 0.75,
         }).await?;
         
-        let tfidf_score = self.calculate_tfidf(TFIDFRequest {
+        let tfidf_score = self.calculate_tfidf_score(TFIDFRequest {
             term_frequency: 1.0,
             document_frequency: 1,
             total_documents: 1000,

@@ -41,3 +41,52 @@ impl HodeiResource<EntityUid, RestrictedExpression> for Repository {
 }
 
 // TODO: Add StorageBackend implementation when available
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::hrn::{Hrn, RepositoryId, OrganizationId};
+    use shared::lifecycle::Lifecycle;
+
+    fn org_hrn() -> OrganizationId {
+        OrganizationId(Hrn::new("hrn:hodei:iam:global:acme:organization").unwrap())
+    }
+
+    fn repo() -> Repository {
+        Repository {
+            hrn: RepositoryId(Hrn::new("hrn:hodei:repository:eu-west-1:acme:repository/main").unwrap()),
+            organization_hrn: org_hrn(),
+            name: "main".into(),
+            region: "eu-west-1".into(),
+            repo_type: crate::domain::repository::RepositoryType::Hosted,
+            format: shared::enums::Ecosystem::Maven,
+            config: crate::domain::repository::RepositoryConfig::Hosted(crate::domain::repository::HostedConfig { deployment_policy: crate::domain::repository::DeploymentPolicy::AllowSnapshots }),
+            storage_backend_hrn: Hrn::new("hrn:hodei:storage:eu-west-1:acme:bucket/artifacts").unwrap(),
+            lifecycle: Lifecycle::new(Hrn::new("hrn:hodei:iam:global:acme:user/alice").unwrap()),
+        }
+    }
+
+    #[test]
+    fn repository_resource_id_is_entity_uid() {
+        let r = repo();
+        let id = <Repository as HodeiResource<EntityUid, RestrictedExpression>>::resource_id(&r);
+        assert!(!id.to_string().is_empty());
+    }
+
+    #[test]
+    fn repository_has_basic_attributes() {
+        let r = repo();
+        let attrs = <Repository as HodeiResource<EntityUid, RestrictedExpression>>::resource_attributes(&r);
+        assert!(attrs.contains_key("type"));
+        assert!(attrs.contains_key("repo_type"));
+        assert!(attrs.contains_key("format"));
+        assert!(attrs.contains_key("region"));
+    }
+
+    #[test]
+    fn repository_has_parent_org() {
+        let r = repo();
+        let parents = <Repository as HodeiResource<EntityUid, RestrictedExpression>>::resource_parents(&r);
+        assert_eq!(parents.len(), 1);
+    }
+}

@@ -4,6 +4,7 @@
 //! for document indexing operations. Each port has a single, well-defined responsibility.
 
 use async_trait::async_trait;
+use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 use crate::features::index_text_documents::dto::*;
 
@@ -352,7 +353,7 @@ pub struct HealthDetail {
 }
 
 /// Index statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexStats {
     /// Total number of documents
     pub total_documents: u64,

@@ -8,14 +8,12 @@ pub mod ports;
 pub mod error;
 pub mod use_case;
 pub mod adapter;
-pub mod api;
 pub mod di;
 
 // Re-export commonly used types for easier access
 pub use dto::*;
 pub use error::*;
 pub use ports::*;
-pub use api::*;
 pub use di::*;
 
 use std::sync::Arc;
@@ -42,21 +40,17 @@ impl SearchFullTextFeature {
         Ok(())
     }
     
-    /// Get the search API
-    pub fn api(&self) -> Arc<FullTextSearchApi> {
-        self.di_container.search_api()
-    }
     
-    /// Get feature health status
+    /// Get feature health status (via use cases / DI, without exposing REST controllers)
     pub async fn health_check(&self) -> FeatureHealthStatus {
-        let search_health = self.di_container.search_api().health_check().await;
-        
+        let ready = self.di_container.search_use_case().is_ready();
+        let overall = if ready { HealthStatus::Healthy } else { HealthStatus::Warning };
         FeatureHealthStatus {
             feature_name: "search_full_text".to_string(),
-            is_healthy: search_health.overall_status == HealthStatus::Healthy,
-            components: vec![("search_engine".to_string(), search_health.overall_status)],
+            is_healthy: overall == HealthStatus::Healthy,
+            components: vec![("search_engine".to_string(), overall.clone())],
             last_check: chrono::Utc::now(),
-            message: match search_health.overall_status {
+            message: match overall {
                 HealthStatus::Healthy => "Search engine is healthy".to_string(),
                 HealthStatus::Warning => "Search engine has warnings".to_string(),
                 HealthStatus::Unhealthy => "Search engine is unhealthy".to_string(),
@@ -192,87 +186,4 @@ mod tests {
     }
 }
 
-// Integration helper functions
-pub mod integration {
-    use super::*;
-    use axum::{Json, extract::Query};
-    
-    /// Create Axum routes for the search feature
-    pub fn create_routes() -> axum::Router {
-        use axum::{
-            routing::{get, post},
-            extract::Query,
-            Json,
-        };
-        
-        axum::Router::new()
-            .route("/search", post(handle_search))
-            .route("/search/suggestions", get(handle_suggestions))
-            .route("/search/analyze", post(handle_analyze))
-            .route("/search/more-like-this/:document_id", get(handle_more_like_this))
-            .route("/search/facets", post(handle_facets))
-            .route("/search/health", get(handle_health))
-    }
-    
-    /// Search handler
-    async fn handle_search(
-        Json(request): Json<SearchRequest>,
-    ) -> Json<ApiResponse<FullTextSearchResults>> {
-        // In a real implementation, this would get the feature from app state
-        let feature = create_test_feature();
-        let response = feature.api().search_api(request).await;
-        Json(response)
-    }
-    
-    /// Suggestions handler
-    async fn handle_suggestions(
-        Query(params): Query<std::collections::HashMap<String, String>>,
-    ) -> Json<ApiResponse<SearchSuggestionsResponse>> {
-        let partial_query = params.get("q").cloned().unwrap_or_default();
-        let request = SuggestionsRequest {
-            partial_query,
-            limit: params.get("limit").and_then(|s| s.parse().ok()),
-            ..Default::default()
-        };
-        
-        let feature = create_test_feature();
-        let response = feature.api().suggestions_api(request).await;
-        Json(response)
-    }
-    
-    /// Query analysis handler
-    async fn handle_analyze(
-        Json(request): Json<QueryAnalysisRequest>,
-    ) -> Json<ApiResponse<QueryPerformanceAnalysis>> {
-        let feature = create_test_feature();
-        let response = feature.api().analyze_query_api(request).await;
-        Json(response)
-    }
-    
-    /// More-like-this handler
-    async fn handle_more_like_this(
-        axum::extract::Path(document_id): axum::extract::Path<String>,
-        Query(params): Query<std::collections::HashMap<String, String>>,
-    ) -> Json<ApiResponse<FullTextSearchResults>> {
-        let limit = params.get("limit").and_then(|s| s.parse().ok());
-        
-        let feature = create_test_feature();
-        let response = feature.api().more_like_this_api(document_id, limit).await;
-        Json(response)
-    }
-    
-    /// Facets handler
-    async fn handle_facets(
-        Json(request): Json<SearchRequest>,
-    ) -> Json<ApiResponse<SearchFacets>> {
-        let feature = create_test_feature();
-        let response = feature.api().facets_api(request).await;
-        Json(response)
-    }
-    
-    /// Health check handler
-    async fn handle_health() -> Json<FeatureHealthStatus> {
-        let feature = create_test_feature();
-        Json(feature.health_check().await)
-    }
-}
+// Integration helpers for REST are intentionally omitted per architecture guidelines.

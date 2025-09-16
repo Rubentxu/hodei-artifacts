@@ -64,3 +64,17 @@ pub enum RetentionRule {
 /// Acción a tomar cuando una regla de retención se cumple.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum RetentionAction { Delete, Archive, Notify }
+
+/// Política de limpieza alineada con el diagrama de dominio.
+/// Mantiene compatibilidad coexistiendo con `RetentionPolicy` mientras migramos.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupPolicy {
+    /// Número máximo de versiones a conservar.
+    pub max_versions_to_keep: u32,
+    /// Días para retener snapshots.
+    pub retain_snapshots_for_days: u32,
+    /// Umbral de días desde la última descarga para limpieza.
+    pub last_downloaded_threshold_days: u32,
+    /// Cron de ejecución de la limpieza (expresión tipo cron).
+    pub cleanup_cron_expression: String,
+}

@@ -6,6 +6,7 @@ use shared::enums::Ecosystem;
 use serde::{Serialize, Deserialize};
 use url::Url;
 use std::str::FromStr;
+use std::collections::HashMap;
 
 /// Representa un contenedor para artefactos que define políticas de acceso y almacenamiento.
 /// Es el Agregado Raíz principal de este Bounded Context.

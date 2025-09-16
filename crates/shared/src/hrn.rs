@@ -182,4 +182,166 @@ impl FromStr for UserId {
     }
 }
 
-// ... (The rest of the file remains the same)
+// --- Generic HRN-wrapped IDs for other domain entities ---
+
+/// HRN para identificar artefactos lógicos.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ArtifactId(pub Hrn);
+
+impl ArtifactId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(ArtifactId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for ArtifactId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for ArtifactId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(ArtifactId(Hrn::new(s)?)) }
+}
+
+/// HRN para identificar políticas.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PolicyId(pub Hrn);
+
+impl PolicyId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(PolicyId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for PolicyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for PolicyId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(PolicyId(Hrn::new(s)?)) }
+}
+
+/// HRN para identificar equipos.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TeamId(pub Hrn);
+
+impl TeamId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(TeamId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for TeamId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for TeamId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(TeamId(Hrn::new(s)?)) }
+}
+
+/// HRN para identificar atestaciones.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AttestationId(pub Hrn);
+
+impl AttestationId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(AttestationId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for AttestationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for AttestationId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(AttestationId(Hrn::new(s)?)) }
+}
+
+/// HRN para identificar resultados de escaneo.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ScanResultId(pub Hrn);
+
+impl ScanResultId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(ScanResultId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for ScanResultId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for ScanResultId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(ScanResultId(Hrn::new(s)?)) }
+}
+
+/// HRN para identificar flujos de eventos.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EventStreamId(pub Hrn);
+
+impl EventStreamId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(EventStreamId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for EventStreamId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for EventStreamId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(EventStreamId(Hrn::new(s)?)) }
+}
+
+/// HRN para identificar dashboards.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct DashboardId(pub Hrn);
+
+impl DashboardId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(DashboardId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for DashboardId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for DashboardId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(DashboardId(Hrn::new(s)?)) }
+}
+
+/// HRN para identificar buckets de almacenamiento.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StorageBucketId(pub Hrn);
+
+impl StorageBucketId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(StorageBucketId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for StorageBucketId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for StorageBucketId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(StorageBucketId(Hrn::new(s)?)) }
+}
+
+/// HRN para identificar monitores.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MonitorId(pub Hrn);
+
+impl MonitorId {
+    pub fn new(hrn: &str) -> Result<Self, HrnError> { Ok(MonitorId(Hrn::new(hrn)?)) }
+    pub fn as_str(&self) -> &str { self.0.as_str() }
+}
+
+impl fmt::Display for MonitorId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
+}
+
+impl FromStr for MonitorId {
+    type Err = HrnError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(MonitorId(Hrn::new(s)?)) }
+}

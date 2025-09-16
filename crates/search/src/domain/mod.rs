@@ -6,14 +6,20 @@
 pub mod document;
 pub mod index;
 pub mod query;
+pub mod dashboard;
+pub mod report;
+pub mod alert;
 
 // Re-export commonly used domain types
 pub use document::*;
 pub use index::*;
 pub use query::*;
+pub use dashboard::*;
+pub use report::*;
+pub use alert::*;
 
 /// Search document identifier
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DocumentId(String);
 
 impl DocumentId {
@@ -49,7 +55,7 @@ impl std::fmt::Display for DocumentId {
 }
 
 /// Search index identifier
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct IndexId(String);
 
 impl IndexId {

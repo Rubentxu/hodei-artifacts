@@ -295,13 +295,13 @@ impl Sorting {
     
     pub fn newest_first() -> Self {
         Self {
-            sort_by: vec![SortField::new("created_at", SortDirection::Descending)],
+            sort_by: vec![SortField::new("created_at".to_string(), SortDirection::Descending)],
         }
     }
     
     pub fn oldest_first() -> Self {
         Self {
-            sort_by: vec![SortField::new("created_at", SortDirection::Ascending)],
+            sort_by: vec![SortField::new("created_at".to_string(), SortDirection::Ascending)],
         }
     }
     

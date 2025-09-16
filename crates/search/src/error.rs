@@ -314,7 +314,7 @@ pub struct ErrorContext {
 }
 
 impl ErrorContext {
-    pub fn new<S: Into<String>>(operation: S, component: S) -> Self {
+    pub fn new<O: Into<String>, C: Into<String>>(operation: O, component: C) -> Self {
         Self {
             operation: operation.into(),
             component: component.into(),

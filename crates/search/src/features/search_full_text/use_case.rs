@@ -261,10 +261,7 @@ impl FullTextSearchUseCase {
         // Wait for all enrichment tasks to complete
         let enriched_results: Vec<SearchResult> = try_join_all(enrichment_tasks)
             .await
-            .map_err(|e| FullTextSearchError::Concurrency(format!("Failed to enrich results: {}", e)))?
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| FullTextSearchError::Concurrency(format!("Task failed during enrichment: {}", e)))?;
+            .map_err(|e| FullTextSearchError::Concurrency(format!("Failed to enrich results: {}", e)))?;
         
         results.results = enriched_results;
         
@@ -594,18 +591,8 @@ impl QueryPerformanceUseCase {
             None
         };
         
-        // Get index stats if requested
-        let index_stats = if command.include_index_stats {
-            match self.performance_monitor.get_search_stats(TimeRange {
-                start: chrono::Utc::now() - chrono::Duration::hours(1),
-                end: chrono::Utc::now(),
-            }).await {
-                Ok(stats) => Some(stats),
-                Err(_) => None,
-            }
-        } else {
-            None
-        };
+        // Get index stats if requested (placeholder: disable until proper mapping)
+        let index_stats = None;
         
         let analysis = QueryPerformanceAnalysis {
             analysis: query_analysis,

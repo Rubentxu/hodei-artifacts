@@ -676,7 +676,7 @@ mod tests {
 // Use the types from ports.rs instead
 
 // Additional error types for index management
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum RebuildError {
     #[error("Index rebuild failed: {0}")]
     RebuildFailed(String),
@@ -688,7 +688,7 @@ pub enum RebuildError {
     RebuildInterrupted,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ClearError {
     #[error("Index clear failed: {0}")]
     ClearFailed(String),
@@ -698,7 +698,7 @@ pub enum ClearError {
     ClearInterrupted,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ValidationError {
     #[error("Index validation failed: {0}")]
     ValidationFailed(String),

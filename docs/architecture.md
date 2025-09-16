@@ -188,10 +188,8 @@ Siempre se va a testear use_case.rs y api.rs que son los ficheros que tienen tod
 ```text
 features/
 ├── todo_management/
-│   ├── use_case.rs          # Código fuente
-│   ├── use_case_test.rs     # Tests unitarios
-│   ├── api.rs               # Código fuente
-│   └── api_test.rs          # Tests unitarios
+│   ├── use_case.rs          # Código fuente│   
+│   └── use_case_test.rs     # Tests unitarios
 ```
 
 **Tests de Integración (directorio `tests/`)**
@@ -200,10 +198,39 @@ Prueban el crate como una caja negra.
 ```text
 crates/<context>/
   └── tests/
-      ├── it_calculator.rs     # Tests de integración
+      ├── it_use_case_test.rs     # Tests de integración
       └── compose/
           └── docker-compose.yml # Entorno para testcontainers
 ```
+
+## Estructura Actualizada por Feature (ejemplo) estrictamente obligada
+```text
+crates/todo_management/src/features/create_todo/
+├── mod.rs
+├── use_case.rs              # Punto de entrada principal - contiene la lógica de negocio
+├── ports.rs                 # Interfaces para servicios externos (ej: TodoPersister)
+├── error.rs                 # Errores específicos de la feature
+├── dto.rs                   # Estructuras de datos de transferencia
+├── use_case_test.rs         # Tests unitarios del caso de uso
+├── event_handler.rs         # Manejador de eventos de dominio (si es necesario)
+├── di.rs                    # Configuración del contenedor DI
+├── mocks.rs                 # Mocks para tests
+├── event_handler_test.rs    # Tests para handler de eventos
+└── adapter.rs               # Tests de integración (único archivo)
+```
+- 1. Caso de Uso como Punto de Entrada (use_case.rs)
+- 2. Puertos (Interfaces para repositorios o servicios externos con principios de segregación de interfaces SOLID) (ports.rs) 
+- 3. Implementaciones de puertos (adapter.rs) 
+- 4. Errores específicos de la feature (error.rs)
+- 5. DTOs (dto.rs) Comandos, queries y DTOs específicos
+- 6. Eventos de dominio (event_handler.rs) punto de entrada de eventos de dominio para el caso de uso.
+- 7. Tests unitarios del caso de uso (use_case_test.rs)
+- 8. Inyección de dependencias (di.rs) para inyectar todas las dependencias del caso de uso.
+- 9. Mocks (mocks.rs) para mockear todas las dependencias del caso de uso.
+- 10. Tests de eventos de dominio (event_handler_test.rs) para testear la integración con los servicios externos.
+- 11. Disponibilizar la featur con mod.rs
+
+
 
 ### Resumen de Estructura de Directorios prototipo de obligado cumplimiento
 
@@ -255,6 +282,21 @@ crates/<context>/
         │   └── di_config.rs        # Configuración global de implementaciones
         └── Cargo.toml              # Dependencias del ejecutable
 ```
+
+
+# Directrices para Exponer Features vía REST API en el Proyecto Raíz
+
+1. **En el directorio `src` del proyecto raíz**, crea controladores (handlers) para cada feature que necesite exponerse via REST.  
+2. **Organiza los controladores por feature** en módulos bajo `src/api/` (ej: `src/api/todos/` para features de todos).  
+3. **Cada handler debe inyectar el caso de uso** de la feature y transformar requests HTTP en comandos del caso de uso.  
+4. **Configura las rutas en `src/main.rs`** usando Axum, importando los handlers desde los módulos de la API.  
+5. **Mantén los controladores simples** solo con lógica de transporte HTTP, delegando lógica de negocio al caso de uso.  
+
+**Convención para controladores:**  
+- Usa una estructura de directorios como `src/api/{nombre_feature}/handlers.rs`  
+- Nombra los handlers con el patrón `{accion}_{entidad}_handler` (ej: `create_todo_handler`)  
+- Agrupa handlers relacionados en el mismo módulo para mantener la cohesión
+
 
 ## IMPORTANTE FEATURE VSA
 - Se debe respetar en nombre del tipo de ficheros Clean Architecture dentro de cada feature.

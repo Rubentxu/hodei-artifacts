@@ -64,6 +64,10 @@ impl TantivyDocumentIndexer {
             schema,
         })
     }
+    /// Get a clone of the underlying Tantivy Index Arc for health monitor wiring
+    pub fn index_arc(&self) -> Arc<RwLock<Index>> {
+        self.index.clone()
+    }
     
     pub fn create_schema(&self) -> Result<(), IndexDocumentError> {
         debug!("Creating search index schema");
@@ -298,13 +302,17 @@ impl TextAnalyzerPort for BasicTextAnalyzer {
             }
         }
         
-        let detected_language = self.detect_language(&command.text).await.ok();
+        let detected_language = self
+            .detect_language(&command.text)
+            .await
+            .unwrap_or(None);
         
+        let token_count = tokens.len();
         Ok(TextAnalysisResponse {
             original_text: command.text,
             detected_language,
             tokens,
-            token_count: tokens.len(),
+            token_count,
             analysis_time_ms: start_time.elapsed().as_millis() as u64,
         })
     }
@@ -408,7 +416,7 @@ impl IndexHealthMonitorPort for BasicIndexHealthMonitor {
         };
         
         Ok(IndexHealth {
-            status: health_status,
+            status: health_status.clone(),
             document_count: document_count as u64,
             index_size_bytes: 0, // TODO: Get actual index size
             memory_usage_bytes: 0, // TODO: Get actual memory usage
@@ -416,7 +424,7 @@ impl IndexHealthMonitorPort for BasicIndexHealthMonitor {
             details: vec![
                 HealthDetail {
                     name: "Document Count".to_string(),
-                    status: health_status,
+                    status: health_status.clone(),
                     message: format!("Index contains {} documents", document_count),
                     timestamp: chrono::Utc::now(),
                 }
@@ -531,6 +539,14 @@ impl DocumentIndexSchema {
             indexed_at_field,
         }
     }
+    /// Convenience alias used by DI
+    pub fn create() -> Self {
+        Self::new()
+    }
+    /// Convenience used by DI to obtain Tantivy schema directly
+    pub fn create_tantivy_schema() -> Schema {
+        Self::new().schema.clone()
+    }
     
     pub fn to_document(&self, command: &IndexDocumentCommand) -> TantivyDocument {
         doc! {
@@ -542,37 +558,37 @@ impl DocumentIndexSchema {
             self.version_field => command.metadata.version.clone(),
             self.tags_field => command.metadata.tags.join(" "),
             self.language_field => command.language.clone().unwrap_or_else(|| "en".to_string()),
-            self.indexed_at_field => tantivy::DateTime::from_utc(chrono::Utc::now()),
+            self.indexed_at_field => tantivy::DateTime::from_utc(time::OffsetDateTime::now_utc()),
         }
     }
     
     pub fn from_document(&self, doc: &TantivyDocument) -> Option<IndexedDocumentInfo> {
         let artifact_id = doc.get_first(self.artifact_id_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .map(|s| s.to_string())?;
             
         let title = doc.get_first(self.title_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .map(|s| s.to_string());
             
         let description = doc.get_first(self.description_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .map(|s| s.to_string());
             
         let artifact_type = doc.get_first(self.artifact_type_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .map(|s| s.to_string())?;
             
         let version = doc.get_first(self.version_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .map(|s| s.to_string())?;
             
         let language = doc.get_first(self.language_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .map(|s| s.to_string());
             
         let tags = doc.get_first(self.tags_field)
-            .and_then(|v| v.as_text())
+            .and_then(|v| v.as_str())
             .map(|s| s.split(' ').map(|t| t.to_string()).collect())
             .unwrap_or_default();
             

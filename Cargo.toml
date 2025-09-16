@@ -8,9 +8,8 @@ members = [
     "crates/supply-chain",
     "crates/search",
     "crates/security",
-    "crates/analytics",
-    "crates/distribution",
-    "crates/infra-mongo",
+    "crates/policies",
+    "crates/distribution", 
     "crates/organization"
 ]
 resolver = "2"
@@ -40,7 +39,6 @@ hex = "0.4"
 hyper = { version = "1", features = ["full"] }
 jsonwebtoken = "^9.3"
 mime = "0.3"
-mongodb = "3.3.0"
 lapin = { version = "3.4.0" }
 redis = { version = "0.32.5", features = ["tokio-comp"] }
 reqwest = { version = "0.12.4", features = ["json"] }
@@ -90,10 +88,9 @@ repository = { path = "crates/repository" }
 "supply-chain" = { path = "crates/supply-chain" }
 search = { path = "crates/search" }
 security = { path = "crates/security" }
-analytics = { path = "crates/analytics" }
 distribution = { path = "crates/distribution" }
-infra-mongo = { path = "crates/infra-mongo" }
 organization = { path = "crates/organization" }
+policies = { path = "crates/policies" }
 
 
 # Core

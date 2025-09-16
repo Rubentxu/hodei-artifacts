@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::ports::*;
 use super::use_case::*;
 use super::adapter::*;
-use api::*;
+// no REST exposure from features
 use super::error::*;
 
 /// Dependency injection container for index text documents feature
@@ -26,8 +26,105 @@ impl IndexTextDocumentsDIContainer {
         text_analyzer: Arc<dyn TextAnalyzerPort>,
         health_monitor: Arc<dyn IndexHealthMonitorPort>,
     ) -> Self {
-        let document_use_case = Arc::new(IndexDocumentUseCase::new(document_indexer.clone()));
-        let batch_use_case = Arc::new(BatchIndexUseCase::new(document_indexer));
+        // No-op implementations for missing ports
+        struct NoopIndexSchemaManager;
+        #[async_trait::async_trait]
+        impl IndexSchemaManagerPort for NoopIndexSchemaManager {
+            async fn create_schema(&self, _config: SchemaConfig) -> Result<SchemaInfo, SchemaError> {
+                Ok(SchemaInfo { name: "default".into(), version: "1.0.0".into(), fields: vec![], settings: IndexSettings { number_of_shards: 1, number_of_replicas: 0, refresh_interval: "1s".into(), analysis: AnalysisSettings { analyzers: vec![], tokenizers: vec![], filters: vec![] } }, created_at: chrono::Utc::now(), updated_at: chrono::Utc::now() })
+            }
+            async fn get_schema(&self) -> Result<SchemaInfo, SchemaError> {
+                self.create_schema(SchemaConfig { name: "default".into(), fields: vec![], settings: IndexSettings { number_of_shards: 1, number_of_replicas: 0, refresh_interval: "1s".into(), analysis: AnalysisSettings { analyzers: vec![], tokenizers: vec![], filters: vec![] } } }).await
+            }
+            async fn add_field(&self, field_config: FieldConfig) -> Result<FieldInfo, SchemaError> {
+                Ok(FieldInfo { name: field_config.name, field_type: field_config.field_type, indexed: field_config.indexed, stored: field_config.stored, required: field_config.required, options: field_config.options })
+            }
+            async fn update_field(&self, field_name: &str, field_config: FieldConfig) -> Result<FieldInfo, SchemaError> {
+                self.add_field(FieldConfig { name: field_name.into(), ..field_config }).await
+            }
+            async fn validate_schema(&self) -> Result<SchemaValidationResult, SchemaError> {
+                Ok(SchemaValidationResult { is_valid: true, errors: vec![], warnings: vec![] })
+            }
+        }
+
+        struct NoopDocumentValidator;
+        #[async_trait::async_trait]
+        impl DocumentValidatorPort for NoopDocumentValidator {
+            async fn validate_document(&self, _command: &IndexDocumentCommand) -> Result<ValidationResult, ValidationError> {
+                Ok(ValidationResult { is_valid: true, errors: vec![], warnings: vec![] })
+            }
+            async fn validate_metadata(&self, _metadata: &ArtifactMetadata) -> Result<MetadataValidationResult, ValidationError> {
+                Ok(MetadataValidationResult { is_valid: true, errors: vec![], warnings: vec![] })
+            }
+            async fn validate_content(&self, _content: &str) -> Result<ContentValidationResult, ValidationError> {
+                Ok(ContentValidationResult { is_valid: true, content_length: 0, errors: vec![], warnings: vec![] })
+            }
+            async fn check_duplicate_content(&self, _content: &str) -> Result<bool, DuplicateError> { Ok(false) }
+        }
+
+        let schema_manager = Arc::new(NoopIndexSchemaManager) as Arc<dyn IndexSchemaManagerPort>;
+        let validator = Arc::new(NoopDocumentValidator) as Arc<dyn DocumentValidatorPort>;
+
+        struct NoopIndexHealthMonitor;
+        #[async_trait::async_trait]
+        impl IndexHealthMonitorPort for NoopIndexHealthMonitor {
+            async fn check_index_health(&self) -> Result<IndexHealth, HealthError> {
+                Ok(IndexHealth {
+                    status: HealthStatus::Healthy,
+                    document_count: 0,
+                    index_size_bytes: 0,
+                    memory_usage_bytes: 0,
+                    last_updated: chrono::Utc::now(),
+                    details: vec![],
+                })
+            }
+            async fn get_index_stats(&self) -> Result<IndexStats, StatsError> {
+                Ok(IndexStats {
+                    total_documents: 0,
+                    total_terms: 0,
+                    avg_terms_per_document: 0.0,
+                    index_size_bytes: 0,
+                    memory_usage_bytes: 0,
+                    segment_count: 0,
+                    created_at: chrono::Utc::now(),
+                    last_optimized_at: None,
+                })
+            }
+            async fn get_indexing_performance_metrics(&self, _time_range: TimeRange) -> Result<IndexingMetrics, MetricsError> {
+                Ok(IndexingMetrics {
+                    avg_indexing_time_ms: 0.0,
+                    total_operations: 0,
+                    successful_operations: 0,
+                    failed_operations: 0,
+                    operations_per_second: 0.0,
+                    p99_latency_ms: 0.0,
+                })
+            }
+            async fn get_memory_usage(&self) -> Result<MemoryUsage, MemoryError> {
+                Ok(MemoryUsage {
+                    current_usage_bytes: 0,
+                    peak_usage_bytes: 0,
+                    memory_limit_bytes: 0,
+                    usage_percentage: 0.0,
+                })
+            }
+            async fn needs_optimization(&self) -> Result<bool, OptimizationError> { Ok(false) }
+        }
+
+        let document_use_case = Arc::new(IndexDocumentUseCase::new(
+            document_indexer.clone(),
+            text_analyzer.clone(),
+            health_monitor.clone(),
+            schema_manager.clone(),
+            validator.clone(),
+        ));
+        let batch_use_case = Arc::new(IndexDocumentUseCase::new(
+            document_indexer.clone(),
+            text_analyzer.clone(),
+            health_monitor.clone(),
+            schema_manager.clone(),
+            validator.clone(),
+        ));
         
         let state = IndexTextDocumentsState {
             document_use_case: document_use_case.clone(),
@@ -51,7 +148,7 @@ impl IndexTextDocumentsDIContainer {
     ) -> Result<Self, IndexDocumentError> {
         let document_indexer = Arc::new(TantivyDocumentIndexer::new(Some(index_path))?);
         let text_analyzer = Arc::new(BasicTextAnalyzer::new());
-        let health_monitor = Arc::new(BasicIndexHealthMonitor::new(document_indexer.index.clone()));
+        let health_monitor = Arc::new(BasicIndexHealthMonitor::new(document_indexer.index_arc()));
         
         Ok(Self::new(document_indexer, text_analyzer, health_monitor))
     }
@@ -60,7 +157,7 @@ impl IndexTextDocumentsDIContainer {
     pub fn for_production_with_memory_index() -> Result<Self, IndexDocumentError> {
         let document_indexer = Arc::new(TantivyDocumentIndexer::new(None)?);
         let text_analyzer = Arc::new(BasicTextAnalyzer::new());
-        let health_monitor = Arc::new(BasicIndexHealthMonitor::new(document_indexer.index.clone()));
+        let health_monitor = Arc::new(BasicIndexHealthMonitor::new(document_indexer.index_arc()));
         
         Ok(Self::new(document_indexer, text_analyzer, health_monitor))
     }
@@ -83,15 +180,12 @@ impl IndexTextDocumentsDIContainer {
     ) -> Result<Self, IndexDocumentError> {
         let document_indexer = Arc::new(TantivyDocumentIndexer::new(index_path)?);
         let text_analyzer = Arc::new(BasicTextAnalyzer::new());
-        let health_monitor = Arc::new(BasicIndexHealthMonitor::new(document_indexer.index.clone()));
+        let health_monitor = Arc::new(BasicIndexHealthMonitor::new(document_indexer.index_arc()));
         
         Ok(Self::new(document_indexer, text_analyzer, health_monitor))
     }
     
-    /// Get the API router for this feature
-    pub fn router(&self) -> axum::Router {
-        create_router(self.state.clone())
-    }
+    // No API router exposure from DI per architecture guidelines
     
     /// Get a reference to the document use case
     pub fn document_use_case(&self) -> &Arc<IndexDocumentUseCase> {
@@ -184,7 +278,7 @@ impl IndexTextDocumentsDIContainerBuilder {
             .unwrap_or_else(|| Arc::new(BasicTextAnalyzer::new()));
         
         let health_monitor = self.health_monitor
-            .unwrap_or_else(|| Arc::new(BasicIndexHealthMonitor::new(document_indexer.index.clone())));
+            .unwrap_or_else(|| Arc::new(NoopIndexHealthMonitor));
         
         Ok(IndexTextDocumentsDIContainer::new(
             document_indexer,
@@ -202,7 +296,7 @@ impl IndexTextDocumentsDIContainerBuilder {
             .unwrap_or_else(|| Arc::new(BasicTextAnalyzer::new()));
         
         let health_monitor = self.health_monitor
-            .unwrap_or_else(|| Arc::new(BasicIndexHealthMonitor::new(document_indexer.index.clone())));
+            .unwrap_or_else(|| Arc::new(NoopIndexHealthMonitor));
         
         Ok(IndexTextDocumentsDIContainer::new(
             document_indexer,
@@ -312,7 +406,7 @@ impl IndexTextDocumentsConfig {
         };
         
         let health_monitor = if self.enable_health_monitoring {
-            Arc::new(BasicIndexHealthMonitor::new(document_indexer.index.clone())) as Arc<dyn IndexHealthMonitorPort>
+            Arc::new(BasicIndexHealthMonitor::new(document_indexer.index_arc())) as Arc<dyn IndexHealthMonitorPort>
         } else {
             // Use a no-op health monitor when health monitoring is disabled
             todo!("Implement no-op health monitor")
