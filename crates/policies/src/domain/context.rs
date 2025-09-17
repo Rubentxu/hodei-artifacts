@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use shared::hrn::{Hrn, UserId};
 
 use crate::domain::action::Action;
-use crate::domain::resources::AttributeValue;
+use shared::attributes::AttributeValue;
 
 /// Contexto para la evaluación de una política
 #[derive(Debug, Clone, Serialize, Deserialize)]

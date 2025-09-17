@@ -174,7 +174,7 @@ El objetivo es un testing rápido y eficiente.
 - **Corredor de Pruebas `nextest`:** Adoptar `cargo-nextest` como el corredor de pruebas principal por su velocidad y mejor feedback.
 - **Feedback Rápido:** Aprovechar su ejecución paralela para reducir drásticamente los tiempos de validación en el desarrollo local (TDD).
 - **Optimización para CI:** Integrar `nextest` en el pipeline de Integración Continua para mantener los builds ágiles y fiables.
-- **Prioridad Unitaria:** Foco en tests unitarios amplios sobre `use_case.rs` y `api.rs`, mockeando todas las dependencias externas. Testear también los eventos de dominio emitidos.
+- **Prioridad Unitaria:** Foco en tests unitarios amplios sobre `use_case.rs` , mockeando todas las dependencias externas. Testear también los eventos de dominio emitidos.
 - **Logging con `tracing`:** No usar `println!`. Utilizar el crate `tracing` para capturar logs y spans, permitiendo crear *asserts* que verifiquen el comportamiento interno.
 - **Tests de Integración con `testcontainers`:** Usar `testcontainers` y Docker Compose para levantar entornos aislados y reproducibles (BBDD, colas, etc.), evitando conflictos entre tests paralelos.
 - **Ejecución Centralizada:** Usar `Makefile` para ejecutar todos los tipos de tests de forma consistente.
@@ -183,7 +183,7 @@ El objetivo es un testing rápido y eficiente.
 
 **Tests Unitarios (dentro de Ejemplo `src/features/create_todo/`)** 
 Se colocan en archivos `*_test.rs` junto al código que prueban para agilizar la compilación.
-Siempre se va a testear use_case.rs y api.rs que son los ficheros que tienen toda la lógica de negocio.
+Siempre se va a testear use_case.rs que son los ficheros que tienen toda la lógica de negocio.
 
 ```text
 features/
@@ -254,12 +254,10 @@ crates/todo_management/src/features/create_todo/
 │   │   │   │   │   ├── error.rs    # Errores personalizados de la feature
 │   │   │   │   │   ├── ports.rs    # Interfaces SEGREGADAS de los servicios necesarios para esta feature
 │   │   │   │   │   ├── adapter.rs  # Implementaciones CONCRETAS de los servicios definidos en ports.rs
-│   │   │   │   │   ├── api.rs      # Punto de entrada de toda la feature
 │   │   │   │   │   ├── event_handler.rs  # Manejador de eventos de dominio
 │   │   │   │   │   ├── di.rs       # Configuración del contenedor DI
 │   │   │   │   │   ├── mocks.rs    # Mocks para tests
 │   │   │   │   │   ├── use_case_test.rs  # Tests unitarios para caso de uso
-│   │   │   │   │   ├── api_test.rs       # Tests unitarios para API
 │   │   │   │   │   └── event_handler_test.rs   # Tests para handler de eventos
 │   │   │   │   ├── complete_todo/  # Feature: Completar tarea
 │   │   │   │   │   └── ...         # Misma estructura con sus PROPIOS ports
@@ -300,11 +298,9 @@ crates/todo_management/src/features/create_todo/
 
 ## IMPORTANTE FEATURE VSA
 - Se debe respetar en nombre del tipo de ficheros Clean Architecture dentro de cada feature.
-- La idea es que el fichero api.rs sea el punto de entrada o controlador de api rest de la feature.
-- Este api.rs proporcionara al router todo la función necesaria para configurarla en la aplicación aglutinadora que esta en src de la raíz del proyecto.
 - Si se detecta que una feature está teniendo más funcionalidades de las necesarias, se valora por principio SOLID de responsabilidad única la opción de crear otro feature que complete la funcionalidad aparte.
 - **MUY IMPORTANTE** Respetar los nombres de los ficheros segun Clean architecture, nada de crear service.rs o cotroller.rs o handler.rs o cualquier otra cosa que imcumpla las especifiaciones anteriores.
-- Siempre se crean los tests de api.rs y use_case.rs con todo los mocks necesarios, segun se ha especificado.
+- Siempre se crean los tests de use_case.rs con todo los mocks necesarios, segun se ha especificado.
 
 ## Flujo de Trabajo de ejemplo para Historia de Usuario
 
@@ -318,19 +314,18 @@ crates/todo_management/src/features/create_todo/
 
 #### 🎯 Tareas de Implementación
 
-| Estado | Tarea | Descripción                       | Ubicación |
-|--------|-------|-----------------------------------|-----------|
-| ○ | Tarea 1 | Definir modelos de dominio        | `(nombre_crate)/src/domain/xxx.rs` |
-| ○ | Tarea 2 | Crear estructura de directorios   | Feature-specific directory |
-| ○ | Tarea 3 | Crear archivo mod.rs              | `mod.rs` para la feature |
-| ○ | Tarea 4 | Definir abstracciones (puertos)   | `ports.rs` (segregación de interfaces SOLID) |
-| ○ | Tarea 5 | Implementar adaptadores concretos | `adapter.rs` (SyftSbomGenerator, examplePartialRepository) |
-| ○ | Tarea 6 | Desarrollar caso de uso           | `use_case.rs` |
-| ○ | Tarea 7 | Conectar punto de entrada         | `api.rs` (manejador de eventos) |
-| ○ | Tarea 8 | Crear DTOs                        | `dto.rs` (si es necesario) |
-| ○ | Tarea 9 | Crear tests unitarios             | Para caso de uso y API |
-| ○ | Tarea 10 | Crear tests de integración        | Con tests containers |
-| ○ | Tarea 11 | Actualizar documentación          | Historia de usuario |
+| Estado | Tarea    | Descripción                       | Ubicación |
+|--------|----------|-----------------------------------|-----------|
+| ○ | Tarea 1  | Definir modelos de dominio        | `(nombre_crate)/src/domain/xxx.rs` |
+| ○ | Tarea 2  | Crear estructura de directorios   | Feature-specific directory |
+| ○ | Tarea 3  | Crear archivo mod.rs              | `mod.rs` para la feature |
+| ○ | Tarea 4  | Definir abstracciones (puertos)   | `ports.rs` (segregación de interfaces SOLID) |
+| ○ | Tarea 5  | Implementar adaptadores concretos | `adapter.rs` (SyftSbomGenerator, examplePartialRepository) |
+| ○ | Tarea 6  | Desarrollar caso de uso           | `use_case.rs` |
+| ○ | Tarea 7  | Crear DTOs                        | `dto.rs` (si es necesario) |
+| ○ | Tarea 8  | Crear tests unitarios             | Para caso de uso y API |
+| ○ | Tarea 9  | Crear tests de integración        | Con tests containers |
+| ○ | Tarea 10 | Actualizar documentación          | Historia de usuario |
 
 ## Checklist de Verificación para el Agente AI
 
@@ -370,4 +365,9 @@ Al implementar, verifique siempre:
 - 🔍 Identificar posibles mejoras o ajustes necesarios
 - 🔍 Actualizar documentación de la historia de usuario
 
-Estas reglas mantendrán la arquitectura desacoplada y alineada con VSA y *Clean Architecture*, asegurando alta calidad de código mediante compilación limpia y tests exhaustivos.
+## 5. Arquitectura y Stack Tecnológico
+- Lenguaje y Runtime: Rust (última versión estable) con el runtime asíncrono Tokio.
+- Framework Web: Axum.
+- Base de Datos y Bus de Eventos: SurrealDB como la única fuente de verdad, aprovechando sus capacidades de base de datos de grafos, búsqueda de texto completo y eventos en tiempo real.
+- Almacenamiento de Objetos: Se utilizará la crate object_store de Rust para la abstracción del almacenamiento, permitiendo el soporte de S3, Azure Blob Storage, Google Cloud Storage, etc.
+- Motor de Autorización: Cedar, integrado de forma nativa en cada endpoint de la API para la aplicación de políticas.

@@ -1,7 +1,7 @@
 // crates/shared/src/events.rs
 
 use serde::{Serialize, Deserialize};
-use crate::hrn::{Hrn, EventStreamId};
+use crate::hrn::{Hrn};
 use async_trait::async_trait;
 use anyhow::Result;
 

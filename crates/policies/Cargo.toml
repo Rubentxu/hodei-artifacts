@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+# Core dependencies
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -12,3 +13,29 @@ tracing = { workspace = true }
 shared = { path = "../shared" }
 chrono = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+
+# Cedar Policy Engine
+cedar-policy = { workspace = true }
+
+# Database - SurrealDB for policy storage
+surrealdb = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+async-trait = { workspace = true }
+
+# Testing (dev dependencies)
+mockall = { workspace = true, optional = true }
+testcontainers = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+[features]
+integration = []
+
+[dev-dependencies]
+mockall = { workspace = true }
+testcontainers = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }

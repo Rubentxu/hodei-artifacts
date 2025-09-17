@@ -51,10 +51,7 @@ Para habilitar la ejecución paralela de tests de integración, se ha implementa
 
 **Template Docker Compose:** `tests/compose/docker-compose.template.yml`
 ```yaml
-services:
-  mongodb:
-    ports:
-      - "{{MONGO_HOST_PORT}}:27017"
+services:  
   rabbitmq:
     ports:
       - "{{RABBITMQ_HOST_PORT}}:5672"

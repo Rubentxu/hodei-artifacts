@@ -313,12 +313,10 @@ crates/artifact/
 │       │   ├── adapter.rs
 │       │   ├── dto.rs
 │       │   ├── error.rs
-│       │   ├── api.rs
 │       │   ├── event_handler.rs
 │       │   ├── di.rs
 │       │   ├── mocks.rs
 │       │   ├── use_case_test.rs
-│       │   ├── api_test.rs
 │       │   └── event_handler_test.rs
 │       ├── upload_multipart/    # Multipart upload
 │       │   └── ... (same structure)
@@ -371,12 +369,10 @@ crates/distribution/
 │       │   ├── adapter.rs
 │       │   ├── dto.rs
 │       │   ├── error.rs
-│       │   ├── api.rs
 │       │   ├── event_handler.rs
 │       │   ├── di.rs
 │       │   ├── mocks.rs
 │       │   ├── use_case_test.rs
-│       │   ├── api_test.rs
 │       │   └── event_handler_test.rs
 │       ├── npm_support/         # npm protocol support
 │       │   └── ... (same structure)
@@ -418,12 +414,10 @@ crates/iam/
 │       │   ├── adapter.rs
 │       │   ├── dto.rs
 │       │   ├── error.rs
-│       │   ├── api.rs
 │       │   ├── event_handler.rs
 │       │   ├── di.rs
 │       │   ├── mocks.rs
 │       │   ├── use_case_test.rs
-│       │   ├── api_test.rs
 │       │   └── event_handler_test.rs
 │       ├── oidc_integration/   # OIDC integration
 │       │   └── ... (same structure)
@@ -466,12 +460,10 @@ crates/policies/
 │       │   ├── adapter.rs
 │       │   ├── dto.rs
 │       │   ├── error.rs
-│       │   ├── api.rs
 │       │   ├── event_handler.rs
 │       │   ├── di.rs
 │       │   ├── mocks.rs
 │       │   ├── use_case_test.rs
-│       │   ├── api_test.rs
 │       │   └── event_handler_test.rs
 │       ├── policy_playground/  # Interactive editor
 │       │   └── ... (same structure)
@@ -514,12 +506,10 @@ crates/organization/
 │       │   ├── adapter.rs
 │       │   ├── dto.rs
 │       │   ├── error.rs
-│       │   ├── api.rs
 │       │   ├── event_handler.rs
 │       │   ├── di.rs
 │       │   ├── mocks.rs
 │       │   ├── use_case_test.rs
-│       │   ├── api_test.rs
 │       │   └── event_handler_test.rs
 │       ├── scp_management/     # SCP management
 │       │   └── ... (same structure)
@@ -562,12 +552,10 @@ crates/repository/
 │       │   ├── adapter.rs
 │       │   ├── dto.rs
 │       │   ├── error.rs
-│       │   ├── api.rs
 │       │   ├── event_handler.rs
 │       │   ├── di.rs
 │       │   ├── mocks.rs
 │       │   ├── use_case_test.rs
-│       │   ├── api_test.rs
 │       │   └── event_handler_test.rs
 │       ├── virtual_repository/ # Virtual repositories
 │       │   └── ... (same structure)
@@ -610,12 +598,10 @@ crates/supply-chain/
 │       │   ├── adapter.rs
 │       │   ├── dto.rs
 │       │   ├── error.rs
-│       │   ├── api.rs
 │       │   ├── event_handler.rs
 │       │   ├── di.rs
 │       │   ├── mocks.rs
 │       │   ├── use_case_test.rs
-│       │   ├── api_test.rs
 │       │   └── event_handler_test.rs
 │       ├── vulnerability_scan/ # Vulnerability scanning
 │       │   └── ... (same structure)
@@ -660,12 +646,10 @@ crates/search/
 │       │   ├── adapter.rs
 │       │   ├── dto.rs
 │       │   ├── error.rs
-│       │   ├── api.rs
 │       │   ├── event_handler.rs
 │       │   ├── di.rs
 │       │   ├── mocks.rs
 │       │   ├── use_case_test.rs
-│       │   ├── api_test.rs
 │       │   └── event_handler_test.rs
 │       ├── advanced_search/    # Advanced search
 │       │   └── ... (same structure)
@@ -956,12 +940,10 @@ features/<feature_name>/
 ├── adapter.rs               # Concrete implementations of ports
 ├── dto.rs                   # Data transfer objects
 ├── error.rs                 # Feature-specific errors
-├── api.rs                   # REST API entry point
 ├── event_handler.rs         # Domain event handler
 ├── di.rs                    # Dependency injection configuration
 ├── mocks.rs                 # Mocks for testing
 ├── use_case_test.rs         # Unit tests for use case
-├── api_test.rs              # Unit tests for API
 └── event_handler_test.rs    # Tests for event handler
 ```
 
@@ -970,7 +952,6 @@ features/<feature_name>/
 * **use_case.rs:** Must contain the main business logic with no external dependencies
 * **ports.rs:** Must define segregated interfaces following SOLID principles
 * **adapter.rs:** Must implement concrete adapters for the defined ports
-* **api.rs:** Must be the REST API entry point with minimal logic
 * **All tests:** Must be implemented with proper mocks and coverage
 
 ## 8. Roadmap
@@ -1000,10 +981,17 @@ features/<feature_name>/
 
 ### 9.1 Prerequisites
 
-* Rust 1.75+ (with `rustup`)
+* Rust 1.75+ (with `rustup`) 2024
 * Docker and Docker Compose
 * SurrealDB CLI
 * Node.js 18+ (for UI development)
+
+#### Arquitectura y Stack Tecnológico
+- Lenguaje y Runtime: Rust (última versión estable) con el runtime asíncrono Tokio.
+- Framework Web: Axum. (última versión estable)
+- Base de Datos y Bus de Eventos: SurrealDB como la única fuente de verdad, aprovechando sus capacidades de base de datos de grafos, búsqueda de texto completo y eventos en tiempo real.
+- Almacenamiento de Objetos: Se utilizará la crate object_store de Rust para la abstracción del almacenamiento, permitiendo el soporte de S3, Azure Blob Storage, Google Cloud Storage, etc.
+- Motor de Autorización (última versión estable): Cedar, integrado de forma nativa en cada endpoint de la API para la aplicación de políticas.
 
 ### 9.2 Setup Development Environment
 

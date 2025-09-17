@@ -33,6 +33,9 @@ LLM_SETTINGS.*
 .kiro/specs
 .kiro
 .kilocode
+.specify/*
+specs/
+
 
 
 

@@ -1,25 +1,9 @@
-use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::str::FromStr;
-use shared::hrn::Hrn;
+pub(crate) use shared::hrn::{Hrn, OrganizationId};
 
-/// Identificador HRN para políticas
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PolicyId(pub Hrn);
+// Reuse shared kernel ID types to avoid duplication.
+pub use shared::hrn::HodeiPolicyId;
 
-impl PolicyId {
-    pub fn new(org_id: &shared::hrn::OrganizationId, name: &str) -> Result<Self, shared::hrn::HrnError> {
-        let hrn = Hrn::new(&format!("{}/policy/{}", org_id.as_str(), name))?;
-        Ok(PolicyId(hrn))
-    }
-    pub fn as_str(&self) -> &str { self.0.as_str() }
-}
-
-impl fmt::Display for PolicyId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.0) }
-}
-
-impl FromStr for PolicyId {
-    type Err = shared::hrn::HrnError;
-    fn from_str(s: &str) -> Result<Self, Self::Err> { Ok(PolicyId(Hrn::new(s)?)) }
+/// Helper to create a PolicyId from organization and policy name
+pub fn make_policy_id(org_id: &OrganizationId, name: &str) -> Result<HodeiPolicyId, Box<dyn std::error::Error + Send + Sync>> {
+    HodeiPolicyId::new(org_id, name)
 }

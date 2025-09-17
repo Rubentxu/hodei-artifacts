@@ -181,7 +181,7 @@ impl Policy {
 
     /// Remove a tag from the policy
     pub fn remove_tag(&mut self, tag: &str, updated_by: String) {
-        if let Some(pos) = self.metadata.tags.iter().position(|t| t == tag) {
+        if let Some(pos) = self.metadata.tags.iter().position(|t| t.as_str() == tag) {
             self.metadata.tags.remove(pos);
             self.metadata.updated_at = OffsetDateTime::now_utc();
             self.metadata.updated_by = updated_by;
@@ -266,10 +266,11 @@ impl std::error::Error for PolicyError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::hrn::{Hrn, PolicyId};
+    use cedar_policy::PolicyId as CedarPolicyId;
+    use std::str::FromStr;
 
-    fn create_test_policy_id() -> PolicyId {
-        PolicyId(Hrn::new("hrn:hodei:iam:global:org_123:policy/test_policy").expect("Valid HRN"))
+    fn create_test_policy_id() -> CedarPolicyId {
+        CedarPolicyId::from_str("test_policy").expect("Valid PolicyId")
     }
 
     #[test]
