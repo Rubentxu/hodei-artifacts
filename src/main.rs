@@ -59,6 +59,16 @@ async fn main() -> Result<()> {
     let (engine, policy_store) = build_policy_engine(storage).await?;
     tracing::info!("Policy engine initialized successfully");
     
+    // Build policies create_policy use case via DI (embedded by default, mem when feature disabled)
+    #[cfg(feature = "embedded")]
+    let (create_policy_uc, _engine_for_uc) = policies::features::create_policy::di::embedded::make_use_case_embedded(&config.database.url)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build create_policy use case (embedded): {}", e)))?;
+    #[cfg(not(feature = "embedded"))]
+    let (create_policy_uc, _engine_for_uc) = policies::features::create_policy::di::make_use_case_mem()
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build create_policy use case (mem): {}", e)))?;
+
     // Create shared application state
     let shared_state = Arc::new(AppState {
         engine,
@@ -67,6 +77,7 @@ async fn main() -> Result<()> {
         config: config.clone(),
         metrics,
         health: Arc::new(RwLock::new(HealthStatus::new())),
+        create_policy_uc: Some(Arc::new(create_policy_uc)),
     });
     
     // Build application router

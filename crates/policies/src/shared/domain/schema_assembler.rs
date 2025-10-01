@@ -7,7 +7,7 @@ use crate::shared::HodeiEntityType;
 /// Generate a Cedar SchemaFragment for a given entity type `T`.
 ///
 /// Prefers typed metadata (cedar_attributes, is_principal_type).
-pub fn generate_fragment_for_type<T: HodeiEntityType>() -> Result<SchemaFragment, SchemaError> {
+pub fn generate_fragment_for_type<T: HodeiEntityType>() -> Result<SchemaFragment, Box<SchemaError>> {
     let attrs = T::cedar_attributes();
 
     let mut s = String::new();
@@ -15,10 +15,10 @@ pub fn generate_fragment_for_type<T: HodeiEntityType>() -> Result<SchemaFragment
     let principal_clause = if T::is_principal_type() { " in Principal" } else { "" };
 
     // entity Header
-    let _ = write!(s, "entity {}{} {{\n", ty, principal_clause);
+    let _ = writeln!(s, "entity {}{} {{", ty, principal_clause);
 
     for (name, atype) in attrs {
-        let _ = write!(s, "    {}: {},\n", name, atype.to_cedar_decl());
+        let _ = writeln!(s, "    {}: {}", name, atype.to_cedar_decl());
     }
     // Close entity
     s.push_str("};\n");

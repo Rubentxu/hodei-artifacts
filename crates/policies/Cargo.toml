@@ -18,7 +18,7 @@ sha2 = { workspace = true }
 # Cedar Policy Engine
 cedar-policy = { workspace = true }
 
-# Database - SurrealDB for policy storage
+# Database - SurrealDB for policy storage (backend via crate features)
 surrealdb = { workspace = true }
 
 # Async runtime
@@ -28,6 +28,9 @@ async-trait = { workspace = true }
 ## testing dependencies are only declared under [dev-dependencies]
 
 [features]
+default = ["embedded"]
+mem = ["surrealdb/kv-mem"]
+embedded = ["surrealdb/kv-rocksdb"]
 integration = []
 
 [dev-dependencies]

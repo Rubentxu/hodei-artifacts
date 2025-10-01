@@ -10,22 +10,42 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
     use tower::ServiceExt;
+    use crate::{app_state::{AppState, AppMetrics, HealthStatus}, config::Config, adapters::SurrealDbAdapter, ports::{AuthorizationEnginePort, PolicyStorePort, StorageAdapterPort}};
 
-    // Test helper to create a mock AppState
-    fn create_mock_app_state() -> Arc<AppState> {
-        // This would need to be implemented with mock versions of the components
-        // For now, we'll just create a placeholder
-        unimplemented!("Create mock app state for testing")
+    async fn build_test_state() -> Arc<AppState> {
+        let config = Config::from_env().expect("config");
+
+        // Minimal adapters for required ports (placeholders with SurrealDbAdapter)
+        let storage: Arc<dyn StorageAdapterPort> = Arc::new(SurrealDbAdapter::connect(&config.database.url).await.expect("db"));
+        let engine: Arc<dyn AuthorizationEnginePort> = Arc::new(SurrealDbAdapter::new());
+        let policy_store: Arc<dyn PolicyStorePort> = Arc::new(SurrealDbAdapter::new());
+
+        // DI for policies create_policy use case
+        #[cfg(feature = "embedded")]
+        let (uc, _engine_uc) = policies::features::create_policy::di::embedded::make_use_case_embedded(&config.database.url)
+            .await
+            .expect("uc embedded");
+        #[cfg(not(feature = "embedded"))]
+        let (uc, _engine_uc) = policies::features::create_policy::di::make_use_case_mem()
+            .await
+            .expect("uc mem");
+
+        Arc::new(AppState {
+            engine,
+            policy_store,
+            storage,
+            config,
+            metrics: AppMetrics::new(),
+            health: Arc::new(tokio::sync::RwLock::new(HealthStatus::new())),
+            create_policy_uc: Some(Arc::new(uc)),
+        })
     }
 
     #[tokio::test]
     async fn test_create_policy_success() {
-        // Create a mock app state
-        let state = create_mock_app_state();
-        
-        // Build our application with the mock state
+        let state = build_test_state().await;
         let app = Router::new()
-            .route("/policies", post(create_policy))
+            .route("/api/v1/policies", post(create_policy))
             .with_state(state);
         
         // Create a request body
@@ -41,7 +61,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/policies")
+                    .uri("/api/v1/policies")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_string(&request_body).unwrap()))
                     .unwrap(),
@@ -67,12 +87,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_policy_missing_name() {
-        // Create a mock app state
-        let state = create_mock_app_state();
-        
-        // Build our application with the mock state
+        let state = build_test_state().await;
         let app = Router::new()
-            .route("/policies", post(create_policy))
+            .route("/api/v1/policies", post(create_policy))
             .with_state(state);
         
         // Create a request body with missing name
@@ -101,12 +118,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_policy_missing_content() {
-        // Create a mock app state
-        let state = create_mock_app_state();
-        
-        // Build our application with the mock state
+        let state = build_test_state().await;
         let app = Router::new()
-            .route("/policies", post(create_policy))
+            .route("/api/v1/policies", post(create_policy))
             .with_state(state);
         
         // Create a request body with missing policy_content
@@ -135,12 +149,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_policies() {
-        // Create a mock app state
-        let state = create_mock_app_state();
-        
-        // Build our application with the mock state
+        let state = build_test_state().await;
         let app = Router::new()
-            .route("/policies", get(list_policies))
+            .route("/api/v1/policies", get(list_policies))
             .with_state(state);
         
         // Send the request
@@ -148,7 +159,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("GET")
-                    .uri("/policies")
+                    .uri("/api/v1/policies")
                     .header("content-type", "application/json")
                     .body(Body::from(""))
                     .unwrap(),
@@ -170,12 +181,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_policy() {
-        // Create a mock app state
-        let state = create_mock_app_state();
-        
-        // Build our application with the mock state
+        let state = build_test_state().await;
         let app = Router::new()
-            .route("/policies/:id", delete(delete_policy))
+            .route("/api/v1/policies/:id", delete(delete_policy))
             .with_state(state);
         
         // Send the request
@@ -183,7 +191,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri("/policies/test-policy-id")
+                    .uri("/api/v1/policies/test-policy-id")
                     .header("content-type", "application/json")
                     .body(Body::from(""))
                     .unwrap(),
@@ -204,12 +212,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_policy_missing_id() {
-        // Create a mock app state
-        let state = create_mock_app_state();
-        
-        // Build our application with the mock state
+        let state = build_test_state().await;
         let app = Router::new()
-            .route("/policies/:id", delete(delete_policy))
+            .route("/api/v1/policies/:id", delete(delete_policy))
             .with_state(state);
         
         // Send the request with empty policy ID
@@ -217,7 +222,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("DELETE")
-                    .uri("/policies/")
+                    .uri("/api/v1/policies/")
                     .header("content-type", "application/json")
                     .body(Body::from(""))
                     .unwrap(),

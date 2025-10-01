@@ -46,10 +46,28 @@ pub async fn create_policy(
         return Err(AppError::BadRequest("Policy content cannot be empty".to_string()));
     }
     
+    // Build command and validate via policies DTO
+    let cmd = policies::features::create_policy::dto::CreatePolicyCommand::new(
+        request.policy_content.clone(),
+    );
+    if let Err(e) = cmd.validate() {
+        return Err(AppError::Validation(e.to_string()));
+    }
+
+    // Execute use case (via DI from AppState or fallback DI builder)
+    if let Some(uc) = &state.create_policy_uc {
+        uc.execute(&cmd).await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+    } else {
+        let (uc, _engine) = policies::features::create_policy::di::make_use_case_mem()
+            .await
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        uc.execute(&cmd).await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+    }
+
     // Record metrics
     state.metrics.record_policy_operation();
-    
-    // Create policy (placeholder implementation)
+
+    // Create response (ID generated here; persistence layer stores the policy text)
     let policy_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     

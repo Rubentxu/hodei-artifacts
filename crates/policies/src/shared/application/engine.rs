@@ -69,7 +69,7 @@ impl EngineBuilder {
 
     pub fn register_entity_type<T: HodeiEntityType + 'static>(
         &mut self,
-    ) -> Result<&mut Self, SchemaError> {
+    ) -> Result<&mut Self, Box<SchemaError>> {
         let frag = generate_fragment_for_type::<T>()?;
         self.partials.insert(T::entity_type_name(), frag);
         Ok(self)
@@ -78,7 +78,7 @@ impl EngineBuilder {
     pub fn build(
         self,
         storage: Arc<dyn PolicyStorage>,
-    ) -> Result<(AuthorizationEngine, PolicyStore), SchemaError> {
+    ) -> Result<(AuthorizationEngine, PolicyStore), Box<SchemaError>> {
         // Compose schema from base + registered partials + feature actions
         // Base provides fundamental types referenced by partials/actions
         let base = r#"
@@ -244,7 +244,7 @@ mod tests {
 
         // Build principal and resource entities
         let principal = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "User".into(),
@@ -253,7 +253,7 @@ mod tests {
             .with_attr("name", "Alice")
             .with_attr("email", "alice@example.com");
         let resource = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "Resource".into(),
@@ -327,7 +327,7 @@ mod tests {
             build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowCreatePolicy));
 
         let principal = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "User".into(),
@@ -335,7 +335,7 @@ mod tests {
         ))
             .with_attr("name", "Alice");
         let resource = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "Resource".into(),
@@ -362,14 +362,14 @@ mod tests {
             build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowCreatePolicy));
 
         let principal = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "User".into(),
             "alice".into(),
         ));
         let resource = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "Resource".into(),
@@ -395,14 +395,14 @@ mod tests {
             build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowWithContext));
 
         let principal = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "User".into(),
             "alice".into(),
         ));
         let resource = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "Resource".into(),
@@ -431,14 +431,14 @@ mod tests {
             build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowWithContext));
 
         let principal = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "User".into(),
             "alice".into(),
         ));
         let resource = TestEntity::new(Hrn::new(
-            "aws".into(),
+            "default".into(),
             "hodei".into(),
             "".into(),
             "Resource".into(),

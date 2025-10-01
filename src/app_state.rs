@@ -11,6 +11,8 @@ pub struct AppState {
     pub config: Config,
     pub metrics: AppMetrics,
     pub health: Arc<RwLock<HealthStatus>>,
+    // Optional DI for policies::create_policy use case (wired lazily if None)
+    pub create_policy_uc: Option<Arc<policies::features::create_policy::use_case::CreatePolicyUseCase>>,
 }
 
 #[derive(Clone)]
