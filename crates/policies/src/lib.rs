@@ -1,4 +1,5 @@
 // crates/policies/src/lib.rs
 
-pub mod domain;
+pub mod shared;
+pub use shared as domain; // backward-compatible alias
 pub mod features;

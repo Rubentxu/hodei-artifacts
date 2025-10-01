@@ -1,12 +1,11 @@
-
+use crate::domain::{PolicyStorage, StorageError};
 use cedar_policy::{Policy, PolicySet, Schema, Validator};
 use std::sync::Arc;
-use crate::domain::{PolicyStorage, StorageError};
 
 #[derive(Clone)]
-pub struct PolicyStore {   
+pub struct PolicyStore {
     storage: Arc<dyn PolicyStorage>,
-    validator: Validator
+    validator: Validator,
 }
 
 #[cfg(test)]
@@ -20,9 +19,15 @@ mod tests {
 
     #[async_trait]
     impl PolicyStorage for DummyStorage {
-        async fn save_policy(&self, _policy: &Policy) -> Result<(), StorageError> { Ok(()) }
-        async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> { Ok(true) }
-        async fn load_all_policies(&self) -> Result<Vec<Policy>, StorageError> { Ok(vec![]) }
+        async fn save_policy(&self, _policy: &Policy) -> Result<(), StorageError> {
+            Ok(())
+        }
+        async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
+            Ok(true)
+        }
+        async fn load_all_policies(&self) -> Result<Vec<Policy>, StorageError> {
+            Ok(vec![])
+        }
     }
 
     fn minimal_schema() -> Arc<Schema> {
@@ -59,20 +64,22 @@ mod tests {
 
 impl PolicyStore {
     pub fn new(schema: Arc<Schema>, storage: Arc<dyn PolicyStorage>) -> Self {
-        Self { storage,  validator: Validator::new(schema.as_ref().clone()) }
+        Self {
+            storage,
+            validator: Validator::new(schema.as_ref().clone()),
+        }
     }
 
     pub async fn add_policy(&self, policy: Policy) -> Result<(), String> {
         // Build a PolicySet containing the single policy to validate
         let mut pset = PolicySet::new();
-        pset
-            .add(policy.clone())
+        pset.add(policy.clone())
             .map_err(|e| format!("Failed to add policy to set: {}", e))?;
 
         // Validate the policy set using Cedar's validator
-        let validation_result =
-            self.validator
-                .validate(&pset, cedar_policy::ValidationMode::default());
+        let validation_result = self
+            .validator
+            .validate(&pset, cedar_policy::ValidationMode::default());
 
         if validation_result.validation_passed() {
             self.storage
@@ -89,14 +96,19 @@ impl PolicyStore {
     }
 
     pub async fn remove_policy(&self, id: &str) -> Result<bool, String> {
-        self.storage.delete_policy(id).await.map_err(|e| e.to_string())
+        self.storage
+            .delete_policy(id)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub async fn get_current_policy_set(&self) -> Result<PolicySet, StorageError> {
         let policies = self.storage.load_all_policies().await?;
         let mut policy_set = PolicySet::new();
         for policy in policies {
-            policy_set.add(policy).map_err(|e| StorageError::ParsingError(e.to_string()))?;
+            policy_set
+                .add(policy)
+                .map_err(|e| StorageError::ParsingError(e.to_string()))?;
         }
         Ok(policy_set)
     }

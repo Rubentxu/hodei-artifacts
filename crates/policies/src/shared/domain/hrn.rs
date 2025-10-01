@@ -1,7 +1,7 @@
-use cedar_policy::{EntityUid, EntityId, EntityTypeName};
+use cedar_policy::{EntityId, EntityTypeName, EntityUid};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct Hrn {
@@ -20,7 +20,13 @@ impl Hrn {
         resource_type: String,
         resource_id: String,
     ) -> Self {
-        Self { partition, service, account_id, resource_type, resource_id }
+        Self {
+            partition,
+            service,
+            account_id,
+            resource_type,
+            resource_id,
+        }
     }
 
     pub fn from_string(hrn_str: &str) -> Option<Self> {
@@ -56,7 +62,11 @@ impl Hrn {
         let type_str = if self.resource_type.contains("::") {
             self.resource_type.clone()
         } else if !self.service.is_empty() {
-            format!("{}::{}", Self::normalize_ident(&self.service), Self::normalize_ident(&self.resource_type))
+            format!(
+                "{}::{}",
+                Self::normalize_ident(&self.service),
+                Self::normalize_ident(&self.resource_type)
+            )
         } else {
             Self::normalize_ident(&self.resource_type)
         };
@@ -64,7 +74,8 @@ impl Hrn {
         let eid = EntityId::from_str(&self.resource_id)
             .or_else(|_| EntityId::from_str(&format!("\"{}\"", self.resource_id)))
             .expect("Failed to create EntityId");
-        let type_name = EntityTypeName::from_str(&type_str).expect("Failed to create EntityTypeName");
+        let type_name =
+            EntityTypeName::from_str(&type_str).expect("Failed to create EntityTypeName");
         EntityUid::from_type_name_and_id(type_name, eid)
     }
 
@@ -75,13 +86,21 @@ impl Hrn {
         let mut out = String::new();
         let mut chars = s.chars();
         if let Some(c0) = chars.next() {
-            let c = if c0.is_ascii_alphabetic() || c0 == '_' { c0 } else { '_' };
+            let c = if c0.is_ascii_alphabetic() || c0 == '_' {
+                c0
+            } else {
+                '_'
+            };
             out.push(c);
         } else {
             out.push('_');
         }
         for c in chars {
-            if c.is_ascii_alphanumeric() || c == '_' { out.push(c); } else { out.push('_'); }
+            if c.is_ascii_alphanumeric() || c == '_' {
+                out.push(c);
+            } else {
+                out.push('_');
+            }
         }
         out
     }

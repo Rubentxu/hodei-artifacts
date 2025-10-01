@@ -200,7 +200,7 @@ fn main() {
         resource: Organization
     };
     "#;
-    
+
     let result = SchemaFragment::from_cedarschema_str(schema_str);
     match result {
         Ok((fragment, warnings)) => {
@@ -208,13 +208,13 @@ fn main() {
             for warning in warnings {
                 println!("Warning: {}", warning);
             }
-            
+
             // Try to build a complete schema
             let schema_result = Schema::from_schema_fragments([fragment]);
             match schema_result {
                 Ok(schema) => {
                     println!("Complete schema built successfully");
-                    
+
                     // Try to create a validator
                     let validator = cedar_policy::Validator::new(schema);
                     println!("Validator created successfully");

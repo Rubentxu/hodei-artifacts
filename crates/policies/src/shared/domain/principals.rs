@@ -1,11 +1,9 @@
-use crate::domain::{HodeiEntity, HodeiEntityType, Hrn};
-use cedar_policy::{EntityUid, SchemaError, SchemaFragment, RestrictedExpression};
+use crate::shared::domain::hrn::Hrn;
+use crate::shared::domain::ports::{self, HodeiEntity, HodeiEntityType};
+use ports::AttributeType::*;
+use cedar_policy::{EntityUid, RestrictedExpression};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use std::collections::{HashMap, BTreeMap};
-
-// --- Definiciones de Structs ---
-// (Estas son las estructuras que proporcionaste)
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -30,7 +28,6 @@ mod tests {
                 id.into(),
             ),
             name: format!("group-{}", id),
-            namespace: "default".into(),
             tags: vec!["team".into()],
         }
     }
@@ -40,7 +37,6 @@ mod tests {
         let g = sample_group("dev");
         let attrs = g.attributes();
         assert!(attrs.contains_key("name"));
-        assert!(attrs.contains_key("namespace"));
         assert!(attrs.contains_key("tags"));
     }
 
@@ -75,7 +71,6 @@ mod tests {
         let attrs = user.attributes();
         assert!(attrs.contains_key("name"));
         assert!(attrs.contains_key("email"));
-        assert!(attrs.contains_key("group_hrns"));
         assert!(attrs.contains_key("tags"));
     }
 }
@@ -84,7 +79,6 @@ mod tests {
 pub struct Group {
     pub hrn: Hrn,
     pub name: String,
-    pub namespace: String,
     pub tags: Vec<String>,
 }
 
@@ -92,7 +86,6 @@ pub struct Group {
 pub struct ServiceAccount {
     pub hrn: Hrn,
     pub name: String,
-    pub namespace: String,
     pub annotations: HashMap<String, String>,
     pub tags: Vec<String>,
 }
@@ -112,18 +105,14 @@ impl HodeiEntityType for User {
         "User"
     }
 
-    fn partial_schema() -> Result<SchemaFragment, SchemaError> {
-        let schema_str = r#"
-        entity User in Principal {
-            name: String,
-            email: String,
-            group_hrns: Set<String>,
-            tags: Set<String>
-        };
-        "#;
-        let (fragment, _) = SchemaFragment::from_cedarschema_str(schema_str)
-            .expect("User schema should be valid");
-        Ok(fragment)
+    fn is_principal_type() -> bool { true }
+
+    fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
+        vec![
+            ("name", Primitive("String")),
+            ("email", Primitive("String")),
+            ("tags", Set(Box::new(Primitive("String")))),
+        ]
     }
 }
 
@@ -134,17 +123,11 @@ impl HodeiEntityType for Group {
         "Group"
     }
 
-    fn partial_schema() -> Result<SchemaFragment, SchemaError> {
-        let schema_str = r#"
-        entity Group {
-            name: String,
-            namespace: String,
-            tags: Set<String>
-        };
-        "#;
-        let (fragment, _) = SchemaFragment::from_cedarschema_str(schema_str)
-            .expect("Group schema should be valid");
-        Ok(fragment)
+    fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
+        vec![
+            ("name", Primitive("String")),
+            ("tags", Set(Box::new(Primitive("String")))),
+        ]
     }
 }
 
@@ -156,7 +139,6 @@ impl HodeiEntity for Group {
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
         attrs.insert("name".to_string(), RestrictedExpression::new_string(self.name.clone()));
-        attrs.insert("namespace".to_string(), RestrictedExpression::new_string(self.namespace.clone()));
         let tag_exprs: Vec<RestrictedExpression> = self.tags.iter().map(|t| RestrictedExpression::new_string(t.clone())).collect();
         attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
         attrs
@@ -175,18 +157,14 @@ impl HodeiEntityType for ServiceAccount {
         "ServiceAccount"
     }
 
-    fn partial_schema() -> Result<SchemaFragment, SchemaError> {
-        let schema_str = r#"
-        entity ServiceAccount in Principal {
-            name: String,
-            namespace: String,
-            annotations: String,
-            tags: Set<String>
-        };
-        "#;
-        let (fragment, _) = SchemaFragment::from_cedarschema_str(schema_str)
-            .expect("ServiceAccount schema should be valid");
-        Ok(fragment)
+    fn is_principal_type() -> bool { true }
+
+    fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
+        vec![
+            ("name", Primitive("String")),
+            ("annotations", Primitive("String")),
+            ("tags", Set(Box::new(Primitive("String")))),
+        ]
     }
 }
 
@@ -198,7 +176,6 @@ impl HodeiEntity for ServiceAccount {
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
         attrs.insert("name".to_string(), RestrictedExpression::new_string(self.name.clone()));
-        attrs.insert("namespace".to_string(), RestrictedExpression::new_string(self.namespace.clone()));
         
         // Convert annotations to a record
         let annotation_map: BTreeMap<String, RestrictedExpression> = self.annotations
@@ -225,18 +202,13 @@ impl HodeiEntityType for Namespace {
     fn entity_type_name() -> &'static str {
         "Namespace"
     }
-    
-    fn partial_schema() -> Result<SchemaFragment, SchemaError> {
-        let schema_str = r#"
-        entity Namespace {
-            name: String,
-            annotations: String,
-            tags: Set<String>
-        };
-        "#;
-        let (fragment, _) = SchemaFragment::from_cedarschema_str(schema_str)
-            .expect("Namespace schema should be valid");
-        Ok(fragment)
+
+    fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
+        vec![
+            ("name", Primitive("String")),
+            ("annotations", Primitive("String")),
+            ("tags", Set(Box::new(Primitive("String")))),
+        ]
     }
 }
 
@@ -262,10 +234,7 @@ impl HodeiEntity for Namespace {
         attrs
     }
     
-    fn parents(&self) -> Vec<EntityUid> {
-        // Namespaces don't have parents in this model
-        Vec::new()
-    }
+    fn parents(&self) -> Vec<EntityUid> { Vec::new() }
 }
 
 impl HodeiEntity for User {
@@ -282,8 +251,6 @@ impl HodeiEntity for User {
         let mut attrs = HashMap::new();
         attrs.insert("name".to_string(), RestrictedExpression::new_string(self.name.clone()));
         attrs.insert("email".to_string(), RestrictedExpression::new_string(self.email.clone()));
-        let group_hrn_exprs: Vec<RestrictedExpression> = self.group_hrns.iter().map(|hrn| RestrictedExpression::new_string(hrn.to_string())).collect();
-        attrs.insert("group_hrns".to_string(), RestrictedExpression::new_set(group_hrn_exprs));
         let tag_exprs: Vec<RestrictedExpression> = self.tags.iter().map(|t| RestrictedExpression::new_string(t.clone())).collect();
         attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
         attrs

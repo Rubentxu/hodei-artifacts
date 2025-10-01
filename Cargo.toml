@@ -109,6 +109,7 @@ tracing = { workspace = true }
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 tower-http = { version = "0.6.6", features = ["cors", "trace", "timeout", "compression-br"] }
 http = "1.1.0"
+async-trait = { workspace = true }
 
 
 uuid = { workspace = true }

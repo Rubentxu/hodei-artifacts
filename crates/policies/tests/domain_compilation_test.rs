@@ -2,11 +2,8 @@
 
 #[cfg(test)]
 mod tests {
-    use policies::domain::{HodeiEntity, HodeiEntityType, AuthorizationEngine, EngineBuilder};
-    use policies::domain::principals::{User, Group};
-    use cedar_policy::{SchemaFragment, SchemaError};
-    use std::collections::HashMap;
-    use std::sync::Arc;
+    use policies::domain::principals::{Group, User};
+    use policies::domain::{EngineBuilder, HodeiEntityType};
 
     #[test]
     fn test_user_entity_type() {
@@ -19,20 +16,20 @@ mod tests {
     }
 
     #[test]
-    fn test_user_partial_schema() {
-        let schema = User::partial_schema();
-        assert!(schema.is_ok());
+    fn test_user_cedar_attributes_present() {
+        let attrs = User::cedar_attributes();
+        assert!(!attrs.is_empty(), "User should define typed cedar_attributes");
     }
 
     #[test]
-    fn test_group_partial_schema() {
-        let schema = Group::partial_schema();
-        assert!(schema.is_ok());
+    fn test_group_cedar_attributes_present() {
+        let attrs = Group::cedar_attributes();
+        assert!(!attrs.is_empty(), "Group should define typed cedar_attributes");
     }
 
     #[test]
     fn test_engine_builder() {
-        let builder = EngineBuilder::new();
+        let _builder = EngineBuilder::new();
         // Just testing that we can create an engine builder
         assert!(true);
     }

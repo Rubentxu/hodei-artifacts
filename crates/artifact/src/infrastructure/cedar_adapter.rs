@@ -1,4 +1,4 @@
-//! Cedar Policy adapter for PackageVersion resource
+// ! Cedar Policy adapter for PackageVersion resource
 
 use cedar_policy::{EntityId, EntityTypeName, EntityUid, RestrictedExpression};
 use std::collections::HashMap;
@@ -25,6 +25,8 @@ impl HodeiResource<EntityUid, RestrictedExpression> for PackageVersion {
             let entity_id = EntityId::from_str(self.hrn.as_str()).unwrap();
             EntityUid::from_type_name_and_id(entity_type, entity_id)
         }
+    }
+}
 
 /// Cedar Policy adapter implementation for logical Artifact
 impl HodeiResource<EntityUid, RestrictedExpression> for Artifact {
@@ -50,8 +52,8 @@ impl HodeiResource<EntityUid, RestrictedExpression> for Artifact {
             RestrictedExpression::new_string(self.coordinates.version.clone()),
         );
         attrs.insert(
-            "coordinates.qualifier".to_string(),
-            RestrictedExpression::new_string(self.coordinates.qualifier.clone()),
+            "coordinates.qualifiers".to_string(),
+            RestrictedExpression::new_string(self.coordinates.qualifiers.clone()),
         );
         attrs.insert(
             "artifact_type".to_string(),
@@ -239,4 +241,3 @@ fn create_entity_uid_from_hrn(hrn: &str) -> EntityUid {
         EntityUid::from_type_name_and_id(entity_type, entity_id)
     }
 }
-

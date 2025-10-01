@@ -3,7 +3,7 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
-use crate::enums::{HashAlgorithm, ArtifactType, ArtifactRole};
+use crate::enums::HashAlgorithm;
 
 /// El hash criptográfico del contenido de un fichero físico. Es inmutable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

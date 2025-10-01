@@ -1,7 +1,6 @@
 
 use crate::error::Result;
 use std::fmt::Debug;
-use async_trait::async_trait;
 
 // Trait para abstraer el adaptador de almacenamiento
 #[async_trait::async_trait]

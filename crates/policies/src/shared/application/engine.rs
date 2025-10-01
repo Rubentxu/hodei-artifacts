@@ -1,9 +1,11 @@
-use cedar_policy::{Context, Entities, PolicySet, Request, Response, Schema, SchemaError, SchemaFragment};
+use crate::domain::actions;
+use crate::domain::{HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStore};
+use cedar_policy::{
+    Context, Entities, PolicySet, Request, Response, Schema, SchemaError, SchemaFragment,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use crate::domain::{HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStore};
-use crate::domain::{actions, principals};
-use async_trait::async_trait;
+use crate::shared::generate_fragment_for_type;
 
 pub struct AuthorizationRequest<'a> {
     pub principal: &'a dyn HodeiEntity,
@@ -21,20 +23,17 @@ pub struct AuthorizationEngine {
 
 impl AuthorizationEngine {
     pub async fn is_authorized(&self, request: &AuthorizationRequest<'_>) -> Response {
-        let entity_vec: Vec<cedar_policy::Entity> = request.entities
+        let entity_vec: Vec<cedar_policy::Entity> = request
+            .entities
             .iter()
             .map(|entity| {
                 let attrs = entity.attributes();
                 let parents: HashSet<_> = entity.parents().into_iter().collect();
-                cedar_policy::Entity::new(
-                    entity.euid(),
-                    attrs,
-                    parents,
-                )
+                cedar_policy::Entity::new(entity.euid(), attrs, parents)
             })
             .collect::<Result<Vec<_>, _>>()
             .expect("Failed to create entities");
-        
+
         let entities = Entities::from_entities(entity_vec, None)
             .expect("Failed to create Entities collection");
 
@@ -44,13 +43,19 @@ impl AuthorizationEngine {
             request.resource.euid(),
             request.context.clone(),
             None,
-        ).expect("Failed to create Cedar request");
+        )
+            .expect("Failed to create Cedar request");
 
-        let policies = self.store.get_current_policy_set().await.unwrap_or_else(|_| PolicySet::new());
+        let policies = self
+            .store
+            .get_current_policy_set()
+            .await
+            .unwrap_or_else(|_| PolicySet::new());
         cedar_policy::Authorizer::new().is_authorized(&cedar_request, &policies, &entities)
     }
-
 }
+
+
 
 #[derive(Default)]
 pub struct EngineBuilder {
@@ -62,20 +67,26 @@ impl EngineBuilder {
         Self::default()
     }
 
-    pub fn register_entity_type<T: HodeiEntityType + 'static>(&mut self) -> Result<&mut Self, SchemaError> {
-        self.partials.insert(T::entity_type_name(), T::partial_schema()?);
+    pub fn register_entity_type<T: HodeiEntityType + 'static>(
+        &mut self,
+    ) -> Result<&mut Self, SchemaError> {
+        let frag = generate_fragment_for_type::<T>()?;
+        self.partials.insert(T::entity_type_name(), frag);
         Ok(self)
     }
 
-    pub fn build(self, storage: Arc<dyn PolicyStorage>) -> Result<(AuthorizationEngine, PolicyStore), SchemaError> {
+    pub fn build(
+        self,
+        storage: Arc<dyn PolicyStorage>,
+    ) -> Result<(AuthorizationEngine, PolicyStore), SchemaError> {
         // Compose schema from base + registered partials + feature actions
         // Base provides fundamental types referenced by partials/actions
         let base = r#"
         entity Principal { };
         entity Resource { name: String };
         "#;
-        let (base_frag, _) = SchemaFragment::from_cedarschema_str(base)
-            .expect("Base schema should be valid");
+        let (base_frag, _) =
+            SchemaFragment::from_cedarschema_str(base).expect("Base schema should be valid");
 
         let mut fragments: Vec<SchemaFragment> = Vec::new();
         fragments.push(base_frag);
@@ -84,14 +95,18 @@ impl EngineBuilder {
 
         // Add actions derived from feature directories only when there are registered partials
         if !fragments.is_empty() && has_partials {
-            let actions_frag = actions::build_feature_actions_fragment().expect("actions fragment should be valid");
+            let actions_frag = actions::build_feature_actions_fragment()
+                .expect("actions fragment should be valid");
             fragments.push(actions_frag);
         }
 
         let schema = Arc::new(Schema::from_schema_fragments(fragments)?);
-        
+
         let store = PolicyStore::new(schema.clone(), storage);
-        let engine = AuthorizationEngine { schema, store: store.clone() };
+        let engine = AuthorizationEngine {
+            schema,
+            store: store.clone(),
+        };
         Ok((engine, store))
     }
 }
@@ -99,8 +114,8 @@ impl EngineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{PolicyStorage, StorageError, Hrn, HodeiEntityType};
     use crate::domain::principals;
+    use crate::domain::{Hrn, PolicyStorage, StorageError};
     use async_trait::async_trait;
     use serde_json::json;
 
@@ -136,28 +151,49 @@ mod tests {
 
     impl TestEntity {
         fn new(hrn: Hrn) -> Self {
-            Self { hrn, attrs: Default::default(), parents: vec![] }
+            Self {
+                hrn,
+                attrs: Default::default(),
+                parents: vec![],
+            }
         }
         fn with_attr(mut self, k: &str, v: &str) -> Self {
-            self.attrs.insert(k.to_string(), cedar_policy::RestrictedExpression::new_string(v.to_string()));
+            self.attrs.insert(
+                k.to_string(),
+                cedar_policy::RestrictedExpression::new_string(v.to_string()),
+            );
             self
         }
     }
 
     impl crate::domain::HodeiEntity for TestEntity {
-        fn hrn(&self) -> &Hrn { &self.hrn }
-        fn attributes(&self) -> std::collections::HashMap<String, cedar_policy::RestrictedExpression> { self.attrs.clone() }
-        fn parents(&self) -> Vec<cedar_policy::EntityUid> { self.parents.clone() }
+        fn hrn(&self) -> &Hrn {
+            &self.hrn
+        }
+        fn attributes(
+            &self,
+        ) -> std::collections::HashMap<String, cedar_policy::RestrictedExpression> {
+            self.attrs.clone()
+        }
+        fn parents(&self) -> Vec<cedar_policy::EntityUid> {
+            self.parents.clone()
+        }
     }
 
     // Helper: build engine composing base + principals partials + feature actions
-    fn build_engine_with_registered_entities_and_actions(storage: Arc<dyn PolicyStorage>) -> (AuthorizationEngine, PolicyStore) {
+    fn build_engine_with_registered_entities_and_actions(
+        storage: Arc<dyn PolicyStorage>,
+    ) -> (AuthorizationEngine, PolicyStore) {
         let mut builder = EngineBuilder::new();
         builder
-            .register_entity_type::<principals::User>().expect("register user")
-            .register_entity_type::<principals::Group>().expect("register group")
-            .register_entity_type::<principals::ServiceAccount>().expect("register sa")
-            .register_entity_type::<principals::Namespace>().expect("register ns");
+            .register_entity_type::<principals::User>()
+            .expect("register user")
+            .register_entity_type::<principals::Group>()
+            .expect("register group")
+            .register_entity_type::<principals::ServiceAccount>()
+            .expect("register sa")
+            .register_entity_type::<principals::Namespace>()
+            .expect("register ns");
         builder.build(storage).expect("engine build")
     }
 
@@ -169,15 +205,25 @@ mod tests {
         entity Resource { name: String };
         action evaluate_policy appliesTo { principal: User, resource: Resource };
         "#;
-        let (frag, _) = cedar_policy::SchemaFragment::from_cedarschema_str(schema_src).expect("schema");
-        let schema = Arc::new(cedar_policy::Schema::from_schema_fragments(vec![frag]).expect("schema build"));
+        let (frag, _) =
+            cedar_policy::SchemaFragment::from_cedarschema_str(schema_src).expect("schema");
+        let schema = Arc::new(
+            cedar_policy::Schema::from_schema_fragments(vec![frag]).expect("schema build"),
+        );
 
         // Storage returns a policy permitting alice evaluate_policy on res1
         struct PolicyStorageAllow;
         #[async_trait]
         impl PolicyStorage for PolicyStorageAllow {
-            async fn save_policy(&self, _policy: &cedar_policy::Policy) -> Result<(), StorageError> { Ok(()) }
-            async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> { Ok(true) }
+            async fn save_policy(
+                &self,
+                _policy: &cedar_policy::Policy,
+            ) -> Result<(), StorageError> {
+                Ok(())
+            }
+            async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
+                Ok(true)
+            }
             async fn load_all_policies(&self) -> Result<Vec<cedar_policy::Policy>, StorageError> {
                 let policy_src = r#"permit(
                     principal == User::"alice",
@@ -191,13 +237,28 @@ mod tests {
 
         let storage: Arc<dyn PolicyStorage> = Arc::new(PolicyStorageAllow);
         let store = PolicyStore::new(schema.clone(), storage);
-        let engine = AuthorizationEngine { schema: schema.clone(), store: store.clone() };
+        let engine = AuthorizationEngine {
+            schema: schema.clone(),
+            store: store.clone(),
+        };
 
         // Build principal and resource entities
-        let principal = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "User".into(), "alice".into()))
+        let principal = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "User".into(),
+            "alice".into(),
+        ))
             .with_attr("name", "Alice")
             .with_attr("email", "alice@example.com");
-        let resource = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "Resource".into(), "res1".into()))
+        let resource = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "Resource".into(),
+            "res1".into(),
+        ))
             .with_attr("name", "Res1");
 
         // Action via HRN helper
@@ -222,8 +283,12 @@ mod tests {
     struct StorageAllowWithContext;
     #[async_trait]
     impl PolicyStorage for StorageAllowWithContext {
-        async fn save_policy(&self, _policy: &cedar_policy::Policy) -> Result<(), StorageError> { Ok(()) }
-        async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> { Ok(true) }
+        async fn save_policy(&self, _policy: &cedar_policy::Policy) -> Result<(), StorageError> {
+            Ok(())
+        }
+        async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
+            Ok(true)
+        }
         async fn load_all_policies(&self) -> Result<Vec<cedar_policy::Policy>, StorageError> {
             let policy_src = r#"permit(
                 principal == User::"alice",
@@ -239,8 +304,12 @@ mod tests {
     struct StorageAllowCreatePolicy;
     #[async_trait]
     impl PolicyStorage for StorageAllowCreatePolicy {
-        async fn save_policy(&self, _policy: &cedar_policy::Policy) -> Result<(), StorageError> { Ok(()) }
-        async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> { Ok(true) }
+        async fn save_policy(&self, _policy: &cedar_policy::Policy) -> Result<(), StorageError> {
+            Ok(())
+        }
+        async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
+            Ok(true)
+        }
         async fn load_all_policies(&self) -> Result<Vec<cedar_policy::Policy>, StorageError> {
             let policy_src = r#"permit(
                 principal == User::"alice",
@@ -254,11 +323,24 @@ mod tests {
 
     #[tokio::test]
     async fn engine_with_domain_fragments_allows_matching_request() {
-        let (engine, _store) = build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowCreatePolicy));
+        let (engine, _store) =
+            build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowCreatePolicy));
 
-        let principal = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "User".into(), "alice".into()))
+        let principal = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "User".into(),
+            "alice".into(),
+        ))
             .with_attr("name", "Alice");
-        let resource = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "Resource".into(), "res1".into()))
+        let resource = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "Resource".into(),
+            "res1".into(),
+        ))
             .with_attr("name", "Res1");
         let action_uid = Hrn::action("", "create_policy").euid();
 
@@ -276,10 +358,23 @@ mod tests {
 
     #[tokio::test]
     async fn engine_with_domain_fragments_denies_mismatched_resource() {
-        let (engine, _store) = build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowCreatePolicy));
+        let (engine, _store) =
+            build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowCreatePolicy));
 
-        let principal = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "User".into(), "alice".into()));
-        let resource = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "Resource".into(), "res2".into()));
+        let principal = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "User".into(),
+            "alice".into(),
+        ));
+        let resource = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "Resource".into(),
+            "res2".into(),
+        ));
         let action_uid = Hrn::action("", "create_policy").euid();
 
         let req = AuthorizationRequest {
@@ -296,13 +391,27 @@ mod tests {
 
     #[tokio::test]
     async fn engine_allows_when_context_condition_matches() {
-        let (engine, _store) = build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowWithContext));
+        let (engine, _store) =
+            build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowWithContext));
 
-        let principal = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "User".into(), "alice".into()));
-        let resource = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "Resource".into(), "res1".into()));
+        let principal = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "User".into(),
+            "alice".into(),
+        ));
+        let resource = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "Resource".into(),
+            "res1".into(),
+        ));
         let action_uid = Hrn::action("", "create_policy").euid();
 
-        let ctx = cedar_policy::Context::from_json_value(json!({"ip": "127.0.0.1"}), None).expect("ctx");
+        let ctx =
+            cedar_policy::Context::from_json_value(json!({"ip": "127.0.0.1"}), None).expect("ctx");
 
         let req = AuthorizationRequest {
             principal: &principal,
@@ -318,13 +427,27 @@ mod tests {
 
     #[tokio::test]
     async fn engine_denies_when_context_condition_not_met() {
-        let (engine, _store) = build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowWithContext));
+        let (engine, _store) =
+            build_engine_with_registered_entities_and_actions(Arc::new(StorageAllowWithContext));
 
-        let principal = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "User".into(), "alice".into()));
-        let resource = TestEntity::new(Hrn::new("aws".into(), "hodei".into(), "".into(), "Resource".into(), "res1".into()));
+        let principal = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "User".into(),
+            "alice".into(),
+        ));
+        let resource = TestEntity::new(Hrn::new(
+            "aws".into(),
+            "hodei".into(),
+            "".into(),
+            "Resource".into(),
+            "res1".into(),
+        ));
         let action_uid = Hrn::action("", "create_policy").euid();
 
-        let ctx = cedar_policy::Context::from_json_value(json!({"ip": "10.0.0.1"}), None).expect("ctx");
+        let ctx =
+            cedar_policy::Context::from_json_value(json!({"ip": "10.0.0.1"}), None).expect("ctx");
 
         let req = AuthorizationRequest {
             principal: &principal,
