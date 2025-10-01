@@ -1,7 +1,7 @@
 // crates/search/src/domain/alert.rs
 
 use serde::{Deserialize, Serialize};
-use shared::hrn::Hrn;
+use shared::hrn::{Hrn, AlertId, OrganizationId};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

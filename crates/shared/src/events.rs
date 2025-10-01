@@ -3,7 +3,6 @@
 use serde::{Serialize, Deserialize};
 use crate::hrn::{Hrn};
 use async_trait::async_trait;
-use anyhow::Result;
 
 // Nota: Los tipos concretos de eventos (OrganizationEvent, etc.) se definen en sus
 // respectivos crates para mantener la cohesión del Bounded Context.
@@ -38,7 +37,7 @@ pub struct Event {
 /// Flujo de eventos
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventStream {
-    pub id: EventStreamId,
+    pub id: String,
     pub name: String,
     pub organization: Hrn,
     pub filters: Vec<String>,
@@ -50,7 +49,7 @@ pub struct EventStream {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventSubscription {
     pub id: Hrn,
-    pub stream: EventStreamId,
+    pub stream: String,
     pub subscriber: String,
     pub active: bool,
     pub created_at: String,

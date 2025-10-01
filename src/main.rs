@@ -1,122 +1,266 @@
-use axum::{
-    routing::{delete, get, post, put, IntoMakeService},
-    Extension, Router,
-};
-use std::path::PathBuf;
-
-// Import DI containers from the feature crates
-use artifact::features::upload_artifact::UploadArtifactDIContainer;
-use artifact::features::upload_progress::UploadProgressDIContainer;
-use iam::features::validate_policy::{ValidatePolicyDIContainer, api::ValidatePolicyApi};
-use repository::create_repository_api_module;
-// Import root API handlers
+mod adapters;
 mod api;
-use crate::api::upload_artifact::handlers::upload_artifact_handler;
-use crate::api::upload_progress::handlers as progress_handlers;
-use crate::api::validation_engine::handlers as validation_handlers;
-use crate::api::versioning::handlers as versioning_handlers;
-use artifact::features::validation_engine::di::ValidationEngineDIContainer;
-use artifact::features::versioning::di::VersioningDIContainer;
-use artifact::features::upload_artifact::adapter::LocalFsArtifactStorage;
+mod app_state;
+mod config;
+mod error;
+mod middleware;
+mod models;
+mod ports;
+mod services;
+
+use crate::{
+    adapters::SurrealDbAdapter,
+    app_state::{AppMetrics, AppState, HealthStatus},
+    config::Config,
+    error::{AppError, Result},
+    models::{BlogPost, Team, User},
+    ports::{AuthorizationEnginePort, PolicyStorePort, StorageAdapterPort},
+    services::shutdown,
+};
+use axum::{
+    routing::{delete, get, post},
+    Router,
+};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::RwLock;
+use tower_http::{
+    compression::CompressionLayer,
+    cors::{Any, CorsLayer},
+    timeout::TimeoutLayer,
+    trace::TraceLayer,
+};
+use http::{HeaderValue, Method};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
-async fn main() {
-    // Initialize tracing subscriber for logging
-    tracing_subscriber::fmt::init();
+async fn main() -> Result<()> {
+    // Load configuration
+    let config = Config::from_env()?;
+    
+    // Setup logging
+    setup_logging(&config)?;
+    
+    tracing::info!("Starting Policy BaaS MVP");
+    tracing::debug!("Configuration: {:#?}", config);
+    
+    // Initialize metrics if enabled
+    if config.metrics.enabled && config.metrics.prometheus_registry {
+        initialize_metrics();
+    }
+    
+    // Initialize metrics collector
+    let metrics = AppMetrics::new();
+    
+    // Connect to database with retry logic
+    let storage = connect_database(&config).await?;
+    tracing::info!("Database connection established");
+    
+    // Build policy engine
+    let (engine, policy_store) = build_policy_engine(storage).await?;
+    tracing::info!("Policy engine initialized successfully");
+    
+    // Create shared application state
+    let shared_state = Arc::new(AppState {
+        engine,
+        policy_store,
+        storage,
+        config: config.clone(),
+        metrics,
+        health: Arc::new(RwLock::new(HealthStatus::new())),
+    });
+    
+    // Build application router
+    let app = build_router(shared_state.clone()).await?;
+    
+    // Start server
+    let bind_addr = format!("{}:{}", config.server.host, config.server.port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .map_err(AppError::ServerBind)?;
+    
+    tracing::info!("Server listening on {}", bind_addr);
+    tracing::info!("Health check available at: http://{}/health", bind_addr);
+    if config.metrics.enabled {
+        tracing::info!("Metrics available at: http://{}{}", bind_addr, config.metrics.endpoint);
+    }
+    
+    // Start server with graceful shutdown
+    let shutdown_timeout = Duration::from_secs(config.server.shutdown_timeout_seconds);
+    
+    tokio::select! {
+        result = axum::serve(listener, app) => {
+            if let Err(e) = result {
+                tracing::error!("Server error: {}", e);
+                return Err(AppError::Internal(e.to_string()));
+            }
+        }
+        _ = shutdown::graceful_shutdown(shutdown_timeout) => {
+            tracing::info!("Received shutdown signal, stopping server");
+        }
+    }
+    
+    tracing::info!("Application shutdown completed");
+    Ok(())
+}
 
-    // --- Feature: Upload Artifact ---
-    let upload_artifact_container = UploadArtifactDIContainer::for_production(
-        &aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await,
-        "mongodb://localhost:27017",
-        "hodei",
-        "amqp://localhost:5672",
-        "events",
-        "artifacts"
-    ).await;
-    let upload_artifact_use_case = upload_artifact_container.use_case.clone();
+fn setup_logging(config: &Config) -> Result<()> {
+    let filter = tracing_subscriber::EnvFilter::try_new(&config.logging.level)
+        .map_err(|e| AppError::LoggingSetup(e.to_string()))?;
+    
+    let subscriber = tracing_subscriber::registry().with(filter);
+    
+    match config.logging.format {
+        config::LogFormat::Json => {
+            subscriber
+                .with(tracing_subscriber::fmt::layer().json())
+                .try_init()
+                .map_err(|e| AppError::LoggingSetup(e.to_string()))?;
+        }
+        config::LogFormat::Pretty => {
+            subscriber
+                .with(tracing_subscriber::fmt::layer().pretty())
+                .try_init()
+                .map_err(|e| AppError::LoggingSetup(e.to_string()))?;
+        }
+        config::LogFormat::Compact => {
+            subscriber
+                .with(tracing_subscriber::fmt::layer().compact())
+                .try_init()
+                .map_err(|e| AppError::LoggingSetup(e.to_string()))?;
+        }
+    }
+    
+    Ok(())
+}
 
-    // --- Feature: Upload Progress Tracking ---
-    let upload_progress_container = UploadProgressDIContainer::for_development();
-    let upload_progress_use_case = upload_progress_container.use_case.clone();
+fn initialize_metrics() {
+    // Initialize Prometheus metrics registry
+    // This would depend on your specific metrics implementation
+    tracing::info!("Metrics registry initialized");
+}
 
-    // --- Feature: Validate Policy ---
-    let schema_path = PathBuf::from("crates/security/schema/policy_schema.cedarschema");
-    let validate_policy_container = ValidatePolicyDIContainer::for_production(schema_path)
-        .expect("Failed to create ValidatePolicyDIContainer");
-    let validate_policy_api = validate_policy_container.api;
+async fn connect_database(config: &Config) -> Result<Arc<dyn StorageAdapterPort>> {
+    let mut attempts = 0;
+    let max_attempts = config.database.retry_attempts;
+    let base_delay = Duration::from_secs(1);
+    
+    loop {
+        match SurrealDbAdapter::connect(&config.database.url).await {
+            Ok(adapter) => {
+                tracing::info!("Successfully connected to database");
+                return Ok(Arc::new(adapter));
+            }
+            Err(e) => {
+                attempts += 1;
+                if attempts >= max_attempts {
+                    return Err(AppError::DatabaseConnection(format!(
+                        "Failed to connect after {} attempts: {}",
+                        max_attempts, e
+                    )));
+                }
+                
+                let delay = base_delay * 2_u32.pow(attempts - 1);
+                tracing::warn!(
+                    "Database connection attempt {} failed, retrying in {:?}: {}",
+                    attempts,
+                    delay,
+                    e
+                );
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
 
-    // --- Repository CRUD Endpoints ---
-    let repository_api_module = create_repository_api_module(
-        mongodb::Client::with_uri_str("mongodb://localhost:27017")
-            .await
-            .expect("Failed to connect to MongoDB")
-            .database("hodei")
-    );
-    let repository_router = repository_api_module.create_router();
+async fn build_policy_engine(
+    storage: Arc<dyn StorageAdapterPort>,
+) -> Result<(Arc<dyn AuthorizationEnginePort>, Arc<dyn PolicyStorePort>)> {
+    // En una implementación real, aquí construiríamos el motor de autorización y el almacenamiento de políticas
+    // basado en el adaptador de almacenamiento proporcionado
+    Ok((Arc::new(SurrealDbAdapter::new()), Arc::new(SurrealDbAdapter::new())))
+}
 
-    // --- Feature: Versioning ---
-    let versioning_use_case = VersioningDIContainer::new_with_real_implementations().into_use_case();
+async fn build_router(state: Arc<AppState>) -> Result<Router> {
+    let cors = build_cors_layer(&state.config)?;
+    
+    let request_timeout = Duration::from_secs(state.config.server.request_timeout_seconds);
+    
+    let api_routes = Router::new()
+        // Policy management routes
+        .route("/policies", post(api::create_policy))
+        .route("/policies", get(api::list_policies))
+        .route("/policies/:id", delete(api::delete_policy))
+        
+        // Authorization route
+        .route("/authorize", post(api::authorize));
+    
+    let health_routes = Router::new()
+        .route("/health", get(api::health))
+        .route("/ready", get(api::readiness));
+    
+    let mut app = Router::new()
+        .nest("/api/v1", api_routes)
+        .merge(health_routes)
+        .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(state.clone(), middleware::metrics_middleware))
+        .layer(axum::middleware::from_fn(middleware::logging_middleware))
+        .layer(TraceLayer::new_for_http())
+        .layer(TimeoutLayer::new(request_timeout))
+        .layer(CompressionLayer::new())
+        .layer(cors);
+    
+    // Add metrics endpoint if enabled
+    if state.config.metrics.enabled {
+        app = app.route(&state.config.metrics.endpoint, get(api::metrics));
+    }
+    
+    Ok(app)
+}
 
-    // --- Feature: Validation Engine ---
-    let validation_storage_dir = std::env::var("HODEI_STORAGE_DIR").unwrap_or_else(|_| "/tmp/hodei-storage".to_string());
-    let validation_storage = std::sync::Arc::new(LocalFsArtifactStorage::new(PathBuf::from(validation_storage_dir)));
-    let validation_use_case = ValidationEngineDIContainer::new_with_real_implementations(validation_storage).into_use_case();
-
-    // --- Create and combine Axum routers ---
-    let app = Router::new()
-        // Artifact endpoints
-        .route("/artifacts", post(upload_artifact_handler))
-        .route("/uploads/{upload_id}/progress", get(progress_handlers::get_progress))
-        .route("/uploads/progress", get(progress_handlers::list_sessions))
-        .route(
-            "/uploads/{upload_id}/subscribe",
-            post(progress_handlers::subscribe_client),
-        )
-        .route(
-            "/uploads/{client_id}/unsubscribe",
-            delete(progress_handlers::unsubscribe_client),
-        )
-        .route(
-            "/policies/validate",
-            post(ValidatePolicyApi::handle),
-        )
-        // Versioning endpoints
-        .route("/versioning/validate", post(versioning_handlers::validate_version))
-        .route(
-            "/versioning/config/{repository_hrn}",
-            get(versioning_handlers::get_versioning_config).put(versioning_handlers::update_versioning_config),
-        )
-        .route(
-            "/versioning/versions/{package_hrn}",
-            get(versioning_handlers::get_existing_versions),
-        )
-        // Validation engine endpoints
-        .route(
-            "/validation/validate",
-            post(validation_handlers::validate_artifact),
-        )
-        .route(
-            "/validation/rules/{artifact_type}",
-            get(validation_handlers::get_validation_rules),
-        )
-        .route(
-            "/validation/rules",
-            post(validation_handlers::add_validation_rule),
-        )
-        .route(
-            "/validation/rules/{rule_id}",
-            delete(validation_handlers::remove_validation_rule),
-        )
-        // Repository CRUD endpoints
-        .nest("/api/v1", repository_router)
-        .layer(Extension(upload_artifact_use_case))
-        .layer(Extension(upload_progress_use_case))
-        .layer(Extension(versioning_use_case))
-        .layer(Extension(validation_use_case))
-        .layer(Extension(validate_policy_api));
-
-    // --- Start the server ---
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    tracing::info!("listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app.into_make_service()).await.unwrap();
+fn build_cors_layer(config: &Config) -> Result<CorsLayer> {
+    let mut cors = CorsLayer::new();
+    
+    // Configure allowed origins
+    if config.cors.allow_origins.contains(&"*".to_string()) {
+        cors = cors.allow_origin(tower_http::cors::Any);
+    } else {
+        for origin in &config.cors.allow_origins {
+            cors = cors.allow_origin(
+                origin
+                    .parse::<http::HeaderValue>()
+                    .map_err(|_| AppError::Configuration(format!("Invalid CORS origin: {}", origin)))?,
+            );
+        }
+    }
+    
+    // Configure allowed headers
+    let headers: Result<Vec<_>, _> = config
+        .cors
+        .allow_headers
+        .iter()
+        .map(|h| {
+            h.parse::<http::HeaderName>()
+                .map_err(|_| AppError::Configuration(format!("Invalid CORS header: {}", h)))
+        })
+        .collect();
+    cors = cors.allow_headers(headers?);
+    
+    // Configure allowed methods
+    let methods: Result<Vec<_>, _> = config
+        .cors
+        .allow_methods
+        .iter()
+        .map(|m| {
+            m.parse::<http::Method>()
+                .map_err(|_| AppError::Configuration(format!("Invalid CORS method: {}", m)))
+        })
+        .collect();
+    cors = cors.allow_methods(methods?);
+    
+    // Configure max age
+    if let Some(max_age) = config.cors.max_age {
+        cors = cors.max_age(Duration::from_secs(max_age));
+    }
+    
+    Ok(cors)
 }

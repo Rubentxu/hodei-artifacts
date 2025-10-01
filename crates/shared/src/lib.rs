@@ -6,10 +6,11 @@ pub mod hrn;
 pub mod lifecycle;
 pub mod models;
 pub mod security;
-pub mod testing;
 pub mod attributes;
-pub mod policy;
-pub mod policy_id;
+
 
 // Ergonomic re-export so crates can `use shared::HodeiResource;`
 pub use security::HodeiResource;
+
+// Re-export HRN types for other crates
+pub use hrn::{Hrn, OrganizationId, HodeiPolicyId, UserId, TeamId, RepositoryId, ArtifactId, DashboardId, ReportId, AlertId};

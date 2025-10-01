@@ -2,7 +2,7 @@
 
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
-use crate::hrn::PhysicalArtifactId;
+
 use crate::enums::{HashAlgorithm, ArtifactType, ArtifactRole};
 
 /// El hash criptográfico del contenido de un fichero físico. Es inmutable.
@@ -44,13 +44,13 @@ impl PackageCoordinates {
     }
 }
 
-/// Una referencia tipada desde una `PackageVersion` a un `PhysicalArtifact`.
+/// Referencia a un artefacto físico, alineada con el diagrama de dominio.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactReference {
-    /// El HRN del `PhysicalArtifact` al que se refiere.
-    pub artifact_hrn: PhysicalArtifactId,
-    /// El tipo de fichero (binario principal, firma, SBOM, etc.).
-    pub artifact_type: ArtifactType,
-    /// El rol semántico del fichero dentro del paquete (ej. "sources", "javadoc").
-    pub role: Option<ArtifactRole>,
+    /// HRN del artefacto físico.
+    pub physical_artifact_hrn: String,
+    /// Tamaño del artefacto en bytes.
+    pub size_in_bytes: u64,
+    /// Hash del contenido del artefacto.
+    pub content_hash: ContentHash,
 }

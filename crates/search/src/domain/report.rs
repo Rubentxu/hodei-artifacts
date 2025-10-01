@@ -1,7 +1,7 @@
 // crates/search/src/domain/report.rs
 
 use serde::{Deserialize, Serialize};
-use shared::hrn::{Hrn, UserId};
+use shared::hrn::{Hrn, ReportId, OrganizationId, UserId};
 use time::OffsetDateTime;
 
 /// Reporte generado por el sistema de búsqueda/analítica.

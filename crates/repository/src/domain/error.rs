@@ -1,7 +1,6 @@
 
 // crates/repository/src/domain/error.rs
 
-use shared::hrn::HrnError;
 use thiserror::Error;
 
 /// Errores específicos del dominio de Repository
@@ -50,11 +49,6 @@ pub enum RepositoryError {
     HrnError(String),
 }
 
-impl From<HrnError> for RepositoryError {
-    fn from(err: HrnError) -> Self {
-        RepositoryError::HrnError(err.to_string())
-    }
-}
 
 impl From<mongodb::error::Error> for RepositoryError {
     fn from(err: mongodb::error::Error) -> Self {

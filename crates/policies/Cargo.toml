@@ -25,11 +25,7 @@ surrealdb = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 async-trait = { workspace = true }
 
-# Testing (dev dependencies)
-mockall = { workspace = true, optional = true }
-testcontainers = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
-uuid = { workspace = true, optional = true }
+## testing dependencies are only declared under [dev-dependencies]
 
 [features]
 integration = []

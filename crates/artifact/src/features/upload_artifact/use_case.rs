@@ -165,8 +165,7 @@ impl UploadArtifactUseCase {
                 tracing::debug!("Storage location: {}", storage_location);
 
                 // 4. Create and save the physical artifact record
-                let new_physical_artifact_hrn = PhysicalArtifactId::new(&content_hash_str)
-                    .map_err(|e| UploadArtifactError::RepositoryError(e.to_string()))?;
+                let new_physical_artifact_hrn = PhysicalArtifactId(Hrn(content_hash_str.clone()));
                 let new_physical_artifact = PhysicalArtifact {
                     hrn: new_physical_artifact_hrn.0.clone(),
                     organization_hrn: OrganizationId::new("default")
@@ -179,7 +178,7 @@ impl UploadArtifactUseCase {
                     checksums: std::collections::HashMap::new(),
                     storage_location,
                     mime_type: detected_mime_type.clone(),
-                    lifecycle: Lifecycle::new(UserId::new_system_user().0),
+                    lifecycle: Lifecycle::new(Hrn("hrn:hodei:iam::system:user/system".to_string())),
                 };
                 self.repository
                     .save_physical_artifact(&new_physical_artifact)
@@ -208,7 +207,7 @@ impl UploadArtifactUseCase {
             tracing::error!("OrganizationId creation error: {:?}", e);
             UploadArtifactError::RepositoryError(e.to_string())
         })?;
-        let repo_id = RepositoryId::new(org_id.as_str(), "default").map_err(|e| {
+        let repo_id = RepositoryId::new(&org_id, "default").map_err(|e| {
             tracing::error!("RepositoryId creation error: {:?}", e);
             UploadArtifactError::RepositoryError(e.to_string())
         })?;
@@ -242,13 +241,16 @@ impl UploadArtifactUseCase {
                 custom_properties: std::collections::HashMap::new(),
             },
             artifacts: vec![ArtifactReference {
-                artifact_hrn: PhysicalArtifactId(physical_artifact_hrn.clone()),
-                artifact_type: ArtifactType::Primary,
-                role: Some(ArtifactRole::Main),
+                physical_artifact_hrn: physical_artifact_hrn.to_string(),
+                size_in_bytes: command.content_length,
+                content_hash: ContentHash {
+                    algorithm: HashAlgorithm::Sha256,
+                    value: content_hash_str.clone(),
+                },
             }],
             dependencies: vec![],
             tags: vec![],
-            lifecycle: Lifecycle::new(UserId::new_system_user().0),
+            lifecycle: Lifecycle::new(UserId(Hrn("hrn:hodei:iam::system:user/system".to_string())).0),
             oci_manifest_hrn: None,
         };
 
@@ -421,7 +423,7 @@ impl UploadArtifactUseCase {
                     checksums: std::collections::HashMap::new(),
                     storage_location,
                     mime_type: detected_mime_type.clone(),
-                    lifecycle: Lifecycle::new(UserId::new_system_user().0),
+                    lifecycle: Lifecycle::new(Hrn("hrn:hodei:iam::system:user/system".to_string())),
                 };
                 self.repository
                     .save_physical_artifact(&new_physical_artifact)
@@ -450,7 +452,7 @@ impl UploadArtifactUseCase {
             tracing::error!("OrganizationId creation error: {:?}", e);
             UploadArtifactError::RepositoryError(e.to_string())
         })?;
-        let repo_id = RepositoryId::new(org_id.as_str(), "default").map_err(|e| {
+        let repo_id = RepositoryId::new(&org_id, "default").map_err(|e| {
             tracing::error!("RepositoryId creation error: {:?}", e);
             UploadArtifactError::RepositoryError(e.to_string())
         })?;
@@ -490,7 +492,7 @@ impl UploadArtifactUseCase {
             }],
             dependencies: vec![],
             tags: vec![],
-            lifecycle: Lifecycle::new(UserId::new_system_user().0),
+                lifecycle: Lifecycle::new(Hrn("hrn:hodei:iam::system:user/system".to_string())),
             oci_manifest_hrn: None,
         };
 

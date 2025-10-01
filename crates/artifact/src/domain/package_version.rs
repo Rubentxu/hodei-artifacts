@@ -2,7 +2,7 @@ use crate::domain::error;
 use serde::{Deserialize, Serialize};
 use shared::hrn::{Hrn, OrganizationId, RepositoryId};
 use shared::lifecycle::Lifecycle;
-pub(crate) use shared::models::{ArtifactReference, PackageCoordinates};
+pub(crate) use shared::models::{ArtifactReference, PackageCoordinates, ContentHash};
 use std::collections::HashMap;
 use time::OffsetDateTime;
 
