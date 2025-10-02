@@ -45,25 +45,15 @@ impl GetPolicyUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::application::EngineBuilder;
-    use crate::shared::domain::principals;
-    use crate::shared::infrastructure::surreal::SurrealMemStorage;
+    use crate::shared::application::di_helpers;
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn get_policy_returns_existing_policy() {
-        // Build engine/store with real mem storage and schema
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+    async fn get_policy_returns_policy_when_exists() {
+        // Build engine/store with real mem storage (no entities registered - domain agnostic)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         // First, create a policy
         let policy_src = r#"permit(principal, action, resource);"#;
@@ -82,19 +72,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_policy_returns_not_found_for_nonexistent_policy() {
-        // Build engine/store with real mem storage and schema
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+    async fn get_policy_returns_none_when_not_exists() {
+        // Build engine/store with real mem storage (no entities registered - domain agnostic)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         let uc = GetPolicyUseCase::new(store);
         let query = GetPolicyQuery::new("nonexistent_policy_id");
@@ -111,17 +93,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_policy_validates_empty_id() {
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         let uc = GetPolicyUseCase::new(store);
         let query = GetPolicyQuery::new("");

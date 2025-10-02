@@ -22,6 +22,15 @@ pub struct AppState {
     // Authorization engine from policies crate
     #[allow(dead_code)]
     pub authorization_engine: Arc<policies::shared::AuthorizationEngine>,
+
+    // IAM use cases from hodei-iam crate
+    pub create_user_uc: Arc<hodei_iam::CreateUserUseCase>,
+    pub create_group_uc: Arc<hodei_iam::CreateGroupUseCase>,
+    pub add_user_to_group_uc: Arc<hodei_iam::AddUserToGroupUseCase>,
+
+    // IAM repositories (for listing endpoints)
+    pub user_repo: Arc<dyn hodei_iam::shared::application::ports::UserRepository>,
+    pub group_repo: Arc<dyn hodei_iam::shared::application::ports::GroupRepository>,
 }
 
 impl Default for AppMetrics {

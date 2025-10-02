@@ -66,24 +66,15 @@ impl UpdatePolicyUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::application::EngineBuilder;
-    use crate::shared::domain::principals;
-    use crate::shared::infrastructure::surreal::SurrealMemStorage;
+    use crate::shared::application::di_helpers;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn update_policy_successfully_updates_existing_policy() {
-        // Arrange: Create engine/store and add a policy
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+        // Arrange: Create engine/store and add a policy (no entities registered - domain agnostic)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         // Add original policy
         let original_policy_src = r#"permit(principal, action, resource);"#;
@@ -113,17 +104,9 @@ mod tests {
 
     #[tokio::test]
     async fn update_policy_returns_not_found_for_nonexistent_policy() {
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         let uc = UpdatePolicyUseCase::new(store);
         let cmd = UpdatePolicyCommand::new(
@@ -143,17 +126,9 @@ mod tests {
 
     #[tokio::test]
     async fn update_policy_validates_empty_id() {
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         let uc = UpdatePolicyUseCase::new(store);
         let cmd = UpdatePolicyCommand::new(
@@ -171,17 +146,9 @@ mod tests {
 
     #[tokio::test]
     async fn update_policy_validates_empty_content() {
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         let uc = UpdatePolicyUseCase::new(store);
         let cmd = UpdatePolicyCommand::new("policy_id".to_string(), "".to_string());
@@ -196,17 +163,9 @@ mod tests {
 
     #[tokio::test]
     async fn update_policy_validates_new_policy_syntax() {
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         // Add original policy
         let original_policy_src = r#"permit(principal, action, resource);"#;

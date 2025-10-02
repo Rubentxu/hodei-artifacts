@@ -1,16 +1,6 @@
 [workspace]
 members = [
-    ".", # The main package
-    "crates/shared",
-    "crates/artifact",
-    "crates/iam",
-    "crates/repository",
-    "crates/supply-chain",
-    "crates/search",
-    "crates/security",
-    "crates/policies",
-    "crates/distribution",
-    "crates/organization"
+    ".", # Only root package; subcrates used as path deps but not workspace members
 ]
 resolver = "2"
 
@@ -37,11 +27,11 @@ futures = { version = "0.3" }
 futures-util = { version = "0.3" }
 hex = "0.4"
 hyper = { version = "1", features = ["full"] }
-jsonwebtoken = "^9.3"
+jsonwebtoken= "^9.3"
 mime = "0.3"
 lapin = { version = "3.6.0" }
 redis = { version = "0.32.5", features = ["tokio-comp"] }
-reqwest = { version = "0.12.23", features = ["json"] }
+reqwest = { version = "0.12.23", features =["json"] }
 ring = "^0.17"
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0" }
@@ -67,7 +57,7 @@ tracing-subscriber = "0.3.20"
 tracing-test = "0.2.5"
 regex = "1.0"
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6.6", features = ["cors", "trace", "timeout", "compression-br"] }
+tower-http = { version = "0.6.6", features = ["cors", "trace", "timeout", "compression-br"]}
 http = "1.1.0"
 infer = "0.19.0"
 metrics = "0.24.1"
@@ -87,13 +77,13 @@ name = "hodei-artifacts-api"
 path = "src/main.rs"
 
 [dependencies]
-# Point to the new crates (solo activos: shared y policies)
+# Point to the new crates (solo activos: shared, policies y hodei-iam)
 shared = { path = "crates/shared" }
 policies = { path = "crates/policies", features = ["mem"] }
+hodei-iam = { path = "crates/hodei-iam" }
 
 # Crates desactivados temporalmente (no maduros)
 #artifact = { path = "crates/artifact" }
-# iam = { path = "crates/iam" }
 # repository = { path = "crates/repository" }
 # "supply-chain" = { path = "crates/supply-chain" }
 # search = { path = "crates/search" }
@@ -108,7 +98,7 @@ axum = { workspace = true, features = ["multipart"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
+tracing-subscriber = {version = "0.3.20", features = ["env-filter", "json"] }
 tower-http = { version = "0.6.6", features = ["cors", "trace", "timeout", "compression-br"] }
 tower = { workspace = true }
 http = "1.1.0"
@@ -118,7 +108,7 @@ anyhow = { workspace = true }
 
 # OpenAPI/Swagger
 utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
+utoipa-swagger-ui= { version = "9.0", features = ["axum"] }
 
 # Configuration
 dotenvy = "0.15"

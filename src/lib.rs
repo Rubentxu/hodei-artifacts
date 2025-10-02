@@ -6,6 +6,7 @@ pub mod middleware;
 pub mod services;
 
 use crate::app_state::{AppMetrics, AppState, HealthStatus};
+use crate::config::Config;
 use crate::error::{AppError, Result};
 use axum::{routing::{delete, get, post, put}, Router};
 use std::sync::Arc;
@@ -14,36 +15,63 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, timeout::Timeou
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-/// Build a Router suitable for tests using in-memory DI
-pub async fn build_app_for_tests() -> Result<Router> {
-    // Load config from env (uses defaults when not set)
-    let config = config::Config::from_env()?;
-
+/// Build AppState using either embedded or in-memory implementations depending on features
+pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
     // Metrics (simple initialization)
     let metrics = AppMetrics::new();
 
-    // DI: use in-memory implementations
-    let (create_policy_uc, authorization_engine) = policies::features::create_policy::di::make_use_case_mem()
+    // Policies DI
+    #[cfg(feature = "embedded")]
+    let (create_policy_uc, authorization_engine) = policies::features::create_policy::di::embedded::make_create_policy_use_case_embedded(&config.database.url)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build create_policy use case (embedded): {}", e)))?;
+    #[cfg(not(feature = "embedded"))]
+    let (create_policy_uc, authorization_engine) = policies::features::create_policy::di::make_create_policy_use_case_mem()
         .await
         .map_err(|e| AppError::Internal(format!("failed to build create_policy use case (mem): {}", e)))?;
 
-    let (get_policy_uc, _) = policies::features::get_policy::di::make_use_case_mem()
+    #[cfg(feature = "embedded")]
+    let (get_policy_uc, _) = policies::features::get_policy::di::embedded::make_get_policy_use_case_embedded(&config.database.url)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build get_policy use case (embedded): {}", e)))?;
+    #[cfg(not(feature = "embedded"))]
+    let (get_policy_uc, _) = policies::features::get_policy::di::make_get_policy_use_case_mem()
         .await
         .map_err(|e| AppError::Internal(format!("failed to build get_policy use case (mem): {}", e)))?;
 
-    let (list_policies_uc, _) = policies::features::list_policies::di::make_use_case_mem()
+    #[cfg(feature = "embedded")]
+    let (list_policies_uc, _) = policies::features::list_policies::di::embedded::make_list_policies_use_case_embedded(&config.database.url)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build list_policies use case (embedded): {}", e)))?;
+    #[cfg(not(feature = "embedded"))]
+    let (list_policies_uc, _) = policies::features::list_policies::di::make_list_policies_use_case_mem()
         .await
         .map_err(|e| AppError::Internal(format!("failed to build list_policies use case (mem): {}", e)))?;
 
-    let (update_policy_uc, _) = policies::features::update_policy::di::make_use_case_mem()
+    #[cfg(feature = "embedded")]
+    let (update_policy_uc, _) = policies::features::update_policy::di::embedded::make_update_policy_use_case_embedded(&config.database.url)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build update_policy use case (embedded): {}", e)))?;
+    #[cfg(not(feature = "embedded"))]
+    let (update_policy_uc, _) = policies::features::update_policy::di::make_update_policy_use_case_mem()
         .await
         .map_err(|e| AppError::Internal(format!("failed to build update_policy use case (mem): {}", e)))?;
 
-    let (validate_policy_uc, _) = policies::features::validate_policy::di::make_use_case_mem()
+    #[cfg(feature = "embedded")]
+    let (validate_policy_uc, _) = policies::features::validate_policy::di::embedded::make_validate_policy_use_case_embedded(&config.database.url)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build validate_policy use case (embedded): {}", e)))?;
+    #[cfg(not(feature = "embedded"))]
+    let (validate_policy_uc, _) = policies::features::validate_policy::di::make_validate_policy_use_case_mem()
         .await
         .map_err(|e| AppError::Internal(format!("failed to build validate_policy use case (mem): {}", e)))?;
 
-    let (policy_playground_uc, _) = policies::features::policy_playground::di::make_use_case_mem()
+    #[cfg(feature = "embedded")]
+    let (policy_playground_uc, _) = policies::features::policy_playground::di::embedded::make_policy_playground_use_case_embedded(&config.database.url)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build policy_playground use case (embedded): {}", e)))?;
+    #[cfg(not(feature = "embedded"))]
+    let (policy_playground_uc, _) = policies::features::policy_playground::di::make_policy_playground_use_case_mem()
         .await
         .map_err(|e| AppError::Internal(format!("failed to build policy_playground use case (mem): {}", e)))?;
 
@@ -55,9 +83,21 @@ pub async fn build_app_for_tests() -> Result<Router> {
         .await
         .map_err(|e| AppError::Internal(format!("failed to build batch_eval use case (mem): {}", e)))?;
 
-    let (delete_policy_uc, _) = policies::features::delete_policy::di::make_use_case_mem()
+    #[cfg(feature = "embedded")]
+    let (delete_policy_uc, _) = policies::features::delete_policy::di::embedded::make_delete_policy_use_case_embedded(&config.database.url)
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build delete_policy use case (embedded): {}", e)))?;
+    #[cfg(not(feature = "embedded"))]
+    let (delete_policy_uc, _) = policies::features::delete_policy::di::make_delete_policy_use_case_mem()
         .await
         .map_err(|e| AppError::Internal(format!("failed to build delete_policy use case (mem): {}", e)))?;
+
+    // IAM in-memory repos and use cases (for now always in-memory)
+    let user_repo = Arc::new(hodei_iam::shared::infrastructure::persistence::InMemoryUserRepository::new());
+    let group_repo = Arc::new(hodei_iam::shared::infrastructure::persistence::InMemoryGroupRepository::new());
+    let create_user_uc = hodei_iam::features::create_user::di::make_use_case(user_repo.clone());
+    let create_group_uc = hodei_iam::features::create_group::di::make_use_case(group_repo.clone());
+    let add_user_to_group_uc = hodei_iam::features::add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
 
     let state = Arc::new(AppState {
         config: config.clone(),
@@ -73,8 +113,21 @@ pub async fn build_app_for_tests() -> Result<Router> {
         analyze_policies_uc: Arc::new(analyze_policies_uc),
         batch_eval_uc: Arc::new(batch_eval_uc),
         authorization_engine,
+        // IAM
+        create_user_uc: Arc::new(create_user_uc),
+        create_group_uc: Arc::new(create_group_uc),
+        add_user_to_group_uc: Arc::new(add_user_to_group_uc),
+        user_repo,
+        group_repo,
     });
 
+    Ok(state)
+}
+
+/// Build a Router suitable for tests using in-memory DI
+pub async fn build_app_for_tests() -> Result<Router> {
+    let config = config::Config::from_env()?;
+    let state = build_app_state(&config).await?;
     build_router(state).await
 }
 
@@ -95,6 +148,12 @@ pub async fn build_router(state: Arc<AppState>) -> Result<Router> {
             api::policy_playground,
             api::analyze_policies,
             api::batch_playground,
+            // IAM endpoints
+            api::create_user,
+            api::list_users,
+            api::create_group,
+            api::list_groups,
+            api::add_user_to_group,
         ),
         components(
             schemas(
@@ -118,13 +177,20 @@ pub async fn build_router(state: Arc<AppState>) -> Result<Router> {
                 api::policy_handlers::BatchPlaygroundResponseApi,
                 api::policy_handlers::PolicyListResponse,
                 api::policy_handlers::ListPoliciesParams,
-                api::policy_handlers::ErrorResponse
+                api::policy_handlers::ErrorResponse,
+                // IAM schemas
+                api::CreateUserRequest,
+                api::UserResponse,
+                api::CreateGroupRequest,
+                api::GroupResponse,
+                api::AddUserToGroupRequest,
             )
         ),
         tags(
             (name = "policies", description = "Policy management endpoints - Create, read, update, and delete Cedar policies"),
             (name = "health", description = "Health check endpoints"),
-            (name = "authorization", description = "Authorization endpoints")
+            (name = "authorization", description = "Authorization endpoints"),
+            (name = "IAM", description = "Identity and Access Management endpoints")
         )
     )]
     struct ApiDoc;
@@ -139,7 +205,9 @@ pub async fn build_router(state: Arc<AppState>) -> Result<Router> {
         .route("/policies/playground", post(api::policy_playground))
         .route("/policies/analysis", post(api::analyze_policies))
         .route("/policies/playground/batch", post(api::batch_playground))
-        .route("/authorize", post(api::authorize));
+        .route("/authorize", post(api::authorize))
+        // IAM routes nested under /api/v1/iam
+        .nest("/iam", api::iam_routes());
 
     let health_routes = Router::new()
         .route("/health", get(api::health))

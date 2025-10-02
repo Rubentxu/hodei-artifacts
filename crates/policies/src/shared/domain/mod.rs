@@ -1,11 +1,12 @@
 // Local modules in shared/domain
 pub mod actions;
 pub mod entity_utils;
+pub mod error;
 pub mod hrn;
 pub mod ports;
-pub mod principals;
 pub mod schema_assembler;
 
 // Convenience re-exports for external use
+pub use error::HodeiPoliciesError;
 pub use hrn::Hrn;
-pub use ports::{AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, StorageError};
+pub use ports::{Action, AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, Principal, Resource, StorageError};

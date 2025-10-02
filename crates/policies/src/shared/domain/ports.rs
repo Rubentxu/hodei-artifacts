@@ -32,8 +32,29 @@ impl AttributeType {
 
 /// Type-level metadata for building Cedar schema fragments from Rust types
 pub trait HodeiEntityType {
-    /// The Cedar entity type name (e.g., "User", "Group")
-    fn entity_type_name() -> &'static str;
+    /// Devuelve el nombre del 'servicio' que actúa como espacio de nombres.
+    /// Ejemplo: "IAM", "Billing", "S3".
+    fn service_name() -> &'static str;
+
+    /// Devuelve el nombre local del tipo de recurso.
+    /// Ejemplo: "User", "Group", "Bucket".
+    fn resource_type_name() -> &'static str;
+
+    /// **Método de conveniencia (con implementación por defecto).**
+    /// Construye el `EntityTypeName` completo para Cedar a partir de las partes.
+    fn cedar_entity_type_name() -> EntityTypeName {
+        let namespace = Hrn::to_pascal_case(Self::service_name());
+        let type_str = format!("{}::{}", namespace, Self::resource_type_name());
+        EntityTypeName::from_str(&type_str)
+            .expect("Failed to create EntityTypeName from service and resource type")
+    }
+
+    /// DEPRECATED: Use `cedar_entity_type_name()` instead.
+    /// Mantener por compatibilidad temporal.
+    fn entity_type_name() -> &'static str {
+        // Fallback para compatibilidad: usa resource_type_name
+        Self::resource_type_name()
+    }
 
     /// Whether this entity type is a Principal in Cedar terms
     fn is_principal_type() -> bool {
@@ -66,6 +87,22 @@ pub trait HodeiEntity {
             EntityTypeName::from_str(hrn.resource_type.as_str()).unwrap();
         EntityUid::from_type_name_and_id(type_name, eid)
     }
+}
+
+///A marker trait for entities that can act as 'principals'.
+pub trait Principal: HodeiEntity + HodeiEntityType {}
+
+/// A marker trait for entities that can act as 'resources'.
+pub trait Resource: HodeiEntity + HodeiEntityType {}
+
+/// Define an action that can be registered in thepolicy engine.
+pub trait Action {
+    /// The unique identifier of the action.
+    fn name() -> &'static str;
+
+    /// Define which types of Principal and Resource this action applies to.
+    /// This will be used to generate the Cedar schema.
+    fn applies_to() -> (EntityTypeName, EntityTypeName);
 }
 
 #[async_trait]

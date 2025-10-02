@@ -13,6 +13,26 @@ pub struct Hrn {
 }
 
 impl Hrn {
+    /// Convención AWS: nombre de servicio siempre en minúsculas (puede contener dígitos y '-')
+    pub fn normalize_service_name(service: &str) -> String {
+        service.to_ascii_lowercase()
+    }
+
+    /// Convierte 'iam' o 'my-service' a 'Iam' o 'MyService' (namespace Cedar)
+    pub fn to_pascal_case(s: &str) -> String {
+        s.split(|c| c == '-' || c == '_')
+            .filter(|seg| !seg.is_empty())
+            .map(|seg| {
+                let mut chars = seg.chars();
+                match chars.next() {
+                    Some(f) => f.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
     pub fn new(
         partition: String,
         service: String,
@@ -22,9 +42,39 @@ impl Hrn {
     ) -> Self {
         Self {
             partition,
-            service,
+            service: Self::normalize_service_name(&service),
             account_id,
             resource_type,
+            resource_id,
+        }
+    }
+
+    /// Constructor usando HodeiEntityType para garantizar consistencia
+    ///
+    /// Este método construye un HRN usando la información del tipo, eliminando
+    /// la posibilidad de desincronización entre el esquema y las instancias.
+    ///
+    /// # Ejemplo
+    /// ```no_run
+    /// use policies::shared::domain::hrn::Hrn;
+    /// use hodei_iam::User;
+    ///
+    /// let user_hrn = Hrn::for_entity_type::<User>(
+    ///     "hodei".to_string(),
+    ///     "default".to_string(),
+    ///     "user-123".to_string(),
+    /// );
+    /// ```
+    pub fn for_entity_type<T: crate::shared::domain::ports::HodeiEntityType>(
+        partition: String,
+        account_id: String,
+        resource_id: String,
+    ) -> Self {
+        Self {
+            partition,
+            service: Self::normalize_service_name(T::service_name()),
+            account_id,
+            resource_type: T::resource_type_name().to_string(),
             resource_id,
         }
     }
@@ -42,14 +92,14 @@ impl Hrn {
 
         Some(Hrn {
             partition: parts[1].to_string(),
-            service: parts[2].to_string(),
+            service: Self::normalize_service_name(parts[2]),
             account_id: parts[4].to_string(), // El 3er segmento (region) se omite
             resource_type: resource_parts[0].to_string(),
             resource_id: resource_parts[1].to_string(),
         })
     }
 
-    /// Convert HRN to Cedar EntityUid
+    /// Convert HRN to Cedar EntityUid con namespace PascalCase (p.ej., Iam::User)
     ///
     /// Cedar expects UIDs as `Type::"id"`, where Type may be namespaced like `App::User`.
     /// We map:
@@ -58,15 +108,12 @@ impl Hrn {
     ///   both components are normalized to valid Cedar identifiers.
     /// - Id: always quoted string; if parsing fails, we wrap in quotes.
     pub fn euid(&self) -> EntityUid {
-        // Build a normalized, possibly namespaced type name
+        // Namespace Cedar con PascalCase derivado del servicio
+        let namespace = Self::to_pascal_case(&self.service);
         let type_str = if self.resource_type.contains("::") {
             self.resource_type.clone()
-        } else if !self.service.is_empty() {
-            format!(
-                "{}::{}",
-                Self::normalize_ident(&self.service),
-                Self::normalize_ident(&self.resource_type)
-            )
+        } else if !namespace.is_empty() {
+            format!("{}::{}", namespace, Self::normalize_ident(&self.resource_type))
         } else {
             Self::normalize_ident(&self.resource_type)
         };
@@ -86,21 +133,13 @@ impl Hrn {
         let mut out = String::new();
         let mut chars = s.chars();
         if let Some(c0) = chars.next() {
-            let c = if c0.is_ascii_alphabetic() || c0 == '_' {
-                c0
-            } else {
-                '_'
-            };
+            let c = if c0.is_ascii_alphabetic() || c0 == '_' { c0 } else { '_' };
             out.push(c);
         } else {
             out.push('_');
         }
         for c in chars {
-            if c.is_ascii_alphanumeric() || c == '_' {
-                out.push(c);
-            } else {
-                out.push('_');
-            }
+            if c.is_ascii_alphanumeric() || c == '_' { out.push(c); } else { out.push('_'); }
         }
         out
     }
@@ -111,7 +150,7 @@ impl Hrn {
     pub fn action(service: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
             partition: "aws".to_string(),
-            service: service.into(),
+            service: Self::normalize_service_name(&service.into()),
             account_id: String::new(),
             resource_type: "Action".to_string(),
             resource_id: name.into(),
@@ -166,6 +205,21 @@ mod tests {
         // Expect normalized namespace and type
         assert!(s.contains("hodei_svc::User_Profile"));
         assert!(s.contains("\"bob\""));
+    }
+
+    #[test]
+    fn euid_uses_pascal_namespace() {
+        let hrn = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "123".to_string(),
+            "User".to_string(),
+            "alice".to_string(),
+        );
+        let euid = hrn.euid();
+        let s = format!("{}", euid);
+        assert!(s.contains("Iam::User"));
+        assert!(s.contains("\"alice\""));
     }
 }
 

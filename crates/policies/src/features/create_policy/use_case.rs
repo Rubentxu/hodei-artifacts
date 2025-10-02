@@ -41,25 +41,15 @@ impl CreatePolicyUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::application::EngineBuilder;
-    use crate::shared::domain::principals;
-    use crate::shared::infrastructure::surreal::SurrealMemStorage;
+    use crate::shared::application::di_helpers;
     use std::sync::Arc;
 
     #[tokio::test]
     async fn create_policy_persists_in_surreal_mem() {
-        // Build engine/store with real mem storage and schema
-        let (engine, _store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()
-                .expect("user")
-                .register_entity_type::<principals::Group>()
-                .expect("group");
-            let storage = Arc::new(SurrealMemStorage::new("ns", "db").await.expect("mem db"));
-            builder.build(storage).expect("engine build")
-        };
-        let store = Arc::new(engine.store.clone());
+        // Build engine/store with real mem storage (no entities registered - domain agnostic)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+            .await
+            .expect("build engine");
 
         let uc = CreatePolicyUseCase::new(store);
         let cmd = crate::features::create_policy::dto::CreatePolicyCommand::new(

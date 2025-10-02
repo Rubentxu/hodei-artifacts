@@ -1,1495 +1,306 @@
-# Código Completo del Sistema BaaS con Mejoras
+### Fase 1: Construcción de `hodei-organizations` - La Base de la Gobernanza
 
-## Estructura del Proyecto
+Este crate es la fundación. No podemos gobernar si no tenemos una estructura que gobernar.
+Stack persistencia SurrealDB Embebida.
 
-```
-src/
-├── main.rs
-├── config.rs
-├── error.rs
-├── app_state.rs
-├── services/
-│   ├── mod.rs
-│   └── shutdown.rs
-├── api/
-│   ├── mod.rs
-│   ├── auth_handler.rs
-│   ├── policy_handlers.rs
-│   ├── health_handler.rs
-│   └── metrics_handler.rs
-├── middleware/
-│   ├── mod.rs
-│   ├── logging.rs
-│   └── metrics.rs
-├── models/
-│   ├── mod.rs
-│   ├── user.rs
-│   ├── team.rs
-│   └── blog_post.rs
-└── surreal_adapter/
-    ├── mod.rs
-    └── storage.rs
-```
 
-## Cargo.toml
+#### **HU 1.1: Modelado y Persistencia del `Account`**
 
-```toml
-[package]
-name = "policy-baas-mvp"
-version = "0.1.0"
-edition = "2021"
+*   **Como** un Arquitecto de la Nube,
+*   **Quiero** modelar una `Account` como la unidad fundamental de mi organización y poder crearla y recuperarla,
+*   **Para que** pueda representar las particiones de recursos y de IAM de mi sistema.
 
-[dependencies]
-# Core framework
-axum = { version = "0.7", features = ["macros"] }
-tokio = { version = "1.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+*   **Detalles de Implementación:**
+    *   **Dominio (`src/shared/domain/account.rs`):** Crea el struct `Account { hrn: Hrn, name: String, parent_hrn: Hrn }`. El `parent_hrn` apuntará a una OU o a la Raíz.
+    *   **Puerto (`.../ports/account_repository.rs`):** Define `trait AccountRepository { async fn save(&self, ...); async fn find_by_hrn(&self, ...); }`.
+    *   **Feature (`.../features/create_account/`):** Implementa el `CreateAccountUseCase` que genera un HRN único, crea una instancia de `Account` y la guarda usando el repositorio.
 
-# HTTP middleware
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace", "timeout", "compression"] }
-
-# Error handling
-thiserror = "1.0"
-anyhow = "1.0"
-
-# Logging and observability
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-metrics = "0.21"
-metrics-exporter-prometheus = "0.12"
-
-# Configuration
-dotenvy = "0.15"
-
-# Time handling
-chrono = { version = "0.4", features = ["serde"] }
-
-# HTTP types
-http = "1.0"
-uuid = { version = "1.0", features = ["v4", "serde"] }
-
-# Your policy engine (assuming it exists)
-hodei-policy = { path = "./hodei-policy" }
-
-# Database adapter (assuming SurrealDB)
-# Add your actual database dependencies here
-```
-
+*   **Testing:**
+    *   **Unitario:** En `account.rs`, prueba que `Account::new()` inicializa los campos correctamente.
+    *   **Integración (`tests/create_account_test.rs`):**
+        1.  Setup: Crea una implementación `InMemoryAccountRepository` (usando `Surreal::new::<Mem>()` y un `Mutex<HashMap>`).
+        2.  Arrange: Instancia el `CreateAccountUseCase` con el repositorio en memoria.
+        3.  Act: Ejecuta el caso de uso con el comando `{ name: "TestAccount" }`.
+        4.  Assert: Verifica que el `AccountView` devuelto es correcto. Usa el repositorio para recuperar la `Account` y afirma que sus propiedades coinciden con las esperadas.
 
 ---
 
+#### **HU 1.2: Modelado y Persistencia de la `OrganizationalUnit (OU)`**
+
+*   **Como** un Administrador de la Organización,
+*   **Quiero** crear y recuperar Unidades Organizativas (OUs),
+*   **Para que** pueda empezar a construir la jerarquía de mi organización.
+
+*   **Detalles de Implementación:**
+    *   **Dominio (`.../domain/ou.rs`):** Crea el struct `OrganizationalUnit { hrn: Hrn, name: String, parent_hrn: Hrn, child_ous: Vec<Hrn>, child_accounts: Vec<Hrn>, attached_scps: Vec<Hrn> }`.
+    *   **Puerto (`.../ports/ou_repository.rs`):** Define el `trait OuRepository`.
+    *   **Feature (`.../features/create_ou/`):** Implementa el `CreateOuUseCase`.
+
+*   **Testing:**
+    *   **Unitario:** En `ou.rs`, prueba los métodos de negocio como `add_child_account`, `remove_child_account`, etc., para asegurar que manipulan las listas de HRNs correctamente.
+    *   **Integración (`tests/create_ou_test.rs`):** Sigue el mismo patrón que para `Account`, usando un `InMemoryOuRepository`.
+
+---
+
+#### **HU 1.3: Mover una `Account` entre OUs**
+
+*   **Como** un Administrador de la Organización,
+*   **Quiero** mover una `Account` existente de una OU a otra,
+*   **Para que** pueda reestructurar mi organización a medida que evoluciona.
+
+*   **Detalles de Implementación:**
+    *   **Feature (`.../features/move_account/`):** El `MoveAccountUseCase` es el primer caso de uso que coordina entre múltiples agregados.
+        *   Necesitará ser inyectado con `Arc<dyn AccountRepository>` y `Arc<dyn OuRepository>`.
+        *   Su lógica debe ser:
+            1.  Cargar la `Account` a mover.
+            2.  Cargar la `OU` de origen y la `OU` de destino.
+            3.  Llamar a `ou_origen.remove_child_account(...)`.
+            4.  Llamar a `account.set_parent(...)`.
+            5.  Llamar a `ou_destino.add_child_account(...)`.
+            6.  Guardar los tres agregados modificados (`account`, `ou_origen`, `ou_destino`).
+
+*   **Testing:**
+    *   **Integración (`tests/move_account_test.rs`):** Este test es crucial.
+        1.  Setup: Crea repos en memoria para OUs y Accounts.
+        2.  Arrange: Puebla los repos con una `Account` "WebApp", una `OU` "Staging" y una `OU` "Production". La cuenta "WebApp" debe estar inicialmente en "Staging".
+        3.  Act: Ejecuta el `MoveAccountUseCase` para mover "WebApp" a "Production".
+        4.  Assert:
+            *   Recupera la `Account` "WebApp" y afirma que su `parent_hrn` ahora apunta a "Production".
+            *   Recupera la `OU` "Staging" y afirma que su lista `child_accounts` está vacía.
+            *   Recupera la `OU` "Production" y afirma que su lista `child_accounts` ahora contiene el HRN de "WebApp".
+
+---
+
+#### **HU 1.4: Gestión Básica de `ServiceControlPolicy (SCP)`**
+
+*   **Como** un Administrador de Gobernanza,
+*   **Quiero** crear y adjuntar una SCP a una OU,
+*   **Para que** pueda definir una barrera de permisos para todas las cuentas dentro de esa OU.
+
+*   **Detalles de Implementación:**
+    *   **Dominio (`.../domain/scp.rs`):** Define `ServiceControlPolicy { hrn: Hrn, name: String, document: String }`.
+    *   **Puerto (`.../ports/scp_repository.rs`):** Define `trait ScpRepository`.
+    *   **Feature (`.../features/create_scp/`):** Implementa el caso de uso para crear la SCP.
+    *   **Feature (`.../features/attach_scp/`):** Implementa el caso de uso para adjuntarla. Este caso de uso cargará la OU (o Account) y la SCP, llamará al método de dominio `ou.attach_scp(...)` y guardará la OU actualizada.
+
+*   **Testing:**
+    *   **Integración (`tests/attach_scp_test.rs`):**
+        1.  Arrange: Crea una `OU` y una `SCP` en los repos en memoria.
+        2.  Act: Ejecuta el `AttachScpUseCase`.
+        3.  Assert: Recupera la `OU` y afirma que su `attached_scps` ahora contiene el HRN de la `SCP`.
+
+---
+
+### Fase 2: Construcción de `hodei-authorizer` - El Cerebro Orquestador
+
+Este crate no tiene dominio propio, es pura lógica de aplicación y orquestación.
+
+#### **HU 2.1: Definición de Contratos y Mocks**
+
+*   **Como el** desarrollador del `Authorizer`,
+*   **Necesito** definir los traits (`...Provider`) que describen los datos que necesito de `hodei-iam` y `hodei-organizations`,
+*   **Para que** pueda desarrollar la lógica de decisión de forma aislada y testable.
+
+*   **Detalles de Implementación:**
+    *   **Crate `hodei-authorizer` (`src/ports.rs`):**
+        *   Define `trait IamPolicyProvider { async fn get_identity_policies_for(&self, ...) -> ...; }`.
+        *   Define `trait OrganizationBoundaryProvider { async fn get_effective_scps_for(&self, ...) -> ...; }`.
+    *   **Mocks (`src/tests/mocks.rs`):** Crea structs `MockIamPolicyProvider` y `MockOrgBoundaryProvider` que implementen estos traits y te permitan configurar qué datos devuelven en los tests.
+
+*   **Testing:**
+    *   **Unitario:** Escribe tests para tus mocks para asegurar que devuelven los datos con los que los configuras.
+
+---
+
+#### **HU 2.2: Implementación de la Regla "Deny Explícito Anula Todo"**
+
+*   **Como el** `AuthorizerService`,
+*   **Quiero** recolectar TODAS las políticas aplicables (IAM y SCPs) y si CUALQUIERA de ellas contiene un `Deny` explícito para la petición, la decisión final debe ser `Deny` inmediatamente,
+*   **Para que** se cumpla la regla de seguridad más fundamental.
+
+*   **Detalles de Implementación:**
+    *   En `AuthorizerService::is_authorized`:
+        1.  Llama a `iam_provider.get_identity_policies_for(...)`.
+        2.  Llama a `org_provider.get_effective_scps_for(...)`.
+        3.  Combina ambos conjuntos de políticas en un único `PolicySet`.
+        4.  Usa el `PolicyEvaluator` de `hodei-policies` para evaluar este `PolicySet`.
+        5.  Si `response.decision() == Decision::Deny`, `return response;`.
+
+*   **Testing:**
+    *   **Integración (`tests/deny_rule_test.rs`):**
+        1.  Setup: Instancia el `AuthorizerService` con tus proveedores mock.
+        2.  Arrange: Configura el `MockOrgBoundaryProvider` para que devuelva una SCP con `forbid(principal, action, resource);`. Configura el `MockIamPolicyProvider` para que devuelva una política con `permit(...)`.
+        3.  Act: Llama a `authorizer.is_authorized(...)`.
+        4.  Assert: Afirma que la decisión final es `Deny`.
+
+---
+
+#### **HU 2.3: Implementación de la Regla "Se Requiere un Allow de Identidad"**
+
+*   **Como el** `AuthorizerService`,
+*   **Quiero**, si no hubo un `Deny` explícito, evaluar únicamente las políticas de IAM,
+*   **Para que** pueda determinar si la identidad del principal tiene permiso para realizar la acción.
+
+*   **Detalles de Implementación:**
+    *   Añade el siguiente bloque de lógica a `is_authorized` después del chequeo de `Deny`.
+        1.  Toma *solo* las políticas del `IamPolicyProvider`.
+        2.  Evalúalas con el `PolicyEvaluator`.
+        3.  Si la decisión no es `Allow`, la decisión final es `Deny` (implícito).
+
+*   **Testing:**
+    *   **Integración (`tests/iam_allow_rule_test.rs`):**
+        1.  Arrange: Configura los mocks para que no devuelvan ninguna política de `Deny`. Configura el `MockIamPolicyProvider` para que devuelva una política `permit(...)` que coincida con la petición.
+        2.  Act: Llama a `authorizer.is_authorized(...)`.
+        3.  Assert: Afirma que la decisión final es `Allow` (por ahora, antes de la última regla).
+
+---
+
+#### **HU 2.4: Implementación de la Regla "Las Barreras de la Organización Deben Permitir"**
+
+*   **Como el** `AuthorizerService`,
+*   **Quiero**, si una acción está permitida por IAM, verificar adicionalmente que también está permitida por las barreras de las SCPs,
+*   **Para que** las políticas de gobernanza actúen como un filtro final sobre los permisos concedidos.
+
+*   **Detalles de Implementación:**
+    *   Añade el último bloque de lógica.
+        1.  Si el chequeo de IAM dio `Allow`, ahora toma *solo* las políticas del `OrganizationBoundaryProvider`.
+        2.  Evalúalas.
+        3.  Si la decisión de esta evaluación *no* es `Allow`, la decisión final se convierte en `Deny`. Si es `Allow`, la decisión final se mantiene como `Allow`.
+
+*   **Testing:**
+    *   **Integración (`tests/scp_boundary_rule_test.rs`):**
+        1.  Arrange: Configura `MockIamPolicyProvider` para que devuelva una política `permit(...)` para `action::"s3:GetObject"`. Configura `MockOrgBoundaryProvider` para que devuelva una SCP que *no* menciona `s3:GetObject` (por ejemplo, solo permite `ec2:*`).
+        2.  Act: Llama a `authorizer.is_authorized(...)` pidiendo `s3:GetObject`.
+        3.  Assert: Afirma que la decisión final es `Deny`, porque aunque IAM lo permitió, la barrera de la SCP no lo hizo (Deny implícito de la barrera).
+
 ---
 
 
-## src/config.rs
+# Feature Specification: Governance & Authorization Core
 
-```rust
-use serde::{Deserialize, Serialize};
-use std::env;
+**Feature Branch**: `feat/governance-auth-core`
+**Created**: 2025-10-02
+**Status**: Draft
+**Input**: User description: "Implementar un sistema de gobernanza tipo AWS Organizations con SCPs y un orquestador de autorización central que combine las políticas de gobernanza con las políticas de IAM para tomar decisiones de acceso seguras y jerárquicas."
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub server: ServerConfig,
-    pub database: DatabaseConfig,
-    pub logging: LoggingConfig,
-    pub cors: CorsConfig,
-    pub metrics: MetricsConfig,
-}
+## User Scenarios & Testing
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerConfig {
-    pub host: String,
-    pub port: u16,
-    pub shutdown_timeout_seconds: u64,
-    pub request_timeout_seconds: u64,
-}
+### Primary User Story
+Como Arquitecto de Seguridad, quiero definir barreras de permisos a nivel de organización (SCPs) que restrinjan lo que los administradores de cuentas individuales pueden hacer, para garantizar que se cumplan las políticas de gobernanza corporativa, incluso si se conceden permisos excesivos a nivel de IAM.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseConfig {
-    pub url: String,
-    pub max_connections: u32,
-    pub connection_timeout_seconds: u64,
-    pub retry_attempts: u32,
-}
+### Acceptance Scenarios
+1.  **Given** una OU "Production" tiene una SCP adjunta que explícitamente **deniega** la acción `iam:DeleteUser`,
+    **And** una Cuenta "WebApp" está dentro de la OU "Production",
+    **And** un `User` "Admin" dentro de la cuenta "WebApp" tiene una política de IAM que **permite** `iam:*` (todos los permisos),
+    **When** el "Admin" intenta realizar la acción `iam:DeleteUser`,
+    **Then** la petición es **denegada**.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoggingConfig {
-    pub level: String,
-    pub format: LogFormat,
-}
+2.  **Given** una OU "Sandbox" tiene una SCP adjunta que **permite** la acción `s3:GetObject` y `ec2:*`,
+    **And** una Cuenta "DevAccount" está dentro de la OU "Sandbox",
+    **And** un `User` "Developer" dentro de "DevAccount" tiene una política de IAM que **permite** `s3:GetObject`,
+    **When** el "Developer" intenta realizar la acción `s3:GetObject`,
+    **Then** la petición es **permitida**.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum LogFormat {
-    Json,
-    Pretty,
-    Compact,
-}
+3.  **Given** una OU "Sandbox" tiene una SCP adjunta que **permite** solo `ec2:*`,
+    **And** una Cuenta "DevAccount" está dentro de la OU "Sandbox",
+    **And** un `User` "Developer" dentro de "DevAccount" tiene una política de IAM que **permite** `s3:GetObject`,
+    **When** el "Developer" intenta realizar la acción `s3:GetObject`,
+    **Then** la petición es **denegada** (porque la barrera de la SCP no lo permite).
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CorsConfig {
-    pub allow_origins: Vec<String>,
-    pub allow_headers: Vec<String>,
-    pub allow_methods: Vec<String>,
-    pub max_age: Option<u64>,
-}
+### Edge Cases
+- ¿Qué sucede si una entidad tiene múltiples SCPs heredadas (de la Raíz, de OUs anidadas)? El sistema debe evaluar la unión de todas las SCPs aplicables.
+- ¿Cómo maneja el sistema una Cuenta que no está en ninguna OU (directamente bajo la Raíz)? Debe heredar las SCPs de la Raíz.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetricsConfig {
-    pub enabled: bool,
-    pub endpoint: String,
-    pub prometheus_registry: bool,
-}
+## Requirements
 
-impl Config {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        // Load .env file if present
-        dotenvy::dotenv().ok();
+### Functional Requirements
+- **FR-001**: El sistema DEBE permitir la creación de una jerarquía de Unidades Organizativas (OUs) y Cuentas.
+- **FR-002**: El sistema DEBE permitir la creación de Políticas de Control de Servicio (SCPs) que contengan documentos de políticas de Cedar.
+- **FR-003**: El sistema DEBE permitir adjuntar y desadjuntar SCPs a la Raíz, OUs o Cuentas.
+- **FR-004**: El sistema DEBE proveer un servicio de autorización central (`hodei-authorizer`).
+- **FR-005**: El servicio de autorización DEBE denegar una acción si CUALQUIER política aplicable (IAM o SCP) contiene un `forbid` explícito que coincida.
+- **FR-006**: Si no hay un `forbid` explícito, el servicio de autorización DEBE requerir que un `permit` explícito exista en las políticas de IAM.
+- **FR-007**: Si un `permit` de IAM existe, el servicio de autorización DEBE verificar adicionalmente que la acción está implícita o explícitamente permitida por la unión de todas las SCPs efectivas.
 
-        Ok(Self {
-            server: ServerConfig {
-                host: env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-                port: env::var("SERVER_PORT")
-                    .unwrap_or_else(|_| "3000".to_string())
-                    .parse()
-                    .map_err(|_| ConfigError::InvalidPort)?,
-                shutdown_timeout_seconds: env::var("SHUTDOWN_TIMEOUT")
-                    .unwrap_or_else(|_| "30".to_string())
-                    .parse()
-                    .unwrap_or(30),
-                request_timeout_seconds: env::var("REQUEST_TIMEOUT")
-                    .unwrap_or_else(|_| "30".to_string())
-                    .parse()
-                    .unwrap_or(30),
-            },
-            database: DatabaseConfig {
-                url: env::var("DATABASE_URL")
-                    .unwrap_or_else(|_| "baas_mvp_api.db".to_string()),
-                max_connections: env::var("DB_MAX_CONNECTIONS")
-                    .unwrap_or_else(|_| "10".to_string())
-                    .parse()
-                    .unwrap_or(10),
-                connection_timeout_seconds: env::var("DB_CONNECTION_TIMEOUT")
-                    .unwrap_or_else(|_| "5".to_string())
-                    .parse()
-                    .unwrap_or(5),
-                retry_attempts: env::var("DB_RETRY_ATTEMPTS")
-                    .unwrap_or_else(|_| "3".to_string())
-                    .parse()
-                    .unwrap_or(3),
-            },
-            logging: LoggingConfig {
-                level: env::var("LOG_LEVEL")
-                    .unwrap_or_else(|_| "info,policy_baas_mvp=debug".to_string()),
-                format: match env::var("LOG_FORMAT").as_deref() {
-                    Ok("json") => LogFormat::Json,
-                    Ok("compact") => LogFormat::Compact,
-                    _ => LogFormat::Pretty,
-                },
-            },
-            cors: CorsConfig {
-                allow_origins: env::var("CORS_ORIGINS")
-                    .unwrap_or_else(|_| "*".to_string())
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect(),
-                allow_headers: env::var("CORS_HEADERS")
-                    .unwrap_or_else(|_| "content-type,authorization,x-request-id".to_string())
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect(),
-                allow_methods: env::var("CORS_METHODS")
-                    .unwrap_or_else(|_| "GET,POST,PUT,DELETE,OPTIONS".to_string())
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect(),
-                max_age: env::var("CORS_MAX_AGE")
-                    .ok()
-                    .and_then(|s| s.parse().ok()),
-            },
-            metrics: MetricsConfig {
-                enabled: env::var("METRICS_ENABLED")
-                    .unwrap_or_else(|_| "true".to_string())
-                    .parse()
-                    .unwrap_or(true),
-                endpoint: env::var("METRICS_ENDPOINT")
-                    .unwrap_or_else(|_| "/metrics".to_string()),
-                prometheus_registry: env::var("PROMETHEUS_REGISTRY")
-                    .unwrap_or_else(|_| "true".to_string())
-                    .parse()
-                    .unwrap_or(true),
-            },
-        })
-    }
-}
+### Key Entities
+- **Organization**: La entidad raíz que contiene todo.
+- **OrganizationalUnit (OU)**: Un contenedor para otras OUs o Cuentas.
+- **Account**: Una partición que contiene recursos y principales de IAM.
+- **ServiceControlPolicy (SCP)**: Una política de gobernanza que define barreras.
 
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("Invalid port configuration")]
-    InvalidPort,
-    #[error("Missing required environment variable: {0}")]
-    MissingEnvVar(String),
-    #[error("Invalid configuration value: {0}")]
-    InvalidValue(String),
-}
+---
+---
+
+# Implementation Plan: Governance & Authorization Core
+
+**Input**: Design documents from `specs/governance-auth-core/`
+**Prerequisites**: `hodei-iam` y `hodei-policies` (refactorizado) existen.
+
+## Phase 3.1: Setup
+- [ ] T001 [P] Crear la estructura del crate `hodei-organizations` en `crates/hodei-organizations/`
+- [ ] T002 [P] Crear la estructura del crate `hodei-authorizer` en `crates/hodei-authorizer/`
+- [ ] T003 [P] Añadir los nuevos crates al `Cargo.toml` del workspace.
+- [ ] T004 [P] Configurar dependencias: `hodei-organizations` depende de `hodei-policies`. `hodei-authorizer` depende de los tres.
+
+## Phase 3.2: Tests First (TDD) ⚠️ MUST COMPLETE BEFORE 3.3
+
+### `hodei-organizations`
+- [ ] T005 [P] Integration test para `CreateAccountUseCase` en `crates/hodei-organizations/tests/create_account_test.rs`
+- [ ] T006 [P] Integration test para `CreateOuUseCase` en `crates/hodei-organizations/tests/create_ou_test.rs`
+- [ ] T007 [P] Integration test para `MoveAccountUseCase` en `crates/hodei-organizations/tests/move_account_test.rs`
+- [ ] T008 [P] Integration test para `AttachScpUseCase` en `crates/hodei-organizations/tests/attach_scp_test.rs`
+- [ ] T009 [P] Integration test para `GetEffectiveScpsUseCase` en `crates/hodei-organizations/tests/get_effective_scps_test.rs` (Debe simular una jerarquía y verificar que se recolectan las SCPs correctas)
+
+### `hodei-authorizer`
+- [ ] T010 [P] Integration test para la regla "Deny explícito de SCP anula Allow de IAM" en `crates/hodei-authorizer/tests/deny_scp_overrides_iam_test.rs`
+- [ ] T011 [P] Integration test para la regla "Deny explícito de IAM anula todo" en `crates/hodei-authorizer/tests/deny_iam_overrides_all_test.rs`
+- [ ] T012 [P] Integration test para la regla "Se requiere Allow de IAM y Allow de SCP" en `crates/hodei-authorizer/tests/allow_requires_both_test.rs`
+
+## Phase 3.3: Core Implementation (ONLY after tests are failing)
+
+### `hodei-organizations`
+- [ ] T013 [P] Modelo de dominio `Account` en `crates/hodei-organizations/src/shared/domain/account.rs`
+- [ ] T014 [P] Modelo de dominio `OrganizationalUnit` en `crates/hodei-organizations/src/shared/domain/ou.rs`
+- [ ] T015 [P] Modelo de dominio `ServiceControlPolicy` en `crates/hodei-organizations/src/shared/domain/scp.rs`
+- [ ] T016 [P] Puertos de Repositorio para `Account`, `OU`, `SCP` en `crates/hodei-organizations/src/shared/application/ports/`
+- [ ] T017 Feature `CreateAccountUseCase` en `crates/hodei-organizations/src/features/create_account/`
+- [ ] T018 Feature `CreateOuUseCase` en `crates/hodei-organizations/src/features/create_ou/`
+- [ ] T019 Feature `MoveAccountUseCase` en `crates/hodei-organizations/src/features/move_account/`
+- [ ] T020 Feature `AttachScpUseCase` en `crates/hodei-organizations/src/features/attach_scp/`
+- [ ] T021 Feature `GetEffectiveScpsUseCase` en `crates/hodei-organizations/src/features/get_effective_scps/`
+
+### `hodei-authorizer`
+- [ ] T022 [P] Definir traits `IamPolicyProvider` y `OrganizationBoundaryProvider` en `crates/hodei-authorizer/src/ports.rs`
+- [ ] T023 Implementar la lógica de decisión en `AuthorizerService` en `crates/hodei-authorizer/src/authorizer.rs`
+
+## Phase 3.4: Integration
+- [ ] T024 [P] Implementar adaptadores de repositorio para `SurrealDB` para `Account`, `OU`, `SCP` en `crates/hodei-organizations/src/shared/infrastructure/surreal/`
+- [ ] T025 Implementar el adaptador `OrganizationBoundaryProvider` en `hodei-organizations` que use el `GetEffectiveScpsUseCase`.
+- [ ] T026 Implementar el adaptador `IamPolicyProvider` en `hodei-iam`.
+- [ ] T027 Refactorizar `hodei-policies` para ser un motor puro (`PolicyEvaluator`).
+
+## Phase 3.5: Polish
+- [ ] T028 [P] Unit tests para la lógica de dominio de `OU` (ej. `add_child`) en `crates/hodei-organizations/src/shared/domain/ou.rs`
+- [ ] T029 [P] Documentación de la API pública para `hodei-authorizer`.
+- [ ] T030 Crear un test E2E completo en `tests/` del workspace que configure los 3 crates y verifique un escenario complejo.
+
+## Dependencies
+- T005-T012 (Tests) deben estar escritos y fallando antes de T013-T023.
+- T013, T014, T015 (Modelos) bloquean sus respectivos repositorios y casos de uso.
+- T022 (Puertos de Authorizer) bloquea T023 (Lógica de Authorizer).
+- T023 bloquea T025 y T026 (Adaptadores).
+- T027 (Refactor de Policies) es un prerrequisito para T023.
+
+## Parallel Example
+```
+# Fase de Tests (TDD). Pueden escribirse todos en paralelo.
+Task: "Integration test para `CreateAccountUseCase` en crates/hodei-organizations/tests/create_account_test.rs"
+Task: "Integration test para `CreateOuUseCase` en crates/hodei-organizations/tests/create_ou_test.rs"
+Task: "Integration test para la regla 'Deny explícito de SCP anula Allow de IAM' en crates/hodei-authorizer/tests/deny_scp_overrides_iam_test.rs"
+...
 ```
 
-## src/error.rs
-
-```rust
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Json,
-};
-use serde_json::json;
-
-#[derive(Debug, thiserror::Error)]
-pub enum AppError {
-    #[error("Configuration error: {0}")]
-    Configuration(String),
-    
-    #[error("Logging setup error: {0}")]
-    LoggingSetup(String),
-    
-    #[error("Database connection error: {0}")]
-    DatabaseConnection(String),
-    
-    #[error("Policy engine error: {0}")]
-    PolicyEngine(String),
-    
-    #[error("Server bind error")]
-    ServerBind(#[from] std::io::Error),
-    
-    #[error("Authorization error: {0}")]
-    Authorization(String),
-    
-    #[error("Validation error: {0}")]
-    Validation(String),
-    
-    #[error("Not found: {0}")]
-    NotFound(String),
-    
-    #[error("Internal server error: {0}")]
-    Internal(String),
-    
-    #[error("Bad request: {0}")]
-    BadRequest(String),
-}
-
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        let (status, error_type, error_message) = match &self {
-            AppError::Configuration(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "CONFIGURATION_ERROR",
-                "Internal configuration error"
-            ),
-            AppError::LoggingSetup(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "LOGGING_ERROR",
-                "Logging setup failed"
-            ),
-            AppError::DatabaseConnection(_) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "DATABASE_ERROR",
-                "Database service unavailable"
-            ),
-            AppError::PolicyEngine(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "POLICY_ENGINE_ERROR",
-                "Policy engine error"
-            ),
-            AppError::ServerBind(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "SERVER_ERROR",
-                "Server binding error"
-            ),
-            AppError::Authorization(_) => (
-                StatusCode::UNAUTHORIZED,
-                "AUTHORIZATION_ERROR",
-                "Authorization failed"
-            ),
-            AppError::Validation(_) => (
-                StatusCode::BAD_REQUEST,
-                "VALIDATION_ERROR",
-                "Request validation failed"
-            ),
-            AppError::NotFound(_) => (
-                StatusCode::NOT_FOUND,
-                "NOT_FOUND",
-                "Resource not found"
-            ),
-            AppError::Internal(_) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "INTERNAL_ERROR",
-                "Internal server error"
-            ),
-            AppError::BadRequest(_) => (
-                StatusCode::BAD_REQUEST,
-                "BAD_REQUEST",
-                "Bad request"
-            ),
-        };
-        
-        let body = Json(json!({
-            "error": {
-                "type": error_type,
-                "message": error_message,
-                "details": self.to_string(),
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            }
-        }));
-        
-        // Log error with appropriate level
-        match &self {
-            AppError::Configuration(_) | 
-            AppError::LoggingSetup(_) | 
-            AppError::DatabaseConnection(_) | 
-            AppError::PolicyEngine(_) | 
-            AppError::ServerBind(_) | 
-            AppError::Internal(_) => {
-                tracing::error!("Application error: {}", self);
-            },
-            AppError::Authorization(_) | 
-            AppError::NotFound(_) => {
-                tracing::warn!("Client error: {}", self);
-            },
-            AppError::Validation(_) | 
-            AppError::BadRequest(_) => {
-                tracing::debug!("Validation error: {}", self);
-            },
-        }
-        
-        (status, body).into_response()
-    }
-}
-
-// Convenience conversion functions
-impl From<crate::config::ConfigError> for AppError {
-    fn from(err: crate::config::ConfigError) -> Self {
-        AppError::Configuration(err.to_string())
-    }
-}
-
-pub type Result<T> = std::result::Result<T, AppError>;
-```
-
-## src/app_state.rs
-
-```rust
-use crate::config::Config;
-use hodei_policy::{AuthorizationEngine, PolicyStore};
-use metrics::{Counter, Histogram};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub engine: AuthorizationEngine,
-    pub policy_store: PolicyStore,
-    pub config: Config,
-    pub metrics: AppMetrics,
-    pub health: Arc<RwLock<HealthStatus>>,
-}
-
-#[derive(Clone)]
-pub struct AppMetrics {
-    pub requests_total: Counter,
-    pub authorization_requests: Counter,
-    pub authorization_success: Counter,
-    pub authorization_failures: Counter,
-    pub policy_operations: Counter,
-    pub errors_total: Counter,
-    pub request_duration: Histogram,
-}
-
-impl AppMetrics {
-    pub fn new() -> Self {
-        Self {
-            requests_total: metrics::counter!("http_requests_total"),
-            authorization_requests: metrics::counter!("authorization_requests_total"),
-            authorization_success: metrics::counter!("authorization_success_total"),
-            authorization_failures: metrics::counter!("authorization_failures_total"),
-            policy_operations: metrics::counter!("policy_operations_total"),
-            errors_total: metrics::counter!("errors_total"),
-            request_duration: metrics::histogram!("http_request_duration_seconds"),
-        }
-    }
-    
-    pub fn record_request(&self) {
-        self.requests_total.increment(1);
-    }
-    
-    pub fn record_authorization(&self, success: bool) {
-        self.authorization_requests.increment(1);
-        if success {
-            self.authorization_success.increment(1);
-        } else {
-            self.authorization_failures.increment(1);
-        }
-    }
-    
-    pub fn record_policy_operation(&self) {
-        self.policy_operations.increment(1);
-    }
-    
-    pub fn record_error(&self, error_type: &str) {
-        self.errors_total.increment(1);
-        // You could add labels for error types if your metrics backend supports it
-    }
-    
-    pub fn record_request_duration(&self, duration: std::time::Duration) {
-        self.request_duration.record(duration.as_secs_f64());
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct HealthStatus {
-    pub database: ComponentHealth,
-    pub policy_engine: ComponentHealth,
-    pub startup_time: chrono::DateTime<chrono::Utc>,
-    pub last_health_check: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ComponentHealth {
-    Healthy,
-    Degraded { reason: String },
-    Unhealthy { reason: String },
-}
-
-impl HealthStatus {
-    pub fn new() -> Self {
-        let now = chrono::Utc::now();
-        Self {
-            database: ComponentHealth::Healthy,
-            policy_engine: ComponentHealth::Healthy,
-            startup_time: now,
-            last_health_check: now,
-        }
-    }
-    
-    pub fn is_healthy(&self) -> bool {
-        matches!(self.database, ComponentHealth::Healthy) &&
-        matches!(self.policy_engine, ComponentHealth::Healthy)
-    }
-    
-    pub fn update_database_health(&mut self, health: ComponentHealth) {
-        self.database = health;
-        self.last_health_check = chrono::Utc::now();
-    }
-    
-    pub fn update_policy_engine_health(&mut self, health: ComponentHealth) {
-        self.policy_engine = health;
-        self.last_health_check = chrono::Utc::now();
-    }
-}
-
-impl Default for HealthStatus {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-```
-
-## src/services/mod.rs
-
-```rust
-pub mod shutdown;
-
-pub use shutdown::signal;
-```
-
-## src/services/shutdown.rs
-
-```rust
-use tokio::signal;
-use tracing::{info, warn};
-
-pub async fn signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {
-            info!("Received Ctrl+C signal, initiating graceful shutdown");
-        },
-        _ = terminate => {
-            info!("Received SIGTERM signal, initiating graceful shutdown");
-        },
-    }
-    
-    // Give some time for cleanup
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    info!("Shutdown signal processed");
-}
-
-pub async fn graceful_shutdown(timeout: std::time::Duration) {
-    info!("Starting graceful shutdown with {}s timeout", timeout.as_secs());
-    
-    // Wait for the shutdown signal
-    signal().await;
-    
-    // Additional cleanup tasks can be added here
-    // For example: flushing metrics, closing database connections, etc.
-    
-    // Wait a bit to ensure all ongoing requests complete
-    let cleanup_time = std::cmp::min(timeout, std::time::Duration::from_secs(5));
-    tokio::time::sleep(cleanup_time).await;
-    
-    info!("Graceful shutdown completed");
-}
-```
-
-## src/middleware/mod.rs
-
-```rust
-pub mod logging;
-pub mod metrics;
-
-pub use logging::*;
-pub use metrics::*;
-```
-
-## src/middleware/logging.rs
-
-```rust
-use axum::{
-    extract::Request,
-    middleware::Next,
-    response::Response,
-};
-use std::time::Instant;
-use tracing::{info, warn};
-use uuid::Uuid;
-
-pub async fn logging_middleware(
-    request: Request,
-    next: Next,
-) -> Response {
-    let start = Instant::now();
-    let request_id = Uuid::new_v4().to_string();
-    let method = request.method().clone();
-    let uri = request.uri().clone();
-    
-    // Add request ID to headers if needed
-    info!(
-        request_id = %request_id,
-        method = %method,
-        uri = %uri,
-        "Processing request"
-    );
-    
-    let response = next.run(request).await;
-    
-    let duration = start.elapsed();
-    let status = response.status();
-    
-    if status.is_success() {
-        info!(
-            request_id = %request_id,
-            method = %method,
-            uri = %uri,
-            status = %status,
-            duration_ms = %duration.as_millis(),
-            "Request completed successfully"
-        );
-    } else if status.is_client_error() {
-        warn!(
-            request_id = %request_id,
-            method = %method,
-            uri = %uri,
-            status = %status,
-            duration_ms = %duration.as_millis(),
-            "Request failed with client error"
-        );
-    } else {
-        warn!(
-            request_id = %request_id,
-            method = %method,
-            uri = %uri,
-            status = %status,
-            duration_ms = %duration.as_millis(),
-            "Request failed with server error"
-        );
-    }
-    
-    response
-}
-```
-
-## src/middleware/metrics.rs
-
-```rust
-use crate::app_state::AppState;
-use axum::{
-    extract::{Request, State},
-    middleware::Next,
-    response::Response,
-};
-use std::{sync::Arc, time::Instant};
-
-pub async fn metrics_middleware(
-    State(state): State<Arc<AppState>>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let start = Instant::now();
-    
-    // Record request
-    state.metrics.record_request();
-    
-    let response = next.run(request).await;
-    
-    // Record duration
-    let duration = start.elapsed();
-    state.metrics.record_request_duration(duration);
-    
-    // Record errors if any
-    if response.status().is_server_error() {
-        state.metrics.record_error("server_error");
-    } else if response.status().is_client_error() {
-        state.metrics.record_error("client_error");
-    }
-    
-    response
-}
-```
-
-## src/api/mod.rs
-
-```rust
-pub mod auth_handler;
-pub mod policy_handlers;
-pub mod health_handler;
-pub mod metrics_handler;
-
-pub use auth_handler::*;
-pub use policy_handlers::*;
-pub use health_handler::*;
-pub use metrics_handler::*;
-```
-
-## src/api/health_handler.rs
-
-```rust
-use crate::{app_state::AppState, error::Result};
-use axum::{extract::State, response::Json};
-use serde_json::{json, Value};
-use std::sync::Arc;
-
-pub async fn health(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let health = state.health.read().await;
-    
-    let response = json!({
-        "status": if health.is_healthy() { "healthy" } else { "unhealthy" },
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "uptime_seconds": (chrono::Utc::now() - health.startup_time).num_seconds(),
-        "components": {
-            "database": component_health_to_json(&health.database),
-            "policy_engine": component_health_to_json(&health.policy_engine)
-        },
-        "version": env!("CARGO_PKG_VERSION"),
-    });
-    
-    Ok(Json(response))
-}
-
-pub async fn readiness(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let health = state.health.read().await;
-    
-    let response = json!({
-        "status": if health.is_healthy() { "ready" } else { "not_ready" },
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "checks": {
-            "database": health.database,
-            "policy_engine": health.policy_engine,
-        }
-    });
-    
-    Ok(Json(response))
-}
-
-fn component_health_to_json(health: &crate::app_state::ComponentHealth) -> Value {
-    match health {
-        crate::app_state::ComponentHealth::Healthy => json!({
-            "status": "healthy"
-        }),
-        crate::app_state::ComponentHealth::Degraded { reason } => json!({
-            "status": "degraded",
-            "reason": reason
-        }),
-        crate::app_state::ComponentHealth::Unhealthy { reason } => json!({
-            "status": "unhealthy",
-            "reason": reason
-        }),
-    }
-}
-```
-
-## src/api/metrics_handler.rs
-
-```rust
-use crate::app_state::AppState;
-use axum::{extract::State, response::Response};
-use std::sync::Arc;
-
-pub async fn metrics(State(state): State<Arc<AppState>>) -> Response {
-    if !state.config.metrics.enabled {
-        return Response::builder()
-            .status(404)
-            .body("Metrics disabled".into())
-            .unwrap();
-    }
-    
-    // This would depend on your metrics implementation
-    // For Prometheus, you might do something like:
-    /*
-    let encoder = prometheus::TextEncoder::new();
-    let metric_families = prometheus::gather();
-    let mut buffer = Vec::new();
-    encoder.encode(&metric_families, &mut buffer).unwrap();
-    
-    Response::builder()
-        .header("content-type", "text/plain; version=0.0.4")
-        .body(buffer.into())
-        .unwrap()
-    */
-    
-    // Placeholder response
-    Response::builder()
-        .header("content-type", "text/plain")
-        .body("# Metrics would be here\n".into())
-        .unwrap()
-}
-```
-
-## src/api/auth_handler.rs
-
-```rust
-use crate::{app_state::AppState, error::{AppError, Result}};
-use axum::{extract::State, response::Json};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-pub struct AuthorizationRequest {
-    pub principal: String,
-    pub action: String,
-    pub resource: String,
-    pub context: Option<Value>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AuthorizationResponse {
-    pub decision: String,
-    pub reasons: Vec<String>,
-    pub request_id: String,
-    pub timestamp: String,
-}
-
-pub async fn authorize(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<AuthorizationRequest>,
-) -> Result<Json<AuthorizationResponse>> {
-    let request_id = uuid::Uuid::new_v4().to_string();
-    
-    tracing::info!(
-        request_id = %request_id,
-        principal = %request.principal,
-        action = %request.action,
-        resource = %request.resource,
-        "Processing authorization request"
-    );
-    
-    // Validate request
-    if request.principal.is_empty() {
-        return Err(AppError::BadRequest("Principal cannot be empty".to_string()));
-    }
-    
-    if request.action.is_empty() {
-        return Err(AppError::BadRequest("Action cannot be empty".to_string()));
-    }
-    
-    if request.resource.is_empty() {
-        return Err(AppError::BadRequest("Resource cannot be empty".to_string()));
-    }
-    
-    // Process authorization using the policy engine
-    let decision = match process_authorization(&state, &request).await {
-        Ok(result) => {
-            state.metrics.record_authorization(result.decision == "Allow");
-            result
-        },
-        Err(e) => {
-            state.metrics.record_authorization(false);
-            tracing::error!(
-                request_id = %request_id,
-                error = %e,
-                "Authorization processing failed"
-            );
-            return Err(e);
-        }
-    };
-    
-    tracing::info!(
-        request_id = %request_id,
-        decision = %decision.decision,
-        "Authorization request completed"
-    );
-    
-    Ok(Json(AuthorizationResponse {
-        decision: decision.decision,
-        reasons: decision.reasons,
-        request_id,
-        timestamp: chrono::Utc::now().to_rfc3339(),
-    }))
-}
-
-async fn process_authorization(
-    state: &Arc<AppState>,
-    request: &AuthorizationRequest,
-) -> Result<AuthorizationResult> {
-    // This is where you'd integrate with your actual policy engine
-    // For now, this is a placeholder implementation
-    
-    // Example: Check if this is an admin user
-    if request.principal == "admin" {
-        return Ok(AuthorizationResult {
-            decision: "Allow".to_string(),
-            reasons: vec!["Admin user has full access".to_string()],
-        });
-    }
-    
-    // Example: Deny by default for this demo
-    Ok(AuthorizationResult {
-        decision: "Deny".to_string(),
-        reasons: vec!["Default deny policy applied".to_string()],
-    })
-}
-
-#[derive(Debug)]
-struct AuthorizationResult {
-    decision: String,
-    reasons: Vec<String>,
-}
-```
-
-## src/api/policy_handlers.rs
-
-```rust
-use crate::{app_state::AppState, error::{AppError, Result}};
-use axum::{extract::{Path, State}, response::Json};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-pub struct CreatePolicyRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub policy_content: String,
-    pub enabled: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PolicyResponse {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub policy_content: String,
-    pub enabled: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PolicyListResponse {
-    pub policies: Vec<PolicyResponse>,
-    pub total: usize,
-}
-
-pub async fn create_policy(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<CreatePolicyRequest>,
-) -> Result<Json<PolicyResponse>> {
-    tracing::info!(
-        policy_name = %request.name,
-        "Creating new policy"
-    );
-    
-    // Validate request
-    if request.name.is_empty() {
-        return Err(AppError::BadRequest("Policy name cannot be empty".to_string()));
-    }
-    
-    if request.policy_content.is_empty() {
-        return Err(AppError::BadRequest("Policy content cannot be empty".to_string()));
-    }
-    
-    // Record metrics
-    state.metrics.record_policy_operation();
-    
-    // Create policy (placeholder implementation)
-    let policy_id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
-    
-    let policy = PolicyResponse {
-        id: policy_id.clone(),
-        name: request.name.clone(),
-        description: request.description,
-        policy_content: request.policy_content,
-        enabled: request.enabled.unwrap_or(true),
-        created_at: now.clone(),
-        updated_at: now,
-    };
-    
-    tracing::info!(
-        policy_id = %policy_id,
-        policy_name = %request.name,
-        "Policy created successfully"
-    );
-    
-    Ok(Json(policy))
-}
-
-pub async fn list_policies(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<PolicyListResponse>> {
-    tracing::debug!("Listing all policies");
-    
-    // Placeholder implementation - in reality, you'd fetch from storage
-    let policies = vec![
-        PolicyResponse {
-            id: "sample-policy-1".to_string(),
-            name: "Sample Policy".to_string(),
-            description: Some("A sample policy for demonstration".to_string()),
-            policy_content: "permit(principal, action, resource);".to_string(),
-            enabled: true,
-            created_at: chrono::Utc::now().to_rfc3339(),
-            updated_at: chrono::Utc::now().to_rfc3339(),
-        },
-    ];
-    
-    let response = PolicyListResponse {
-        total: policies.len(),
-        policies,
-    };
-    
-    Ok(Json(response))
-}
-
-pub async fn delete_policy(
-    State(state): State<Arc<AppState>>,
-    Path(policy_id): Path<String>,
-) -> Result<Json<serde_json::Value>> {
-    tracing::info!(
-        policy_id = %policy_id,
-        "Deleting policy"
-    );
-    
-    if policy_id.is_empty() {
-        return Err(AppError::BadRequest("Policy ID cannot be empty".to_string()));
-    }
-    
-    // Record metrics
-    state.metrics.record_policy_operation();
-    
-    // Placeholder implementation - in reality, you'd delete from storage
-    // and handle cases where the policy doesn't exist
-    
-    tracing::info!(
-        policy_id = %policy_id,
-        "Policy deleted successfully"
-    );
-    
-    Ok(Json(serde_json::json!({
-        "message": "Policy deleted successfully",
-        "policy_id": policy_id,
-        "timestamp": chrono::Utc::now().to_rfc3339()
-    })))
-}
-```
-
-## src/models/mod.rs
-
-```rust
-pub mod user;
-pub mod team;
-pub mod blog_post;
-
-pub use user::User;
-pub use team::Team;
-pub use blog_post::BlogPost;
-```
-
-## src/models/user.rs
-
-```rust
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct User {
-    pub id: String,
-    pub username: String,
-    pub email: String,
-    pub full_name: String,
-    pub department: Option<String>,
-    pub job_title: Option<String>,
-    pub active: bool,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl User {
-    pub fn new(username: String, email: String, full_name: String) -> Self {
-        let now = chrono::Utc::now();
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            username,
-            email,
-            full_name,
-            department: None,
-            job_title: None,
-            active: true,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-}
-```
-
-## src/models/team.rs
-
-```rust
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Team {
-    pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub members: Vec<String>, // User IDs
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-impl Team {
-    pub fn new(name: String, description: Option<String>) -> Self {
-        let now = chrono::Utc::now();
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            name,
-            description,
-            members: Vec::new(),
-            created_at: now,
-            updated_at: now,
-        }
-    }
-    
-    pub fn add_member(&mut self, user_id: String) {
-        if !self.members.contains(&user_id) {
-            self.members.push(user_id);
-            self.updated_at = chrono::Utc::now();
-        }
-    }
-    
-    pub fn remove_member(&mut self, user_id: &str) {
-        self.members.retain(|id| id != user_id);
-        self.updated_at = chrono::Utc::now();
-    }
-}
-```
-
-## src/models/blog_post.rs
-
-```rust
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlogPost {
-    pub id: String,
-    pub title: String,
-    pub content: String,
-    pub author_id: String,
-    pub published: bool,
-    pub tags: Vec<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub published_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl BlogPost {
-    pub fn new(title: String, content: String, author_id: String) -> Self {
-        let now = chrono::Utc::now();
-        Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            title,
-            content,
-            author_id,
-            published: false,
-            tags: Vec::new(),
-            created_at: now,
-            updated_at: now,
-            published_at: None,
-        }
-    }
-    
-    pub fn publish(&mut self) {
-        self.published = true;
-        self.published_at = Some(chrono::Utc::now());
-        self.updated_at = chrono::Utc::now();
-    }
-    
-    pub fn unpublish(&mut self) {
-        self.published = false;
-        self.published_at = None;
-        self.updated_at = chrono::Utc::now();
-    }
-    
-    pub fn add_tag(&mut self, tag: String) {
-        if !self.tags.contains(&tag) {
-            self.tags.push(tag);
-            self.updated_at = chrono::Utc::now();
-        }
-    }
-}
-```
-
-## src/main.rs
-
-```rust
-mod api;
-mod app_state;
-mod config;
-mod error;
-mod middleware;
-mod models;
-mod services;
-mod surreal_adapter;
-
-use crate::{
-    app_state::{AppMetrics, AppState, HealthStatus},
-    config::Config,
-    error::{AppError, Result},
-    middleware::{logging_middleware, metrics_middleware},
-    models::{BlogPost, Team, User},
-    services::shutdown,
-    surreal_adapter::SurrealStorageAdapter,
-};
-use axum::{
-    middleware,
-    routing::{delete, get, post},
-    Router,
-};
-use hodei_policy::EngineBuilder;
-use std::{sync::Arc, time::Duration};
-use tokio::sync::RwLock;
-use tower_http::{
-    compression::CompressionLayer,
-    cors::CorsLayer,
-    timeout::TimeoutLayer,
-    trace::TraceLayer,
-};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Load configuration
-    let config = Config::from_env()?;
-    
-    // Setup logging
-    setup_logging(&config)?;
-    
-    tracing::info!("Starting Policy BaaS MVP");
-    tracing::debug!("Configuration: {:#?}", config);
-    
-    // Initialize metrics if enabled
-    if config.metrics.enabled && config.metrics.prometheus_registry {
-        initialize_metrics();
-    }
-    
-    // Initialize metrics collector
-    let metrics = AppMetrics::new();
-    
-    // Connect to database with retry logic
-    let storage = connect_database(&config).await?;
-    tracing::info!("Database connection established");
-    
-    // Build policy engine
-    let (engine, policy_store) = build_policy_engine(storage).await?;
-    tracing::info!("Policy engine initialized successfully");
-    
-    // Create shared application state
-    let shared_state = Arc::new(AppState {
-        engine,
-        policy_store,
-        config: config.clone(),
-        metrics,
-        health: Arc::new(RwLock::new(HealthStatus::new())),
-    });
-    
-    // Build application router
-    let app = build_router(shared_state.clone()).await?;
-    
-    // Start server
-    let bind_addr = format!("{}:{}", config.server.host, config.server.port);
-    let listener = tokio::net::TcpListener::bind(&bind_addr)
-        .await
-        .map_err(AppError::ServerBind)?;
-    
-    tracing::info!("Server listening on {}", bind_addr);
-    tracing::info!("Health check available at: http://{}/health", bind_addr);
-    if config.metrics.enabled {
-        tracing::info!("Metrics available at: http://{}{}", bind_addr, config.metrics.endpoint);
-    }
-    
-    // Start server with graceful shutdown
-    let shutdown_timeout = Duration::from_secs(config.server.shutdown_timeout_seconds);
-    
-    tokio::select! {
-        result = axum::serve(listener, app) => {
-            if let Err(e) = result {
-                tracing::error!("Server error: {}", e);
-                return Err(AppError::Internal(e.to_string()));
-            }
-        }
-        _ = shutdown::graceful_shutdown(shutdown_timeout) => {
-            tracing::info!("Received shutdown signal, stopping server");
-        }
-    }
-    
-    tracing::info!("Application shutdown completed");
-    Ok(())
-}
-
-fn setup_logging(config: &Config) -> Result<()> {
-    let filter = tracing_subscriber::EnvFilter::try_new(&config.logging.level)
-        .map_err(|e| AppError::LoggingSetup(e.to_string()))?;
-    
-    let subscriber = tracing_subscriber::registry().with(filter);
-    
-    match config.logging.format {
-        config::LogFormat::Json => {
-            subscriber
-                .with(tracing_subscriber::fmt::layer().json())
-                .try_init()
-                .map_err(|e| AppError::LoggingSetup(e.to_string()))?;
-        }
-        config::LogFormat::Pretty => {
-            subscriber
-                .with(tracing_subscriber::fmt::layer().pretty())
-                .try_init()
-                .map_err(|e| AppError::LoggingSetup(e.to_string()))?;
-        }
-        config::LogFormat::Compact => {
-            subscriber
-                .with(tracing_subscriber::fmt::layer().compact())
-                .try_init()
-                .map_err(|e| AppError::LoggingSetup(e.to_string()))?;
-        }
-    }
-    
-    Ok(())
-}
-
-fn initialize_metrics() {
-    // Initialize Prometheus metrics registry
-    // This would depend on your specific metrics implementation
-    tracing::info!("Metrics registry initialized");
-}
-
-async fn connect_database(config: &Config) -> Result<Arc<SurrealStorageAdapter>> {
-    let mut attempts = 0;
-    let max_attempts = config.database.retry_attempts;
-    let base_delay = Duration::from_secs(1);
-    
-    loop {
-        match SurrealStorageAdapter::connect(&config.database.url).await {
-            Ok(adapter) => {
-                tracing::info!("Successfully connected to database");
-                return Ok(Arc::new(adapter));
-            }
-            Err(e) => {
-                attempts += 1;
-                if attempts >= max_attempts {
-                    return Err(AppError::DatabaseConnection(format!(
-                        "Failed to connect after {} attempts: {}",
-                        max_attempts, e
-                    )));
-                }
-                
-                let delay = base_delay * 2_u32.pow(attempts - 1);
-                tracing::warn!(
-                    "Database connection attempt {} failed, retrying in {:?}: {}",
-                    attempts,
-                    delay,
-                    e
-                );
-                tokio::time::sleep(delay).await;
-            }
-        }
-    }
-}
-
-async fn build_policy_engine(
-    storage: Arc<SurrealStorageAdapter>,
-) -> Result<(hodei_policy::AuthorizationEngine, hodei_policy::PolicyStore)> {
-    EngineBuilder::new()
-        .register_entity_type::<User>()
-        .map_err(|e| AppError::PolicyEngine(format!("Failed to register User entity: {}", e)))?
-        .register_entity_type::<Team>()
-        .map_err(|e| AppError::PolicyEngine(format!("Failed to register Team entity: {}", e)))?
-        .register_entity_type::<BlogPost>()
-        .map_err(|e| AppError::PolicyEngine(format!("Failed to register BlogPost entity: {}", e)))?
-        .build(storage)
-        .map_err(|e| AppError::PolicyEngine(format!("Failed to build policy engine: {}", e)))
-}
-
-async fn build_router(state: Arc<AppState>) -> Result<Router> {
-    let cors = build_cors_layer(&state.config)?;
-    
-    let request_timeout = Duration::from_secs(state.config.server.request_timeout_seconds);
-    
-    let api_routes = Router::new()
-        // Policy management routes
-        .route("/policies", post(api::create_policy))
-        .route("/policies", get(api::list_policies))
-        .route("/policies/:id", delete(api::delete_policy))
-        
-        // Authorization route
-        .route("/authorize", post(api::authorize));
-    
-    let health_routes = Router::new()
-        .route("/health", get(api::health))
-        .route("/ready", get(api::readiness));
-    
-    let mut app = Router::new()
-        .nest("/api/v1", api_routes)
-        .merge(health_routes)
-        .with_state(state.clone())
-        .layer(middleware::from_fn_with_state(state.clone(), metrics_middleware))
-        .layer(middleware::from_fn(logging_middleware))
-        .layer(TraceLayer::new_for_http())
-        .layer(TimeoutLayer::new(request_timeout))
-        .layer(CompressionLayer::new())
-        .layer(cors);
-    
-    // Add metrics endpoint if enabled
-    if state.config.metrics.enabled {
-        app = app.route(&state.config.metrics.endpoint, get(api::metrics));
-    }
-    
-    Ok(app)
-}
-
-fn build_cors_layer(config: &Config) -> Result<CorsLayer> {
-    let mut cors = CorsLayer::new();
-    
-    // Configure allowed origins
-    if config.cors.allow_origins.contains(&"*".to_string()) {
-        cors = cors.allow_origin(tower_http::cors::Any);
-    } else {
-        for origin in &config.cors.allow_origins {
-            cors = cors.allow_origin(
-                origin
-                    .parse::<http::HeaderValue>()
-                    .map_err(|_| AppError::Configuration(format!("Invalid CORS origin: {}", origin)))?,
-            );
-        }
-    }
-    
-    // Configure allowed headers
-    let headers: Result<Vec<_>, _> = config
-        .cors
-        .allow_headers
-        .iter()
-        .map(|h| {
-            h.parse::<http::HeaderName>()
-                .map_err(|_| AppError::Configuration(format!("Invalid CORS header: {}", h)))
-        })
-        .collect();
-    cors = cors.allow_headers(headers?);
-    
-    // Configure allowed methods
-    let methods: Result<Vec<_>, _> = config
-        .cors
-        .allow_methods
-        .iter()
-        .map(|m| {
-            m.parse::<http::Method>()
-                .map_err(|_| AppError::Configuration(format!("Invalid CORS method: {}", m)))
-        })
-        .collect();
-    cors = cors.allow_methods(methods?);
-    
-    // Configure max age
-    if let Some(max_age) = config.cors.max_age {
-        cors = cors.max_age(Duration::from_secs(max_age));
-    }
-    
-    Ok(cors)
-}
-```
-
-## Archivo .env de ejemplo
-
-```env
-# Server configuration
-SERVER_HOST=0.0.0.0
-SERVER_PORT=3000
-SHUTDOWN_TIMEOUT=30
-REQUEST_TIMEOUT=30
-
-# Database configuration
-DATABASE_URL=baas_mvp_api.db
-DB_MAX_CONNECTIONS=10
-DB_CONNECTION_TIMEOUT=5
-DB_RETRY_ATTEMPTS=3
-
-# Logging configuration
-LOG_LEVEL=info,policy_baas_mvp=debug,tower_http=debug
-LOG_FORMAT=pretty
-
-# CORS configuration
-CORS_ORIGINS=*
-CORS_HEADERS=content-type,authorization,x-request-id
-CORS_METHODS=GET,POST,PUT,DELETE,OPTIONS
-CORS_MAX_AGE=86400
-
-# Metrics configuration
-METRICS_ENABLED=true
-METRICS_ENDPOINT=/metrics
-PROMETHEUS_REGISTRY=true
-```
-
-Este código completo incluye todas las mejoras mencionadas:
-
-- ✅ **Configuración basada en entorno**
-- ✅ **Gestión robusta de errores**
-- ✅ **Logging estructurado y configurable**
-- ✅ **Health checks y métricas**
-- ✅ **Graceful shutdown**
-- ✅ **Middleware personalizado**
-- ✅ **Arquitectura modular**
-- ✅ **Timeout y compresión HTTP**
-- ✅ **CORS configurable**
-- ✅ **Retry logic para base de datos**
-
-El sistema ahora está listo para producción con todas las características necesarias para un servicio BaaS robusto.
+## Notes
+- Cada `feature` en `hodei-organizations` debe tener su propia "vertical slice" (`dto`, `use_case`, `di`).
+- Los tests de integración son la clave. Usarán implementaciones de repositorios en memoria (`Surreal::new::<Mem>()`) para aislar el test de una base de datos real.
+- El `PolicyEvaluator` en `hodei-policies` será un componente simple y sin estado, fácil de instanciar y usar en los tests de `hodei-authorizer`.

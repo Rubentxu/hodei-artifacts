@@ -8,8 +8,7 @@ pub use application::{AuthorizationEngine, AuthorizationRequest, EngineBuilder, 
 pub use domain::{
     actions, entity_utils,
     hrn::Hrn,
-    ports::{AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, StorageError},
-    principals,
+    ports::{AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, StorageError, Principal, Resource, Action},
     schema_assembler::*,
 };
 

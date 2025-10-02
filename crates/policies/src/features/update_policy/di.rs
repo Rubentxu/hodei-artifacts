@@ -1,49 +1,30 @@
 use std::sync::Arc;
-
 use anyhow::Result;
-
-use crate::shared::application::{AuthorizationEngine, EngineBuilder};
-use crate::shared::domain::principals;
-use crate::shared::infrastructure::surreal::SurrealMemStorage;
-
+use crate::shared::application::{AuthorizationEngine, di_helpers};
 use super::use_case::UpdatePolicyUseCase;
 
 /// Build UpdatePolicyUseCase wired with SurrealDB in-memory storage (default dev/test)
-pub async fn make_use_case_mem() -> Result<(UpdatePolicyUseCase, Arc<AuthorizationEngine>)> {
-    let storage = Arc::new(SurrealMemStorage::new("policies", "policies").await?);
-
-    let (engine, store) = {
-        let mut builder = EngineBuilder::new();
-        builder
-            .register_entity_type::<principals::User>()?
-            .register_entity_type::<principals::Group>()?;
-        builder.build(storage)?
-    };
-
-    let uc = UpdatePolicyUseCase::new(Arc::new(store));
-    Ok((uc, Arc::new(engine)))
+/// NOTE: This creates an engine with NO entities registered.
+/// Consumers should use hodei-iam::di or register their own entities.
+pub async fn make_update_policy_use_case_mem() -> Result<(UpdatePolicyUseCase, Arc<AuthorizationEngine>)> {
+    let (engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator).await?;
+    let uc = UpdatePolicyUseCase::new(store);
+    Ok((uc, engine))
 }
 
 #[cfg(feature = "embedded")]
 pub mod embedded {
     use super::*;
-    use crate::shared::infrastructure::surreal::SurrealEmbeddedStorage;
+    use crate::shared::application::di_helpers;
 
     /// Build UpdatePolicyUseCase wired with SurrealDB embedded (RocksDB)
-    pub async fn make_use_case_embedded(
+    /// NOTE: This creates an engine with NO entities registered.
+    /// Consumers should use hodei-iam::di or register their own entities.
+    pub async fn make_update_policy_use_case_embedded(
         path: &str,
     ) -> Result<(UpdatePolicyUseCase, Arc<AuthorizationEngine>)> {
-        let storage = Arc::new(SurrealEmbeddedStorage::new("policies", "policies", path).await?);
-
-        let (engine, store) = {
-            let mut builder = EngineBuilder::new();
-            builder
-                .register_entity_type::<principals::User>()?
-                .register_entity_type::<principals::Group>()?;
-            builder.build(storage)?
-        };
-
-        let uc = UpdatePolicyUseCase::new(Arc::new(store));
-        Ok((uc, Arc::new(engine)))
+        let (engine, store) = di_helpers::build_engine_embedded(path, di_helpers::no_entities_configurator).await?;
+        let uc = UpdatePolicyUseCase::new(store);
+        Ok((uc, engine))
     }
 }
