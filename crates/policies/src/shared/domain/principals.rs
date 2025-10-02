@@ -1,7 +1,7 @@
 use crate::shared::domain::hrn::Hrn;
 use crate::shared::domain::ports::{self, HodeiEntity, HodeiEntityType};
-use ports::AttributeType::*;
 use cedar_policy::{EntityUid, RestrictedExpression};
+use ports::AttributeType::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -43,11 +43,29 @@ mod tests {
     #[test]
     fn user_parents_produce_entityuids() {
         let groups = vec![
-            Hrn::new("aws".into(), "hodei".into(), "123".into(), "Group".into(), "dev".into()),
-            Hrn::new("aws".into(), "hodei".into(), "123".into(), "Group".into(), "ops".into()),
+            Hrn::new(
+                "aws".into(),
+                "hodei".into(),
+                "123".into(),
+                "Group".into(),
+                "dev".into(),
+            ),
+            Hrn::new(
+                "aws".into(),
+                "hodei".into(),
+                "123".into(),
+                "Group".into(),
+                "ops".into(),
+            ),
         ];
         let user = User {
-            hrn: Hrn::new("aws".into(), "hodei".into(), "123".into(), "User".into(), "alice".into()),
+            hrn: Hrn::new(
+                "aws".into(),
+                "hodei".into(),
+                "123".into(),
+                "User".into(),
+                "alice".into(),
+            ),
             name: "Alice".into(),
             group_hrns: groups,
             email: "alice@example.com".into(),
@@ -62,7 +80,13 @@ mod tests {
     #[test]
     fn user_attributes_contains_expected() {
         let user = User {
-            hrn: Hrn::new("aws".into(), "hodei".into(), "123".into(), "User".into(), "alice".into()),
+            hrn: Hrn::new(
+                "aws".into(),
+                "hodei".into(),
+                "123".into(),
+                "User".into(),
+                "alice".into(),
+            ),
             name: "Alice".into(),
             group_hrns: vec![],
             email: "alice@example.com".into(),
@@ -105,7 +129,9 @@ impl HodeiEntityType for User {
         "User"
     }
 
-    fn is_principal_type() -> bool { true }
+    fn is_principal_type() -> bool {
+        true
+    }
 
     fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
         vec![
@@ -135,15 +161,22 @@ impl HodeiEntity for Group {
     fn hrn(&self) -> &Hrn {
         &self.hrn
     }
-    
+
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
-        attrs.insert("name".to_string(), RestrictedExpression::new_string(self.name.clone()));
-        let tag_exprs: Vec<RestrictedExpression> = self.tags.iter().map(|t| RestrictedExpression::new_string(t.clone())).collect();
+        attrs.insert(
+            "name".to_string(),
+            RestrictedExpression::new_string(self.name.clone()),
+        );
+        let tag_exprs: Vec<RestrictedExpression> = self
+            .tags
+            .iter()
+            .map(|t| RestrictedExpression::new_string(t.clone()))
+            .collect();
         attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
         attrs
     }
-    
+
     fn parents(&self) -> Vec<EntityUid> {
         // Groups don't have parents in this model
         Vec::new()
@@ -157,7 +190,9 @@ impl HodeiEntityType for ServiceAccount {
         "ServiceAccount"
     }
 
-    fn is_principal_type() -> bool { true }
+    fn is_principal_type() -> bool {
+        true
+    }
 
     fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
         vec![
@@ -172,24 +207,36 @@ impl HodeiEntity for ServiceAccount {
     fn hrn(&self) -> &Hrn {
         &self.hrn
     }
-    
+
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
-        attrs.insert("name".to_string(), RestrictedExpression::new_string(self.name.clone()));
-        
+        attrs.insert(
+            "name".to_string(),
+            RestrictedExpression::new_string(self.name.clone()),
+        );
+
         // Convert annotations to a record
-        let annotation_map: BTreeMap<String, RestrictedExpression> = self.annotations
+        let annotation_map: BTreeMap<String, RestrictedExpression> = self
+            .annotations
             .iter()
             .map(|(k, v)| (k.clone(), RestrictedExpression::new_string(v.clone())))
             .collect();
-        attrs.insert("annotations".to_string(), RestrictedExpression::new_record(annotation_map).unwrap_or_else(|_|
-            RestrictedExpression::new_string("error_creating_record".to_string())));
-        
-        let tag_exprs: Vec<RestrictedExpression> = self.tags.iter().map(|t| RestrictedExpression::new_string(t.clone())).collect();
+        attrs.insert(
+            "annotations".to_string(),
+            RestrictedExpression::new_record(annotation_map).unwrap_or_else(|_| {
+                RestrictedExpression::new_string("error_creating_record".to_string())
+            }),
+        );
+
+        let tag_exprs: Vec<RestrictedExpression> = self
+            .tags
+            .iter()
+            .map(|t| RestrictedExpression::new_string(t.clone()))
+            .collect();
         attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
         attrs
     }
-    
+
     fn parents(&self) -> Vec<EntityUid> {
         // Service accounts don't have parents in this model
         Vec::new()
@@ -216,25 +263,39 @@ impl HodeiEntity for Namespace {
     fn hrn(&self) -> &Hrn {
         &self.hrn
     }
-    
+
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
-        attrs.insert("name".to_string(), RestrictedExpression::new_string(self.name.clone()));
-        
+        attrs.insert(
+            "name".to_string(),
+            RestrictedExpression::new_string(self.name.clone()),
+        );
+
         // Convert annotations to a record
-        let annotation_map: BTreeMap<String, RestrictedExpression> = self.annotations
+        let annotation_map: BTreeMap<String, RestrictedExpression> = self
+            .annotations
             .iter()
             .map(|(k, v)| (k.clone(), RestrictedExpression::new_string(v.clone())))
             .collect();
-        attrs.insert("annotations".to_string(), RestrictedExpression::new_record(annotation_map).unwrap_or_else(|_|
-            RestrictedExpression::new_string("error_creating_record".to_string())));
-        
-        let tag_exprs: Vec<RestrictedExpression> = self.tags.iter().map(|t| RestrictedExpression::new_string(t.clone())).collect();
+        attrs.insert(
+            "annotations".to_string(),
+            RestrictedExpression::new_record(annotation_map).unwrap_or_else(|_| {
+                RestrictedExpression::new_string("error_creating_record".to_string())
+            }),
+        );
+
+        let tag_exprs: Vec<RestrictedExpression> = self
+            .tags
+            .iter()
+            .map(|t| RestrictedExpression::new_string(t.clone()))
+            .collect();
         attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
         attrs
     }
-    
-    fn parents(&self) -> Vec<EntityUid> { Vec::new() }
+
+    fn parents(&self) -> Vec<EntityUid> {
+        Vec::new()
+    }
 }
 
 impl HodeiEntity for User {
@@ -249,9 +310,19 @@ impl HodeiEntity for User {
 
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
         let mut attrs = HashMap::new();
-        attrs.insert("name".to_string(), RestrictedExpression::new_string(self.name.clone()));
-        attrs.insert("email".to_string(), RestrictedExpression::new_string(self.email.clone()));
-        let tag_exprs: Vec<RestrictedExpression> = self.tags.iter().map(|t| RestrictedExpression::new_string(t.clone())).collect();
+        attrs.insert(
+            "name".to_string(),
+            RestrictedExpression::new_string(self.name.clone()),
+        );
+        attrs.insert(
+            "email".to_string(),
+            RestrictedExpression::new_string(self.email.clone()),
+        );
+        let tag_exprs: Vec<RestrictedExpression> = self
+            .tags
+            .iter()
+            .map(|t| RestrictedExpression::new_string(t.clone()))
+            .collect();
         attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
         attrs
     }

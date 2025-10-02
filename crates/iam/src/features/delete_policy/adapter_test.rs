@@ -10,7 +10,8 @@ mod tests {
             name.to_string(),
             "permit(principal, action, resource);".to_string(),
             "Test policy".to_string(),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]

@@ -21,7 +21,7 @@ async fn test_create_policy_with_valid_hrns() {
 
     // Test HRN validation specifically
     let semantic_result = adapter.validate_semantics(valid_policy).await;
-    
+
     // The policy should pass HRN validation (even if it fails Cedar schema validation)
     // We're testing that the HRNs are properly formatted and use supported resource types
     match semantic_result {
@@ -32,10 +32,11 @@ async fn test_create_policy_with_valid_hrns() {
             let error_msg = e.to_string();
             // If it fails, it should NOT be due to HRN validation errors
             assert!(
-                !error_msg.contains("Unsupported service") && 
-                !error_msg.contains("Unsupported resource type") &&
-                !error_msg.contains("Invalid resource type"),
-                "Policy should not fail HRN validation, but got: {}", error_msg
+                !error_msg.contains("Unsupported service")
+                    && !error_msg.contains("Unsupported resource type")
+                    && !error_msg.contains("Invalid resource type"),
+                "Policy should not fail HRN validation, but got: {}",
+                error_msg
             );
         }
     }
@@ -55,11 +56,18 @@ async fn test_create_policy_with_invalid_service_hrn() {
     "#;
 
     let result = adapter.validate_semantics(invalid_policy).await;
-    assert!(result.is_err(), "Policy with invalid service HRN should fail semantic validation");
+    assert!(
+        result.is_err(),
+        "Policy with invalid service HRN should fail semantic validation"
+    );
 
     let error = result.unwrap_err();
     let error_message = error.to_string();
-    assert!(error_message.contains("Unsupported service"), "Error should mention unsupported service: {}", error_message);
+    assert!(
+        error_message.contains("Unsupported service"),
+        "Error should mention unsupported service: {}",
+        error_message
+    );
 }
 
 #[tokio::test]
@@ -76,11 +84,18 @@ async fn test_create_policy_with_invalid_resource_type_hrn() {
     "#;
 
     let result = adapter.validate_semantics(invalid_policy).await;
-    assert!(result.is_err(), "Policy with invalid resource type HRN should fail semantic validation");
+    assert!(
+        result.is_err(),
+        "Policy with invalid resource type HRN should fail semantic validation"
+    );
 
     let error = result.unwrap_err();
     let error_message = error.to_string();
-    assert!(error_message.contains("Unsupported resource type"), "Error should mention unsupported resource type: {}", error_message);
+    assert!(
+        error_message.contains("Unsupported resource type"),
+        "Error should mention unsupported resource type: {}",
+        error_message
+    );
 }
 
 #[tokio::test]
@@ -97,11 +112,18 @@ async fn test_create_policy_with_incompatible_service_resource() {
     "#;
 
     let result = adapter.validate_semantics(invalid_policy).await;
-    assert!(result.is_err(), "Policy with incompatible service-resource combination should fail semantic validation");
+    assert!(
+        result.is_err(),
+        "Policy with incompatible service-resource combination should fail semantic validation"
+    );
 
     let error = result.unwrap_err();
     let error_message = error.to_string();
-    assert!(error_message.contains("Invalid resource type"), "Error should mention invalid resource type for service: {}", error_message);
+    assert!(
+        error_message.contains("Invalid resource type"),
+        "Error should mention invalid resource type for service: {}",
+        error_message
+    );
 }
 
 #[tokio::test]
@@ -121,7 +143,11 @@ async fn test_create_policy_with_multiple_valid_hrns() {
     "#;
 
     let result = adapter.validate_semantics(valid_policy).await;
-    assert!(result.is_ok(), "Policy with multiple valid HRNs should pass semantic validation: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Policy with multiple valid HRNs should pass semantic validation: {:?}",
+        result
+    );
 }
 
 #[tokio::test]
@@ -141,7 +167,11 @@ async fn test_create_policy_with_supply_chain_hrns() {
     "#;
 
     let result = adapter.validate_semantics(valid_policy).await;
-    assert!(result.is_ok(), "Policy with supply chain HRNs should pass semantic validation: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Policy with supply chain HRNs should pass semantic validation: {:?}",
+        result
+    );
 }
 
 #[tokio::test]
@@ -161,7 +191,11 @@ async fn test_create_policy_with_analytics_hrns() {
     "#;
 
     let result = adapter.validate_semantics(valid_policy).await;
-    assert!(result.is_ok(), "Policy with analytics HRNs should pass semantic validation: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Policy with analytics HRNs should pass semantic validation: {:?}",
+        result
+    );
 }
 
 #[tokio::test]
@@ -181,7 +215,11 @@ async fn test_create_policy_with_configuration_hrns() {
     "#;
 
     let result = adapter.validate_semantics(valid_policy).await;
-    assert!(result.is_ok(), "Policy with configuration HRNs should pass semantic validation: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Policy with configuration HRNs should pass semantic validation: {:?}",
+        result
+    );
 }
 
 #[tokio::test]
@@ -200,5 +238,9 @@ async fn test_create_policy_with_monitoring_hrns() {
     "#;
 
     let result = adapter.validate_semantics(valid_policy).await;
-    assert!(result.is_ok(), "Policy with monitoring HRNs should pass semantic validation: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Policy with monitoring HRNs should pass semantic validation: {:?}",
+        result
+    );
 }

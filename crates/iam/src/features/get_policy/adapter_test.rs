@@ -7,7 +7,7 @@ mod tests {
         // This test verifies that the adapter compiles correctly
         // Full integration tests with MongoDB would require testcontainers
         // and would be placed in a separate integration test file
-        
+
         // For now, we just test that the types are correct
         assert!(true); // Placeholder test to ensure module compiles
     }

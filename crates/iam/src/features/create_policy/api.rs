@@ -18,7 +18,10 @@ impl CreatePolicyApi {
     }
 
     /// Handle create policy request
-    pub async fn create_policy(&self, command: CreatePolicyCommand) -> Result<CreatePolicyResponse, IamError> {
+    pub async fn create_policy(
+        &self,
+        command: CreatePolicyCommand,
+    ) -> Result<CreatePolicyResponse, IamError> {
         self.use_case.execute(command).await
     }
 }
@@ -42,15 +45,15 @@ mod tests {
     async fn test_create_policy_api_structure() {
         // This test just verifies the API structure compiles
         // Real tests would use dependency injection with mocks
-        
+
         // Mock database (in real tests, use testcontainers or mocks)
         let mock_db = Arc::new(
             mongodb::Client::with_uri_str("mongodb://localhost:27017")
                 .await
                 .unwrap()
-                .database("test")
+                .database("test"),
         );
-        
+
         // Repository will be injected via DI container
         let validator = Arc::new(CedarPolicyValidator::new());
         let publisher = Arc::new(SimplePolicyEventPublisher::new());
@@ -66,7 +69,7 @@ mod tests {
         // ));
 
         // let api = CreatePolicyApi::new(use_case);
-        
+
         // Verify API was created successfully
         // assert!(std::ptr::addr_of!(api).is_null() == false);
     }

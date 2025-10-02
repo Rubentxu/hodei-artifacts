@@ -14,14 +14,15 @@ mod tests {
             name.to_string(),
             "permit(principal, action, resource);".to_string(),
             "Test policy".to_string(),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]
     fn test_build_filter_document_empty_filter() {
         // This test verifies the filter document building logic
         let filter = PolicyFilter::new();
-        
+
         // We can't easily test the private method, but we can test that
         // the adapter can be constructed successfully
         // In a real scenario, this would be an integration test with a test database

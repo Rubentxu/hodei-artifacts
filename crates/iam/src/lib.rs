@@ -8,5 +8,5 @@ pub mod infrastructure;
 pub mod test_utils;
 
 // Re-export commonly used types
-pub use domain::policy::{Policy, PolicyStatus, PolicyMetadata, PolicyError};
+pub use domain::policy::{Policy, PolicyError, PolicyMetadata, PolicyStatus};
 pub use infrastructure::errors::{IamError, ValidationError};

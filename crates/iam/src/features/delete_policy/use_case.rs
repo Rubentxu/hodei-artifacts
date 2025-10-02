@@ -1,7 +1,7 @@
 // crates/iam/src/features/delete_policy/use_case.rs
 
 use crate::features::delete_policy::dto::{DeletePolicyCommand, DeletePolicyResponse};
-use crate::features::delete_policy::ports::{PolicyDeleter, PolicyDeleteEventPublisher};
+use crate::features::delete_policy::ports::{PolicyDeleteEventPublisher, PolicyDeleter};
 use crate::infrastructure::errors::IamError;
 use std::sync::Arc;
 
@@ -25,7 +25,10 @@ impl DeletePolicyUseCase {
     }
 
     /// Execute the delete policy use case
-    pub async fn execute(&self, command: DeletePolicyCommand) -> Result<DeletePolicyResponse, IamError> {
+    pub async fn execute(
+        &self,
+        command: DeletePolicyCommand,
+    ) -> Result<DeletePolicyResponse, IamError> {
         // 1. Validate command
         command.validate()?;
 

@@ -18,7 +18,10 @@ impl ListPoliciesApi {
     }
 
     /// Handle list policies request
-    pub async fn list_policies(&self, query: ListPoliciesQuery) -> Result<ListPoliciesResponse, IamError> {
+    pub async fn list_policies(
+        &self,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, IamError> {
         self.use_case.execute(query).await
     }
 }

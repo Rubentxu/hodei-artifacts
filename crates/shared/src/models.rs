@@ -1,6 +1,6 @@
 // crates/shared/src/models.rs
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::enums::HashAlgorithm;
@@ -33,10 +33,19 @@ impl PackageCoordinates {
     pub fn new(namespace: &str, name: &str, version: &str) -> Self {
         Self::with_qualifiers(namespace, name, version, HashMap::new())
     }
-    
-    pub fn with_qualifiers(namespace: &str, name: &str, version: &str, qualifiers: HashMap<String, String>) -> Self {
+
+    pub fn with_qualifiers(
+        namespace: &str,
+        name: &str,
+        version: &str,
+        qualifiers: HashMap<String, String>,
+    ) -> Self {
         Self {
-            namespace: if namespace.is_empty() { None } else { Some(namespace.to_string()) },
+            namespace: if namespace.is_empty() {
+                None
+            } else {
+                Some(namespace.to_string())
+            },
             name: name.to_string(),
             version: version.to_string(),
             qualifiers,

@@ -2,10 +2,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
     use crate::domain::validation::ValidationResult;
-    use crate::infrastructure::errors::ValidationError;
     use crate::features::create_policy::ports::PolicyValidator;
+    use crate::infrastructure::errors::ValidationError;
+    use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
 
     #[tokio::test]
     async fn test_validate_syntax_valid_policy() {
@@ -59,7 +59,11 @@ mod tests {
         let validation_result = result.unwrap();
         assert!(!validation_result.is_valid);
         assert_eq!(validation_result.errors.len(), 1);
-        assert!(validation_result.errors[0].message.contains("cannot be empty"));
+        assert!(
+            validation_result.errors[0]
+                .message
+                .contains("cannot be empty")
+        );
     }
 
     #[tokio::test]

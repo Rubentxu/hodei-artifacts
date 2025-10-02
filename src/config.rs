@@ -76,8 +76,7 @@ impl Config {
                     .unwrap_or(30),
             },
             database: DatabaseConfig {
-                url: env::var("DATABASE_URL")
-                    .unwrap_or_else(|_| "baas_mvp_api.db".to_string()),
+                url: env::var("DATABASE_URL").unwrap_or_else(|_| "baas_mvp_api.db".to_string()),
                 max_connections: env::var("DB_MAX_CONNECTIONS")
                     .unwrap_or_else(|_| "10".to_string())
                     .parse()
@@ -116,17 +115,14 @@ impl Config {
                     .split(',')
                     .map(|s| s.trim().to_string())
                     .collect(),
-                max_age: env::var("CORS_MAX_AGE")
-                    .ok()
-                    .and_then(|s| s.parse().ok()),
+                max_age: env::var("CORS_MAX_AGE").ok().and_then(|s| s.parse().ok()),
             },
             metrics: MetricsConfig {
                 enabled: env::var("METRICS_ENABLED")
                     .unwrap_or_else(|_| "true".to_string())
                     .parse()
                     .unwrap_or(true),
-                endpoint: env::var("METRICS_ENDPOINT")
-                    .unwrap_or_else(|_| "/metrics".to_string()),
+                endpoint: env::var("METRICS_ENDPOINT").unwrap_or_else(|_| "/metrics".to_string()),
                 prometheus_registry: env::var("PROMETHEUS_REGISTRY")
                     .unwrap_or_else(|_| "true".to_string())
                     .parse()
@@ -137,11 +133,14 @@ impl Config {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum ConfigError {
-    #[error("Invalid port configuration")]
-    InvalidPort,
+    #[error("Failed to load environment: {0}")]
+    EnvError(String),
     #[error("Missing required environment variable: {0}")]
     MissingEnvVar(String),
     #[error("Invalid configuration value: {0}")]
     InvalidValue(String),
+    #[error("Invalid port number")]
+    InvalidPort,
 }

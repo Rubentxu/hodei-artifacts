@@ -1,4 +1,7 @@
-use crate::{app_state::AppState, error::{AppError, Result}};
+use crate::{
+    app_state::AppState,
+    error::{AppError, Result},
+};
 use axum::{extract::State, response::Json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,6 +12,7 @@ pub struct AuthorizationRequest {
     pub principal: String,
     pub action: String,
     pub resource: String,
+    #[allow(dead_code)]
     pub context: Option<Value>,
 }
 
@@ -25,7 +29,7 @@ pub async fn authorize(
     Json(request): Json<AuthorizationRequest>,
 ) -> Result<Json<AuthorizationResponse>> {
     let request_id = uuid::Uuid::new_v4().to_string();
-    
+
     tracing::info!(
         request_id = %request_id,
         principal = %request.principal,
@@ -33,26 +37,30 @@ pub async fn authorize(
         resource = %request.resource,
         "Processing authorization request"
     );
-    
+
     // Validate request
     if request.principal.is_empty() {
-        return Err(AppError::BadRequest("Principal cannot be empty".to_string()));
+        return Err(AppError::BadRequest(
+            "Principal cannot be empty".to_string(),
+        ));
     }
-    
+
     if request.action.is_empty() {
         return Err(AppError::BadRequest("Action cannot be empty".to_string()));
     }
-    
+
     if request.resource.is_empty() {
         return Err(AppError::BadRequest("Resource cannot be empty".to_string()));
     }
-    
+
     // Process authorization using the policy engine
     let decision = match process_authorization(&state, &request).await {
         Ok(result) => {
-            state.metrics.record_authorization(result.decision == "Allow");
+            state
+                .metrics
+                .record_authorization(result.decision == "Allow");
             result
-        },
+        }
         Err(e) => {
             state.metrics.record_authorization(false);
             tracing::error!(
@@ -63,13 +71,13 @@ pub async fn authorize(
             return Err(e);
         }
     };
-    
+
     tracing::info!(
         request_id = %request_id,
         decision = %decision.decision,
         "Authorization request completed"
     );
-    
+
     Ok(Json(AuthorizationResponse {
         decision: decision.decision,
         reasons: decision.reasons,
@@ -79,12 +87,12 @@ pub async fn authorize(
 }
 
 async fn process_authorization(
-    state: &Arc<AppState>,
+    _state: &Arc<AppState>,
     request: &AuthorizationRequest,
 ) -> Result<AuthorizationResult> {
     // This is where you'd integrate with your actual policy engine
     // For now, this is a placeholder implementation
-    
+
     // Example: Check if this is an admin user
     if request.principal == "admin" {
         return Ok(AuthorizationResult {
@@ -92,7 +100,7 @@ async fn process_authorization(
             reasons: vec!["Admin user has full access".to_string()],
         });
     }
-    
+
     // Example: Deny by default for this demo
     Ok(AuthorizationResult {
         decision: "Deny".to_string(),

@@ -1,5 +1,5 @@
 use tokio::signal;
-use tracing::{info, warn};
+use tracing::info;
 
 pub async fn signal() {
     let ctrl_c = async {
@@ -27,24 +27,27 @@ pub async fn signal() {
             info!("Received SIGTERM signal, initiating graceful shutdown");
         },
     }
-    
+
     // Give some time for cleanup
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     info!("Shutdown signal processed");
 }
 
 pub async fn graceful_shutdown(timeout: std::time::Duration) {
-    info!("Starting graceful shutdown with {}s timeout", timeout.as_secs());
-    
+    info!(
+        "Starting graceful shutdown with {}s timeout",
+        timeout.as_secs()
+    );
+
     // Wait for the shutdown signal
     signal().await;
-    
+
     // Additional cleanup tasks can be added here
     // For example: flushing metrics, closing database connections, etc.
-    
+
     // Wait a bit to ensure all ongoing requests complete
     let cleanup_time = std::cmp::min(timeout, std::time::Duration::from_secs(5));
     tokio::time::sleep(cleanup_time).await;
-    
+
     info!("Graceful shutdown completed");
 }

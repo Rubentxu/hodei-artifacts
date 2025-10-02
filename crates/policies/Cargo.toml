@@ -28,7 +28,7 @@ async-trait = { workspace = true }
 ## testing dependencies are only declared under [dev-dependencies]
 
 [features]
-default = ["embedded"]
+default = ["mem"]
 mem = ["surrealdb/kv-mem"]
 embedded = ["surrealdb/kv-rocksdb"]
 integration = []

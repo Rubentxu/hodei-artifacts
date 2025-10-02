@@ -1,7 +1,9 @@
 // crates/iam/src/features/update_policy/use_case.rs
 
 use crate::features::update_policy::dto::{UpdatePolicyCommand, UpdatePolicyResponse};
-use crate::features::update_policy::ports::{PolicyUpdater, PolicyUpdateValidator, PolicyUpdateEventPublisher};
+use crate::features::update_policy::ports::{
+    PolicyUpdateEventPublisher, PolicyUpdateValidator, PolicyUpdater,
+};
 use crate::infrastructure::errors::IamError;
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -29,7 +31,10 @@ impl UpdatePolicyUseCase {
     }
 
     /// Execute the update policy use case
-    pub async fn execute(&self, command: UpdatePolicyCommand) -> Result<UpdatePolicyResponse, IamError> {
+    pub async fn execute(
+        &self,
+        command: UpdatePolicyCommand,
+    ) -> Result<UpdatePolicyResponse, IamError> {
         // 1. Validate command
         command.validate()?;
 
@@ -57,7 +62,8 @@ impl UpdatePolicyUseCase {
             let validation_result = self.validator.validate_syntax(content).await?;
             if !validation_result.is_valid {
                 return Err(IamError::validation_error(
-                    validation_result.first_error_message()
+                    validation_result
+                        .first_error_message()
                         .unwrap_or("Invalid policy syntax")
                         .to_string(),
                 ));

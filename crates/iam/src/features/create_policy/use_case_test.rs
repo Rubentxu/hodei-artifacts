@@ -2,11 +2,13 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::features::create_policy::use_case::CreatePolicyUseCase;
     use crate::domain::policy::{Policy, PolicyStatus};
     use crate::domain::validation::ValidationResult;
     use crate::features::create_policy::dto::CreatePolicyCommand;
-    use crate::features::create_policy::ports::{PolicyCreator, PolicyValidator, PolicyEventPublisher};
+    use crate::features::create_policy::ports::{
+        PolicyCreator, PolicyEventPublisher, PolicyValidator,
+    };
+    use crate::features::create_policy::use_case::CreatePolicyUseCase;
     use crate::infrastructure::errors::{IamError, ValidationError};
     use async_trait::async_trait;
     use shared::hrn::PolicyId;
@@ -55,7 +57,7 @@ mod tests {
             if self.should_fail {
                 return Err(IamError::DatabaseError("Mock database error".to_string()));
             }
-            
+
             self.created_policies.lock().unwrap().push(policy.clone());
             Ok(policy)
         }
@@ -95,7 +97,9 @@ mod tests {
 
         async fn validate_semantics(&self, _content: &str) -> Result<(), IamError> {
             if self.should_fail {
-                Err(IamError::validation_error("Mock semantic validation error".to_string()))
+                Err(IamError::validation_error(
+                    "Mock semantic validation error".to_string(),
+                ))
             } else {
                 Ok(())
             }
@@ -143,12 +147,8 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        
-        let use_case = CreatePolicyUseCase::new(
-            creator.clone(),
-            validator,
-            publisher.clone(),
-        );
+
+        let use_case = CreatePolicyUseCase::new(creator.clone(), validator, publisher.clone());
 
         let command = create_test_command();
 
@@ -179,7 +179,7 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::with_failure());
         let publisher = Arc::new(MockEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator.clone(), validator, publisher);
         let command = create_test_command();
 
@@ -207,7 +207,7 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::with_existing_policy());
         let validator = Arc::new(MockPolicyValidator::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator.clone(), validator, publisher);
         let command = create_test_command();
 
@@ -234,7 +234,7 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::with_failure());
         let validator = Arc::new(MockPolicyValidator::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, publisher);
         let command = create_test_command();
 
@@ -257,9 +257,9 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::new());
         let publisher = Arc::new(MockEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator.clone(), validator, publisher);
-        
+
         let command = CreatePolicyCommand::new(
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
@@ -274,7 +274,10 @@ mod tests {
         // Assert
         assert!(result.is_ok());
         let response = result.unwrap();
-        assert_eq!(response.policy.description, Some("Test description".to_string()));
+        assert_eq!(
+            response.policy.description,
+            Some("Test description".to_string())
+        );
         assert_eq!(response.policy.metadata.tags, vec!["test", "policy"]);
     }
 
@@ -309,7 +312,8 @@ mod tests {
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
             "test_user".to_string(),
-        ).with_tags((0..15).map(|i| format!("tag{}", i)).collect());
+        )
+        .with_tags((0..15).map(|i| format!("tag{}", i)).collect());
         assert!(command.validate().is_err());
 
         // Test valid command

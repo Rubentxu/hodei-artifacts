@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct MetricValue {
@@ -26,8 +26,9 @@ impl PolicyMetrics {
             value,
             timestamp: chrono::Utc::now(),
         };
-        
-        metrics.entry(name.to_string())
+
+        metrics
+            .entry(name.to_string())
             .or_insert_with(Vec::new)
             .push(metric_value);
     }
@@ -39,7 +40,8 @@ impl PolicyMetrics {
 
     // Policy validation metrics
     pub async fn record_validation_duration(&self, duration_ms: u64) {
-        self.record_metric("validation_duration_ms", duration_ms as f64).await;
+        self.record_metric("validation_duration_ms", duration_ms as f64)
+            .await;
     }
 
     pub async fn record_validation_success(&self) {
@@ -52,7 +54,8 @@ impl PolicyMetrics {
 
     // Policy conflict detection metrics
     pub async fn record_conflict_detection_duration(&self, duration_ms: u64) {
-        self.record_metric("conflict_detection_duration_ms", duration_ms as f64).await;
+        self.record_metric("conflict_detection_duration_ms", duration_ms as f64)
+            .await;
     }
 
     pub async fn record_conflicts_found(&self, count: usize) {
@@ -61,7 +64,8 @@ impl PolicyMetrics {
 
     // Policy coverage analysis metrics
     pub async fn record_coverage_analysis_duration(&self, duration_ms: u64) {
-        self.record_metric("coverage_analysis_duration_ms", duration_ms as f64).await;
+        self.record_metric("coverage_analysis_duration_ms", duration_ms as f64)
+            .await;
     }
 
     pub async fn record_coverage_percentage(&self, percentage: f64) {
@@ -69,11 +73,13 @@ impl PolicyMetrics {
     }
 
     pub async fn record_coverage_gaps_found(&self, gap_count: usize) {
-        self.record_metric("coverage_gaps_found", gap_count as f64).await;
+        self.record_metric("coverage_gaps_found", gap_count as f64)
+            .await;
     }
 
     pub async fn record_coverage_suggestions_generated(&self, suggestion_count: usize) {
-        self.record_metric("coverage_suggestions_generated", suggestion_count as f64).await;
+        self.record_metric("coverage_suggestions_generated", suggestion_count as f64)
+            .await;
     }
 
     // General policy metrics
@@ -95,7 +101,8 @@ impl PolicyMetrics {
 
     // Batch operation metrics
     pub async fn record_batch_validation_duration(&self, duration_ms: u64) {
-        self.record_metric("batch_validation_duration_ms", duration_ms as f64).await;
+        self.record_metric("batch_validation_duration_ms", duration_ms as f64)
+            .await;
     }
 
     pub async fn record_batch_size(&self, size: usize) {
@@ -120,14 +127,14 @@ mod tests {
     #[tokio::test]
     async fn test_record_and_get_metric() {
         let metrics = PolicyMetrics::new();
-        
+
         metrics.record_validation_duration(100).await;
         metrics.record_validation_success().await;
-        
+
         let validation_duration = metrics.get_metric("validation_duration_ms").await;
         assert!(validation_duration.is_some());
         assert_eq!(validation_duration.unwrap().len(), 1);
-        
+
         let validation_success = metrics.get_metric("validation_success").await;
         assert!(validation_success.is_some());
         assert_eq!(validation_success.unwrap().len(), 1);
@@ -136,16 +143,16 @@ mod tests {
     #[tokio::test]
     async fn test_coverage_metrics() {
         let metrics = PolicyMetrics::new();
-        
+
         metrics.record_coverage_analysis_duration(500).await;
         metrics.record_coverage_percentage(85.5).await;
         metrics.record_coverage_gaps_found(3).await;
         metrics.record_coverage_suggestions_generated(5).await;
-        
+
         let duration = metrics.get_metric("coverage_analysis_duration_ms").await;
         assert!(duration.is_some());
         assert_eq!(duration.unwrap()[0].value, 500.0);
-        
+
         let percentage = metrics.get_metric("coverage_percentage").await;
         assert!(percentage.is_some());
         assert_eq!(percentage.unwrap()[0].value, 85.5);

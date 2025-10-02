@@ -1,8 +1,8 @@
 // crates/iam/src/domain/user.rs
 
+use serde::{Deserialize, Serialize};
 use shared::hrn::{Hrn, OrganizationId};
 use shared::lifecycle::Lifecycle;
-use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 
 /// Representa a un usuario humano, un principal fundamental en el sistema.
@@ -21,7 +21,7 @@ pub struct User {
 
     /// Información de perfil adicional y no crítica para la seguridad.
     pub profile: UserProfile,
-    
+
     /// Lista de HRNs de las organizaciones a las que este usuario pertenece.
     /// Esta información es crucial para las políticas de Cedar.
     pub organization_memberships: Vec<OrganizationId>,
@@ -31,7 +31,7 @@ pub struct User {
 
     /// El ID del usuario en un proveedor de identidad externo (ej. Keycloak, Okta).
     pub external_id: Option<String>,
-    
+
     /// Información de auditoría y ciclo de vida.
     pub lifecycle: Lifecycle,
 
@@ -58,4 +58,3 @@ pub enum UserStatus {
     /// La cuenta está pendiente de eliminación.
     PendingDeletion,
 }
-

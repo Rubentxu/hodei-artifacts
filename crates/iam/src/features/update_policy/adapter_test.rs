@@ -10,7 +10,8 @@ mod tests {
             name.to_string(),
             content.to_string(),
             "Test policy".to_string(),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]

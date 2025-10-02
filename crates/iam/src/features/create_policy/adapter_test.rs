@@ -2,11 +2,13 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::features::create_policy::adapter::{CedarPolicyValidatorAdapter, SimplePolicyEventPublisherAdapter};
-    use crate::features::create_policy::ports::{PolicyValidator, PolicyEventPublisher};
+    use crate::features::create_policy::adapter::{
+        CedarPolicyValidatorAdapter, SimplePolicyEventPublisherAdapter,
+    };
+    use crate::features::create_policy::ports::{PolicyEventPublisher, PolicyValidator};
     use crate::infrastructure::events::policy_event_publisher::SimplePolicyEventPublisher;
     use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
-    use crate::test_utils::{create_test_policy, PolicyBuilder};
+    use crate::test_utils::{PolicyBuilder, create_test_policy};
     use std::sync::Arc;
 
     #[tokio::test]
@@ -50,7 +52,7 @@ mod tests {
         // Test that adapters can be created successfully
         let validator = Arc::new(CedarPolicyValidator::new());
         let validator_adapter = CedarPolicyValidatorAdapter::new(validator);
-        
+
         let publisher = Arc::new(SimplePolicyEventPublisher::new());
         let publisher_adapter = SimplePolicyEventPublisherAdapter::new(publisher);
 

@@ -10,7 +10,7 @@ use cedar_policy::PolicyId;
 pub trait PolicyDeleter: Send + Sync {
     /// Get a policy by its ID (needed for deletion validation)
     async fn get_by_id(&self, id: &PolicyId) -> Result<Option<Policy>, IamError>;
-    
+
     /// Delete a policy by its ID
     async fn delete(&self, id: &PolicyId) -> Result<(), IamError>;
 }

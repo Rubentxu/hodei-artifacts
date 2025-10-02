@@ -1,12 +1,12 @@
 // crates/iam/src/features/delete_policy/adapter.rs
 
 use crate::domain::policy::Policy;
-use crate::features::delete_policy::ports::{PolicyDeleter, PolicyDeleteEventPublisher};
+use crate::features::delete_policy::ports::{PolicyDeleteEventPublisher, PolicyDeleter};
 use crate::infrastructure::errors::IamError;
 use crate::infrastructure::events::policy_event_publisher::SimplePolicyEventPublisher;
 use async_trait::async_trait;
-use mongodb::{bson::doc, Collection, Database};
 use cedar_policy::PolicyId;
+use mongodb::{Collection, Database, bson::doc};
 use std::sync::Arc;
 
 /// Adapter that implements PolicyDeleter using MongoDB directly
@@ -28,7 +28,7 @@ impl DeletePolicyAdapter {
 impl PolicyDeleter for DeletePolicyAdapter {
     async fn get_by_id(&self, id: &PolicyId) -> Result<Option<Policy>, IamError> {
         let filter = doc! { "_id": id.to_string() };
-        
+
         self.collection
             .find_one(filter)
             .await

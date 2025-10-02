@@ -1,8 +1,8 @@
 //! Test to verify schema implementation works correctly
 
 use cedar_policy::{
-    Context, Entities, Entity, EntityUid, PolicySet, Request, RestrictedExpression, Schema
-    , SchemaFragment,
+    Context, Entities, Entity, EntityUid, PolicySet, Request, RestrictedExpression, Schema,
+    SchemaFragment,
 };
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;

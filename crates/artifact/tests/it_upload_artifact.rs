@@ -8,21 +8,21 @@ mod helpers;
 #[cfg(test)]
 mod tests {
     use crate::helpers;
-    use axum::{routing::post, Extension, Router};
+    use axum::{Extension, Router, routing::post};
     use reqwest::{
-        multipart::{Form, Part},
         Client as ReqwestClient,
+        multipart::{Form, Part},
     };
     use serde_json::json;
     use std::sync::Arc;
     use std::time::Duration;
-    use testcontainers::core::ContainerPort;
-    use testcontainers::core::{Healthcheck, WaitFor};
-    use testcontainers::runners::AsyncRunner;
     use testcontainers::ContainerAsync;
     use testcontainers::GenericImage;
     use testcontainers::Image;
     use testcontainers::ImageExt;
+    use testcontainers::core::ContainerPort;
+    use testcontainers::core::{Healthcheck, WaitFor};
+    use testcontainers::runners::AsyncRunner;
     use tokio::net::TcpListener;
     use tracing::info;
 
@@ -32,13 +32,13 @@ mod tests {
     use shared::models::PackageCoordinates;
 
     use aws_config::BehaviorVersion;
-    use aws_sdk_s3::{config::Region, Client as S3Client};
-    use futures_util::stream::TryStreamExt;
+    use aws_sdk_s3::{Client as S3Client, config::Region};
     use futures_util::StreamExt;
-    use lapin::{options::*, types::FieldTable, Channel, Connection, ConnectionProperties};
+    use futures_util::stream::TryStreamExt;
+    use lapin::{Channel, Connection, ConnectionProperties, options::*, types::FieldTable};
     use mongodb::{
-        bson::{self, doc}, Client as MongoClient,
-        Collection,
+        Client as MongoClient, Collection,
+        bson::{self, doc},
     };
 
     // Custom Docker Image definitions

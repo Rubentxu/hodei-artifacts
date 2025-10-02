@@ -2,15 +2,16 @@
 
 use crate::domain::policy::Policy;
 use crate::domain::validation::ValidationResult;
-use crate::features::update_policy::ports::{PolicyUpdater, PolicyUpdateValidator, PolicyUpdateEventPublisher};
+use crate::features::update_policy::ports::{
+    PolicyUpdateEventPublisher, PolicyUpdateValidator, PolicyUpdater,
+};
 use crate::infrastructure::errors::IamError;
-use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
 use crate::infrastructure::events::policy_event_publisher::SimplePolicyEventPublisher;
+use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
 use async_trait::async_trait;
-use mongodb::{bson::doc, Collection, Database};
 use cedar_policy::PolicyId;
+use mongodb::{Collection, Database, bson::doc};
 use std::sync::Arc;
-
 
 /// Adapter that implements PolicyUpdater using MongoDB directly
 pub struct UpdatePolicyAdapter {
@@ -21,9 +22,9 @@ pub struct UpdatePolicyAdapter {
 
 impl UpdatePolicyAdapter {
     pub fn new(
-        database: Arc<Database>, 
+        database: Arc<Database>,
         validator: Arc<CedarPolicyValidator>,
-        event_publisher: Arc<SimplePolicyEventPublisher>
+        event_publisher: Arc<SimplePolicyEventPublisher>,
     ) -> Self {
         Self {
             collection: database.collection::<Policy>("policies"),
@@ -36,34 +37,43 @@ impl UpdatePolicyAdapter {
     async fn validate_policy_semantics(&self, content: &str) -> Result<(), IamError> {
         use security::ComprehensiveCedarValidator;
 
-        let validator = ComprehensiveCedarValidator::new()
-            .map_err(|e| IamError::validation_error(format!("Failed to create validator: {}", e)))?;
+        let validator = ComprehensiveCedarValidator::new().map_err(|e| {
+            IamError::validation_error(format!("Failed to create validator: {}", e))
+        })?;
 
-        let result = validator.validate_policy_comprehensive(content).await
+        let result = validator
+            .validate_policy_comprehensive(content)
+            .await
             .map_err(|e| IamError::validation_error(format!("Validation failed: {}", e)))?;
 
         if !result.is_valid {
             // Create detailed error message with all validation failures
             let mut error_parts = Vec::new();
-            
+
             if !result.hrn_errors.is_empty() {
                 error_parts.push(format!("HRN errors: {}", result.hrn_errors.join(", ")));
             }
-            
+
             if !result.syntax_errors.is_empty() {
-                error_parts.push(format!("Syntax errors: {}", result.syntax_errors.join(", ")));
+                error_parts.push(format!(
+                    "Syntax errors: {}",
+                    result.syntax_errors.join(", ")
+                ));
             }
-            
+
             if !result.semantic_errors.is_empty() {
-                error_parts.push(format!("Semantic errors: {}", result.semantic_errors.join(", ")));
+                error_parts.push(format!(
+                    "Semantic errors: {}",
+                    result.semantic_errors.join(", ")
+                ));
             }
-            
+
             let error_message = if error_parts.is_empty() {
                 "Policy validation failed".to_string()
             } else {
                 error_parts.join("; ")
             };
-            
+
             return Err(IamError::validation_error(error_message));
         }
 
@@ -76,7 +86,11 @@ impl UpdatePolicyAdapter {
     }
 
     /// Validate compatibility between old and new policy versions
-    async fn validate_update_compatibility(&self, old_content: &str, new_content: &str) -> Result<(), IamError> {
+    async fn validate_update_compatibility(
+        &self,
+        old_content: &str,
+        new_content: &str,
+    ) -> Result<(), IamError> {
         // First validate that both policies are individually valid
         self.validate_policy_semantics(old_content).await?;
         self.validate_policy_semantics(new_content).await?;
@@ -94,7 +108,7 @@ impl UpdatePolicyAdapter {
 impl PolicyUpdater for UpdatePolicyAdapter {
     async fn get_by_id(&self, id: &PolicyId) -> Result<Option<Policy>, IamError> {
         let filter = doc! { "_id": id.to_string() };
-        
+
         self.collection
             .find_one(filter)
             .await
@@ -119,11 +133,10 @@ impl PolicyUpdater for UpdatePolicyAdapter {
 
     async fn exists(&self, id: &PolicyId) -> Result<bool, IamError> {
         let filter = doc! { "_id": id.to_string() };
-        let count = self.collection
-            .count_documents(filter)
-            .await
-            .map_err(|e| IamError::DatabaseError(format!("Failed to check policy existence: {}", e)))?;
-        
+        let count = self.collection.count_documents(filter).await.map_err(|e| {
+            IamError::DatabaseError(format!("Failed to check policy existence: {}", e))
+        })?;
+
         Ok(count > 0)
     }
 }
@@ -141,8 +154,14 @@ impl PolicyUpdateValidator for UpdatePolicyAdapter {
 
 #[async_trait]
 impl PolicyUpdateEventPublisher for UpdatePolicyAdapter {
-    async fn publish_policy_updated(&self, old_policy: &Policy, new_policy: &Policy) -> Result<(), IamError> {
-        self.event_publisher.publish_policy_updated(old_policy, new_policy).await
+    async fn publish_policy_updated(
+        &self,
+        old_policy: &Policy,
+        new_policy: &Policy,
+    ) -> Result<(), IamError> {
+        self.event_publisher
+            .publish_policy_updated(old_policy, new_policy)
+            .await
     }
 }
 
@@ -153,7 +172,12 @@ impl crate::features::update_policy::ports::UpdatePolicySemanticValidator for Up
         self.validate_policy_semantics(policy).await
     }
 
-    async fn validate_update_compatibility(&self, old_policy: &str, new_policy: &str) -> Result<(), IamError> {
-        self.validate_update_compatibility(old_policy, new_policy).await
+    async fn validate_update_compatibility(
+        &self,
+        old_policy: &str,
+        new_policy: &str,
+    ) -> Result<(), IamError> {
+        self.validate_update_compatibility(old_policy, new_policy)
+            .await
     }
 }

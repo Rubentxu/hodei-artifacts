@@ -1,7 +1,7 @@
 // crates/iam/src/features/list_policies/dto.rs
 
 use crate::domain::policy::{Policy, PolicyStatus};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Sort criteria for policies
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn test_list_policies_query_defaults() {
         let query = ListPoliciesQuery::new();
-        
+
         assert!(query.is_empty());
         assert_eq!(query.effective_limit(), 50);
         assert_eq!(query.effective_offset(), 0);
@@ -212,7 +212,7 @@ mod tests {
     fn test_policy_list_response_creation() {
         let policies = vec![];
         let response = ListPoliciesResponse::new(policies, 0);
-        
+
         assert!(response.is_empty());
         assert_eq!(response.len(), 0);
         assert_eq!(response.total, 0);
@@ -223,7 +223,7 @@ mod tests {
     fn test_policy_list_response_with_pagination() {
         let policies = vec![];
         let response = ListPoliciesResponse::with_pagination(policies, 100, 1, 20);
-        
+
         assert!(response.has_more); // 20 < 100
         assert_eq!(response.page, 1);
         assert_eq!(response.per_page, 20);
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_policy_list_response_empty() {
         let response = ListPoliciesResponse::empty();
-        
+
         assert!(response.is_empty());
         assert_eq!(response.len(), 0);
         assert_eq!(response.total, 0);

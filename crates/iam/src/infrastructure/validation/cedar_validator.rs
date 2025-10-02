@@ -10,19 +10,18 @@ use std::str::FromStr;
 
 /// Cedar-based implementation of policy validation
 pub struct CedarPolicyValidator {
-    
     // schema: Option<Schema>,
 }
 
 impl CedarPolicyValidator {
     /// Create a new Cedar policy validator without schema
     pub fn new() -> Self {
-        Self { }
+        Self {}
     }
 
     /// Create a new Cedar policy validator with schema
     pub fn with_schema(_schema: Schema) -> Self {
-        Self { }
+        Self {}
     }
 
     /// Parse a single policy from Cedar DSL

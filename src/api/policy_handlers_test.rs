@@ -10,34 +10,37 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
     use tower::ServiceExt;
-    use crate::{app_state::{AppState, AppMetrics, HealthStatus}, config::Config, adapters::SurrealDbAdapter, ports::{AuthorizationEnginePort, PolicyStorePort, StorageAdapterPort}};
+    use crate::{app_state::{AppState, AppMetrics, HealthStatus}, config::Config};
 
     async fn build_test_state() -> Arc<AppState> {
         let config = Config::from_env().expect("config");
 
-        // Minimal adapters for required ports (placeholders with SurrealDbAdapter)
-        let storage: Arc<dyn StorageAdapterPort> = Arc::new(SurrealDbAdapter::connect(&config.database.url).await.expect("db"));
-        let engine: Arc<dyn AuthorizationEnginePort> = Arc::new(SurrealDbAdapter::new());
-        let policy_store: Arc<dyn PolicyStorePort> = Arc::new(SurrealDbAdapter::new());
-
-        // DI for policies create_policy use case
+        // Build use cases from policies crate via DI
         #[cfg(feature = "embedded")]
-        let (uc, _engine_uc) = policies::features::create_policy::di::embedded::make_use_case_embedded(&config.database.url)
+        let (create_uc, authorization_engine) = policies::features::create_policy::di::embedded::make_use_case_embedded(&config.database.url)
             .await
-            .expect("uc embedded");
+            .expect("create uc embedded");
         #[cfg(not(feature = "embedded"))]
-        let (uc, _engine_uc) = policies::features::create_policy::di::make_use_case_mem()
+        let (create_uc, authorization_engine) = policies::features::create_policy::di::make_use_case_mem()
             .await
-            .expect("uc mem");
+            .expect("create uc mem");
+
+        #[cfg(feature = "embedded")]
+        let (get_uc, _) = policies::features::get_policy::di::embedded::make_use_case_embedded(&config.database.url)
+            .await
+            .expect("get uc embedded");
+        #[cfg(not(feature = "embedded"))]
+        let (get_uc, _) = policies::features::get_policy::di::make_use_case_mem()
+            .await
+            .expect("get uc mem");
 
         Arc::new(AppState {
-            engine,
-            policy_store,
-            storage,
             config,
             metrics: AppMetrics::new(),
             health: Arc::new(tokio::sync::RwLock::new(HealthStatus::new())),
-            create_policy_uc: Some(Arc::new(uc)),
+            create_policy_uc: Arc::new(create_uc),
+            get_policy_uc: Arc::new(get_uc),
+            authorization_engine,
         })
     }
 
@@ -231,6 +234,61 @@ mod tests {
             .unwrap();
         
         // Check the response status
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_policy_not_found() {
+        let state = build_test_state().await;
+        let app = Router::new()
+            .route("/api/v1/policies/:id", get(crate::api::get_policy))
+            .with_state(state);
+        
+        // Send the request for a non-existent policy
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/policies/nonexistent-policy-id")
+                    .header("content-type", "application/json")
+                    .body(Body::from(""))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        
+        // Check the response status - should be 404 Not Found
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        
+        // Check the response body contains error information
+        let body = hyper::body::to_bytes(response.into_body()).await.unwrap();
+        let response_body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        
+        assert!(response_body["error"].is_object());
+        assert_eq!(response_body["error"]["type"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn test_get_policy_empty_id() {
+        let state = build_test_state().await;
+        let app = Router::new()
+            .route("/api/v1/policies/:id", get(crate::api::get_policy))
+            .with_state(state);
+        
+        // Send the request with empty policy ID (will be caught by validation)
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/policies/%20") // URL-encoded space
+                    .header("content-type", "application/json")
+                    .body(Body::from(""))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        
+        // Check the response status - should be 400 Bad Request
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

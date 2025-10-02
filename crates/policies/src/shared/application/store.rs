@@ -25,6 +25,9 @@ mod tests {
         async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
             Ok(true)
         }
+        async fn get_policy_by_id(&self, _id: &str) -> Result<Option<Policy>, StorageError> {
+            Ok(None)
+        }
         async fn load_all_policies(&self) -> Result<Vec<Policy>, StorageError> {
             Ok(vec![])
         }
@@ -111,5 +114,12 @@ impl PolicyStore {
                 .map_err(|e| StorageError::ParsingError(e.to_string()))?;
         }
         Ok(policy_set)
+    }
+
+    pub async fn get_policy(&self, id: &str) -> Result<Option<Policy>, String> {
+        self.storage
+            .get_policy_by_id(id)
+            .await
+            .map_err(|e| e.to_string())
     }
 }

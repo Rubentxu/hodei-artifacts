@@ -1,7 +1,7 @@
 // crates/iam/src/domain/policy.rs
 
-use serde::{Deserialize, Serialize};
 use cedar_policy::PolicyId;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 /// Represents a Cedar policy in the IAM system
@@ -57,16 +57,22 @@ impl Policy {
     ) -> Result<Self, PolicyError> {
         // Validate name
         if name.trim().is_empty() {
-            return Err(PolicyError::InvalidName("Policy name cannot be empty".to_string()));
+            return Err(PolicyError::InvalidName(
+                "Policy name cannot be empty".to_string(),
+            ));
         }
-        
+
         if name.len() > 255 {
-            return Err(PolicyError::InvalidName("Policy name too long (max 255 characters)".to_string()));
+            return Err(PolicyError::InvalidName(
+                "Policy name too long (max 255 characters)".to_string(),
+            ));
         }
 
         // Validate content
         if content.trim().is_empty() {
-            return Err(PolicyError::InvalidContent("Policy content cannot be empty".to_string()));
+            return Err(PolicyError::InvalidContent(
+                "Policy content cannot be empty".to_string(),
+            ));
         }
 
         let now = OffsetDateTime::now_utc();
@@ -88,9 +94,15 @@ impl Policy {
     }
 
     /// Update policy content and increment version
-    pub fn update_content(&mut self, content: String, updated_by: String) -> Result<(), PolicyError> {
+    pub fn update_content(
+        &mut self,
+        content: String,
+        updated_by: String,
+    ) -> Result<(), PolicyError> {
         if content.trim().is_empty() {
-            return Err(PolicyError::InvalidContent("Policy content cannot be empty".to_string()));
+            return Err(PolicyError::InvalidContent(
+                "Policy content cannot be empty".to_string(),
+            ));
         }
 
         self.content = content;
@@ -103,11 +115,15 @@ impl Policy {
     /// Update policy name
     pub fn update_name(&mut self, name: String, updated_by: String) -> Result<(), PolicyError> {
         if name.trim().is_empty() {
-            return Err(PolicyError::InvalidName("Policy name cannot be empty".to_string()));
+            return Err(PolicyError::InvalidName(
+                "Policy name cannot be empty".to_string(),
+            ));
         }
-        
+
         if name.len() > 255 {
-            return Err(PolicyError::InvalidName("Policy name too long (max 255 characters)".to_string()));
+            return Err(PolicyError::InvalidName(
+                "Policy name too long (max 255 characters)".to_string(),
+            ));
         }
 
         self.name = name;
@@ -150,10 +166,12 @@ impl Policy {
                 Ok(())
             }
             PolicyStatus::Inactive => Ok(()), // Already inactive, no-op
-            PolicyStatus::Draft | PolicyStatus::Deprecated => Err(PolicyError::InvalidStatusTransition {
-                from: self.status.clone(),
-                to: PolicyStatus::Inactive,
-            }),
+            PolicyStatus::Draft | PolicyStatus::Deprecated => {
+                Err(PolicyError::InvalidStatusTransition {
+                    from: self.status.clone(),
+                    to: PolicyStatus::Inactive,
+                })
+            }
         }
     }
 
@@ -216,21 +234,21 @@ impl PolicyStatus {
             // From Draft
             (PolicyStatus::Draft, PolicyStatus::Active) => true,
             (PolicyStatus::Draft, PolicyStatus::Deprecated) => true,
-            
+
             // From Active
             (PolicyStatus::Active, PolicyStatus::Inactive) => true,
             (PolicyStatus::Active, PolicyStatus::Deprecated) => true,
-            
+
             // From Inactive
             (PolicyStatus::Inactive, PolicyStatus::Active) => true,
             (PolicyStatus::Inactive, PolicyStatus::Deprecated) => true,
-            
+
             // From Deprecated (no transitions allowed)
             (PolicyStatus::Deprecated, _) => false,
-            
+
             // Same status (no-op)
             (a, b) if a == b => true,
-            
+
             // All other transitions are invalid
             _ => false,
         }
@@ -285,7 +303,7 @@ mod tests {
 
         assert!(policy.is_ok());
         let policy = policy.unwrap();
-        
+
         assert_eq!(policy.id, policy_id);
         assert_eq!(policy.name, "Test Policy");
         assert_eq!(policy.content, "permit(principal, action, resource);");
@@ -357,7 +375,8 @@ mod tests {
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
             "user_123".to_string(),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(policy.status, PolicyStatus::Draft);
         assert!(!policy.is_active());
@@ -375,13 +394,13 @@ mod tests {
         // Test all valid transitions
         assert!(PolicyStatus::Draft.can_transition_to(&PolicyStatus::Active));
         assert!(PolicyStatus::Draft.can_transition_to(&PolicyStatus::Deprecated));
-        
+
         assert!(PolicyStatus::Active.can_transition_to(&PolicyStatus::Inactive));
         assert!(PolicyStatus::Active.can_transition_to(&PolicyStatus::Deprecated));
-        
+
         assert!(PolicyStatus::Inactive.can_transition_to(&PolicyStatus::Active));
         assert!(PolicyStatus::Inactive.can_transition_to(&PolicyStatus::Deprecated));
-        
+
         // Test invalid transitions from Deprecated
         assert!(!PolicyStatus::Deprecated.can_transition_to(&PolicyStatus::Draft));
         assert!(!PolicyStatus::Deprecated.can_transition_to(&PolicyStatus::Active));
@@ -396,7 +415,8 @@ mod tests {
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
             "user_123".to_string(),
-        ).unwrap();
+        )
+        .unwrap();
 
         // Test serialization to JSON
         let json = serde_json::to_string(&policy).expect("Should serialize to JSON");
@@ -405,7 +425,8 @@ mod tests {
         assert!(json.contains("Draft"));
 
         // Test deserialization from JSON
-        let deserialized: Policy = serde_json::from_str(&json).expect("Should deserialize from JSON");
+        let deserialized: Policy =
+            serde_json::from_str(&json).expect("Should deserialize from JSON");
         assert_eq!(deserialized, policy);
     }
 }

@@ -1,12 +1,12 @@
-use axum::{
-    extract::{Extension},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    Json,
-};
-use std::sync::Arc;
 use crate::features::validate_policy::dto::{ValidatePolicyRequest, ValidatePolicyResponse};
 use crate::features::validate_policy::use_case::ValidatePolicyUseCase;
+use axum::{
+    Json,
+    extract::Extension,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use std::sync::Arc;
 
 // The API endpoint for policy validation.
 pub struct ValidatePolicyApi {
@@ -19,7 +19,10 @@ impl ValidatePolicyApi {
     }
 
     // The Axum handler function.
-    pub async fn handle(Extension(state): Extension<Arc<Self>>, Json(request): Json<ValidatePolicyRequest>) -> Response {
+    pub async fn handle(
+        Extension(state): Extension<Arc<Self>>,
+        Json(request): Json<ValidatePolicyRequest>,
+    ) -> Response {
         match state.use_case.execute(request).await {
             Ok(response) => {
                 if response.is_valid {

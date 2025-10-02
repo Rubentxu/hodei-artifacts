@@ -2,8 +2,8 @@
 
 use crate::domain::policy::Policy;
 use crate::infrastructure::errors::IamError;
-use serde::{Deserialize, Serialize};
 use cedar_policy::PolicyId;
+use serde::{Deserialize, Serialize};
 
 /// Query to get a policy by ID
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,8 +38,8 @@ impl GetPolicyResponse {
     pub fn new(policy: Policy) -> Self {
         Self { policy }
     }
-}#[cfg(test
-)]
+}
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::policy::{Policy, PolicyMetadata, PolicyStatus};
@@ -48,9 +48,7 @@ mod tests {
 
     #[test]
     fn test_get_policy_query_new() {
-        let policy_id = PolicyId(
-            Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"),
-        );
+        let policy_id = PolicyId(Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"));
         let query = GetPolicyQuery::new(policy_id.clone());
 
         assert_eq!(query.id, policy_id);
@@ -58,9 +56,7 @@ mod tests {
 
     #[test]
     fn test_get_policy_query_validate() {
-        let policy_id = PolicyId(
-            Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"),
-        );
+        let policy_id = PolicyId(Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"));
         let query = GetPolicyQuery::new(policy_id);
 
         assert!(query.validate().is_ok());
@@ -68,9 +64,7 @@ mod tests {
 
     #[test]
     fn test_get_policy_response_new() {
-        let policy_id = PolicyId(
-            Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"),
-        );
+        let policy_id = PolicyId(Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"));
         let policy = Policy {
             id: policy_id,
             name: "Test Policy".to_string(),

@@ -82,9 +82,8 @@ mod tests {
     }
 
     fn create_test_policy() -> Policy {
-        let policy_id = PolicyId(
-            Hrn::new("hrn:hodei:iam:global:policy/test_policy").expect("Valid HRN"),
-        );
+        let policy_id =
+            PolicyId(Hrn::new("hrn:hodei:iam:global:policy/test_policy").expect("Valid HRN"));
         Policy {
             id: policy_id,
             name: "Test Policy".to_string(),
@@ -107,15 +106,18 @@ mod tests {
         let test_policy = create_test_policy();
         let reader = Arc::new(MockPolicyReader::with_policy(test_policy.clone()));
         let use_case = GetPolicyUseCase::new(reader);
-        
+
         let query = GetPolicyQuery::new(test_policy.id.clone());
         let result = use_case.execute(query).await;
-        
+
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.policy.id, test_policy.id);
         assert_eq!(response.policy.name, "Test Policy");
-        assert_eq!(response.policy.description, Some("A test policy".to_string()));
+        assert_eq!(
+            response.policy.description,
+            Some("A test policy".to_string())
+        );
         assert_eq!(response.policy.status, PolicyStatus::Active);
     }
 
@@ -123,13 +125,12 @@ mod tests {
     async fn test_get_policy_not_found() {
         let reader = Arc::new(MockPolicyReader::new());
         let use_case = GetPolicyUseCase::new(reader);
-        
-        let policy_id = PolicyId(
-            Hrn::new("hrn:hodei:iam:global:policy/nonexistent").expect("Valid HRN"),
-        );
+
+        let policy_id =
+            PolicyId(Hrn::new("hrn:hodei:iam:global:policy/nonexistent").expect("Valid HRN"));
         let query = GetPolicyQuery::new(policy_id.clone());
         let result = use_case.execute(query).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             IamError::PolicyNotFound(id) => {
@@ -143,13 +144,11 @@ mod tests {
     async fn test_get_policy_repository_failure() {
         let reader = Arc::new(MockPolicyReader::with_failure());
         let use_case = GetPolicyUseCase::new(reader);
-        
-        let policy_id = PolicyId(
-            Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"),
-        );
+
+        let policy_id = PolicyId(Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"));
         let query = GetPolicyQuery::new(policy_id);
         let result = use_case.execute(query).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             IamError::DatabaseError(msg) => {
@@ -161,11 +160,9 @@ mod tests {
 
     #[test]
     fn test_query_validation() {
-        let policy_id = PolicyId(
-            Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"),
-        );
+        let policy_id = PolicyId(Hrn::new("hrn:hodei:iam:global:policy/test").expect("Valid HRN"));
         let query = GetPolicyQuery::new(policy_id);
-        
+
         // Query validation should pass for valid PolicyId
         assert!(query.validate().is_ok());
     }

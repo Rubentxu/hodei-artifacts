@@ -54,8 +54,8 @@ impl Hrn {
     /// Cedar expects UIDs as `Type::"id"`, where Type may be namespaced like `App::User`.
     /// We map:
     /// - Type: if `resource_type` already contains `::`, it's used as-is.
-    ///         otherwise, when `service` is non-empty we construct `"{service}::{resource_type}"`.
-    ///         both components are normalized to valid Cedar identifiers.
+    ///   otherwise, when `service` is non-empty we construct `"{service}::{resource_type}"`.
+    ///   both components are normalized to valid Cedar identifiers.
     /// - Id: always quoted string; if parsing fails, we wrap in quotes.
     pub fn euid(&self) -> EntityUid {
         // Build a normalized, possibly namespaced type name
@@ -173,13 +173,8 @@ impl fmt::Display for Hrn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "hrn:{}:{}:{}:{}:{}/{}",
-            self.partition,
-            self.service,
-            "", // region (omitida por simplicidad)
-            self.account_id,
-            self.resource_type,
-            self.resource_id
+            "hrn:{}:{}::{}:{}/{}",
+            self.partition, self.service, self.account_id, self.resource_type, self.resource_id
         )
     }
 }

@@ -1,11 +1,11 @@
 use crate::domain::actions;
 use crate::domain::{HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStore};
+use crate::shared::generate_fragment_for_type;
 use cedar_policy::{
     Context, Entities, PolicySet, Request, Response, Schema, SchemaError, SchemaFragment,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use crate::shared::generate_fragment_for_type;
 
 pub struct AuthorizationRequest<'a> {
     pub principal: &'a dyn HodeiEntity,
@@ -44,7 +44,7 @@ impl AuthorizationEngine {
             request.context.clone(),
             None,
         )
-            .expect("Failed to create Cedar request");
+        .expect("Failed to create Cedar request");
 
         let policies = self
             .store
@@ -54,8 +54,6 @@ impl AuthorizationEngine {
         cedar_policy::Authorizer::new().is_authorized(&cedar_request, &policies, &entities)
     }
 }
-
-
 
 #[derive(Default)]
 pub struct EngineBuilder {
@@ -128,6 +126,12 @@ mod tests {
         }
         async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
             Ok(true)
+        }
+        async fn get_policy_by_id(
+            &self,
+            _id: &str,
+        ) -> Result<Option<cedar_policy::Policy>, StorageError> {
+            Ok(None)
         }
         async fn load_all_policies(&self) -> Result<Vec<cedar_policy::Policy>, StorageError> {
             Ok(vec![])
@@ -224,6 +228,12 @@ mod tests {
             async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
                 Ok(true)
             }
+            async fn get_policy_by_id(
+                &self,
+                _id: &str,
+            ) -> Result<Option<cedar_policy::Policy>, StorageError> {
+                Ok(None)
+            }
             async fn load_all_policies(&self) -> Result<Vec<cedar_policy::Policy>, StorageError> {
                 let policy_src = r#"permit(
                     principal == User::"alice",
@@ -250,8 +260,8 @@ mod tests {
             "User".into(),
             "alice".into(),
         ))
-            .with_attr("name", "Alice")
-            .with_attr("email", "alice@example.com");
+        .with_attr("name", "Alice")
+        .with_attr("email", "alice@example.com");
         let resource = TestEntity::new(Hrn::new(
             "default".into(),
             "hodei".into(),
@@ -259,7 +269,7 @@ mod tests {
             "Resource".into(),
             "res1".into(),
         ))
-            .with_attr("name", "Res1");
+        .with_attr("name", "Res1");
 
         // Action via HRN helper
         let action_uid = Hrn::action("", "evaluate_policy").euid();
@@ -289,6 +299,12 @@ mod tests {
         async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
             Ok(true)
         }
+        async fn get_policy_by_id(
+            &self,
+            _id: &str,
+        ) -> Result<Option<cedar_policy::Policy>, StorageError> {
+            Ok(None)
+        }
         async fn load_all_policies(&self) -> Result<Vec<cedar_policy::Policy>, StorageError> {
             let policy_src = r#"permit(
                 principal == User::"alice",
@@ -309,6 +325,12 @@ mod tests {
         }
         async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
             Ok(true)
+        }
+        async fn get_policy_by_id(
+            &self,
+            _id: &str,
+        ) -> Result<Option<cedar_policy::Policy>, StorageError> {
+            Ok(None)
         }
         async fn load_all_policies(&self) -> Result<Vec<cedar_policy::Policy>, StorageError> {
             let policy_src = r#"permit(
@@ -333,7 +355,7 @@ mod tests {
             "User".into(),
             "alice".into(),
         ))
-            .with_attr("name", "Alice");
+        .with_attr("name", "Alice");
         let resource = TestEntity::new(Hrn::new(
             "default".into(),
             "hodei".into(),
@@ -341,7 +363,7 @@ mod tests {
             "Resource".into(),
             "res1".into(),
         ))
-            .with_attr("name", "Res1");
+        .with_attr("name", "Res1");
         let action_uid = Hrn::action("", "create_policy").euid();
 
         let req = AuthorizationRequest {

@@ -2,9 +2,9 @@
 
 #[cfg(test)]
 mod tests {
-    use mongodb::{bson::doc, Client};
+    use mongodb::{Client, bson::doc};
     use std::time::Duration;
-    use testcontainers::{core::WaitFor, runners::AsyncRunner, GenericImage, ImageExt};
+    use testcontainers::{GenericImage, ImageExt, core::WaitFor, runners::AsyncRunner};
     use tracing::info;
 
     #[tokio::test]

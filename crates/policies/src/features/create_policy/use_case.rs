@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use cedar_policy::Policy;
 
-use crate::shared::application::PolicyStore;
 use super::dto::CreatePolicyCommand;
+use crate::shared::application::PolicyStore;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CreatePolicyError {
@@ -24,13 +24,14 @@ impl CreatePolicyUseCase {
 
     pub async fn execute(&self, cmd: &CreatePolicyCommand) -> Result<(), CreatePolicyError> {
         // Validate command
-        cmd.validate().map_err(|e| CreatePolicyError::InvalidPolicy(e.to_string()))?;
+        cmd.validate()
+            .map_err(|e| CreatePolicyError::InvalidPolicy(e.to_string()))?;
 
-        let policy: Policy = cmd.policy_src
+        let policy: Policy = cmd
+            .policy_src
             .parse::<Policy>()
             .map_err(|e| CreatePolicyError::InvalidPolicy(e.to_string()))?;
-        self
-            .store
+        self.store
             .add_policy(policy)
             .await
             .map_err(CreatePolicyError::Storage)
@@ -41,8 +42,8 @@ impl CreatePolicyUseCase {
 mod tests {
     use super::*;
     use crate::shared::application::EngineBuilder;
-    use crate::shared::infrastructure::surreal::SurrealMemStorage;
     use crate::shared::domain::principals;
+    use crate::shared::infrastructure::surreal::SurrealMemStorage;
     use std::sync::Arc;
 
     #[tokio::test]

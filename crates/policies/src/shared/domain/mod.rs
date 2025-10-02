@@ -8,4 +8,4 @@ pub mod schema_assembler;
 
 // Convenience re-exports for external use
 pub use hrn::Hrn;
-pub use ports::{HodeiEntity, HodeiEntityType, PolicyStorage, StorageError, AttributeType};
+pub use ports::{AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, StorageError};

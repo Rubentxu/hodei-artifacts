@@ -7,13 +7,13 @@ use thiserror::Error;
 pub enum ListPoliciesError {
     #[error("Invalid filter: {0}")]
     InvalidFilter(String),
-    
+
     #[error("Invalid pagination: {0}")]
     InvalidPagination(String),
-    
+
     #[error("Database error: {0}")]
     DatabaseError(String),
-    
+
     #[error("Internal error: {0}")]
     InternalError(String),
 }
@@ -23,12 +23,12 @@ impl ListPoliciesError {
     pub fn invalid_filter(message: impl Into<String>) -> Self {
         Self::InvalidFilter(message.into())
     }
-    
+
     /// Create an invalid pagination error
     pub fn invalid_pagination(message: impl Into<String>) -> Self {
         Self::InvalidPagination(message.into())
     }
-    
+
     /// Create a database error
     pub fn database_error(message: impl Into<String>) -> Self {
         Self::DatabaseError(message.into())
@@ -54,7 +54,7 @@ mod tests {
     fn test_list_policies_error_display() {
         let error = ListPoliciesError::InvalidFilter("Test filter error".to_string());
         assert_eq!(error.to_string(), "Invalid filter: Test filter error");
-        
+
         let error = ListPoliciesError::DatabaseError("DB error".to_string());
         assert_eq!(error.to_string(), "Database error: DB error");
     }
@@ -63,7 +63,7 @@ mod tests {
     fn test_list_policies_error_convenience_methods() {
         let error = ListPoliciesError::invalid_filter("test filter");
         assert!(matches!(error, ListPoliciesError::InvalidFilter(_)));
-        
+
         let error = ListPoliciesError::invalid_pagination("test pagination");
         assert!(matches!(error, ListPoliciesError::InvalidPagination(_)));
     }

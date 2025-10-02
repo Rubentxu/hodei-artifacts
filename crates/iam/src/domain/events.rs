@@ -1,7 +1,7 @@
 // crates/iam/src/domain/events.rs
 
+use serde::{Deserialize, Serialize};
 use shared::hrn::{Hrn, OrganizationId};
-use serde::{Serialize, Deserialize};
 use time::OffsetDateTime;
 
 /// Eventos de dominio publicados por el contexto `iam`.

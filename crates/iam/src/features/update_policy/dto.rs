@@ -2,8 +2,8 @@
 
 use crate::domain::policy::Policy;
 use crate::infrastructure::errors::IamError;
-use serde::{Deserialize, Serialize};
 use cedar_policy::PolicyId;
+use serde::{Deserialize, Serialize};
 
 /// Command to update an existing policy
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,10 +71,11 @@ impl UpdatePolicyCommand {
     /// Validate the command
     pub fn validate(&self) -> Result<(), IamError> {
         // Check if at least one field is being updated
-        if self.name.is_none() 
-            && self.description.is_none() 
-            && self.content.is_none() 
-            && self.tags.is_none() {
+        if self.name.is_none()
+            && self.description.is_none()
+            && self.content.is_none()
+            && self.tags.is_none()
+        {
             return Err(IamError::InvalidInput(
                 "At least one field must be updated".to_string(),
             ));
@@ -95,7 +96,9 @@ impl UpdatePolicyCommand {
         // Validate content if provided
         if let Some(content) = &self.content {
             if content.trim().is_empty() {
-                return Err(IamError::InvalidInput("Content cannot be empty".to_string()));
+                return Err(IamError::InvalidInput(
+                    "Content cannot be empty".to_string(),
+                ));
             }
         }
 

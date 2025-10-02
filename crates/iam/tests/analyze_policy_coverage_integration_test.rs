@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use crate::features::analyze_policy_coverage::*;
 use crate::domain::policy::{Policy, PolicyId, PolicyStatus};
+use crate::features::analyze_policy_coverage::*;
 use crate::infrastructure::errors::IamError;
+use std::sync::Arc;
 
 // Integration test for analyze policy coverage feature
 // This test demonstrates the complete flow from request to response
@@ -30,7 +30,10 @@ async fn test_analyze_policy_coverage_integration() {
     let json = serde_json::to_string(&request).unwrap();
     let deserialized: AnalyzeCoverageRequest = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.schema_version, request.schema_version);
-    assert_eq!(deserialized.include_suggestions, request.include_suggestions);
+    assert_eq!(
+        deserialized.include_suggestions,
+        request.include_suggestions
+    );
 }
 
 #[tokio::test]
@@ -61,8 +64,11 @@ async fn test_coverage_gap_types() {
     // Test serialization
     let json = serde_json::to_string(&gap).unwrap();
     let deserialized: CoverageGap = serde_json::from_str(&json).unwrap();
-    
-    assert!(matches!(deserialized.gap_type, CoverageGapType::UncoveredEntity));
+
+    assert!(matches!(
+        deserialized.gap_type,
+        CoverageGapType::UncoveredEntity
+    ));
     assert!(matches!(deserialized.severity, GapSeverity::High));
     assert_eq!(deserialized.entity_type, Some("TestEntity".to_string()));
 }
@@ -80,15 +86,20 @@ async fn test_coverage_suggestion_types() {
             severity: GapSeverity::Medium,
         },
         recommended_action: "Create a policy for test_action".to_string(),
-        policy_template: Some("permit (principal, action == \"test_action\", resource);".to_string()),
+        policy_template: Some(
+            "permit (principal, action == \"test_action\", resource);".to_string(),
+        ),
         priority: SuggestionPriority::High,
     };
 
     // Test serialization
     let json = serde_json::to_string(&suggestion).unwrap();
     let deserialized: CoverageSuggestion = serde_json::from_str(&json).unwrap();
-    
-    assert!(matches!(deserialized.suggestion_type, SuggestionType::CreatePolicy));
+
+    assert!(matches!(
+        deserialized.suggestion_type,
+        SuggestionType::CreatePolicy
+    ));
     assert!(matches!(deserialized.priority, SuggestionPriority::High));
     assert!(deserialized.policy_template.is_some());
 }
@@ -114,12 +125,19 @@ fn test_entity_coverage_calculation() {
         total_attributes: 10,
         covered_attributes: 7,
         coverage_percentage: 70.0,
-        missing_attributes: vec!["attr1".to_string(), "attr2".to_string(), "attr3".to_string()],
+        missing_attributes: vec![
+            "attr1".to_string(),
+            "attr2".to_string(),
+            "attr3".to_string(),
+        ],
     };
 
     assert_eq!(coverage.coverage_percentage, 70.0);
     assert_eq!(coverage.missing_attributes.len(), 3);
-    assert_eq!(coverage.total_attributes - coverage.covered_attributes, coverage.missing_attributes.len());
+    assert_eq!(
+        coverage.total_attributes - coverage.covered_attributes,
+        coverage.missing_attributes.len()
+    );
 }
 
 #[test]
@@ -142,7 +160,7 @@ fn test_action_coverage_structure() {
 #[test]
 fn test_analyze_coverage_request_default() {
     let request = AnalyzeCoverageRequest::default();
-    
+
     assert!(request.policies.is_empty());
     assert!(request.schema_version.is_none());
     assert!(request.include_suggestions);
@@ -157,8 +175,16 @@ async fn test_coverage_analysis_error_handling() {
     let database_error = IamError::DatabaseError("Test database error".to_string());
 
     // Verify error messages
-    assert!(validation_error.to_string().contains("Test validation error"));
-    assert!(policy_not_found_error.to_string().contains("test-policy-id"));
+    assert!(
+        validation_error
+            .to_string()
+            .contains("Test validation error")
+    );
+    assert!(
+        policy_not_found_error
+            .to_string()
+            .contains("test-policy-id")
+    );
     assert!(database_error.to_string().contains("Test database error"));
 }
 
@@ -166,7 +192,7 @@ async fn test_coverage_analysis_error_handling() {
 #[test]
 fn test_complex_coverage_scenario() {
     let mut report = CoverageReport::new();
-    
+
     // Add entity coverage
     report.entity_coverage.insert(
         "User".to_string(),
@@ -178,7 +204,7 @@ fn test_complex_coverage_scenario() {
             missing_attributes: vec![],
         },
     );
-    
+
     report.entity_coverage.insert(
         "Artifact".to_string(),
         EntityCoverage {
@@ -229,20 +255,20 @@ fn test_complex_coverage_scenario() {
     assert_eq!(report.coverage_percentage, 75.0); // (2 + 1) / (2 + 2) * 100
     assert_eq!(report.entity_coverage.len(), 2);
     assert_eq!(report.action_coverage.len(), 2);
-    
+
     // Verify specific coverage details
     let user_coverage = report.entity_coverage.get("User").unwrap();
     assert_eq!(user_coverage.coverage_percentage, 100.0);
     assert!(user_coverage.missing_attributes.is_empty());
-    
+
     let artifact_coverage = report.entity_coverage.get("Artifact").unwrap();
     assert_eq!(artifact_coverage.coverage_percentage, 37.5);
     assert_eq!(artifact_coverage.missing_attributes.len(), 5);
-    
+
     let read_coverage = report.action_coverage.get("read").unwrap();
     assert!(read_coverage.is_covered);
     assert_eq!(read_coverage.covering_policies.len(), 1);
-    
+
     let delete_coverage = report.action_coverage.get("delete").unwrap();
     assert!(!delete_coverage.is_covered);
     assert!(delete_coverage.covering_policies.is_empty());

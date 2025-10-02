@@ -66,7 +66,9 @@ impl CreatePolicyCommand {
 
         // Validate content
         if self.content.trim().is_empty() {
-            return Err(IamError::InvalidInput("Content cannot be empty".to_string()));
+            return Err(IamError::InvalidInput(
+                "Content cannot be empty".to_string(),
+            ));
         }
 
         // Validate created_by
@@ -108,8 +110,8 @@ impl CreatePolicyResponse {
             message: "Policy created successfully".to_string(),
         }
     }
-}#[cfg(test)
-]
+}
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -149,7 +151,10 @@ mod tests {
         )
         .with_tags(vec!["engineering".to_string(), "test".to_string()]);
 
-        assert_eq!(command.tags, Some(vec!["engineering".to_string(), "test".to_string()]));
+        assert_eq!(
+            command.tags,
+            Some(vec!["engineering".to_string(), "test".to_string()])
+        );
     }
 
     #[test]
@@ -173,7 +178,12 @@ mod tests {
 
         let result = command.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Name cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Name cannot be empty")
+        );
     }
 
     #[test]
@@ -187,7 +197,12 @@ mod tests {
 
         let result = command.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Name cannot exceed 255 characters"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Name cannot exceed 255 characters")
+        );
     }
 
     #[test]
@@ -200,7 +215,12 @@ mod tests {
 
         let result = command.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Content cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Content cannot be empty")
+        );
     }
 
     #[test]
@@ -213,7 +233,12 @@ mod tests {
 
         let result = command.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Created by field cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Created by field cannot be empty")
+        );
     }
 
     #[test]
@@ -228,7 +253,12 @@ mod tests {
 
         let result = command.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Cannot have more than 10 tags"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot have more than 10 tags")
+        );
     }
 
     #[test]
@@ -242,7 +272,12 @@ mod tests {
 
         let result = command.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Tags cannot be empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Tags cannot be empty")
+        );
     }
 
     #[test]
@@ -257,6 +292,11 @@ mod tests {
 
         let result = command.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Tag cannot exceed 50 characters"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Tag cannot exceed 50 characters")
+        );
     }
 }

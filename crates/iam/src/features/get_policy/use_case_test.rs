@@ -2,10 +2,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::features::get_policy::use_case::GetPolicyUseCase;
     use crate::domain::policy::{Policy, PolicyStatus};
     use crate::features::get_policy::dto::{GetPolicyQuery, GetPolicyResponse};
     use crate::features::get_policy::ports::PolicyReader;
+    use crate::features::get_policy::use_case::GetPolicyUseCase;
     use crate::infrastructure::errors::IamError;
     use crate::test_utils::{create_test_policy, policy_id};
     use async_trait::async_trait;

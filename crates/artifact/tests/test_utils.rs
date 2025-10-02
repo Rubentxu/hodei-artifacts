@@ -2,7 +2,7 @@ use artifact::features::upload_artifact::adapter::LocalFsChunkedUploadStorage;
 use artifact::features::upload_artifact::ports::ChunkedUploadStorage as UploadArtifactChunkedStorage;
 use artifact::features::upload_progress::dto::ReceivedChunkInfo;
 use artifact::features::upload_progress::{
-    ports::ChunkedUploadStorage as UploadProgressChunkedStorage, ProgressError,
+    ProgressError, ports::ChunkedUploadStorage as UploadProgressChunkedStorage,
 };
 use async_trait::async_trait;
 use bytes::Bytes;

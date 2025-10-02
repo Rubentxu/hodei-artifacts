@@ -3,7 +3,9 @@ mod tests {
     use crate::domain::policy::Policy;
     use crate::domain::validation::ValidationResult;
     use crate::features::update_policy::dto::UpdatePolicyCommand;
-    use crate::features::update_policy::ports::{PolicyUpdater, PolicyUpdateValidator, PolicyUpdateEventPublisher};
+    use crate::features::update_policy::ports::{
+        PolicyUpdateEventPublisher, PolicyUpdateValidator, PolicyUpdater,
+    };
     use crate::features::update_policy::use_case::UpdatePolicyUseCase;
     use crate::infrastructure::errors::IamError;
     use crate::test_utils::{create_test_policy, policy_id};
@@ -47,7 +49,7 @@ mod tests {
         let mut mock_updater = MockPolicyUpdaterImpl::new();
         let mut mock_validator = MockValidator::new();
         let mut mock_publisher = MockEventPublisher::new();
-        
+
         let policy_id = policy_id();
         let mut policy = create_test_policy();
         policy.id = policy_id.clone();
@@ -108,7 +110,7 @@ mod tests {
         let mut mock_updater = MockPolicyUpdaterImpl::new();
         let mock_validator = MockValidator::new();
         let mock_publisher = MockEventPublisher::new();
-        
+
         let policy_id = policy_id();
 
         mock_updater

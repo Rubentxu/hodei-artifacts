@@ -4,9 +4,8 @@ pub mod cedar_integration;
 pub mod resources;
 
 // Re-export para fácil acceso
-pub use cedar_integration::{to_cedar_entity, CedarEntityConverter};
+pub use cedar_integration::{CedarEntityConverter, to_cedar_entity};
 pub use resources::HodeiResource;
-
 
 // /// Ejemplo de implementación para Organization usando tipos Cedar
 // impl HodeiResource<cedar_policy::EntityUid, cedar_policy::Expr> for Organization {

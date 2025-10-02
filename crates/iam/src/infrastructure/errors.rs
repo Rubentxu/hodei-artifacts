@@ -1,8 +1,8 @@
 // crates/iam/src/infrastructure/errors.rs
 
-use thiserror::Error;
-use cedar_policy::PolicyId;
 use crate::domain::policy::PolicyStatus;
+use cedar_policy::PolicyId;
+use thiserror::Error;
 
 /// Validation error details for policy content
 #[derive(Debug, Clone, PartialEq)]
@@ -17,46 +17,49 @@ pub struct ValidationError {
 pub enum IamError {
     #[error("Policy not found: {0:?}")]
     PolicyNotFound(PolicyId),
-    
+
     #[error("Policy validation failed")]
     PolicyValidationFailed { errors: Vec<ValidationError> },
-    
+
     #[error("Invalid policy status transition from {from:?} to {to:?}")]
-    InvalidStatusTransition { from: PolicyStatus, to: PolicyStatus },
-    
+    InvalidStatusTransition {
+        from: PolicyStatus,
+        to: PolicyStatus,
+    },
+
     #[error("Invalid input: {0}")]
     InvalidInput(String),
-    
+
     #[error("Database error: {0}")]
     DatabaseError(String),
-    
+
     #[error("Authorization error: {0}")]
     AuthorizationError(String),
-    
+
     #[error("Configuration error: {0}")]
     ConfigurationError(String),
-    
+
     #[error("Policy already exists: {0:?}")]
     PolicyAlreadyExists(PolicyId),
-    
+
     #[error("Concurrent modification detected for policy: {0:?}")]
     ConcurrentModification(PolicyId),
-    
+
     #[error("Policy is read-only and cannot be modified: {0:?}")]
     PolicyReadOnly(PolicyId),
-    
+
     #[error("Internal error: {0}")]
     InternalError(String),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(String),
-    
+
     #[error("Network error: {0}")]
     NetworkError(String),
-    
+
     #[error("Timeout error: {0}")]
     TimeoutError(String),
-    
+
     #[error("Event publish error: {0}")]
     EventPublishError(String),
 }
@@ -209,14 +212,14 @@ mod tests {
     #[test]
     fn test_error_display() {
         let policy_id = create_test_policy_id();
-        
+
         let error = IamError::PolicyNotFound(policy_id.clone());
         assert!(error.to_string().contains("Policy not found"));
-        
+
         let error = IamError::InvalidInput("Test message".to_string());
         assert!(error.to_string().contains("Invalid input"));
         assert!(error.to_string().contains("Test message"));
-        
+
         let error = IamError::DatabaseError("Connection failed".to_string());
         assert!(error.to_string().contains("Database error"));
         assert!(error.to_string().contains("Connection failed"));
@@ -253,22 +256,22 @@ mod tests {
     #[test]
     fn test_error_classification() {
         let policy_id = create_test_policy_id();
-        
+
         // Client errors
         assert!(IamError::PolicyNotFound(policy_id.clone()).is_client_error());
         assert!(IamError::InvalidInput("test".to_string()).is_client_error());
         assert!(IamError::AuthorizationError("test".to_string()).is_client_error());
-        
+
         // Server errors
         assert!(IamError::DatabaseError("test".to_string()).is_server_error());
         assert!(IamError::InternalError("test".to_string()).is_server_error());
         assert!(IamError::ConfigurationError("test".to_string()).is_server_error());
-        
+
         // Retryable errors
         assert!(IamError::NetworkError("test".to_string()).is_retryable());
         assert!(IamError::TimeoutError("test".to_string()).is_retryable());
         assert!(IamError::InternalError("test".to_string()).is_retryable());
-        
+
         // Non-retryable errors
         assert!(!IamError::PolicyNotFound(policy_id).is_retryable());
         assert!(!IamError::InvalidInput("test".to_string()).is_retryable());
@@ -277,31 +280,64 @@ mod tests {
     #[test]
     fn test_http_status_codes() {
         let policy_id = create_test_policy_id();
-        
-        assert_eq!(IamError::PolicyNotFound(policy_id.clone()).http_status_code(), 404);
-        assert_eq!(IamError::InvalidInput("test".to_string()).http_status_code(), 400);
-        assert_eq!(IamError::AuthorizationError("test".to_string()).http_status_code(), 403);
-        assert_eq!(IamError::PolicyAlreadyExists(policy_id).http_status_code(), 409);
-        assert_eq!(IamError::DatabaseError("test".to_string()).http_status_code(), 500);
-        assert_eq!(IamError::NetworkError("test".to_string()).http_status_code(), 502);
-        assert_eq!(IamError::TimeoutError("test".to_string()).http_status_code(), 504);
+
+        assert_eq!(
+            IamError::PolicyNotFound(policy_id.clone()).http_status_code(),
+            404
+        );
+        assert_eq!(
+            IamError::InvalidInput("test".to_string()).http_status_code(),
+            400
+        );
+        assert_eq!(
+            IamError::AuthorizationError("test".to_string()).http_status_code(),
+            403
+        );
+        assert_eq!(
+            IamError::PolicyAlreadyExists(policy_id).http_status_code(),
+            409
+        );
+        assert_eq!(
+            IamError::DatabaseError("test".to_string()).http_status_code(),
+            500
+        );
+        assert_eq!(
+            IamError::NetworkError("test".to_string()).http_status_code(),
+            502
+        );
+        assert_eq!(
+            IamError::TimeoutError("test".to_string()).http_status_code(),
+            504
+        );
     }
 
     #[test]
     fn test_error_codes() {
         let policy_id = create_test_policy_id();
-        
-        assert_eq!(IamError::PolicyNotFound(policy_id).error_code(), "POLICY_NOT_FOUND");
-        assert_eq!(IamError::InvalidInput("test".to_string()).error_code(), "INVALID_INPUT");
-        assert_eq!(IamError::DatabaseError("test".to_string()).error_code(), "DATABASE_ERROR");
-        assert_eq!(IamError::AuthorizationError("test".to_string()).error_code(), "AUTHORIZATION_ERROR");
+
+        assert_eq!(
+            IamError::PolicyNotFound(policy_id).error_code(),
+            "POLICY_NOT_FOUND"
+        );
+        assert_eq!(
+            IamError::InvalidInput("test".to_string()).error_code(),
+            "INVALID_INPUT"
+        );
+        assert_eq!(
+            IamError::DatabaseError("test".to_string()).error_code(),
+            "DATABASE_ERROR"
+        );
+        assert_eq!(
+            IamError::AuthorizationError("test".to_string()).error_code(),
+            "AUTHORIZATION_ERROR"
+        );
     }
 
     #[test]
     fn test_conversion_from_policy_error() {
         let policy_error = crate::domain::policy::PolicyError::InvalidName("Test".to_string());
         let iam_error: IamError = policy_error.into();
-        
+
         match iam_error {
             IamError::InvalidInput(msg) => assert_eq!(msg, "Test"),
             _ => panic!("Expected InvalidInput error"),
@@ -315,7 +351,7 @@ mod tests {
             to: PolicyStatus::Active,
         };
         let iam_error: IamError = policy_error.into();
-        
+
         match iam_error {
             IamError::InvalidStatusTransition { from, to } => {
                 assert_eq!(from, PolicyStatus::Deprecated);

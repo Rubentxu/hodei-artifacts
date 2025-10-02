@@ -8,8 +8,11 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait PolicyLister: Send + Sync {
     /// List policies with filtering and pagination
-    async fn list(&self, query: ListPoliciesQuery) -> Result<ListPoliciesResponse, ListPoliciesError>;
-    
+    async fn list(
+        &self,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, ListPoliciesError>;
+
     /// Count policies matching the query
     async fn count(&self, query: ListPoliciesQuery) -> Result<u64, ListPoliciesError>;
 }

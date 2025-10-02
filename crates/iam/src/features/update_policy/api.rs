@@ -18,7 +18,10 @@ impl UpdatePolicyApi {
     }
 
     /// Handle update policy request
-    pub async fn update_policy(&self, command: UpdatePolicyCommand) -> Result<UpdatePolicyResponse, IamError> {
+    pub async fn update_policy(
+        &self,
+        command: UpdatePolicyCommand,
+    ) -> Result<UpdatePolicyResponse, IamError> {
         self.use_case.execute(command).await
     }
 }

@@ -2,8 +2,8 @@ use crate::shared::domain::ports::{PolicyStorage, StorageError};
 use async_trait::async_trait;
 use cedar_policy::Policy;
 use serde::{Deserialize, Serialize};
-use surrealdb::engine::local::{Db, Mem};
 use surrealdb::Surreal;
+use surrealdb::engine::local::{Db, Mem};
 
 #[derive(Clone)]
 pub struct SurrealMemStorage {
@@ -43,7 +43,9 @@ impl PolicyStorage for SurrealMemStorage {
         let _res: Option<PolicyRecord> = self
             .db
             .upsert(thing)
-            .content(PolicyRecord { src: policy.to_string() })
+            .content(PolicyRecord {
+                src: policy.to_string(),
+            })
             .await
             .map_err(|e| StorageError::ProviderError(Box::new(e)))?;
         Ok(())
@@ -57,6 +59,26 @@ impl PolicyStorage for SurrealMemStorage {
             .await
             .map_err(|e| StorageError::ProviderError(Box::new(e)))?;
         Ok(res.is_some())
+    }
+
+    async fn get_policy_by_id(&self, id: &str) -> Result<Option<Policy>, StorageError> {
+        let thing = (self.table.as_str(), id);
+        let rec: Option<PolicyRecord> = self
+            .db
+            .select(thing)
+            .await
+            .map_err(|e| StorageError::ProviderError(Box::new(e)))?;
+
+        match rec {
+            Some(r) => {
+                let policy = r
+                    .src
+                    .parse::<Policy>()
+                    .map_err(|e| StorageError::ParsingError(e.to_string()))?;
+                Ok(Some(policy))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn load_all_policies(&self) -> Result<Vec<Policy>, StorageError> {
@@ -92,7 +114,10 @@ mod tests {
         let all = storage.load_all_policies().await.expect("load");
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].to_string(), p.to_string());
-        let removed = storage.delete_policy(&p.id().to_string()).await.expect("delete");
+        let removed = storage
+            .delete_policy(&p.id().to_string())
+            .await
+            .expect("delete");
         assert!(removed);
     }
 }

@@ -1,11 +1,11 @@
 // crates/iam/src/features/list_policies/adapter.rs
 
 use crate::domain::policy::Policy;
-use crate::features::list_policies::ports::PolicyLister;
 use crate::features::list_policies::dto::{ListPoliciesQuery, ListPoliciesResponse};
 use crate::features::list_policies::error::ListPoliciesError;
+use crate::features::list_policies::ports::PolicyLister;
 use async_trait::async_trait;
-use mongodb::{bson::doc, Collection, Database};
+use mongodb::{Collection, Database, bson::doc};
 use std::sync::Arc;
 
 /// Adapter that implements PolicyLister using MongoDB directly
@@ -46,7 +46,10 @@ impl ListPoliciesAdapter {
 
 #[async_trait]
 impl PolicyLister for ListPoliciesAdapter {
-    async fn list(&self, query: ListPoliciesQuery) -> Result<ListPoliciesResponse, ListPoliciesError> {
+    async fn list(
+        &self,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, ListPoliciesError> {
         let query_doc = self.build_filter_document(&query);
 
         // Count total documents matching the filter
@@ -54,7 +57,9 @@ impl PolicyLister for ListPoliciesAdapter {
             .collection
             .count_documents(query_doc.clone())
             .await
-            .map_err(|e| ListPoliciesError::DatabaseError(format!("Failed to count policies: {}", e)))?;
+            .map_err(|e| {
+                ListPoliciesError::DatabaseError(format!("Failed to count policies: {}", e))
+            })?;
 
         // Execute the query with pagination and sorting
         let mut cursor = self
@@ -64,14 +69,14 @@ impl PolicyLister for ListPoliciesAdapter {
             .skip(query.effective_offset() as u64)
             .sort(doc! { "metadata.created_at": -1 }) // Sort by creation date, newest first
             .await
-            .map_err(|e| ListPoliciesError::DatabaseError(format!("Failed to list policies: {}", e)))?;
+            .map_err(|e| {
+                ListPoliciesError::DatabaseError(format!("Failed to list policies: {}", e))
+            })?;
 
         let mut policies = Vec::new();
-        while cursor
-            .advance()
-            .await
-            .map_err(|e| ListPoliciesError::DatabaseError(format!("Failed to iterate policies: {}", e)))?
-        {
+        while cursor.advance().await.map_err(|e| {
+            ListPoliciesError::DatabaseError(format!("Failed to iterate policies: {}", e))
+        })? {
             let policy = cursor.deserialize_current().map_err(|e| {
                 ListPoliciesError::DatabaseError(format!("Failed to deserialize policy: {}", e))
             })?;
@@ -87,6 +92,8 @@ impl PolicyLister for ListPoliciesAdapter {
         self.collection
             .count_documents(query_doc)
             .await
-            .map_err(|e| ListPoliciesError::DatabaseError(format!("Failed to count policies: {}", e)))
+            .map_err(|e| {
+                ListPoliciesError::DatabaseError(format!("Failed to count policies: {}", e))
+            })
     }
 }

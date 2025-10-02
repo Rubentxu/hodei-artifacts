@@ -20,10 +20,7 @@ impl DeletePolicyDI {
         let adapter = Arc::new(DeletePolicyAdapter::new(database, publisher));
 
         // Use case (business logic)
-        let use_case = Arc::new(DeletePolicyUseCase::new(
-            adapter.clone(),
-            adapter,
-        ));
+        let use_case = Arc::new(DeletePolicyUseCase::new(adapter.clone(), adapter));
 
         // API layer
         DeletePolicyApi::new(use_case)

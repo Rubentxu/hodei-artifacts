@@ -9,7 +9,7 @@ members = [
     "crates/search",
     "crates/security",
     "crates/policies",
-    "crates/distribution", 
+    "crates/distribution",
     "crates/organization"
 ]
 resolver = "2"
@@ -78,26 +78,28 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
-[lib]
-name = "hodei_artifacts_api"
-path = "src/lib.rs"
+[features]
+default = []
+embedded = ["policies/embedded"]
 
 [[bin]]
 name = "hodei-artifacts-api"
 path = "src/main.rs"
 
 [dependencies]
-# Point to the new crates
+# Point to the new crates (solo activos: shared y policies)
 shared = { path = "crates/shared" }
-artifact = { path = "crates/artifact" }
-iam = { path = "crates/iam" }
-repository = { path = "crates/repository" }
-"supply-chain" = { path = "crates/supply-chain" }
-search = { path = "crates/search" }
-security = { path = "crates/security" }
-distribution = { path = "crates/distribution" }
-organization = { path = "crates/organization" }
-policies = { path = "crates/policies" }
+policies = { path = "crates/policies", features = ["mem"] }
+
+# Crates desactivados temporalmente (no maduros)
+# artifact = { path = "crates/artifact" }
+# iam = { path = "crates/iam" }
+# repository = { path = "crates/repository" }
+# "supply-chain" = { path = "crates/supply-chain" }
+# search = { path = "crates/search" }
+# security = { path = "crates/security" }
+# distribution = { path = "crates/distribution" }
+# organization = { path = "crates/organization" }
 
 
 # Core
@@ -108,10 +110,23 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 tower-http = { version = "0.6.6", features = ["cors", "trace", "timeout", "compression-br"] }
+tower = { workspace = true }
 http = "1.1.0"
 async-trait = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
+# OpenAPI/Swagger
+utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 
+# Configuration
+dotenvy = "0.15"
+
+# Utilities
 uuid = { workspace = true }
+chrono = { workspace = true }
+hyper = { workspace = true }
+metrics = { workspace = true }
 
 aws-config.workspace = true

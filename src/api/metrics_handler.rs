@@ -9,7 +9,7 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> Response {
             .body("Metrics disabled".into())
             .unwrap();
     }
-    
+
     // This would depend on your metrics implementation
     // For Prometheus, you might do something like:
     /*
@@ -17,13 +17,13 @@ pub async fn metrics(State(state): State<Arc<AppState>>) -> Response {
     let metric_families = prometheus::gather();
     let mut buffer = Vec::new();
     encoder.encode(&metric_families, &mut buffer).unwrap();
-    
+
     Response::builder()
         .header("content-type", "text/plain; version=0.0.4")
         .body(buffer.into())
         .unwrap()
     */
-    
+
     // Placeholder response
     Response::builder()
         .header("content-type", "text/plain")

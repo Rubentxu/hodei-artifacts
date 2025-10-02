@@ -30,7 +30,9 @@ pub mod embedded {
     use crate::shared::infrastructure::surreal::SurrealEmbeddedStorage;
 
     /// Build CreatePolicyUseCase wired with SurrealDB embedded (RocksDB)
-    pub async fn make_use_case_embedded(path: &str) -> Result<(CreatePolicyUseCase, Arc<AuthorizationEngine>)> {
+    pub async fn make_use_case_embedded(
+        path: &str,
+    ) -> Result<(CreatePolicyUseCase, Arc<AuthorizationEngine>)> {
         let storage = Arc::new(SurrealEmbeddedStorage::new("policies", "policies", path).await?);
 
         let (engine, store) = {

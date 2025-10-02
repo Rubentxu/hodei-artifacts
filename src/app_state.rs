@@ -1,18 +1,22 @@
-use crate::{config::Config, ports::{AuthorizationEnginePort, PolicyStorePort, StorageAdapterPort}};
+use crate::config::Config;
 use metrics::{Counter, Histogram};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Application state - solo contiene use cases de los crates especializados
 #[derive(Clone)]
 pub struct AppState {
-    pub engine: Arc<dyn AuthorizationEnginePort>,
-    pub policy_store: Arc<dyn PolicyStorePort>,
-    pub storage: Arc<dyn StorageAdapterPort>,
     pub config: Config,
     pub metrics: AppMetrics,
     pub health: Arc<RwLock<HealthStatus>>,
-    // Optional DI for policies::create_policy use case (wired lazily if None)
-    pub create_policy_uc: Option<Arc<policies::features::create_policy::use_case::CreatePolicyUseCase>>,
+    // Use cases from policies crate
+    pub create_policy_uc: Arc<policies::features::create_policy::use_case::CreatePolicyUseCase>,
+    pub get_policy_uc: Arc<policies::features::get_policy::use_case::GetPolicyUseCase>,
+    pub list_policies_uc: Arc<policies::features::list_policies::use_case::ListPoliciesUseCase>,
+    pub delete_policy_uc: Arc<policies::features::delete_policy::use_case::DeletePolicyUseCase>,
+    // Authorization engine from policies crate
+    #[allow(dead_code)]
+    pub authorization_engine: Arc<policies::shared::AuthorizationEngine>,
 }
 
 #[derive(Clone)]
@@ -38,11 +42,11 @@ impl AppMetrics {
             request_duration: metrics::histogram!("http_request_duration_seconds"),
         }
     }
-    
+
     pub fn record_request(&self) {
         self.requests_total.increment(1);
     }
-    
+
     pub fn record_authorization(&self, success: bool) {
         self.authorization_requests.increment(1);
         if success {
@@ -51,16 +55,16 @@ impl AppMetrics {
             self.authorization_failures.increment(1);
         }
     }
-    
+
     pub fn record_policy_operation(&self) {
         self.policy_operations.increment(1);
     }
-    
-    pub fn record_error(&self, error_type: &str) {
+
+    pub fn record_error(&self, _error_type: &str) {
         self.errors_total.increment(1);
         // You could add labels for error types if your metrics backend supports it
     }
-    
+
     pub fn record_request_duration(&self, duration: std::time::Duration) {
         self.request_duration.record(duration.as_secs_f64());
     }
@@ -70,11 +74,13 @@ impl AppMetrics {
 pub struct HealthStatus {
     pub database: ComponentHealth,
     pub policy_engine: ComponentHealth,
-    pub startup_time: chrono::DateTime<chrono::Utc>,
+    #[allow(dead_code)]
     pub last_health_check: chrono::DateTime<chrono::Utc>,
+    pub startup_time: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[allow(dead_code)]
 pub enum ComponentHealth {
     Healthy,
     Degraded { reason: String },
@@ -91,17 +97,19 @@ impl HealthStatus {
             last_health_check: now,
         }
     }
-    
+
     pub fn is_healthy(&self) -> bool {
-        matches!(self.database, ComponentHealth::Healthy) &&
-        matches!(self.policy_engine, ComponentHealth::Healthy)
+        matches!(self.database, ComponentHealth::Healthy)
+            && matches!(self.policy_engine, ComponentHealth::Healthy)
     }
-    
+
+    #[allow(dead_code)]
     pub fn update_database_health(&mut self, health: ComponentHealth) {
         self.database = health;
         self.last_health_check = chrono::Utc::now();
     }
-    
+
+    #[allow(dead_code)]
     pub fn update_policy_engine_health(&mut self, health: ComponentHealth) {
         self.policy_engine = health;
         self.last_health_check = chrono::Utc::now();

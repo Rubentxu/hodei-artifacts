@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use testcontainers::{core::WaitFor, runners::AsyncRunner, GenericImage};
+    use testcontainers::{GenericImage, core::WaitFor, runners::AsyncRunner};
     use tracing::info;
 
     #[tokio::test]

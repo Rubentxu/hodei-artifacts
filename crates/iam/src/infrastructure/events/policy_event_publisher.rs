@@ -55,7 +55,11 @@ impl PolicyDeleteEventPublisher for SimplePolicyEventPublisher {
 
 #[async_trait]
 impl PolicyUpdateEventPublisher for SimplePolicyEventPublisher {
-    async fn publish_policy_updated(&self, old_policy: &Policy, new_policy: &Policy) -> Result<(), IamError> {
+    async fn publish_policy_updated(
+        &self,
+        old_policy: &Policy,
+        new_policy: &Policy,
+    ) -> Result<(), IamError> {
         // For now, just log the event
         // In a real implementation, this would publish to a message bus
         tracing::info!(
@@ -68,8 +72,6 @@ impl PolicyUpdateEventPublisher for SimplePolicyEventPublisher {
         Ok(())
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -105,6 +107,4 @@ mod tests {
         let result = publisher.publish_policy_created(&policy).await;
         assert!(result.is_ok());
     }
-
-
 }

@@ -2,15 +2,14 @@
 
 use crate::domain::policy::Policy;
 use crate::domain::validation::ValidationResult;
-use crate::features::create_policy::ports::{PolicyCreator, PolicyValidator, PolicyEventPublisher};
 use crate::features::create_policy::error::CreatePolicyError;
-use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
+use crate::features::create_policy::ports::{PolicyCreator, PolicyEventPublisher, PolicyValidator};
 use crate::infrastructure::events::policy_event_publisher::SimplePolicyEventPublisher;
+use crate::infrastructure::validation::cedar_validator::CedarPolicyValidator;
 use async_trait::async_trait;
-use mongodb::{bson::doc, Collection, Database};
 use cedar_policy::PolicyId;
+use mongodb::{Collection, Database, bson::doc};
 use std::sync::Arc;
-
 
 /// Adapter that implements PolicyCreator using MongoDB directly
 pub struct MongoPolicyCreatorAdapter {
@@ -28,21 +27,19 @@ impl MongoPolicyCreatorAdapter {
 #[async_trait]
 impl PolicyCreator for MongoPolicyCreatorAdapter {
     async fn create(&self, policy: Policy) -> Result<Policy, CreatePolicyError> {
-        self.collection
-            .insert_one(&policy)
-            .await
-            .map_err(|e| CreatePolicyError::DatabaseError(format!("Failed to create policy: {}", e)))?;
-        
+        self.collection.insert_one(&policy).await.map_err(|e| {
+            CreatePolicyError::DatabaseError(format!("Failed to create policy: {}", e))
+        })?;
+
         Ok(policy)
     }
 
     async fn exists(&self, id: &PolicyId) -> Result<bool, CreatePolicyError> {
         let filter = doc! { "_id": id.to_string() };
-        let count = self.collection
-            .count_documents(filter)
-            .await
-            .map_err(|e| CreatePolicyError::DatabaseError(format!("Failed to check policy existence: {}", e)))?;
-        
+        let count = self.collection.count_documents(filter).await.map_err(|e| {
+            CreatePolicyError::DatabaseError(format!("Failed to check policy existence: {}", e))
+        })?;
+
         Ok(count > 0)
     }
 }
@@ -57,8 +54,6 @@ impl CedarPolicyValidatorAdapter {
         Self { validator }
     }
 
-
-
     /// Perform comprehensive Cedar validation using all Cedar capabilities
     async fn validate_policy_semantics(&self, content: &str) -> Result<(), CreatePolicyError> {
         use security::ComprehensiveCedarValidator;
@@ -66,31 +61,39 @@ impl CedarPolicyValidatorAdapter {
         let validator = ComprehensiveCedarValidator::new()
             .map_err(|e| CreatePolicyError::ValidationFailed { errors: vec![] })?;
 
-        let result = validator.validate_policy_comprehensive(content).await
+        let result = validator
+            .validate_policy_comprehensive(content)
+            .await
             .map_err(|e| CreatePolicyError::ValidationFailed { errors: vec![] })?;
 
         if !result.is_valid {
             // Create detailed error message with all validation failures
             let mut error_parts = Vec::new();
-            
+
             if !result.hrn_errors.is_empty() {
                 error_parts.push(format!("HRN errors: {}", result.hrn_errors.join(", ")));
             }
-            
+
             if !result.syntax_errors.is_empty() {
-                error_parts.push(format!("Syntax errors: {}", result.syntax_errors.join(", ")));
+                error_parts.push(format!(
+                    "Syntax errors: {}",
+                    result.syntax_errors.join(", ")
+                ));
             }
-            
+
             if !result.semantic_errors.is_empty() {
-                error_parts.push(format!("Semantic errors: {}", result.semantic_errors.join(", ")));
+                error_parts.push(format!(
+                    "Semantic errors: {}",
+                    result.semantic_errors.join(", ")
+                ));
             }
-            
+
             let error_message = if error_parts.is_empty() {
                 "Policy validation failed".to_string()
             } else {
                 error_parts.join("; ")
             };
-            
+
             return Err(CreatePolicyError::ValidationFailed { errors: vec![] });
         }
 
@@ -106,7 +109,9 @@ impl CedarPolicyValidatorAdapter {
 #[async_trait]
 impl PolicyValidator for CedarPolicyValidatorAdapter {
     async fn validate_syntax(&self, content: &str) -> Result<ValidationResult, CreatePolicyError> {
-        self.validator.validate_syntax(content).await
+        self.validator
+            .validate_syntax(content)
+            .await
             .map_err(|e| CreatePolicyError::ValidationFailed { errors: vec![] })
     }
 
@@ -129,7 +134,14 @@ impl SimplePolicyEventPublisherAdapter {
 #[async_trait]
 impl PolicyEventPublisher for SimplePolicyEventPublisherAdapter {
     async fn publish_policy_created(&self, policy: &Policy) -> Result<(), CreatePolicyError> {
-        self.publisher.publish_policy_created(policy).await
-            .map_err(|e| CreatePolicyError::EventPublishingFailed(format!("Failed to publish policy created event: {}", e)))
+        self.publisher
+            .publish_policy_created(policy)
+            .await
+            .map_err(|e| {
+                CreatePolicyError::EventPublishingFailed(format!(
+                    "Failed to publish policy created event: {}",
+                    e
+                ))
+            })
     }
 }

@@ -2,10 +2,10 @@
 
 use crate::domain::policy::{Policy, PolicyMetadata, PolicyStatus};
 use crate::features::create_policy::dto::{CreatePolicyCommand, CreatePolicyResponse};
-use crate::features::create_policy::ports::{PolicyCreator, PolicyValidator, PolicyEventPublisher};
 use crate::features::create_policy::error::CreatePolicyError;
-use shared::hrn::Hrn;
+use crate::features::create_policy::ports::{PolicyCreator, PolicyEventPublisher, PolicyValidator};
 use cedar_policy::PolicyId;
+use shared::hrn::Hrn;
 use std::sync::Arc;
 use time::OffsetDateTime;
 
@@ -32,37 +32,39 @@ impl CreatePolicyUseCase {
     }
 
     /// Execute the create policy use case
-    pub async fn execute(&self, command: CreatePolicyCommand) -> Result<CreatePolicyResponse, CreatePolicyError> {
+    pub async fn execute(
+        &self,
+        command: CreatePolicyCommand,
+    ) -> Result<CreatePolicyResponse, CreatePolicyError> {
         // 1. Validate command
         command.validate()?;
 
         // 2. Validate Cedar policy syntax
-        let validation_result = self.validator.validate_syntax(&command.content).await
-            .map_err(|e| CreatePolicyError::ValidationFailed {
-                errors: vec![],
-            })?;
+        let validation_result = self
+            .validator
+            .validate_syntax(&command.content)
+            .await
+            .map_err(|e| CreatePolicyError::ValidationFailed { errors: vec![] })?;
         if !validation_result.is_valid {
             let errors = validation_result.errors.clone().unwrap_or_default();
             return Err(CreatePolicyError::ValidationFailed { errors });
         }
 
         // 3. Validate Cedar policy semantics against schema
-        self.validator.validate_semantics(&command.content).await
-            .map_err(|e| CreatePolicyError::ValidationFailed {
-                errors: vec![],
-            })?;
+        self.validator
+            .validate_semantics(&command.content)
+            .await
+            .map_err(|e| CreatePolicyError::ValidationFailed { errors: vec![] })?;
 
         // 4. Generate policy ID
-        let policy_id = self.generate_policy_id(&command.name)
-            .map_err(|e| CreatePolicyError::InvalidInput(
-                format!("Failed to generate policy ID: {}", e)
-            ))?;
+        let policy_id = self.generate_policy_id(&command.name).map_err(|e| {
+            CreatePolicyError::InvalidInput(format!("Failed to generate policy ID: {}", e))
+        })?;
 
         // 5. Check if policy already exists
-        if self.creator.exists(&policy_id).await
-            .map_err(|e| CreatePolicyError::DatabaseError(
-                format!("Failed to check policy existence: {}", e)
-            ))? {
+        if self.creator.exists(&policy_id).await.map_err(|e| {
+            CreatePolicyError::DatabaseError(format!("Failed to check policy existence: {}", e))
+        })? {
             return Err(CreatePolicyError::PolicyAlreadyExists(policy_id));
         }
 
@@ -85,18 +87,20 @@ impl CreatePolicyUseCase {
         };
 
         // 7. Persist policy
-        let created_policy = self.creator.create(policy).await
-            .map_err(|e| CreatePolicyError::DatabaseError(
-                format!("Failed to create policy: {}", e)
-            ))?;
+        let created_policy = self.creator.create(policy).await.map_err(|e| {
+            CreatePolicyError::DatabaseError(format!("Failed to create policy: {}", e))
+        })?;
 
         // 8. Publish domain event
         self.event_publisher
             .publish_policy_created(&created_policy)
             .await
-            .map_err(|e| CreatePolicyError::EventPublishingFailed(
-                format!("Failed to publish policy created event: {}", e)
-            ))?;
+            .map_err(|e| {
+                CreatePolicyError::EventPublishingFailed(format!(
+                    "Failed to publish policy created event: {}",
+                    e
+                ))
+            })?;
 
         // 9. Return response
         Ok(CreatePolicyResponse::new(created_policy))
@@ -108,7 +112,13 @@ impl CreatePolicyUseCase {
         let safe_name = name
             .to_lowercase()
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect::<String>();
 
         // Add timestamp to ensure uniqueness
@@ -117,8 +127,8 @@ impl CreatePolicyUseCase {
 
         // Create HRN for the policy
         let hrn_string = format!("hrn:hodei:iam:global:policy/{}", policy_name);
-        let hrn = Hrn::new(&hrn_string)
-            .map_err(|e| format!("Failed to create policy ID: {}", e))?;
+        let hrn =
+            Hrn::new(&hrn_string).map_err(|e| format!("Failed to create policy ID: {}", e))?;
 
         Ok(PolicyId(hrn))
     }
@@ -173,7 +183,9 @@ mod tests {
     impl PolicyCreator for MockPolicyCreator {
         async fn create(&self, policy: Policy) -> Result<Policy, CreatePolicyError> {
             if self.should_fail_create {
-                return Err(CreatePolicyError::DatabaseError("Mock database error".to_string()));
+                return Err(CreatePolicyError::DatabaseError(
+                    "Mock database error".to_string(),
+                ));
             }
 
             let mut policies = self.policies.lock().unwrap();
@@ -184,7 +196,9 @@ mod tests {
 
         async fn exists(&self, _id: &PolicyId) -> Result<bool, CreatePolicyError> {
             if self.should_fail_exists {
-                return Err(CreatePolicyError::DatabaseError("Mock exists check error".to_string()));
+                return Err(CreatePolicyError::DatabaseError(
+                    "Mock exists check error".to_string(),
+                ));
             }
             Ok(self.policy_exists)
         }
@@ -197,21 +211,21 @@ mod tests {
 
     impl MockPolicyValidator {
         fn new() -> Self {
-            Self { 
+            Self {
                 should_fail_syntax: false,
                 should_fail_semantics: false,
             }
         }
 
         fn with_syntax_failure() -> Self {
-            Self { 
+            Self {
                 should_fail_syntax: true,
                 should_fail_semantics: false,
             }
         }
 
         fn with_semantic_failure() -> Self {
-            Self { 
+            Self {
                 should_fail_syntax: false,
                 should_fail_semantics: true,
             }
@@ -220,7 +234,10 @@ mod tests {
 
     #[async_trait]
     impl PolicyValidator for MockPolicyValidator {
-        async fn validate_syntax(&self, _content: &str) -> Result<ValidationResult, CreatePolicyError> {
+        async fn validate_syntax(
+            &self,
+            _content: &str,
+        ) -> Result<ValidationResult, CreatePolicyError> {
             if self.should_fail_syntax {
                 Ok(ValidationResult::invalid(vec![ValidationError {
                     message: "Mock validation error".to_string(),
@@ -270,7 +287,9 @@ mod tests {
     impl PolicyEventPublisher for MockPolicyEventPublisher {
         async fn publish_policy_created(&self, policy: &Policy) -> Result<(), CreatePolicyError> {
             if self.should_fail {
-                return Err(CreatePolicyError::EventPublishingFailed("Mock event publish error".to_string()));
+                return Err(CreatePolicyError::EventPublishingFailed(
+                    "Mock event publish error".to_string(),
+                ));
             }
 
             let mut events = self.published_events.lock().unwrap();
@@ -284,9 +303,9 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::new());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher.clone());
-        
+
         let command = CreatePolicyCommand::new(
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
@@ -294,7 +313,7 @@ mod tests {
         );
 
         let result = use_case.execute(command).await;
-        
+
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.policy.name, "Test Policy");
@@ -313,9 +332,9 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::new());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let command = CreatePolicyCommand::new(
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
@@ -325,11 +344,14 @@ mod tests {
         .with_tags(vec!["engineering".to_string(), "test".to_string()]);
 
         let result = use_case.execute(command).await;
-        
+
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.policy.name, "Test Policy");
-        assert_eq!(response.policy.description, Some("A test policy".to_string()));
+        assert_eq!(
+            response.policy.description,
+            Some("A test policy".to_string())
+        );
         assert_eq!(response.policy.metadata.tags, vec!["engineering", "test"]);
     }
 
@@ -338,9 +360,9 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::with_syntax_failure());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let command = CreatePolicyCommand::new(
             "Test Policy".to_string(),
             "invalid policy content".to_string(),
@@ -348,7 +370,7 @@ mod tests {
         );
 
         let result = use_case.execute(command).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             CreatePolicyError::ValidationFailed { errors } => {
@@ -364,17 +386,18 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::with_semantic_failure());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let command = CreatePolicyCommand::new(
             "Test Policy".to_string(),
-            "permit(principal == UnknownEntity::\"alice\", action == ReadArtifact, resource);".to_string(),
+            "permit(principal == UnknownEntity::\"alice\", action == ReadArtifact, resource);"
+                .to_string(),
             "user_123".to_string(),
         );
 
         let result = use_case.execute(command).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             CreatePolicyError::ValidationFailed { errors } => {
@@ -389,9 +412,9 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::new());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let command = CreatePolicyCommand::new(
             "".to_string(), // Invalid empty name
             "permit(principal, action, resource);".to_string(),
@@ -399,7 +422,7 @@ mod tests {
         );
 
         let result = use_case.execute(command).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             CreatePolicyError::InvalidInput(msg) => {
@@ -414,9 +437,9 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::with_existing_policy());
         let validator = Arc::new(MockPolicyValidator::new());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let command = CreatePolicyCommand::new(
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
@@ -424,7 +447,7 @@ mod tests {
         );
 
         let result = use_case.execute(command).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             CreatePolicyError::PolicyAlreadyExists(_) => {
@@ -439,9 +462,9 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::with_create_failure());
         let validator = Arc::new(MockPolicyValidator::new());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let command = CreatePolicyCommand::new(
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
@@ -449,7 +472,7 @@ mod tests {
         );
 
         let result = use_case.execute(command).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             CreatePolicyError::DatabaseError(msg) => {
@@ -464,9 +487,9 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::new());
         let event_publisher = Arc::new(MockPolicyEventPublisher::with_failure());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let command = CreatePolicyCommand::new(
             "Test Policy".to_string(),
             "permit(principal, action, resource);".to_string(),
@@ -474,7 +497,7 @@ mod tests {
         );
 
         let result = use_case.execute(command).await;
-        
+
         assert!(result.is_err());
         match result.unwrap_err() {
             CreatePolicyError::EventPublishingFailed(msg) => {
@@ -489,12 +512,12 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::new());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let policy_id = use_case.generate_policy_id("Test Policy");
         assert!(policy_id.is_ok());
-        
+
         let id = policy_id.unwrap();
         let hrn_string = id.to_string();
         assert!(hrn_string.starts_with("hrn:hodei:iam:global:policy/"));
@@ -506,12 +529,12 @@ mod tests {
         let creator = Arc::new(MockPolicyCreator::new());
         let validator = Arc::new(MockPolicyValidator::new());
         let event_publisher = Arc::new(MockPolicyEventPublisher::new());
-        
+
         let use_case = CreatePolicyUseCase::new(creator, validator, event_publisher);
-        
+
         let policy_id = use_case.generate_policy_id("Test Policy @#$%");
         assert!(policy_id.is_ok());
-        
+
         let id = policy_id.unwrap();
         let hrn_string = id.to_string();
         assert!(hrn_string.starts_with("hrn:hodei:iam:global:policy/"));

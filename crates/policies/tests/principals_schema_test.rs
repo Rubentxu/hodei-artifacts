@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use policies::domain::{principals, EngineBuilder, PolicyStorage, StorageError};
+use policies::domain::{EngineBuilder, PolicyStorage, StorageError, principals};
 use std::sync::Arc;
 
 struct DummyStorage;
@@ -11,6 +11,12 @@ impl PolicyStorage for DummyStorage {
     }
     async fn delete_policy(&self, _id: &str) -> Result<bool, StorageError> {
         Ok(true)
+    }
+    async fn get_policy_by_id(
+        &self,
+        _id: &str,
+    ) -> Result<Option<cedar_policy::Policy>, StorageError> {
+        Ok(None)
     }
     async fn load_all_policies(&self) -> Result<Vec<cedar_policy::Policy>, StorageError> {
         Ok(vec![])

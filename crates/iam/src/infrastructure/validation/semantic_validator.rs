@@ -18,7 +18,7 @@ impl SemanticPolicyValidator {
     pub fn new() -> Result<Self, IamError> {
         let security_validator = SecurityPolicyValidator::new()
             .map_err(|e| IamError::ConfigurationError(format!("Failed to initialize semantic validator: {}", e)))?;
-        
+
         Ok(Self {
             security_validator,
         })
@@ -28,7 +28,7 @@ impl SemanticPolicyValidator {
     pub fn with_schema(schema_content: &str) -> Result<Self, IamError> {
         let security_validator = SecurityPolicyValidator::with_schema(schema_content)
             .map_err(|e| IamError::ConfigurationError(format!("Failed to initialize semantic validator with schema: {}", e)))?;
-        
+
         Ok(Self {
             security_validator,
         })
@@ -79,14 +79,14 @@ impl CreatePolicyValidator for SemanticPolicyValidator {
 
     async fn validate_semantics(&self, content: &str) -> Result<(), IamError> {
         let result = self.validate_comprehensive(content).await?;
-        
+
         if result.is_valid {
             Ok(())
         } else {
             let error_messages: Vec<String> = result.errors.iter()
                 .map(|e| e.message.clone())
                 .collect();
-            
+
             Err(IamError::validation_error(error_messages.join("; ")))
         }
     }
@@ -100,14 +100,14 @@ impl PolicyUpdateValidator for SemanticPolicyValidator {
 
     async fn validate_semantics(&self, content: &str) -> Result<(), IamError> {
         let result = self.validate_comprehensive(content).await?;
-        
+
         if result.is_valid {
             Ok(())
         } else {
             let error_messages: Vec<String> = result.errors.iter()
                 .map(|e| e.message.clone())
                 .collect();
-            
+
             Err(IamError::validation_error(error_messages.join("; ")))
         }
     }
@@ -190,7 +190,7 @@ mod tests {
     async fn test_validate_empty_policy() {
         let validator = SemanticPolicyValidator::new().unwrap();
         let result = validator.validate_comprehensive("").await.unwrap();
-        
+
         assert!(!result.is_valid);
         assert!(!result.errors.is_empty());
         assert!(result.errors[0].message.contains("empty"));
@@ -208,7 +208,7 @@ mod tests {
         "#;
 
         use crate::features::create_policy::ports::PolicyValidator;
-        
+
         let result = PolicyValidator::validate_semantics(&validator, valid_policy).await;
         assert!(result.is_ok());
 

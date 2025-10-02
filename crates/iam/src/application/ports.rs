@@ -2,7 +2,6 @@
 
 use crate::domain::policy::{Policy, PolicyStatus};
 
-
 /// Filter criteria for policy queries
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PolicyFilter {
@@ -217,7 +216,7 @@ mod tests {
     #[test]
     fn test_policy_filter_defaults() {
         let filter = PolicyFilter::new();
-        
+
         assert!(filter.is_empty());
         assert_eq!(filter.effective_limit(), 50);
         assert_eq!(filter.effective_offset(), 0);
@@ -225,10 +224,8 @@ mod tests {
 
     #[test]
     fn test_policy_filter_effective_values() {
-        let filter = PolicyFilter::new()
-            .with_limit(100)
-            .with_offset(25);
-        
+        let filter = PolicyFilter::new().with_limit(100).with_offset(25);
+
         assert_eq!(filter.effective_limit(), 100);
         assert_eq!(filter.effective_offset(), 25);
     }
@@ -237,7 +234,7 @@ mod tests {
     fn test_policy_list_creation() {
         let policies = vec![];
         let list = PolicyList::new(policies, 0);
-        
+
         assert!(list.is_empty());
         assert_eq!(list.len(), 0);
         assert_eq!(list.total_count, 0);
@@ -247,7 +244,7 @@ mod tests {
     #[test]
     fn test_policy_list_empty() {
         let list = PolicyList::empty();
-        
+
         assert!(list.is_empty());
         assert_eq!(list.len(), 0);
         assert_eq!(list.total_count, 0);

@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use crates::iam::features::validate_policy::*;
 use crates::iam::features::analyze_policy_coverage::*;
+use crates::iam::features::validate_policy::*;
 use crates::iam::infrastructure::errors::IamError;
+use std::sync::Arc;
 
 /// Comprehensive integration tests for enhanced validation features
 /// Tests the complete validation pipeline with real Cedar integration
@@ -24,10 +24,7 @@ async fn test_comprehensive_policy_validation_pipeline() {
         );
     "#;
 
-    let command = ValidatePolicyCommand::new(
-        valid_policy.to_string(),
-        "test_user".to_string(),
-    );
+    let command = ValidatePolicyCommand::new(valid_policy.to_string(), "test_user".to_string());
 
     // Validate the command structure
     assert!(command.validate().is_ok());
@@ -39,39 +36,49 @@ async fn test_comprehensive_policy_validation_pipeline() {
 async fn test_batch_validation_with_mixed_policies() {
     // Test batch validation with a mix of valid and invalid policies
     let policies = vec![
-        PolicyToValidate::new(r#"
+        PolicyToValidate::new(
+            r#"
             permit (
                 principal == User::"alice",
                 action == Action::"read",
                 resource == Artifact::"doc1"
             );
-        "#.to_string()).with_id("policy1".to_string()),
-        
-        PolicyToValidate::new(r#"
+        "#
+            .to_string(),
+        )
+        .with_id("policy1".to_string()),
+        PolicyToValidate::new(
+            r#"
             invalid syntax here
-        "#.to_string()).with_id("policy2".to_string()),
-        
-        PolicyToValidate::new(r#"
+        "#
+            .to_string(),
+        )
+        .with_id("policy2".to_string()),
+        PolicyToValidate::new(
+            r#"
             permit (
                 principal == UnknownEntity::"bob",
                 action == Action::"write",
                 resource == Artifact::"doc2"
             );
-        "#.to_string()).with_id("policy3".to_string()),
-        
-        PolicyToValidate::new(r#"
+        "#
+            .to_string(),
+        )
+        .with_id("policy3".to_string()),
+        PolicyToValidate::new(
+            r#"
             forbid (
                 principal,
                 action == Action::"delete",
                 resource == Artifact::"doc3"
             );
-        "#.to_string()).with_id("policy4".to_string()),
+        "#
+            .to_string(),
+        )
+        .with_id("policy4".to_string()),
     ];
 
-    let command = ValidatePoliciesBatchCommand::new(
-        policies,
-        "test_user".to_string(),
-    );
+    let command = ValidatePoliciesBatchCommand::new(policies, "test_user".to_string());
 
     // Validate the batch command
     assert!(command.validate().is_ok());
@@ -80,7 +87,11 @@ async fn test_batch_validation_with_mixed_policies() {
 
     // Test individual policy validation within batch
     for (index, policy) in command.policies.iter().enumerate() {
-        assert!(!policy.content.trim().is_empty(), "Policy {} should not be empty", index);
+        assert!(
+            !policy.content.trim().is_empty(),
+            "Policy {} should not be empty",
+            index
+        );
         if let Some(ref id) = policy.id {
             assert!(!id.is_empty(), "Policy ID {} should not be empty", index);
         }
@@ -137,7 +148,7 @@ async fn test_conflict_detection_scenarios() {
     assert_eq!(conflicting_policies.len(), 2);
     assert!(conflicting_policies[0].contains("permit"));
     assert!(conflicting_policies[1].contains("forbid"));
-    
+
     // Both policies reference the same principal, action, and resource
     for policy in &conflicting_policies {
         assert!(policy.contains(r#"User::"alice""#));
@@ -176,15 +187,21 @@ async fn test_enhanced_error_formatting() {
     use crate::iam::features::validate_policy::error_formatter::PolicyValidationErrorFormatter;
 
     let formatter = PolicyValidationErrorFormatter::new();
-    
+
     // Test syntax error formatting
     let syntax_error = formatter.format_error(
         ValidationErrorType::SyntaxError,
         "Missing semicolon at end of policy",
-        Some(PolicyLocation { line: 5, column: 30 }),
+        Some(PolicyLocation {
+            line: 5,
+            column: 30,
+        }),
     );
 
-    assert!(matches!(syntax_error.error_type, ValidationErrorType::SyntaxError));
+    assert!(matches!(
+        syntax_error.error_type,
+        ValidationErrorType::SyntaxError
+    ));
     assert!(syntax_error.message.contains("Line 5, Column 30"));
     assert!(syntax_error.message.contains("syntax error"));
     assert!(syntax_error.suggested_fix.is_some());
@@ -194,10 +211,16 @@ async fn test_enhanced_error_formatting() {
     let entity_error = formatter.format_error(
         ValidationErrorType::UnknownEntity,
         "unknown entity 'InvalidEntity' in policy",
-        Some(PolicyLocation { line: 3, column: 15 }),
+        Some(PolicyLocation {
+            line: 3,
+            column: 15,
+        }),
     );
 
-    assert!(matches!(entity_error.error_type, ValidationErrorType::UnknownEntity));
+    assert!(matches!(
+        entity_error.error_type,
+        ValidationErrorType::UnknownEntity
+    ));
     assert!(entity_error.message.contains("Line 3, Column 15"));
     assert!(entity_error.suggested_fix.is_some());
     let suggestion = entity_error.suggested_fix.unwrap();
@@ -208,7 +231,7 @@ async fn test_enhanced_error_formatting() {
 async fn test_performance_monitoring_integration() {
     // Test performance monitoring throughout validation pipeline
     use crate::iam::features::validate_policy::performance_monitor::{
-        PolicyValidationPerformanceMonitor, PerformanceThresholds
+        PerformanceThresholds, PolicyValidationPerformanceMonitor,
     };
 
     let thresholds = PerformanceThresholds {
@@ -227,9 +250,15 @@ async fn test_performance_monitoring_integration() {
     assert_eq!(session.session_id, "integration-test");
 
     // Add checkpoints
-    monitor.add_checkpoint(&mut session, "syntax_validation".to_string()).await;
-    monitor.add_checkpoint(&mut session, "semantic_validation".to_string()).await;
-    monitor.add_checkpoint(&mut session, "hrn_validation".to_string()).await;
+    monitor
+        .add_checkpoint(&mut session, "syntax_validation".to_string())
+        .await;
+    monitor
+        .add_checkpoint(&mut session, "semantic_validation".to_string())
+        .await;
+    monitor
+        .add_checkpoint(&mut session, "hrn_validation".to_string())
+        .await;
 
     assert_eq!(session.checkpoints.len(), 3);
     assert_eq!(session.checkpoints[0].name, "syntax_validation");
@@ -257,7 +286,9 @@ async fn test_performance_monitoring_integration() {
     };
 
     // Cache result
-    monitor.cache_result(policy_content, validation_result.clone()).await;
+    monitor
+        .cache_result(policy_content, validation_result.clone())
+        .await;
 
     // Retrieve cached result
     let cached_result = monitor.get_cached_result(policy_content).await;
@@ -329,26 +360,27 @@ async fn test_cross_policy_validation() {
 
     // Validate policy structure
     assert_eq!(policies.len(), 3);
-    
+
     // Check that policies have different principals and actions
     assert!(policies[0].contains(r#"User::"alice""#));
     assert!(policies[1].contains(r#"User::"bob""#));
     assert!(policies[2].contains("forbid"));
-    
+
     // Check conditional logic
     assert!(policies[0].contains("context.time"));
     assert!(policies[1].contains("principal.department"));
-    
+
     // Test cross-policy validation result structure
     let cross_policy_result = CrossPolicyValidationResult {
-        conflicts: vec![
-            PolicyConflict {
-                conflict_type: ConflictType::PermitDenyConflict,
-                involved_policies: vec![0, 2],
-                description: "Policy 0 permits access while policy 2 forbids it for the same resource".to_string(),
-                suggested_resolution: Some("Review the conditions and ensure they don't overlap".to_string()),
-            }
-        ],
+        conflicts: vec![PolicyConflict {
+            conflict_type: ConflictType::PermitDenyConflict,
+            involved_policies: vec![0, 2],
+            description: "Policy 0 permits access while policy 2 forbids it for the same resource"
+                .to_string(),
+            suggested_resolution: Some(
+                "Review the conditions and ensure they don't overlap".to_string(),
+            ),
+        }],
         redundancies: vec![],
         coverage_analysis: Some(CoverageAnalysis {
             overall_coverage: 85.0,
@@ -362,7 +394,7 @@ async fn test_cross_policy_validation() {
     assert_eq!(cross_policy_result.conflicts.len(), 1);
     assert_eq!(cross_policy_result.redundancies.len(), 0);
     assert!(cross_policy_result.coverage_analysis.is_some());
-    
+
     let coverage = cross_policy_result.coverage_analysis.unwrap();
     assert_eq!(coverage.overall_coverage, 85.0);
     assert_eq!(coverage.uncovered_entities.len(), 1);
@@ -384,9 +416,10 @@ async fn test_validation_metrics_and_reporting() {
     assert_eq!(batch_metrics.average_time_per_policy_ms, 300);
     assert_eq!(batch_metrics.policies_processed, 5);
     assert_eq!(batch_metrics.policies_passed, 4);
-    
+
     // Calculate success rate
-    let success_rate = batch_metrics.policies_passed as f64 / batch_metrics.policies_processed as f64;
+    let success_rate =
+        batch_metrics.policies_passed as f64 / batch_metrics.policies_processed as f64;
     assert_eq!(success_rate, 0.8); // 80% success rate
 
     // Test individual validation metrics
@@ -401,9 +434,11 @@ async fn test_validation_metrics_and_reporting() {
     assert_eq!(validation_metrics.memory_usage_bytes, 512000);
     assert_eq!(validation_metrics.validation_steps, 4);
     assert_eq!(validation_metrics.schema_load_time_ms, 50);
-    
+
     // Verify schema load time is reasonable compared to total time
-    let schema_load_percentage = (validation_metrics.schema_load_time_ms as f64 / validation_metrics.validation_time_ms as f64) * 100.0;
+    let schema_load_percentage = (validation_metrics.schema_load_time_ms as f64
+        / validation_metrics.validation_time_ms as f64)
+        * 100.0;
     assert!(schema_load_percentage < 25.0); // Schema loading should be < 25% of total time
 }
 
@@ -411,32 +446,35 @@ async fn test_validation_metrics_and_reporting() {
 async fn test_error_aggregation_and_prioritization() {
     // Test error aggregation and prioritization in validation results
     let validation_result = PolicyValidationResult {
-        syntax_errors: vec![
-            ValidationError {
-                error_type: ValidationErrorType::SyntaxError,
-                message: "Missing semicolon at line 3".to_string(),
-                location: Some(PolicyLocation { line: 3, column: 25 }),
-                suggested_fix: Some("Add semicolon at the end of the statement".to_string()),
-                documentation_link: Some("https://docs.hodei.com/iam/policies/syntax".to_string()),
-            }
-        ],
-        semantic_errors: vec![
-            ValidationError {
-                error_type: ValidationErrorType::UnknownEntity,
-                message: "Entity type 'InvalidUser' not found in schema".to_string(),
-                location: Some(PolicyLocation { line: 2, column: 15 }),
-                suggested_fix: Some("Use a valid entity type from the schema".to_string()),
-                documentation_link: Some("https://docs.hodei.com/iam/policies/entities".to_string()),
-            }
-        ],
+        syntax_errors: vec![ValidationError {
+            error_type: ValidationErrorType::SyntaxError,
+            message: "Missing semicolon at line 3".to_string(),
+            location: Some(PolicyLocation {
+                line: 3,
+                column: 25,
+            }),
+            suggested_fix: Some("Add semicolon at the end of the statement".to_string()),
+            documentation_link: Some("https://docs.hodei.com/iam/policies/syntax".to_string()),
+        }],
+        semantic_errors: vec![ValidationError {
+            error_type: ValidationErrorType::UnknownEntity,
+            message: "Entity type 'InvalidUser' not found in schema".to_string(),
+            location: Some(PolicyLocation {
+                line: 2,
+                column: 15,
+            }),
+            suggested_fix: Some("Use a valid entity type from the schema".to_string()),
+            documentation_link: Some("https://docs.hodei.com/iam/policies/entities".to_string()),
+        }],
         hrn_errors: vec![],
-        warnings: vec![
-            ValidationWarning {
-                message: "This condition might be redundant".to_string(),
-                location: Some(PolicyLocation { line: 4, column: 10 }),
-                severity: WarningSeverity::Medium,
-            }
-        ],
+        warnings: vec![ValidationWarning {
+            message: "This condition might be redundant".to_string(),
+            location: Some(PolicyLocation {
+                line: 4,
+                column: 10,
+            }),
+            severity: WarningSeverity::Medium,
+        }],
         schema_info: SchemaValidationInfo {
             version: "1.0.0".to_string(),
             schema_id: "test-schema".to_string(),
@@ -453,13 +491,19 @@ async fn test_error_aggregation_and_prioritization() {
 
     // Verify error details
     let syntax_error = &validation_result.syntax_errors[0];
-    assert!(matches!(syntax_error.error_type, ValidationErrorType::SyntaxError));
+    assert!(matches!(
+        syntax_error.error_type,
+        ValidationErrorType::SyntaxError
+    ));
     assert!(syntax_error.suggested_fix.is_some());
     assert!(syntax_error.documentation_link.is_some());
     assert!(syntax_error.location.is_some());
 
     let semantic_error = &validation_result.semantic_errors[0];
-    assert!(matches!(semantic_error.error_type, ValidationErrorType::UnknownEntity));
+    assert!(matches!(
+        semantic_error.error_type,
+        ValidationErrorType::UnknownEntity
+    ));
     assert!(semantic_error.message.contains("InvalidUser"));
 
     let warning = &validation_result.warnings[0];
@@ -471,7 +515,7 @@ async fn test_error_aggregation_and_prioritization() {
 async fn test_end_to_end_validation_workflow() {
     // Test complete end-to-end validation workflow
     // This simulates a real user request through the entire system
-    
+
     // 1. Create a complex policy with multiple components
     let complex_policy = r#"
         permit (
@@ -490,7 +534,8 @@ async fn test_end_to_end_validation_workflow() {
     let command = ValidatePolicyCommand::new(
         complex_policy.to_string(),
         "integration_test_user".to_string(),
-    ).with_options(ValidationOptions {
+    )
+    .with_options(ValidationOptions {
         include_warnings: Some(true),
         deep_validation: Some(true),
         schema_version: Some("1.0.0".to_string()),
@@ -515,20 +560,21 @@ async fn test_end_to_end_validation_workflow() {
 
     // 5. Test batch processing with the complex policy
     let batch_policies = vec![
-        PolicyToValidate::new(complex_policy.to_string())
-            .with_id("complex-policy-1".to_string()),
-        PolicyToValidate::new(r#"
+        PolicyToValidate::new(complex_policy.to_string()).with_id("complex-policy-1".to_string()),
+        PolicyToValidate::new(
+            r#"
             forbid (principal, action, resource) when {
                 context.ip_address in ip("192.168.1.0/24")
             };
-        "#.to_string())
-            .with_id("ip-restriction-policy".to_string()),
+        "#
+            .to_string(),
+        )
+        .with_id("ip-restriction-policy".to_string()),
     ];
 
-    let batch_command = ValidatePoliciesBatchCommand::new(
-        batch_policies,
-        "integration_test_user".to_string(),
-    ).with_options(ValidationOptions::default());
+    let batch_command =
+        ValidatePoliciesBatchCommand::new(batch_policies, "integration_test_user".to_string())
+            .with_options(ValidationOptions::default());
 
     assert!(batch_command.validate().is_ok());
     assert_eq!(batch_command.policies.len(), 2);
@@ -537,6 +583,10 @@ async fn test_end_to_end_validation_workflow() {
     // 6. Verify individual policies in batch
     for (index, policy) in batch_command.policies.iter().enumerate() {
         assert!(policy.id.is_some(), "Policy {} should have an ID", index);
-        assert!(!policy.content.trim().is_empty(), "Policy {} should not be empty", index);
+        assert!(
+            !policy.content.trim().is_empty(),
+            "Policy {} should not be empty",
+            index
+        );
     }
 }

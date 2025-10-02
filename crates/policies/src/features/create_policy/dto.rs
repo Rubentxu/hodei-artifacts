@@ -5,7 +5,9 @@ pub struct CreatePolicyCommand {
 
 impl CreatePolicyCommand {
     pub fn new(policy_src: impl Into<String>) -> Self {
-        Self { policy_src: policy_src.into() }
+        Self {
+            policy_src: policy_src.into(),
+        }
     }
 
     pub fn validate(&self) -> Result<(), CreatePolicyValidationError> {

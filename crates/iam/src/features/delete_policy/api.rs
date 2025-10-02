@@ -18,7 +18,10 @@ impl DeletePolicyApi {
     }
 
     /// Handle delete policy request
-    pub async fn delete_policy(&self, command: DeletePolicyCommand) -> Result<DeletePolicyResponse, IamError> {
+    pub async fn delete_policy(
+        &self,
+        command: DeletePolicyCommand,
+    ) -> Result<DeletePolicyResponse, IamError> {
         self.use_case.execute(command).await
     }
 }

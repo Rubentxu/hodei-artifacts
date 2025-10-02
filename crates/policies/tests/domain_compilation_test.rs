@@ -18,13 +18,19 @@ mod tests {
     #[test]
     fn test_user_cedar_attributes_present() {
         let attrs = User::cedar_attributes();
-        assert!(!attrs.is_empty(), "User should define typed cedar_attributes");
+        assert!(
+            !attrs.is_empty(),
+            "User should define typed cedar_attributes"
+        );
     }
 
     #[test]
     fn test_group_cedar_attributes_present() {
         let attrs = Group::cedar_attributes();
-        assert!(!attrs.is_empty(), "Group should define typed cedar_attributes");
+        assert!(
+            !attrs.is_empty(),
+            "Group should define typed cedar_attributes"
+        );
     }
 
     #[test]

@@ -33,11 +33,11 @@ const FEATURE_ACTIONS: &[&str] = &[
     "validate_policy",
 ];
 
-
 /// Build a Cedar schema fragment that declares one action per feature name.
 ///
 /// The actions are declared with appliesTo matching our domain:
 /// principal `User` y resource `Resource`.
+#[allow(clippy::result_large_err)]
 pub fn build_feature_actions_fragment() -> Result<SchemaFragment, CedarSchemaError> {
     let mut s = String::new();
     // Ensure the base types exist where this fragment is used; callers should

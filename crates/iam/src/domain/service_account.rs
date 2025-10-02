@@ -1,8 +1,8 @@
 // crates/iam/src/domain/service_account.rs
 
+use serde::{Deserialize, Serialize};
 use shared::hrn::{Hrn, OrganizationId};
 use shared::lifecycle::Lifecycle;
-use serde::{Serialize, Deserialize};
 
 /// Representa un principal no humano, como una aplicación o un sistema de CI/CD.
 /// Es un Agregado Raíz.
@@ -20,7 +20,7 @@ pub struct ServiceAccount {
 
     /// Descripción de su propósito.
     pub description: Option<String>,
-    
+
     /// El estado actual de la cuenta.
     pub status: ServiceAccountStatus,
 
@@ -30,4 +30,7 @@ pub struct ServiceAccount {
 
 /// El estado del ciclo de vida de una cuenta de servicio.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ServiceAccountStatus { Active, Disabled }
+pub enum ServiceAccountStatus {
+    Active,
+    Disabled,
+}
