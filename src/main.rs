@@ -13,7 +13,7 @@ use crate::{
 };
 use axum::{
     Router,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use std::{sync::Arc, time::Duration};
 use tokio::sync::RwLock;
@@ -109,6 +109,69 @@ async fn main() -> Result<()> {
             ))
         })?;
 
+    // Build update_policy use case
+    #[cfg(feature = "embedded")]
+    let (update_policy_uc, _) =
+        policies::features::update_policy::di::embedded::make_use_case_embedded(&config.database.url)
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build update_policy use case (embedded): {}",
+                    e
+                ))
+            })?;
+    #[cfg(not(feature = "embedded"))]
+    let (update_policy_uc, _) = policies::features::update_policy::di::make_use_case_mem()
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build update_policy use case (mem): {}",
+                e
+            ))
+        })?;
+
+    // Build validate_policy use case
+    #[cfg(feature = "embedded")]
+    let (validate_policy_uc, _) =
+        policies::features::validate_policy::di::embedded::make_use_case_embedded(&config.database.url)
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build validate_policy use case (embedded): {}",
+                    e
+                ))
+            })?;
+    #[cfg(not(feature = "embedded"))]
+    let (validate_policy_uc, _) = policies::features::validate_policy::di::make_use_case_mem()
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build validate_policy use case (mem): {}",
+                e
+            ))
+        })?;
+
+    // Build policy_playground use case
+    #[cfg(feature = "embedded")]
+    let (policy_playground_uc, _) =
+        policies::features::policy_playground::di::embedded::make_use_case_embedded(&config.database.url)
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build policy_playground use case (embedded): {}",
+                    e
+                ))
+            })?;
+    #[cfg(not(feature = "embedded"))]
+    let (policy_playground_uc, _) = policies::features::policy_playground::di::make_use_case_mem()
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build policy_playground use case (mem): {}",
+                e
+            ))
+        })?;
+
     #[cfg(feature = "embedded")]
     let (delete_policy_uc, _) =
         policies::features::delete_policy::di::embedded::make_use_case_embedded(
@@ -133,6 +196,15 @@ async fn main() -> Result<()> {
 
     tracing::info!("Policy engine and use cases initialized successfully");
 
+    // Build analyze policies and batch eval use cases (mem)
+    let analyze_policies_uc = policies::features::policy_analysis::di::make_use_case_mem()
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build analyze_policies use case (mem): {}", e)))?;
+
+    let batch_eval_uc = policies::features::batch_eval::di::make_use_case_mem()
+        .await
+        .map_err(|e| AppError::Internal(format!("failed to build batch_eval use case (mem): {}", e)))?;
+
     // Create shared application state
     let shared_state = Arc::new(AppState {
         config: config.clone(),
@@ -142,6 +214,11 @@ async fn main() -> Result<()> {
         get_policy_uc: Arc::new(get_policy_uc),
         list_policies_uc: Arc::new(list_policies_uc),
         delete_policy_uc: Arc::new(delete_policy_uc),
+        update_policy_uc: Arc::new(update_policy_uc),
+        validate_policy_uc: Arc::new(validate_policy_uc),
+        policy_playground_uc: Arc::new(policy_playground_uc),
+        analyze_policies_uc: Arc::new(analyze_policies_uc),
+        batch_eval_uc: Arc::new(batch_eval_uc),
         authorization_engine,
     });
 
@@ -236,11 +313,21 @@ async fn build_router(state: Arc<AppState>) -> Result<Router> {
             api::list_policies,
             api::get_policy,
             api::delete_policy,
+            api::update_policy,
+            api::validate_policy,
+            api::policy_playground,
         ),
         components(
             schemas(
                 api::policy_handlers::PolicyResponse,
                 api::policy_handlers::CreatePolicyRequest,
+                api::policy_handlers::UpdatePolicyRequest,
+                api::policy_handlers::ValidatePolicyRequest,
+                api::policy_handlers::PlaygroundRequestApi,
+                api::policy_handlers::PlaygroundScenarioApi,
+                api::policy_handlers::PlaygroundOptionsApi,
+                api::policy_handlers::PlaygroundResponseApi,
+                api::policy_handlers::PlaygroundAuthResultApi,
                 api::policy_handlers::PolicyListResponse,
                 api::policy_handlers::ListPoliciesParams,
                 api::policy_handlers::ErrorResponse
@@ -272,6 +359,11 @@ async fn build_router(state: Arc<AppState>) -> Result<Router> {
         .route("/policies", get(api::list_policies))
         .route("/policies/{id}", get(api::get_policy))
         .route("/policies/{id}", delete(api::delete_policy))
+        .route("/policies/{id}", put(api::update_policy))
+        .route("/policies/validate", post(api::validate_policy))
+        .route("/policies/playground", post(api::policy_playground))
+        .route("/policies/analysis", post(api::analyze_policies))
+        .route("/policies/playground/batch", post(api::batch_playground))
         // Authorization route
         .route("/authorize", post(api::authorize));
 

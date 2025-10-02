@@ -92,7 +92,7 @@ shared = { path = "crates/shared" }
 policies = { path = "crates/policies", features = ["mem"] }
 
 # Crates desactivados temporalmente (no maduros)
-# artifact = { path = "crates/artifact" }
+#artifact = { path = "crates/artifact" }
 # iam = { path = "crates/iam" }
 # repository = { path = "crates/repository" }
 # "supply-chain" = { path = "crates/supply-chain" }

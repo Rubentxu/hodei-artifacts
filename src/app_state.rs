@@ -14,9 +14,20 @@ pub struct AppState {
     pub get_policy_uc: Arc<policies::features::get_policy::use_case::GetPolicyUseCase>,
     pub list_policies_uc: Arc<policies::features::list_policies::use_case::ListPoliciesUseCase>,
     pub delete_policy_uc: Arc<policies::features::delete_policy::use_case::DeletePolicyUseCase>,
+    pub update_policy_uc: Arc<policies::features::update_policy::use_case::UpdatePolicyUseCase>,
+    pub validate_policy_uc: Arc<policies::features::validate_policy::use_case::ValidatePolicyUseCase>,
+    pub policy_playground_uc: Arc<policies::features::policy_playground::use_case::PolicyPlaygroundUseCase>,
+    pub analyze_policies_uc: Arc<policies::features::policy_analysis::use_case::AnalyzePoliciesUseCase>,
+    pub batch_eval_uc: Arc<policies::features::batch_eval::use_case::BatchEvalUseCase>,
     // Authorization engine from policies crate
     #[allow(dead_code)]
     pub authorization_engine: Arc<policies::shared::AuthorizationEngine>,
+}
+
+impl Default for AppMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone)]

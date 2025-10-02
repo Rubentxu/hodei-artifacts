@@ -122,4 +122,37 @@ impl PolicyStore {
             .await
             .map_err(|e| e.to_string())
     }
+
+    /// Update an existing policy by removing the old one and adding the new one
+    pub async fn update_policy(&self, old_id: &str, new_policy: Policy) -> Result<(), String> {
+        // Eliminar política antigua
+        let removed = self.remove_policy(old_id).await?;
+        if !removed {
+            return Err(format!("Policy '{}' not found", old_id));
+        }
+
+        // Agregar nueva política (esto valida automáticamente)
+        self.add_policy(new_policy).await
+    }
+
+    /// Validate a policy without persisting it
+    pub fn validate_policy(&self, policy: &Policy) -> Result<(), String> {
+        let mut pset = PolicySet::new();
+        pset.add(policy.clone())
+            .map_err(|e| format!("Failed to add policy: {}", e))?;
+
+        let validation_result = self
+            .validator
+            .validate(&pset, cedar_policy::ValidationMode::default());
+
+        if validation_result.validation_passed() {
+            Ok(())
+        } else {
+            let errors: Vec<String> = validation_result
+                .validation_errors()
+                .map(|e| e.to_string())
+                .collect();
+            Err(format!("Validation failed: {}", errors.join(", ")))
+        }
+    }
 }
