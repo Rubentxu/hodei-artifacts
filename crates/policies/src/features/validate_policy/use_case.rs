@@ -71,11 +71,10 @@ impl ValidatePolicyUseCase {
 mod tests {
     use super::*;
     use crate::shared::application::di_helpers;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn validate_policy_accepts_valid_policy() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -89,7 +88,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_policy_rejects_invalid_syntax() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -105,7 +104,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_policy_rejects_empty_content() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -122,7 +121,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_policy_accepts_complex_valid_policy() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 

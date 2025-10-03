@@ -67,12 +67,11 @@ impl UpdatePolicyUseCase {
 mod tests {
     use super::*;
     use crate::shared::application::di_helpers;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn update_policy_successfully_updates_existing_policy() {
         // Arrange: Create engine/store and add a policy (no entities registered - domain agnostic)
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -104,7 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_policy_returns_not_found_for_nonexistent_policy() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -126,7 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_policy_validates_empty_id() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -146,7 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_policy_validates_empty_content() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -163,7 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn update_policy_validates_new_policy_syntax() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 

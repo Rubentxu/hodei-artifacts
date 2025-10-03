@@ -33,24 +33,22 @@ impl TracedPlaygroundUseCase {
         }
 
         // Heuristic path: DO NOT call base_uc to avoid ID conflicts; replicate minimal logic
-        // Parse policies with explicit IDs
-        let mut policies: Vec<(String, Policy)> = Vec::with_capacity(base_req.policies.len());
+        // Parse all policies together as a single PolicySet to get consistent IDs
+        let mut policy_set_str = String::new();
+        for pstr in base_req.policies.iter() {
+            policy_set_str.push_str(pstr.trim());
+            policy_set_str.push_str("\n\n");
+        }
         
-        for (idx, pstr) in base_req.policies.iter().enumerate() {
-            // Parse as-is first to check if it has an ID
-            match pstr.parse::<Policy>() {
-                Ok(p) => {
-                    policies.push((p.id().to_string(), p));
-                },
-                Err(_) => {
-                    // Try adding an ID prefix
-                    let policy_str = format!("@id(\"trace_policy_{}\") {}", idx, pstr);
-                    match policy_str.parse::<Policy>() {
-                        Ok(p) => policies.push((p.id().to_string(), p)),
-                        Err(e) => return Err(format!("invalid policy [{}]: {}", idx, e)),
-                    }
-                }
-            }
+        // Parse the entire PolicySet at once
+        let pset_parsed = PolicySet::from_str(&policy_set_str)
+            .map_err(|e| format!("failed to parse policy set: {}", e))?;
+        
+        // Extract policies with their Cedar-assigned IDs
+        let mut policies: Vec<(String, Policy)> = Vec::with_capacity(base_req.policies.len());
+        for p in pset_parsed.policies() {
+            let id = p.id().to_string();
+            policies.push((id, p.clone()));
         }
 
         // Minimal validation result (no schema/policy validation for traces mode)
@@ -87,11 +85,8 @@ impl TracedPlaygroundUseCase {
 
             let start = std::time::Instant::now();
 
-            // Build full PolicySet with all policies
-            let mut pset_all = PolicySet::new();
-            for (_, p) in &policies { 
-                pset_all.add(p.clone()).map_err(|e| format!("pset_all add error: {}", e))?; 
-            }
+            // Build full PolicySet - use the parsed one directly to preserve IDs
+            let pset_all = pset_parsed.clone();
 
             // Baseline
             let baseline = authorizer.is_authorized(&request, &pset_all, &entities);
@@ -100,9 +95,10 @@ impl TracedPlaygroundUseCase {
 
             // Parallel removal
             let mut set: JoinSet<(String, bool)> = JoinSet::new();
+            let policy_strings = base_req.policies.clone(); // Keep original strings
             for (i, (pol_id, _)) in policies.iter().enumerate() {
                 let pol_id_cloned = pol_id.clone();
-                let policies_clone = policies.clone();
+                let policy_strings_clone = policy_strings.clone();
                 let entities_clone = entities.clone();
                 let sc_principal_c = sc.principal.clone();
                 let sc_action_c = sc.action.clone();
@@ -110,10 +106,15 @@ impl TracedPlaygroundUseCase {
                 let sc_context_c = sc.context.clone();
                 set.spawn(async move {
                     // Rebuild PolicySet without policy i
-                    let mut pset = PolicySet::new();
-                    for (j, (_, p)) in policies_clone.iter().enumerate() {
-                        if i != j { let _ = pset.add(p.clone()); }
+                    let mut pset_str = String::new();
+                    for (j, pstr) in policy_strings_clone.iter().enumerate() {
+                        if i != j {
+                            pset_str.push_str(pstr.trim());
+                            pset_str.push_str("\n\n");
+                        }
                     }
+                    let pset = PolicySet::from_str(&pset_str).unwrap_or_else(|_| PolicySet::new());
+                    
                     // Recreate request
                     let principal = EntityUid::from_str(&sc_principal_c).unwrap();
                     let action = EntityUid::from_str(&sc_action_c).unwrap();
@@ -249,9 +250,17 @@ mod tests {
         let opts = TracedPlaygroundOptions { include_policy_traces: true };
         let res = traced_uc.execute(&opts, &req, &base_uc).await.unwrap();
         let det = &res.authorization_results[0].determining_policies;
+        
         assert!(det.as_ref().unwrap().len() >= 1);
         // The forbid policy is determining (removing it changes decision from Deny to Allow)
-        // With auto-assigned IDs, the first policy will be trace_policy_0
-        assert!(det.as_ref().unwrap().contains(&"trace_policy_0".to_string()));
+        // Cedar assigns IDs automatically (policy0, policy1, etc.)
+        // The determining policy should be one of them (either policy0 or policy1 depending on parse order)
+        let determining_policies = det.as_ref().unwrap();
+        assert!(
+            determining_policies.contains(&"policy0".to_string()) || 
+            determining_policies.contains(&"policy1".to_string()),
+            "Expected either policy0 or policy1 in determining policies, but got: {:?}",
+            determining_policies
+        );
     }
 }

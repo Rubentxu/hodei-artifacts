@@ -46,12 +46,11 @@ impl GetPolicyUseCase {
 mod tests {
     use super::*;
     use crate::shared::application::di_helpers;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn get_policy_returns_policy_when_exists() {
         // Build engine/store with real mem storage (no entities registered - domain agnostic)
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -74,7 +73,7 @@ mod tests {
     #[tokio::test]
     async fn get_policy_returns_none_when_not_exists() {
         // Build engine/store with real mem storage (no entities registered - domain agnostic)
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -93,7 +92,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_policy_validates_empty_id() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 

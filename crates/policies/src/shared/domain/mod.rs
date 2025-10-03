@@ -1,5 +1,4 @@
 // Local modules in shared/domain
-pub mod actions;
 pub mod entity_utils;
 pub mod error;
 pub mod hrn;

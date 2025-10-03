@@ -55,9 +55,9 @@ impl Hrn {
     /// la posibilidad de desincronización entre el esquema y las instancias.
     ///
     /// # Ejemplo
-    /// ```no_run
+    /// ```ignore
     /// use policies::shared::domain::hrn::Hrn;
-    /// use hodei_iam::User;
+    /// use hodei_iam::User; // From hodei-iam crate
     ///
     /// let user_hrn = Hrn::for_entity_type::<User>(
     ///     "hodei".to_string(),
@@ -202,8 +202,8 @@ mod tests {
         );
         let euid = hrn.euid();
         let s = format!("{}", euid);
-        // Expect normalized namespace and type
-        assert!(s.contains("hodei_svc::User_Profile"));
+        // Expect PascalCase namespace and normalized type (guiones convertidos a guiones bajos)
+        assert!(s.contains("HodeiSvc::User_Profile"));
         assert!(s.contains("\"bob\""));
     }
 

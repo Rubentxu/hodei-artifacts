@@ -12,7 +12,7 @@ fn test_hrn_for_entity_type_user() {
     );
 
     assert_eq!(hrn.partition, "hodei");
-    assert_eq!(hrn.service, "IAM");
+    assert_eq!(hrn.service, "iam");  // service_name is normalized to lowercase
     assert_eq!(hrn.account_id, "default");
     assert_eq!(hrn.resource_type, "User");
     assert_eq!(hrn.resource_id, "user123");
@@ -27,7 +27,7 @@ fn test_hrn_for_entity_type_group() {
     );
 
     assert_eq!(hrn.partition, "hodei");
-    assert_eq!(hrn.service, "IAM");
+    assert_eq!(hrn.service, "iam");  // service_name is normalized to lowercase
     assert_eq!(hrn.account_id, "default");
     assert_eq!(hrn.resource_type, "Group");
     assert_eq!(hrn.resource_id, "group456");
@@ -42,8 +42,8 @@ fn test_hrn_for_entity_type_to_string() {
     );
 
     let hrn_str = hrn.to_string();
-    assert!(hrn_str.contains("IAM"));
-    assert!(hrn_str.contains("User"));
+    assert!(hrn_str.contains(":iam:"));  // service is lowercase in HRN string
+    assert!(hrn_str.contains(":User/"));  // resource_type followed by /
     assert!(hrn_str.contains("alice"));
 }
 
@@ -58,6 +58,6 @@ fn test_hrn_for_entity_type_euid() {
     let euid = hrn.euid();
     let euid_str = format!("{}", euid);
 
-    assert!(euid_str.contains("IAM::User"));
+    assert!(euid_str.contains("Iam::User"));  // Cedar namespace is PascalCase
     assert!(euid_str.contains("bob"));
 }

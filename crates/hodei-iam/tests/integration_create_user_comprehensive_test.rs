@@ -81,10 +81,10 @@ async fn test_create_user_hrn_format() {
 
     let result = use_case.execute(command).await.unwrap();
 
-    // Verify HRN format
-    assert!(result.hrn.contains("hrn:"));
-    assert!(result.hrn.contains("IAM"));
-    assert!(result.hrn.contains("User"));
+    // Verify HRN format: hrn:partition:service::account_id:resource_type/resource_id
+    assert!(result.hrn.starts_with("hrn:"), "HRN should start with 'hrn:'");
+    assert!(result.hrn.contains(":iam:"), "HRN should contain service 'iam' in lowercase");
+    assert!(result.hrn.contains(":User/"), "HRN should contain resource_type 'User' followed by '/'");
 }
 
 #[tokio::test]
@@ -130,4 +130,3 @@ async fn test_create_users_batch() {
     let all_users = repo.find_all().await.unwrap();
     assert_eq!(all_users.len(), 3);
 }
-

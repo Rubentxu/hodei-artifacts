@@ -1,11 +1,11 @@
 use cedar_policy::Policy;
-use policies::features::list_policies::di::make_use_case_mem;
+use policies::features::list_policies::di::make_list_policies_use_case_mem;
 use policies::features::list_policies::dto::ListPoliciesQuery;
 
 #[tokio::test]
 async fn test_list_policies_integration_empty() {
     // Arrange: Create use case with empty storage
-    let (list_uc, _engine) = make_use_case_mem()
+    let (list_uc, _engine) = make_list_policies_use_case_mem()
         .await
         .expect("Failed to create list_policies use case");
 
@@ -23,7 +23,7 @@ async fn test_list_policies_integration_empty() {
 #[tokio::test]
 async fn test_list_policies_integration_with_data() {
     // Arrange: Create use case and add a policy
-    let (list_uc, engine) = make_use_case_mem()
+    let (list_uc, engine) = make_list_policies_use_case_mem()
         .await
         .expect("Failed to create list_policies use case");
 
@@ -54,7 +54,7 @@ async fn test_list_policies_integration_with_data() {
 #[tokio::test]
 async fn test_list_policies_integration_after_create_and_delete() {
     // Arrange: Create use case and add a policy
-    let (list_uc, engine) = make_use_case_mem()
+    let (list_uc, engine) = make_list_policies_use_case_mem()
         .await
         .expect("Failed to create list_policies use case");
 

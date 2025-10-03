@@ -60,12 +60,11 @@ impl ListPoliciesUseCase {
 mod tests {
     use super::*;
     use crate::shared::application::di_helpers;
-    use std::sync::Arc;
 
     #[tokio::test]
     async fn list_policies_returns_empty_when_no_policies() {
         // Build engine/store with real mem storage (no entities registered - domain agnostic)
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -79,7 +78,7 @@ mod tests {
     #[tokio::test]
     async fn list_policies_returns_single_policy_after_adding() {
         // Build engine/store with real mem storage (no entities registered - domain agnostic)
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -101,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_policies_works_with_valid_cedar_policies() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -136,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_policies_with_pagination() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -163,7 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_policies_validates_limit() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 
@@ -182,7 +181,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_policies_with_filter() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator)
+        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
             .await
             .expect("build engine");
 

@@ -1,11 +1,9 @@
-use crate::domain::actions;
-use crate::domain::{HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStore};
+use crate::shared::domain::{HodeiEntity, PolicyStorage};
+use crate::shared::application::PolicyStore;
 use crate::shared::domain::ports::{Action, Principal, Resource};
 use crate::shared::generate_fragment_for_type;
-use cedar_policy::{
-    Context, Entities, PolicySet, Request, Response, Schema, SchemaError, SchemaFragment,
-};
-use std::collections::{HashMap, HashSet};
+use cedar_policy::{CedarSchemaError, Context, Entities, PolicySet, Request, Response, Schema, SchemaError, SchemaFragment};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 pub struct AuthorizationRequest<'a> {
@@ -58,9 +56,6 @@ impl AuthorizationEngine {
 
 #[derive(Default)]
 pub struct EngineBuilder {
-    // Keep the old fields for backward compatibility
-    partials: HashMap<&'static str, SchemaFragment>,
-    // New fields for the generic approach
     entity_fragments: Vec<SchemaFragment>,
     action_fragments: Vec<SchemaFragment>,
 }
@@ -70,29 +65,20 @@ impl EngineBuilder {
         Self::default() 
     }
 
-    // Old method for backward compatibility
-    pub fn register_entity_type<T: HodeiEntityType + 'static>(
-        &mut self,
-    ) -> Result<&mut Self, Box<SchemaError>> {
-        let frag = generate_fragment_for_type::<T>()?;
-        self.partials.insert(T::entity_type_name(), frag);
-        Ok(self)
-    }
-
     // New methods for the generic approach
-    pub fn register_principal<P: Principal>(&mut self) -> Result<&mut Self, Box<SchemaError>> {
+    pub fn register_principal<P: Principal>(&mut self) -> Result<&mut Self, Box<CedarSchemaError>> {
         let frag = generate_fragment_for_type::<P>()?;
         self.entity_fragments.push(frag);
         Ok(self)
     }
 
-    pub fn register_resource<R: Resource>(&mut self) -> Result<&mut Self, Box<SchemaError>> {
+    pub fn register_resource<R: Resource>(&mut self) -> Result<&mut Self, Box<CedarSchemaError>> {
         let frag = generate_fragment_for_type::<R>()?;
         self.entity_fragments.push(frag);
         Ok(self)
     }
 
-    pub fn register_action<A: Action>(&mut self) -> Result<&mut Self, Box<SchemaError>> {
+    pub fn register_action<A: Action>(&mut self) -> Result<&mut Self, Box<CedarSchemaError>> {
         let (principal_type, resource_type) = A::applies_to();
         let schema_str = format!(
             "action \"{}\" appliesTo {{ principal: {}, resource: {} }};",
@@ -107,10 +93,10 @@ impl EngineBuilder {
                 let invalid = "entity Invalid { invalid: Invalid }";
                 match SchemaFragment::from_cedarschema_str(invalid) {
                     Ok(_) => unreachable!(),
-                    Err(cedar_err) => {
+                    Err(_cedar_err) => {
                         // Create a generic schema parsing error using Schema::from_schema_fragments
                         // with an empty fragment list to trigger a schema error
-                        Box::new(SchemaError::from(
+                        Box::new(CedarSchemaError::from(
                             Schema::from_schema_fragments(vec![]).unwrap_err()
                         ))
                     }
@@ -125,46 +111,16 @@ impl EngineBuilder {
         self,
         storage: Arc<dyn PolicyStorage>,
     ) -> Result<(AuthorizationEngine, PolicyStore), Box<SchemaError>> {
-        // If we have new fragments, use them; otherwise, fall back to the old approach
-        if !self.entity_fragments.is_empty() || !self.action_fragments.is_empty() {
-            let all_fragments = [self.entity_fragments, self.action_fragments].concat();
-            let schema = Arc::new(Schema::from_schema_fragments(all_fragments)?);
-            let store = PolicyStore::new(schema.clone(), storage);
-            let engine = AuthorizationEngine { 
-                schema, 
-                store: store.clone() 
-            };
-            Ok((engine, store))
-        } else {
-            // Compose schema from base + registered partials + feature actions
-            // Base provides fundamental types referenced by partials/actions
-            let base = r#"
-            entity Principal { };
-            entity Resource { name: String };
-            "#;
-            let (base_frag, _) =
-                SchemaFragment::from_cedarschema_str(base).expect("Base schema should be valid");
-
-            let mut fragments: Vec<SchemaFragment> = Vec::new();
-            fragments.push(base_frag);
-            let has_partials = !self.partials.is_empty();
-            fragments.extend(self.partials.into_values());
-
-            // Add actions derived from feature directories only when there are registered partials
-            if !fragments.is_empty() && has_partials {
-                let actions_frag = actions::build_feature_actions_fragment()
-                    .expect("actions fragment should be valid");
-                fragments.push(actions_frag);
-            }
-
-            let schema = Arc::new(Schema::from_schema_fragments(fragments)?);
-
-            let store = PolicyStore::new(schema.clone(), storage);
-            let engine = AuthorizationEngine {
-                schema,
-                store: store.clone(),
-            };
-            Ok((engine, store))
-        }
+        // Build schema from registered fragments only
+        // No automatic base schema - everything must be explicitly registered by the client
+        let all_fragments = [self.entity_fragments, self.action_fragments].concat();
+        
+        let schema = Arc::new(Schema::from_schema_fragments(all_fragments)?);
+        let store = PolicyStore::new(schema.clone(), storage);
+        let engine = AuthorizationEngine { 
+            schema, 
+            store: store.clone() 
+        };
+        Ok((engine, store))
     }
 }

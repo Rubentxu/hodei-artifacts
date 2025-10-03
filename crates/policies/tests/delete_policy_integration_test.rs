@@ -1,12 +1,12 @@
 use cedar_policy::Policy;
-use policies::features::delete_policy::di::make_use_case_mem;
+use policies::features::delete_policy::di::make_delete_policy_use_case_mem;
 use policies::features::delete_policy::dto::DeletePolicyCommand;
 use policies::features::delete_policy::use_case::DeletePolicyError;
 
 #[tokio::test]
 async fn test_delete_policy_integration_success() {
     // Arrange: Create use case and add a policy
-    let (delete_uc, engine) = make_use_case_mem()
+    let (delete_uc, engine) = make_delete_policy_use_case_mem()
         .await
         .expect("Failed to create delete_policy use case");
 
@@ -48,7 +48,7 @@ async fn test_delete_policy_integration_success() {
 #[tokio::test]
 async fn test_delete_policy_integration_not_found() {
     // Arrange: Create use case with empty storage
-    let (delete_uc, _engine) = make_use_case_mem()
+    let (delete_uc, _engine) = make_delete_policy_use_case_mem()
         .await
         .expect("Failed to create delete_policy use case");
 
@@ -69,7 +69,7 @@ async fn test_delete_policy_integration_not_found() {
 #[tokio::test]
 async fn test_delete_policy_integration_invalid_id() {
     // Arrange: Create use case
-    let (delete_uc, _engine) = make_use_case_mem()
+    let (delete_uc, _engine) = make_delete_policy_use_case_mem()
         .await
         .expect("Failed to create delete_policy use case");
 
@@ -88,7 +88,7 @@ async fn test_delete_policy_integration_invalid_id() {
 #[tokio::test]
 async fn test_delete_policy_integration_idempotent() {
     // Arrange: Create use case and add a policy
-    let (delete_uc, engine) = make_use_case_mem()
+    let (delete_uc, engine) = make_delete_policy_use_case_mem()
         .await
         .expect("Failed to create delete_policy use case");
 

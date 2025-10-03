@@ -50,3 +50,104 @@ where
 pub fn no_entities_configurator(builder: EngineBuilder) -> Result<EngineBuilder> {
     Ok(builder)
 }
+
+/// Test helpers module - provides reusable test entities and configurators
+/// Available in both test and non-test builds for integration tests and examples
+pub mod test_helpers {
+    use super::*;
+    use crate::shared::domain::ports::{Action, AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource};
+    use crate::shared::Hrn;
+    use cedar_policy::{EntityTypeName, EntityUid, RestrictedExpression};
+    use std::collections::HashMap;
+    use std::str::FromStr;
+
+    // Test Principal type
+    pub struct TestPrincipal {
+        pub hrn: Hrn,
+    }
+
+    impl HodeiEntityType for TestPrincipal {
+        fn service_name() -> &'static str {
+            "test"
+        }
+        fn resource_type_name() -> &'static str {
+            "Principal"
+        }
+        fn is_principal_type() -> bool {
+            true
+        }
+        fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
+            vec![("email", AttributeType::Primitive("String"))]
+        }
+    }
+
+    impl HodeiEntity for TestPrincipal {
+        fn hrn(&self) -> &Hrn {
+            &self.hrn
+        }
+        fn attributes(&self) -> HashMap<String, RestrictedExpression> {
+            HashMap::new()
+        }
+        fn parents(&self) -> Vec<EntityUid> {
+            Vec::new()
+        }
+    }
+
+    impl Principal for TestPrincipal {}
+
+    // Test Resource type
+    pub struct TestResource {
+        pub hrn: Hrn,
+    }
+
+    impl HodeiEntityType for TestResource {
+        fn service_name() -> &'static str {
+            "test"
+        }
+        fn resource_type_name() -> &'static str {
+            "Resource"
+        }
+        fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
+            vec![("name", AttributeType::Primitive("String"))]
+        }
+    }
+
+    impl HodeiEntity for TestResource {
+        fn hrn(&self) -> &Hrn {
+            &self.hrn
+        }
+        fn attributes(&self) -> HashMap<String, RestrictedExpression> {
+            HashMap::new()
+        }
+        fn parents(&self) -> Vec<EntityUid> {
+            Vec::new()
+        }
+    }
+
+    impl Resource for TestResource {}
+
+    // Test Action
+    pub struct TestAccessAction;
+
+    impl Action for TestAccessAction {
+        fn name() -> &'static str {
+            "access"
+        }
+        fn applies_to() -> (EntityTypeName, EntityTypeName) {
+            let principal_type = EntityTypeName::from_str("Test::Principal")
+                .expect("Valid principal type");
+            let resource_type = EntityTypeName::from_str("Test::Resource")
+                .expect("Valid resource type");
+            (principal_type, resource_type)
+        }
+    }
+
+    /// Configurator for tests - registers basic test entities and actions
+    pub fn test_entities_configurator(mut builder: EngineBuilder) -> Result<EngineBuilder> {
+        builder
+            .register_principal::<TestPrincipal>()?
+            .register_resource::<TestResource>()?
+            .register_action::<TestAccessAction>()?;
+        Ok(builder)
+    }
+}

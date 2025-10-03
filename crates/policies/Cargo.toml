@@ -38,3 +38,4 @@ mockall = { workspace = true }
 testcontainers = { workspace = true }
 futures = { workspace = true }
 uuid = { workspace = true }
+regex = { workspace = true }

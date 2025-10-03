@@ -7,7 +7,7 @@ use super::use_case::PolicyPlaygroundUseCase;
 /// NOTE: This creates an engine with NO entities registered.
 /// Consumers should use hodei-iam::di or register their own entities.
 pub async fn make_policy_playground_use_case_mem() -> Result<(PolicyPlaygroundUseCase, Arc<AuthorizationEngine>)> {
-    let (engine, _store) = di_helpers::build_engine_mem(di_helpers::no_entities_configurator).await?;
+    let (engine, _store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator).await?;
     let uc = PolicyPlaygroundUseCase::new();
     Ok((uc, engine))
 }
@@ -22,7 +22,7 @@ pub mod embedded {
     pub async fn make_policy_playground_use_case_embedded(
         path: &str,
     ) -> Result<(PolicyPlaygroundUseCase, Arc<AuthorizationEngine>)> {
-        let (engine, _store) = di_helpers::build_engine_embedded(path, di_helpers::no_entities_configurator).await?;
+        let (engine, _store) = di_helpers::build_engine_embedded(path, di_helpers::test_helpers::test_entities_configurator).await?;
         let uc = PolicyPlaygroundUseCase::new();
         Ok((uc, engine))
     }
