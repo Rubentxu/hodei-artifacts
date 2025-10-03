@@ -4,16 +4,17 @@
 
 use hodei_iam::{
     features::{
-        create_user::{self as create_user_feature, dto::CreateUserCommand},
-        create_group::{self as create_group_feature, dto::CreateGroupCommand},
         add_user_to_group::{self, dto::AddUserToGroupCommand},
+        create_group::{self as create_group_feature, dto::CreateGroupCommand},
+        create_user::{self as create_user_feature, dto::CreateUserCommand},
     },
     shared::{
-        application::ports::{UserRepository, GroupRepository},
-        infrastructure::persistence::{InMemoryUserRepository, InMemoryGroupRepository},
+        application::ports::UserRepository,
+        infrastructure::persistence::{InMemoryGroupRepository, InMemoryUserRepository},
     },
 };
 use std::sync::Arc;
+
 
 #[tokio::test]
 async fn test_add_user_to_group_success() {

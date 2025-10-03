@@ -1,9 +1,9 @@
+use cedar_policy::EntityTypeName;
 /// Domain actions for hodei-iam
 /// 
 /// This module defines the IAM actions that can be performed
 
 use policies::shared::domain::ports::Action;
-use cedar_policy::EntityTypeName;
 use std::str::FromStr;
 
 pub struct CreateUserAction;

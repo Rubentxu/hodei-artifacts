@@ -1,10 +1,10 @@
+use cedar_policy::{EntityUid, RestrictedExpression};
 /// Domain entities for hodei-iam
 /// 
 /// This module defines the core IAM entities: User, Group, ServiceAccount, Namespace
 
 use policies::shared::domain::hrn::Hrn;
 use policies::shared::domain::ports::{self, HodeiEntity, HodeiEntityType, Principal, Resource};
-use cedar_policy::{EntityUid, RestrictedExpression};
 use ports::AttributeType::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};

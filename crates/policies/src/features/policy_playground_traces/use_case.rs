@@ -1,6 +1,6 @@
 use super::dto::{TracedAuthorizationResult, TracedPlaygroundOptions, TracedPlaygroundResponse};
 use crate::features::policy_playground::dto as base;
-use cedar_policy::{Authorizer, Context, Entities, Entity, EntityUid, Policy, PolicySet, Request, RestrictedExpression, Decision as CedarDecision};
+use cedar_policy::{Authorizer, Context, Decision as CedarDecision, Entities, Entity, EntityUid, Policy, PolicySet, Request, RestrictedExpression};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use tokio::task::JoinSet;

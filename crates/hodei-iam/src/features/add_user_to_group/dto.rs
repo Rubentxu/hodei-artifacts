@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddUserToGroupCommand {
     pub user_hrn: String,

@@ -3,6 +3,7 @@
 use hodei_iam::User;
 use policies::shared::domain::hrn::Hrn;
 
+
 #[test]
 fn test_user_new_creates_empty_groups() {
     let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());

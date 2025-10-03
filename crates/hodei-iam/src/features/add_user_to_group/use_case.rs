@@ -1,9 +1,9 @@
+use super::dto::AddUserToGroupCommand;
+use crate::shared::application::ports::{GroupRepository, UserRepository};
+use policies::shared::domain::hrn::Hrn;
 /// Use case for adding a user to a group
 
 use std::sync::Arc;
-use crate::shared::application::ports::{UserRepository, GroupRepository};
-use super::dto::AddUserToGroupCommand;
-use policies::shared::domain::hrn::Hrn;
 
 pub struct AddUserToGroupUseCase {
     user_repo: Arc<dyn UserRepository>,

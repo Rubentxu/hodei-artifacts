@@ -3,6 +3,6 @@
 pub mod entities;
 pub mod actions;
 
+pub use actions::{CreateGroupAction, CreateUserAction};
 // Re-export for convenience
-pub use entities::{User, Group, ServiceAccount, Namespace};
-pub use actions::{CreateUserAction, CreateGroupAction};
+pub use entities::{Group, Namespace, ServiceAccount, User};

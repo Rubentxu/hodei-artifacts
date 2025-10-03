@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use anyhow::Result;
-use crate::shared::application::{AuthorizationEngine, di_helpers};
 use super::use_case::PolicyPlaygroundUseCase;
+use crate::shared::application::{di_helpers, AuthorizationEngine};
+use anyhow::Result;
+use std::sync::Arc;
 
 /// Build PolicyPlaygroundUseCase (no storage required) and an AuthorizationEngine for consistency
 /// NOTE: This creates an engine with NO entities registered.

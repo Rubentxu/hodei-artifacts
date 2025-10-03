@@ -1,5 +1,5 @@
 use policies::shared::application::parallel::{
-    AuthScenario, build_policy_set, build_entities, evaluate_scenarios_channel, evaluate_until_first
+    build_entities, build_policy_set, evaluate_scenarios_channel, evaluate_until_first, AuthScenario
 };
 
 #[tokio::test]

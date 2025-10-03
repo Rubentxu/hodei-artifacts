@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use cedar_policy::Policy;
 
-use crate::shared::application::PolicyStore;
 use super::dto::{ValidatePolicyQuery, ValidationError, ValidationResult};
+use crate::shared::application::PolicyStore;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ValidatePolicyError {

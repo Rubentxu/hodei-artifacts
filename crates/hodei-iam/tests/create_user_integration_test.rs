@@ -11,6 +11,7 @@ use hodei_iam::{
 };
 use std::sync::Arc;
 
+
 #[tokio::test]
 async fn test_create_user_success() {
     // Arrange

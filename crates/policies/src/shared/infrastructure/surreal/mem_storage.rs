@@ -2,8 +2,8 @@ use crate::shared::domain::ports::{PolicyStorage, StorageError};
 use async_trait::async_trait;
 use cedar_policy::Policy;
 use serde::{Deserialize, Serialize};
-use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, Mem};
+use surrealdb::Surreal;
 
 #[derive(Clone)]
 pub struct SurrealMemStorage {

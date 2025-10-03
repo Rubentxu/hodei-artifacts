@@ -1,12 +1,12 @@
-/// Use case for creating a new group
-
-use std::sync::Arc;
+use super::dto::{CreateGroupCommand, GroupView};
 use crate::shared::{
     application::ports::GroupRepository,
     domain::Group,
 };
-use super::dto::{CreateGroupCommand, GroupView};
 use policies::shared::domain::hrn::Hrn;
+/// Use case for creating a new group
+
+use std::sync::Arc;
 
 pub struct CreateGroupUseCase {
     repo: Arc<dyn GroupRepository>,

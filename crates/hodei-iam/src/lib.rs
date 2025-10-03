@@ -25,22 +25,22 @@
 pub mod shared;
 pub mod features;
 
-// Re-export commonly used items for convenience
-pub use shared::domain::{User, Group, ServiceAccount, Namespace, CreateUserAction, CreateGroupAction};
 pub use shared::application::configure_default_iam_entities;
+// Re-export commonly used items for convenience
+pub use shared::domain::{CreateGroupAction, CreateUserAction, Group, Namespace, ServiceAccount, User};
 
 // Re-export features for easy access
 pub use features::{
+    add_user_to_group::AddUserToGroupUseCase,
     create_group::CreateGroupUseCase,
     create_user::CreateUserUseCase,
-    add_user_to_group::AddUserToGroupUseCase,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use policies::shared::domain::ports::{Principal, Resource, Action};
     use policies::shared::domain::hrn::Hrn;
+    use policies::shared::domain::ports::{Action, Principal, Resource};
 
     fn sample_group(id: &str) -> Group {
         Group {

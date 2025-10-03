@@ -1,13 +1,13 @@
+use crate::shared::application::{AuthorizationEngine, EngineBuilder, PolicyStore};
+use crate::shared::domain::PolicyStorage;
+use crate::shared::infrastructure::surreal::SurrealMemStorage;
+use anyhow::Result;
 /// Centralized DI helpers to avoid code duplication across features
 /// 
 /// This module provides reusable functions for building engines and storage,
 /// allowing features to focus on their specific use case construction.
 
 use std::sync::Arc;
-use anyhow::Result;
-use crate::shared::application::{AuthorizationEngine, EngineBuilder, PolicyStore};
-use crate::shared::domain::PolicyStorage;
-use crate::shared::infrastructure::surreal::SurrealMemStorage;
 
 #[cfg(feature = "embedded")]
 use crate::shared::infrastructure::surreal::SurrealEmbeddedStorage;

@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use anyhow::Result;
-use crate::shared::application::{AuthorizationEngine, di_helpers};
 use super::use_case::DeletePolicyUseCase;
+use crate::shared::application::{di_helpers, AuthorizationEngine};
+use anyhow::Result;
+use std::sync::Arc;
 
 /// Build DeletePolicyUseCase wired with SurrealDB in-memory storage (default dev/test)
 /// NOTE: For tests, this uses test entities. For production, use hodei-iam::di or register your own entities.

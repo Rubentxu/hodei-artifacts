@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Instant;
 
-use cedar_policy::{Authorizer, Context, Entities, Entity, EntityUid, Policy, PolicySet, Request, RestrictedExpression, Schema, SchemaFragment, Validator, ValidationMode, Decision as CedarDecision};
 use crate::shared::application::parallel::{evaluate_scenarios_channel, AuthScenario};
+use cedar_policy::{Authorizer, Context, Decision as CedarDecision, Entities, Entity, EntityUid, Policy, PolicySet, Request, RestrictedExpression, Schema, SchemaFragment, ValidationMode, Validator};
 
 use super::dto::{
     AuthorizationDiagnostics, AuthorizationResult, Decision, EntityDefinition, EvaluationStatistics,

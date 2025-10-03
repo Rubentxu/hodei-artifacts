@@ -1,12 +1,12 @@
-/// Use case for creating a new user
-
-use std::sync::Arc;
+use super::dto::{CreateUserCommand, UserView};
 use crate::shared::{
     application::ports::UserRepository,
     domain::User,
 };
-use super::dto::{CreateUserCommand, UserView};
 use policies::shared::domain::hrn::Hrn;
+/// Use case for creating a new user
+
+use std::sync::Arc;
 
 pub struct CreateUserUseCase {
     repo: Arc<dyn UserRepository>,

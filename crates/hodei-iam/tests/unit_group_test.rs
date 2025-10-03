@@ -3,6 +3,7 @@
 use hodei_iam::Group;
 use policies::shared::domain::hrn::Hrn;
 
+
 #[test]
 fn test_group_new_creates_empty_collections() {
     let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());

@@ -1,3 +1,5 @@
+use crate::shared::application::ports::{GroupRepository, UserRepository};
+use crate::shared::domain::{Group, User};
 /// In-memory repository implementations for testing
 ///
 /// These repositories store data in memory using RwLock for thread-safe access
@@ -5,8 +7,6 @@
 use async_trait::async_trait;
 use policies::shared::domain::hrn::Hrn;
 use std::sync::RwLock;
-use crate::shared::domain::{User, Group};
-use crate::shared::application::ports::{UserRepository, GroupRepository};
 
 /// In-memory implementation of UserRepository for testing
 #[derive(Debug, Default)]

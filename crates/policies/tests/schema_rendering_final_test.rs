@@ -1,3 +1,5 @@
+use async_trait::async_trait;
+use cedar_policy::{EntityTypeName, EntityUid, Policy, PolicySet, RestrictedExpression, Schema};
 /// Tests para verificar el rendering final del schema generado por el EngineBuilder
 ///
 /// Estos tests registran diferentes tipos de entidades y acciones para validar
@@ -10,12 +12,10 @@ use policies::shared::domain::ports::{
     StorageError,
 };
 use policies::shared::Hrn;
-use async_trait::async_trait;
-use cedar_policy::{EntityTypeName, EntityUid, Policy, PolicySet, RestrictedExpression, Schema};
+use regex::Regex;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use regex::Regex;
 
 // ============================================================================
 // Mock Storage

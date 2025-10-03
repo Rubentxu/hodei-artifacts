@@ -1,10 +1,10 @@
 use cedar_policy::{Authorizer, Context, Entities, Entity, EntityUid, Policy, PolicySet, Request, RestrictedExpression};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinSet;
 use tokio::time::{timeout, Duration};
-use tokio::sync::{mpsc, Mutex};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 /// Scenario description compatible with Cedar
 #[derive(Clone, Debug)]

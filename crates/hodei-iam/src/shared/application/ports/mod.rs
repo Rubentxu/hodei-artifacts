@@ -1,10 +1,10 @@
+use crate::shared::domain::{Group, User};
 /// Application ports (interfaces) for hodei-iam
 ///
 /// This module defines the traits (ports) that the application layer uses
 /// to interact with infrastructure concerns like persistence.
 
 use async_trait::async_trait;
-use crate::shared::domain::{User, Group};
 use policies::shared::domain::hrn::Hrn;
 
 #[async_trait]

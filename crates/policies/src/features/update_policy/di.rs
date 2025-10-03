@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use anyhow::Result;
-use crate::shared::application::{AuthorizationEngine, di_helpers};
 use super::use_case::UpdatePolicyUseCase;
+use crate::shared::application::{di_helpers, AuthorizationEngine};
+use anyhow::Result;
+use std::sync::Arc;
 
 /// Build UpdatePolicyUseCase wired with SurrealDB in-memory storage (default dev/test)
 /// NOTE: This creates an engine with NO entities registered.
