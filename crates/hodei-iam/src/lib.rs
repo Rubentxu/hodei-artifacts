@@ -29,3 +29,9 @@ pub use shared::application::configure_default_iam_entities;
 pub use shared::domain::{
     CreateGroupAction, CreateUserAction, Group, Namespace, ServiceAccount, User,
 };
+
+// Re-export features for easy access
+pub use features::{
+    add_user_to_group::AddUserToGroupUseCase, create_group::CreateGroupUseCase,
+    create_user::CreateUserUseCase,
+};

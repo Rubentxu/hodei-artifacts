@@ -1,24 +1,28 @@
-use crate::features::create_account::ports::AccountPersister;
 use crate::features::create_account::error::CreateAccountError;
+use crate::features::create_account::ports::AccountPersister;
+use crate::shared::application::ports::account_repository::AccountRepository;
 use crate::shared::domain::account::Account;
-use crate::shared::application::ports::account_repository::{AccountRepository};
 use async_trait::async_trait;
-use std::sync::Arc;
 
-pub struct AccountPersisterAdapter<AR: AccountRepository> {
-    repository: Arc<AR>,
+/// Adapter that implements the AccountPersister trait using the AccountRepository
+pub struct AccountRepositoryAdapter<AR: AccountRepository> {
+    repository: AR,
 }
 
-impl<AR: AccountRepository> AccountPersisterAdapter<AR> {
-    pub fn new(repository: Arc<AR>) -> Self {
+impl<AR: AccountRepository> AccountRepositoryAdapter<AR> {
+    /// Create a new adapter instance
+    pub fn new(repository: AR) -> Self {
         Self { repository }
     }
 }
 
 #[async_trait]
-impl<AR: AccountRepository + Send + Sync> AccountPersister for AccountPersisterAdapter<AR> {
+impl<AR: AccountRepository + Send + Sync> AccountPersister for AccountRepositoryAdapter<AR> {
+    /// Save an account using the repository
     async fn save(&self, account: Account) -> Result<(), CreateAccountError> {
-        self.repository.save(&account).await
-            .map_err(|e| CreateAccountError::AccountRepositoryError(e))
+        self.repository
+            .save(&account)
+            .await
+            .map_err(CreateAccountError::AccountRepositoryError)
     }
 }
