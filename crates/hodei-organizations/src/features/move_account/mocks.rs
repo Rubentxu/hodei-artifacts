@@ -114,7 +114,7 @@ impl AccountRepository for MockAccountRepository {
             Ok(Some(Account::new(
                 hrn.clone(),
                 "Test Account".to_string(),
-                source_ou_hrn,
+                Some(source_ou_hrn),
             )))
         } else {
             Ok(None)

@@ -1,16 +1,15 @@
-use serde::{Deserialize, Serialize};
 use policies::domain::Hrn;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAccountCommand {
-    pub hrn: Hrn,
     pub name: String,
-    pub parent_hrn: Hrn,
+    pub parent_hrn: Option<Hrn>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountView {
     pub hrn: Hrn,
     pub name: String,
-    pub parent_hrn: Hrn,
+    pub parent_hrn: Option<Hrn>,
 }

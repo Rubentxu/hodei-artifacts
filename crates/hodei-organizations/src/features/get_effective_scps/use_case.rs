@@ -54,7 +54,12 @@ where
             "ou" => self.collect_from_ou(&target_hrn).await?,
             "account" => {
                 if let Some(account) = self.org_repository.find_account_by_hrn(&target_hrn).await? {
-                    self.collect_from_ou(&account.parent_hrn).await?
+                    if let Some(parent_hrn) = &account.parent_hrn {
+                        self.collect_from_ou(parent_hrn).await?
+                    } else {
+                        // Account without parent OU: no inherited SCPs
+                        Vec::new()
+                    }
                 } else {
                     return Err(GetEffectiveScpsError::TargetNotFound(query.resource_hrn));
                 }

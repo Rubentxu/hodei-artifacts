@@ -1,5 +1,7 @@
 use crate::config::Config;
 use metrics::{Counter, Histogram};
+use shared::infrastructure::audit::AuditLogStore;
+use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -15,9 +17,12 @@ pub struct AppState {
     pub list_policies_uc: Arc<policies::features::list_policies::use_case::ListPoliciesUseCase>,
     pub delete_policy_uc: Arc<policies::features::delete_policy::use_case::DeletePolicyUseCase>,
     pub update_policy_uc: Arc<policies::features::update_policy::use_case::UpdatePolicyUseCase>,
-    pub validate_policy_uc: Arc<policies::features::validate_policy::use_case::ValidatePolicyUseCase>,
-    pub policy_playground_uc: Arc<policies::features::policy_playground::use_case::PolicyPlaygroundUseCase>,
-    pub analyze_policies_uc: Arc<policies::features::policy_analysis::use_case::AnalyzePoliciesUseCase>,
+    pub validate_policy_uc:
+        Arc<policies::features::validate_policy::use_case::ValidatePolicyUseCase>,
+    pub policy_playground_uc:
+        Arc<policies::features::policy_playground::use_case::PolicyPlaygroundUseCase>,
+    pub analyze_policies_uc:
+        Arc<policies::features::policy_analysis::use_case::AnalyzePoliciesUseCase>,
     pub batch_eval_uc: Arc<policies::features::batch_eval::use_case::BatchEvalUseCase>,
     // Authorization engine from policies crate
     #[allow(dead_code)]
@@ -31,6 +36,12 @@ pub struct AppState {
     // IAM repositories (for listing endpoints)
     pub user_repo: Arc<dyn hodei_iam::shared::application::ports::UserRepository>,
     pub group_repo: Arc<dyn hodei_iam::shared::application::ports::GroupRepository>,
+
+    // Event Bus for domain events (concrete type for now, can be abstracted later with enum dispatch)
+    pub event_bus: Arc<InMemoryEventBus>,
+
+    // Audit log store for CloudWatch-like event auditing
+    pub audit_store: Arc<AuditLogStore>,
 }
 
 impl Default for AppMetrics {

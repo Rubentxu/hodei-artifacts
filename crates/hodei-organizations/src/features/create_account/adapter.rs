@@ -4,24 +4,24 @@ use crate::shared::application::ports::account_repository::AccountRepository;
 use crate::shared::domain::account::Account;
 use async_trait::async_trait;
 
-/// Adapter that implements the AccountPersister trait using the AccountRepository
-pub struct AccountRepositoryAdapter<AR: AccountRepository> {
+/// Adapter implementing AccountPersister over any AccountRepository.
+/// Creation is done via `AccountRepositoryAdapter::new(repo)`. The previous
+/// `account_persister` helper was removed to avoid dead_code warnings and
+/// simplify DI wiring.
+pub(crate) struct AccountRepositoryAdapter<AR: AccountRepository> {
     repository: AR,
 }
 
 impl<AR: AccountRepository> AccountRepositoryAdapter<AR> {
-    /// Create a new adapter instance
-    pub fn new(repository: AR) -> Self {
+    pub(crate) fn new(repository: AR) -> Self {
         Self { repository }
     }
 }
 
 #[async_trait]
 impl<AR: AccountRepository + Send + Sync> AccountPersister for AccountRepositoryAdapter<AR> {
-    /// Save an account using the repository
     async fn save(&self, account: Account) -> Result<(), CreateAccountError> {
-        self.repository
-            .save(&account)
+        <AR as AccountRepository>::save(&self.repository, &account)
             .await
             .map_err(CreateAccountError::AccountRepositoryError)
     }

@@ -33,10 +33,56 @@ pub use features::{
     create_group::CreateGroupUseCase,
     create_user::CreateUserUseCase,
     get_effective_policies_for_principal::{
-        EffectivePoliciesResponse, GetEffectivePoliciesForPrincipalUseCase,
-        GetEffectivePoliciesQuery,
+        EffectivePoliciesResponse, GetEffectivePoliciesQuery,
+        make_use_case as make_get_effective_policies_use_case,
     },
 };
+
+use async_trait::async_trait;
+use std::sync::Arc;
+
+/// Abstraction (puerto) para consultar políticas efectivas de un principal.
+///
+/// Este trait elimina la necesidad de que consumidores externos conozcan los parámetros genéricos
+/// del caso de uso interno. Se implementa sobre el caso de uso genérico real y se expone
+/// como objeto dinámico (`Arc<dyn EffectivePoliciesQueryService>`).
+#[async_trait]
+pub trait EffectivePoliciesQueryService: Send + Sync {
+    async fn get_effective_policies(
+        &self,
+        query: GetEffectivePoliciesQuery,
+    ) -> Result<
+        EffectivePoliciesResponse,
+        features::get_effective_policies_for_principal::GetEffectivePoliciesError,
+    >;
+}
+
+/// Implementación del trait para el caso de uso genérico real.
+#[async_trait]
+impl<UF, GF, PF> EffectivePoliciesQueryService
+    for features::get_effective_policies_for_principal::GetEffectivePoliciesForPrincipalUseCase<
+        UF,
+        GF,
+        PF,
+    >
+where
+    UF: features::get_effective_policies_for_principal::UserFinderPort + Send + Sync,
+    GF: features::get_effective_policies_for_principal::GroupFinderPort + Send + Sync,
+    PF: features::get_effective_policies_for_principal::PolicyFinderPort + Send + Sync,
+{
+    async fn get_effective_policies(
+        &self,
+        query: GetEffectivePoliciesQuery,
+    ) -> Result<
+        EffectivePoliciesResponse,
+        features::get_effective_policies_for_principal::GetEffectivePoliciesError,
+    > {
+        self.execute(query).await
+    }
+}
+
+/// Tipo de conveniencia para inyección de dependencias.
+pub type DynEffectivePoliciesQueryService = Arc<dyn EffectivePoliciesQueryService>;
 
 // ✅ Configurador para policies engine (necesario para setup inicial)
 pub use shared::application::configure_default_iam_entities;

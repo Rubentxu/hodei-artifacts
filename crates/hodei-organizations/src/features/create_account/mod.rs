@@ -1,9 +1,10 @@
-pub mod use_case;
-pub mod ports;
-pub mod error;
+pub mod adapter;
+pub mod di;
 pub mod dto;
-#[cfg(test)]
-pub mod use_case_test;
+pub mod error;
 #[cfg(test)]
 pub mod mocks;
-mod adapter;
+pub mod ports;
+pub mod use_case;
+#[cfg(test)]
+pub mod use_case_test;

@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use policies::shared::domain::hrn::Hrn;
 
 // ✅ Importar casos de uso de otros crates (NO entidades ni providers)
-use hodei_iam::GetEffectivePoliciesForPrincipalUseCase;
+use hodei_iam::DynEffectivePoliciesQueryService;
 use policies::shared::AuthorizationEngine;
 
 // Usar el trait local en lugar del tipo concreto
@@ -53,7 +53,7 @@ impl AuthorizationCache for DummyCache {
 /// Esto respeta el principio de responsabilidad única.
 pub struct EvaluatePermissionsContainer<CACHE, LOGGER, METRICS> {
     // ✅ Casos de uso de otros crates
-    iam_use_case: Arc<GetEffectivePoliciesForPrincipalUseCase>,
+    iam_use_case: DynEffectivePoliciesQueryService,
     org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
     authorization_engine: Arc<AuthorizationEngine>,
 
@@ -71,7 +71,7 @@ where
 {
     /// Create a new dependency injection container
     pub fn new(
-        iam_use_case: Arc<GetEffectivePoliciesForPrincipalUseCase>,
+        iam_use_case: DynEffectivePoliciesQueryService,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
         cache: Option<CACHE>,
@@ -103,7 +103,7 @@ where
 
 /// Builder pattern for creating the dependency injection container
 pub struct EvaluatePermissionsContainerBuilder<CACHE, LOGGER, METRICS> {
-    iam_use_case: Option<Arc<GetEffectivePoliciesForPrincipalUseCase>>,
+    iam_use_case: Option<DynEffectivePoliciesQueryService>,
     org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
     authorization_engine: Option<Arc<AuthorizationEngine>>,
     cache: Option<CACHE>,
@@ -130,10 +130,7 @@ where
     }
 
     /// Set the IAM use case
-    pub fn with_iam_use_case(
-        mut self,
-        iam_use_case: Arc<GetEffectivePoliciesForPrincipalUseCase>,
-    ) -> Self {
+    pub fn with_iam_use_case(mut self, iam_use_case: DynEffectivePoliciesQueryService) -> Self {
         self.iam_use_case = Some(iam_use_case);
         self
     }
@@ -205,7 +202,7 @@ pub mod factories {
 
     /// Create a container with all required dependencies (no cache)
     pub fn create_without_cache<LOGGER, METRICS>(
-        iam_use_case: Arc<GetEffectivePoliciesForPrincipalUseCase>,
+        iam_use_case: DynEffectivePoliciesQueryService,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
         logger: LOGGER,
@@ -227,7 +224,7 @@ pub mod factories {
 
     /// Create a container with cache enabled
     pub fn create_with_cache<CACHE, LOGGER, METRICS>(
-        iam_use_case: Arc<GetEffectivePoliciesForPrincipalUseCase>,
+        iam_use_case: DynEffectivePoliciesQueryService,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
         cache: CACHE,
@@ -257,8 +254,28 @@ mod tests {
         MockAuthorizationCache, MockAuthorizationLogger, MockAuthorizationMetrics,
     };
 
-    fn create_test_iam_use_case() -> Arc<GetEffectivePoliciesForPrincipalUseCase> {
-        Arc::new(GetEffectivePoliciesForPrincipalUseCase::new())
+    // Mock implementation of the EffectivePoliciesQueryService trait
+    struct MockEffectivePoliciesQueryService;
+
+    #[async_trait::async_trait]
+    impl hodei_iam::EffectivePoliciesQueryService for MockEffectivePoliciesQueryService {
+        async fn get_effective_policies(
+            &self,
+            _query: hodei_iam::GetEffectivePoliciesQuery,
+        ) -> Result<
+            hodei_iam::EffectivePoliciesResponse,
+            hodei_iam::features::get_effective_policies_for_principal::GetEffectivePoliciesError,
+        > {
+            use cedar_policy::PolicySet;
+            Ok(hodei_iam::EffectivePoliciesResponse::new(
+                PolicySet::new(),
+                "mock".to_string(),
+            ))
+        }
+    }
+
+    fn create_test_iam_use_case() -> DynEffectivePoliciesQueryService {
+        Arc::new(MockEffectivePoliciesQueryService {})
     }
 
     fn create_test_org_use_case() -> Option<Arc<dyn GetEffectiveScpsPort>> {

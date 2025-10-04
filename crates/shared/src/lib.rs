@@ -3,13 +3,18 @@
 pub mod enums;
 // pub mod events;  // Temporalmente desactivado - depende de Hrn
 // pub mod lifecycle;  // Temporalmente desactivado - depende de Hrn
-pub mod attributes;
-pub mod models;
-pub mod security;
 pub mod application;
+pub mod infrastructure;
+pub mod models;
 
-// Ergonomic re-export so crates can `use shared::HodeiResource;`
-pub use security::HodeiResource;
 
 // Re-export application types for ergonomic use
-pub use application::{UnitOfWork, UnitOfWorkFactory, UnitOfWorkError};
+pub use application::{UnitOfWork, UnitOfWorkError, UnitOfWorkFactory};
+
+// Re-export event bus types for ergonomic use
+pub use application::ports::{
+    DomainEvent, EventBus, EventEnvelope, EventHandler, EventPublisher, Subscription,
+};
+
+// Re-export infrastructure implementations
+pub use infrastructure::InMemoryEventBus;

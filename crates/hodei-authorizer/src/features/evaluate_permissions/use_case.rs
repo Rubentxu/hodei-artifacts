@@ -14,8 +14,7 @@ use crate::features::evaluate_permissions::ports::{
 use policies::shared::AuthorizationEngine;
 
 // Importar casos de uso de otros crates (NO entidades internas)
-use hodei_iam::GetEffectivePoliciesForPrincipalUseCase;
-use hodei_iam::GetEffectivePoliciesQuery;
+use hodei_iam::{DynEffectivePoliciesQueryService, GetEffectivePoliciesQuery};
 use hodei_organizations::GetEffectiveScpsQuery;
 
 /// Use case for evaluating authorization permissions with multi-layer security
@@ -27,7 +26,7 @@ use hodei_organizations::GetEffectiveScpsQuery;
 /// - Gestiona aspectos transversales: cache, logging, metrics
 pub struct EvaluatePermissionsUseCase<CACHE, LOGGER, METRICS> {
     // ✅ Casos de uso de otros crates (NO providers custom)
-    iam_use_case: Arc<GetEffectivePoliciesForPrincipalUseCase>,
+    iam_use_case: DynEffectivePoliciesQueryService,
     org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
 
     // ✅ Motor de autorización del crate policies
@@ -56,7 +55,7 @@ where
 {
     /// Create a new instance of the use case
     pub fn new(
-        iam_use_case: Arc<GetEffectivePoliciesForPrincipalUseCase>,
+        iam_use_case: DynEffectivePoliciesQueryService,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
         cache: Option<CACHE>,
@@ -136,12 +135,16 @@ where
             principal_hrn: request.principal.to_string(),
         };
 
-        let iam_response = self.iam_use_case.execute(iam_query).await.map_err(|e| {
-            EvaluatePermissionsError::IamPolicyProviderError(format!(
-                "Failed to get IAM policies: {}",
-                e
-            ))
-        })?;
+        let iam_response = self
+            .iam_use_case
+            .get_effective_policies(iam_query)
+            .await
+            .map_err(|e| {
+                EvaluatePermissionsError::IamPolicyProviderError(format!(
+                    "Failed to get IAM policies: {}",
+                    e
+                ))
+            })?;
 
         info!(
             "Retrieved {} IAM policies for principal",
@@ -199,7 +202,7 @@ where
 
         // Step 4: Delegate evaluation to policies crate's AuthorizationEngine
         let decision = self
-            .evaluate_with_policy_set(&request, &combined_policies)
+            .evaluate_with_policy_set(request, &combined_policies)
             .await?;
 
         info!(
@@ -327,13 +330,13 @@ where
                     serde_json::Value::String(user_agent.clone()),
                 );
             }
-            if let Some(ref request_time) = request_context.request_time {
-                if let Ok(formatted) = request_time.format(&Rfc3339) {
-                    context_data.insert(
-                        "request_time".to_string(),
-                        serde_json::Value::String(formatted),
-                    );
-                }
+            if let Some(ref request_time) = request_context.request_time
+                && let Ok(formatted) = request_time.format(&Rfc3339)
+            {
+                context_data.insert(
+                    "request_time".to_string(),
+                    serde_json::Value::String(formatted),
+                );
             }
 
             // Add additional context

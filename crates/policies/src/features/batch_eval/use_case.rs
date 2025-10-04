@@ -3,10 +3,8 @@ use cedar_policy::{Entities, PolicySet};
 
 use crate::features::policy_playground::dto as base;
 use crate::shared::application::parallel::{
-    build_entities as build_entities_shared,
-    build_policy_set as build_policy_set_shared,
-    evaluate_scenarios_channel,
-    AuthScenario,
+    AuthScenario, build_entities as build_entities_shared,
+    build_policy_set as build_policy_set_shared, evaluate_scenarios_channel,
 };
 use tracing::info;
 
@@ -14,17 +12,32 @@ use tracing::info;
 pub struct BatchEvalUseCase;
 
 impl BatchEvalUseCase {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
-    pub async fn execute(&self, req: &BatchPlaygroundRequest) -> Result<BatchPlaygroundResponse, String> {
+    pub async fn execute(
+        &self,
+        req: &BatchPlaygroundRequest,
+    ) -> Result<BatchPlaygroundResponse, String> {
         // Apply limit
         let scenarios = if let Some(limit) = req.limit_scenarios {
-            req.scenarios.iter().take(limit).cloned().collect::<Vec<_>>()
-        } else { req.scenarios.clone() };
+            req.scenarios
+                .iter()
+                .take(limit)
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            req.scenarios.clone()
+        };
 
         // Build shared PolicySet and Entities
         let pset = build_policy_set_shared(&req.policies).unwrap_or_else(|_| PolicySet::new());
-        let entity_tuples: Vec<(String, std::collections::HashMap<String, serde_json::Value>, Vec<String>)> = req
+        let entity_tuples: Vec<(
+            String,
+            std::collections::HashMap<String, serde_json::Value>,
+            Vec<String>,
+        )> = req
             .entities
             .iter()
             .map(|e| (e.uid.clone(), e.attributes.clone(), e.parents.clone()))
@@ -47,22 +60,36 @@ impl BatchEvalUseCase {
         // Use mpsc-based evaluator
         let workers = 8usize;
         let buffer = 2 * workers;
-        let (outcomes, pstats) = evaluate_scenarios_channel(&pset, &ents, auth_scenarios, req.timeout_ms, workers, buffer).await?;
+        let (outcomes, pstats) = evaluate_scenarios_channel(
+            &pset,
+            &ents,
+            auth_scenarios,
+            req.timeout_ms,
+            workers,
+            buffer,
+        )
+        .await?;
 
         let mut total_time = 0u64;
         let mut allow_count = 0usize;
         for o in outcomes.iter() {
             total_time += o.eval_time_us;
-            if o.allow { allow_count += 1; }
+            if o.allow {
+                allow_count += 1;
+            }
         }
 
-        let total = total;
+        // redundant redefinition removed (total already computed above)
         let statistics = base::EvaluationStatistics {
             total_scenarios: total,
             allow_count,
             deny_count: total.saturating_sub(allow_count),
             total_evaluation_time_us: total_time,
-            average_evaluation_time_us: if total == 0 { 0 } else { total_time / total as u64 },
+            average_evaluation_time_us: if total == 0 {
+                0
+            } else {
+                total_time / total as u64
+            },
         };
 
         info!(
@@ -72,6 +99,9 @@ impl BatchEvalUseCase {
             "batch_eval completed"
         );
 
-        Ok(BatchPlaygroundResponse { results_count: total, statistics })
+        Ok(BatchPlaygroundResponse {
+            results_count: total,
+            statistics,
+        })
     }
 }

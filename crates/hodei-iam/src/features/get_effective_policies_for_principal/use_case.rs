@@ -4,8 +4,12 @@ use crate::features::get_effective_policies_for_principal::dto::{
 use crate::features::get_effective_policies_for_principal::error::{
     GetEffectivePoliciesError, GetEffectivePoliciesResult,
 };
+use crate::features::get_effective_policies_for_principal::ports::{
+    GroupFinderPort, PolicyFinderPort, UserFinderPort,
+};
 use cedar_policy::PolicySet;
 use policies::shared::domain::hrn::Hrn;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 /// Caso de uso para obtener las políticas IAM efectivas de un principal
@@ -19,20 +23,50 @@ use tracing::{info, warn};
 /// - Recolectar políticas directas del principal
 /// - Recolectar políticas de todos los grupos
 /// - Combinar todo en un PolicySet de Cedar
-pub struct GetEffectivePoliciesForPrincipalUseCase {
-    // Los ports reales se inyectarán aquí cuando implementemos los repositorios
-    // Por ahora es un placeholder para establecer el patrón
+///
+/// # Arquitectura
+/// Usa ports segregados (ISP - Interface Segregation Principle) para:
+/// - UserFinderPort: Buscar usuarios
+/// - GroupFinderPort: Buscar grupos del usuario
+/// - PolicyFinderPort: Buscar políticas asociadas
+pub struct GetEffectivePoliciesForPrincipalUseCase<UF, GF, PF>
+where
+    UF: UserFinderPort,
+    GF: GroupFinderPort,
+    PF: PolicyFinderPort,
+{
+    user_finder: Arc<UF>,
+    group_finder: Arc<GF>,
+    policy_finder: Arc<PF>,
 }
 
-impl GetEffectivePoliciesForPrincipalUseCase {
-    pub fn new() -> Self {
-        Self {}
+impl<UF, GF, PF> GetEffectivePoliciesForPrincipalUseCase<UF, GF, PF>
+where
+    UF: UserFinderPort,
+    GF: GroupFinderPort,
+    PF: PolicyFinderPort,
+{
+    /// Create a new instance of the use case
+    pub fn new(user_finder: Arc<UF>, group_finder: Arc<GF>, policy_finder: Arc<PF>) -> Self {
+        Self {
+            user_finder,
+            group_finder,
+            policy_finder,
+        }
     }
 
     /// Ejecuta la obtención de políticas IAM efectivas devolviendo un PolicySet de Cedar
     ///
     /// Este es el método público que otros crates deben usar.
     /// No expone las entidades internas User/Group/Policy.
+    ///
+    /// # Flujo
+    /// 1. Validar y parsear el HRN del principal
+    /// 2. Buscar el usuario/service-account
+    /// 3. Obtener grupos a los que pertenece
+    /// 4. Recolectar políticas directas del principal
+    /// 5. Recolectar políticas de todos los grupos
+    /// 6. Combinar todo en un PolicySet de Cedar
     pub async fn execute(
         &self,
         query: GetEffectivePoliciesQuery,
@@ -42,7 +76,7 @@ impl GetEffectivePoliciesForPrincipalUseCase {
             query.principal_hrn
         );
 
-        // Validar y parsear el HRN del principal
+        // Step 1: Validar y parsear el HRN del principal
         let principal_hrn = Hrn::from_string(&query.principal_hrn).ok_or_else(|| {
             GetEffectivePoliciesError::InvalidPrincipalHrn(query.principal_hrn.clone())
         })?;
@@ -58,20 +92,67 @@ impl GetEffectivePoliciesForPrincipalUseCase {
             }
         }
 
-        // TODO: Implementar la lógica real cuando tengamos los repositorios
-        // Por ahora devolvemos un PolicySet vacío para establecer el contrato
-        //
-        // La implementación real haría:
-        // 1. let user = self.user_repo.find_by_hrn(&principal_hrn).await?;
-        // 2. let groups = self.group_repo.find_by_user(&user.hrn).await?;
-        // 3. let user_policies = self.policy_repo.find_by_principal(&user.hrn).await?;
-        // 4. let group_policies = for each group: self.policy_repo.find_by_principal(&group.hrn).await?;
-        // 5. Combinar todas en un PolicySet
+        // Step 2: Buscar el usuario (verificar que existe)
+        let user = self
+            .user_finder
+            .find_by_hrn(&principal_hrn)
+            .await
+            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?
+            .ok_or_else(|| {
+                GetEffectivePoliciesError::PrincipalNotFound(query.principal_hrn.clone())
+            })?;
 
-        let policy_set = PolicySet::new();
+        info!("Found principal: {}", user.name);
+
+        // Step 3: Obtener grupos a los que pertenece el principal
+        let groups = self
+            .group_finder
+            .find_groups_by_user_hrn(&user.hrn)
+            .await
+            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
+
+        info!("Principal belongs to {} group(s)", groups.len());
+
+        // Step 4: Recolectar políticas directas del principal
+        let principal_policies = self
+            .policy_finder
+            .find_policies_by_principal(&user.hrn)
+            .await
+            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
         info!(
-            "Found {} effective policies for principal {}",
+            "Found {} direct policies for principal",
+            principal_policies.len()
+        );
+
+        // Step 5: Recolectar políticas de todos los grupos
+        let mut all_group_policies = Vec::new();
+        for group in &groups {
+            let group_policies = self
+                .policy_finder
+                .find_policies_by_principal(&group.hrn)
+                .await
+                .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
+
+            info!(
+                "Found {} policies for group {}",
+                group_policies.len(),
+                group.name
+            );
+
+            all_group_policies.extend(group_policies);
+        }
+
+        // Step 6: Combinar todas las políticas en un PolicySet
+        let all_policy_documents: Vec<String> = principal_policies
+            .into_iter()
+            .chain(all_group_policies)
+            .collect();
+
+        let policy_set = self.convert_to_policy_set(all_policy_documents)?;
+
+        info!(
+            "Successfully collected {} effective policies for principal {}",
             policy_set.policies().count(),
             query.principal_hrn
         );
@@ -82,97 +163,194 @@ impl GetEffectivePoliciesForPrincipalUseCase {
         ))
     }
 
-    /// Método interno (futuro) para obtener políticas directas del principal
-    #[allow(dead_code)]
-    async fn get_principal_policies(
-        &self,
-        _principal_hrn: &Hrn,
-    ) -> GetEffectivePoliciesResult<Vec<String>> {
-        // TODO: Implementar cuando tengamos repositorios
-        Ok(vec![])
-    }
-
-    /// Método interno (futuro) para obtener políticas de grupos
-    #[allow(dead_code)]
-    async fn get_group_policies(
-        &self,
-        _principal_hrn: &Hrn,
-    ) -> GetEffectivePoliciesResult<Vec<String>> {
-        // TODO: Implementar cuando tengamos repositorios
-        Ok(vec![])
-    }
-
     /// Convierte las políticas IAM internas a un PolicySet de Cedar
     ///
     /// Este método oculta los detalles de las entidades internas y solo
     /// expone el PolicySet que otros crates pueden usar.
-    #[allow(dead_code)]
+    ///
+    /// # Error Handling
+    /// Las políticas que no se pueden parsear se registran como warnings
+    /// pero no detienen el proceso. Esto permite que algunas políticas
+    /// válidas funcionen incluso si otras están mal formadas.
     fn convert_to_policy_set(
         &self,
         policy_documents: Vec<String>,
     ) -> GetEffectivePoliciesResult<PolicySet> {
         let mut policy_set = PolicySet::new();
+        let mut parse_errors = 0;
 
         for (idx, policy_doc) in policy_documents.into_iter().enumerate() {
             match policy_doc.parse::<cedar_policy::Policy>() {
                 Ok(policy) => {
                     if let Err(e) = policy_set.add(policy) {
                         warn!("Failed to add policy {} to set: {}", idx, e);
-                        // Continuamos con las demás políticas
+                        parse_errors += 1;
                     }
                 }
                 Err(e) => {
                     warn!("Failed to parse policy document {}: {}", idx, e);
-                    // Continuamos con las demás políticas
+                    parse_errors += 1;
                 }
             }
+        }
+
+        if parse_errors > 0 {
+            warn!(
+                "Encountered {} policy parse/add errors during conversion",
+                parse_errors
+            );
         }
 
         Ok(policy_set)
     }
 }
 
-impl Default for GetEffectivePoliciesForPrincipalUseCase {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::domain::{Group, User};
+
+    // Mock implementations for testing
+    struct MockUserFinder {
+        users: Vec<User>,
+    }
+
+    #[async_trait::async_trait]
+    impl UserFinderPort for MockUserFinder {
+        async fn find_by_hrn(
+            &self,
+            hrn: &Hrn,
+        ) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(self.users.iter().find(|u| &u.hrn == hrn).cloned())
+        }
+    }
+
+    struct MockGroupFinder {
+        groups: Vec<(Hrn, Vec<Group>)>, // (user_hrn, groups)
+    }
+
+    #[async_trait::async_trait]
+    impl GroupFinderPort for MockGroupFinder {
+        async fn find_groups_by_user_hrn(
+            &self,
+            user_hrn: &Hrn,
+        ) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(self
+                .groups
+                .iter()
+                .find(|(hrn, _)| hrn == user_hrn)
+                .map(|(_, groups)| groups.clone())
+                .unwrap_or_default())
+        }
+    }
+
+    struct MockPolicyFinder {
+        policies: Vec<(Hrn, Vec<String>)>, // (principal_hrn, policies)
+    }
+
+    #[async_trait::async_trait]
+    impl PolicyFinderPort for MockPolicyFinder {
+        async fn find_policies_by_principal(
+            &self,
+            principal_hrn: &Hrn,
+        ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(self
+                .policies
+                .iter()
+                .find(|(hrn, _)| hrn == principal_hrn)
+                .map(|(_, policies)| policies.clone())
+                .unwrap_or_default())
+        }
+    }
 
     #[tokio::test]
-    async fn test_execute_with_valid_user_hrn() {
-        let use_case = GetEffectivePoliciesForPrincipalUseCase::new();
+    async fn test_execute_with_valid_user_and_policies() {
+        // Setup
+        let user_hrn = Hrn::from_string("hrn:hodei:iam:us-east-1:default:user/test-user").unwrap();
+        let user = User::new(
+            user_hrn.clone(),
+            "test-user".to_string(),
+            "test@example.com".to_string(),
+        );
 
+        let group_hrn = Hrn::from_string("hrn:hodei:iam:us-east-1:default:group/admins").unwrap();
+        let group = Group::new(group_hrn.clone(), "admins".to_string());
+
+        let user_policy = r#"permit(principal, action, resource);"#.to_string();
+        let group_policy = r#"permit(principal, action == Action::"read", resource);"#.to_string();
+
+        let user_finder = Arc::new(MockUserFinder {
+            users: vec![user.clone()],
+        });
+
+        let group_finder = Arc::new(MockGroupFinder {
+            groups: vec![(user_hrn.clone(), vec![group.clone()])],
+        });
+
+        let policy_finder = Arc::new(MockPolicyFinder {
+            policies: vec![
+                (user_hrn.clone(), vec![user_policy]),
+                (group_hrn.clone(), vec![group_policy]),
+            ],
+        });
+
+        let use_case =
+            GetEffectivePoliciesForPrincipalUseCase::new(user_finder, group_finder, policy_finder);
+
+        // Execute
         let query = GetEffectivePoliciesQuery {
-            principal_hrn: "hrn:aws:iam:us-east-1:default:user/test-user".to_string(),
+            principal_hrn: "hrn:hodei:iam:us-east-1:default:user/test-user".to_string(),
         };
 
         let result = use_case.execute(query).await;
-        if let Err(e) = &result {
-            eprintln!("Error: {:?}", e);
-        }
-        assert!(result.is_ok());
 
+        // Assert
+        assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(
             response.principal_hrn,
-            "hrn:aws:iam:us-east-1:default:user/test-user"
+            "hrn:hodei:iam:us-east-1:default:user/test-user"
         );
-        assert_eq!(response.policy_count, 0); // Empty for now
+        assert_eq!(response.policy_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_user_not_found() {
+        let user_finder = Arc::new(MockUserFinder { users: vec![] });
+        let group_finder = Arc::new(MockGroupFinder { groups: vec![] });
+        let policy_finder = Arc::new(MockPolicyFinder { policies: vec![] });
+
+        let use_case =
+            GetEffectivePoliciesForPrincipalUseCase::new(user_finder, group_finder, policy_finder);
+
+        let query = GetEffectivePoliciesQuery {
+            principal_hrn: "hrn:hodei:iam:us-east-1:default:user/nonexistent".to_string(),
+        };
+
+        let result = use_case.execute(query).await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            GetEffectivePoliciesError::PrincipalNotFound(_)
+        ));
     }
 
     #[tokio::test]
     async fn test_execute_with_invalid_hrn() {
-        let use_case = GetEffectivePoliciesForPrincipalUseCase::new();
+        let user_finder = Arc::new(MockUserFinder { users: vec![] });
+        let group_finder = Arc::new(MockGroupFinder { groups: vec![] });
+        let policy_finder = Arc::new(MockPolicyFinder { policies: vec![] });
+
+        let use_case =
+            GetEffectivePoliciesForPrincipalUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = GetEffectivePoliciesQuery {
             principal_hrn: "invalid-hrn".to_string(),
         };
 
         let result = use_case.execute(query).await;
+
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -182,19 +360,50 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_invalid_principal_type() {
-        let use_case = GetEffectivePoliciesForPrincipalUseCase::new();
+        let user_finder = Arc::new(MockUserFinder { users: vec![] });
+        let group_finder = Arc::new(MockGroupFinder { groups: vec![] });
+        let policy_finder = Arc::new(MockPolicyFinder { policies: vec![] });
+
+        let use_case =
+            GetEffectivePoliciesForPrincipalUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = GetEffectivePoliciesQuery {
-            principal_hrn: "hrn:aws:s3:us-east-1:default:bucket/test-bucket".to_string(),
+            principal_hrn: "hrn:hodei:s3:us-east-1:default:bucket/test-bucket".to_string(),
         };
 
         let result = use_case.execute(query).await;
+
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        eprintln!("Error received: {:?}", err);
         assert!(matches!(
-            err,
+            result.unwrap_err(),
             GetEffectivePoliciesError::InvalidPrincipalType(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_no_policies() {
+        let user_hrn = Hrn::from_string("hrn:hodei:iam:us-east-1:default:user/test-user").unwrap();
+        let user = User::new(
+            user_hrn.clone(),
+            "test-user".to_string(),
+            "test@example.com".to_string(),
+        );
+
+        let user_finder = Arc::new(MockUserFinder { users: vec![user] });
+        let group_finder = Arc::new(MockGroupFinder { groups: vec![] });
+        let policy_finder = Arc::new(MockPolicyFinder { policies: vec![] });
+
+        let use_case =
+            GetEffectivePoliciesForPrincipalUseCase::new(user_finder, group_finder, policy_finder);
+
+        let query = GetEffectivePoliciesQuery {
+            principal_hrn: "hrn:hodei:iam:us-east-1:default:user/test-user".to_string(),
+        };
+
+        let result = use_case.execute(query).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.policy_count, 0);
     }
 }

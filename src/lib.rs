@@ -8,10 +8,18 @@ pub mod services;
 use crate::app_state::{AppMetrics, AppState, HealthStatus};
 use crate::config::Config;
 use crate::error::{AppError, Result};
-use axum::{routing::{delete, get, post, put}, Router};
+use axum::{
+    Router,
+    routing::{delete, get, post, put},
+};
+
+use shared::infrastructure::audit::{AuditEventHandler, AuditLogStore};
+use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tower_http::{compression::CompressionLayer, cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer};
+use tower_http::{
+    compression::CompressionLayer, cors::CorsLayer, timeout::TimeoutLayer, trace::TraceLayer,
+};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -20,84 +28,209 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
     // Metrics (simple initialization)
     let metrics = AppMetrics::new();
 
+    // Initialize Event Bus (InMemory for now, can be swapped with NATS in production)
+    let event_bus = Arc::new(InMemoryEventBus::with_capacity(1000));
+
+    tracing::info!("Event bus initialized (InMemory with capacity 1000)");
+
+    // Initialize Audit Log Store
+    let audit_store = Arc::new(AuditLogStore::new());
+    tracing::info!("Audit log store initialized");
+
     // Policies DI
     #[cfg(feature = "embedded")]
-    let (create_policy_uc, authorization_engine) = policies::features::create_policy::di::embedded::make_create_policy_use_case_embedded(&config.database.url)
+    let (create_policy_uc, authorization_engine) =
+        policies::features::create_policy::di::embedded::make_create_policy_use_case_embedded(
+            &config.database.url,
+        )
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build create_policy use case (embedded): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build create_policy use case (embedded): {}",
+                e
+            ))
+        })?;
     #[cfg(not(feature = "embedded"))]
-    let (create_policy_uc, authorization_engine) = policies::features::create_policy::di::make_create_policy_use_case_mem()
-        .await
-        .map_err(|e| AppError::Internal(format!("failed to build create_policy use case (mem): {}", e)))?;
+    let (create_policy_uc, authorization_engine) =
+        policies::features::create_policy::di::make_create_policy_use_case_mem()
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build create_policy use case (mem): {}",
+                    e
+                ))
+            })?;
 
     #[cfg(feature = "embedded")]
-    let (get_policy_uc, _) = policies::features::get_policy::di::embedded::make_get_policy_use_case_embedded(&config.database.url)
+    let (get_policy_uc, _) =
+        policies::features::get_policy::di::embedded::make_get_policy_use_case_embedded(
+            &config.database.url,
+        )
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build get_policy use case (embedded): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build get_policy use case (embedded): {}",
+                e
+            ))
+        })?;
     #[cfg(not(feature = "embedded"))]
     let (get_policy_uc, _) = policies::features::get_policy::di::make_get_policy_use_case_mem()
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build get_policy use case (mem): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!("failed to build get_policy use case (mem): {}", e))
+        })?;
 
     #[cfg(feature = "embedded")]
-    let (list_policies_uc, _) = policies::features::list_policies::di::embedded::make_list_policies_use_case_embedded(&config.database.url)
+    let (list_policies_uc, _) =
+        policies::features::list_policies::di::embedded::make_list_policies_use_case_embedded(
+            &config.database.url,
+        )
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build list_policies use case (embedded): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build list_policies use case (embedded): {}",
+                e
+            ))
+        })?;
     #[cfg(not(feature = "embedded"))]
-    let (list_policies_uc, _) = policies::features::list_policies::di::make_list_policies_use_case_mem()
-        .await
-        .map_err(|e| AppError::Internal(format!("failed to build list_policies use case (mem): {}", e)))?;
+    let (list_policies_uc, _) =
+        policies::features::list_policies::di::make_list_policies_use_case_mem()
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build list_policies use case (mem): {}",
+                    e
+                ))
+            })?;
 
     #[cfg(feature = "embedded")]
-    let (update_policy_uc, _) = policies::features::update_policy::di::embedded::make_update_policy_use_case_embedded(&config.database.url)
+    let (update_policy_uc, _) =
+        policies::features::update_policy::di::embedded::make_update_policy_use_case_embedded(
+            &config.database.url,
+        )
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build update_policy use case (embedded): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build update_policy use case (embedded): {}",
+                e
+            ))
+        })?;
     #[cfg(not(feature = "embedded"))]
-    let (update_policy_uc, _) = policies::features::update_policy::di::make_update_policy_use_case_mem()
-        .await
-        .map_err(|e| AppError::Internal(format!("failed to build update_policy use case (mem): {}", e)))?;
+    let (update_policy_uc, _) =
+        policies::features::update_policy::di::make_update_policy_use_case_mem()
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build update_policy use case (mem): {}",
+                    e
+                ))
+            })?;
 
     #[cfg(feature = "embedded")]
-    let (validate_policy_uc, _) = policies::features::validate_policy::di::embedded::make_validate_policy_use_case_embedded(&config.database.url)
+    let (validate_policy_uc, _) =
+        policies::features::validate_policy::di::embedded::make_validate_policy_use_case_embedded(
+            &config.database.url,
+        )
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build validate_policy use case (embedded): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build validate_policy use case (embedded): {}",
+                e
+            ))
+        })?;
     #[cfg(not(feature = "embedded"))]
-    let (validate_policy_uc, _) = policies::features::validate_policy::di::make_validate_policy_use_case_mem()
-        .await
-        .map_err(|e| AppError::Internal(format!("failed to build validate_policy use case (mem): {}", e)))?;
+    let (validate_policy_uc, _) =
+        policies::features::validate_policy::di::make_validate_policy_use_case_mem()
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build validate_policy use case (mem): {}",
+                    e
+                ))
+            })?;
 
     #[cfg(feature = "embedded")]
     let (policy_playground_uc, _) = policies::features::policy_playground::di::embedded::make_policy_playground_use_case_embedded(&config.database.url)
         .await
         .map_err(|e| AppError::Internal(format!("failed to build policy_playground use case (embedded): {}", e)))?;
     #[cfg(not(feature = "embedded"))]
-    let (policy_playground_uc, _) = policies::features::policy_playground::di::make_policy_playground_use_case_mem()
-        .await
-        .map_err(|e| AppError::Internal(format!("failed to build policy_playground use case (mem): {}", e)))?;
+    let (policy_playground_uc, _) =
+        policies::features::policy_playground::di::make_policy_playground_use_case_mem()
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build policy_playground use case (mem): {}",
+                    e
+                ))
+            })?;
 
     let analyze_policies_uc = policies::features::policy_analysis::di::make_use_case_mem()
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build analyze_policies use case (mem): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build analyze_policies use case (mem): {}",
+                e
+            ))
+        })?;
 
     let batch_eval_uc = policies::features::batch_eval::di::make_use_case_mem()
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build batch_eval use case (mem): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!("failed to build batch_eval use case (mem): {}", e))
+        })?;
 
     #[cfg(feature = "embedded")]
-    let (delete_policy_uc, _) = policies::features::delete_policy::di::embedded::make_delete_policy_use_case_embedded(&config.database.url)
+    let (delete_policy_uc, _) =
+        policies::features::delete_policy::di::embedded::make_delete_policy_use_case_embedded(
+            &config.database.url,
+        )
         .await
-        .map_err(|e| AppError::Internal(format!("failed to build delete_policy use case (embedded): {}", e)))?;
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "failed to build delete_policy use case (embedded): {}",
+                e
+            ))
+        })?;
     #[cfg(not(feature = "embedded"))]
-    let (delete_policy_uc, _) = policies::features::delete_policy::di::make_delete_policy_use_case_mem()
-        .await
-        .map_err(|e| AppError::Internal(format!("failed to build delete_policy use case (mem): {}", e)))?;
+    let (delete_policy_uc, _) =
+        policies::features::delete_policy::di::make_delete_policy_use_case_mem()
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!(
+                    "failed to build delete_policy use case (mem): {}",
+                    e
+                ))
+            })?;
 
     // IAM in-memory repos and use cases (for now always in-memory)
-    let user_repo = Arc::new(hodei_iam::shared::infrastructure::persistence::InMemoryUserRepository::new());
-    let group_repo = Arc::new(hodei_iam::shared::infrastructure::persistence::InMemoryGroupRepository::new());
-    let create_user_uc = hodei_iam::features::create_user::di::make_use_case(user_repo.clone());
-    let create_group_uc = hodei_iam::features::create_group::di::make_use_case(group_repo.clone());
-    let add_user_to_group_uc = hodei_iam::features::add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let user_repo =
+        Arc::new(hodei_iam::shared::infrastructure::persistence::InMemoryUserRepository::new());
+    let group_repo =
+        Arc::new(hodei_iam::shared::infrastructure::persistence::InMemoryGroupRepository::new());
+
+    // Create IAM use cases with event bus integration
+    let create_user_uc = hodei_iam::features::create_user::di::make_use_case_with_events(
+        user_repo.clone(),
+        event_bus.clone(),
+    );
+    let create_group_uc = hodei_iam::features::create_group::di::make_use_case_with_events(
+        group_repo.clone(),
+        event_bus.clone(),
+    );
+    let add_user_to_group_uc =
+        hodei_iam::features::add_user_to_group::di::make_use_case_with_events(
+            user_repo.clone(),
+            group_repo.clone(),
+            event_bus.clone(),
+        );
+
+    // Create GetEffectivePolicies use case (for hodei-authorizer integration)
+    let _effective_policies_service: hodei_iam::DynEffectivePoliciesQueryService = {
+        // intentionally unused for now (wired later into authorizer)
+        let uc =
+            hodei_iam::make_get_effective_policies_use_case(user_repo.clone(), group_repo.clone());
+        Arc::new(uc)
+    };
 
     let state = Arc::new(AppState {
         config: config.clone(),
@@ -119,7 +252,87 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
         add_user_to_group_uc: Arc::new(add_user_to_group_uc),
         user_repo,
         group_repo,
+        // Event Bus
+        event_bus: event_bus.clone(),
+        // Audit Store
+        audit_store: audit_store.clone(),
     });
+
+    // Subscribe AuditEventHandler to capture all domain events
+    tracing::info!("Subscribing AuditEventHandler to all domain events");
+    // Bring EventBus trait into scope locally for subscribe() calls
+    use shared::EventBus;
+
+    // Subscribe to IAM events
+
+    let audit_handler_user_created = Arc::new(AuditEventHandler::new(audit_store.clone()));
+    event_bus
+        .subscribe::<hodei_iam::shared::domain::events::UserCreated, _>(audit_handler_user_created)
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "Failed to subscribe AuditEventHandler for UserCreated: {}",
+                e
+            ))
+        })?;
+
+    let audit_handler_group_created = Arc::new(AuditEventHandler::new(audit_store.clone()));
+    event_bus
+        .subscribe::<hodei_iam::shared::domain::events::GroupCreated, _>(
+            audit_handler_group_created,
+        )
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "Failed to subscribe AuditEventHandler for GroupCreated: {}",
+                e
+            ))
+        })?;
+
+    let audit_handler_user_added = Arc::new(AuditEventHandler::new(audit_store.clone()));
+    event_bus
+        .subscribe::<hodei_iam::shared::domain::events::UserAddedToGroup, _>(
+            audit_handler_user_added,
+        )
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "Failed to subscribe AuditEventHandler for UserAddedToGroup: {}",
+                e
+            ))
+        })?;
+
+    // Subscribe to Organizations events
+    let audit_handler_account_created = Arc::new(AuditEventHandler::new(audit_store.clone()));
+    event_bus
+        .subscribe::<hodei_organizations::shared::domain::events::AccountCreated, _>(
+            audit_handler_account_created,
+        )
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "Failed to subscribe AuditEventHandler for AccountCreated: {}",
+                e
+            ))
+        })?;
+
+    let audit_handler_scp_attached = Arc::new(AuditEventHandler::new(audit_store.clone()));
+    event_bus
+        .subscribe::<hodei_organizations::shared::domain::events::ScpAttached, _>(
+            audit_handler_scp_attached,
+        )
+        .await
+        .map_err(|e| {
+            AppError::Internal(format!(
+                "Failed to subscribe AuditEventHandler for ScpAttached: {}",
+                e
+            ))
+        })?;
+
+    tracing::info!(
+        "AuditEventHandler subscribed successfully to {} event types",
+        5
+    );
 
     Ok(state)
 }
@@ -134,7 +347,8 @@ pub async fn build_app_for_tests() -> Result<Router> {
 /// Public router builder for reuse in tests
 pub async fn build_router(state: Arc<AppState>) -> Result<Router> {
     let cors = build_cors_layer(&state.config)?;
-    let request_timeout = std::time::Duration::from_secs(state.config.server.request_timeout_seconds);
+    let request_timeout =
+        std::time::Duration::from_secs(state.config.server.request_timeout_seconds);
 
     #[derive(OpenApi)]
     #[openapi(
@@ -223,14 +437,18 @@ pub async fn build_router(state: Arc<AppState>) -> Result<Router> {
 
     let app = app_router
         .with_state(state.clone())
-        .layer(axum::middleware::from_fn_with_state(state.clone(), middleware::metrics_middleware))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::metrics_middleware,
+        ))
         .layer(axum::middleware::from_fn(middleware::logging_middleware))
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::new(request_timeout))
         .layer(CompressionLayer::new())
         .layer(cors);
 
-    let final_app = app.merge(SwaggerUi::new("/api-docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
+    let final_app =
+        app.merge(SwaggerUi::new("/api-docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
     Ok(final_app)
 }
 
@@ -240,7 +458,9 @@ fn build_cors_layer(config: &config::Config) -> Result<CorsLayer> {
         cors = cors.allow_origin(tower_http::cors::Any);
     } else {
         for origin in &config.cors.allow_origins {
-            cors = cors.allow_origin(origin.parse::<http::HeaderValue>().map_err(|_| AppError::Configuration(format!("Invalid CORS origin: {}", origin)))?);
+            cors = cors.allow_origin(origin.parse::<http::HeaderValue>().map_err(|_| {
+                AppError::Configuration(format!("Invalid CORS origin: {}", origin))
+            })?);
         }
     }
     Ok(cors)
