@@ -19,7 +19,7 @@ impl BatchEvalUseCase {
     pub async fn execute(&self, req: &BatchPlaygroundRequest) -> Result<BatchPlaygroundResponse, String> {
         // Apply limit
         let scenarios = if let Some(limit) = req.limit_scenarios {
-            req.scenarios.iter().cloned().take(limit).collect::<Vec<_>>()
+            req.scenarios.iter().take(limit).cloned().collect::<Vec<_>>()
         } else { req.scenarios.clone() };
 
         // Build shared PolicySet and Entities

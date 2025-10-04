@@ -6,6 +6,10 @@ pub mod enums;
 pub mod attributes;
 pub mod models;
 pub mod security;
+pub mod application;
 
 // Ergonomic re-export so crates can `use shared::HodeiResource;`
 pub use security::HodeiResource;
+
+// Re-export application types for ergonomic use
+pub use application::{UnitOfWork, UnitOfWorkFactory, UnitOfWorkError};

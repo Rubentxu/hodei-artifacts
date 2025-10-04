@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".", # Only root package; subcrates used as path deps but not workspace members
+#    "crates/hodei-authorizer",
 ]
 resolver = "2"
 
@@ -81,6 +82,8 @@ path = "src/main.rs"
 shared = { path = "crates/shared" }
 policies = { path = "crates/policies", features = ["mem"] }
 hodei-iam = { path = "crates/hodei-iam" }
+hodei-organizations = { path = "crates/hodei-organizations" }
+hodei-authorizer = { path = "crates/hodei-authorizer" }
 
 # Crates desactivados temporalmente (no maduros)
 #artifact = { path = "crates/artifact" }
@@ -120,3 +123,8 @@ hyper = { workspace = true }
 metrics = { workspace = true }
 
 aws-config.workspace = true
+
+[dev-dependencies]
+hodei-organizations = { path = "crates/hodei-organizations" }
+hodei-authorizer = { path = "crates/hodei-authorizer" }
+surrealdb = { workspace = true }

@@ -1,306 +1,356 @@
-### Fase 1: Construcción de `hodei-organizations` - La Base de la Gobernanza
+### **Documento de Planificación: Implementación del Sistema de Autorización Multi-capa**
 
-Este crate es la fundación. No podemos gobernar si no tenemos una estructura que gobernar.
-Stack persistencia SurrealDB Embebida.
+#### **Visión del Producto**
 
+El objetivo es desarrollar un sistema de autorización robusto y multi-capa, 
+inspirado en los servicios de AWS (IAM, Organizations, Access Analyzer, CloudTrail),
+que se integre de forma nativa en nuestra arquitectura de crates y siga los principios de diseño VSA y Hexagonal. 
+El sistema aplicará el principio de privilegio mínimo y la precedencia de la denegación explícita para garantizar la máxima seguridad.
 
-#### **HU 1.1: Modelado y Persistencia del `Account`**
+---
+Cada historia está diseñada para ser independiente (siempre que se cumplan sus dependencias), medible y alineada con tu arquitectura estricta. He añadido una sección de "Justificación" a cada una para explicar el "porqué" de esa segregación específica, junto con detalles de implementación más profundos.
 
-*   **Como** un Arquitecto de la Nube,
-*   **Quiero** modelar una `Account` como la unidad fundamental de mi organización y poder crearla y recuperarla,
-*   **Para que** pueda representar las particiones de recursos y de IAM de mi sistema.
+---
 
+### **Documento de Planificación Detallado: Implementación del Sistema de Autorización Multi-capa**
+
+### **Epic 1: Refactorización y Alineamiento Arquitectónico (Deuda Técnica)**
+
+**Objetivo:** Alinear el código existente con las directrices de arquitectura VSA estrictas para mejorar la consistencia, mantenibilidad y reducir la deuda técnica antes de construir nuevas funcionalidades.
+
+---
+#### **HU-1.1: Definir los Puertos Segregados para la feature `attach_scp`** ✅ **COMPLETADA**
+*   **Como** desarrollador,
+*   **quiero** definir los traits de puerto específicos que el caso de uso `AttachScpUseCase` necesita,
+*   **para** cumplir con el Principio de Segregación de Interfaces (ISP) y desacoplar el caso de uso de las interfaces de repositorio completas.
+*   **Justificación:** Esta HU establece el "contrato" que el caso de uso requiere de sus dependencias, sin acoplarlo a la totalidad de los métodos de un repositorio. Es el primer paso para una implementación VSA limpia.
 *   **Detalles de Implementación:**
-    *   **Dominio (`src/shared/domain/account.rs`):** Crea el struct `Account { hrn: Hrn, name: String, parent_hrn: Hrn }`. El `parent_hrn` apuntará a una OU o a la Raíz.
-    *   **Puerto (`.../ports/account_repository.rs`):** Define `trait AccountRepository { async fn save(&self, ...); async fn find_by_hrn(&self, ...); }`.
-    *   **Feature (`.../features/create_account/`):** Implementa el `CreateAccountUseCase` que genera un HRN único, crea una instancia de `Account` y la guarda usando el repositorio.
-
-*   **Testing:**
-    *   **Unitario:** En `account.rs`, prueba que `Account::new()` inicializa los campos correctamente.
-    *   **Integración (`tests/create_account_test.rs`):**
-        1.  Setup: Crea una implementación `InMemoryAccountRepository` (usando `Surreal::new::<Mem>()` y un `Mutex<HashMap>`).
-        2.  Arrange: Instancia el `CreateAccountUseCase` con el repositorio en memoria.
-        3.  Act: Ejecuta el caso de uso con el comando `{ name: "TestAccount" }`.
-        4.  Assert: Verifica que el `AccountView` devuelto es correcto. Usa el repositorio para recuperar la `Account` y afirma que sus propiedades coinciden con las esperadas.
+    *   **Fichero a Crear/Modificar:** `crates/hodei-organizations/src/features/attach_scp/ports.rs`.
+    *   **Traits a Definir:**
+        *   `trait ScpRepositoryPort`: Debe definir `async fn find_scp_by_hrn(&self, hrn: &Hrn) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError>`.
+        *   `trait AccountRepositoryPort`: Debe definir `async fn find_account_by_hrn(&self, hrn: &Hrn) -> Result<Option<Account>, AccountRepositoryError>` y `async fn save_account(&self, account: Account) -> Result<(), AccountRepositoryError>`.
+        *   `trait OuRepositoryPort`: Debe definir `async fn find_ou_by_hrn(&self, hrn: &Hrn) -> Result<Option<OrganizationalUnit>, OuRepositoryError>` y `async fn save_ou(&self, ou: OrganizationalUnit) -> Result<(), OuRepositoryError>`.
+*   **Criterios de Aceptación:**
+    1.  ✅ El fichero `ports.rs` existe y contiene los tres traits definidos.
+    2.  ✅ Las firmas de los métodos son exactamente las necesarias para que `AttachScpUseCase` compile.
+    3.  ✅ El código compila sin errores (`cargo check`).
 
 ---
-
-#### **HU 1.2: Modelado y Persistencia de la `OrganizationalUnit (OU)`**
-
-*   **Como** un Administrador de la Organización,
-*   **Quiero** crear y recuperar Unidades Organizativas (OUs),
-*   **Para que** pueda empezar a construir la jerarquía de mi organización.
-
+#### **HU-1.2: Implementar los Adaptadores para los Puertos de `attach_scp`** ✅ **COMPLETADA**
+*   **Como** desarrollador,
+*   **quiero** implementar los adaptadores que conectan los puertos segregados de `attach_scp` con los repositorios de la capa de aplicación,
+*   **para** completar el patrón hexagonal y permitir que el caso de uso interactúe con la infraestructura de forma indirecta.
+*   **Justificación:** Esta HU es la "fontanería" que conecta la abstracción (el puerto) con la siguiente capa de abstracción (el repositorio de aplicación), permitiendo la inyección de dependencias.
 *   **Detalles de Implementación:**
-    *   **Dominio (`.../domain/ou.rs`):** Crea el struct `OrganizationalUnit { hrn: Hrn, name: String, parent_hrn: Hrn, child_ous: Vec<Hrn>, child_accounts: Vec<Hrn>, attached_scps: Vec<Hrn> }`.
-    *   **Puerto (`.../ports/ou_repository.rs`):** Define el `trait OuRepository`.
-    *   **Feature (`.../features/create_ou/`):** Implementa el `CreateOuUseCase`.
-
-*   **Testing:**
-    *   **Unitario:** En `ou.rs`, prueba los métodos de negocio como `add_child_account`, `remove_child_account`, etc., para asegurar que manipulan las listas de HRNs correctamente.
-    *   **Integración (`tests/create_ou_test.rs`):** Sigue el mismo patrón que para `Account`, usando un `InMemoryOuRepository`.
+    *   **Fichero a Crear/Modificar:** `crates/hodei-organizations/src/features/attach_scp/adapter.rs`.
+    *   **Structs a Definir:**
+        *   `struct ScpRepositoryAdapter<R: ScpRepository>`: Implementará `ScpRepositoryPort` delegando las llamadas al `R` interno.
+        *   `struct AccountRepositoryAdapter<R: AccountRepository>`: Implementará `AccountRepositoryPort` delegando las llamadas al `R` interno.
+        *   `struct OuRepositoryAdapter<R: OuRepository>`: Implementará `OuRepositoryPort` delegando las llamadas al `R` interno.
+*   **Criterios de Aceptación:**
+    1.  ✅ El fichero `adapter.rs` existe y contiene las tres structs.
+    2.  ✅ Cada `Adapter` implementa su `Port` correspondiente.
+    3.  ✅ El código compila sin errores.
+*   **Dependencias:** `HU-1.1`.
 
 ---
-
-#### **HU 1.3: Mover una `Account` entre OUs**
-
-*   **Como** un Administrador de la Organización,
-*   **Quiero** mover una `Account` existente de una OU a otra,
-*   **Para que** pueda reestructurar mi organización a medida que evoluciona.
-
+#### **HU-1.3: Refactorizar `AttachScpUseCase` y sus Tests para Usar Puertos Segregados** ✅ **COMPLETADA**
+*   **Como** desarrollador,
+*   **quiero** modificar el `AttachScpUseCase` y sus tests asociados para que dependan de los nuevos puertos segregados,
+*   **para** finalizar el alineamiento VSA de la feature.
+*   **Justificación:** Completa el refactor, asegurando que el núcleo de la lógica de negocio ahora depende de su propio contrato segregado, lo que facilita las pruebas y el mantenimiento.
 *   **Detalles de Implementación:**
-    *   **Feature (`.../features/move_account/`):** El `MoveAccountUseCase` es el primer caso de uso que coordina entre múltiples agregados.
-        *   Necesitará ser inyectado con `Arc<dyn AccountRepository>` y `Arc<dyn OuRepository>`.
-        *   Su lógica debe ser:
-            1.  Cargar la `Account` a mover.
-            2.  Cargar la `OU` de origen y la `OU` de destino.
-            3.  Llamar a `ou_origen.remove_child_account(...)`.
-            4.  Llamar a `account.set_parent(...)`.
-            5.  Llamar a `ou_destino.add_child_account(...)`.
-            6.  Guardar los tres agregados modificados (`account`, `ou_origen`, `ou_destino`).
-
-*   **Testing:**
-    *   **Integración (`tests/move_account_test.rs`):** Este test es crucial.
-        1.  Setup: Crea repos en memoria para OUs y Accounts.
-        2.  Arrange: Puebla los repos con una `Account` "WebApp", una `OU` "Staging" y una `OU` "Production". La cuenta "WebApp" debe estar inicialmente en "Staging".
-        3.  Act: Ejecuta el `MoveAccountUseCase` para mover "WebApp" a "Production".
-        4.  Assert:
-            *   Recupera la `Account` "WebApp" y afirma que su `parent_hrn` ahora apunta a "Production".
-            *   Recupera la `OU` "Staging" y afirma que su lista `child_accounts` está vacía.
-            *   Recupera la `OU` "Production" y afirma que su lista `child_accounts` ahora contiene el HRN de "WebApp".
+    *   **Ficheros a Modificar:**
+        *   `features/attach_scp/use_case.rs`: Cambiar la firma de la struct y el constructor `new` para aceptar los `*Port` traits.
+        *   `features/attach_scp/di.rs`: Actualizar la factoría para que construya los adaptadores y los inyecte en el caso de uso.
+        *   `features/attach_scp/mocks.rs`: Modificar los mocks para que implementen los `*Port` traits en lugar de los traits de repositorio genéricos.
+        *   `features/attach_scp/use_case_test.rs`: Asegurarse de que los tests sigan funcionando con los mocks actualizados.
+*   **Criterios de Aceptación:**
+    1.  ✅ `AttachScpUseCase` ya no depende directamente de los traits de `shared/application/ports`.
+    2.  ✅ La inyección de dependencias funciona correctamente.
+    3.  ✅ Todos los tests en `use_case_test.rs` pasan.
+*   **Dependencias:** `HU-1.2`.
 
 ---
-
-#### **HU 1.4: Gestión Básica de `ServiceControlPolicy (SCP)`**
-
-*   **Como** un Administrador de Gobernanza,
-*   **Quiero** crear y adjuntar una SCP a una OU,
-*   **Para que** pueda definir una barrera de permisos para todas las cuentas dentro de esa OU.
-
+#### **HU-1.4: Definir el Contrato de `UnitOfWork` en el Shared Kernel** ✅ **COMPLETADA**
+*   **Como** desarrollador,
+*   **quiero** definir una abstracción `UnitOfWork` en el `shared kernel`,
+*   **para** establecer un contrato estándar para gestionar transacciones que pueda ser implementado por diferentes proveedores de persistencia.
+*   **Justificación:** Es la base para implementar operaciones atómicas. Definir primero el trait asegura que la lógica de negocio no se acople a una implementación de base de datos específica.
 *   **Detalles de Implementación:**
-    *   **Dominio (`.../domain/scp.rs`):** Define `ServiceControlPolicy { hrn: Hrn, name: String, document: String }`.
-    *   **Puerto (`.../ports/scp_repository.rs`):** Define `trait ScpRepository`.
-    *   **Feature (`.../features/create_scp/`):** Implementa el caso de uso para crear la SCP.
-    *   **Feature (`.../features/attach_scp/`):** Implementa el caso de uso para adjuntarla. Este caso de uso cargará la OU (o Account) y la SCP, llamará al método de dominio `ou.attach_scp(...)` y guardará la OU actualizada.
-
-*   **Testing:**
-    *   **Integración (`tests/attach_scp_test.rs`):**
-        1.  Arrange: Crea una `OU` y una `SCP` en los repos en memoria.
-        2.  Act: Ejecuta el `AttachScpUseCase`.
-        3.  Assert: Recupera la `OU` y afirma que su `attached_scps` ahora contiene el HRN de la `SCP`.
+    *   **Fichero a Crear:** `crates/shared/src/application/ports/unit_of_work.rs`.
+    *   **Trait a Definir:**
+        *   `trait UnitOfWork`: Debe ser `async`. Definirá métodos `async fn begin()`, `async fn commit()`, `async fn rollback()`.
+        *   También expondrá "factorías" para los repositorios transaccionales: `fn accounts(&self) -> Arc<dyn AccountRepository>`. El repositorio devuelto debe estar ligado al contexto de la transacción.
+*   **Criterios de Aceptación:**
+    1.  ✅ El trait `UnitOfWork` está definido.
+    2.  ✅ La decisión de diseño sobre cómo los repositorios participan en la transacción (obteniéndolos de la UoW) está documentada en el código.
+    3.  ✅ El código compila sin errores (`cargo check`).
 
 ---
-
-### Fase 2: Construcción de `hodei-authorizer` - El Cerebro Orquestador
-
-Este crate no tiene dominio propio, es pura lógica de aplicación y orquestación.
-
-#### **HU 2.1: Definición de Contratos y Mocks**
-
-*   **Como el** desarrollador del `Authorizer`,
-*   **Necesito** definir los traits (`...Provider`) que describen los datos que necesito de `hodei-iam` y `hodei-organizations`,
-*   **Para que** pueda desarrollar la lógica de decisión de forma aislada y testable.
-
+#### **HU-1.5: Implementar `SurrealUnitOfWork` y Repositorios Transaccionales** ✅ **COMPLETADA**
+*   **Como** desarrollador,
+*   **quiero** una implementación concreta de `UnitOfWork` para SurrealDB y adaptar los repositorios para que la utilicen,
+*   **para** poder ejecutar operaciones de base de datos de manera transaccional.
+*   **Justificación:** Proporciona la capacidad técnica real para realizar transacciones. Sin esto, la UoW es solo una abstracción.
 *   **Detalles de Implementación:**
-    *   **Crate `hodei-authorizer` (`src/ports.rs`):**
-        *   Define `trait IamPolicyProvider { async fn get_identity_policies_for(&self, ...) -> ...; }`.
-        *   Define `trait OrganizationBoundaryProvider { async fn get_effective_scps_for(&self, ...) -> ...; }`.
-    *   **Mocks (`src/tests/mocks.rs`):** Crea structs `MockIamPolicyProvider` y `MockOrgBoundaryProvider` que implementen estos traits y te permitan configurar qué datos devuelven en los tests.
-
-*   **Testing:**
-    *   **Unitario:** Escribe tests para tus mocks para asegurar que devuelven los datos con los que los configuras.
+    *   **Fichero a Crear:** `crates/hodei-organizations/src/shared/infrastructure/surreal/unit_of_work.rs`.
+    *   **Lógica/Algoritmo:**
+        *   La struct `SurrealUnitOfWork` contendrá una conexión a la DB.
+        *   `begin()` ejecutará la query `BEGIN TRANSACTION`.
+        *   `commit()` ejecutará `COMMIT TRANSACTION`.
+        *   `rollback()` ejecutará `CANCEL TRANSACTION`.
+        *   Los `Surreal*Repository` existentes deben ser refactorizados. Sus métodos `save` y `update` ya no tomarán una conexión directa, sino una referencia al contexto transaccional gestionado por la `SurrealUnitOfWork`.
+*   **Criterios de Aceptación:**
+    1.  ✅ `SurrealUnitOfWork` implementa correctamente el trait `UnitOfWork`.
+    2.  ✅ Los métodos de los repositorios de SurrealDB se han adaptado para operar dentro del contexto de una transacción.
+    3.  ✅ El código compila sin errores (`cargo check`).
+*   **Dependencias:** `HU-1.4`.
 
 ---
-
-#### **HU 2.2: Implementación de la Regla "Deny Explícito Anula Todo"**
-
-*   **Como el** `AuthorizerService`,
-*   **Quiero** recolectar TODAS las políticas aplicables (IAM y SCPs) y si CUALQUIERA de ellas contiene un `Deny` explícito para la petición, la decisión final debe ser `Deny` inmediatamente,
-*   **Para que** se cumpla la regla de seguridad más fundamental.
-
+#### **HU-1.6: Aplicar Transaccionalidad al `MoveAccountUseCase`**
+*   **Como** desarrollador,
+*   **quiero** refactorizar `MoveAccountUseCase` para que utilice el `UnitOfWork`,
+*   **para** asegurar que las tres operaciones de guardado (cuenta, OU origen, OU destino) se realicen de forma atómica.
+*   **Justificación:** Corrige una vulnerabilidad crítica de consistencia de datos en una operación de negocio fundamental.
 *   **Detalles de Implementación:**
-    *   En `AuthorizerService::is_authorized`:
-        1.  Llama a `iam_provider.get_identity_policies_for(...)`.
-        2.  Llama a `org_provider.get_effective_scps_for(...)`.
-        3.  Combina ambos conjuntos de políticas en un único `PolicySet`.
-        4.  Usa el `PolicyEvaluator` de `hodei-policies` para evaluar este `PolicySet`.
-        5.  Si `response.decision() == Decision::Deny`, `return response;`.
-
-*   **Testing:**
-    *   **Integración (`tests/deny_rule_test.rs`):**
-        1.  Setup: Instancia el `AuthorizerService` con tus proveedores mock.
-        2.  Arrange: Configura el `MockOrgBoundaryProvider` para que devuelva una SCP con `forbid(principal, action, resource);`. Configura el `MockIamPolicyProvider` para que devuelva una política con `permit(...)`.
-        3.  Act: Llama a `authorizer.is_authorized(...)`.
-        4.  Assert: Afirma que la decisión final es `Deny`.
+    *   **Ficheros a Modificar:** `features/move_account/use_case.rs`, `di.rs`, y `ports.rs`.
+    *   **Lógica/Algoritmo:**
+        1.  Inyectar una factoría de `UnitOfWork` en `MoveAccountUseCase`.
+        2.  En `execute`, llamar a `uow_factory.create()` para obtener una nueva UoW.
+        3.  Llamar a `uow.begin()`.
+        4.  Obtener los repositorios desde la `uow`.
+        5.  Realizar todas las operaciones de lectura y escritura usando estos repositorios.
+        6.  Envolver la lógica en un `match` o `if let Ok(...)`: si todo va bien, llamar a `uow.commit()`. Si cualquier `Result` es `Err`, llamar a `uow.rollback()` antes de propagar el error.
+*   **Criterios de Aceptación:**
+    1.  El `MoveAccountUseCase` ya no tiene fallos de atomicidad.
+    2.  Los tests de integración se actualizan para simular un fallo a mitad de la operación y verificar que los datos se revierten a su estado original.
+*   **Dependencias:** `HU-1.5`.
 
 ---
+### **Epic 2: Implementar el Motor de Autorización Central (`hodei-authorizer`)**
 
-#### **HU 2.3: Implementación de la Regla "Se Requiere un Allow de Identidad"**
+**Objetivo:** Crear un nuevo *bounded context* (`hodei-authorizer`) que centralice todas las decisiones de autorización, siguiendo el modelo de evaluación multi-capa.
 
-*   **Como el** `AuthorizerService`,
-*   **Quiero**, si no hubo un `Deny` explícito, evaluar únicamente las políticas de IAM,
-*   **Para que** pueda determinar si la identidad del principal tiene permiso para realizar la acción.
-
+---
+#### **HU-2.1: Andamiaje del Crate `hodei-authorizer` y la Feature `evaluate_permissions`**
+*   **Como** arquitecto de software,
+*   **quiero** crear la estructura base del crate `hodei-authorizer`,
+*   **para** establecer el fundamento sobre el cual se construirán las funcionalidades de autorización.
+*   **Justificación:** Es el punto de partida técnico. Define la API pública del nuevo servicio y crea el esqueleto de su primera y más importante feature.
 *   **Detalles de Implementación:**
-    *   Añade el siguiente bloque de lógica a `is_authorized` después del chequeo de `Deny`.
-        1.  Toma *solo* las políticas del `IamPolicyProvider`.
-        2.  Evalúalas con el `PolicyEvaluator`.
-        3.  Si la decisión no es `Allow`, la decisión final es `Deny` (implícito).
-
-*   **Testing:**
-    *   **Integración (`tests/iam_allow_rule_test.rs`):**
-        1.  Arrange: Configura los mocks para que no devuelvan ninguna política de `Deny`. Configura el `MockIamPolicyProvider` para que devuelva una política `permit(...)` que coincida con la petición.
-        2.  Act: Llama a `authorizer.is_authorized(...)`.
-        3.  Assert: Afirma que la decisión final es `Allow` (por ahora, antes de la última regla).
+    *   **Acciones:**
+        1.  `cargo new crates/hodei-authorizer` y añadirlo al workspace.
+        2.  Crear la estructura de directorios VSA para `features/evaluate_permissions`.
+    *   **DTOs a Definir en `dto.rs`:**
+        *   `struct AuthorizationRequest { principal_hrn: Hrn, action: String, resource_hrn: Hrn, context: serde_json::Value }`
+        *   `struct AuthorizationResponse { decision: Decision, determining_policies: Vec<String> }`
+        *   `enum Decision { Allow, Deny }`
+*   **Criterios de Aceptación:**
+    1.  El nuevo crate compila.
+    2.  La estructura de la feature `evaluate_permissions` está completa con ficheros vacíos o con contenido básico.
 
 ---
-
-#### **HU 2.4: Implementación de la Regla "Las Barreras de la Organización Deben Permitir"**
-
-*   **Como el** `AuthorizerService`,
-*   **Quiero**, si una acción está permitida por IAM, verificar adicionalmente que también está permitida por las barreras de las SCPs,
-*   **Para que** las políticas de gobernanza actúen como un filtro final sobre los permisos concedidos.
-
+#### **HU-2.2: Implementar el Adaptador `IamPolicyProvider` en `hodei-iam`** ✅ **COMPLETADA**
+*   **Como** el crate `hodei-iam`,
+*   **quiero** proveer una implementación del `IamPolicyProvider`,
+*   **para** que el `hodei-authorizer` pueda consumir las políticas de identidad que yo gestiono.
+*   **Justificación:** Este es un punto de integración clave. Permite que el autorizador, un servicio agnóstico, obtenga los datos que necesita del dominio de IAM.
 *   **Detalles de Implementación:**
-    *   Añade el último bloque de lógica.
-        1.  Si el chequeo de IAM dio `Allow`, ahora toma *solo* las políticas del `OrganizationBoundaryProvider`.
-        2.  Evalúalas.
-        3.  Si la decisión de esta evaluación *no* es `Allow`, la decisión final se convierte en `Deny`. Si es `Allow`, la decisión final se mantiene como `Allow`.
+    *   **Fichero a Modificar:** `crates/hodei-iam/src/shared/infrastructure/surreal/iam_policy_provider.rs`.
+    *   **Lógica/Algoritmo:**
+        1.  El método `get_identity_policies_for` recibe un `principal_hrn`.
+        2.  Realizar una query a SurrealDB para obtener el `User` con ese `hrn`.
+        3.  Si se encuentra, realizar una segunda query para obtener los `Group` a los que pertenece (basado en `user.group_hrns`).
+        4.  Para el usuario y cada grupo, realizar queries adicionales para obtener los `Policy` adjuntos.
+        5.  Combinar todas las políticas encontradas en un único `PolicySet` de Cedar.
+        6.  Devolver el `PolicySet`.
+*   **Criterios de Aceptación:**
+    1.  ✅ La implementación está completa y el `//TODO` eliminado.
+    2.  ✅ Existen tests de integración que verifican que el adaptador devuelve el `PolicySet` correcto para un usuario en varios grupos.
+*   **Dependencias:** `HU-2.1` (necesita el trait `IamPolicyProvider` definido allí).
 
-*   **Testing:**
-    *   **Integración (`tests/scp_boundary_rule_test.rs`):**
-        1.  Arrange: Configura `MockIamPolicyProvider` para que devuelva una política `permit(...)` para `action::"s3:GetObject"`. Configura `MockOrgBoundaryProvider` para que devuelva una SCP que *no* menciona `s3:GetObject` (por ejemplo, solo permite `ec2:*`).
-        2.  Act: Llama a `authorizer.is_authorized(...)` pidiendo `s3:GetObject`.
-        3.  Assert: Afirma que la decisión final es `Deny`, porque aunque IAM lo permitió, la barrera de la SCP no lo hizo (Deny implícito de la barrera).
-
----
-
-
-# Feature Specification: Governance & Authorization Core
-
-**Feature Branch**: `feat/governance-auth-core`
-**Created**: 2025-10-02
-**Status**: Draft
-**Input**: User description: "Implementar un sistema de gobernanza tipo AWS Organizations con SCPs y un orquestador de autorización central que combine las políticas de gobernanza con las políticas de IAM para tomar decisiones de acceso seguras y jerárquicas."
-
-## User Scenarios & Testing
-
-### Primary User Story
-Como Arquitecto de Seguridad, quiero definir barreras de permisos a nivel de organización (SCPs) que restrinjan lo que los administradores de cuentas individuales pueden hacer, para garantizar que se cumplan las políticas de gobernanza corporativa, incluso si se conceden permisos excesivos a nivel de IAM.
-
-### Acceptance Scenarios
-1.  **Given** una OU "Production" tiene una SCP adjunta que explícitamente **deniega** la acción `iam:DeleteUser`,
-    **And** una Cuenta "WebApp" está dentro de la OU "Production",
-    **And** un `User` "Admin" dentro de la cuenta "WebApp" tiene una política de IAM que **permite** `iam:*` (todos los permisos),
-    **When** el "Admin" intenta realizar la acción `iam:DeleteUser`,
-    **Then** la petición es **denegada**.
-
-2.  **Given** una OU "Sandbox" tiene una SCP adjunta que **permite** la acción `s3:GetObject` y `ec2:*`,
-    **And** una Cuenta "DevAccount" está dentro de la OU "Sandbox",
-    **And** un `User` "Developer" dentro de "DevAccount" tiene una política de IAM que **permite** `s3:GetObject`,
-    **When** el "Developer" intenta realizar la acción `s3:GetObject`,
-    **Then** la petición es **permitida**.
-
-3.  **Given** una OU "Sandbox" tiene una SCP adjunta que **permite** solo `ec2:*`,
-    **And** una Cuenta "DevAccount" está dentro de la OU "Sandbox",
-    **And** un `User` "Developer" dentro de "DevAccount" tiene una política de IAM que **permite** `s3:GetObject`,
-    **When** el "Developer" intenta realizar la acción `s3:GetObject`,
-    **Then** la petición es **denegada** (porque la barrera de la SCP no lo permite).
-
-### Edge Cases
-- ¿Qué sucede si una entidad tiene múltiples SCPs heredadas (de la Raíz, de OUs anidadas)? El sistema debe evaluar la unión de todas las SCPs aplicables.
-- ¿Cómo maneja el sistema una Cuenta que no está en ninguna OU (directamente bajo la Raíz)? Debe heredar las SCPs de la Raíz.
-
-## Requirements
-
-### Functional Requirements
-- **FR-001**: El sistema DEBE permitir la creación de una jerarquía de Unidades Organizativas (OUs) y Cuentas.
-- **FR-002**: El sistema DEBE permitir la creación de Políticas de Control de Servicio (SCPs) que contengan documentos de políticas de Cedar.
-- **FR-003**: El sistema DEBE permitir adjuntar y desadjuntar SCPs a la Raíz, OUs o Cuentas.
-- **FR-004**: El sistema DEBE proveer un servicio de autorización central (`hodei-authorizer`).
-- **FR-005**: El servicio de autorización DEBE denegar una acción si CUALQUIER política aplicable (IAM o SCP) contiene un `forbid` explícito que coincida.
-- **FR-006**: Si no hay un `forbid` explícito, el servicio de autorización DEBE requerir que un `permit` explícito exista en las políticas de IAM.
-- **FR-007**: Si un `permit` de IAM existe, el servicio de autorización DEBE verificar adicionalmente que la acción está implícita o explícitamente permitida por la unión de todas las SCPs efectivas.
-
-### Key Entities
-- **Organization**: La entidad raíz que contiene todo.
-- **OrganizationalUnit (OU)**: Un contenedor para otras OUs o Cuentas.
-- **Account**: Una partición que contiene recursos y principales de IAM.
-- **ServiceControlPolicy (SCP)**: Una política de gobernanza que define barreras.
+#### **HU-2.3: Implementar la Lógica de Decisión de IAM en `EvaluatePermissionsUseCase`** ✅ **COMPLETADA**
+*   **Como** el `EvaluatePermissionsUseCase`,
+*   **quiero** usar el motor de Cedar para evaluar las políticas de IAM,
+*   **para** determinar si la acción debe ser permitida o denegada según las reglas de identidad.
+*   **Justificación:** Implementa el núcleo de la lógica de negocio del autorizador para la capa de IAM.
+*   **Detalles de Implementación:**
+    *   **Fichero a Modificar:** `crates/hodei-authorizer/src/features/evaluate_permissions/use_case.rs`.
+    *   **Lógica/Algoritmo:**
+        1.  El `execute` recibe el `AuthorizationRequest`.
+        2.  Invoca a `self.iam_policy_provider.get_identity_policies_for(...)`.
+        3.  Crea un `cedar_policy::Request` a partir del DTO.
+        4.  Crea un `cedar_policy::Entities` vacío (por ahora, las entidades de la solicitud se resuelven en el `PolicySet`).
+        5.  Llama a `Authorizer::new().is_authorized(...)`.
+        6.  Analiza la `Response`:
+            *   Si `response.decision() == Decision::Deny`, retornar `AuthorizationResponse { decision: Deny, ... }`.
+            *   Si `response.decision() == Decision::Allow`, retornar `AuthorizationResponse { decision: Allow, ... }`.
+            *   En cualquier otro caso (implícitamente, si no hay políticas que apliquen), retornar `Deny` (Principio de Privilegio Mínimo).
+*   **Criterios de Aceptación:**
+    1.  ✅ El caso de uso implementa correctamente la lógica de decisión.
+    2.  ✅ Los tests unitarios cubren los tres escenarios: Denegación explícita, Permiso explícito y Denegación implícita.
+*   **Dependencias:** `HU-2.2`.
 
 ---
+
+### **Epic 3: Integrar Límites Organizacionales (SCPs)**
+
+**Objetivo:** Añadir la capa de validación de SCPs de `hodei-organizations` al flujo de autorización, asegurando que las denegaciones de la organización tengan la máxima prioridad.
+
 ---
+#### **HU-3.1: Definir el Puerto `OrganizationBoundaryProvider` en el Autorizador**
+*   **Como** el `EvaluatePermissionsUseCase`,
+*   **necesito** una forma de obtener los SCPs efectivos para la cuenta de un recurso,
+*   **para** aplicar los guardarraíles de la organización antes de evaluar los permisos de IAM.
+*   **Justificación:** Establece el contrato para que el autorizador pueda consultar los límites organizacionales sin acoplarse al crate `hodei-organizations`.
+*   **Detalles de Implementación:**
+    *   **Fichero a Crear/Modificar:** `crates/hodei-authorizer/src/features/evaluate_permissions/ports.rs`.
+    *   **Trait a Definir:**
+        *   `trait OrganizationBoundaryProvider`: Debe ser `async`. Definirá un método `async fn get_effective_scps_for(&self, resource_hrn: &Hrn) -> Result<PolicySet>`. El método recibe el `Hrn` del recurso para poder determinar la cuenta a la que pertenece.
+*   **Criterios de Aceptación:**
+    1.  El trait `OrganizationBoundaryProvider` está definido en el `ports.rs` del autorizador.
+    2.  El código compila sin errores.
+*   **Dependencias:** `HU-2.1`.
 
-# Implementation Plan: Governance & Authorization Core
+---
+#### **HU-3.2: Implementar el Adaptador `OrganizationBoundaryProvider` en `hodei-organizations`**
+*   **Como** el crate `hodei-organizations`,
+*   **quiero** proveer una implementación del `OrganizationBoundaryProvider`,
+*   **para** que el `hodei-authorizer` pueda consumir los SCPs que yo gestiono.
+*   **Justificación:** Conecta el dominio de las organizaciones con el servicio de autorización, permitiendo que las políticas de la organización influyan en las decisiones de permisos.
+*   **Detalles de Implementación:**
+    *   **Fichero a Modificar:** `crates/hodei-organizations/src/shared/infrastructure/surreal/organization_boundary_provider.rs`.
+    *   **Lógica/Algoritmo:**
+        1.  El adaptador `SurrealOrganizationBoundaryProvider` implementará el trait `OrganizationBoundaryProvider`.
+        2.  El método `get_effective_scps_for` recibirá el `resource_hrn`.
+        3.  Debe implementar la lógica para ascender en la jerarquía desde ese recurso (si es una `Account`) o desde sus `Account` hijas (si es una `OU`) para encontrar la `Account` a la que pertenece. Se puede usar el `HierarchyService` existente.
+        4.  Una vez identificada la `Account`, utilizará el caso de uso `GetEffectiveScpsUseCase` para obtener el `PolicySet` de SCPs.
+        5.  Devolverá el `PolicySet` resultante.
+*   **Criterios de Aceptación:**
+    1.  El `SurrealOrganizationBoundaryProvider` implementa completamente el trait.
+    2.  El `//TODO` en el fichero es eliminado.
+    3.  Existen tests de integración que verifican que el adaptador devuelve los SCPs correctos para un `Hrn` dado.
+*   **Dependencias:** `HU-3.1`.
 
-**Input**: Design documents from `specs/governance-auth-core/`
-**Prerequisites**: `hodei-iam` y `hodei-policies` (refactorizado) existen.
+---
+#### **HU-3.3: Integrar la Lógica de Evaluación de SCPs en `EvaluatePermissionsUseCase`**
+*   **Como** desarrollador,
+*   **quiero** que `EvaluatePermissionsUseCase` evalúe los SCPs *antes* que las políticas de IAM,
+*   **para** que una denegación de SCP bloquee la solicitud inmediatamente, respetando la lógica de AWS.
+*   **Justificación:** Implementa una de las reglas de negocio más críticas del sistema de permisos: la precedencia de los límites organizacionales.
+*   **Detalles de Implementación:**
+    *   **Fichero a Modificar:** `crates/hodei-authorizer/src/features/evaluate_permissions/use_case.rs`.
+    *   **Lógica/Algoritmo:**
+        1.  Inyectar el `OrganizationBoundaryProvider` en `EvaluatePermissionsUseCase`.
+        2.  Refactorizar el método `execute` para que siga este flujo:
+            a.  Recibir el `AuthorizationRequest`.
+            b.  Llamar a `self.organization_boundary_provider.get_effective_scps_for(&request.resource_hrn)`.
+            c.  Evaluar la solicitud (`cedar_policy::Request`) contra el `PolicySet` de SCPs.
+            d.  **Punto de Decisión:** Si la respuesta de Cedar es `Deny`, retornar inmediatamente `AuthorizationResponse { decision: Deny, ... }`. La evaluación termina.
+            e.  Si la respuesta es `Allow` (o no hay políticas que apliquen), continuar con el flujo existente de evaluación de políticas de IAM (llamada al `IamPolicyProvider`).
+*   **Criterios de Aceptación:**
+    1.  El `EvaluatePermissionsUseCase` sigue el flujo de evaluación en dos pasos.
+    2.  Los tests unitarios se actualizan para incluir escenarios donde un SCP deniega una acción que de otro modo estaría permitida por IAM, y viceversa.
+*   **Dependencias:** `HU-3.2`.
 
-## Phase 3.1: Setup
-- [ ] T001 [P] Crear la estructura del crate `hodei-organizations` en `crates/hodei-organizations/`
-- [ ] T002 [P] Crear la estructura del crate `hodei-authorizer` en `crates/hodei-authorizer/`
-- [ ] T003 [P] Añadir los nuevos crates al `Cargo.toml` del workspace.
-- [ ] T004 [P] Configurar dependencias: `hodei-organizations` depende de `hodei-policies`. `hodei-authorizer` depende de los tres.
+---
+### **Epic 4: Activar el Análisis Proactivo de Políticas (Access Analyzer)**
 
-## Phase 3.2: Tests First (TDD) ⚠️ MUST COMPLETE BEFORE 3.3
+**Objetivo:** Exponer la funcionalidad de análisis estático existente en el crate `policies` a través de una API, permitiendo a los usuarios validar sus políticas antes de desplegarlas.
 
-### `hodei-organizations`
-- [ ] T005 [P] Integration test para `CreateAccountUseCase` en `crates/hodei-organizations/tests/create_account_test.rs`
-- [ ] T006 [P] Integration test para `CreateOuUseCase` en `crates/hodei-organizations/tests/create_ou_test.rs`
-- [ ] T007 [P] Integration test para `MoveAccountUseCase` en `crates/hodei-organizations/tests/move_account_test.rs`
-- [ ] T008 [P] Integration test para `AttachScpUseCase` en `crates/hodei-organizations/tests/attach_scp_test.rs`
-- [ ] T009 [P] Integration test para `GetEffectiveScpsUseCase` en `crates/hodei-organizations/tests/get_effective_scps_test.rs` (Debe simular una jerarquía y verificar que se recolectan las SCPs correctas)
+---
+#### **HU-4.1: Crear un Endpoint REST para la Feature `policy_analysis`**
+*   **Como** ingeniero de seguridad,
+*   **quiero** poder enviar un conjunto de políticas a un endpoint `/policies/analyze`,
+*   **para** recibir un análisis de posibles violaciones de seguridad y malas prácticas.
+*   **Justificación:** Transforma una capacidad interna del crate `policies` en una herramienta de cara al usuario, proporcionando valor de seguridad proactivo.
+*   **Detalles de Implementación:**
+    *   **Fichero a Crear/Modificar:** `src/api_http/src/api/policies/handlers.rs` (o similar en el crate ejecutable).
+    *   **Lógica del Controlador:**
+        1.  Definir un handler `analyze_policies_handler` que acepte una petición POST con un cuerpo JSON.
+        2.  El cuerpo de la petición debe poder deserializarse en el DTO `AnalyzePoliciesRequest` del crate `policies`.
+        3.  Inyectar el `AnalyzePoliciesUseCase` en el estado del handler (ej. Axum `State`).
+        4.  Llamar a `use_case.execute(request_dto)`.
+        5.  Serializar la `AnalyzePoliciesResponse` resultante en una respuesta HTTP 200 OK.
+        6.  Manejar posibles errores del caso de uso y convertirlos en respuestas HTTP apropiadas (ej. 400 Bad Request, 500 Internal Server Error).
+*   **Criterios de Aceptación:**
+    1.  La ruta `POST /policies/analyze` está registrada en el router de la aplicación.
+    2.  Una petición válida con políticas y reglas devuelve un `200 OK` con un JSON de `AnalyzePoliciesResponse`.
+    3.  Una petición mal formada devuelve un `400 Bad Request`.
+*   **Dependencias:** La feature `policy_analysis` ya existe en el crate `policies`.
 
-### `hodei-authorizer`
-- [ ] T010 [P] Integration test para la regla "Deny explícito de SCP anula Allow de IAM" en `crates/hodei-authorizer/tests/deny_scp_overrides_iam_test.rs`
-- [ ] T011 [P] Integration test para la regla "Deny explícito de IAM anula todo" en `crates/hodei-authorizer/tests/deny_iam_overrides_all_test.rs`
-- [ ] T012 [P] Integration test para la regla "Se requiere Allow de IAM y Allow de SCP" en `crates/hodei-authorizer/tests/allow_requires_both_test.rs`
+---
+#### **HU-4.2: Implementar la Regla de Análisis "Sin Wildcard en Recurso"**
+*   **Como** administrador de seguridad,
+*   **quiero** que el analizador de políticas me advierta si una política aplica a `resource == *`,
+*   **para** prevenir permisos que otorgan acceso a todos los recursos de un tipo sin restricciones.
+*   **Justificación:** Enriquece la funcionalidad del `Access Analyzer` con una regla de "buenas prácticas" muy común, aumentando su utilidad.
+*   **Detalles de Implementación:**
+    *   **Fichero a Modificar:** `crates/policies/src/features/policy_analysis/use_case.rs`.
+    *   **Lógica/Algoritmo:**
+        1.  Añadir un nuevo `match` arm para la regla `"no_resource_wildcard"` dentro de `execute`.
+        2.  La lógica no puede ser una simple búsqueda de texto, ya que `resource` es una palabra clave común. Se debe analizar la estructura de la política.
+        3.  Una opción es parsear cada política con `cedar_policy::Policy::from_str` y luego inspeccionar su estructura abstracta (AST) para encontrar condiciones como `resource == *` o cláusulas `principal, action, resource` sin condiciones adicionales sobre el recurso.
+        4.  Si se encuentra una política que viola esta regla, se añade una `RuleViolation` a la respuesta.
+*   **Criterios de Aceptación:**
+    1.  Al invocar el `AnalyzePoliciesUseCase` con una política que contiene `resource` sin restricciones específicas y la regla activada, se devuelve una violación.
+    2.  Políticas que restringen el recurso (ej. `resource == MyResource::"id"`, `resource in MyOrg::"resources"`) no disparan la violación.
+*   **Dependencias:** `HU-4.1`.
 
-## Phase 3.3: Core Implementation (ONLY after tests are failing)
+---
+### **Epic 5: Habilitar Auditoría y Trazabilidad (CloudTrail)**
 
-### `hodei-organizations`
-- [ ] T013 [P] Modelo de dominio `Account` en `crates/hodei-organizations/src/shared/domain/account.rs`
-- [ ] T014 [P] Modelo de dominio `OrganizationalUnit` en `crates/hodei-organizations/src/shared/domain/ou.rs`
-- [ ] T015 [P] Modelo de dominio `ServiceControlPolicy` en `crates/hodei-organizations/src/shared/domain/scp.rs`
-- [ ] T016 [P] Puertos de Repositorio para `Account`, `OU`, `SCP` en `crates/hodei-organizations/src/shared/application/ports/`
-- [ ] T017 Feature `CreateAccountUseCase` en `crates/hodei-organizations/src/features/create_account/`
-- [ ] T018 Feature `CreateOuUseCase` en `crates/hodei-organizations/src/features/create_ou/`
-- [ ] T019 Feature `MoveAccountUseCase` en `crates/hodei-organizations/src/features/move_account/`
-- [ ] T020 Feature `AttachScpUseCase` en `crates/hodei-organizations/src/features/attach_scp/`
-- [ ] T021 Feature `GetEffectiveScpsUseCase` en `crates/hodei-organizations/src/features/get_effective_scps/`
+**Objetivo:** Crear un rastro de auditoría inmutable para cada decisión de autorización, proporcionando visibilidad completa sobre quién accedió a qué y por qué.
 
-### `hodei-authorizer`
-- [ ] T022 [P] Definir traits `IamPolicyProvider` y `OrganizationBoundaryProvider` en `crates/hodei-authorizer/src/ports.rs`
-- [ ] T023 Implementar la lógica de decisión en `AuthorizerService` en `crates/hodei-authorizer/src/authorizer.rs`
+---
+#### **HU-5.1: Definir el Trait `AuditLogger` y el Struct `AuditEvent` en el Shared Kernel**
+*   **Como** desarrollador,
+*   **quiero** un contrato claro (`AuditLogger`) y un modelo de datos (`AuditEvent`) para la auditoría,
+*   **para** desacoplar la lógica de autorización de la implementación específica de logging.
+*   **Justificación:** Es el primer paso para una auditoría robusta. Define el "qué" se va a registrar, antes de decidir el "cómo" y el "dónde".
+*   **Detalles de Implementación:**
+    *   **Fichero a Crear:** `crates/shared/src/auditing.rs`.
+    *   **Struct `AuditEvent`:**
+        *   Debe contener campos como `timestamp`, `principal_hrn`, `action`, `resource_hrn`, `decision` (Allow/Deny), `determining_policies` (Vec<String>), `context` (JSON), `source_ip`, `user_agent`, etc.
+    *   **Trait `AuditLogger`:**
+        *   Definirá un método `async fn log_decision(&self, event: AuditEvent) -> Result<(), AuditError>`.
+*   **Criterios de Aceptación:**
+    1.  El módulo `auditing.rs` existe en `crates/shared`.
+    2.  El struct `AuditEvent` y el trait `AuditLogger` están definidos y son públicos.
 
-## Phase 3.4: Integration
-- [ ] T024 [P] Implementar adaptadores de repositorio para `SurrealDB` para `Account`, `OU`, `SCP` en `crates/hodei-organizations/src/shared/infrastructure/surreal/`
-- [ ] T025 Implementar el adaptador `OrganizationBoundaryProvider` en `hodei-organizations` que use el `GetEffectiveScpsUseCase`.
-- [ ] T026 Implementar el adaptador `IamPolicyProvider` en `hodei-iam`.
-- [ ] T027 Refactorizar `hodei-policies` para ser un motor puro (`PolicyEvaluator`).
+---
+#### **HU-5.2: Integrar el `AuditLogger` en el `EvaluatePermissionsUseCase`**
+*   **Como** el `EvaluatePermissionsUseCase`,
+*   **quiero** registrar el resultado de cada evaluación de permisos,
+*   **para** cumplir con los requisitos de auditoría del sistema.
+*   **Justificación:** Conecta la lógica de decisión con el sistema de auditoría, asegurando que ninguna decisión pase sin ser registrada.
+*   **Detalles de Implementación:**
+    *   **Fichero a Modificar:** `crates/hodei-authorizer/src/features/evaluate_permissions/use_case.rs`.
+    *   **Lógica/Algoritmo:**
+        1.  Inyectar `Arc<dyn AuditLogger>` en el `EvaluatePermissionsUseCase`.
+        2.  Justo antes de cada `return` en el método `execute` (tanto para `Allow` como para `Deny`), construir un `AuditEvent` con toda la información disponible de la solicitud y la respuesta.
+        3.  Llamar a `self.audit_logger.log_decision(event).await`.
+        4.  La llamada al logger debe ser a prueba de fallos; un error en el logging no debe hacer fallar la solicitud de autorización principal. Se puede usar `tokio::spawn` para hacerlo en segundo plano o simplemente registrar el error de auditoría sin propagarlo.
+*   **Criterios de Aceptación:**
+    1.  El `EvaluatePermissionsUseCase` tiene una nueva dependencia: `AuditLogger`.
+    2.  Se realiza una llamada a `log_decision` para cada ruta de salida del método `execute`.
+*   **Dependencias:** `HU-5.1`.
 
-## Phase 3.5: Polish
-- [ ] T028 [P] Unit tests para la lógica de dominio de `OU` (ej. `add_child`) en `crates/hodei-organizations/src/shared/domain/ou.rs`
-- [ ] T029 [P] Documentación de la API pública para `hodei-authorizer`.
-- [ ] T030 Crear un test E2E completo en `tests/` del workspace que configure los 3 crates y verifique un escenario complejo.
-
-## Dependencies
-- T005-T012 (Tests) deben estar escritos y fallando antes de T013-T023.
-- T013, T014, T015 (Modelos) bloquean sus respectivos repositorios y casos de uso.
-- T022 (Puertos de Authorizer) bloquea T023 (Lógica de Authorizer).
-- T023 bloquea T025 y T026 (Adaptadores).
-- T027 (Refactor de Policies) es un prerrequisito para T023.
-
-## Parallel Example
-```
-# Fase de Tests (TDD). Pueden escribirse todos en paralelo.
-Task: "Integration test para `CreateAccountUseCase` en crates/hodei-organizations/tests/create_account_test.rs"
-Task: "Integration test para `CreateOuUseCase` en crates/hodei-organizations/tests/create_ou_test.rs"
-Task: "Integration test para la regla 'Deny explícito de SCP anula Allow de IAM' en crates/hodei-authorizer/tests/deny_scp_overrides_iam_test.rs"
-...
-```
-
-## Notes
-- Cada `feature` en `hodei-organizations` debe tener su propia "vertical slice" (`dto`, `use_case`, `di`).
-- Los tests de integración son la clave. Usarán implementaciones de repositorios en memoria (`Surreal::new::<Mem>()`) para aislar el test de una base de datos real.
-- El `PolicyEvaluator` en `hodei-policies` será un componente simple y sin estado, fácil de instanciar y usar en los tests de `hodei-authorizer`.
+---
+#### **HU-5.3: Implementar un `SurrealAuditLogger` para la Persistencia de Auditoría**
+*   **Como** operador del sistema,
+*   **quiero** que los eventos de auditoría se almacenen de forma persistente en SurrealDB,
+*   **para** poder consultarlos y analizarlos posteriormente.
+*   **Justificación:** Proporciona la implementación concreta que guarda los datos de auditoría, haciéndolos útiles y duraderos.
+*   **Detalles de Implementación:**
+    *   **Fichero a Crear:** `crates/shared/src/infrastructure/surreal_audit_logger.rs` (o en un crate de infraestructura dedicado).
+    *   **Lógica/Algoritmo:**
+        1.  Crear la struct `SurrealAuditLogger` que contiene una conexión a SurrealDB.
+        2.  Implementar el trait `AuditLogger`.
+        3.  El método `log_decision` tomará el `AuditEvent` y lo insertará como un nuevo registro en una tabla llamada `audit_log`. La tabla puede usar un ID de SurrealDB autogenerado.
+*   **Criterios de Aceptación:**
+    1.  La implementación existe y se conecta a SurrealDB.
+    2.  Cuando se llama a `log_decision`, se crea un nuevo documento en la tabla `audit_log` con los datos del evento.
+    3.  El DI global en `api_http` está configurado para proveer `SurrealAuditLogger` como la implementación de `AuditLogger`.
+*   **Dependencias:** `HU-5.2`.

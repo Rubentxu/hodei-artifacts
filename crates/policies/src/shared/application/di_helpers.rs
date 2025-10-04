@@ -3,10 +3,9 @@ use crate::shared::domain::PolicyStorage;
 use crate::shared::infrastructure::surreal::SurrealMemStorage;
 use anyhow::Result;
 /// Centralized DI helpers to avoid code duplication across features
-/// 
+///
 /// This module provides reusable functions for building engines and storage,
 /// allowing features to focus on their specific use case construction.
-
 use std::sync::Arc;
 
 #[cfg(feature = "embedded")]
@@ -14,16 +13,19 @@ use crate::shared::infrastructure::surreal::SurrealEmbeddedStorage;
 
 /// Build an AuthorizationEngine with a custom EngineBuilder configurator
 /// Uses in-memory storage (default dev/test)
-pub async fn build_engine_mem<F>(configurator: F) -> Result<(Arc<AuthorizationEngine>, Arc<PolicyStore>)>
+pub async fn build_engine_mem<F>(
+    configurator: F,
+) -> Result<(Arc<AuthorizationEngine>, Arc<PolicyStore>)>
 where
     F: FnOnce(EngineBuilder) -> Result<EngineBuilder>,
 {
-    let storage: Arc<dyn PolicyStorage> = Arc::new(SurrealMemStorage::new("policies", "policies").await?);
-    
+    let storage: Arc<dyn PolicyStorage> =
+        Arc::new(SurrealMemStorage::new("policies", "policies").await?);
+
     let builder = EngineBuilder::new();
     let builder = configurator(builder)?;
     let (engine, store) = builder.build(storage.clone())?;
-    
+
     Ok((Arc::new(engine), Arc::new(store)))
 }
 
@@ -37,12 +39,13 @@ pub async fn build_engine_embedded<F>(
 where
     F: FnOnce(EngineBuilder) -> Result<EngineBuilder>,
 {
-    let storage: Arc<dyn PolicyStorage> = Arc::new(SurrealEmbeddedStorage::new("policies", "policies", path).await?);
-    
+    let storage: Arc<dyn PolicyStorage> =
+        Arc::new(SurrealEmbeddedStorage::new("policies", "policies", path).await?);
+
     let builder = EngineBuilder::new();
     let builder = configurator(builder)?;
     let (engine, store) = builder.build(storage.clone())?;
-    
+
     Ok((Arc::new(engine), Arc::new(store)))
 }
 
@@ -55,8 +58,10 @@ pub fn no_entities_configurator(builder: EngineBuilder) -> Result<EngineBuilder>
 /// Available in both test and non-test builds for integration tests and examples
 pub mod test_helpers {
     use super::*;
-    use crate::shared::domain::ports::{Action, AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource};
     use crate::shared::Hrn;
+    use crate::shared::domain::ports::{
+        Action, AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource,
+    };
     use cedar_policy::{EntityTypeName, EntityUid, RestrictedExpression};
     use std::collections::HashMap;
     use std::str::FromStr;
@@ -134,10 +139,10 @@ pub mod test_helpers {
             "access"
         }
         fn applies_to() -> (EntityTypeName, EntityTypeName) {
-            let principal_type = EntityTypeName::from_str("Test::Principal")
-                .expect("Valid principal type");
-            let resource_type = EntityTypeName::from_str("Test::Resource")
-                .expect("Valid resource type");
+            let principal_type =
+                EntityTypeName::from_str("Test::Principal").expect("Valid principal type");
+            let resource_type =
+                EntityTypeName::from_str("Test::Resource").expect("Valid resource type");
             (principal_type, resource_type)
         }
     }

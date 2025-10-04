@@ -7,6 +7,12 @@ use tokio::task::JoinSet;
 
 pub struct TracedPlaygroundUseCase;
 
+impl Default for TracedPlaygroundUseCase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TracedPlaygroundUseCase {
     pub fn new() -> Self { Self }
 
@@ -130,7 +136,7 @@ impl TracedPlaygroundUseCase {
 
             let mut determining: Vec<String> = Vec::new();
             while let Some(joined) = set.join_next().await {
-                if let Ok((id, allow)) = joined { if allow != baseline_allow { determining.push(id); } }
+                if let Ok((id, allow)) = joined && allow != baseline_allow { determining.push(id); }
             }
 
             let eval_time = start.elapsed().as_micros() as u64;

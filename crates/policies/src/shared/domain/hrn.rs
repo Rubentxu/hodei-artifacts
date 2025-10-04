@@ -20,12 +20,14 @@ impl Hrn {
 
     /// Convierte 'iam' o 'my-service' a 'Iam' o 'MyService' (namespace Cedar)
     pub fn to_pascal_case(s: &str) -> String {
-        s.split(|c| c == '-' || c == '_')
+        s.split(['-', '_'])
             .filter(|seg| !seg.is_empty())
             .map(|seg| {
                 let mut chars = seg.chars();
                 match chars.next() {
-                    Some(f) => f.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase(),
+                    Some(f) => {
+                        f.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase()
+                    }
                     None => String::new(),
                 }
             })
@@ -113,7 +115,11 @@ impl Hrn {
         let type_str = if self.resource_type.contains("::") {
             self.resource_type.clone()
         } else if !namespace.is_empty() {
-            format!("{}::{}", namespace, Self::normalize_ident(&self.resource_type))
+            format!(
+                "{}::{}",
+                namespace,
+                Self::normalize_ident(&self.resource_type)
+            )
         } else {
             Self::normalize_ident(&self.resource_type)
         };
@@ -133,13 +139,21 @@ impl Hrn {
         let mut out = String::new();
         let mut chars = s.chars();
         if let Some(c0) = chars.next() {
-            let c = if c0.is_ascii_alphabetic() || c0 == '_' { c0 } else { '_' };
+            let c = if c0.is_ascii_alphabetic() || c0 == '_' {
+                c0
+            } else {
+                '_'
+            };
             out.push(c);
         } else {
             out.push('_');
         }
         for c in chars {
-            if c.is_ascii_alphanumeric() || c == '_' { out.push(c); } else { out.push('_'); }
+            if c.is_ascii_alphanumeric() || c == '_' {
+                out.push(c);
+            } else {
+                out.push('_');
+            }
         }
         out
     }

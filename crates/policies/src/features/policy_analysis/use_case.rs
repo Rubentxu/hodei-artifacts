@@ -31,9 +31,9 @@ impl AnalyzePoliciesUseCase {
         let mut violations: Vec<RuleViolation> = Vec::new();
 
         // Optional: schema-based validation of policy set
-        if let Some(s) = &req.schema {
-            if let Ok((frag, _)) = SchemaFragment::from_cedarschema_str(s) {
-                if let Ok(schema) = Schema::from_schema_fragments(vec![frag]) {
+        if let Some(s) = &req.schema
+            && let Ok((frag, _)) = SchemaFragment::from_cedarschema_str(s)
+                && let Ok(schema) = Schema::from_schema_fragments(vec![frag]) {
                     let v = Validator::new(schema);
                     let vr = v.validate(&pset, ValidationMode::default());
                     if !vr.validation_passed() {
@@ -45,8 +45,6 @@ impl AnalyzePoliciesUseCase {
                         }
                     }
                 }
-            }
-        }
 
         for rule in &req.rules {
             match rule.kind.as_str() {
@@ -93,7 +91,7 @@ impl AnalyzePoliciesUseCase {
                     }
                 }
                 "no_permit_without_condition" => {
-                    let unconditioned = req.policies.iter().enumerate().any(|(_i, p)| {
+                    let unconditioned = req.policies.iter().any(|p| {
                         let pol = p.to_lowercase();
                         pol.contains("permit(")
                             && !pol.contains(" when ")

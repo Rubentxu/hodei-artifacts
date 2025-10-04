@@ -129,7 +129,7 @@ impl PolicyPlaygroundUseCase {
             let buffer = 2 * workers;
             let (outcomes, _stats) = evaluate_scenarios_channel(&pset, &entities, auth_scenarios, None, workers, buffer)
                 .await
-                .map_err(|e| PlaygroundError::RequestError(e))?;
+                .map_err(PlaygroundError::RequestError)?;
             for o in outcomes {
                 if o.allow { allow_count += 1; }
                 total_time += o.eval_time_us;
