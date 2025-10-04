@@ -1,10 +1,12 @@
-use crate::features::evaluate_permissions::dto::{AuthorizationRequest, AuthorizationResponse, AuthorizationDecision, AuthorizationContext};
-use crate::features::evaluate_permissions::use_case::EvaluatePermissionsUseCase;
-use crate::features::evaluate_permissions::mocks::{
-    MockIamPolicyProvider, MockOrganizationBoundaryProvider, MockAuthorizationCache,
-    MockAuthorizationLogger, MockAuthorizationMetrics, MockEntityResolver, test_helpers
+use crate::features::evaluate_permissions::dto::{
+    AuthorizationContext, AuthorizationDecision, AuthorizationRequest, AuthorizationResponse,
 };
 use crate::features::evaluate_permissions::error::EvaluatePermissionsError;
+use crate::features::evaluate_permissions::mocks::{
+    MockAuthorizationCache, MockAuthorizationLogger, MockAuthorizationMetrics, MockEntityResolver,
+    MockIamPolicyProvider, MockOrganizationBoundaryProvider, test_helpers,
+};
+use crate::features::evaluate_permissions::use_case::EvaluatePermissionsUseCase;
 
 #[tokio::test]
 async fn test_evaluate_permissions_allow_with_iam_policy() {
@@ -13,11 +15,12 @@ async fn test_evaluate_permissions_allow_with_iam_policy() {
     let resource = test_helpers::create_test_hrn("bucket", "test-bucket");
     let action = "read".to_string();
 
-    let allow_policy = test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
-    
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), allow_policy);
-    
+    let allow_policy =
+        test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
+
+    let iam_provider =
+        MockIamPolicyProvider::new().with_policy(&principal.to_string(), allow_policy);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();
@@ -52,19 +55,17 @@ async fn test_evaluate_permissions_deny_by_scp() {
     let resource = test_helpers::create_test_hrn("bucket", "test-bucket");
     let action = "read".to_string();
 
-    let allow_policy = test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
-    let deny_scp = test_helpers::create_test_scp(
-        "scp-1",
-        "Deny All",
-        test_helpers::create_deny_all_policy()
-    );
+    let allow_policy =
+        test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
+    let deny_scp =
+        test_helpers::create_test_scp("scp-1", "Deny All", test_helpers::create_deny_all_policy());
 
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), allow_policy);
-    
-    let org_provider = MockOrganizationBoundaryProvider::new()
-        .with_scps(&principal.to_string(), vec![deny_scp]);
-    
+    let iam_provider =
+        MockIamPolicyProvider::new().with_policy(&principal.to_string(), allow_policy);
+
+    let org_provider =
+        MockOrganizationBoundaryProvider::new().with_scps(&principal.to_string(), vec![deny_scp]);
+
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();
     let metrics = MockAuthorizationMetrics::new();
@@ -139,9 +140,8 @@ async fn test_evaluate_permissions_explicit_deny_precedence() {
     let deny_policy = test_helpers::create_deny_all_policy();
     let policy_set = test_helpers::create_test_policy_set(&[&allow_policy, &deny_policy]);
 
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), policy_set);
-    
+    let iam_provider = MockIamPolicyProvider::new().with_policy(&principal.to_string(), policy_set);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();
@@ -181,9 +181,8 @@ async fn test_evaluate_permissions_explicit_allow_no_denies() {
     let allow_policy = test_helpers::create_allow_all_policy();
     let policy_set = test_helpers::create_test_policy_set(&[&allow_policy]);
 
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), policy_set);
-    
+    let iam_provider = MockIamPolicyProvider::new().with_policy(&principal.to_string(), policy_set);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();
@@ -223,9 +222,9 @@ async fn test_evaluate_permissions_principle_of_least_privilege() {
     // Create empty PolicySet
     let empty_policy_set = test_helpers::create_test_policy_set(&[]);
 
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), empty_policy_set);
-    
+    let iam_provider =
+        MockIamPolicyProvider::new().with_policy(&principal.to_string(), empty_policy_set);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();
@@ -268,8 +267,8 @@ async fn test_evaluate_permissions_cache_hit() {
     );
 
     let cache_key = format!("auth:{}:{}:{}", principal, action, resource);
-    let cache = MockAuthorizationCache::new()
-        .with_cached_response(&cache_key, cached_response.clone());
+    let cache =
+        MockAuthorizationCache::new().with_cached_response(&cache_key, cached_response.clone());
 
     let iam_provider = MockIamPolicyProvider::new();
     let org_provider = MockOrganizationBoundaryProvider::new();
@@ -311,16 +310,20 @@ async fn test_evaluate_permissions_with_context() {
         request_time: Some(time::OffsetDateTime::now_utc()),
         additional_context: {
             let mut map = std::collections::HashMap::new();
-            map.insert("department".to_string(), serde_json::Value::String("engineering".to_string()));
+            map.insert(
+                "department".to_string(),
+                serde_json::Value::String("engineering".to_string()),
+            );
             map
         },
     };
 
-    let allow_policy = test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
-    
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), allow_policy);
-    
+    let allow_policy =
+        test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
+
+    let iam_provider =
+        MockIamPolicyProvider::new().with_policy(&principal.to_string(), allow_policy);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();
@@ -432,11 +435,12 @@ async fn test_evaluate_permissions_logging_and_metrics() {
     let resource = test_helpers::create_test_hrn("bucket", "test-bucket");
     let action = "read".to_string();
 
-    let allow_policy = test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
-    
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), allow_policy);
-    
+    let allow_policy =
+        test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
+
+    let iam_provider =
+        MockIamPolicyProvider::new().with_policy(&principal.to_string(), allow_policy);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();
@@ -447,8 +451,8 @@ async fn test_evaluate_permissions_logging_and_metrics() {
         iam_provider,
         org_provider,
         Some(cache),
-        logger,
-        metrics,
+        logger.clone(),
+        metrics.clone(),
         entity_resolver,
     );
 
@@ -482,11 +486,12 @@ async fn test_evaluate_permissions_no_cache() {
     let resource = test_helpers::create_test_hrn("bucket", "test-bucket");
     let action = "read".to_string();
 
-    let allow_policy = test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
-    
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), allow_policy);
-    
+    let allow_policy =
+        test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
+
+    let iam_provider =
+        MockIamPolicyProvider::new().with_policy(&principal.to_string(), allow_policy);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let logger = MockAuthorizationLogger::new();
     let metrics = MockAuthorizationMetrics::new();
@@ -522,13 +527,12 @@ async fn test_evaluate_permissions_specific_policy_match() {
     let specific_policy = test_helpers::create_specific_allow_policy(
         &principal.to_string(),
         &action,
-        &resource.to_string()
+        &resource.to_string(),
     );
     let policy_set = test_helpers::create_test_policy_set(&[&specific_policy]);
-    
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), policy_set);
-    
+
+    let iam_provider = MockIamPolicyProvider::new().with_policy(&principal.to_string(), policy_set);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();
@@ -563,11 +567,12 @@ async fn test_evaluate_permissions_entity_resolver_error() {
     let resource = test_helpers::create_test_hrn("bucket", "test-bucket");
     let action = "read".to_string();
 
-    let allow_policy = test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
-    
-    let iam_provider = MockIamPolicyProvider::new()
-        .with_policy(&principal.to_string(), allow_policy);
-    
+    let allow_policy =
+        test_helpers::create_test_policy_set(&[test_helpers::create_allow_all_policy()]);
+
+    let iam_provider =
+        MockIamPolicyProvider::new().with_policy(&principal.to_string(), allow_policy);
+
     let org_provider = MockOrganizationBoundaryProvider::new();
     let cache = MockAuthorizationCache::new();
     let logger = MockAuthorizationLogger::new();

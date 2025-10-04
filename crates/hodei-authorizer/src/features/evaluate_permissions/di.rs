@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use crate::features::evaluate_permissions::use_case::EvaluatePermissionsUseCase;
-use crate::features::evaluate_permissions::ports::{
-    IamPolicyProvider, OrganizationBoundaryProvider, AuthorizationCache,
-    AuthorizationLogger, AuthorizationMetrics, EntityResolver
-};
-use crate::features::evaluate_permissions::error::EvaluatePermissionsResult;
 use crate::features::evaluate_permissions::dto::AuthorizationResponse;
-use policies::shared::domain::hrn::Hrn;
+use crate::features::evaluate_permissions::error::EvaluatePermissionsResult;
+use crate::features::evaluate_permissions::ports::{
+    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics, EntityResolver,
+    IamPolicyProvider, OrganizationBoundaryProvider,
+};
+use crate::features::evaluate_permissions::use_case::EvaluatePermissionsUseCase;
 use async_trait::async_trait;
+use policies::shared::domain::hrn::Hrn;
 
 /// Dummy cache implementation for when cache is not needed
 #[derive(Debug, Clone, Copy)]
@@ -16,11 +16,19 @@ pub struct DummyCache;
 
 #[async_trait]
 impl AuthorizationCache for DummyCache {
-    async fn get(&self, _cache_key: &str) -> EvaluatePermissionsResult<Option<AuthorizationResponse>> {
+    async fn get(
+        &self,
+        _cache_key: &str,
+    ) -> EvaluatePermissionsResult<Option<AuthorizationResponse>> {
         Ok(None)
     }
 
-    async fn put(&self, _cache_key: &str, _response: &AuthorizationResponse, _ttl: std::time::Duration) -> EvaluatePermissionsResult<()> {
+    async fn put(
+        &self,
+        _cache_key: &str,
+        _response: &AuthorizationResponse,
+        _ttl: std::time::Duration,
+    ) -> EvaluatePermissionsResult<()> {
         Ok(())
     }
 
@@ -34,6 +42,7 @@ impl AuthorizationCache for DummyCache {
 }
 
 /// Dependency injection container for the evaluate permissions feature
+#[derive(Debug)]
 pub struct EvaluatePermissionsContainer<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER> {
     iam_provider: IAM,
     org_provider: ORG,
@@ -43,7 +52,7 @@ pub struct EvaluatePermissionsContainer<IAM, ORG, CACHE, LOGGER, METRICS, RESOLV
     entity_resolver: RESOLVER,
 }
 
-impl<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER> 
+impl<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER>
     EvaluatePermissionsContainer<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER>
 where
     IAM: IamPolicyProvider,
@@ -73,7 +82,9 @@ where
     }
 
     /// Build the EvaluatePermissionsUseCase with all dependencies injected
-    pub fn build_use_case(self) -> EvaluatePermissionsUseCase<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER> {
+    pub fn build_use_case(
+        self,
+    ) -> EvaluatePermissionsUseCase<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER> {
         EvaluatePermissionsUseCase::new(
             self.iam_provider,
             self.org_provider,
@@ -95,7 +106,7 @@ pub struct EvaluatePermissionsContainerBuilder<IAM, ORG, CACHE, LOGGER, METRICS,
     entity_resolver: Option<RESOLVER>,
 }
 
-impl<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER> 
+impl<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER>
     EvaluatePermissionsContainerBuilder<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER>
 where
     IAM: IamPolicyProvider,
@@ -154,10 +165,14 @@ where
     }
 
     /// Build the container
-    pub fn build(self) -> Result<EvaluatePermissionsContainer<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER>, String> {
+    pub fn build(
+        self,
+    ) -> Result<EvaluatePermissionsContainer<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER>, String>
+    {
         Ok(EvaluatePermissionsContainer::new(
             self.iam_provider.ok_or("IAM provider is required")?,
-            self.org_provider.ok_or("Organization provider is required")?,
+            self.org_provider
+                .ok_or("Organization provider is required")?,
             self.cache,
             self.logger.ok_or("Logger is required")?,
             self.metrics.ok_or("Metrics is required")?,
@@ -166,7 +181,7 @@ where
     }
 }
 
-impl<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER> Default 
+impl<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER> Default
     for EvaluatePermissionsContainerBuilder<IAM, ORG, CACHE, LOGGER, METRICS, RESOLVER>
 where
     IAM: IamPolicyProvider,
@@ -245,7 +260,14 @@ pub mod factories {
         logger: Arc<LOGGER>,
         metrics: Arc<METRICS>,
         entity_resolver: Arc<RESOLVER>,
-    ) -> EvaluatePermissionsContainer<Arc<IAM>, Arc<ORG>, CACHE, Arc<LOGGER>, Arc<METRICS>, Arc<RESOLVER>>
+    ) -> EvaluatePermissionsContainer<
+        Arc<IAM>,
+        Arc<ORG>,
+        CACHE,
+        Arc<LOGGER>,
+        Arc<METRICS>,
+        Arc<RESOLVER>,
+    >
     where
         IAM: IamPolicyProvider + 'static,
         ORG: OrganizationBoundaryProvider + 'static,
@@ -269,8 +291,8 @@ pub mod factories {
 mod tests {
     use super::*;
     use crate::features::evaluate_permissions::mocks::{
-        MockIamPolicyProvider, MockOrganizationBoundaryProvider, MockAuthorizationCache,
-        MockAuthorizationLogger, MockAuthorizationMetrics, MockEntityResolver
+        MockAuthorizationCache, MockAuthorizationLogger, MockAuthorizationMetrics,
+        MockEntityResolver, MockIamPolicyProvider, MockOrganizationBoundaryProvider,
     };
 
     #[test]
@@ -296,13 +318,22 @@ mod tests {
 
     #[test]
     fn test_builder_missing_required_dependency() {
-        let result: Result<EvaluatePermissionsContainer<MockIamPolicyProvider, MockOrganizationBoundaryProvider, MockAuthorizationCache, MockAuthorizationLogger, MockAuthorizationMetrics, MockEntityResolver>, String> =
-            EvaluatePermissionsContainerBuilder::new()
-                .with_org_provider(MockOrganizationBoundaryProvider::new())
-                .with_logger(MockAuthorizationLogger::new())
-                .with_metrics(MockAuthorizationMetrics::new())
-                .with_entity_resolver(MockEntityResolver::new())
-                .build();
+        let result: Result<
+            EvaluatePermissionsContainer<
+                MockIamPolicyProvider,
+                MockOrganizationBoundaryProvider,
+                MockAuthorizationCache,
+                MockAuthorizationLogger,
+                MockAuthorizationMetrics,
+                MockEntityResolver,
+            >,
+            String,
+        > = EvaluatePermissionsContainerBuilder::new()
+            .with_org_provider(MockOrganizationBoundaryProvider::new())
+            .with_logger(MockAuthorizationLogger::new())
+            .with_metrics(MockAuthorizationMetrics::new())
+            .with_entity_resolver(MockEntityResolver::new())
+            .build();
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("IAM provider is required"));
