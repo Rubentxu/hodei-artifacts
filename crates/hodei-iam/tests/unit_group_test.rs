@@ -1,8 +1,6 @@
 /// Unit tests for Group domain entity
-
-use hodei_iam::Group;
+use hodei_iam::shared::domain::Group;
 use policies::shared::domain::hrn::Hrn;
-
 
 #[test]
 fn test_group_new_creates_empty_collections() {
@@ -41,8 +39,20 @@ fn test_group_detach_policy() {
     let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
     let mut group = Group::new(hrn, "Developers".to_string());
 
-    let policy1 = Hrn::new("hodei".into(), "policies".into(), "default".into(), "Policy".into(), "p1".into());
-    let policy2 = Hrn::new("hodei".into(), "policies".into(), "default".into(), "Policy".into(), "p2".into());
+    let policy1 = Hrn::new(
+        "hodei".into(),
+        "policies".into(),
+        "default".into(),
+        "Policy".into(),
+        "p1".into(),
+    );
+    let policy2 = Hrn::new(
+        "hodei".into(),
+        "policies".into(),
+        "default".into(),
+        "Policy".into(),
+        "p2".into(),
+    );
 
     group.attach_policy(policy1.clone());
     group.attach_policy(policy2.clone());
@@ -58,7 +68,13 @@ fn test_group_detach_nonexistent_policy_does_nothing() {
     let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
     let mut group = Group::new(hrn, "Developers".to_string());
 
-    let policy_hrn = Hrn::new("hodei".into(), "policies".into(), "default".into(), "Policy".into(), "p1".into());
+    let policy_hrn = Hrn::new(
+        "hodei".into(),
+        "policies".into(),
+        "default".into(),
+        "Policy".into(),
+        "p1".into(),
+    );
 
     // Detach policy that doesn't exist
     group.detach_policy(&policy_hrn);
@@ -79,9 +95,27 @@ fn test_group_multiple_policies() {
     let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
     let mut group = Group::new(hrn, "Developers".to_string());
 
-    let policy1 = Hrn::new("hodei".into(), "policies".into(), "default".into(), "Policy".into(), "p1".into());
-    let policy2 = Hrn::new("hodei".into(), "policies".into(), "default".into(), "Policy".into(), "p2".into());
-    let policy3 = Hrn::new("hodei".into(), "policies".into(), "default".into(), "Policy".into(), "p3".into());
+    let policy1 = Hrn::new(
+        "hodei".into(),
+        "policies".into(),
+        "default".into(),
+        "Policy".into(),
+        "p1".into(),
+    );
+    let policy2 = Hrn::new(
+        "hodei".into(),
+        "policies".into(),
+        "default".into(),
+        "Policy".into(),
+        "p2".into(),
+    );
+    let policy3 = Hrn::new(
+        "hodei".into(),
+        "policies".into(),
+        "default".into(),
+        "Policy".into(),
+        "p3".into(),
+    );
 
     group.attach_policy(policy1);
     group.attach_policy(policy2);

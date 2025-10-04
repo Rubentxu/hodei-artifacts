@@ -11,6 +11,8 @@ anyhow = "1.0"
 async-trait = "0.1"
 tokio = { workspace = true }
 uuid = { version = "1.0", features = ["v4", "serde"] }
+tracing = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }

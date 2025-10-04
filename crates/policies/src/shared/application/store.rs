@@ -1,4 +1,4 @@
-use crate::domain::{PolicyStorage, StorageError};
+use crate::shared::domain::ports::{PolicyStorage, StorageError};
 use cedar_policy::{Policy, PolicySet, Schema, Validator};
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ pub struct PolicyStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::PolicyStorage;
+    use crate::shared::domain::ports::PolicyStorage;
     use async_trait::async_trait;
 
     #[derive(Clone)]

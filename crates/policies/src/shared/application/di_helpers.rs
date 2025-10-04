@@ -1,5 +1,5 @@
 use crate::shared::application::{AuthorizationEngine, EngineBuilder, PolicyStore};
-use crate::shared::domain::PolicyStorage;
+use crate::shared::domain::ports::PolicyStorage;
 use crate::shared::infrastructure::surreal::SurrealMemStorage;
 use anyhow::Result;
 /// Centralized DI helpers to avoid code duplication across features

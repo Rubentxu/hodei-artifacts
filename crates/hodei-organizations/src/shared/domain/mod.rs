@@ -1,10 +1,13 @@
-pub mod account;
-pub mod ou;
-pub mod scp;
-pub mod hrn {
-    pub use policies::shared::domain::hrn::Hrn;
+// Módulos de dominio - INTERNOS al crate
+pub(crate) mod account;
+pub(crate) mod ou;
+pub(crate) mod scp;
+
+// HRN helper para uso interno
+pub(crate) mod hrn {
+    pub(crate) use policies::shared::domain::hrn::Hrn;
     // Compat helper para tests legacy que usaban Hrn::generate("ou")
-    pub fn generate(resource_type: &str) -> Hrn {
+    pub(crate) fn generate(resource_type: &str) -> Hrn {
         Hrn::new(
             "aws".to_string(),
             "hodei".to_string(),
@@ -15,6 +18,9 @@ pub mod hrn {
     }
 }
 
-pub use account::Account;
-pub use ou::OrganizationalUnit;
-pub use scp::ServiceControlPolicy;
+// ❌ NO exportar entidades públicamente - solo accesibles dentro del crate
+// Las entidades se usan internamente en los casos de uso
+// Los casos de uso devuelven DTOs, NO entidades
+pub(crate) use account::Account;
+pub(crate) use ou::OrganizationalUnit;
+pub(crate) use scp::ServiceControlPolicy;

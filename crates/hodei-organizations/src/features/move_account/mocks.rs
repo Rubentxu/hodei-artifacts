@@ -1,15 +1,13 @@
-use std::sync::Arc;
 use async_trait::async_trait;
-use policies::domain::Hrn;
+use policies::shared::domain::hrn::Hrn;
+use std::sync::Arc;
 
-use crate::features::move_account::ports::{
-    MoveAccountUnitOfWorkFactory, MoveAccountUnitOfWork
-};
 use crate::features::move_account::error::MoveAccountError;
-use crate::shared::domain::account::Account;
-use crate::shared::domain::ou::OrganizationalUnit;
+use crate::features::move_account::ports::{MoveAccountUnitOfWork, MoveAccountUnitOfWorkFactory};
 use crate::shared::application::ports::account_repository::AccountRepository;
 use crate::shared::application::ports::ou_repository::OuRepository;
+use crate::shared::domain::account::Account;
+use crate::shared::domain::ou::OrganizationalUnit;
 
 /// Mock UnitOfWork for testing transactional behavior
 pub struct MockMoveAccountUnitOfWork {
@@ -32,7 +30,7 @@ impl MockMoveAccountUnitOfWork {
             transaction_active: false,
         }
     }
-    
+
     pub fn with_failure(should_fail: bool) -> Self {
         Self {
             should_fail_on_save: should_fail,
@@ -52,7 +50,9 @@ impl MoveAccountUnitOfWork for MockMoveAccountUnitOfWork {
     async fn commit(&mut self) -> Result<(), MoveAccountError> {
         if !self.transaction_active {
             return Err(MoveAccountError::OuRepositoryError(
-                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError("No transaction in progress".to_string())
+                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                    "No transaction in progress".to_string(),
+                ),
             ));
         }
         self.transaction_active = false;
@@ -62,7 +62,9 @@ impl MoveAccountUnitOfWork for MockMoveAccountUnitOfWork {
     async fn rollback(&mut self) -> Result<(), MoveAccountError> {
         if !self.transaction_active {
             return Err(MoveAccountError::OuRepositoryError(
-                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError("No transaction in progress".to_string())
+                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                    "No transaction in progress".to_string(),
+                ),
             ));
         }
         self.transaction_active = false;
@@ -92,24 +94,41 @@ pub struct MockAccountRepository {
 
 #[async_trait]
 impl AccountRepository for MockAccountRepository {
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<Account>, crate::shared::application::ports::account_repository::AccountRepositoryError> {
+    async fn find_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<
+        Option<Account>,
+        crate::shared::application::ports::account_repository::AccountRepositoryError,
+    > {
         // Return a mock account for testing
-        if hrn.to_string() == "account:test" {
-            let account_hrn = Hrn::new("account".to_string(), "test".to_string(), "source".to_string(), "ou".to_string(), "hodei".to_string());
+        // Match by resource_id instead of full string representation
+        if hrn.resource_id == "test" && hrn.resource_type == "account" {
+            let source_ou_hrn = Hrn::new(
+                "aws".to_string(),
+                "hodei".to_string(),
+                "123456789012".to_string(),
+                "ou".to_string(),
+                "source".to_string(),
+            );
             Ok(Some(Account::new(
-                account_hrn.clone(),
+                hrn.clone(),
                 "Test Account".to_string(),
-                account_hrn
+                source_ou_hrn,
             )))
         } else {
             Ok(None)
         }
     }
 
-    async fn save(&self, account: &Account) -> Result<(), crate::shared::application::ports::account_repository::AccountRepositoryError> {
+    async fn save(
+        &self,
+        account: &Account,
+    ) -> Result<(), crate::shared::application::ports::account_repository::AccountRepositoryError>
+    {
         let mut calls = self.save_calls.lock().unwrap();
         calls.push(format!("account:{}", account.hrn));
-        
+
         if self.should_fail_on_save {
             Err(crate::shared::application::ports::account_repository::AccountRepositoryError::DatabaseError("Mock save failure".to_string()))
         } else {
@@ -126,40 +145,83 @@ pub struct MockOuRepository {
 
 #[async_trait]
 impl OuRepository for MockOuRepository {
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<OrganizationalUnit>, crate::shared::application::ports::ou_repository::OuRepositoryError> {
+    async fn find_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<
+        Option<OrganizationalUnit>,
+        crate::shared::application::ports::ou_repository::OuRepositoryError,
+    > {
         // Return mock OUs for testing
-        match hrn.to_string().as_str() {
-            "ou:source" => {
+        // Match by resource_id instead of full string representation
+        if hrn.resource_type != "ou" {
+            return Ok(None);
+        }
+
+        match hrn.resource_id.as_str() {
+            "source" => {
                 let mut child_accounts = std::collections::HashSet::new();
-                child_accounts.insert(Hrn::new("account".to_string(), "test".to_string(), "source".to_string(), "ou".to_string(), "hodei".to_string()));
-                
+                let account_hrn = Hrn::new(
+                    "aws".to_string(),
+                    "hodei".to_string(),
+                    "123456789012".to_string(),
+                    "account".to_string(),
+                    "test".to_string(),
+                );
+                child_accounts.insert(account_hrn);
+
+                let parent_hrn = Hrn::new(
+                    "aws".to_string(),
+                    "hodei".to_string(),
+                    "123456789012".to_string(),
+                    "ou".to_string(),
+                    "root".to_string(),
+                );
+
                 Ok(Some(OrganizationalUnit {
                     hrn: hrn.clone(),
-                    parent_hrn: Hrn::new("ou".to_string(), "root".to_string(), "source".to_string(), "hodei".to_string(), "hodei".to_string()),
+                    parent_hrn,
                     name: "Source OU".to_string(),
                     child_ous: std::collections::HashSet::new(),
                     child_accounts,
                     attached_scps: std::collections::HashSet::new(),
                 }))
-            },
-            "ou:target" => Ok(Some(OrganizationalUnit {
-                hrn: hrn.clone(),
-                parent_hrn: Hrn::new("ou".to_string(), "root".to_string(), "target".to_string(), "hodei".to_string(), "hodei".to_string()),
-                name: "Target OU".to_string(),
-                child_ous: std::collections::HashSet::new(),
-                child_accounts: std::collections::HashSet::new(),
-                attached_scps: std::collections::HashSet::new(),
-            })),
+            }
+            "target" => {
+                let parent_hrn = Hrn::new(
+                    "aws".to_string(),
+                    "hodei".to_string(),
+                    "123456789012".to_string(),
+                    "ou".to_string(),
+                    "root".to_string(),
+                );
+
+                Ok(Some(OrganizationalUnit {
+                    hrn: hrn.clone(),
+                    parent_hrn,
+                    name: "Target OU".to_string(),
+                    child_ous: std::collections::HashSet::new(),
+                    child_accounts: std::collections::HashSet::new(),
+                    attached_scps: std::collections::HashSet::new(),
+                }))
+            }
             _ => Ok(None),
         }
     }
 
-    async fn save(&self, ou: &OrganizationalUnit) -> Result<(), crate::shared::application::ports::ou_repository::OuRepositoryError> {
+    async fn save(
+        &self,
+        ou: &OrganizationalUnit,
+    ) -> Result<(), crate::shared::application::ports::ou_repository::OuRepositoryError> {
         let mut calls = self.save_calls.lock().unwrap();
         calls.push(format!("ou:{}", ou.hrn));
-        
+
         if self.should_fail_on_save {
-            Err(crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError("Mock save failure".to_string()))
+            Err(
+                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                    "Mock save failure".to_string(),
+                ),
+            )
         } else {
             Ok(())
         }
@@ -183,7 +245,7 @@ impl MockMoveAccountUnitOfWorkFactory {
             should_fail_on_save: false,
         }
     }
-    
+
     pub fn with_failure(should_fail: bool) -> Self {
         Self {
             should_fail_on_save: should_fail,
@@ -196,6 +258,8 @@ impl MoveAccountUnitOfWorkFactory for MockMoveAccountUnitOfWorkFactory {
     type UnitOfWork = MockMoveAccountUnitOfWork;
 
     async fn create(&self) -> Result<Self::UnitOfWork, MoveAccountError> {
-        Ok(MockMoveAccountUnitOfWork::with_failure(self.should_fail_on_save))
+        Ok(MockMoveAccountUnitOfWork::with_failure(
+            self.should_fail_on_save,
+        ))
     }
 }

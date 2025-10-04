@@ -24,14 +24,19 @@
 pub mod features;
 pub mod shared;
 
-pub use shared::application::configure_default_iam_entities;
-// Re-export commonly used items for convenience
-pub use shared::domain::{
-    CreateGroupAction, CreateUserAction, Group, Namespace, ServiceAccount, User,
+// ❌ NO exportar entidades de dominio - son INTERNAS
+// Solo se accede a este crate a través de sus casos de uso (features)
+
+// ✅ Re-export features/casos de uso para acceso externo
+pub use features::{
+    add_user_to_group::AddUserToGroupUseCase,
+    create_group::CreateGroupUseCase,
+    create_user::CreateUserUseCase,
+    get_effective_policies_for_principal::{
+        EffectivePoliciesResponse, GetEffectivePoliciesForPrincipalUseCase,
+        GetEffectivePoliciesQuery,
+    },
 };
 
-// Re-export features for easy access
-pub use features::{
-    add_user_to_group::AddUserToGroupUseCase, create_group::CreateGroupUseCase,
-    create_user::CreateUserUseCase,
-};
+// ✅ Configurador para policies engine (necesario para setup inicial)
+pub use shared::application::configure_default_iam_entities;
