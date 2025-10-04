@@ -1,11 +1,12 @@
-use crate::shared::application::ports::ScpRepository;
+use crate::features::create_scp::adapter::CreateScpSurrealUnitOfWorkFactoryAdapter;
 use crate::features::create_scp::use_case::CreateScpUseCase;
-use crate::features::create_scp::adapter::ScpRepositoryAdapter;
+use crate::shared::infrastructure::surreal::SurrealUnitOfWorkFactory;
+use std::sync::Arc;
 
-/// Create an instance of the CreateScpUseCase with the provided repository
-pub fn create_scp_use_case<SR: ScpRepository>(
-    scp_repository: SR,
-) -> CreateScpUseCase<ScpRepositoryAdapter<SR>> {
-    let adapter = ScpRepositoryAdapter::new(scp_repository);
-    CreateScpUseCase::new(adapter)
+/// Create an instance of the CreateScpUseCase with SurrealDB UoW
+pub fn create_scp_use_case(
+    uow_factory: Arc<SurrealUnitOfWorkFactory>,
+) -> CreateScpUseCase<CreateScpSurrealUnitOfWorkFactoryAdapter> {
+    let factory_adapter = CreateScpSurrealUnitOfWorkFactoryAdapter::new(uow_factory);
+    CreateScpUseCase::new(Arc::new(factory_adapter))
 }

@@ -6,24 +6,8 @@ use crate::features::evaluate_permissions::dto::{AuthorizationRequest, Authoriza
 use crate::features::evaluate_permissions::error::EvaluatePermissionsResult;
 use policies::shared::domain::hrn::Hrn;
 
-/// Trait for providing IAM policies
-#[async_trait]
-pub trait IamPolicyProvider: Send + Sync {
-    async fn get_identity_policies_for(
-        &self,
-        principal_hrn: &Hrn,
-    ) -> EvaluatePermissionsResult<PolicySet>;
-}
-
-#[async_trait]
-impl<T: IamPolicyProvider> IamPolicyProvider for Arc<T> {
-    async fn get_identity_policies_for(
-        &self,
-        principal_hrn: &Hrn,
-    ) -> EvaluatePermissionsResult<PolicySet> {
-        (**self).get_identity_policies_for(principal_hrn).await
-    }
-}
+// Re-export IamPolicyProvider from hodei-iam
+pub use hodei_iam::shared::application::ports::{IamPolicyProvider, IamPolicyProviderError};
 
 /// Trait for providing organization boundary policies (SCPs)
 #[async_trait]
@@ -153,11 +137,63 @@ impl<T: AuthorizationMetrics> AuthorizationMetrics for Arc<T> {
     }
 }
 
+/// Trait for resolving Hodei entities from HRNs
+///
+/// This trait provides a way to obtain real entity implementations
+/// from hodei-iam (users, groups) and hodei-organizations (accounts, OUs)
+/// for use in authorization evaluation.
+#[async_trait]
+pub trait EntityResolverPort: Send + Sync {
+    /// Resolve a single entity by its HRN
+    async fn resolve(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Box<dyn policies::domain::HodeiEntity>, EntityResolverError>;
+
+    /// Resolve multiple entities by their HRNs
+    async fn resolve_batch(
+        &self,
+        hrns: &[Hrn],
+    ) -> Result<Vec<Box<dyn policies::domain::HodeiEntity>>, EntityResolverError>;
+}
+
+#[async_trait]
+impl<T: EntityResolverPort> EntityResolverPort for Arc<T> {
+    async fn resolve(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Box<dyn policies::domain::HodeiEntity>, EntityResolverError> {
+        (**self).resolve(hrn).await
+    }
+
+    async fn resolve_batch(
+        &self,
+        hrns: &[Hrn],
+    ) -> Result<Vec<Box<dyn policies::domain::HodeiEntity>>, EntityResolverError> {
+        (**self).resolve_batch(hrns).await
+    }
+}
+
+/// Errors that can occur during entity resolution
+#[derive(Debug, thiserror::Error)]
+pub enum EntityResolverError {
+    #[error("Entity not found: {0}")]
+    NotFound(Hrn),
+    #[error("Invalid entity type for HRN: {0}")]
+    InvalidType(String),
+    #[error("Resolution failed: {0}")]
+    ResolutionFailed(String),
+    #[error("Multiple entities not found: {0:?}")]
+    BatchResolutionFailed(Vec<Hrn>),
+}
+
 /// Errors related to authorization ports
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorizationError {
     #[error("IAM policy provider error: {0}")]
-    IamPolicyProvider(String),
+    IamPolicyProvider(#[from] IamPolicyProviderError),
     #[error("Organization boundary provider error: {0}")]
     OrganizationBoundaryProvider(String),
+    #[error("Entity resolver error: {0}")]
+    EntityResolver(#[from] EntityResolverError),
 }

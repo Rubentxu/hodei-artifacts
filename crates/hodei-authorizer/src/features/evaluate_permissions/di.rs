@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::features::evaluate_permissions::dto::AuthorizationResponse;
 use crate::features::evaluate_permissions::error::EvaluatePermissionsResult;
 use crate::features::evaluate_permissions::ports::{
-    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics,
+    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics, EntityResolverPort,
 };
 use crate::features::evaluate_permissions::use_case::EvaluatePermissionsUseCase;
 use async_trait::async_trait;
@@ -56,6 +56,7 @@ pub struct EvaluatePermissionsContainer<CACHE, LOGGER, METRICS> {
     iam_use_case: DynEffectivePoliciesQueryService,
     org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
     authorization_engine: Arc<AuthorizationEngine>,
+    entity_resolver: Arc<dyn EntityResolverPort>,
 
     // Aspectos transversales
     cache: Option<CACHE>,
@@ -74,6 +75,7 @@ where
         iam_use_case: DynEffectivePoliciesQueryService,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
+        entity_resolver: Arc<dyn EntityResolverPort>,
         cache: Option<CACHE>,
         logger: LOGGER,
         metrics: METRICS,
@@ -82,6 +84,7 @@ where
             iam_use_case,
             org_use_case,
             authorization_engine,
+            entity_resolver,
             cache,
             logger,
             metrics,
@@ -94,6 +97,7 @@ where
             self.iam_use_case,
             self.org_use_case,
             self.authorization_engine,
+            self.entity_resolver,
             self.cache,
             self.logger,
             self.metrics,
@@ -106,6 +110,7 @@ pub struct EvaluatePermissionsContainerBuilder<CACHE, LOGGER, METRICS> {
     iam_use_case: Option<DynEffectivePoliciesQueryService>,
     org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
     authorization_engine: Option<Arc<AuthorizationEngine>>,
+    entity_resolver: Option<Arc<dyn EntityResolverPort>>,
     cache: Option<CACHE>,
     logger: Option<LOGGER>,
     metrics: Option<METRICS>,
@@ -123,6 +128,7 @@ where
             iam_use_case: None,
             org_use_case: None,
             authorization_engine: None,
+            entity_resolver: None,
             cache: None,
             logger: None,
             metrics: None,
@@ -153,6 +159,12 @@ where
         self
     }
 
+    /// Set the entity resolver
+    pub fn with_entity_resolver(mut self, entity_resolver: Arc<dyn EntityResolverPort>) -> Self {
+        self.entity_resolver = Some(entity_resolver);
+        self
+    }
+
     /// Set the authorization cache (optional)
     pub fn with_cache(mut self, cache: CACHE) -> Self {
         self.cache = Some(cache);
@@ -178,6 +190,7 @@ where
             self.org_use_case,
             self.authorization_engine
                 .ok_or("AuthorizationEngine is required")?,
+            self.entity_resolver.ok_or("Entity resolver is required")?,
             self.cache,
             self.logger.ok_or("Logger is required")?,
             self.metrics.ok_or("Metrics is required")?,
@@ -205,6 +218,7 @@ pub mod factories {
         iam_use_case: DynEffectivePoliciesQueryService,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
+        entity_resolver: Arc<dyn EntityResolverPort>,
         logger: LOGGER,
         metrics: METRICS,
     ) -> EvaluatePermissionsContainer<DummyCache, LOGGER, METRICS>
@@ -216,6 +230,7 @@ pub mod factories {
             iam_use_case,
             org_use_case,
             authorization_engine,
+            entity_resolver,
             Some(DummyCache),
             logger,
             metrics,
@@ -227,6 +242,7 @@ pub mod factories {
         iam_use_case: DynEffectivePoliciesQueryService,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
+        entity_resolver: Arc<dyn EntityResolverPort>,
         cache: CACHE,
         logger: LOGGER,
         metrics: METRICS,
@@ -240,6 +256,7 @@ pub mod factories {
             iam_use_case,
             org_use_case,
             authorization_engine,
+            entity_resolver,
             Some(cache),
             logger,
             metrics,
@@ -252,6 +269,7 @@ mod tests {
     use super::*;
     use crate::features::evaluate_permissions::mocks::{
         MockAuthorizationCache, MockAuthorizationLogger, MockAuthorizationMetrics,
+        MockEntityResolver,
     };
 
     // Mock implementation of the EffectivePoliciesQueryService trait
@@ -346,11 +364,13 @@ mod tests {
         let cache = MockAuthorizationCache::new();
         let logger = MockAuthorizationLogger::new();
         let metrics = MockAuthorizationMetrics::new();
+        let entity_resolver = Arc::new(MockEntityResolver::new());
 
         let container = EvaluatePermissionsContainerBuilder::new()
             .with_iam_use_case(iam_use_case)
             .with_org_use_case(org_use_case)
             .with_authorization_engine(authorization_engine)
+            .with_entity_resolver(entity_resolver)
             .with_cache(cache)
             .with_logger(logger)
             .with_metrics(metrics)
@@ -371,6 +391,7 @@ mod tests {
         > = EvaluatePermissionsContainerBuilder::new()
             .with_org_use_case(create_test_org_use_case())
             .with_authorization_engine(create_test_authorization_engine())
+            .with_entity_resolver(Arc::new(MockEntityResolver::new()))
             .with_logger(MockAuthorizationLogger::new())
             .with_metrics(MockAuthorizationMetrics::new())
             .build();
@@ -386,6 +407,7 @@ mod tests {
         let iam_use_case = create_test_iam_use_case();
         let org_use_case = create_test_org_use_case();
         let authorization_engine = create_test_authorization_engine();
+        let entity_resolver = Arc::new(MockEntityResolver::new());
         let logger = MockAuthorizationLogger::new();
         let metrics = MockAuthorizationMetrics::new();
 
@@ -393,6 +415,7 @@ mod tests {
             iam_use_case,
             org_use_case,
             authorization_engine,
+            entity_resolver,
             logger,
             metrics,
         );
@@ -407,6 +430,7 @@ mod tests {
         let org_use_case = create_test_org_use_case();
         let authorization_engine = create_test_authorization_engine();
         let cache = MockAuthorizationCache::new();
+        let entity_resolver = Arc::new(MockEntityResolver::new());
         let logger = MockAuthorizationLogger::new();
         let metrics = MockAuthorizationMetrics::new();
 
@@ -414,6 +438,7 @@ mod tests {
             iam_use_case,
             org_use_case,
             authorization_engine,
+            entity_resolver,
             cache,
             logger,
             metrics,

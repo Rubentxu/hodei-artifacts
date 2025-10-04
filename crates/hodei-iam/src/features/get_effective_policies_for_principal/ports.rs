@@ -3,6 +3,9 @@
 //! Define las interfaces (traits) que el caso de uso necesita para obtener
 //! las políticas efectivas de un principal (usuario o service account).
 
+use crate::shared::application::ports::{
+    GroupRepositoryError, PolicyRepositoryError, UserRepositoryError,
+};
 use crate::shared::domain::{Group, User};
 use policies::shared::domain::hrn::Hrn;
 
@@ -10,10 +13,7 @@ use policies::shared::domain::hrn::Hrn;
 #[async_trait::async_trait]
 pub trait UserFinderPort: Send + Sync {
     /// Find a user by their HRN
-    async fn find_by_hrn(
-        &self,
-        hrn: &Hrn,
-    ) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>>;
+    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, UserRepositoryError>;
 }
 
 /// Port para encontrar grupos a los que pertenece un usuario
@@ -23,7 +23,7 @@ pub trait GroupFinderPort: Send + Sync {
     async fn find_groups_by_user_hrn(
         &self,
         user_hrn: &Hrn,
-    ) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Vec<Group>, GroupRepositoryError>;
 }
 
 /// Port para encontrar políticas asociadas a un principal
@@ -35,5 +35,5 @@ pub trait PolicyFinderPort: Send + Sync {
     async fn find_policies_by_principal(
         &self,
         principal_hrn: &Hrn,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Vec<String>, PolicyRepositoryError>;
 }

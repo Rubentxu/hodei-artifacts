@@ -19,7 +19,8 @@ impl IamPolicyProvider for IamPolicyProviderAdapter {
     async fn get_identity_policies_for(
         &self,
         _principal_hrn: &policies::shared::domain::hrn::Hrn,
-    ) -> EvaluatePermissionsResult<PolicySet> {
+    ) -> Result<PolicySet, crate::features::evaluate_permissions::ports::IamPolicyProviderError>
+    {
         // TODO: Implement actual IAM policy retrieval
         Ok(PolicySet::new())
     }

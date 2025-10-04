@@ -1,4 +1,7 @@
 use crate::config::Config;
+use hodei_iam::features::add_user_to_group::adapter::GenericAddUserToGroupUnitOfWork;
+use hodei_iam::features::create_group::adapter::GenericCreateGroupUnitOfWork;
+use hodei_iam::features::create_user::adapter::GenericCreateUserUnitOfWork;
 use metrics::{Counter, Histogram};
 use shared::infrastructure::audit::AuditLogStore;
 use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
@@ -29,9 +32,10 @@ pub struct AppState {
     pub authorization_engine: Arc<policies::shared::AuthorizationEngine>,
 
     // IAM use cases from hodei-iam crate
-    pub create_user_uc: Arc<hodei_iam::CreateUserUseCase>,
-    pub create_group_uc: Arc<hodei_iam::CreateGroupUseCase>,
-    pub add_user_to_group_uc: Arc<hodei_iam::AddUserToGroupUseCase>,
+    pub create_user_uc: Arc<hodei_iam::CreateUserUseCase<GenericCreateUserUnitOfWork>>,
+    pub create_group_uc: Arc<hodei_iam::CreateGroupUseCase<GenericCreateGroupUnitOfWork>>,
+    pub add_user_to_group_uc:
+        Arc<hodei_iam::AddUserToGroupUseCase<GenericAddUserToGroupUnitOfWork>>,
 
     // IAM repositories (for listing endpoints)
     pub user_repo: Arc<dyn hodei_iam::shared::application::ports::UserRepository>,

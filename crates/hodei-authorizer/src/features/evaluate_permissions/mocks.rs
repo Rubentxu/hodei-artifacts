@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::features::evaluate_permissions::dto::{
@@ -6,8 +7,10 @@ use crate::features::evaluate_permissions::dto::{
 };
 use crate::features::evaluate_permissions::error::EvaluatePermissionsResult;
 use crate::features::evaluate_permissions::ports::{
-    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics,
+    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics, EntityResolverError,
+    EntityResolverPort,
 };
+use cedar_policy::EntityUid;
 use policies::shared::domain::hrn::Hrn;
 
 /// Mock Authorization Cache for testing
@@ -138,6 +141,111 @@ impl AuthorizationMetrics for MockAuthorizationMetrics {
 
     async fn record_cache_hit(&self, _hit: bool) -> EvaluatePermissionsResult<()> {
         Ok(())
+    }
+}
+
+/// Mock Entity for testing authorization
+#[derive(Debug, Clone)]
+pub struct MockHodeiEntity {
+    hrn: Hrn,
+    euid: EntityUid,
+    attributes: HashMap<String, cedar_policy::RestrictedExpression>,
+}
+
+impl MockHodeiEntity {
+    pub fn new(hrn: Hrn, euid: EntityUid) -> Self {
+        Self {
+            hrn,
+            euid,
+            attributes: HashMap::new(),
+        }
+    }
+
+    pub fn with_attribute(
+        mut self,
+        key: String,
+        value: cedar_policy::RestrictedExpression,
+    ) -> Self {
+        self.attributes.insert(key, value);
+        self
+    }
+}
+
+impl policies::domain::HodeiEntity for MockHodeiEntity {
+    fn hrn(&self) -> &Hrn {
+        &self.hrn
+    }
+
+    fn euid(&self) -> EntityUid {
+        self.euid.clone()
+    }
+
+    fn attributes(&self) -> HashMap<String, cedar_policy::RestrictedExpression> {
+        self.attributes.clone()
+    }
+}
+
+/// Mock Entity Resolver for testing
+#[derive(Debug, Default, Clone)]
+pub struct MockEntityResolver {
+    entities: Arc<Mutex<HashMap<String, MockHodeiEntity>>>,
+}
+
+impl MockEntityResolver {
+    pub fn new() -> Self {
+        Self {
+            entities: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn with_entity(self, entity: MockHodeiEntity) -> Self {
+        let hrn_str = entity.hrn.to_string();
+        let mut entities = self.entities.lock().unwrap();
+        entities.insert(hrn_str, entity);
+        drop(entities);
+        self
+    }
+
+    pub fn get_resolved_count(&self) -> usize {
+        let entities = self.entities.lock().unwrap();
+        entities.len()
+    }
+}
+
+#[async_trait]
+impl EntityResolverPort for MockEntityResolver {
+    async fn resolve(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Box<dyn policies::domain::HodeiEntity>, EntityResolverError> {
+        let entities = self.entities.lock().unwrap();
+        entities
+            .get(&hrn.to_string())
+            .map(|e| Box::new(e.clone()) as Box<dyn policies::domain::HodeiEntity>)
+            .ok_or_else(|| EntityResolverError::NotFound(hrn.clone()))
+    }
+
+    async fn resolve_batch(
+        &self,
+        hrns: &[Hrn],
+    ) -> Result<Vec<Box<dyn policies::domain::HodeiEntity>>, EntityResolverError> {
+        let entities = self.entities.lock().unwrap();
+        let mut resolved = Vec::new();
+        let mut not_found = Vec::new();
+
+        for hrn in hrns {
+            if let Some(entity) = entities.get(&hrn.to_string()) {
+                resolved.push(Box::new(entity.clone()) as Box<dyn policies::domain::HodeiEntity>);
+            } else {
+                not_found.push(hrn.clone());
+            }
+        }
+
+        if !not_found.is_empty() {
+            return Err(EntityResolverError::BatchResolutionFailed(not_found));
+        }
+
+        Ok(resolved)
     }
 }
 

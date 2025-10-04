@@ -1,9 +1,10 @@
-use crate::shared::application::ports::{GroupRepository, UserRepository};
+use crate::shared::application::ports::{
+    GroupRepository, GroupRepositoryError, UserRepository, UserRepositoryError,
+};
 use crate::shared::domain::{Group, User};
 /// In-memory repository implementations for testing
 ///
 /// These repositories store data in memory using RwLock for thread-safe access
-
 use async_trait::async_trait;
 use policies::shared::domain::hrn::Hrn;
 use std::sync::RwLock;
@@ -24,8 +25,10 @@ impl InMemoryUserRepository {
 
 #[async_trait]
 impl UserRepository for InMemoryUserRepository {
-    async fn save(&self, user: &User) -> Result<(), anyhow::Error> {
-        let mut users = self.users.write().unwrap();
+    async fn save(&self, user: &User) -> Result<(), UserRepositoryError> {
+        let mut users = self.users.write().map_err(|e| {
+            UserRepositoryError::InternalError(format!("Failed to acquire write lock: {}", e))
+        })?;
 
         // Remove existing user with same HRN if present
         users.retain(|u| u.hrn != user.hrn);
@@ -36,13 +39,17 @@ impl UserRepository for InMemoryUserRepository {
         Ok(())
     }
 
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, anyhow::Error> {
-        let users = self.users.read().unwrap();
+    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, UserRepositoryError> {
+        let users = self.users.read().map_err(|e| {
+            UserRepositoryError::InternalError(format!("Failed to acquire read lock: {}", e))
+        })?;
         Ok(users.iter().find(|u| &u.hrn == hrn).cloned())
     }
 
-    async fn find_all(&self) -> Result<Vec<User>, anyhow::Error> {
-        let users = self.users.read().unwrap();
+    async fn find_all(&self) -> Result<Vec<User>, UserRepositoryError> {
+        let users = self.users.read().map_err(|e| {
+            UserRepositoryError::InternalError(format!("Failed to acquire read lock: {}", e))
+        })?;
         Ok(users.clone())
     }
 }
@@ -63,8 +70,10 @@ impl InMemoryGroupRepository {
 
 #[async_trait]
 impl GroupRepository for InMemoryGroupRepository {
-    async fn save(&self, group: &Group) -> Result<(), anyhow::Error> {
-        let mut groups = self.groups.write().unwrap();
+    async fn save(&self, group: &Group) -> Result<(), GroupRepositoryError> {
+        let mut groups = self.groups.write().map_err(|e| {
+            GroupRepositoryError::InternalError(format!("Failed to acquire write lock: {}", e))
+        })?;
 
         // Remove existing group with same HRN if present
         groups.retain(|g| g.hrn != group.hrn);
@@ -75,14 +84,17 @@ impl GroupRepository for InMemoryGroupRepository {
         Ok(())
     }
 
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<Group>, anyhow::Error> {
-        let groups = self.groups.read().unwrap();
+    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<Group>, GroupRepositoryError> {
+        let groups = self.groups.read().map_err(|e| {
+            GroupRepositoryError::InternalError(format!("Failed to acquire read lock: {}", e))
+        })?;
         Ok(groups.iter().find(|g| &g.hrn == hrn).cloned())
     }
 
-    async fn find_all(&self) -> Result<Vec<Group>, anyhow::Error> {
-        let groups = self.groups.read().unwrap();
+    async fn find_all(&self) -> Result<Vec<Group>, GroupRepositoryError> {
+        let groups = self.groups.read().map_err(|e| {
+            GroupRepositoryError::InternalError(format!("Failed to acquire read lock: {}", e))
+        })?;
         Ok(groups.clone())
     }
 }
-

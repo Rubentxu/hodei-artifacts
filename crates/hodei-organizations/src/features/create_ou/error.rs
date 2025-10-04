@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::shared::application::ports::ou_repository::OuRepositoryError;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CreateOuError {
@@ -7,4 +7,6 @@ pub enum CreateOuError {
     OuRepositoryError(#[from] OuRepositoryError),
     #[error("Invalid OU name")]
     InvalidOuName,
+    #[error("Transaction error: {0}")]
+    TransactionError(String),
 }

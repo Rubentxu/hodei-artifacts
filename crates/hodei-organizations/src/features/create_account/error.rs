@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::shared::application::ports::account_repository::AccountRepositoryError;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CreateAccountError {
@@ -7,4 +7,6 @@ pub enum CreateAccountError {
     AccountRepositoryError(#[from] AccountRepositoryError),
     #[error("Invalid account name")]
     InvalidAccountName,
+    #[error("Transaction error: {0}")]
+    TransactionError(String),
 }

@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::shared::application::ports::scp_repository::ScpRepositoryError;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CreateScpError {
@@ -9,4 +9,6 @@ pub enum CreateScpError {
     InvalidScpName,
     #[error("Invalid SCP document")]
     InvalidScpDocument,
+    #[error("Transaction error: {0}")]
+    TransactionError(String),
 }

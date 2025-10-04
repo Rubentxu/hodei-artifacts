@@ -1,12 +1,15 @@
-use crate::shared::infrastructure::surreal::{SurrealUserRepository, SurrealGroupRepository, policy_repository::IamPolicyRepository};
-use crate::shared::application::ports::{UserRepository, GroupRepository};
-use hodei_authorizer::features::evaluate_permissions::ports::{IamPolicyProvider, AuthorizationError};
+use crate::shared::application::ports::{
+    GroupRepository, IamPolicyProvider, IamPolicyProviderError, UserRepository,
+};
+use crate::shared::infrastructure::surreal::{
+    SurrealGroupRepository, SurrealUserRepository, policy_repository::IamPolicyRepository,
+};
+use async_trait::async_trait;
 use cedar_policy::PolicySet;
 use policies::shared::domain::hrn::Hrn;
 use surrealdb::Surreal;
 use surrealdb::engine::any::Any;
-use async_trait::async_trait;
-use tracing::{info, warn, instrument};
+use tracing::{info, instrument, warn};
 
 /// SurrealDB implementation of IamPolicyProvider
 pub struct SurrealIamPolicyProvider {
@@ -30,13 +33,24 @@ impl SurrealIamPolicyProvider {
 impl IamPolicyProvider for SurrealIamPolicyProvider {
     /// Get identity policies for a principal
     #[instrument(skip(self), fields(principal = %principal_hrn))]
-    async fn get_identity_policies_for(&self, principal_hrn: &Hrn) -> Result<PolicySet, AuthorizationError> {
+    async fn get_identity_policies_for(
+        &self,
+        principal_hrn: &Hrn,
+    ) -> Result<PolicySet, IamPolicyProviderError> {
         info!("Retrieving IAM policies for principal: {}", principal_hrn);
 
         // Step 1: Get the user (principal)
-        let user = self.user_repository.find_by_hrn(principal_hrn).await
-            .map_err(|e| AuthorizationError::ProviderError(format!("Failed to find user {}: {}", principal_hrn, e)))?
-            .ok_or_else(|| AuthorizationError::ProviderError(format!("User not found: {}", principal_hrn)))?;
+        let user = self
+            .user_repository
+            .find_by_hrn(principal_hrn)
+            .await
+            .map_err(|e| {
+                IamPolicyProviderError::RepositoryError(format!(
+                    "Failed to find user {}: {}",
+                    principal_hrn, e
+                ))
+            })?
+            .ok_or_else(|| IamPolicyProviderError::PrincipalNotFound(principal_hrn.to_string()))?;
 
         // Step 2: Collect all policy HRNs from user and groups
         let mut policy_hrns = Vec::new();
@@ -49,7 +63,11 @@ impl IamPolicyProvider for SurrealIamPolicyProvider {
         for group_hrn in &user.group_hrns {
             match self.group_repository.find_by_hrn(group_hrn).await {
                 Ok(Some(group)) => {
-                    info!("Found group {} with {} attached policies", group_hrn, group.attached_policy_hrns.len());
+                    info!(
+                        "Found group {} with {} attached policies",
+                        group_hrn,
+                        group.attached_policy_hrns.len()
+                    );
                     policy_hrns.extend_from_slice(&group.attached_policy_hrns);
                 }
                 Ok(None) => {
@@ -73,19 +91,20 @@ impl IamPolicyProvider for SurrealIamPolicyProvider {
 
         for policy_hrn in &policy_hrns {
             match self.policy_repository.find_by_hrn(policy_hrn).await {
-                Ok(Some(iam_policy)) => {
-                    match iam_policy.as_cedar_policy() {
-                        Ok(cedar_policy) => {
-                            policy_set.add_policy(cedar_policy);
-                            successful_policies += 1;
-                            info!("Successfully loaded policy: {}", policy_hrn);
-                        }
-                        Err(e) => {
-                            failed_policies += 1;
-                            warn!("Failed to parse policy {} as Cedar policy: {}", policy_hrn, e);
-                        }
+                Ok(Some(iam_policy)) => match iam_policy.as_cedar_policy() {
+                    Ok(cedar_policy) => {
+                        policy_set.add_policy(cedar_policy);
+                        successful_policies += 1;
+                        info!("Successfully loaded policy: {}", policy_hrn);
                     }
-                }
+                    Err(e) => {
+                        failed_policies += 1;
+                        warn!(
+                            "Failed to parse policy {} as Cedar policy: {}",
+                            policy_hrn, e
+                        );
+                    }
+                },
                 Ok(None) => {
                     failed_policies += 1;
                     warn!("Policy not found: {}", policy_hrn);
@@ -97,10 +116,16 @@ impl IamPolicyProvider for SurrealIamPolicyProvider {
             }
         }
 
-        info!("Successfully loaded {} policies, {} failed", successful_policies, failed_policies);
-        
+        info!(
+            "Successfully loaded {} policies, {} failed",
+            successful_policies, failed_policies
+        );
+
         if failed_policies > 0 {
-            warn!("Some policies failed to load for principal {}", principal_hrn);
+            warn!(
+                "Some policies failed to load for principal {}",
+                principal_hrn
+            );
         }
 
         Ok(policy_set)

@@ -208,6 +208,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::application::ports::{
+        GroupRepositoryError, PolicyRepositoryError, UserRepositoryError,
+    };
     use crate::shared::domain::{Group, User};
 
     // Mock implementations for testing
@@ -217,10 +220,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl UserFinderPort for MockUserFinder {
-        async fn find_by_hrn(
-            &self,
-            hrn: &Hrn,
-        ) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
+        async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, UserRepositoryError> {
             Ok(self.users.iter().find(|u| &u.hrn == hrn).cloned())
         }
     }
@@ -234,7 +234,7 @@ mod tests {
         async fn find_groups_by_user_hrn(
             &self,
             user_hrn: &Hrn,
-        ) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
+        ) -> Result<Vec<Group>, GroupRepositoryError> {
             Ok(self
                 .groups
                 .iter()
@@ -253,7 +253,7 @@ mod tests {
         async fn find_policies_by_principal(
             &self,
             principal_hrn: &Hrn,
-        ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        ) -> Result<Vec<String>, PolicyRepositoryError> {
             Ok(self
                 .policies
                 .iter()
@@ -277,7 +277,7 @@ mod tests {
         let group = Group::new(group_hrn.clone(), "admins".to_string());
 
         let user_policy = r#"permit(principal, action, resource);"#.to_string();
-        let group_policy = r#"permit(principal, action == Action::"read", resource);"#.to_string();
+        let group_policy = r#"permit(principal, action, resource);"#.to_string();
 
         let user_finder = Arc::new(MockUserFinder {
             users: vec![user.clone()],
@@ -328,11 +328,133 @@ mod tests {
         };
 
         let result = use_case.execute(query).await;
-
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
             GetEffectivePoliciesError::PrincipalNotFound(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_repository_error() {
+        // Mock that returns a repository error
+        struct MockUserFinderWithError;
+
+        #[async_trait::async_trait]
+        impl UserFinderPort for MockUserFinderWithError {
+            async fn find_by_hrn(&self, _hrn: &Hrn) -> Result<Option<User>, UserRepositoryError> {
+                Err(UserRepositoryError::DatabaseError(
+                    "Connection failed".to_string(),
+                ))
+            }
+        }
+
+        let user_finder = Arc::new(MockUserFinderWithError);
+        let group_finder = Arc::new(MockGroupFinder { groups: vec![] });
+        let policy_finder = Arc::new(MockPolicyFinder { policies: vec![] });
+
+        let use_case =
+            GetEffectivePoliciesForPrincipalUseCase::new(user_finder, group_finder, policy_finder);
+
+        let query = GetEffectivePoliciesQuery {
+            principal_hrn: "hrn:hodei:iam:us-east-1:default:user/test-user".to_string(),
+        };
+
+        let result = use_case.execute(query).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            GetEffectivePoliciesError::RepositoryError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_group_repository_error() {
+        let user_hrn = Hrn::from_string("hrn:hodei:iam:us-east-1:default:user/test-user").unwrap();
+        let user = User::new(
+            user_hrn.clone(),
+            "test-user".to_string(),
+            "test@example.com".to_string(),
+        );
+
+        // Mock that returns a repository error for groups
+        struct MockGroupFinderWithError;
+
+        #[async_trait::async_trait]
+        impl GroupFinderPort for MockGroupFinderWithError {
+            async fn find_groups_by_user_hrn(
+                &self,
+                _user_hrn: &Hrn,
+            ) -> Result<Vec<Group>, GroupRepositoryError> {
+                Err(GroupRepositoryError::DatabaseError(
+                    "Group query failed".to_string(),
+                ))
+            }
+        }
+
+        let user_finder = Arc::new(MockUserFinder {
+            users: vec![user.clone()],
+        });
+        let group_finder = Arc::new(MockGroupFinderWithError);
+        let policy_finder = Arc::new(MockPolicyFinder { policies: vec![] });
+
+        let use_case =
+            GetEffectivePoliciesForPrincipalUseCase::new(user_finder, group_finder, policy_finder);
+
+        let query = GetEffectivePoliciesQuery {
+            principal_hrn: "hrn:hodei:iam:us-east-1:default:user/test-user".to_string(),
+        };
+
+        let result = use_case.execute(query).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            GetEffectivePoliciesError::RepositoryError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_policy_repository_error() {
+        let user_hrn = Hrn::from_string("hrn:hodei:iam:us-east-1:default:user/test-user").unwrap();
+        let user = User::new(
+            user_hrn.clone(),
+            "test-user".to_string(),
+            "test@example.com".to_string(),
+        );
+
+        // Mock that returns a repository error for policies
+        struct MockPolicyFinderWithError;
+
+        #[async_trait::async_trait]
+        impl PolicyFinderPort for MockPolicyFinderWithError {
+            async fn find_policies_by_principal(
+                &self,
+                _principal_hrn: &Hrn,
+            ) -> Result<Vec<String>, PolicyRepositoryError> {
+                Err(PolicyRepositoryError::DatabaseError(
+                    "Policy query failed".to_string(),
+                ))
+            }
+        }
+
+        let user_finder = Arc::new(MockUserFinder {
+            users: vec![user.clone()],
+        });
+        let group_finder = Arc::new(MockGroupFinder { groups: vec![] });
+        let policy_finder = Arc::new(MockPolicyFinderWithError);
+
+        let use_case =
+            GetEffectivePoliciesForPrincipalUseCase::new(user_finder, group_finder, policy_finder);
+
+        let query = GetEffectivePoliciesQuery {
+            principal_hrn: "hrn:hodei:iam:us-east-1:default:user/test-user".to_string(),
+        };
+
+        let result = use_case.execute(query).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            GetEffectivePoliciesError::RepositoryError(_)
         ));
     }
 

@@ -9,7 +9,7 @@ use crate::features::evaluate_permissions::error::{
     EvaluatePermissionsError, EvaluatePermissionsResult,
 };
 use crate::features::evaluate_permissions::ports::{
-    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics,
+    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics, EntityResolverPort,
 };
 use policies::shared::AuthorizationEngine;
 
@@ -31,6 +31,9 @@ pub struct EvaluatePermissionsUseCase<CACHE, LOGGER, METRICS> {
 
     // ✅ Motor de autorización del crate policies
     authorization_engine: Arc<AuthorizationEngine>,
+
+    // ✅ Entity resolver para obtener entidades reales
+    entity_resolver: Arc<dyn EntityResolverPort>,
 
     // ✅ Aspectos transversales
     cache: Option<CACHE>,
@@ -58,6 +61,7 @@ where
         iam_use_case: DynEffectivePoliciesQueryService,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
+        entity_resolver: Arc<dyn EntityResolverPort>,
         cache: Option<CACHE>,
         logger: LOGGER,
         metrics: METRICS,
@@ -66,6 +70,7 @@ where
             iam_use_case,
             org_use_case,
             authorization_engine,
+            entity_resolver,
             cache,
             logger,
             metrics,
@@ -231,7 +236,7 @@ where
         }
 
         // Convert request to Cedar format
-        let principal = EntityUid::from_str(&request.principal.to_string()).map_err(|e| {
+        let _principal = EntityUid::from_str(&request.principal.to_string()).map_err(|e| {
             EvaluatePermissionsError::InvalidRequest(format!("Invalid principal HRN: {}", e))
         })?;
 
@@ -240,28 +245,42 @@ where
                 EvaluatePermissionsError::InvalidRequest(format!("Invalid action: {}", e))
             })?;
 
-        let resource = EntityUid::from_str(&request.resource.to_string()).map_err(|e| {
+        let _resource = EntityUid::from_str(&request.resource.to_string()).map_err(|e| {
             EvaluatePermissionsError::InvalidRequest(format!("Invalid resource HRN: {}", e))
         })?;
 
         let context = self.create_cedar_context(request)?;
 
-        // Create authorization request for policies crate
-        // Note: Using empty entities vector for now - will be enhanced with proper entity resolution
+        // Resolve principal and resource entities
+        let principal_entity = self
+            .entity_resolver
+            .resolve(&request.principal)
+            .await
+            .map_err(|e| {
+                EvaluatePermissionsError::EntityResolutionError(format!(
+                    "Failed to resolve principal: {}",
+                    e
+                ))
+            })?;
+
+        let resource_entity = self
+            .entity_resolver
+            .resolve(&request.resource)
+            .await
+            .map_err(|e| {
+                EvaluatePermissionsError::EntityResolutionError(format!(
+                    "Failed to resolve resource: {}",
+                    e
+                ))
+            })?;
+
+        // Create authorization request for policies crate with real entities
         let auth_request = policies::shared::AuthorizationRequest {
-            principal: &MockHodeiEntity {
-                euid: principal.clone(),
-                mock_hrn: policies::shared::Hrn::from_string("hrn:hodei:iam::principal/mock")
-                    .unwrap(),
-            },
+            principal: principal_entity.as_ref(),
             action: action.clone(),
-            resource: &MockHodeiEntity {
-                euid: resource.clone(),
-                mock_hrn: policies::shared::Hrn::from_string("hrn:hodei:resource::mock/resource")
-                    .unwrap(),
-            },
+            resource: resource_entity.as_ref(),
             context,
-            entities: vec![], // Will be populated with actual entities later
+            entities: vec![], // Can be populated with additional context entities if needed
         };
 
         // Delegate to policies crate's AuthorizationEngine with the combined PolicySet
@@ -357,29 +376,5 @@ where
             "auth:{}:{}:{}",
             request.principal, request.action, request.resource
         )
-    }
-}
-
-/// Temporary mock implementation of HodeiEntity for authorization requests
-/// This will be replaced with proper entity implementations from hodei-iam and hodei-organizations
-struct MockHodeiEntity {
-    euid: cedar_policy::EntityUid,
-    mock_hrn: policies::shared::Hrn,
-}
-
-impl policies::domain::HodeiEntity for MockHodeiEntity {
-    fn hrn(&self) -> &policies::shared::Hrn {
-        &self.mock_hrn
-    }
-    fn euid(&self) -> cedar_policy::EntityUid {
-        self.euid.clone()
-    }
-
-    fn attributes(&self) -> std::collections::HashMap<String, cedar_policy::RestrictedExpression> {
-        std::collections::HashMap::new()
-    }
-
-    fn parents(&self) -> Vec<cedar_policy::EntityUid> {
-        vec![]
     }
 }

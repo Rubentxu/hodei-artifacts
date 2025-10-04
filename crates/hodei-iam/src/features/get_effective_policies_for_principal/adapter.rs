@@ -6,7 +6,10 @@
 use crate::features::get_effective_policies_for_principal::ports::{
     GroupFinderPort, PolicyFinderPort, UserFinderPort,
 };
-use crate::shared::application::ports::{GroupRepository, UserRepository};
+use crate::shared::application::ports::{
+    GroupRepository, GroupRepositoryError, PolicyRepositoryError, UserRepository,
+    UserRepositoryError,
+};
 use crate::shared::domain::{Group, User};
 use policies::shared::domain::hrn::Hrn;
 use std::sync::Arc;
@@ -24,15 +27,8 @@ impl<UR: UserRepository> UserFinderAdapter<UR> {
 
 #[async_trait::async_trait]
 impl<UR: UserRepository> UserFinderPort for UserFinderAdapter<UR> {
-    async fn find_by_hrn(
-        &self,
-        hrn: &Hrn,
-    ) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
-        self.repository.find_by_hrn(hrn).await.map_err(|e| {
-            // Convert anyhow error to a simple std::io::Error carrying the string message
-            Box::new(std::io::Error::other(e.to_string()))
-                as Box<dyn std::error::Error + Send + Sync>
-        })
+    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, UserRepositoryError> {
+        self.repository.find_by_hrn(hrn).await
     }
 }
 
@@ -52,7 +48,7 @@ impl<GR: GroupRepository> GroupFinderPort for GroupFinderAdapter<GR> {
     async fn find_groups_by_user_hrn(
         &self,
         _user_hrn: &Hrn,
-    ) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<Group>, GroupRepositoryError> {
         // Marcar uso explícito del repositorio para evitar warning de campo no usado
         let _ = &self.repository;
 
@@ -91,7 +87,7 @@ impl PolicyFinderPort for PolicyFinderAdapter {
     async fn find_policies_by_principal(
         &self,
         _principal_hrn: &Hrn,
-    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<String>, PolicyRepositoryError> {
         // TODO: Implementar cuando tengamos PolicyRepository
         // Por ahora devolvemos un vector vacío
         Ok(vec![])
