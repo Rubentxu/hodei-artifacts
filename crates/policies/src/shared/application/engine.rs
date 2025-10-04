@@ -1,7 +1,7 @@
 use crate::shared::application::PolicyStore;
 use crate::shared::domain::HodeiEntity;
 use crate::shared::domain::ports::PolicyStorage;
-use crate::shared::domain::ports::{Action, Principal, Resource};
+use crate::shared::domain::ports::{ActionTrait, Principal, Resource};
 use crate::shared::generate_fragment_for_type;
 use cedar_policy::{
     CedarSchemaError, Context, Entities, PolicySet, Request, Response, Schema, SchemaError,
@@ -122,7 +122,7 @@ impl EngineBuilder {
         Ok(self)
     }
 
-    pub fn register_action<A: Action>(&mut self) -> Result<&mut Self, Box<CedarSchemaError>> {
+    pub fn register_action<A: ActionTrait>(&mut self) -> Result<&mut Self, Box<CedarSchemaError>> {
         let (principal_type, resource_type) = A::applies_to();
         let schema_str = format!(
             "action \"{}\" appliesTo {{ principal: {}, resource: {} }};",

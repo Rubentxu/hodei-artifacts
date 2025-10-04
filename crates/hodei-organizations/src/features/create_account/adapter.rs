@@ -11,10 +11,12 @@ use std::sync::Arc;
 ///
 /// Deprecated: Use CreateAccountSurrealUnitOfWorkAdapter instead
 /// This adapter is kept for backwards compatibility but will be removed in future versions
+#[allow(dead_code)]
 pub(crate) struct AccountRepositoryAdapter<AR: AccountRepository> {
     repository: AR,
 }
 
+#[allow(dead_code)]
 impl<AR: AccountRepository> AccountRepositoryAdapter<AR> {
     pub(crate) fn new(repository: AR) -> Self {
         Self { repository }

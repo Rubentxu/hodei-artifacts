@@ -1,8 +1,7 @@
-/// SurrealDB infrastructure implementations
-/// 
-/// This module contains all SurrealDB-specific implementations of
-/// repositories and transaction management.
-
+//! SurrealDB infrastructure implementations
+//! 
+//! This module contains all SurrealDB-specific implementations of
+//! repositories and transaction management.
 pub mod unit_of_work;
 pub mod account_repository;
 pub mod ou_repository;

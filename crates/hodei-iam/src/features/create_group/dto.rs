@@ -1,4 +1,4 @@
-/// Data Transfer Objects for create_group feature
+//! Data Transfer Objects for create_group feature
 
 use serde::{Deserialize, Serialize};
 
@@ -15,4 +15,3 @@ pub struct GroupView {
     pub name: String,
     pub tags: Vec<String>,
 }
-

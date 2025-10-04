@@ -1,6 +1,6 @@
 use crate::shared::Hrn;
 use async_trait::async_trait;
-use cedar_policy::{EntityId, EntityTypeName, EntityUid, Policy, RestrictedExpression};
+use cedar_policy::{EntityTypeName, EntityUid, Policy, RestrictedExpression};
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -81,11 +81,7 @@ pub trait HodeiEntity {
         Vec::new()
     }
     fn euid(&self) -> EntityUid {
-        let hrn = self.hrn();
-        let eid = EntityId::from_str(hrn.resource_id.as_str()).unwrap();
-        let type_name: EntityTypeName =
-            EntityTypeName::from_str(hrn.resource_type.as_str()).unwrap();
-        EntityUid::from_type_name_and_id(type_name, eid)
+        self.hrn().to_euid()
     }
 }
 
@@ -95,8 +91,8 @@ pub trait Principal: HodeiEntity + HodeiEntityType {}
 /// A marker trait for entities that can act as 'resources'.
 pub trait Resource: HodeiEntity + HodeiEntityType {}
 
-/// Define an action that can be registered in thepolicy engine.
-pub trait Action {
+/// Define an action that can be registered in the policy engine.
+pub trait ActionTrait {
     /// The unique identifier of the action.
     fn name() -> &'static str;
 

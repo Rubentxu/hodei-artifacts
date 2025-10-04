@@ -8,15 +8,15 @@ use cedar_policy::{EntityTypeName, EntityUid, Policy, PolicySet, RestrictedExpre
 
 use policies::shared::application::EngineBuilder;
 use policies::shared::domain::ports::{
-    Action, AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, Principal, Resource,
+    AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, Principal, Resource,
     StorageError,
 };
 use policies::shared::Hrn;
+use policies::shared::domain::ActionTrait;
 use regex::Regex;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-
 // ============================================================================
 // Mock Storage
 // ============================================================================
@@ -197,7 +197,7 @@ impl Resource for ArtifactRepository {}
 
 struct ReadPackageAction;
 
-impl Action for ReadPackageAction {
+impl ActionTrait for ReadPackageAction {
     fn name() -> &'static str {
         "ReadPackage"
     }
@@ -210,7 +210,7 @@ impl Action for ReadPackageAction {
 
 struct WritePackageAction;
 
-impl Action for WritePackageAction {
+impl ActionTrait for WritePackageAction {
     fn name() -> &'static str {
         "WritePackage"
     }
@@ -223,7 +223,7 @@ impl Action for WritePackageAction {
 
 struct ManageRepositoryAction;
 
-impl Action for ManageRepositoryAction {
+impl ActionTrait for ManageRepositoryAction {
     fn name() -> &'static str {
         "ManageRepository"
     }

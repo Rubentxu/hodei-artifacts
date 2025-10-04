@@ -5,7 +5,6 @@ use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Dependency Injection for add_user_to_group feature with Unit of Work
-
 pub fn make_use_case(
     user_repo: Arc<dyn UserRepository>,
     group_repo: Arc<dyn GroupRepository>,

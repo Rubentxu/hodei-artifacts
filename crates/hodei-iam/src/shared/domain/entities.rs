@@ -1,8 +1,7 @@
 use cedar_policy::{EntityUid, RestrictedExpression};
 /// Domain entities for hodei-iam
-/// 
+///
 /// This module defines the core IAM entities: User, Group, ServiceAccount, Namespace
-
 use policies::shared::domain::hrn::Hrn;
 use policies::shared::domain::ports::{self, HodeiEntity, HodeiEntityType, Principal, Resource};
 use ports::AttributeType::*;
@@ -141,7 +140,7 @@ impl HodeiEntity for User {
     }
 
     fn parents(&self) -> Vec<EntityUid> {
-        self.group_hrns.iter().map(|hrn| hrn.euid()).collect()
+        self.group_hrns.iter().map(|hrn| hrn.to_euid()).collect()
     }
 
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
@@ -281,8 +280,12 @@ impl Resource for ServiceAccount {}
 // --- Implementaciones para Namespace ---
 
 impl HodeiEntityType for Namespace {
-    fn service_name() -> &'static str { "iam" }
-    fn resource_type_name() -> &'static str { "Namespace" }
+    fn service_name() -> &'static str {
+        "iam"
+    }
+    fn resource_type_name() -> &'static str {
+        "Namespace"
+    }
 
     fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
         vec![

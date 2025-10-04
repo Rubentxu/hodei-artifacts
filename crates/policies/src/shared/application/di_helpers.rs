@@ -60,11 +60,12 @@ pub mod test_helpers {
     use super::*;
     use crate::shared::Hrn;
     use crate::shared::domain::ports::{
-        Action, AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource,
+        AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource,
     };
     use cedar_policy::{EntityTypeName, EntityUid, RestrictedExpression};
     use std::collections::HashMap;
     use std::str::FromStr;
+    use crate::shared::domain::ActionTrait;
 
     // Test Principal type
     pub struct TestPrincipal {
@@ -134,7 +135,7 @@ pub mod test_helpers {
     // Test Action
     pub struct TestAccessAction;
 
-    impl Action for TestAccessAction {
+    impl ActionTrait for TestAccessAction {
         fn name() -> &'static str {
             "access"
         }

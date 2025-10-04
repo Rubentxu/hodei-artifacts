@@ -6,9 +6,9 @@ pub mod infrastructure;
 // Re-exports para tests e integración
 pub use application::{AuthorizationEngine, AuthorizationRequest, EngineBuilder, PolicyStore};
 pub use domain::{
-    entity_utils,
+    ActionTrait, entity_utils,
     hrn::Hrn,
-    ports::{Action, AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource},
+    ports::{AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource},
     schema_assembler::*,
 };
 

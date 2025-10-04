@@ -1,4 +1,4 @@
-/// IAM API endpoints for managing users and groups
+//! IAM API endpoints for managing users and groups
 
 use axum::{
     extract::State,

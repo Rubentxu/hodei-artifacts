@@ -103,13 +103,30 @@ impl Hrn {
 
     /// Convert HRN to Cedar EntityUid con namespace PascalCase (p.ej., Iam::User)
     ///
+    /// Convert HRN to Cedar EntityUid
+    ///
     /// Cedar expects UIDs as `Type::"id"`, where Type may be namespaced like `App::User`.
     /// We map:
     /// - Type: if `resource_type` already contains `::`, it's used as-is.
     ///   otherwise, when `service` is non-empty we construct `"{service}::{resource_type}"`.
     ///   both components are normalized to valid Cedar identifiers.
     /// - Id: always quoted string; if parsing fails, we wrap in quotes.
-    pub fn euid(&self) -> EntityUid {
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use policies::shared::domain::hrn::Hrn;
+    ///
+    /// let hrn = Hrn::new(
+    ///     "aws".to_string(),
+    ///     "iam".to_string(),
+    ///     "123".to_string(),
+    ///     "User".to_string(),
+    ///     "alice".to_string(),
+    /// );
+    /// let euid = hrn.to_euid();
+    /// ```
+    pub fn to_euid(&self) -> EntityUid {
         // Namespace Cedar con PascalCase derivado del servicio
         let namespace = Self::to_pascal_case(&self.service);
         let type_str = if self.resource_type.contains("::") {
@@ -190,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn euid_is_constructed() {
+    fn to_euid_is_constructed() {
         let hrn = Hrn::new(
             "aws".to_string(),
             "hodei".to_string(),
@@ -198,7 +215,7 @@ mod tests {
             "User".to_string(),
             "alice".to_string(),
         );
-        let euid = hrn.euid();
+        let euid = hrn.to_euid();
         // Basic sanity: formatting should include type and id
         let s = format!("{}", euid);
         assert!(s.contains("User"));
@@ -206,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn euid_uses_service_namespace_for_type() {
+    fn to_euid_uses_service_namespace_for_type() {
         let hrn = Hrn::new(
             "aws".to_string(),
             "hodei-svc".to_string(),
@@ -214,7 +231,7 @@ mod tests {
             "User-Profile".to_string(),
             "bob".to_string(),
         );
-        let euid = hrn.euid();
+        let euid = hrn.to_euid();
         let s = format!("{}", euid);
         // Expect PascalCase namespace and normalized type (guiones convertidos a guiones bajos)
         assert!(s.contains("HodeiSvc::User_Profile"));
@@ -222,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn euid_uses_pascal_namespace() {
+    fn to_euid_uses_pascal_namespace() {
         let hrn = Hrn::new(
             "aws".to_string(),
             "iam".to_string(),
@@ -230,7 +247,7 @@ mod tests {
             "User".to_string(),
             "alice".to_string(),
         );
-        let euid = hrn.euid();
+        let euid = hrn.to_euid();
         let s = format!("{}", euid);
         assert!(s.contains("Iam::User"));
         assert!(s.contains("\"alice\""));

@@ -1,9 +1,3 @@
-//! Utility functions and helpers for working with HodeiEntity implementations.
-//!
-//! This module provides helper functions to make it easier to implement the HodeiEntity
-//! trait, particularly for converting common Rust types to RestrictedExpression values
-//! that can be used as entity attributes in Cedar policies.
-
 use cedar_policy::RestrictedExpression;
 use std::collections::{BTreeMap, HashMap};
 

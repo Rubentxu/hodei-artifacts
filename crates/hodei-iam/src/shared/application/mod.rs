@@ -1,4 +1,4 @@
-/// Application layer for hodei-iam
+//! Application layer for hodei-iam
 
 pub mod ports;
 mod di_configurator;

@@ -54,7 +54,7 @@ fn test_hrn_for_entity_type_euid() {
         "bob".to_string(),
     );
 
-    let euid = hrn.euid();
+    let euid = hrn.to_euid();
     let euid_str = format!("{}", euid);
 
     assert!(euid_str.contains("Iam::User")); // Cedar namespace is PascalCase

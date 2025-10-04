@@ -1,4 +1,4 @@
-/// Data Transfer Objects for create_user feature
+//! Data Transfer Objects for create_user feature
 
 use serde::{Deserialize, Serialize};
 
@@ -18,4 +18,3 @@ pub struct UserView {
     pub groups: Vec<String>,
     pub tags: Vec<String>,
 }
-

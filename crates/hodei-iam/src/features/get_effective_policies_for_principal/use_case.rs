@@ -276,8 +276,8 @@ mod tests {
         let group_hrn = Hrn::from_string("hrn:hodei:iam:us-east-1:default:group/admins").unwrap();
         let group = Group::new(group_hrn.clone(), "admins".to_string());
 
-        let user_policy = r#"permit(principal, action, resource);"#.to_string();
-        let group_policy = r#"permit(principal, action, resource);"#.to_string();
+        let user_policy = r#"permit(principal == User::"test-user", action == Action::"read", resource);"#.to_string();
+        let group_policy = r#"forbid(principal == Group::"admins", action == Action::"delete", resource);"#.to_string();
 
         let user_finder = Arc::new(MockUserFinder {
             users: vec![user.clone()],

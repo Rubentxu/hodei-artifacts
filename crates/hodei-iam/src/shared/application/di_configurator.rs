@@ -2,7 +2,6 @@ use crate::shared::domain::{CreateGroupAction, CreateUserAction, Group, Namespac
 /// DI Configurator for hodei-iam
 /// 
 /// Provides a function to configure the policies EngineBuilder with default IAM entities
-
 use anyhow::Result;
 use policies::shared::application::EngineBuilder;
 
