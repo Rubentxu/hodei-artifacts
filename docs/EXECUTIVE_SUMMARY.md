@@ -15,7 +15,7 @@ El proyecto está en proceso de transformación hacia una arquitectura de **mono
 | Componente | Completitud | Estado | Bloqueadores |
 |------------|-------------|--------|--------------|
 | **Kernel** | 🟢 **90%** | Operacional | HU-1.6 (cosmético) |
-| **Policies** | 🟡 **60%** | Parcial | Falta traductor Cedar |
+| **Policies** | 🟢 **85%** | Operacional | ✅ Traductor implementado |
 | **Hodei-IAM** | 🟡 **50%** | Con errores | Cedar en infra, evaluador incompleto |
 | **Hodei-Organizations** | 🔴 **30%** | Con errores | Cedar en dominio, evaluador no existe |
 | **Hodei-Authorizer** | 🟢 **100%** | Completo | Esperando evaluadores concretos |
@@ -62,22 +62,50 @@ El proyecto está en proceso de transformación hacia una arquitectura de **mono
   - 9 tests unitarios
   - **Código listo para producción** (esperando evaluadores concretos)
 
-### 3. Políticas: Feature `create_policy` Completa
+### 3. 🔴 ERROR DETECTADO: Feature `create_policy` en `policies`
 
-**Impacto:** 🟢 ALTA - Patrón VSA demostrado
+**Impacto:** 🔴 CRÍTICO - Arquitectura incorrecta
 
-- ✅ Arquitectura VSA completa
-- ✅ 26 tests (dto, error, ports, use_case)
-- ✅ Adaptadores implementados (UUID, InMemory, CedarValidator)
-- ✅ DI container funcional
-- ✅ Cero clippy warnings
-- ✅ Feature flag `legacy_infra` aislando código antiguo
+- ❌ **`policies` tiene `features/create_policy/` que NO debe existir**
+- ❌ Viola HU-2.3: "Eliminar TODOS los directorios de features de policies"
+- ❌ `policies` debe ser **solo biblioteca de evaluación**, NO gestor
+- ✅ La gestión correcta ya existe en `hodei-iam/features/create_policy/`
+- **Acción Requerida:** ELIMINAR `crates/policies/src/features/create_policy/`
 
 ---
 
 ## 🔴 Problemas Críticos Identificados
 
-### 1. 🚨 BLOQUEANTE: Traductor Cedar No Existe (Épica 2)
+### 1. 🚨 ERROR ARQUITECTÓNICO: `policies` Gestiona Políticas (Épica 2)
+
+**Impacto:** 🔴 CRÍTICO - Violación de responsabilidades
+
+**Problema:**
+- ❌ `crates/policies/src/features/create_policy/` **NO debe existir**
+- ❌ HU-2.3 dice: "Eliminar TODOS los directorios de features (create_policy, delete_policy, etc.)"
+- ❌ `policies` debe ser **biblioteca pura de evaluación**, NO gestor de políticas
+- ✅ La gestión correcta ya existe en `hodei-iam/features/create_policy/`
+
+**Estado Correcto:**
+```
+policies debe tener SOLO:
+  shared/application/engine.rs    # AuthorizationEngine
+  shared/infrastructure/translator.rs  # Traductor (a crear)
+  
+NO debe tener features/create_policy/
+```
+
+**Gestión de políticas está en el lugar correcto:**
+```
+✅ hodei-iam/features/create_policy/        (para políticas IAM)
+✅ hodei-organizations/features/create_scp/ (para SCPs)
+```
+
+**Solución:** ELIMINAR `crates/policies/src/features/` completo (excepto validate_policy si es útil)
+
+---
+
+### 2. 🚨 BLOQUEANTE: Traductor Cedar No Existe (Épica 2)
 
 **Impacto:** 🔴 CRÍTICO - Bloquea toda la Fase 2
 
@@ -108,7 +136,7 @@ engine.rs (refactorizar)
 
 ---
 
-### 2. 🚨 Cedar Acoplado en Entidades de Dominio
+### 3. 🚨 Cedar Acoplado en Entidades de Dominio
 
 **Impacto:** 🔴 ALTO - Viola principios arquitectónicos
 
@@ -144,7 +172,7 @@ engine.rs (refactorizar)
 
 ---
 
-### 3. 🚨 Evaluadores Autónomos No Existen (Épica 3)
+### 4. 🚨 Evaluadores Autónomos No Existen (Épica 3)
 
 **Impacto:** 🔴 CRÍTICO - Sistema no funcional end-to-end
 
@@ -168,7 +196,7 @@ engine.rs (refactorizar)
 
 ---
 
-### 4. Código Legacy No Eliminado
+### 5. Código Legacy No Eliminado
 
 **Impacto:** 🟡 MEDIO - Confusión y deuda técnica
 
@@ -196,7 +224,8 @@ engine.rs (refactorizar)
 | **Cobertura** | ~40% | 80%+ | 🔴 50% brecha |
 | **Clippy warnings** | 0 (kernel, policies) ✅ | 0 (todos) | 🟡 60% |
 | **Cedar en dominio** | 9 archivos 🔴 | 0 archivos | 🔴 100% brecha |
-| **VSA completo** | 2 features ✅ | 15+ features | 🔴 87% brecha |
+| **Features incorrectas** | 1 (create_policy) 🔴 | 0 | 🔴 |
+| **VSA completo** | 1 feature ✅ | 15+ features | 🔴 93% brecha |
 
 ### Estado de Compilación
 
@@ -218,17 +247,24 @@ engine.rs (refactorizar)
 
 #### Tareas Críticas (Orden Estricto):
 
-1. **T1: Implementar Traductor Cedar** ⏰ 3-4 días
+1. **T1: ELIMINAR `policies/features/create_policy/`** ⏰ 1 día
+   - Eliminar directorio completo `crates/policies/src/features/create_policy/`
+   - Eliminar todas las features legacy (batch_eval, evaluate_policies, etc.)
+   - Dejar solo `shared/application/engine.rs` y preparar para traductor
+   - Actualizar `lib.rs` y `mod.rs`
+   - **CORRECCIÓN ARQUITECTÓNICA CRÍTICA**
+
+2. **T2: Implementar Traductor Cedar** ⏰ 3-4 días
    - Crear `translator.rs` con funciones de conversión
    - 30+ tests unitarios
    - **BLOQUEANTE CRÍTICO**
 
-2. **T2: Refactorizar AuthorizationEngine** ⏰ 2-3 días
+3. **T3: Refactorizar AuthorizationEngine** ⏰ 2-3 días
    - API pública agnóstica
    - Uso interno del traductor
    - 20+ tests integración
 
-3. **T3: Limpiar Cedar de Entidades** ⏰ 2-3 días
+4. **T4: Limpiar Cedar de Entidades** ⏰ 2-3 días
    - Eliminar imports en `hodei-organizations/domain`
    - Eliminar imports en `hodei-iam/infrastructure`
    - Verificar `grep -r "use cedar_policy" → 0 matches`
