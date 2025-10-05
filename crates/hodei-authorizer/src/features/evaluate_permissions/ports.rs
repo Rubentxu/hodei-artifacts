@@ -7,8 +7,15 @@ use crate::features::evaluate_permissions::error::EvaluatePermissionsResult;
 use kernel::Hrn;
 
 /// Trait for providing organization boundary policies (SCPs)
+///
+/// This trait defines the interface for obtaining Service Control Policies (SCPs)
+/// that define organizational boundaries for authorization decisions.
 #[async_trait]
 pub trait OrganizationBoundaryProvider: Send + Sync {
+    /// Get effective SCPs for an entity
+    ///
+    /// Returns a PolicySet containing all effective Service Control Policies
+    /// for the specified entity HRN.
     async fn get_effective_scps_for(
         &self,
         entity_hrn: &Hrn,

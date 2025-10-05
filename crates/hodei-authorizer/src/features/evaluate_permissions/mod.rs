@@ -1,10 +1,47 @@
 //! Feature for evaluating authorization permissions with multi-layer security
 //!
-//! This feature provides comprehensive authorization evaluation combining:
+//! This feature provides comprehensive authorization evaluation by combining:
 //! - IAM policies (user and group permissions)
 //! - Service Control Policies (SCP) for organizational boundaries
 //! - Cedar policy engine for evaluation
 //! - Caching, logging, and metrics
+//!
+//! # Components
+//!
+//! - `dto`: Data Transfer Objects for authorization requests and responses
+//! - `error`: Error types specific to authorization evaluation
+//! - `ports`: Interfaces for cross-context dependencies (cache, logger, metrics, etc.)
+//! - `use_case`: Core authorization evaluation logic
+//! - `di`: Dependency injection container and factories
+//! - `mocks`: Mock implementations for testing
+//!
+//! # Example
+//!
+//! ```no_run
+//! use hodei_authorizer::features::evaluate_permissions::dto::{
+//!     AuthorizationRequest, AuthorizationContext
+//! };
+//! use hodei_authorizer::features::evaluate_permissions::di::factories;
+//! use hodei_authorizer::features::evaluate_permissions::EvaluatePermissionsUseCase;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create an authorization request
+//! let request = AuthorizationRequest::new(
+//!     "hrn:hodei:iam:us-east-1:default:user/alice".parse()?,
+//!     "read".to_string(),
+//!     "hrn:hodei:s3:us-east-1:default:bucket/my-bucket".parse()?,
+//! );
+//!
+//! // Build the use case with dependencies
+//! let use_case: EvaluatePermissionsUseCase<_, _, _> = factories::create_without_cache(
+//!     // ... dependencies
+//! );
+//!
+//! // Execute the authorization evaluation
+//! let response = use_case.execute(request).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 pub mod adapter;
 pub mod di;

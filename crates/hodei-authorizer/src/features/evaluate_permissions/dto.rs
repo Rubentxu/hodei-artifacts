@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Request for authorization evaluation
+///
+/// This struct represents an authorization request with all necessary information
+/// to evaluate permissions using the Cedar policy engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizationRequest {
     /// The principal (user/service) requesting access

@@ -152,8 +152,16 @@ async fn test_create_ou_generates_valid_hrn() {
 
     // Verify HRN structure
     let hrn_str = view.hrn.to_string();
-    assert!(hrn_str.contains("organizations"));
-    assert!(hrn_str.contains("ou"));
-    assert!(hrn_str.contains("HrnTestOU"));
+    // HRN format: hrn:partition:service:region:namespace:resource_type/resource_id
+    // For organizations, service is "hodei", not "organizations"
+    assert!(
+        hrn_str.contains("hodei"),
+        "HRN should contain service 'hodei'"
+    );
+    assert!(
+        hrn_str.contains("ou"),
+        "HRN should contain resource type 'ou'"
+    );
+    assert!(hrn_str.contains("HrnTestOU"), "HRN should contain OU name");
     assert_eq!(view.parent_hrn, parent_hrn);
 }

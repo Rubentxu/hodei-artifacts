@@ -22,23 +22,23 @@ use kernel::{
 
 /// Use case for evaluating authorization permissions with multi-layer security
 ///
-/// Esta implementación sigue el principio de responsabilidad única:
-/// - NO gestiona políticas directamente
-/// - Obtiene políticas IAM y SCP vía puertos cross-context (shared kernel)
-/// - DELEGA la evaluación al AuthorizationEngine de policies
-/// - Gestiona aspectos transversales: cache, logging, metrics
+/// This implementation follows the Single Responsibility Principle:
+/// - It does NOT manage policies directly
+/// - It obtains IAM and SCP policies via cross-context ports (shared kernel)
+/// - It DELEGATES evaluation to the AuthorizationEngine from the policies crate
+/// - It manages cross-cutting concerns: cache, logging, metrics
 pub struct EvaluatePermissionsUseCase<CACHE, LOGGER, METRICS> {
-    // Puertos cross-context (no dependemos de casos de uso concretos de otros crates)
+    // Cross-context ports (we don't depend on concrete use cases from other crates)
     iam_port: Arc<dyn EffectivePoliciesQueryPort>,
     org_port: Option<Arc<dyn GetEffectiveScpsPort>>,
 
-    // Motor de autorización del crate policies
+    // Authorization engine from the policies crate
     authorization_engine: Arc<AuthorizationEngine>,
 
-    // Entity resolver para obtener entidades reales
+    // Entity resolver to obtain real entities
     entity_resolver: Arc<dyn EntityResolverPort>,
 
-    // Aspectos transversales
+    // Cross-cutting concerns
     cache: Option<CACHE>,
     logger: LOGGER,
     metrics: METRICS,
