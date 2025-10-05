@@ -3,7 +3,13 @@ pub mod application;
 pub mod domain;
 pub mod infrastructure;
 
-// Re-exports para tests e integración - only schema-related functionality remains
+// Re-exports del nuevo engine (SIEMPRE disponible)
+pub use application::engine::{
+    AuthorizationDecision, AuthorizationEngine, EngineError, EngineRequest, PolicyDocument,
+};
+
+// Legacy re-exports (behind feature flag)
+#[cfg(feature = "legacy_infra")]
 pub use application::EngineBuilder;
 
 #[cfg(feature = "legacy_infra")]
