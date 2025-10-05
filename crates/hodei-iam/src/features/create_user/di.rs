@@ -1,7 +1,7 @@
 use super::adapter::GenericCreateUserUnitOfWork;
 use super::use_case::CreateUserUseCase;
 use crate::shared::application::ports::UserRepository;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Dependency Injection for create_user feature with Unit of Work

@@ -7,7 +7,7 @@ use crate::shared::application::ports::{
     GroupRepositoryError, PolicyRepositoryError, UserRepositoryError,
 };
 use crate::shared::domain::{Group, User};
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 
 /// Port para encontrar usuarios por HRN
 #[async_trait::async_trait]

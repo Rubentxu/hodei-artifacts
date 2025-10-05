@@ -1,6 +1,6 @@
 /// Unit tests for Hrn constructor with HodeiEntityType
 use hodei_iam::shared::domain::{Group, User};
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 
 #[test]
 fn test_hrn_for_entity_type_user() {

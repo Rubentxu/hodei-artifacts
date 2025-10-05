@@ -3,7 +3,7 @@
 //! This module defines standardized error types for all repository operations
 //! using thiserror for better error handling and type safety.
 
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use thiserror::Error;
 
 /// Errors that can occur during User repository operations

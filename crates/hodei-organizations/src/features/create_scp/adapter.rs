@@ -46,7 +46,7 @@ impl CreateScpSurrealUnitOfWorkAdapter {
 #[async_trait]
 impl CreateScpUnitOfWork for CreateScpSurrealUnitOfWorkAdapter {
     async fn begin(&mut self) -> Result<(), CreateScpError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .begin()
             .await
@@ -54,7 +54,7 @@ impl CreateScpUnitOfWork for CreateScpSurrealUnitOfWorkAdapter {
     }
 
     async fn commit(&mut self) -> Result<(), CreateScpError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .commit()
             .await
@@ -62,7 +62,7 @@ impl CreateScpUnitOfWork for CreateScpSurrealUnitOfWorkAdapter {
     }
 
     async fn rollback(&mut self) -> Result<(), CreateScpError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .rollback()
             .await
@@ -70,7 +70,7 @@ impl CreateScpUnitOfWork for CreateScpSurrealUnitOfWorkAdapter {
     }
 
     fn scps(&self) -> Arc<dyn ScpRepository> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow.scps()
     }
 }
@@ -95,7 +95,7 @@ impl CreateScpUnitOfWorkFactory for CreateScpSurrealUnitOfWorkFactoryAdapter {
     type UnitOfWork = CreateScpSurrealUnitOfWorkAdapter;
 
     async fn create(&self) -> Result<Self::UnitOfWork, CreateScpError> {
-        use shared::application::ports::unit_of_work::UnitOfWorkFactory;
+        use kernel::application::ports::unit_of_work::UnitOfWorkFactory;
         let uow = self
             .inner_factory
             .create()

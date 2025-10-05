@@ -4,10 +4,10 @@ use crate::features::attach_scp::ports::{
     AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
 };
 use crate::shared::domain::events::{ScpAttached, ScpTargetType};
-use policies::domain::Hrn;
-use shared::EventPublisher;
-use shared::application::ports::event_bus::EventEnvelope;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::EventPublisher;
+use kernel::Hrn;
+use kernel::application::ports::event_bus::EventEnvelope;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Use case for attaching an SCP to an entity (Account or OU)

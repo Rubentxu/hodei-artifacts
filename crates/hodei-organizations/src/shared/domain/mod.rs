@@ -10,7 +10,7 @@ pub mod events;
 pub(crate) mod hrn {
     // Import y helper solo disponibles en tests (evita unused_imports y unexpected cfg)
     #[cfg(test)]
-    pub(crate) use policies::shared::domain::hrn::Hrn;
+    pub(crate) use kernel::Hrn;
 
     // Compat helper para tests legacy que usaban Hrn::generate("ou")
     #[cfg(test)]

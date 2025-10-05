@@ -13,8 +13,9 @@ use axum::{
     routing::{delete, get, post, put},
 };
 
-use shared::infrastructure::audit::{AuditEventHandler, AuditLogStore};
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::EventBus;
+use kernel::infrastructure::audit::{AuditEventHandler, AuditLogStore};
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::{
@@ -203,10 +204,8 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
             })?;
 
     // IAM in-memory repos and use cases (for now always in-memory)
-    let user_repo =
-        Arc::new(hodei_iam::shared::infrastructure::persistence::InMemoryUserRepository::new());
-    let group_repo =
-        Arc::new(hodei_iam::shared::infrastructure::persistence::InMemoryGroupRepository::new());
+    let user_repo = Arc::new(hodei_iam::infrastructure::InMemoryUserRepository::new());
+    let group_repo = Arc::new(hodei_iam::infrastructure::InMemoryGroupRepository::new());
 
     // Create IAM use cases with event bus integration
     let create_user_uc = hodei_iam::features::create_user::di::make_use_case_with_events(
@@ -225,11 +224,15 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
         );
 
     // Create GetEffectivePolicies use case (for hodei-authorizer integration)
-    let _effective_policies_service: hodei_iam::DynEffectivePoliciesQueryService = {
+    let _effective_policies_service: Arc<
+        dyn kernel::application::ports::EffectivePoliciesQueryPort,
+    > = {
         // intentionally unused for now (wired later into authorizer)
         let uc =
             hodei_iam::make_get_effective_policies_use_case(user_repo.clone(), group_repo.clone());
-        Arc::new(uc)
+        // Wrap use case in adapter to implement the port trait
+        let adapter = hodei_iam::EffectivePoliciesAdapter::new(uc);
+        Arc::new(adapter)
     };
 
     let state = Arc::new(AppState {
@@ -260,14 +263,12 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
 
     // Subscribe AuditEventHandler to capture all domain events
     tracing::info!("Subscribing AuditEventHandler to all domain events");
-    // Bring EventBus trait into scope locally for subscribe() calls
-    use shared::EventBus;
 
     // Subscribe to IAM events
 
     let audit_handler_user_created = Arc::new(AuditEventHandler::new(audit_store.clone()));
     event_bus
-        .subscribe::<hodei_iam::shared::domain::events::UserCreated, _>(audit_handler_user_created)
+        .subscribe::<hodei_iam::events::UserCreated, _>(audit_handler_user_created)
         .await
         .map_err(|e| {
             AppError::Internal(format!(
@@ -278,9 +279,7 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
 
     let audit_handler_group_created = Arc::new(AuditEventHandler::new(audit_store.clone()));
     event_bus
-        .subscribe::<hodei_iam::shared::domain::events::GroupCreated, _>(
-            audit_handler_group_created,
-        )
+        .subscribe::<hodei_iam::events::GroupCreated, _>(audit_handler_group_created)
         .await
         .map_err(|e| {
             AppError::Internal(format!(
@@ -291,9 +290,7 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
 
     let audit_handler_user_added = Arc::new(AuditEventHandler::new(audit_store.clone()));
     event_bus
-        .subscribe::<hodei_iam::shared::domain::events::UserAddedToGroup, _>(
-            audit_handler_user_added,
-        )
+        .subscribe::<hodei_iam::events::UserAddedToGroup, _>(audit_handler_user_added)
         .await
         .map_err(|e| {
             AppError::Internal(format!(
@@ -305,9 +302,7 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
     // Subscribe to Organizations events
     let audit_handler_account_created = Arc::new(AuditEventHandler::new(audit_store.clone()));
     event_bus
-        .subscribe::<hodei_organizations::shared::domain::events::AccountCreated, _>(
-            audit_handler_account_created,
-        )
+        .subscribe::<hodei_organizations::events::AccountCreated, _>(audit_handler_account_created)
         .await
         .map_err(|e| {
             AppError::Internal(format!(
@@ -318,9 +313,7 @@ pub async fn build_app_state(config: &Config) -> Result<Arc<AppState>> {
 
     let audit_handler_scp_attached = Arc::new(AuditEventHandler::new(audit_store.clone()));
     event_bus
-        .subscribe::<hodei_organizations::shared::domain::events::ScpAttached, _>(
-            audit_handler_scp_attached,
-        )
+        .subscribe::<hodei_organizations::events::ScpAttached, _>(audit_handler_scp_attached)
         .await
         .map_err(|e| {
             AppError::Internal(format!(

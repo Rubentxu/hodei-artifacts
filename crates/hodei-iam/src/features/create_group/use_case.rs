@@ -1,10 +1,10 @@
 use super::dto::{CreateGroupCommand, GroupView};
 use super::ports::CreateGroupUnitOfWork;
 use crate::shared::domain::{Group, events::GroupCreated};
-use policies::shared::domain::hrn::Hrn;
-use shared::EventPublisher;
-use shared::application::ports::event_bus::EventEnvelope;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::EventPublisher;
+use kernel::Hrn;
+use kernel::application::ports::event_bus::EventEnvelope;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Use case for creating a new group with transactional integrity

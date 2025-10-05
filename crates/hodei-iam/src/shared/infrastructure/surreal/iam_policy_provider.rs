@@ -6,7 +6,7 @@ use crate::shared::infrastructure::surreal::{
 };
 use async_trait::async_trait;
 use cedar_policy::PolicySet;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use surrealdb::Surreal;
 use surrealdb::engine::any::Any;
 use tracing::{info, instrument, warn};

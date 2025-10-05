@@ -2,9 +2,9 @@ use crate::config::Config;
 use hodei_iam::features::add_user_to_group::adapter::GenericAddUserToGroupUnitOfWork;
 use hodei_iam::features::create_group::adapter::GenericCreateGroupUnitOfWork;
 use hodei_iam::features::create_user::adapter::GenericCreateUserUnitOfWork;
+use kernel::infrastructure::audit::AuditLogStore;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use metrics::{Counter, Histogram};
-use shared::infrastructure::audit::AuditLogStore;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -38,8 +38,8 @@ pub struct AppState {
         Arc<hodei_iam::AddUserToGroupUseCase<GenericAddUserToGroupUnitOfWork>>,
 
     // IAM repositories (for listing endpoints)
-    pub user_repo: Arc<dyn hodei_iam::shared::application::ports::UserRepository>,
-    pub group_repo: Arc<dyn hodei_iam::shared::application::ports::GroupRepository>,
+    pub user_repo: Arc<dyn hodei_iam::ports::UserRepository>,
+    pub group_repo: Arc<dyn hodei_iam::ports::GroupRepository>,
 
     // Event Bus for domain events (concrete type for now, can be abstracted later with enum dispatch)
     pub event_bus: Arc<InMemoryEventBus>,

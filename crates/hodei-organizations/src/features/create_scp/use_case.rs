@@ -2,7 +2,7 @@ use crate::features::create_scp::dto::{CreateScpCommand, ScpView};
 use crate::features::create_scp::error::CreateScpError;
 use crate::features::create_scp::ports::{CreateScpUnitOfWork, CreateScpUnitOfWorkFactory};
 use crate::shared::domain::scp::ServiceControlPolicy;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::sync::Arc;
 
 /// Use case for creating service control policies with transactional guarantees

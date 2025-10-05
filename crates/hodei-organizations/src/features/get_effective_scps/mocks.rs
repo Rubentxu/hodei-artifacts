@@ -6,7 +6,7 @@ use crate::shared::application::ports::ou_repository::OuRepositoryError;
 use crate::shared::application::ports::scp_repository::ScpRepositoryError;
 use crate::shared::domain::{Account, OrganizationalUnit, ServiceControlPolicy};
 use async_trait::async_trait;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::collections::HashMap;
 use std::sync::RwLock;
 

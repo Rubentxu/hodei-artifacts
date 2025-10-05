@@ -3,7 +3,7 @@ use crate::shared::application::ports::{
     GroupRepository, GroupRepositoryError, UserRepository, UserRepositoryError,
 };
 use crate::shared::domain::{Group, User};
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};

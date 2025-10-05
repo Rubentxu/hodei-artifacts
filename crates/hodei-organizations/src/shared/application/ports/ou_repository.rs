@@ -1,7 +1,7 @@
 use crate::shared::domain::ou::OrganizationalUnit;
 use async_trait::async_trait;
+use kernel::Hrn;
 use thiserror::Error;
-use policies::domain::Hrn;
 
 #[derive(Debug, Error)]
 pub enum OuRepositoryError {
@@ -14,5 +14,6 @@ pub enum OuRepositoryError {
 #[async_trait]
 pub trait OuRepository {
     async fn save(&self, ou: &OrganizationalUnit) -> Result<(), OuRepositoryError>;
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<OrganizationalUnit>, OuRepositoryError>;
+    async fn find_by_hrn(&self, hrn: &Hrn)
+    -> Result<Option<OrganizationalUnit>, OuRepositoryError>;
 }

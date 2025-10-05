@@ -5,7 +5,7 @@ use crate::features::create_scp::ports::{
 use crate::shared::application::ports::scp_repository::{ScpRepository, ScpRepositoryError};
 use crate::shared::domain::scp::ServiceControlPolicy;
 use async_trait::async_trait;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 

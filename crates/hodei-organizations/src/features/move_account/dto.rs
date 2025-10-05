@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use policies::domain::Hrn;
+use kernel::Hrn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoveAccountCommand {

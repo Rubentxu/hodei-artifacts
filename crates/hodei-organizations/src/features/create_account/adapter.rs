@@ -49,7 +49,7 @@ impl CreateAccountSurrealUnitOfWorkAdapter {
 #[async_trait]
 impl CreateAccountUnitOfWork for CreateAccountSurrealUnitOfWorkAdapter {
     async fn begin(&mut self) -> Result<(), CreateAccountError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .begin()
             .await
@@ -57,7 +57,7 @@ impl CreateAccountUnitOfWork for CreateAccountSurrealUnitOfWorkAdapter {
     }
 
     async fn commit(&mut self) -> Result<(), CreateAccountError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .commit()
             .await
@@ -65,7 +65,7 @@ impl CreateAccountUnitOfWork for CreateAccountSurrealUnitOfWorkAdapter {
     }
 
     async fn rollback(&mut self) -> Result<(), CreateAccountError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .rollback()
             .await
@@ -73,7 +73,7 @@ impl CreateAccountUnitOfWork for CreateAccountSurrealUnitOfWorkAdapter {
     }
 
     fn accounts(&self) -> Arc<dyn AccountRepository> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow.accounts()
     }
 }
@@ -98,7 +98,7 @@ impl CreateAccountUnitOfWorkFactory for CreateAccountSurrealUnitOfWorkFactoryAda
     type UnitOfWork = CreateAccountSurrealUnitOfWorkAdapter;
 
     async fn create(&self) -> Result<Self::UnitOfWork, CreateAccountError> {
-        use shared::application::ports::unit_of_work::UnitOfWorkFactory;
+        use kernel::application::ports::unit_of_work::UnitOfWorkFactory;
         let uow = self
             .inner_factory
             .create()

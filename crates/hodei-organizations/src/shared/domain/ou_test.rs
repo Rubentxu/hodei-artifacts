@@ -1,5 +1,5 @@
 use crate::shared::domain::OrganizationalUnit;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 
 #[test]
 fn test_ou_add_child_account() {
@@ -8,10 +8,10 @@ fn test_ou_add_child_account() {
         "Test OU".to_string(),
         Hrn::new("ou", "parent-ou"),
     );
-    
+
     let account_hrn = Hrn::new("account", "test-account");
     ou.add_child_account(account_hrn.clone());
-    
+
     assert!(ou.child_accounts.contains(&account_hrn.to_string()));
 }
 
@@ -23,10 +23,10 @@ fn test_ou_remove_child_account() {
         "Test OU".to_string(),
         Hrn::new("ou", "parent-ou"),
     );
-    
+
     ou.add_child_account(account_hrn.clone());
     assert!(ou.child_accounts.contains(&account_hrn.to_string()));
-    
+
     ou.remove_child_account(account_hrn.clone());
     assert!(!ou.child_accounts.contains(&account_hrn.to_string()));
 }
@@ -38,10 +38,10 @@ fn test_ou_add_child_ou() {
         "Test OU".to_string(),
         Hrn::new("ou", "parent-ou"),
     );
-    
+
     let child_ou_hrn = Hrn::new("ou", "child-ou");
     ou.add_child_ou(child_ou_hrn.clone());
-    
+
     assert!(ou.child_ous.contains(&child_ou_hrn.to_string()));
 }
 
@@ -53,10 +53,10 @@ fn test_ou_remove_child_ou() {
         "Test OU".to_string(),
         Hrn::new("ou", "parent-ou"),
     );
-    
+
     ou.add_child_ou(child_ou_hrn.clone());
     assert!(ou.child_ous.contains(&child_ou_hrn.to_string()));
-    
+
     ou.remove_child_ou(child_ou_hrn.clone());
     assert!(!ou.child_ous.contains(&child_ou_hrn.to_string()));
 }
@@ -68,10 +68,10 @@ fn test_ou_attach_scp() {
         "Test OU".to_string(),
         Hrn::new("ou", "parent-ou"),
     );
-    
+
     let scp_hrn = Hrn::new("scp", "test-scp");
     ou.attach_scp(scp_hrn.clone());
-    
+
     assert!(ou.attached_scps.contains(&scp_hrn.to_string()));
 }
 
@@ -83,10 +83,10 @@ fn test_ou_detach_scp() {
         "Test OU".to_string(),
         Hrn::new("ou", "parent-ou"),
     );
-    
+
     ou.attach_scp(scp_hrn.clone());
     assert!(ou.attached_scps.contains(&scp_hrn.to_string()));
-    
+
     ou.detach_scp(scp_hrn.clone());
     assert!(!ou.attached_scps.contains(&scp_hrn.to_string()));
 }

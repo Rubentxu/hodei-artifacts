@@ -2,7 +2,7 @@ use crate::features::create_ou::dto::CreateOuCommand;
 use crate::features::create_ou::error::CreateOuError;
 use crate::features::create_ou::mocks::MockCreateOuUnitOfWorkFactory;
 use crate::features::create_ou::use_case::CreateOuUseCase;
-use policies::domain::Hrn;
+use kernel::Hrn;
 use std::sync::Arc;
 
 #[tokio::test]

@@ -5,7 +5,7 @@ use crate::features::create_ou::ports::{
 use crate::shared::application::ports::ou_repository::OuRepository;
 use crate::shared::domain::ou::OrganizationalUnit;
 use async_trait::async_trait;
-use policies::domain::Hrn;
+use kernel::Hrn;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

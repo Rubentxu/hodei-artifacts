@@ -2,7 +2,7 @@ use crate::features::create_account::dto::CreateAccountCommand;
 use crate::features::create_account::error::CreateAccountError;
 use crate::features::create_account::mocks::MockCreateAccountUnitOfWorkFactory;
 use crate::features::create_account::use_case::CreateAccountUseCase;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::sync::Arc;
 
 #[tokio::test]

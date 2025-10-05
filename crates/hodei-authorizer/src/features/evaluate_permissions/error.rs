@@ -39,14 +39,11 @@ impl From<crate::features::evaluate_permissions::ports::AuthorizationError>
 {
     fn from(err: crate::features::evaluate_permissions::ports::AuthorizationError) -> Self {
         match err {
-            crate::features::evaluate_permissions::ports::AuthorizationError::IamPolicyProvider(iam_err) => {
-                EvaluatePermissionsError::IamPolicyProviderError(iam_err.to_string())
-            }
             crate::features::evaluate_permissions::ports::AuthorizationError::OrganizationBoundaryProvider(msg) => {
                 EvaluatePermissionsError::OrganizationBoundaryProviderError(msg)
             }
-            crate::features::evaluate_permissions::ports::AuthorizationError::EntityResolver(entity_err) => {
-                EvaluatePermissionsError::EntityResolutionError(entity_err.to_string())
+            crate::features::evaluate_permissions::ports::AuthorizationError::EntityResolver(resolver_err) => {
+                EvaluatePermissionsError::EntityResolutionError(resolver_err.to_string())
             }
         }
     }

@@ -10,8 +10,8 @@ use crate::features::evaluate_permissions::ports::{
     AuthorizationCache, AuthorizationLogger, AuthorizationMetrics, EntityResolverError,
     EntityResolverPort,
 };
+use ::kernel::Hrn;
 use cedar_policy::EntityUid;
-use policies::shared::domain::hrn::Hrn;
 
 /// Mock Authorization Cache for testing
 #[derive(Debug, Default, Clone)]

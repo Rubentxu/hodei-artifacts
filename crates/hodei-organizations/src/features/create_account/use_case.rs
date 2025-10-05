@@ -5,10 +5,10 @@ use crate::features::create_account::ports::{
 };
 use crate::shared::domain::account::Account;
 use crate::shared::domain::events::AccountCreated;
-use policies::domain::Hrn;
-use shared::EventPublisher;
-use shared::application::ports::event_bus::EventEnvelope;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::EventPublisher;
+use kernel::Hrn;
+use kernel::application::ports::event_bus::EventEnvelope;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Use case for creating accounts with transactional guarantees

@@ -44,7 +44,7 @@ impl CreateOuSurrealUnitOfWorkAdapter {
 #[async_trait]
 impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
     async fn begin(&mut self) -> Result<(), CreateOuError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .begin()
             .await
@@ -52,7 +52,7 @@ impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
     }
 
     async fn commit(&mut self) -> Result<(), CreateOuError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .commit()
             .await
@@ -60,7 +60,7 @@ impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
     }
 
     async fn rollback(&mut self) -> Result<(), CreateOuError> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
             .rollback()
             .await
@@ -68,7 +68,7 @@ impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
     }
 
     fn ous(&self) -> Arc<dyn OuRepository> {
-        use shared::application::ports::unit_of_work::UnitOfWork;
+        use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow.ous()
     }
 }
@@ -93,7 +93,7 @@ impl CreateOuUnitOfWorkFactory for CreateOuSurrealUnitOfWorkFactoryAdapter {
     type UnitOfWork = CreateOuSurrealUnitOfWorkAdapter;
 
     async fn create(&self) -> Result<Self::UnitOfWork, CreateOuError> {
-        use shared::application::ports::unit_of_work::UnitOfWorkFactory;
+        use kernel::application::ports::unit_of_work::UnitOfWorkFactory;
         let uow = self
             .inner_factory
             .create()

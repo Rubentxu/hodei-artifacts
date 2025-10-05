@@ -6,7 +6,7 @@
 
 use async_trait::async_trait;
 use cedar_policy::PolicySet;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::sync::Arc;
 use thiserror::Error;
 

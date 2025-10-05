@@ -1,7 +1,6 @@
-use crate::ports::{IamPolicyProvider, OrganizationBoundaryProvider, AuthorizationError};
+use crate::ports::{AuthorizationError, IamPolicyProvider, OrganizationBoundaryProvider};
 
-use policies::shared::domain::hrn::Hrn;
-
+use kernel::Hrn;
 
 /// Authorizer service that combines IAM policies and SCPs to make authorization decisions
 pub struct AuthorizerService<IAM: IamPolicyProvider, ORG: OrganizationBoundaryProvider> {
@@ -21,22 +20,31 @@ impl<IAM: IamPolicyProvider, ORG: OrganizationBoundaryProvider> AuthorizerServic
     }
 
     /// Check if a principal is authorized to perform an action on a resource
-    pub async fn is_authorized(&self, request: AuthorizationRequest) -> Result<AuthorizationResponse, AuthorizationError> {
+    pub async fn is_authorized(
+        &self,
+        request: AuthorizationRequest,
+    ) -> Result<AuthorizationResponse, AuthorizationError> {
         // Get IAM policies for the principal
-        let iam_policies = self.iam_provider.get_identity_policies_for(&request.principal).await?;
-        
+        let iam_policies = self
+            .iam_provider
+            .get_identity_policies_for(&request.principal)
+            .await?;
+
         // Get effective SCPs for the principal's account
-        let effective_scps = self.org_provider.get_effective_scps_for(&request.principal).await?;
-        
+        let effective_scps = self
+            .org_provider
+            .get_effective_scps_for(&request.principal)
+            .await?;
+
         // Combine IAM policies and SCPs
         let mut combined_policies = iam_policies;
         for scp in effective_scps {
             combined_policies.add_policy(scp.policy.clone());
         }
-        
+
         // Evaluate the combined policies
         let response = self.policy_evaluator.evaluate(&combined_policies, &request);
-        
+
         Ok(response)
     }
 }

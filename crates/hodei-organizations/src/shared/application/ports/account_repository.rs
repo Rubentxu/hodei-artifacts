@@ -1,7 +1,7 @@
 use crate::shared::domain::account::Account;
 use async_trait::async_trait;
+use kernel::Hrn;
 use thiserror::Error;
-use policies::domain::Hrn;
 
 #[derive(Debug, Error)]
 pub enum AccountRepositoryError {

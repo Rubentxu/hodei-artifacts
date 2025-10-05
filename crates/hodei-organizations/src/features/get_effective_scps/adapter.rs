@@ -1,10 +1,14 @@
-use crate::shared::domain::{ServiceControlPolicy, Account, OrganizationalUnit};
-use crate::shared::application::ports::scp_repository::{ScpRepository, ScpRepositoryError};
-use crate::shared::application::ports::account_repository::{AccountRepository, AccountRepositoryError};
+use crate::features::get_effective_scps::ports::{
+    AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
+};
+use crate::shared::application::ports::account_repository::{
+    AccountRepository, AccountRepositoryError,
+};
 use crate::shared::application::ports::ou_repository::{OuRepository, OuRepositoryError};
-use crate::features::get_effective_scps::ports::{ScpRepositoryPort, AccountRepositoryPort, OuRepositoryPort};
-use policies::shared::domain::hrn::Hrn;
+use crate::shared::application::ports::scp_repository::{ScpRepository, ScpRepositoryError};
+use crate::shared::domain::{Account, OrganizationalUnit, ServiceControlPolicy};
 use async_trait::async_trait;
+use kernel::Hrn;
 
 /// Adapter that implements the ScpRepositoryPort trait using the ScpRepository
 pub struct ScpRepositoryAdapter<SR: ScpRepository> {
@@ -21,7 +25,10 @@ impl<SR: ScpRepository> ScpRepositoryAdapter<SR> {
 #[async_trait]
 impl<SR: ScpRepository> ScpRepositoryPort for ScpRepositoryAdapter<SR> {
     /// Find an SCP by HRN
-    async fn find_scp_by_hrn(&self, hrn: &Hrn) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError> {
+    async fn find_scp_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError> {
         self.repository.find_by_hrn(hrn).await
     }
 }
@@ -41,7 +48,10 @@ impl<AR: AccountRepository + Send + Sync> AccountRepositoryAdapter<AR> {
 #[async_trait]
 impl<AR: AccountRepository + Send + Sync> AccountRepositoryPort for AccountRepositoryAdapter<AR> {
     /// Find an account by HRN
-    async fn find_account_by_hrn(&self, hrn: &Hrn) -> Result<Option<Account>, AccountRepositoryError> {
+    async fn find_account_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<Account>, AccountRepositoryError> {
         self.repository.find_by_hrn(hrn).await
     }
 }
@@ -61,7 +71,10 @@ impl<OR: OuRepository + Send + Sync> OuRepositoryAdapter<OR> {
 #[async_trait]
 impl<OR: OuRepository + Send + Sync> OuRepositoryPort for OuRepositoryAdapter<OR> {
     /// Find an OU by HRN
-    async fn find_ou_by_hrn(&self, hrn: &Hrn) -> Result<Option<OrganizationalUnit>, OuRepositoryError> {
+    async fn find_ou_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<OrganizationalUnit>, OuRepositoryError> {
         self.repository.find_by_hrn(hrn).await
     }
 }

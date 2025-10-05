@@ -1,10 +1,10 @@
-use policies::shared::Hrn;
 use serde::{Deserialize, Serialize};
+use kernel::Hrn;
 use std::collections::HashSet;
 
 // Cedar Policy traits
 use cedar_policy::{EntityUid, RestrictedExpression};
-use policies::shared::domain::ports::{AttributeType, HodeiEntity, HodeiEntityType, Resource};
+use kernel::{AttributeType, HodeiEntity, HodeiEntityType, Resource};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

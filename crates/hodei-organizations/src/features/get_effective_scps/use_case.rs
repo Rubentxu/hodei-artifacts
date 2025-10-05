@@ -5,7 +5,7 @@ use crate::features::get_effective_scps::ports::{
 };
 use crate::shared::domain::scp::ServiceControlPolicy;
 use cedar_policy::PolicySet;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use tracing::{info, warn};
 
 /// Caso de uso para obtener las SCPs efectivas de una entidad (OU o Account)

@@ -6,7 +6,7 @@ use crate::shared::domain::{Group, User};
 ///
 /// These repositories store data in memory using RwLock for thread-safe access
 use async_trait::async_trait;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::sync::RwLock;
 
 /// In-memory implementation of UserRepository for testing

@@ -1,6 +1,6 @@
 /// Unit tests for Group domain entity
 use hodei_iam::shared::domain::Group;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 
 #[test]
 fn test_group_new_creates_empty_collections() {

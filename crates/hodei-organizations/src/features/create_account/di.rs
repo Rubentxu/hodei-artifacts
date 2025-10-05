@@ -1,7 +1,7 @@
 use crate::features::create_account::adapter::CreateAccountSurrealUnitOfWorkFactoryAdapter;
 use crate::features::create_account::use_case::CreateAccountUseCase;
 use crate::shared::infrastructure::surreal::SurrealUnitOfWorkFactory;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Create an instance of the CreateAccountUseCase with SurrealDB UoW

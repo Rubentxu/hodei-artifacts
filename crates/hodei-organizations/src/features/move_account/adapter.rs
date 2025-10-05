@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crate::features::move_account::ports::MoveAccountUnitOfWork;
 use crate::features::move_account::error::MoveAccountError;
-use shared::application::ports::unit_of_work::UnitOfWork;
+use kernel::application::ports::unit_of_work::UnitOfWork;
 
 pub struct MoveAccountSurrealUnitOfWorkAdapter {
     inner_uow: crate::shared::infrastructure::surreal::SurrealUnitOfWork,

@@ -5,7 +5,7 @@ use crate::features::attach_scp::use_case::AttachScpUseCase;
 use crate::shared::application::ports::account_repository::AccountRepository;
 use crate::shared::application::ports::ou_repository::OuRepository;
 use crate::shared::application::ports::scp_repository::ScpRepository;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Create an instance of the AttachScpUseCase with the provided repositories

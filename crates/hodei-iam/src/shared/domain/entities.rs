@@ -1,11 +1,11 @@
 use cedar_policy::{EntityUid, RestrictedExpression};
+use serde::{Deserialize, Serialize};
+use kernel::AttributeType::*;
 /// Domain entities for hodei-iam
 ///
 /// This module defines the core IAM entities: User, Group, ServiceAccount, Namespace
-use policies::shared::domain::hrn::Hrn;
-use policies::shared::domain::ports::{self, HodeiEntity, HodeiEntityType, Principal, Resource};
-use ports::AttributeType::*;
-use serde::{Deserialize, Serialize};
+use kernel::Hrn;
+use kernel::{AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource};
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,7 +125,7 @@ impl HodeiEntityType for User {
         true
     }
 
-    fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
+    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
         vec![
             ("name", Primitive("String")),
             ("email", Primitive("String")),
@@ -177,7 +177,7 @@ impl HodeiEntityType for Group {
         "Group"
     }
 
-    fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
+    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
         vec![
             ("name", Primitive("String")),
             ("tags", Set(Box::new(Primitive("String")))),
@@ -227,7 +227,7 @@ impl HodeiEntityType for ServiceAccount {
         true
     }
 
-    fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
+    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
         vec![
             ("name", Primitive("String")),
             ("annotations", Primitive("String")),
@@ -287,7 +287,7 @@ impl HodeiEntityType for Namespace {
         "Namespace"
     }
 
-    fn cedar_attributes() -> Vec<(&'static str, ports::AttributeType)> {
+    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
         vec![
             ("name", Primitive("String")),
             ("annotations", Primitive("String")),

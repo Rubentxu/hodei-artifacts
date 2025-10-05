@@ -1,6 +1,6 @@
 /// Unit tests for User domain entity
 use hodei_iam::shared::domain::User;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 
 #[test]
 fn test_user_new_creates_empty_groups() {

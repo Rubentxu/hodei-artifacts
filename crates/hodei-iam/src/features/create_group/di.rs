@@ -1,7 +1,7 @@
 use super::adapter::GenericCreateGroupUnitOfWork;
 use super::use_case::CreateGroupUseCase;
 use crate::shared::application::ports::GroupRepository;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Dependency Injection for create_group feature with Unit of Work

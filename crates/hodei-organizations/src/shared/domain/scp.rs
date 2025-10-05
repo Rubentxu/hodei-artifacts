@@ -3,10 +3,7 @@ use std::collections::HashMap;
 
 // Cedar Policy ecosystem
 use cedar_policy::RestrictedExpression;
-use policies::shared::domain::ports::{AttributeType, HodeiEntity, HodeiEntityType, Resource};
-
-// HRN (Hierarchical Resource Name)
-use policies::shared::domain::hrn::Hrn;
+use kernel::{AttributeType, HodeiEntity, HodeiEntityType, Hrn, Resource};
 
 /// Domain entity representing an Organization Service Control Policy (SCP)
 ///

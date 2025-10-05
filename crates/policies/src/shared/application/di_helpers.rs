@@ -1,7 +1,7 @@
 use crate::shared::application::{AuthorizationEngine, EngineBuilder, PolicyStore};
-use crate::shared::domain::ports::PolicyStorage;
 use crate::shared::infrastructure::surreal::SurrealMemStorage;
 use anyhow::Result;
+use kernel::PolicyStorage;
 /// Centralized DI helpers to avoid code duplication across features
 ///
 /// This module provides reusable functions for building engines and storage,
@@ -58,14 +58,15 @@ pub fn no_entities_configurator(builder: EngineBuilder) -> Result<EngineBuilder>
 /// Available in both test and non-test builds for integration tests and examples
 pub mod test_helpers {
     use super::*;
-    use crate::shared::Hrn;
-    use crate::shared::domain::ports::{
-        AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource,
+    // Using shared kernel re-exports (migration from legacy crate::shared::domain paths)
+    use kernel::{
+        ActionTrait, AttributeType, HodeiEntity, HodeiEntityType, Hrn, Principal, Resource,
     };
+    // (removed redundant per-kernel entity imports)
     use cedar_policy::{EntityTypeName, EntityUid, RestrictedExpression};
     use std::collections::HashMap;
     use std::str::FromStr;
-    use crate::shared::domain::ActionTrait;
+    // (removed separate ActionTrait import - consolidated above)
 
     // Test Principal type
     pub struct TestPrincipal {

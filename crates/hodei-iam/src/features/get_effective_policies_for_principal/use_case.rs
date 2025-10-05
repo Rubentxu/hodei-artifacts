@@ -8,7 +8,7 @@ use crate::features::get_effective_policies_for_principal::ports::{
     GroupFinderPort, PolicyFinderPort, UserFinderPort,
 };
 use cedar_policy::PolicySet;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -276,8 +276,12 @@ mod tests {
         let group_hrn = Hrn::from_string("hrn:hodei:iam:us-east-1:default:group/admins").unwrap();
         let group = Group::new(group_hrn.clone(), "admins".to_string());
 
-        let user_policy = r#"permit(principal == User::"test-user", action == Action::"read", resource);"#.to_string();
-        let group_policy = r#"forbid(principal == Group::"admins", action == Action::"delete", resource);"#.to_string();
+        let user_policy =
+            r#"permit(principal == User::"test-user", action == Action::"read", resource);"#
+                .to_string();
+        let group_policy =
+            r#"forbid(principal == Group::"admins", action == Action::"delete", resource);"#
+                .to_string();
 
         let user_finder = Arc::new(MockUserFinder {
             users: vec![user.clone()],

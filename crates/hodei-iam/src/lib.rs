@@ -22,7 +22,28 @@
 //! # }
 //! ```
 pub mod features;
+// TODO: REFACTOR - shared should be private, but tests in tests/ directory need it
+// Tests should either:
+// 1. Be moved to src/shared/domain/*_test.rs for unit tests
+// 2. Use only public features API for integration tests
 pub mod shared;
+
+// ✅ Re-export domain events for external event subscribers
+pub mod events {
+    pub use crate::shared::domain::events::{GroupCreated, UserAddedToGroup, UserCreated};
+}
+
+// ✅ Re-export infrastructure repositories for DI configuration
+pub mod infrastructure {
+    pub use crate::shared::infrastructure::persistence::{
+        InMemoryGroupRepository, InMemoryUserRepository,
+    };
+}
+
+// ✅ Re-export application ports for external DI configuration
+pub mod ports {
+    pub use crate::shared::application::ports::{GroupRepository, UserRepository};
+}
 
 // ❌ NO exportar entidades de dominio - son INTERNAS
 // Solo se accede a este crate a través de sus casos de uso (features)
@@ -38,32 +59,35 @@ pub use features::{
     },
 };
 
+use ::kernel::application::ports::{
+    EffectivePoliciesQuery, EffectivePoliciesQueryPort, EffectivePoliciesResult,
+};
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// Abstraction (puerto) para consultar políticas efectivas de un principal.
+/// Adaptador que expone el caso de uso interno de "get_effective_policies_for_principal"
+/// mediante el puerto transversal definido en el kernel compartido (`EffectivePoliciesQueryPort`).
 ///
-/// Este trait elimina la necesidad de que consumidores externos conozcan los parámetros genéricos
-/// del caso de uso interno. Se implementa sobre el caso de uso genérico real y se expone
-/// como objeto dinámico (`Arc<dyn EffectivePoliciesQueryService>`).
-#[async_trait]
-pub trait EffectivePoliciesQueryService: Send + Sync {
-    async fn get_effective_policies(
-        &self,
-        query: GetEffectivePoliciesQuery,
-    ) -> Result<
-        EffectivePoliciesResponse,
-        features::get_effective_policies_for_principal::GetEffectivePoliciesError,
-    >;
+/// Esto desacopla a consumidores (p.ej. authorizer) de los detalles internos del
+/// bounded context IAM, cumpliendo DIP y evitando dependencias innecesarias.
+pub struct EffectivePoliciesAdapter<U> {
+    inner: U,
 }
 
-/// Implementación del trait para el caso de uso genérico real.
+impl<U> EffectivePoliciesAdapter<U> {
+    pub fn new(inner: U) -> Self {
+        Self { inner }
+    }
+}
+
 #[async_trait]
-impl<UF, GF, PF> EffectivePoliciesQueryService
-    for features::get_effective_policies_for_principal::GetEffectivePoliciesForPrincipalUseCase<
-        UF,
-        GF,
-        PF,
+impl<UF, GF, PF> EffectivePoliciesQueryPort
+    for EffectivePoliciesAdapter<
+        features::get_effective_policies_for_principal::GetEffectivePoliciesForPrincipalUseCase<
+            UF,
+            GF,
+            PF,
+        >,
     >
 where
     UF: features::get_effective_policies_for_principal::UserFinderPort + Send + Sync,
@@ -72,17 +96,25 @@ where
 {
     async fn get_effective_policies(
         &self,
-        query: GetEffectivePoliciesQuery,
-    ) -> Result<
-        EffectivePoliciesResponse,
-        features::get_effective_policies_for_principal::GetEffectivePoliciesError,
-    > {
-        self.execute(query).await
+        query: EffectivePoliciesQuery,
+    ) -> Result<EffectivePoliciesResult, Box<dyn std::error::Error + Send + Sync>> {
+        // Traducir el DTO transversal al DTO interno del caso de uso
+        let internal_query =
+            features::get_effective_policies_for_principal::GetEffectivePoliciesQuery {
+                principal_hrn: query.principal_hrn,
+            };
+
+        let resp = self.inner.execute(internal_query).await?;
+
+        Ok(EffectivePoliciesResult {
+            policies: resp.policies,
+            policy_count: resp.policy_count,
+        })
     }
 }
 
-/// Tipo de conveniencia para inyección de dependencias.
-pub type DynEffectivePoliciesQueryService = Arc<dyn EffectivePoliciesQueryService>;
+/// Alias ergonómico para inyección dinámica del puerto transversal
+pub type DynEffectivePoliciesQueryPort = Arc<dyn EffectivePoliciesQueryPort>;
 
 // ✅ Configurador para policies engine (necesario para setup inicial)
 pub use shared::application::configure_default_iam_entities;

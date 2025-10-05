@@ -5,7 +5,7 @@ use crate::features::create_account::ports::{
 use crate::shared::application::ports::account_repository::AccountRepository;
 use crate::shared::domain::account::Account;
 use async_trait::async_trait;
-use policies::domain::Hrn;
+use kernel::Hrn;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

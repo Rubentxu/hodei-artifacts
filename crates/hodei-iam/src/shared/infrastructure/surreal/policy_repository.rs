@@ -1,10 +1,10 @@
-use policies::shared::domain::hrn::Hrn;
+use async_trait::async_trait;
+use cedar_policy::Policy;
+use kernel::Hrn;
+use std::str::FromStr;
 use surrealdb::Surreal;
 use surrealdb::engine::any::Any;
 use surrealdb::opt::RecordId;
-use async_trait::async_trait;
-use cedar_policy::Policy;
-use std::str::FromStr;
 
 /// Policy entity for IAM
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

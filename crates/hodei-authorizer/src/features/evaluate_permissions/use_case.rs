@@ -12,42 +12,36 @@ use crate::features::evaluate_permissions::ports::{
     AuthorizationCache, AuthorizationLogger, AuthorizationMetrics, EntityResolverPort,
 };
 use policies::shared::AuthorizationEngine;
-
-// Importar casos de uso de otros crates (NO entidades internas)
-use hodei_iam::{DynEffectivePoliciesQueryService, GetEffectivePoliciesQuery};
-use hodei_organizations::GetEffectiveScpsQuery;
+use kernel::{
+    // Cross-context IAM + Organizations ports re-exported from shared crate (kernel)
+    EffectivePoliciesQuery,
+    EffectivePoliciesQueryPort,
+    GetEffectiveScpsPort,
+    GetEffectiveScpsQuery,
+};
 
 /// Use case for evaluating authorization permissions with multi-layer security
 ///
 /// Esta implementación sigue el principio de responsabilidad única:
 /// - NO gestiona políticas directamente
-/// - USA casos de uso de otros crates para obtener políticas
+/// - Obtiene políticas IAM y SCP vía puertos cross-context (shared kernel)
 /// - DELEGA la evaluación al AuthorizationEngine de policies
 /// - Gestiona aspectos transversales: cache, logging, metrics
 pub struct EvaluatePermissionsUseCase<CACHE, LOGGER, METRICS> {
-    // ✅ Casos de uso de otros crates (NO providers custom)
-    iam_use_case: DynEffectivePoliciesQueryService,
-    org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
+    // Puertos cross-context (no dependemos de casos de uso concretos de otros crates)
+    iam_port: Arc<dyn EffectivePoliciesQueryPort>,
+    org_port: Option<Arc<dyn GetEffectiveScpsPort>>,
 
-    // ✅ Motor de autorización del crate policies
+    // Motor de autorización del crate policies
     authorization_engine: Arc<AuthorizationEngine>,
 
-    // ✅ Entity resolver para obtener entidades reales
+    // Entity resolver para obtener entidades reales
     entity_resolver: Arc<dyn EntityResolverPort>,
 
-    // ✅ Aspectos transversales
+    // Aspectos transversales
     cache: Option<CACHE>,
     logger: LOGGER,
     metrics: METRICS,
-}
-
-/// Trait para abstraer el caso de uso de SCPs efectivas
-#[async_trait::async_trait]
-pub trait GetEffectiveScpsPort: Send + Sync {
-    async fn execute(
-        &self,
-        query: GetEffectiveScpsQuery,
-    ) -> Result<cedar_policy::PolicySet, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 impl<CACHE, LOGGER, METRICS> EvaluatePermissionsUseCase<CACHE, LOGGER, METRICS>
@@ -56,10 +50,10 @@ where
     LOGGER: AuthorizationLogger,
     METRICS: AuthorizationMetrics,
 {
-    /// Create a new instance of the use case
+    /// Create a new instance of the use case using cross-context ports
     pub fn new(
-        iam_use_case: DynEffectivePoliciesQueryService,
-        org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
+        iam_port: Arc<dyn EffectivePoliciesQueryPort>,
+        org_port: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
         entity_resolver: Arc<dyn EntityResolverPort>,
         cache: Option<CACHE>,
@@ -67,8 +61,8 @@ where
         metrics: METRICS,
     ) -> Self {
         Self {
-            iam_use_case,
-            org_use_case,
+            iam_port,
+            org_port,
             authorization_engine,
             entity_resolver,
             cache,
@@ -134,14 +128,14 @@ where
     ) -> EvaluatePermissionsResult<AuthorizationResponse> {
         info!("Starting multi-layer authorization evaluation (orchestration)");
 
-        // Step 1: Get IAM policies using hodei-iam use case
+        // Step 1: Get IAM policies via cross-context port
         info!("Fetching IAM policies for principal");
-        let iam_query = GetEffectivePoliciesQuery {
+        let iam_query = EffectivePoliciesQuery {
             principal_hrn: request.principal.to_string(),
         };
 
         let iam_response = self
-            .iam_use_case
+            .iam_port
             .get_effective_policies(iam_query)
             .await
             .map_err(|e| {
@@ -156,14 +150,14 @@ where
             iam_response.policy_count
         );
 
-        // Step 2: Get SCPs using hodei-organizations use case (if available)
-        let scp_policy_set = if let Some(ref org_use_case) = self.org_use_case {
+        // Step 2: Get SCPs if organizations port available
+        let scp_policy_set = if let Some(ref org_port) = self.org_port {
             info!("Fetching effective SCPs for resource");
             let scp_query = GetEffectiveScpsQuery {
                 resource_hrn: request.resource.to_string(),
             };
 
-            let scp_response = org_use_case.execute(scp_query).await.map_err(|e| {
+            let scp_response = org_port.get_effective_scps(scp_query).await.map_err(|e| {
                 EvaluatePermissionsError::OrganizationBoundaryProviderError(format!(
                     "Failed to get SCPs: {}",
                     e
@@ -176,7 +170,7 @@ where
             );
             scp_response
         } else {
-            info!("No organization use case configured, skipping SCPs");
+            info!("No organization port configured, skipping SCPs");
             cedar_policy::PolicySet::new()
         };
 
@@ -188,7 +182,6 @@ where
         for scp_policy in scp_policy_set.policies() {
             if let Err(e) = combined_policies.add(scp_policy.clone()) {
                 warn!("Failed to add SCP policy: {}", e);
-                // Continue with other policies even if one fails
             }
         }
 
@@ -196,7 +189,6 @@ where
         for iam_policy in iam_response.policies.policies() {
             if let Err(e) = combined_policies.add(iam_policy.clone()) {
                 warn!("Failed to add IAM policy: {}", e);
-                // Continue with other policies even if one fails
             }
         }
 
@@ -218,7 +210,6 @@ where
     }
 
     /// Evaluate authorization by delegating to the policies crate's AuthorizationEngine
-    /// This method will be enhanced once we have proper HodeiEntity implementations
     async fn evaluate_with_policy_set(
         &self,
         request: &AuthorizationRequest,
@@ -227,7 +218,6 @@ where
         use cedar_policy::EntityUid;
         use std::str::FromStr;
 
-        // If no policies, apply Principle of Least Privilege (implicit deny)
         if policies.is_empty() {
             info!("No policies found - applying Principle of Least Privilege (implicit deny)");
             return Ok(AuthorizationResponse::implicit_deny(
@@ -235,7 +225,6 @@ where
             ));
         }
 
-        // Convert request to Cedar format
         let _principal = EntityUid::from_str(&request.principal.to_string()).map_err(|e| {
             EvaluatePermissionsError::InvalidRequest(format!("Invalid principal HRN: {}", e))
         })?;
@@ -251,7 +240,6 @@ where
 
         let context = self.create_cedar_context(request)?;
 
-        // Resolve principal and resource entities
         let principal_entity = self
             .entity_resolver
             .resolve(&request.principal)
@@ -274,22 +262,19 @@ where
                 ))
             })?;
 
-        // Create authorization request for policies crate with real entities
         let auth_request = policies::shared::AuthorizationRequest {
             principal: principal_entity.as_ref(),
             action: action.clone(),
             resource: resource_entity.as_ref(),
             context,
-            entities: vec![], // Can be populated with additional context entities if needed
+            entities: vec![],
         };
 
-        // Delegate to policies crate's AuthorizationEngine with the combined PolicySet
         info!("Delegating evaluation to policies::AuthorizationEngine");
         let response = self
             .authorization_engine
             .is_authorized_with_policy_set(&auth_request, policies);
 
-        // Convert Cedar response to our DTO
         let (decision, determining_policies, explicit, reason) = match response.decision() {
             cedar_policy::Decision::Deny => {
                 let policies: Vec<String> = response
@@ -327,7 +312,6 @@ where
         })
     }
 
-    /// Create Cedar context from request context
     fn create_cedar_context(
         &self,
         request: &AuthorizationRequest,
@@ -357,8 +341,6 @@ where
                     serde_json::Value::String(formatted),
                 );
             }
-
-            // Add additional context
             for (key, value) in &request_context.additional_context {
                 context_data.insert(key.clone(), value.clone());
             }
@@ -370,7 +352,6 @@ where
         })
     }
 
-    /// Generate cache key for authorization request
     fn generate_cache_key(&self, request: &AuthorizationRequest) -> String {
         format!(
             "auth:{}:{}:{}",

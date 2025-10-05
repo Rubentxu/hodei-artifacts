@@ -1,7 +1,7 @@
 use super::adapter::GenericAddUserToGroupUnitOfWork;
 use super::use_case::AddUserToGroupUseCase;
 use crate::shared::application::ports::{GroupRepository, UserRepository};
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Dependency Injection for add_user_to_group feature with Unit of Work

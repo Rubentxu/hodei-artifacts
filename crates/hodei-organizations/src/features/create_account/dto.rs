@@ -1,5 +1,5 @@
-use policies::domain::Hrn;
 use serde::{Deserialize, Serialize};
+use kernel::Hrn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAccountCommand {

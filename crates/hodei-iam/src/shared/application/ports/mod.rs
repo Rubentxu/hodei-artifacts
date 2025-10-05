@@ -4,7 +4,7 @@
 /// to interact with infrastructure concerns like persistence.
 use crate::shared::domain::{Group, User};
 use async_trait::async_trait;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 
 // Export authorization ports
 pub mod authorization;

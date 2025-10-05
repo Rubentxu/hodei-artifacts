@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 use surrealdb::Surreal;
 use surrealdb::engine::any::Any;
 
-use shared::application::ports::unit_of_work::{UnitOfWork, UnitOfWorkFactory, UnitOfWorkError};
+use kernel::application::ports::unit_of_work::{UnitOfWork, UnitOfWorkError, UnitOfWorkFactory};
 
 use crate::shared::application::ports::account_repository::AccountRepository;
 use crate::shared::application::ports::ou_repository::OuRepository;
@@ -22,14 +22,24 @@ impl TransactionalAccountRepository {
 
 #[async_trait]
 impl AccountRepository for TransactionalAccountRepository {
-    async fn save(&self, account: &crate::shared::domain::account::Account) -> Result<(), crate::shared::application::ports::account_repository::AccountRepositoryError> {
+    async fn save(
+        &self,
+        account: &crate::shared::domain::account::Account,
+    ) -> Result<(), crate::shared::application::ports::account_repository::AccountRepositoryError>
+    {
         let hrn_str = account.hrn.to_string();
         self.db.create::<Option<crate::shared::domain::account::Account>>(("account", &hrn_str)).content(account.clone()).await
             .map_err(|e| crate::shared::application::ports::account_repository::AccountRepositoryError::DatabaseError(e.to_string()))?;
         Ok(())
     }
-    
-    async fn find_by_hrn(&self, hrn: &policies::domain::Hrn) -> Result<Option<crate::shared::domain::account::Account>, crate::shared::application::ports::account_repository::AccountRepositoryError> {
+
+    async fn find_by_hrn(
+        &self,
+        hrn: &kernel::Hrn,
+    ) -> Result<
+        Option<crate::shared::domain::account::Account>,
+        crate::shared::application::ports::account_repository::AccountRepositoryError,
+    > {
         let hrn_str = hrn.to_string();
         let result: Option<crate::shared::domain::account::Account> = self.db.select(("account", &hrn_str)).await
             .map_err(|e| crate::shared::application::ports::account_repository::AccountRepositoryError::DatabaseError(e.to_string()))?;
@@ -50,17 +60,37 @@ impl TransactionalOuRepository {
 
 #[async_trait]
 impl OuRepository for TransactionalOuRepository {
-    async fn save(&self, ou: &crate::shared::domain::ou::OrganizationalUnit) -> Result<(), crate::shared::application::ports::ou_repository::OuRepositoryError> {
+    async fn save(
+        &self,
+        ou: &crate::shared::domain::ou::OrganizationalUnit,
+    ) -> Result<(), crate::shared::application::ports::ou_repository::OuRepositoryError> {
         let hrn_str = ou.hrn.to_string();
-        self.db.create::<Option<crate::shared::domain::ou::OrganizationalUnit>>(("ou", &hrn_str)).content(ou.clone()).await
-            .map_err(|e| crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(e.to_string()))?;
+        self.db
+            .create::<Option<crate::shared::domain::ou::OrganizationalUnit>>(("ou", &hrn_str))
+            .content(ou.clone())
+            .await
+            .map_err(|e| {
+                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                    e.to_string(),
+                )
+            })?;
         Ok(())
     }
-    
-    async fn find_by_hrn(&self, hrn: &policies::domain::Hrn) -> Result<Option<crate::shared::domain::ou::OrganizationalUnit>, crate::shared::application::ports::ou_repository::OuRepositoryError> {
+
+    async fn find_by_hrn(
+        &self,
+        hrn: &kernel::Hrn,
+    ) -> Result<
+        Option<crate::shared::domain::ou::OrganizationalUnit>,
+        crate::shared::application::ports::ou_repository::OuRepositoryError,
+    > {
         let hrn_str = hrn.to_string();
-        let result: Option<crate::shared::domain::ou::OrganizationalUnit> = self.db.select(("ou", &hrn_str)).await
-            .map_err(|e| crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(e.to_string()))?;
+        let result: Option<crate::shared::domain::ou::OrganizationalUnit> =
+            self.db.select(("ou", &hrn_str)).await.map_err(|e| {
+                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                    e.to_string(),
+                )
+            })?;
         Ok(result)
     }
 }
@@ -78,23 +108,43 @@ impl TransactionalScpRepository {
 
 #[async_trait]
 impl ScpRepository for TransactionalScpRepository {
-    async fn save(&self, scp: &crate::shared::domain::scp::ServiceControlPolicy) -> Result<(), crate::shared::application::ports::scp_repository::ScpRepositoryError> {
+    async fn save(
+        &self,
+        scp: &crate::shared::domain::scp::ServiceControlPolicy,
+    ) -> Result<(), crate::shared::application::ports::scp_repository::ScpRepositoryError> {
         let hrn_str = scp.hrn.to_string();
-        self.db.create::<Option<crate::shared::domain::scp::ServiceControlPolicy>>(("scp", &hrn_str)).content(scp.clone()).await
-            .map_err(|e| crate::shared::application::ports::scp_repository::ScpRepositoryError::Storage(e.to_string()))?;
+        self.db
+            .create::<Option<crate::shared::domain::scp::ServiceControlPolicy>>(("scp", &hrn_str))
+            .content(scp.clone())
+            .await
+            .map_err(|e| {
+                crate::shared::application::ports::scp_repository::ScpRepositoryError::Storage(
+                    e.to_string(),
+                )
+            })?;
         Ok(())
     }
-    
-    async fn find_by_hrn(&self, hrn: &policies::domain::Hrn) -> Result<Option<crate::shared::domain::scp::ServiceControlPolicy>, crate::shared::application::ports::scp_repository::ScpRepositoryError> {
+
+    async fn find_by_hrn(
+        &self,
+        hrn: &kernel::Hrn,
+    ) -> Result<
+        Option<crate::shared::domain::scp::ServiceControlPolicy>,
+        crate::shared::application::ports::scp_repository::ScpRepositoryError,
+    > {
         let hrn_str = hrn.to_string();
-        let result: Option<crate::shared::domain::scp::ServiceControlPolicy> = self.db.select(("scp", &hrn_str)).await
-            .map_err(|e| crate::shared::application::ports::scp_repository::ScpRepositoryError::Storage(e.to_string()))?;
+        let result: Option<crate::shared::domain::scp::ServiceControlPolicy> =
+            self.db.select(("scp", &hrn_str)).await.map_err(|e| {
+                crate::shared::application::ports::scp_repository::ScpRepositoryError::Storage(
+                    e.to_string(),
+                )
+            })?;
         Ok(result)
     }
 }
 
 /// SurrealDB implementation of UnitOfWork
-/// 
+///
 /// This implementation manages database transactions and provides transactional
 /// repository instances that automatically participate in the transaction context.
 pub struct SurrealUnitOfWork {
@@ -119,48 +169,60 @@ impl UnitOfWork for SurrealUnitOfWork {
 
     async fn begin(&mut self) -> Result<(), UnitOfWorkError> {
         if self.transaction_started {
-            return Err(UnitOfWorkError::Transaction("Transaction already started".to_string()));
+            return Err(UnitOfWorkError::Transaction(
+                "Transaction already started".to_string(),
+            ));
         }
 
-        self.db.query("BEGIN TRANSACTION;").await
+        self.db
+            .query("BEGIN TRANSACTION;")
+            .await
             .map_err(|e| UnitOfWorkError::Transaction(e.to_string()))?;
-        
+
         self.transaction_started = true;
         Ok(())
     }
-    
+
     async fn commit(&mut self) -> Result<(), UnitOfWorkError> {
         if !self.transaction_started {
-            return Err(UnitOfWorkError::Transaction("No transaction in progress".to_string()));
+            return Err(UnitOfWorkError::Transaction(
+                "No transaction in progress".to_string(),
+            ));
         }
 
-        self.db.query("COMMIT TRANSACTION;").await
+        self.db
+            .query("COMMIT TRANSACTION;")
+            .await
             .map_err(|e| UnitOfWorkError::CommitFailed(e.to_string()))?;
-        
+
         self.transaction_started = false;
         Ok(())
     }
-    
+
     async fn rollback(&mut self) -> Result<(), UnitOfWorkError> {
         if !self.transaction_started {
-            return Err(UnitOfWorkError::Transaction("No transaction in progress".to_string()));
+            return Err(UnitOfWorkError::Transaction(
+                "No transaction in progress".to_string(),
+            ));
         }
 
-        self.db.query("CANCEL TRANSACTION;").await
+        self.db
+            .query("CANCEL TRANSACTION;")
+            .await
             .map_err(|e| UnitOfWorkError::RollbackFailed(e.to_string()))?;
-        
+
         self.transaction_started = false;
         Ok(())
     }
-    
+
     fn accounts(&self) -> Arc<Self::AccountRepository> {
         Arc::new(TransactionalAccountRepository::new(self.db.clone()))
     }
-    
+
     fn ous(&self) -> Arc<Self::OuRepository> {
         Arc::new(TransactionalOuRepository::new(self.db.clone()))
     }
-    
+
     fn scps(&self) -> Arc<Self::ScpRepository> {
         Arc::new(TransactionalScpRepository::new(self.db.clone()))
     }

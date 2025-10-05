@@ -7,7 +7,7 @@ mod tests {
     use super::super::use_case::AddUserToGroupUseCase;
     use crate::shared::application::ports::UserRepository;
     use crate::shared::domain::{Group, User};
-    use policies::shared::domain::hrn::Hrn;
+    use kernel::Hrn;
     use std::sync::Arc;
 
     #[tokio::test]

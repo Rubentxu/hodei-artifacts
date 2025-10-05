@@ -1,10 +1,10 @@
 use super::dto::AddUserToGroupCommand;
 use super::ports::AddUserToGroupUnitOfWork;
 use crate::shared::domain::events::UserAddedToGroup;
-use policies::shared::domain::hrn::Hrn;
-use shared::EventPublisher;
-use shared::application::ports::event_bus::EventEnvelope;
-use shared::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use kernel::EventPublisher;
+use kernel::Hrn;
+use kernel::application::ports::event_bus::EventEnvelope;
+use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
 /// Use case for adding a user to a group with transactional integrity

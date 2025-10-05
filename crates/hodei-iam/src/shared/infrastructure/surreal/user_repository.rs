@@ -1,7 +1,7 @@
 use crate::shared::application::ports::{UserRepository, UserRepositoryError};
 use crate::shared::domain::User;
 use async_trait::async_trait;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use surrealdb::Surreal;
 use surrealdb::engine::any::Any;
 use surrealdb::opt::RecordId;

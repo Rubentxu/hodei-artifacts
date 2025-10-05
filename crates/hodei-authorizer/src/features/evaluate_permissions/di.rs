@@ -7,14 +7,14 @@ use crate::features::evaluate_permissions::ports::{
 };
 use crate::features::evaluate_permissions::use_case::EvaluatePermissionsUseCase;
 use async_trait::async_trait;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 
 // ✅ Importar casos de uso de otros crates (NO entidades ni providers)
-use hodei_iam::DynEffectivePoliciesQueryService;
+use hodei_iam::DynEffectivePoliciesQueryPort;
 use policies::shared::AuthorizationEngine;
 
 // Usar el trait local en lugar del tipo concreto
-use crate::features::evaluate_permissions::use_case::GetEffectiveScpsPort;
+use kernel::GetEffectiveScpsPort;
 
 /// Dummy cache implementation for when cache is not needed
 #[derive(Debug, Clone, Copy)]
@@ -53,7 +53,7 @@ impl AuthorizationCache for DummyCache {
 /// Esto respeta el principio de responsabilidad única.
 pub struct EvaluatePermissionsContainer<CACHE, LOGGER, METRICS> {
     // ✅ Casos de uso de otros crates
-    iam_use_case: DynEffectivePoliciesQueryService,
+    iam_use_case: DynEffectivePoliciesQueryPort,
     org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
     authorization_engine: Arc<AuthorizationEngine>,
     entity_resolver: Arc<dyn EntityResolverPort>,
@@ -72,7 +72,7 @@ where
 {
     /// Create a new dependency injection container
     pub fn new(
-        iam_use_case: DynEffectivePoliciesQueryService,
+        iam_use_case: DynEffectivePoliciesQueryPort,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
         entity_resolver: Arc<dyn EntityResolverPort>,
@@ -107,7 +107,7 @@ where
 
 /// Builder pattern for creating the dependency injection container
 pub struct EvaluatePermissionsContainerBuilder<CACHE, LOGGER, METRICS> {
-    iam_use_case: Option<DynEffectivePoliciesQueryService>,
+    iam_use_case: Option<DynEffectivePoliciesQueryPort>,
     org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
     authorization_engine: Option<Arc<AuthorizationEngine>>,
     entity_resolver: Option<Arc<dyn EntityResolverPort>>,
@@ -136,7 +136,7 @@ where
     }
 
     /// Set the IAM use case
-    pub fn with_iam_use_case(mut self, iam_use_case: DynEffectivePoliciesQueryService) -> Self {
+    pub fn with_iam_use_case(mut self, iam_use_case: DynEffectivePoliciesQueryPort) -> Self {
         self.iam_use_case = Some(iam_use_case);
         self
     }
@@ -215,7 +215,7 @@ pub mod factories {
 
     /// Create a container with all required dependencies (no cache)
     pub fn create_without_cache<LOGGER, METRICS>(
-        iam_use_case: DynEffectivePoliciesQueryService,
+        iam_use_case: DynEffectivePoliciesQueryPort,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
         entity_resolver: Arc<dyn EntityResolverPort>,
@@ -239,7 +239,7 @@ pub mod factories {
 
     /// Create a container with cache enabled
     pub fn create_with_cache<CACHE, LOGGER, METRICS>(
-        iam_use_case: DynEffectivePoliciesQueryService,
+        iam_use_case: DynEffectivePoliciesQueryPort,
         org_use_case: Option<Arc<dyn GetEffectiveScpsPort>>,
         authorization_engine: Arc<AuthorizationEngine>,
         entity_resolver: Arc<dyn EntityResolverPort>,
@@ -272,27 +272,27 @@ mod tests {
         MockEntityResolver,
     };
 
-    // Mock implementation of the EffectivePoliciesQueryService trait
+    // Mock implementation of the EffectivePoliciesQueryPort (shared kernel) trait
     struct MockEffectivePoliciesQueryService;
 
     #[async_trait::async_trait]
-    impl hodei_iam::EffectivePoliciesQueryService for MockEffectivePoliciesQueryService {
+    impl kernel::application::ports::EffectivePoliciesQueryPort for MockEffectivePoliciesQueryService {
         async fn get_effective_policies(
             &self,
-            _query: hodei_iam::GetEffectivePoliciesQuery,
+            _query: kernel::application::ports::EffectivePoliciesQuery,
         ) -> Result<
-            hodei_iam::EffectivePoliciesResponse,
-            hodei_iam::features::get_effective_policies_for_principal::GetEffectivePoliciesError,
+            kernel::application::ports::EffectivePoliciesResult,
+            Box<dyn std::error::Error + Send + Sync>,
         > {
             use cedar_policy::PolicySet;
-            Ok(hodei_iam::EffectivePoliciesResponse::new(
-                PolicySet::new(),
-                "mock".to_string(),
-            ))
+            Ok(kernel::application::ports::EffectivePoliciesResult {
+                policies: PolicySet::new(),
+                policy_count: 0,
+            })
         }
     }
 
-    fn create_test_iam_use_case() -> DynEffectivePoliciesQueryService {
+    fn create_test_iam_use_case() -> DynEffectivePoliciesQueryPort {
         Arc::new(MockEffectivePoliciesQueryService {})
     }
 
@@ -306,7 +306,7 @@ mod tests {
     /// ⚠️ IMPORTANTE: En código de producción, el AuthorizationEngine debe
     /// construirse en el APPLICATION LEVEL (main.rs), NO en hodei-authorizer.
     fn create_test_authorization_engine() -> Arc<AuthorizationEngine> {
-        use policies::shared::domain::ports::PolicyStorage;
+        use kernel::{PolicyStorage, PolicyStorageError};
 
         #[derive(Clone)]
         struct TestOnlyStorage;
@@ -316,26 +316,21 @@ mod tests {
             async fn save_policy(
                 &self,
                 _: &cedar_policy::Policy,
-            ) -> Result<(), policies::shared::domain::ports::StorageError> {
+            ) -> Result<(), PolicyStorageError> {
                 Ok(())
             }
-            async fn delete_policy(
-                &self,
-                _: &str,
-            ) -> Result<bool, policies::shared::domain::ports::StorageError> {
+            async fn delete_policy(&self, _: &str) -> Result<bool, PolicyStorageError> {
                 Ok(false)
             }
             async fn get_policy_by_id(
                 &self,
                 _: &str,
-            ) -> Result<Option<cedar_policy::Policy>, policies::shared::domain::ports::StorageError>
-            {
+            ) -> Result<Option<cedar_policy::Policy>, PolicyStorageError> {
                 Ok(None)
             }
             async fn load_all_policies(
                 &self,
-            ) -> Result<Vec<cedar_policy::Policy>, policies::shared::domain::ports::StorageError>
-            {
+            ) -> Result<Vec<cedar_policy::Policy>, PolicyStorageError> {
                 Ok(vec![])
             }
         }

@@ -3,9 +3,9 @@
 //! These events represent state changes in the IAM domain that other
 //! bounded contexts might be interested in.
 
-use policies::domain::Hrn;
 use serde::{Deserialize, Serialize};
-use shared::application::ports::event_bus::DomainEvent;
+use kernel::Hrn;
+use kernel::application::ports::event_bus::DomainEvent;
 
 /// Event emitted when a new user is created
 #[derive(Debug, Clone, Serialize, Deserialize)]

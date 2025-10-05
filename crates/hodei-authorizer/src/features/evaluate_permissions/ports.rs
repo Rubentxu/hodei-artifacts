@@ -4,10 +4,7 @@ use std::sync::Arc;
 
 use crate::features::evaluate_permissions::dto::{AuthorizationRequest, AuthorizationResponse};
 use crate::features::evaluate_permissions::error::EvaluatePermissionsResult;
-use policies::shared::domain::hrn::Hrn;
-
-// Re-export IamPolicyProvider from hodei-iam
-pub use hodei_iam::shared::application::ports::{IamPolicyProvider, IamPolicyProviderError};
+use kernel::Hrn;
 
 /// Trait for providing organization boundary policies (SCPs)
 #[async_trait]
@@ -190,8 +187,6 @@ pub enum EntityResolverError {
 /// Errors related to authorization ports
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorizationError {
-    #[error("IAM policy provider error: {0}")]
-    IamPolicyProvider(#[from] IamPolicyProviderError),
     #[error("Organization boundary provider error: {0}")]
     OrganizationBoundaryProvider(String),
     #[error("Entity resolver error: {0}")]

@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use cedar_policy::{EntityUid, RestrictedExpression};
-use policies::shared::application::EngineBuilder;
-use policies::shared::domain::ports::{
-    AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, Principal, Resource, StorageError,
+use kernel::Hrn;
+use kernel::{
+    AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStorageError as StorageError,
+    Principal, Resource,
 };
-use policies::shared::Hrn;
+use policies::shared::application::EngineBuilder;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -41,7 +42,7 @@ struct TestGroup {
 // Implementación de HodeiEntityType para TestUser
 impl HodeiEntityType for TestUser {
     fn service_name() -> &'static str {
-        "iam"  // Debe estar en minúsculas según la convención
+        "iam" // Debe estar en minúsculas según la convención
     }
     fn resource_type_name() -> &'static str {
         "User"
@@ -59,7 +60,7 @@ impl HodeiEntityType for TestUser {
 
 // Implementación de HodeiEntity para TestUser
 impl HodeiEntity for TestUser {
-    fn hrn(&self) -> &Hrn {
+    fn hrn(&self) -> &kernel::Hrn {
         &self.hrn
     }
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
@@ -76,7 +77,7 @@ impl Principal for TestUser {}
 // Implementación de HodeiEntityType para TestGroup
 impl HodeiEntityType for TestGroup {
     fn service_name() -> &'static str {
-        "iam"  // Debe estar en minúsculas según la convención
+        "iam" // Debe estar en minúsculas según la convención
     }
     fn resource_type_name() -> &'static str {
         "Group"
@@ -88,7 +89,7 @@ impl HodeiEntityType for TestGroup {
 
 // Implementación de HodeiEntity para TestGroup
 impl HodeiEntity for TestGroup {
-    fn hrn(&self) -> &Hrn {
+    fn hrn(&self) -> &kernel::Hrn {
         &self.hrn
     }
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {

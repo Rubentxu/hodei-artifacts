@@ -11,7 +11,7 @@ use crate::shared::application::ports::{
     UserRepositoryError,
 };
 use crate::shared::domain::{Group, User};
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::sync::Arc;
 
 /// Adaptador que conecta UserFinderPort con UserRepository

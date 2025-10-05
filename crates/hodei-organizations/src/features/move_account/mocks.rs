@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use policies::shared::domain::hrn::Hrn;
+use kernel::Hrn;
 use std::sync::Arc;
 
 use crate::features::move_account::error::MoveAccountError;

@@ -1,15 +1,17 @@
-use crate::shared::domain::scp::ServiceControlPolicy;
-use crate::shared::domain::account::Account;
-use crate::shared::domain::ou::OrganizationalUnit;
-use crate::shared::application::ports::scp_repository::ScpRepositoryError;
+use crate::features::attach_scp::ports::{
+    AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
+};
 use crate::shared::application::ports::account_repository::AccountRepositoryError;
 use crate::shared::application::ports::ou_repository::OuRepositoryError;
-use crate::features::attach_scp::ports::{ScpRepositoryPort, AccountRepositoryPort, OuRepositoryPort};
-use policies::domain::Hrn;
+use crate::shared::application::ports::scp_repository::ScpRepositoryError;
+use crate::shared::domain::account::Account;
+use crate::shared::domain::ou::OrganizationalUnit;
+use crate::shared::domain::scp::ServiceControlPolicy;
+use kernel::Hrn;
 
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::RwLock;
-use async_trait::async_trait;
 
 /// Mock implementation of ScpRepositoryPort for testing
 #[derive(Debug, Default)]
@@ -33,7 +35,10 @@ impl MockScpRepositoryPort {
 
 #[async_trait]
 impl ScpRepositoryPort for MockScpRepositoryPort {
-    async fn find_scp_by_hrn(&self, hrn: &Hrn) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError> {
+    async fn find_scp_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError> {
         let scps = self.scps.read().unwrap();
         Ok(scps.get(&hrn.to_string()).cloned())
     }
@@ -66,7 +71,10 @@ impl MockAccountRepositoryPort {
 
 #[async_trait]
 impl AccountRepositoryPort for MockAccountRepositoryPort {
-    async fn find_account_by_hrn(&self, hrn: &Hrn) -> Result<Option<Account>, AccountRepositoryError> {
+    async fn find_account_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<Account>, AccountRepositoryError> {
         let accounts = self.accounts.read().unwrap();
         Ok(accounts.get(&hrn.to_string()).cloned())
     }
@@ -105,7 +113,10 @@ impl MockOuRepositoryPort {
 
 #[async_trait]
 impl OuRepositoryPort for MockOuRepositoryPort {
-    async fn find_ou_by_hrn(&self, hrn: &Hrn) -> Result<Option<OrganizationalUnit>, OuRepositoryError> {
+    async fn find_ou_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<OrganizationalUnit>, OuRepositoryError> {
         let ous = self.ous.read().unwrap();
         Ok(ous.get(&hrn.to_string()).cloned())
     }

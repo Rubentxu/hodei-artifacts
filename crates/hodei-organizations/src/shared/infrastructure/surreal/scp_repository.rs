@@ -1,9 +1,9 @@
-use crate::shared::domain::scp::ServiceControlPolicy;
 use crate::shared::application::ports::scp_repository::{ScpRepository, ScpRepositoryError};
-use policies::shared::domain::hrn::Hrn;
+use crate::shared::domain::scp::ServiceControlPolicy;
+use kernel::Hrn;
+use surrealdb::RecordId;
 use surrealdb::Surreal;
 use surrealdb::engine::any::Any;
-use surrealdb::RecordId;
 
 /// SurrealDB implementation of ScpRepository
 pub struct SurrealScpRepository {
@@ -23,24 +23,30 @@ impl ScpRepository for SurrealScpRepository {
     async fn save(&self, scp: &ServiceControlPolicy) -> Result<(), ScpRepositoryError> {
         let hrn_string = scp.hrn.to_string();
         let record_id = RecordId::from(("scp", hrn_string.as_str()));
-        
-        self.db.update::<Option<ServiceControlPolicy>>(record_id)
+
+        self.db
+            .update::<Option<ServiceControlPolicy>>(record_id)
             .content(scp.clone())
             .await
             .map_err(|e| ScpRepositoryError::Storage(e.to_string()))?;
-        
+
         Ok(())
     }
 
     /// Find a service control policy by HRN
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError> {
+    async fn find_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError> {
         let hrn_string = hrn.to_string();
         let record_id = RecordId::from(("scp", hrn_string.as_str()));
-        
-        let result = self.db.select::<Option<ServiceControlPolicy>>(record_id)
+
+        let result = self
+            .db
+            .select::<Option<ServiceControlPolicy>>(record_id)
             .await
             .map_err(|e| ScpRepositoryError::Storage(e.to_string()))?;
-        
+
         Ok(result)
     }
 }

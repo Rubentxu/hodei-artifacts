@@ -1,17 +1,16 @@
 use async_trait::async_trait;
 use cedar_policy::{EntityTypeName, EntityUid, Policy, PolicySet, RestrictedExpression, Schema};
+use kernel::Hrn;
+use kernel::{
+    AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStorageError as StorageError,
+    Principal, Resource,
+};
 /// Tests para verificar el rendering final del schema generado por el EngineBuilder
 ///
 /// Estos tests registran diferentes tipos de entidades y acciones para validar
 /// que el schema final se genera correctamente con namespaces, atributos y relaciones.
 /// Usan validación de Cedar como fuente principal de verdad.
-
 use policies::shared::application::EngineBuilder;
-use policies::shared::domain::ports::{
-    AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, Principal, Resource,
-    StorageError,
-};
-use policies::shared::Hrn;
 use policies::shared::domain::ActionTrait;
 use regex::Regex;
 use std::collections::HashMap;
@@ -62,13 +61,16 @@ impl HodeiEntityType for IamUser {
             ("email", AttributeType::Primitive("String")),
             ("name", AttributeType::Primitive("String")),
             ("active", AttributeType::Primitive("Bool")),
-            ("roles", AttributeType::Set(Box::new(AttributeType::Primitive("String")))),
+            (
+                "roles",
+                AttributeType::Set(Box::new(AttributeType::Primitive("String"))),
+            ),
         ]
     }
 }
 
 impl HodeiEntity for IamUser {
-    fn hrn(&self) -> &Hrn {
+    fn hrn(&self) -> &kernel::Hrn {
         &self.hrn
     }
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
@@ -104,7 +106,7 @@ impl HodeiEntityType for IamGroup {
 }
 
 impl HodeiEntity for IamGroup {
-    fn hrn(&self) -> &Hrn {
+    fn hrn(&self) -> &kernel::Hrn {
         &self.hrn
     }
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
@@ -138,13 +140,16 @@ impl HodeiEntityType for ArtifactPackage {
             ("version", AttributeType::Primitive("String")),
             ("type", AttributeType::Primitive("String")),
             ("size", AttributeType::Primitive("Long")),
-            ("tags", AttributeType::Set(Box::new(AttributeType::Primitive("String")))),
+            (
+                "tags",
+                AttributeType::Set(Box::new(AttributeType::Primitive("String"))),
+            ),
         ]
     }
 }
 
 impl HodeiEntity for ArtifactPackage {
-    fn hrn(&self) -> &Hrn {
+    fn hrn(&self) -> &kernel::Hrn {
         &self.hrn
     }
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
@@ -178,7 +183,7 @@ impl HodeiEntityType for ArtifactRepository {
 }
 
 impl HodeiEntity for ArtifactRepository {
-    fn hrn(&self) -> &Hrn {
+    fn hrn(&self) -> &kernel::Hrn {
         &self.hrn
     }
     fn attributes(&self) -> HashMap<String, RestrictedExpression> {
@@ -229,7 +234,8 @@ impl ActionTrait for ManageRepositoryAction {
     }
     fn applies_to() -> (EntityTypeName, EntityTypeName) {
         let principal = EntityTypeName::from_str("Iam::Group").expect("Valid principal type");
-        let resource = EntityTypeName::from_str("Artifact::Repository").expect("Valid resource type");
+        let resource =
+            EntityTypeName::from_str("Artifact::Repository").expect("Valid resource type");
         (principal, resource)
     }
 }
@@ -260,20 +266,24 @@ fn print_schema_details(schema: &Schema, title: &str) {
 
 /// Valida que una política es válida contra el schema usando Cedar
 fn validate_policy_against_schema(schema: &Schema, policy_str: &str) -> Result<(), String> {
-    let policy: Policy = policy_str.parse()
+    let policy: Policy = policy_str
+        .parse()
         .map_err(|e| format!("Failed to parse policy: {}", e))?;
 
     let mut policy_set = PolicySet::new();
-    policy_set.add(policy)
+    policy_set
+        .add(policy)
         .map_err(|e| format!("Failed to add policy to set: {}", e))?;
 
     let validator = cedar_policy::Validator::new(schema.clone());
-    let validation_result = validator.validate(&policy_set, cedar_policy::ValidationMode::default());
+    let validation_result =
+        validator.validate(&policy_set, cedar_policy::ValidationMode::default());
 
     if validation_result.validation_passed() {
         Ok(())
     } else {
-        let errors: Vec<String> = validation_result.validation_errors()
+        let errors: Vec<String> = validation_result
+            .validation_errors()
             .map(|e| format!("{:?}", e))
             .collect();
         Err(format!("Validation failed: {:?}", errors))
@@ -288,14 +298,21 @@ fn assert_schema_contains_entities_and_actions(schema: &Schema, expected_compone
             format!("permit(principal, action == {}, resource);", component)
         } else if component.contains("::") {
             // Para una entidad como "Iam::User", creamos una política que la use en una condición 'is'
-            format!("permit(principal, action, resource) when {{ principal is {} }};", component)
+            format!(
+                "permit(principal, action, resource) when {{ principal is {} }};",
+                component
+            )
         } else {
             // Ignorar componentes no reconocidos
             continue;
         };
 
-        validate_policy_against_schema(schema, &test_policy)
-            .unwrap_or_else(|e| panic!("Schema validation failed for component '{}': {}\nGenerated policy: {}", component, e, test_policy));
+        validate_policy_against_schema(schema, &test_policy).unwrap_or_else(|e| {
+            panic!(
+                "Schema validation failed for component '{}': {}\nGenerated policy: {}",
+                component, e, test_policy
+            )
+        });
     }
 }
 
@@ -327,7 +344,7 @@ async fn test_schema_with_single_principal_and_resource() {
 
     assert_schema_contains_entities_and_actions(
         schema,
-        &["Iam::User", "Artifact::Package", "Action::\"ReadPackage\""]
+        &["Iam::User", "Artifact::Package", "Action::\"ReadPackage\""],
     );
 
     let test_policy = r#"
@@ -368,7 +385,12 @@ async fn test_schema_with_multiple_principals() {
 
     assert_schema_contains_entities_and_actions(
         schema,
-        &["Iam::User", "Iam::Group", "Artifact::Package", "Action::\"ReadPackage\""]
+        &[
+            "Iam::User",
+            "Iam::Group",
+            "Artifact::Package",
+            "Action::\"ReadPackage\"",
+        ],
     );
 
     let user_policy = r#"
@@ -378,8 +400,7 @@ async fn test_schema_with_multiple_principals() {
             resource == Artifact::Package::"pkg-456"
         );
     "#;
-    validate_policy_against_schema(schema, user_policy)
-        .expect("User policy should be valid");
+    validate_policy_against_schema(schema, user_policy).expect("User policy should be valid");
 }
 
 #[tokio::test]
@@ -408,7 +429,12 @@ async fn test_schema_with_multiple_resources() {
 
     assert_schema_contains_entities_and_actions(
         schema,
-        &["Iam::User", "Artifact::Package", "Artifact::Repository", "Action::\"ReadPackage\""]
+        &[
+            "Iam::User",
+            "Artifact::Package",
+            "Artifact::Repository",
+            "Action::\"ReadPackage\"",
+        ],
     );
 
     let package_policy = r#"
@@ -418,8 +444,7 @@ async fn test_schema_with_multiple_resources() {
             resource == Artifact::Package::"pkg-789"
         );
     "#;
-    validate_policy_against_schema(schema, package_policy)
-        .expect("Package policy should be valid");
+    validate_policy_against_schema(schema, package_policy).expect("Package policy should be valid");
 }
 
 #[tokio::test]
@@ -454,7 +479,15 @@ async fn test_schema_with_multiple_actions() {
 
     assert_schema_contains_entities_and_actions(
         schema,
-        &["Iam::User", "Iam::Group", "Artifact::Package", "Artifact::Repository", "Action::\"ReadPackage\"", "Action::\"WritePackage\"", "Action::\"ManageRepository\""]
+        &[
+            "Iam::User",
+            "Iam::Group",
+            "Artifact::Package",
+            "Artifact::Repository",
+            "Action::\"ReadPackage\"",
+            "Action::\"WritePackage\"",
+            "Action::\"ManageRepository\"",
+        ],
     );
 
     let read_policy = r#"
@@ -464,8 +497,7 @@ async fn test_schema_with_multiple_actions() {
             resource == Artifact::Package::"pkg-read"
         );
     "#;
-    validate_policy_against_schema(schema, read_policy)
-        .expect("Read policy should be valid");
+    validate_policy_against_schema(schema, read_policy).expect("Read policy should be valid");
 
     let write_policy = r#"
         permit(
@@ -474,8 +506,7 @@ async fn test_schema_with_multiple_actions() {
             resource == Artifact::Package::"pkg-write"
         );
     "#;
-    validate_policy_against_schema(schema, write_policy)
-        .expect("Write policy should be valid");
+    validate_policy_against_schema(schema, write_policy).expect("Write policy should be valid");
 
     let manage_policy = r#"
         permit(
@@ -484,8 +515,7 @@ async fn test_schema_with_multiple_actions() {
             resource == Artifact::Repository::"repo-main"
         );
     "#;
-    validate_policy_against_schema(schema, manage_policy)
-        .expect("Manage policy should be valid");
+    validate_policy_against_schema(schema, manage_policy).expect("Manage policy should be valid");
 }
 
 #[tokio::test]
@@ -496,11 +526,11 @@ async fn test_schema_with_complex_attributes() {
     builder
         .register_principal::<IamUser>()
         .expect("register IamUser")
-        .register_resource::<ArtifactPackage>()      // <-- Recurso que faltaba
+        .register_resource::<ArtifactPackage>() // <-- Recurso que faltaba
         .expect("register ArtifactPackage")
         .register_resource::<ArtifactRepository>()
         .expect("register ArtifactRepository")
-        .register_action::<ReadPackageAction>()       // <-- Acción que faltaba
+        .register_action::<ReadPackageAction>() // <-- Acción que faltaba
         .expect("register ReadPackageAction");
 
     let (engine, _store) = builder.build(storage).expect("build engine");
@@ -514,7 +544,12 @@ async fn test_schema_with_complex_attributes() {
 
     assert_schema_contains_entities_and_actions(
         schema,
-        &["Iam::User", "Artifact::Package", "Artifact::Repository", "Action::\"ReadPackage\""]
+        &[
+            "Iam::User",
+            "Artifact::Package",
+            "Artifact::Repository",
+            "Action::\"ReadPackage\"",
+        ],
     );
 
     let complex_policy = r#"
@@ -526,8 +561,7 @@ async fn test_schema_with_complex_attributes() {
             principal.active == true
         };
     "#;
-    validate_policy_against_schema(schema, complex_policy)
-        .expect("Complex policy should be valid");
+    validate_policy_against_schema(schema, complex_policy).expect("Complex policy should be valid");
 }
 
 #[tokio::test]
@@ -575,10 +609,14 @@ async fn test_complete_schema_rendering() {
     assert_schema_contains_entities_and_actions(
         schema,
         &[
-            "Iam::User", "Iam::Group",
-            "Artifact::Package", "Artifact::Repository",
-            "Action::\"ReadPackage\"", "Action::\"WritePackage\"", "Action::\"ManageRepository\""
-        ]
+            "Iam::User",
+            "Iam::Group",
+            "Artifact::Package",
+            "Artifact::Repository",
+            "Action::\"ReadPackage\"",
+            "Action::\"WritePackage\"",
+            "Action::\"ManageRepository\"",
+        ],
     );
 
     let policies = vec![
@@ -592,7 +630,10 @@ async fn test_complete_schema_rendering() {
             .unwrap_or_else(|e| panic!("Policy {} should be valid: {}", idx, e));
     }
 
-    println!("\n✅ All {} policies validated successfully against the complete schema!", policies.len());
+    println!(
+        "\n✅ All {} policies validated successfully against the complete schema!",
+        policies.len()
+    );
 }
 
 #[tokio::test]
@@ -612,8 +653,14 @@ async fn test_empty_schema() {
     let iam_pattern = Regex::new(r"namespace\s+Iam").expect("Valid regex");
     let artifact_pattern = Regex::new(r"namespace\s+Artifact").expect("Valid regex");
 
-    assert!(!iam_pattern.is_match(&schema_str), "Empty schema should not contain Iam namespace");
-    assert!(!artifact_pattern.is_match(&schema_str), "Empty schema should not contain Artifact namespace");
+    assert!(
+        !iam_pattern.is_match(&schema_str),
+        "Empty schema should not contain Iam namespace"
+    );
+    assert!(
+        !artifact_pattern.is_match(&schema_str),
+        "Empty schema should not contain Artifact namespace"
+    );
 
     let invalid_policy = r#"
         permit(
@@ -624,6 +671,12 @@ async fn test_empty_schema() {
     "#;
 
     let result = validate_policy_against_schema(schema, invalid_policy);
-    assert!(result.is_err(), "Policy should fail validation against empty schema");
-    println!("✅ Policy correctly failed validation against empty schema: {:?}", result.err());
+    assert!(
+        result.is_err(),
+        "Policy should fail validation against empty schema"
+    );
+    println!(
+        "✅ Policy correctly failed validation against empty schema: {:?}",
+        result.err()
+    );
 }

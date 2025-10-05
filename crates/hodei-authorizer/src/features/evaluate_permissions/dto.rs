@@ -1,6 +1,6 @@
+use ::kernel::Hrn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use policies::shared::domain::hrn::Hrn;
 
 /// Request for authorization evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]

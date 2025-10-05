@@ -1,12 +1,10 @@
-use crate::shared::application::ports::scp_repository::ScpRepository;
+use crate::features::get_effective_scps::adapter::{
+    AccountRepositoryAdapter, OuRepositoryAdapter, ScpRepositoryAdapter,
+};
+use crate::features::get_effective_scps::use_case::GetEffectiveScpsUseCase;
 use crate::shared::application::ports::account_repository::AccountRepository;
 use crate::shared::application::ports::ou_repository::OuRepository;
-use crate::features::get_effective_scps::use_case::GetEffectiveScpsUseCase;
-use crate::features::get_effective_scps::adapter::{
-    ScpRepositoryAdapter,
-    AccountRepositoryAdapter,
-    OuRepositoryAdapter,
-};
+use crate::shared::application::ports::scp_repository::ScpRepository;
 
 /// Adaptador combinado que expone tanto cuentas como OUs
 pub struct OrgRepositoryAdapter<AR, OR>
@@ -32,23 +30,37 @@ where
 }
 
 #[async_trait::async_trait]
-impl<AR, OR> crate::features::get_effective_scps::ports::AccountRepositoryPort for OrgRepositoryAdapter<AR, OR>
+impl<AR, OR> crate::features::get_effective_scps::ports::AccountRepositoryPort
+    for OrgRepositoryAdapter<AR, OR>
 where
     AR: AccountRepository + Send + Sync,
     OR: OuRepository + Send + Sync,
 {
-    async fn find_account_by_hrn(&self, hrn: &policies::shared::domain::hrn::Hrn) -> Result<Option<crate::shared::domain::Account>, crate::shared::application::ports::account_repository::AccountRepositoryError> {
+    async fn find_account_by_hrn(
+        &self,
+        hrn: &kernel::Hrn,
+    ) -> Result<
+        Option<crate::shared::domain::Account>,
+        crate::shared::application::ports::account_repository::AccountRepositoryError,
+    > {
         self.account_adapter.find_account_by_hrn(hrn).await
     }
 }
 
 #[async_trait::async_trait]
-impl<AR, OR> crate::features::get_effective_scps::ports::OuRepositoryPort for OrgRepositoryAdapter<AR, OR>
+impl<AR, OR> crate::features::get_effective_scps::ports::OuRepositoryPort
+    for OrgRepositoryAdapter<AR, OR>
 where
     AR: AccountRepository + Send + Sync,
     OR: OuRepository + Send + Sync,
 {
-    async fn find_ou_by_hrn(&self, hrn: &policies::shared::domain::hrn::Hrn) -> Result<Option<crate::shared::domain::OrganizationalUnit>, crate::shared::application::ports::ou_repository::OuRepositoryError> {
+    async fn find_ou_by_hrn(
+        &self,
+        hrn: &kernel::Hrn,
+    ) -> Result<
+        Option<crate::shared::domain::OrganizationalUnit>,
+        crate::shared::application::ports::ou_repository::OuRepositoryError,
+    > {
         self.ou_adapter.find_ou_by_hrn(hrn).await
     }
 }
