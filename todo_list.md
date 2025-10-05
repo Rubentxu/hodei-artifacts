@@ -67,6 +67,14 @@
 - [x] Create handlers for SCP management in src/api/organizations.rs
 - [x] Remove old policy_handlers.rs or update it to only contain schema-related functionality
 
+### 7. 🔧 EN PROGRESO - Actualizar entidades para usar nueva API agnóstica
+- [x] Corregir imports en `actions.rs` para usar `domain::value_objects::ServiceName`
+- [x] Corregir imports en `entities.rs` para usar tipos del dominio del kernel
+- [x] Actualizar implementaciones de entidades para cumplir con nuevo contrato de traits
+- [ ] Corregir errores en `di_configurator.rs` (métodos default() no implementados)
+- [ ] Corregir errores en adapters (tipos de error incompatibles)
+- [ ] Corregir errores en `lib.rs` (type mismatch)
+
 ## Authorization Engine Status
 
 ### ✅ Completed
@@ -78,11 +86,13 @@
 
 ### 🔄 En Progreso
 - **Traducción de Contexto**: Marcado como TODO en el código (línea 134 en `core.rs`)
+- **Actualización de Entidades**: En progreso - corrigiendo imports y errores de compilación
 
 ### 📋 Próximos Pasos
-1. Implementar la traducción de contexto para completar la funcionalidad del engine
-2. Actualizar la documentación para reflejar la nueva arquitectura
-3. Realizar pruebas de integración completas del engine
+1. Completar corrección de errores en `hodei-iam` (8 errores restantes)
+2. Implementar la traducción de contexto para completar la funcionalidad del engine
+3. Actualizar la documentación para reflejar la nueva arquitectura
+4. Realizar pruebas de integración completas del engine
 
 ## Resumen del Refactoring
 
@@ -93,5 +103,15 @@ El `AuthorizationEngine` ha sido exitosamente refactorizado para:
 3. **Thread Safety**: Usa `Arc<RwLock>` para compartir estado entre threads
 4. **Tests Pasan**: 6/6 tests unitarios del engine pasan correctamente
 5. **Compilación Limpia**: Sin errores de compilación en el código principal
+
+### 🚀 Progreso Actual en Épica 3
+
+Estamos trabajando en la **Épica 3: Transformar los Dominios en Evaluadores y Gestores Autónomos**.
+
+**Estado Actual:**
+- ✅ Entities en `hodei-iam` actualizadas para usar nueva API agnóstica
+- ✅ Imports corregidos para usar tipos del dominio del kernel
+- 🔄 Corrigiendo errores de compilación restantes (8/31 errores reducidos)
+- ⏳ Pendiente: Implementar evaluadores autónomos para IAM y Organizations
 
 El engine está listo para ser utilizado en los bounded contexts con una API limpia y agnóstica.

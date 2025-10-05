@@ -3,7 +3,7 @@
 //! This module defines the IAM actions that can be performed.
 //! All actions implement the agnostic ActionTrait.
 
-use kernel::{ActionTrait, ServiceName};
+use kernel::{ActionTrait, domain::value_objects::ServiceName};
 
 // ============================================================================
 // CreateUser Action

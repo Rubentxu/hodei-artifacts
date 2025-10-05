@@ -4,8 +4,10 @@
 //! All entities implement the agnostic HodeiEntityType and HodeiEntity traits.
 
 use kernel::{
-    AttributeName, AttributeType, AttributeValue, HodeiEntity, HodeiEntityType, Hrn, Principal,
-    Resource, ResourceTypeName, ServiceName,
+    HodeiEntity, HodeiEntityType, Hrn, Principal, Resource,
+    domain::value_objects::{AttributeName, ServiceName, ResourceTypeName},
+    domain::entity::AttributeType,
+    domain::attributes::AttributeValue,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
