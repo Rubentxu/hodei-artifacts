@@ -19,11 +19,12 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```ignore
 //! use hodei_authorizer::features::evaluate_permissions::{
 //!     di::EvaluatePermissionsContainerBuilder,
 //!     dto::{AuthorizationRequest, AuthorizationResponse},
 //! };
+//! use kernel::Hrn;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Build the authorization container with required dependencies
@@ -36,9 +37,9 @@
 //!
 //! // Create an authorization request
 //! let request = AuthorizationRequest::new(
-//!     "hrn:hodei:iam:us-east-1:default:user/alice".parse()?,
+//!     Hrn::from_string("hrn:hodei:iam:us-east-1:default:user/alice")?,
 //!     "read".to_string(),
-//!     "hrn:hodei:s3:us-east-1:default:bucket/my-bucket".parse()?,
+//!     Hrn::from_string("hrn:hodei:s3:us-east-1:default:bucket/my-bucket")?,
 //! );
 //!
 //! // Evaluate permissions

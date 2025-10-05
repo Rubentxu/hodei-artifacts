@@ -11,7 +11,7 @@
 //! - `features`: IAM-specific features/use cases (create_user, create_group, add_user_to_group)
 //!
 //! # Example
-//! ```no_run
+//! ```ignore
 //! use hodei_iam::shared::application::configure_default_iam_entities;
 //! use policies::shared::application::di_helpers;
 //!

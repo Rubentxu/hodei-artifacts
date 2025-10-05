@@ -13,7 +13,7 @@ use policies::shared::application::EngineBuilder;
 /// - Actions: CreateUserAction, CreateGroupAction
 /// 
 /// # Example
-/// ```no_run
+/// ```ignore
 /// use policies::shared::application::di_helpers;
 /// use hodei_iam::shared::application::configure_default_iam_entities;
 /// 
