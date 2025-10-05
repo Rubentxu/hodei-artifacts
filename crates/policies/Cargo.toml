@@ -24,14 +24,21 @@ surrealdb = { workspace = true }
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 async-trait = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+dashmap = "6.1.0"
 
 ## testing dependencies are only declared under [dev-dependencies]
 
 [features]
+# default keeps only the in-memory SurrealDB backend and excludes legacy infra wiring.
+# The new refactor path progressively reintroduces minimal adapters isolated per feature.
 default = ["mem"]
 mem = ["surrealdb/kv-mem"]
 embedded = ["surrealdb/kv-rocksdb"]
 integration = []
+# Temporary flag: compiles legacy infrastructure (AuthorizationEngine, PolicyStore, Surreal adapters, DI helpers)
+# This will be removed once all features are migrated to the new ports and adapters.
+legacy_infra = []
 
 [dev-dependencies]
 mockall = { workspace = true }

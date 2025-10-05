@@ -1,12 +1,23 @@
-// Las features se implementarán según se necesiten
-// Por ahora, este módulo está vacío y listo para agregar features
-pub mod create_policy;
-pub mod get_policy;
-pub mod list_policies;
-pub mod delete_policy;
-pub mod update_policy;
-pub mod validate_policy;
-pub mod policy_playground;
-pub mod policy_playground_traces;
-pub mod policy_analysis;
+// Features module - only schema-related functionality remains
+// Most features are gated behind "legacy_infra" during refactor
+
+#[cfg(feature = "legacy_infra")]
 pub mod batch_eval;
+
+// New refactored feature - always available
+pub mod create_policy;
+
+#[cfg(feature = "legacy_infra")]
+pub mod evaluate_policies;
+
+#[cfg(feature = "legacy_infra")]
+pub mod policy_analysis;
+
+#[cfg(feature = "legacy_infra")]
+pub mod policy_playground;
+
+#[cfg(feature = "legacy_infra")]
+pub mod policy_playground_traces;
+
+// validate_policy available but with stub implementation when legacy_infra is disabled
+pub mod validate_policy;

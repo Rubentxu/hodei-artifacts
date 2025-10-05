@@ -9,34 +9,23 @@ use crate::features::evaluate_permissions::error::{
     EvaluatePermissionsError, EvaluatePermissionsResult,
 };
 use crate::features::evaluate_permissions::ports::{
-    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics, EntityResolverPort,
+    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics,
 };
-use policies::shared::AuthorizationEngine;
-use kernel::{
-    // Cross-context IAM + Organizations ports re-exported from shared crate (kernel)
-    EffectivePoliciesQuery,
-    EffectivePoliciesQueryPort,
-    GetEffectiveScpsPort,
-    GetEffectiveScpsQuery,
+use kernel::application::ports::authorization::{
+    EvaluationRequest, EvaluationDecision, ScpEvaluator, IamPolicyEvaluator, AuthorizationError,
 };
 
 /// Use case for evaluating authorization permissions with multi-layer security
 ///
 /// This implementation follows the Single Responsibility Principle:
 /// - It does NOT manage policies directly
-/// - It obtains IAM and SCP policies via cross-context ports (shared kernel)
-/// - It DELEGATES evaluation to the AuthorizationEngine from the policies crate
+/// - It delegates IAM policy evaluation to IamPolicyEvaluator trait
+/// - It delegates SCP evaluation to ScpEvaluator trait
 /// - It manages cross-cutting concerns: cache, logging, metrics
 pub struct EvaluatePermissionsUseCase<CACHE, LOGGER, METRICS> {
-    // Cross-context ports (we don't depend on concrete use cases from other crates)
-    iam_port: Arc<dyn EffectivePoliciesQueryPort>,
-    org_port: Option<Arc<dyn GetEffectiveScpsPort>>,
-
-    // Authorization engine from the policies crate
-    authorization_engine: Arc<AuthorizationEngine>,
-
-    // Entity resolver to obtain real entities
-    entity_resolver: Arc<dyn EntityResolverPort>,
+    // Cross-context evaluators (we don't depend on concrete use cases from other crates)
+    iam_evaluator: Arc<dyn IamPolicyEvaluator>,
+    org_evaluator: Arc<dyn ScpEvaluator>,
 
     // Cross-cutting concerns
     cache: Option<CACHE>,
@@ -50,21 +39,17 @@ where
     LOGGER: AuthorizationLogger,
     METRICS: AuthorizationMetrics,
 {
-    /// Create a new instance of the use case using cross-context ports
+    /// Create a new instance of the use case using cross-context evaluators
     pub fn new(
-        iam_port: Arc<dyn EffectivePoliciesQueryPort>,
-        org_port: Option<Arc<dyn GetEffectiveScpsPort>>,
-        authorization_engine: Arc<AuthorizationEngine>,
-        entity_resolver: Arc<dyn EntityResolverPort>,
+        iam_evaluator: Arc<dyn IamPolicyEvaluator>,
+        org_evaluator: Arc<dyn ScpEvaluator>,
         cache: Option<CACHE>,
         logger: LOGGER,
         metrics: METRICS,
     ) -> Self {
         Self {
-            iam_port,
-            org_port,
-            authorization_engine,
-            entity_resolver,
+            iam_evaluator,
+            org_evaluator,
             cache,
             logger,
             metrics,
@@ -121,234 +106,65 @@ where
         result
     }
 
-    /// Core authorization evaluation logic - orchestrates policy collection and delegates to AuthorizationEngine
+    /// Core authorization evaluation logic - orchestrates policy evaluation via delegated traits
     async fn evaluate_authorization(
         &self,
         request: &AuthorizationRequest,
     ) -> EvaluatePermissionsResult<AuthorizationResponse> {
         info!("Starting multi-layer authorization evaluation (orchestration)");
 
-        // Step 1: Get IAM policies via cross-context port
-        info!("Fetching IAM policies for principal");
-        let iam_query = EffectivePoliciesQuery {
-            principal_hrn: request.principal.to_string(),
+        // Convert to kernel's EvaluationRequest
+        let eval_request = EvaluationRequest {
+            principal: request.principal.clone(),
+            action: request.action.clone(),
+            resource: request.resource.clone(),
         };
 
-        let iam_response = self
-            .iam_port
-            .get_effective_policies(iam_query)
-            .await
+        // Step 1: Evaluate SCPs first (higher precedence in evaluation - deny overrides)
+        info!("Evaluating SCPs for resource");
+        let scp_decision = self.org_evaluator.evaluate_scps(eval_request.clone()).await
+            .map_err(|e| {
+                EvaluatePermissionsError::OrganizationBoundaryProviderError(format!(
+                    "Failed to evaluate SCPs: {}",
+                    e
+                ))
+            })?;
+
+        // If SCP explicitly denies, return deny decision immediately
+        if !scp_decision.decision {
+            info!("Access denied by SCP policy");
+            return Ok(AuthorizationResponse {
+                decision: AuthorizationDecision::Deny,
+                determining_policies: vec![],
+                reason: scp_decision.reason,
+                explicit: true,
+            });
+        }
+
+        // Step 2: Evaluate IAM policies
+        info!("Evaluating IAM policies for principal");
+        let iam_decision = self.iam_evaluator.evaluate_iam_policies(eval_request).await
             .map_err(|e| {
                 EvaluatePermissionsError::IamPolicyProviderError(format!(
-                    "Failed to get IAM policies: {}",
+                    "Failed to evaluate IAM policies: {}",
                     e
                 ))
             })?;
-
-        info!(
-            "Retrieved {} IAM policies for principal",
-            iam_response.policy_count
-        );
-
-        // Step 2: Get SCPs if organizations port available
-        let scp_policy_set = if let Some(ref org_port) = self.org_port {
-            info!("Fetching effective SCPs for resource");
-            let scp_query = GetEffectiveScpsQuery {
-                resource_hrn: request.resource.to_string(),
-            };
-
-            let scp_response = org_port.get_effective_scps(scp_query).await.map_err(|e| {
-                EvaluatePermissionsError::OrganizationBoundaryProviderError(format!(
-                    "Failed to get SCPs: {}",
-                    e
-                ))
-            })?;
-
-            info!(
-                "Retrieved {} SCPs for resource",
-                scp_response.policies().count()
-            );
-            scp_response
-        } else {
-            info!("No organization port configured, skipping SCPs");
-            cedar_policy::PolicySet::new()
-        };
-
-        // Step 3: Combine PolicySets
-        info!("Combining IAM policies and SCPs");
-        let mut combined_policies = cedar_policy::PolicySet::new();
-
-        // Add SCPs first (higher precedence in evaluation - deny overrides)
-        for scp_policy in scp_policy_set.policies() {
-            if let Err(e) = combined_policies.add(scp_policy.clone()) {
-                warn!("Failed to add SCP policy: {}", e);
-            }
-        }
-
-        // Add IAM policies
-        for iam_policy in iam_response.policies.policies() {
-            if let Err(e) = combined_policies.add(iam_policy.clone()) {
-                warn!("Failed to add IAM policy: {}", e);
-            }
-        }
-
-        info!(
-            "Combined {} total policies, delegating evaluation to AuthorizationEngine",
-            combined_policies.policies().count()
-        );
-
-        // Step 4: Delegate evaluation to policies crate's AuthorizationEngine
-        let decision = self
-            .evaluate_with_policy_set(request, &combined_policies)
-            .await?;
 
         info!(
             "Authorization evaluation completed: {:?}",
-            decision.decision
+            iam_decision.decision
         );
-        Ok(decision)
-    }
-
-    /// Evaluate authorization by delegating to the policies crate's AuthorizationEngine
-    async fn evaluate_with_policy_set(
-        &self,
-        request: &AuthorizationRequest,
-        policies: &cedar_policy::PolicySet,
-    ) -> EvaluatePermissionsResult<AuthorizationResponse> {
-        use cedar_policy::EntityUid;
-        use std::str::FromStr;
-
-        if policies.is_empty() {
-            info!("No policies found - applying Principle of Least Privilege (implicit deny)");
-            return Ok(AuthorizationResponse::implicit_deny(
-                "No policies matched - access denied by Principle of Least Privilege".to_string(),
-            ));
-        }
-
-        let _principal = EntityUid::from_str(&request.principal.to_string()).map_err(|e| {
-            EvaluatePermissionsError::InvalidRequest(format!("Invalid principal HRN: {}", e))
-        })?;
-
-        let action =
-            EntityUid::from_str(&format!("Action::\"{}\"", request.action)).map_err(|e| {
-                EvaluatePermissionsError::InvalidRequest(format!("Invalid action: {}", e))
-            })?;
-
-        let _resource = EntityUid::from_str(&request.resource.to_string()).map_err(|e| {
-            EvaluatePermissionsError::InvalidRequest(format!("Invalid resource HRN: {}", e))
-        })?;
-
-        let context = self.create_cedar_context(request)?;
-
-        let principal_entity = self
-            .entity_resolver
-            .resolve(&request.principal)
-            .await
-            .map_err(|e| {
-                EvaluatePermissionsError::EntityResolutionError(format!(
-                    "Failed to resolve principal: {}",
-                    e
-                ))
-            })?;
-
-        let resource_entity = self
-            .entity_resolver
-            .resolve(&request.resource)
-            .await
-            .map_err(|e| {
-                EvaluatePermissionsError::EntityResolutionError(format!(
-                    "Failed to resolve resource: {}",
-                    e
-                ))
-            })?;
-
-        let auth_request = policies::shared::AuthorizationRequest {
-            principal: principal_entity.as_ref(),
-            action: action.clone(),
-            resource: resource_entity.as_ref(),
-            context,
-            entities: vec![],
-        };
-
-        info!("Delegating evaluation to policies::AuthorizationEngine");
-        let response = self
-            .authorization_engine
-            .is_authorized_with_policy_set(&auth_request, policies);
-
-        let (decision, determining_policies, explicit, reason) = match response.decision() {
-            cedar_policy::Decision::Deny => {
-                let policies: Vec<String> = response
-                    .diagnostics()
-                    .reason()
-                    .map(|p| p.to_string())
-                    .collect();
-                (
-                    AuthorizationDecision::Deny,
-                    policies,
-                    true,
-                    "Access explicitly denied by policy".to_string(),
-                )
-            }
-            cedar_policy::Decision::Allow => {
-                let policies: Vec<String> = response
-                    .diagnostics()
-                    .reason()
-                    .map(|p| p.to_string())
-                    .collect();
-                (
-                    AuthorizationDecision::Allow,
-                    policies,
-                    true,
-                    "Access explicitly allowed by policy".to_string(),
-                )
-            }
-        };
 
         Ok(AuthorizationResponse {
-            decision,
-            determining_policies,
-            reason,
-            explicit,
-        })
-    }
-
-    fn create_cedar_context(
-        &self,
-        request: &AuthorizationRequest,
-    ) -> EvaluatePermissionsResult<cedar_policy::Context> {
-        use time::format_description::well_known::Rfc3339;
-
-        let mut context_data = serde_json::Map::new();
-
-        if let Some(ref request_context) = request.context {
-            if let Some(ref source_ip) = request_context.source_ip {
-                context_data.insert(
-                    "source_ip".to_string(),
-                    serde_json::Value::String(source_ip.clone()),
-                );
-            }
-            if let Some(ref user_agent) = request_context.user_agent {
-                context_data.insert(
-                    "user_agent".to_string(),
-                    serde_json::Value::String(user_agent.clone()),
-                );
-            }
-            if let Some(ref request_time) = request_context.request_time
-                && let Ok(formatted) = request_time.format(&Rfc3339)
-            {
-                context_data.insert(
-                    "request_time".to_string(),
-                    serde_json::Value::String(formatted),
-                );
-            }
-            for (key, value) in &request_context.additional_context {
-                context_data.insert(key.clone(), value.clone());
-            }
-        }
-
-        let context_json = serde_json::Value::Object(context_data);
-        cedar_policy::Context::from_json_value(context_json, None).map_err(|e| {
-            EvaluatePermissionsError::InvalidRequest(format!("Invalid context: {}", e))
+            decision: if iam_decision.decision {
+                AuthorizationDecision::Allow
+            } else {
+                AuthorizationDecision::Deny
+            },
+            determining_policies: vec![],
+            reason: iam_decision.reason,
+            explicit: true,
         })
     }
 

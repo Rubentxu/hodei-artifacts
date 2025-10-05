@@ -1,7 +1,5 @@
-use cedar_policy::{EntityId, EntityTypeName, EntityUid};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::str::FromStr;
 
 /// Hrn (Hodei Resource Name)
 ///
@@ -25,8 +23,33 @@ pub struct Hrn {
 }
 
 impl Hrn {
+    /// Acceso al campo service
+    pub fn service(&self) -> &str {
+        &self.service
+    }
+
+    /// Acceso al campo resource_id
+    pub fn resource_id(&self) -> &str {
+        &self.resource_id
+    }
+
+    /// Acceso al campo resource_type
+    pub fn resource_type(&self) -> &str {
+        &self.resource_type
+    }
+
+    /// Acceso al campo partition
+    pub fn partition(&self) -> &str {
+        &self.partition
+    }
+
+    /// Acceso al campo account_id
+    pub fn account_id(&self) -> &str {
+        &self.account_id
+    }
+
     /// Convención: nombre de servicio siempre en minúsculas (puede contener dígitos y '-')
-    pub fn normalize_service_name(service: &str) -> String {
+    fn normalize_service_name(service: &str) -> String {
         service.to_ascii_lowercase()
     }
 
@@ -37,7 +60,9 @@ impl Hrn {
             .map(|seg| {
                 let mut chars = seg.chars();
                 match chars.next() {
-                    Some(f) => f.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase(),
+                    Some(f) => {
+                        f.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase()
+                    }
                     None => String::new(),
                 }
             })
@@ -76,11 +101,13 @@ impl Hrn {
         account_id: String,
         resource_id: String,
     ) -> Self {
+        let service_name = T::service_name();
+        let resource_type_name = T::resource_type_name();
         Self {
             partition,
-            service: Self::normalize_service_name(T::service_name()),
+            service: Self::normalize_service_name(service_name.as_str()),
             account_id,
-            resource_type: T::resource_type_name().to_string(),
+            resource_type: resource_type_name.as_str().to_string(),
             resource_id,
         }
     }
@@ -106,26 +133,36 @@ impl Hrn {
         })
     }
 
-    /// Convierte el HRN a un `EntityUid` de Cedar, aplicando namespace PascalCase
+    /// Construye el nombre completo del tipo de entidad (Namespace::Type)
+    ///
+    /// Este método es útil para construir identificadores de entidad
+    /// para sistemas de políticas.
     ///
     /// Regla:
     /// - Si `resource_type` ya contiene `::`, se usa tal cual.
     /// - Sino y existe `service`, se produce `<ServicePascalCase>::<NormalizedResourceType>`
-    pub fn to_euid(&self) -> EntityUid {
+    pub fn entity_type_name(&self) -> String {
         let namespace = Self::to_pascal_case(&self.service);
-        let type_str = if self.resource_type.contains("::") {
+        if self.resource_type.contains("::") {
             self.resource_type.clone()
         } else if !namespace.is_empty() {
-            format!("{}::{}", namespace, Self::normalize_ident(&self.resource_type))
+            format!(
+                "{}::{}",
+                namespace,
+                Self::normalize_ident(&self.resource_type)
+            )
         } else {
             Self::normalize_ident(&self.resource_type)
-        };
+        }
+    }
 
-        let eid = EntityId::from_str(&self.resource_id)
-            .or_else(|_| EntityId::from_str(&format!("\"{}\"", self.resource_id)))
-            .expect("Failed to create EntityId");
-        let type_name = EntityTypeName::from_str(&type_str).expect("Failed to create EntityTypeName");
-        EntityUid::from_type_name_and_id(type_name, eid)
+    /// Construye un identificador de entidad completo en formato string
+    ///
+    /// Formato: `<EntityTypeName>::"<resource_id>"`
+    /// Ejemplo: `Iam::User::"alice"`
+    pub fn entity_uid_string(&self) -> String {
+        let type_name = self.entity_type_name();
+        format!("{}::\"{}\"", type_name, self.resource_id)
     }
 
     /// Normaliza un identificador para Cedar
@@ -135,7 +172,11 @@ impl Hrn {
         let mut out = String::new();
         let mut chars = s.chars();
         if let Some(c0) = chars.next() {
-            let c = if c0.is_ascii_alphabetic() || c0 == '_' { c0 } else { '_' };
+            let c = if c0.is_ascii_alphabetic() || c0 == '_' {
+                c0
+            } else {
+                '_'
+            };
             out.push(c);
         } else {
             out.push('_');
@@ -190,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn to_euid_is_constructed() {
+    fn entity_type_name_is_constructed() {
         let hrn = Hrn::new(
             "aws".to_string(),
             "hodei".to_string(),
@@ -198,29 +239,12 @@ mod tests {
             "User".to_string(),
             "alice".to_string(),
         );
-        let euid = hrn.to_euid();
-        let s = format!("{}", euid);
-        assert!(s.contains("User"));
-        assert!(s.contains("alice"));
+        let type_name = hrn.entity_type_name();
+        assert_eq!(type_name, "Hodei::User");
     }
 
     #[test]
-    fn to_euid_uses_service_namespace_for_type() {
-        let hrn = Hrn::new(
-            "aws".to_string(),
-            "hodei-svc".to_string(),
-            "123".to_string(),
-            "User-Profile".to_string(),
-            "bob".to_string(),
-        );
-        let euid = hrn.to_euid();
-        let s = format!("{}", euid);
-        assert!(s.contains("HodeiSvc::User_Profile"));
-        assert!(s.contains("\"bob\""));
-    }
-
-    #[test]
-    fn to_euid_uses_pascal_namespace() {
+    fn entity_uid_string_format() {
         let hrn = Hrn::new(
             "aws".to_string(),
             "iam".to_string(),
@@ -228,19 +252,57 @@ mod tests {
             "User".to_string(),
             "alice".to_string(),
         );
-        let euid = hrn.to_euid();
-        let s = format!("{}", euid);
-        assert!(s.contains("Iam::User"));
-        assert!(s.contains("\"alice\""));
+        let uid_str = hrn.entity_uid_string();
+        assert_eq!(uid_str, "Iam::User::\"alice\"");
+    }
+
+    #[test]
+    fn entity_type_name_uses_service_namespace() {
+        let hrn = Hrn::new(
+            "aws".to_string(),
+            "hodei-svc".to_string(),
+            "123".to_string(),
+            "User-Profile".to_string(),
+            "bob".to_string(),
+        );
+        let type_name = hrn.entity_type_name();
+        assert_eq!(type_name, "HodeiSvc::User_Profile");
+    }
+
+    #[test]
+    fn entity_type_name_uses_pascal_namespace() {
+        let hrn = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "123".to_string(),
+            "User".to_string(),
+            "alice".to_string(),
+        );
+        let type_name = hrn.entity_type_name();
+        assert_eq!(type_name, "Iam::User");
     }
 
     #[test]
     fn action_constructor_builds_action_type() {
         let hrn = Hrn::action("iam", "CreateUser");
         assert_eq!(hrn.resource_type, "Action");
-        let euid = hrn.to_euid();
-        let s = format!("{}", euid);
-        assert!(s.contains("Iam::Action"));
-        assert!(s.contains("CreateUser"));
+        let type_name = hrn.entity_type_name();
+        assert!(type_name.contains("Iam::Action"));
+    }
+
+    #[test]
+    fn accessor_methods() {
+        let hrn = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "123456".to_string(),
+            "User".to_string(),
+            "alice".to_string(),
+        );
+        assert_eq!(hrn.service(), "iam");
+        assert_eq!(hrn.resource_id(), "alice");
+        assert_eq!(hrn.resource_type(), "User");
+        assert_eq!(hrn.partition(), "aws");
+        assert_eq!(hrn.account_id(), "123456");
     }
 }

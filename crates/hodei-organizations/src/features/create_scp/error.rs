@@ -1,14 +1,44 @@
-use crate::shared::application::ports::scp_repository::ScpRepositoryError;
 use thiserror::Error;
+use crate::shared::application::ports::PolicyStorageError;
 
 #[derive(Debug, Error)]
 pub enum CreateScpError {
-    #[error("SCP repository error: {0}")]
-    ScpRepositoryError(#[from] ScpRepositoryError),
-    #[error("Invalid SCP name")]
-    InvalidScpName,
-    #[error("Invalid SCP document")]
-    InvalidScpDocument,
-    #[error("Transaction error: {0}")]
-    TransactionError(String),
+    #[error("Policy storage error: {0}")]
+    StorageError(#[from] PolicyStorageError),
+    #[error("Invalid SCP content")]
+    InvalidScpContent,
+    #[error("SCP already exists")]
+    ScpAlreadyExists,
+}
+
+#[derive(Debug, Error)]
+pub enum DeleteScpError {
+    #[error("Policy storage error: {0}")]
+    StorageError(#[from] PolicyStorageError),
+    #[error("SCP not found")]
+    ScpNotFound,
+}
+
+#[derive(Debug, Error)]
+pub enum UpdateScpError {
+    #[error("Policy storage error: {0}")]
+    StorageError(#[from] PolicyStorageError),
+    #[error("SCP not found")]
+    ScpNotFound,
+    #[error("Invalid SCP content")]
+    InvalidScpContent,
+}
+
+#[derive(Debug, Error)]
+pub enum GetScpError {
+    #[error("Policy storage error: {0}")]
+    StorageError(#[from] PolicyStorageError),
+    #[error("SCP not found")]
+    ScpNotFound,
+}
+
+#[derive(Debug, Error)]
+pub enum ListScpsError {
+    #[error("Policy storage error: {0}")]
+    StorageError(#[from] PolicyStorageError),
 }

@@ -1,102 +1,7 @@
-use crate::shared::application::PolicyStore;
 use crate::shared::domain::HodeiEntity;
-use crate::shared::domain::ports::PolicyStorage;
 use crate::shared::domain::ports::{ActionTrait, Principal, Resource};
 use crate::shared::generate_fragment_for_type;
-use cedar_policy::{
-    CedarSchemaError, Context, Entities, PolicySet, Request, Response, Schema, SchemaError,
-    SchemaFragment,
-};
-use std::collections::HashSet;
-use std::sync::Arc;
-
-pub struct AuthorizationRequest<'a> {
-    pub principal: &'a dyn HodeiEntity,
-    pub action: cedar_policy::EntityUid,
-    pub resource: &'a dyn HodeiEntity,
-    pub context: Context,
-    pub entities: Vec<&'a dyn HodeiEntity>,
-}
-
-#[derive(Clone)]
-pub struct AuthorizationEngine {
-    pub schema: Arc<Schema>,
-    pub store: PolicyStore,
-}
-
-impl AuthorizationEngine {
-    /// Evaluate authorization using the internal PolicyStore
-    pub async fn is_authorized(&self, request: &AuthorizationRequest<'_>) -> Response {
-        let entity_vec: Vec<cedar_policy::Entity> = request
-            .entities
-            .iter()
-            .map(|entity| {
-                let attrs = entity.attributes();
-                let parents: HashSet<_> = entity.parents().into_iter().collect();
-                cedar_policy::Entity::new(entity.euid(), attrs, parents)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .expect("Failed to create entities");
-
-        let entities = Entities::from_entities(entity_vec, None)
-            .expect("Failed to create Entities collection");
-
-        let cedar_request = Request::new(
-            request.principal.euid(),
-            request.action.clone(),
-            request.resource.euid(),
-            request.context.clone(),
-            None,
-        )
-        .expect("Failed to create Cedar request");
-
-        let policies = self
-            .store
-            .get_current_policy_set()
-            .await
-            .unwrap_or_else(|_| PolicySet::new());
-        cedar_policy::Authorizer::new().is_authorized(&cedar_request, &policies, &entities)
-    }
-
-    /// Evaluate authorization using an external PolicySet
-    ///
-    /// This method allows orchestrators (like hodei-authorizer) to provide
-    /// a dynamically constructed PolicySet without requiring PolicyStore persistence.
-    ///
-    /// # Use Case
-    /// Use this when policies are collected from multiple sources at runtime
-    /// (e.g., IAM policies + SCPs) and need to be evaluated together.
-    pub fn is_authorized_with_policy_set(
-        &self,
-        request: &AuthorizationRequest<'_>,
-        policies: &PolicySet,
-    ) -> Response {
-        let entity_vec: Vec<cedar_policy::Entity> = request
-            .entities
-            .iter()
-            .map(|entity| {
-                let attrs = entity.attributes();
-                let parents: HashSet<_> = entity.parents().into_iter().collect();
-                cedar_policy::Entity::new(entity.euid(), attrs, parents)
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .expect("Failed to create entities");
-
-        let entities = Entities::from_entities(entity_vec, None)
-            .expect("Failed to create Entities collection");
-
-        let cedar_request = Request::new(
-            request.principal.euid(),
-            request.action.clone(),
-            request.resource.euid(),
-            request.context.clone(),
-            None,
-        )
-        .expect("Failed to create Cedar request");
-
-        cedar_policy::Authorizer::new().is_authorized(&cedar_request, policies, &entities)
-    }
-}
+use cedar_policy::{CedarSchemaError, Schema, SchemaError, SchemaFragment};
 
 #[derive(Default)]
 pub struct EngineBuilder {
@@ -153,20 +58,10 @@ impl EngineBuilder {
         Ok(self)
     }
 
-    pub fn build(
-        self,
-        storage: Arc<dyn PolicyStorage>,
-    ) -> Result<(AuthorizationEngine, PolicyStore), Box<SchemaError>> {
+    pub fn build_schema(self) -> Result<Schema, Box<SchemaError>> {
         // Build schema from registered fragments only
         // No automatic base schema - everything must be explicitly registered by the client
         let all_fragments = [self.entity_fragments, self.action_fragments].concat();
-
-        let schema = Arc::new(Schema::from_schema_fragments(all_fragments)?);
-        let store = PolicyStore::new(schema.clone(), storage);
-        let engine = AuthorizationEngine {
-            schema,
-            store: store.clone(),
-        };
-        Ok((engine, store))
+        Schema::from_schema_fragments(all_fragments).map_err(Box::new)
     }
 }

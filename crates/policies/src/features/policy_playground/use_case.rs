@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::time::Instant;
 
-use crate::shared::application::parallel::{evaluate_scenarios_channel, AuthScenario};
 use cedar_policy::{Authorizer, Context, Decision as CedarDecision, Entities, Entity, EntityUid, Policy, PolicySet, Request, RestrictedExpression, Schema, SchemaFragment, ValidationMode, Validator};
 
 use super::dto::{
@@ -93,15 +92,13 @@ impl PolicyPlaygroundUseCase {
         // Build entities
         let entities = self.parse_entities(&req.entities)?;
 
-        // Evaluate scenarios (parallel when >1)
+        // Evaluate scenarios sequentially
         let mut results = Vec::with_capacity(req.authorization_requests.len());
         let mut total_time = 0u64;
         let mut allow_count = 0usize;
 
-        if req.authorization_requests.len() == 1 {
-            // Keep fast single-path
-            let authorizer = Authorizer::new();
-            let sc = &req.authorization_requests[0];
+        let authorizer = Authorizer::new();
+        for sc in &req.authorization_requests {
             let start = Instant::now();
             let principal = EntityUid::from_str(&sc.principal)
                 .map_err(|e| PlaygroundError::EuidParseError(format!("principal: {}", e)))?;
@@ -118,30 +115,6 @@ impl PolicyPlaygroundUseCase {
             let eval_time = start.elapsed().as_micros() as u64;
             total_time += eval_time;
             results.push(AuthorizationResult { scenario_name: sc.name.clone(), decision, determining_policies: vec![], evaluated_policies: vec![], diagnostics: AuthorizationDiagnostics { reasons, errors: vec![], info: vec![] }, evaluation_time_us: eval_time });
-        } else {
-            // Use shared parallel evaluator
-            let auth_scenarios: Vec<AuthScenario> = req.authorization_requests
-                .iter()
-                .cloned()
-                .map(|s| AuthScenario { name: s.name, principal: s.principal, action: s.action, resource: s.resource, context: s.context })
-                .collect();
-            let workers = 8usize;
-            let buffer = 2 * workers;
-            let (outcomes, _stats) = evaluate_scenarios_channel(&pset, &entities, auth_scenarios, None, workers, buffer)
-                .await
-                .map_err(PlaygroundError::RequestError)?;
-            for o in outcomes {
-                if o.allow { allow_count += 1; }
-                total_time += o.eval_time_us;
-                results.push(AuthorizationResult {
-                    scenario_name: o.name,
-                    decision: if o.allow { Decision::Allow } else { Decision::Deny },
-                    determining_policies: vec![],
-                    evaluated_policies: vec![],
-                    diagnostics: AuthorizationDiagnostics { reasons: o.reasons, errors: vec![], info: vec![] },
-                    evaluation_time_us: o.eval_time_us,
-                });
-            }
         }
 
         // Stable order for determinism in tests

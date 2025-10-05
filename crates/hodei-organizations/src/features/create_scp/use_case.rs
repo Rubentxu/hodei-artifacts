@@ -1,86 +1,120 @@
-use crate::features::create_scp::dto::{CreateScpCommand, ScpView};
-use crate::features::create_scp::error::CreateScpError;
-use crate::features::create_scp::ports::{CreateScpUnitOfWork, CreateScpUnitOfWorkFactory};
-use crate::shared::domain::scp::ServiceControlPolicy;
-use kernel::Hrn;
-use std::sync::Arc;
+use crate::shared::domain::{Hrn, Policy};
+use crate::features::create_scp::ports::ScpPersister;
+use crate::features::create_scp::dto::{CreateScpCommand, DeleteScpCommand, UpdateScpCommand, GetScpQuery, ListScpsQuery, ScpDto};
+use crate::features::create_scp::error::{CreateScpError, DeleteScpError, UpdateScpError, GetScpError, ListScpsError};
+use async_trait::async_trait;
+use chrono::Utc;
+use cedar_policy::{PolicyId, PolicySet};
+use tracing::instrument;
 
-/// Use case for creating service control policies with transactional guarantees
-///
-/// This implementation uses the UnitOfWork pattern to ensure atomic operations
-/// and consistency.
-pub struct CreateScpUseCase<UWF: CreateScpUnitOfWorkFactory> {
-    uow_factory: Arc<UWF>,
+pub struct CreateScpUseCase<T: ScpPersister> {
+    scp_persister: T,
 }
 
-impl<UWF: CreateScpUnitOfWorkFactory> CreateScpUseCase<UWF> {
-    pub fn new(uow_factory: Arc<UWF>) -> Self {
-        Self { uow_factory }
+impl<T: ScpPersister> CreateScpUseCase<T> {
+    pub fn new(scp_persister: T) -> Self {
+        Self { scp_persister }
     }
 
-    pub async fn execute(&self, command: CreateScpCommand) -> Result<ScpView, CreateScpError> {
-        // Create a new UnitOfWork for this operation
-        let mut uow = self.uow_factory.create().await?;
-
-        // Begin the transaction
-        uow.begin().await?;
-
-        // Execute the business logic within the transaction
-        let result = self.execute_within_transaction(&command, &mut uow).await;
-
-        // Commit or rollback based on the result
-        match result {
-            Ok(view) => {
-                uow.commit().await?;
-                Ok(view)
-            }
-            Err(e) => {
-                // Attempt to rollback, but don't hide the original error
-                if let Err(rollback_err) = uow.rollback().await {
-                    tracing::error!("Failed to rollback transaction: {}", rollback_err);
-                }
-                Err(e)
-            }
+    #[instrument(skip(self))]
+    pub async fn execute(&self, command: CreateScpCommand) -> Result<ScpDto, CreateScpError> {
+        // Validate SCP content
+        let policy_set = PolicySet::from_str(&command.scp_content)
+            .map_err(|_| CreateScpError::InvalidScpContent)?;
+        
+        if policy_set.policies().count() != 1 {
+            return Err(CreateScpError::InvalidScpContent);
         }
+
+        // Create SCP entity
+        let policy_id = PolicyId::from_str(&command.scp_id)
+            .map_err(|_| CreateScpError::InvalidScpContent)?;
+        
+        let hrn = Hrn::new("organizations", "scp", &command.scp_id);
+        let now = Utc::now();
+        
+        let policy = Policy {
+            id: hrn.clone(),
+            content: command.scp_content,
+            description: command.description,
+            created_at: now,
+            updated_at: now,
+        };
+
+        // Persist SCP
+        let saved_policy = self.scp_persister.create_scp(command).await?;
+        Ok(ScpDto::from(saved_policy))
+    }
+}
+
+pub struct DeleteScpUseCase<T: ScpPersister> {
+    scp_persister: T,
+}
+
+impl<T: ScpPersister> DeleteScpUseCase<T> {
+    pub fn new(scp_persister: T) -> Self {
+        Self { scp_persister }
     }
 
-    async fn execute_within_transaction(
-        &self,
-        command: &CreateScpCommand,
-        uow: &mut UWF::UnitOfWork,
-    ) -> Result<ScpView, CreateScpError> {
-        // Validar el nombre de la SCP
-        if command.name.is_empty() {
-            return Err(CreateScpError::InvalidScpName);
+    #[instrument(skip(self))]
+    pub async fn execute(&self, command: DeleteScpCommand) -> Result<(), DeleteScpError> {
+        self.scp_persister.delete_scp(command).await
+    }
+}
+
+pub struct UpdateScpUseCase<T: ScpPersister> {
+    scp_persister: T,
+}
+
+impl<T: ScpPersister> UpdateScpUseCase<T> {
+    pub fn new(scp_persister: T) -> Self {
+        Self { scp_persister }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn execute(&self, command: UpdateScpCommand) -> Result<ScpDto, UpdateScpError> {
+        // Validate SCP content
+        let policy_set = PolicySet::from_str(&command.scp_content)
+            .map_err(|_| UpdateScpError::InvalidScpContent)?;
+        
+        if policy_set.policies().count() != 1 {
+            return Err(UpdateScpError::InvalidScpContent);
         }
 
-        // Validar el documento de la SCP
-        if command.document.is_empty() {
-            return Err(CreateScpError::InvalidScpDocument);
-        }
+        // Update SCP
+        let updated_policy = self.scp_persister.update_scp(command).await?;
+        Ok(ScpDto::from(updated_policy))
+    }
+}
 
-        // Crear el HRN para la SCP
-        let scp_hrn = Hrn::new(
-            "aws".to_string(),
-            "hodei".to_string(),
-            "default".to_string(),
-            "scp".to_string(),
-            command.name.clone(),
-        );
+pub struct GetScpUseCase<T: ScpPersister> {
+    scp_persister: T,
+}
 
-        // Crear la SCP
-        let scp =
-            ServiceControlPolicy::new(scp_hrn, command.name.clone(), command.document.clone());
+impl<T: ScpPersister> GetScpUseCase<T> {
+    pub fn new(scp_persister: T) -> Self {
+        Self { scp_persister }
+    }
 
-        // Guardar la SCP dentro de la transacción
-        let scp_repo = uow.scps();
-        scp_repo.save(&scp).await?;
+    #[instrument(skip(self))]
+    pub async fn execute(&self, query: GetScpQuery) -> Result<ScpDto, GetScpError> {
+        let policy = self.scp_persister.get_scp(query).await?;
+        Ok(ScpDto::from(policy))
+    }
+}
 
-        // Devolver la vista de la SCP
-        Ok(ScpView {
-            hrn: scp.hrn,
-            name: scp.name,
-            document: scp.document,
-        })
+pub struct ListScpsUseCase<T: ScpPersister> {
+    scp_persister: T,
+}
+
+impl<T: ScpPersister> ListScpsUseCase<T> {
+    pub fn new(scp_persister: T) -> Self {
+        Self { scp_persister }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn execute(&self, query: ListScpsQuery) -> Result<Vec<ScpDto>, ListScpsError> {
+        let policies = self.scp_persister.list_scps(query).await?;
+        Ok(policies.into_iter().map(ScpDto::from).collect())
     }
 }

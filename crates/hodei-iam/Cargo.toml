@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 policies = { path = "../policies" }
 kernel = { path = "../kernel" }
-cedar-policy = { workspace = true }
 serde = { workspace = true }
 chrono = { workspace = true }
 anyhow = "1.0"

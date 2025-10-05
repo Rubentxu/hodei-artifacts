@@ -1,8 +1,13 @@
+// Legacy implementation gated behind feature flag during refactor
+#[cfg(feature = "legacy_infra")]
 use std::sync::Arc;
 
+#[cfg(feature = "legacy_infra")]
 use cedar_policy::Policy;
 
-use super::dto::{ValidatePolicyQuery, ValidationError, ValidationResult};
+use super::dto::{ValidatePolicyQuery, ValidationResult};
+
+#[cfg(feature = "legacy_infra")]
 use crate::shared::application::PolicyStore;
 
 #[derive(Debug, thiserror::Error)]
@@ -13,10 +18,15 @@ pub enum ValidatePolicyError {
     ValidationError(String),
 }
 
+#[cfg(feature = "legacy_infra")]
 pub struct ValidatePolicyUseCase {
     store: Arc<PolicyStore>,
 }
 
+#[cfg(not(feature = "legacy_infra"))]
+pub struct ValidatePolicyUseCase;
+
+#[cfg(feature = "legacy_infra")]
 impl ValidatePolicyUseCase {
     pub fn new(store: Arc<PolicyStore>) -> Self {
         Self { store }
@@ -67,16 +77,40 @@ impl ValidatePolicyUseCase {
     }
 }
 
-#[cfg(test)]
+#[cfg(not(feature = "legacy_infra"))]
+impl ValidatePolicyUseCase {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub async fn execute(
+        &self,
+        _query: &ValidatePolicyQuery,
+    ) -> Result<ValidationResult, ValidatePolicyError> {
+        Err(ValidatePolicyError::ValidationError(
+            "ValidatePolicyUseCase disabled during refactor. Enable feature 'legacy_infra' if needed.".to_string()
+        ))
+    }
+}
+
+#[cfg(not(feature = "legacy_infra"))]
+impl Default for ValidatePolicyUseCase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(all(test, feature = "legacy_infra"))]
 mod tests {
     use super::*;
     use crate::shared::application::di_helpers;
 
     #[tokio::test]
     async fn validate_policy_accepts_valid_policy() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
-            .await
-            .expect("build engine");
+        let (_engine, store) =
+            di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
+                .await
+                .expect("build engine");
 
         let uc = ValidatePolicyUseCase::new(store);
         let query = ValidatePolicyQuery::new("permit(principal, action, resource);".to_string());
@@ -88,13 +122,13 @@ mod tests {
 
     #[tokio::test]
     async fn validate_policy_rejects_invalid_syntax() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
-            .await
-            .expect("build engine");
+        let (_engine, store) =
+            di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
+                .await
+                .expect("build engine");
 
         let uc = ValidatePolicyUseCase::new(store);
-        let query =
-            ValidatePolicyQuery::new("this is not valid cedar syntax".to_string());
+        let query = ValidatePolicyQuery::new("this is not valid cedar syntax".to_string());
         let result = uc.execute(&query).await.expect("validate policy");
 
         assert!(!result.is_valid);
@@ -104,9 +138,10 @@ mod tests {
 
     #[tokio::test]
     async fn validate_policy_rejects_empty_content() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
-            .await
-            .expect("build engine");
+        let (_engine, store) =
+            di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
+                .await
+                .expect("build engine");
 
         let uc = ValidatePolicyUseCase::new(store);
         let query = ValidatePolicyQuery::new("".to_string());
@@ -121,9 +156,10 @@ mod tests {
 
     #[tokio::test]
     async fn validate_policy_accepts_complex_valid_policy() {
-        let (_engine, store) = di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
-            .await
-            .expect("build engine");
+        let (_engine, store) =
+            di_helpers::build_engine_mem(di_helpers::test_helpers::test_entities_configurator)
+                .await
+                .expect("build engine");
 
         let uc = ValidatePolicyUseCase::new(store);
         let complex_policy = r#"

@@ -1,7 +1,7 @@
 use super::dto::{AnalyzePoliciesRequest, AnalyzePoliciesResponse, RuleViolation};
-use crate::shared::application::parallel::{evaluate_until_first, AuthScenario};
 use cedar_policy::{
-    Entities, EntityUid, Policy, PolicySet, Schema, SchemaFragment, ValidationMode, Validator,
+    Authorizer, Context, Entities, EntityUid, Policy, PolicySet, Request,
+    Schema, SchemaFragment, ValidationMode, Validator,
 };
 use std::str::FromStr;
 
@@ -54,38 +54,50 @@ impl AnalyzePoliciesUseCase {
                     let resource = synth_euid("Resource", "doc1").to_string();
                     let mut ctx_false = std::collections::HashMap::new();
                     ctx_false.insert("mfa".to_string(), serde_json::json!(false));
-                    let scenarios = vec![
-                        AuthScenario {
-                            name: "mfa_false".to_string(),
-                            principal: principal.clone(),
-                            action: action.clone(),
-                            resource: resource.clone(),
-                            context: Some(ctx_false),
-                        },
-                        AuthScenario {
-                            name: "mfa_missing".to_string(),
-                            principal: principal.clone(),
-                            action: action.clone(),
-                            resource: resource.clone(),
-                            context: None,
-                        },
-                    ];
-                    if let Some(out) = evaluate_until_first(
-                        &pset,
-                        &Entities::empty(),
-                        scenarios,
+                    
+                    // Evaluate scenarios sequentially
+                    let authorizer = Authorizer::new();
+                    let entities = Entities::empty();
+                    
+                    // First scenario: mfa = false
+                    let context_false = Context::from_pairs(std::collections::HashMap::new()).unwrap_or_else(|_| Context::empty());
+                    let request_false = Request::new(
+                        EntityUid::from_str(&principal).map_err(|e| e.to_string())?,
+                        EntityUid::from_str(&action).map_err(|e| e.to_string())?,
+                        EntityUid::from_str(&resource).map_err(|e| e.to_string())?,
+                        context_false,
                         None,
-                        4,
-                        8,
-                        |o| o.allow,
-                    )
-                    .await?
-                    {
+                    ).map_err(|e| e.to_string())?;
+                    
+                    let response_false = authorizer.is_authorized(&request_false, &pset, &entities);
+                    if response_false.decision() == cedar_policy::Decision::Allow {
                         violations.push(RuleViolation {
                             rule_id: rule.id.clone(),
                             message: format!(
-                                "Allow without strong auth: scenario='{}' P='{}' A='{}' R='{}'",
-                                out.name, principal, action, resource
+                                "Allow without strong auth: scenario='mfa_false' P='{}' A='{}' R='{}'",
+                                principal, action, resource
+                            ),
+                        });
+                        continue; // Found violation, no need to check further
+                    }
+                    
+                    // Second scenario: mfa missing (empty context)
+                    let context_empty = Context::empty();
+                    let request_empty = Request::new(
+                        EntityUid::from_str(&principal).map_err(|e| e.to_string())?,
+                        EntityUid::from_str(&action).map_err(|e| e.to_string())?,
+                        EntityUid::from_str(&resource).map_err(|e| e.to_string())?,
+                        context_empty,
+                        None,
+                    ).map_err(|e| e.to_string())?;
+                    
+                    let response_empty = authorizer.is_authorized(&request_empty, &pset, &entities);
+                    if response_empty.decision() == cedar_policy::Decision::Allow {
+                        violations.push(RuleViolation {
+                            rule_id: rule.id.clone(),
+                            message: format!(
+                                "Allow without strong auth: scenario='mfa_missing' P='{}' A='{}' R='{}'",
+                                principal, action, resource
                             ),
                         });
                     }
@@ -101,29 +113,27 @@ impl AnalyzePoliciesUseCase {
                         let principal = synth_euid("User", "u").to_string();
                         let action = synth_euid("Action", "a").to_string();
                         let resource = synth_euid("Resource", "r").to_string();
-                        let scenarios = vec![AuthScenario {
-                            name: "empty_ctx".to_string(),
-                            principal: principal.clone(),
-                            action: action.clone(),
-                            resource: resource.clone(),
-                            context: None,
-                        }];
-                        if let Some(out) = evaluate_until_first(
-                            &pset,
-                            &Entities::empty(),
-                            scenarios,
+                        
+                        // Evaluate scenario sequentially
+                        let authorizer = Authorizer::new();
+                        let entities = Entities::empty();
+                        let context = Context::empty();
+                        
+                        let request = Request::new(
+                            EntityUid::from_str(&principal).map_err(|e| e.to_string())?,
+                            EntityUid::from_str(&action).map_err(|e| e.to_string())?,
+                            EntityUid::from_str(&resource).map_err(|e| e.to_string())?,
+                            context,
                             None,
-                            2,
-                            4,
-                            |o| o.allow,
-                        )
-                        .await?
-                        {
+                        ).map_err(|e| e.to_string())?;
+                        
+                        let response = authorizer.is_authorized(&request, &pset, &entities);
+                        if response.decision() == cedar_policy::Decision::Allow {
                             violations.push(RuleViolation {
                                 rule_id: rule.id.clone(),
                                 message: format!(
-                                    "Allow without condition: scenario='{}' P='{}' A='{}' R='{}'",
-                                    out.name, principal, action, resource
+                                    "Allow without condition: scenario='empty_ctx' P='{}' A='{}' R='{}'",
+                                    principal, action, resource
                                 ),
                             });
                         }
@@ -150,4 +160,3 @@ fn synth_euid(etype: &str, name: &str) -> EntityUid {
     };
     EntityUid::from_str(&format!("{}::\"{}\"", et, name)).expect("valid synthetic euid")
 }
-

@@ -11,30 +11,36 @@
 //! Principios:
 //! - No incluir lógica de negocio específica.
 //! - Solo tipos estables y abstracciones (HRN, traits de entidades, storage de políticas).
-//! - Evitar introducir dependencias cíclicas (este módulo debe permanecer “en la base”).
+//! - Evitar introducir dependencias cíclicas (este módulo debe permanecer "en la base").
 //!
 //! Estructura:
 //! - `hrn`: Representa el identificador global de recursos (Hrn).
 //! - `entity`: Traits y tipos para describir entidades, acciones y almacenamiento de políticas.
+//! - `value_objects`: Value Objects tipados del dominio (ServiceName, ResourceTypeName, etc.)
+//! - `attributes`: Tipos agnósticos para representar valores de atributos
 //!
 //! Re-exports clave para ergonomía:
 //! - `Hrn`
 //! - `HodeiEntityType`, `HodeiEntity`, `Principal`, `Resource`
 //! - `ActionTrait`, `AttributeType`
 //! - `PolicyStorage`, `PolicyStorageError`
+//! - `ServiceName`, `ResourceTypeName`, `AttributeName`, `ValidationError`
+//! - `AttributeValue`
 
-pub mod hrn;
+pub mod attributes;
 pub mod entity;
+pub mod hrn;
+pub mod value_objects;
 
 // Re-export de tipos fundamentales para uso directo por consumidores.
-pub use hrn::Hrn;
 pub use entity::{
-    AttributeType,
-    HodeiEntityType,
-    HodeiEntity,
-    Principal,
-    Resource,
-    ActionTrait,
-    PolicyStorage,
-    PolicyStorageError,
+    ActionTrait, AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStorageError,
+    Principal, Resource,
 };
+pub use hrn::Hrn;
+
+// Re-export de Value Objects para uso ergonómico
+pub use value_objects::{AttributeName, ResourceTypeName, ServiceName, ValidationError};
+
+// Re-export de tipos de atributos agnósticos
+pub use attributes::AttributeValue;

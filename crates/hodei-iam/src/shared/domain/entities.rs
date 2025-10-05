@@ -1,12 +1,18 @@
-use cedar_policy::{EntityUid, RestrictedExpression};
-use kernel::AttributeType::*;
-/// Domain entities for hodei-iam
-///
-/// This module defines the core IAM entities: User, Group, ServiceAccount, Namespace
-use kernel::Hrn;
-use kernel::{AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource};
+//! Domain entities for hodei-iam
+//!
+//! This module defines the core IAM entities: User, Group, ServiceAccount, Namespace
+//! All entities implement the agnostic HodeiEntityType and HodeiEntity traits.
+
+use kernel::{
+    AttributeName, AttributeType, AttributeValue, HodeiEntity, HodeiEntityType, Hrn, Principal,
+    Resource, ResourceTypeName, ServiceName,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
+
+// ============================================================================
+// User Entity
+// ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -52,6 +58,80 @@ impl User {
     }
 }
 
+impl HodeiEntityType for User {
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn resource_type_name() -> ResourceTypeName {
+        ResourceTypeName::new("User").expect("Valid resource type")
+    }
+
+    fn is_principal_type() -> bool {
+        true
+    }
+
+    fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
+        vec![
+            (
+                AttributeName::new("name").expect("Valid attribute name"),
+                AttributeType::string(),
+            ),
+            (
+                AttributeName::new("email").expect("Valid attribute name"),
+                AttributeType::string(),
+            ),
+            (
+                AttributeName::new("tags").expect("Valid attribute name"),
+                AttributeType::set(AttributeType::string()),
+            ),
+        ]
+    }
+}
+
+impl HodeiEntity for User {
+    fn hrn(&self) -> &Hrn {
+        &self.hrn
+    }
+
+    fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
+        let mut attrs = HashMap::new();
+
+        attrs.insert(
+            AttributeName::new("name").expect("Valid attribute name"),
+            AttributeValue::string(&self.name),
+        );
+
+        attrs.insert(
+            AttributeName::new("email").expect("Valid attribute name"),
+            AttributeValue::string(&self.email),
+        );
+
+        let tag_values: Vec<AttributeValue> = self
+            .tags
+            .iter()
+            .map(|t| AttributeValue::string(t))
+            .collect();
+        attrs.insert(
+            AttributeName::new("tags").expect("Valid attribute name"),
+            AttributeValue::set(tag_values),
+        );
+
+        attrs
+    }
+
+    fn parent_hrns(&self) -> Vec<Hrn> {
+        self.group_hrns.clone()
+    }
+}
+
+impl Principal for User {}
+impl Resource for User {}
+
+// ============================================================================
+// Group Entity
+// ============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
     pub hrn: Hrn,
@@ -94,93 +174,25 @@ impl Group {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceAccount {
-    pub hrn: Hrn,
-    pub name: String,
-    pub annotations: HashMap<String, String>,
-    pub tags: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Namespace {
-    pub hrn: Hrn,
-    pub name: String,
-    pub tags: Vec<String>,
-    pub annotations: HashMap<String, String>,
-}
-
-// --- Implementaciones para User ---
-
-impl HodeiEntityType for User {
-    fn service_name() -> &'static str {
-        "iam"
-    }
-
-    fn resource_type_name() -> &'static str {
-        "User"
-    }
-
-    fn is_principal_type() -> bool {
-        true
-    }
-
-    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
-        vec![
-            ("name", Primitive("String")),
-            ("email", Primitive("String")),
-            ("tags", Set(Box::new(Primitive("String")))),
-        ]
-    }
-}
-
-impl HodeiEntity for User {
-    fn hrn(&self) -> &Hrn {
-        &self.hrn
-    }
-
-    fn parents(&self) -> Vec<EntityUid> {
-        self.group_hrns.iter().map(|hrn| hrn.to_euid()).collect()
-    }
-
-    fn attributes(&self) -> HashMap<String, RestrictedExpression> {
-        let mut attrs = HashMap::new();
-        attrs.insert(
-            "name".to_string(),
-            RestrictedExpression::new_string(self.name.clone()),
-        );
-        attrs.insert(
-            "email".to_string(),
-            RestrictedExpression::new_string(self.email.clone()),
-        );
-        let tag_exprs: Vec<RestrictedExpression> = self
-            .tags
-            .iter()
-            .map(|t| RestrictedExpression::new_string(t.clone()))
-            .collect();
-        attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
-        attrs
-    }
-}
-
-impl Principal for User {}
-impl Resource for User {}
-
-// --- Implementaciones para Group ---
-
 impl HodeiEntityType for Group {
-    fn service_name() -> &'static str {
-        "iam"
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
     }
 
-    fn resource_type_name() -> &'static str {
-        "Group"
+    fn resource_type_name() -> ResourceTypeName {
+        ResourceTypeName::new("Group").expect("Valid resource type")
     }
 
-    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
+    fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
         vec![
-            ("name", Primitive("String")),
-            ("tags", Set(Box::new(Primitive("String")))),
+            (
+                AttributeName::new("name").expect("Valid attribute name"),
+                AttributeType::string(),
+            ),
+            (
+                AttributeName::new("tags").expect("Valid attribute name"),
+                AttributeType::set(AttributeType::string()),
+            ),
         ]
     }
 }
@@ -190,48 +202,85 @@ impl HodeiEntity for Group {
         &self.hrn
     }
 
-    fn attributes(&self) -> HashMap<String, RestrictedExpression> {
+    fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
         let mut attrs = HashMap::new();
+
         attrs.insert(
-            "name".to_string(),
-            RestrictedExpression::new_string(self.name.clone()),
+            AttributeName::new("name").expect("Valid attribute name"),
+            AttributeValue::string(&self.name),
         );
-        let tag_exprs: Vec<RestrictedExpression> = self
+
+        let tag_values: Vec<AttributeValue> = self
             .tags
             .iter()
-            .map(|t| RestrictedExpression::new_string(t.clone()))
+            .map(|t| AttributeValue::string(t))
             .collect();
-        attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
+        attrs.insert(
+            AttributeName::new("tags").expect("Valid attribute name"),
+            AttributeValue::set(tag_values),
+        );
+
         attrs
     }
 
-    fn parents(&self) -> Vec<EntityUid> {
+    fn parent_hrns(&self) -> Vec<Hrn> {
         Vec::new()
     }
 }
 
 impl Resource for Group {}
 
-// --- Implementaciones para ServiceAccount ---
+// ============================================================================
+// ServiceAccount Entity
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceAccount {
+    pub hrn: Hrn,
+    pub name: String,
+    pub annotations: HashMap<String, String>,
+    pub tags: Vec<String>,
+}
+
+impl ServiceAccount {
+    /// Create a new ServiceAccount
+    pub fn new(hrn: Hrn, name: String) -> Self {
+        Self {
+            hrn,
+            name,
+            annotations: HashMap::new(),
+            tags: Vec::new(),
+        }
+    }
+}
 
 impl HodeiEntityType for ServiceAccount {
-    fn service_name() -> &'static str {
-        "iam"
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
     }
 
-    fn resource_type_name() -> &'static str {
-        "ServiceAccount"
+    fn resource_type_name() -> ResourceTypeName {
+        ResourceTypeName::new("ServiceAccount").expect("Valid resource type")
     }
 
     fn is_principal_type() -> bool {
         true
     }
 
-    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
+    fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
         vec![
-            ("name", Primitive("String")),
-            ("annotations", Primitive("String")),
-            ("tags", Set(Box::new(Primitive("String")))),
+            (
+                AttributeName::new("name").expect("Valid attribute name"),
+                AttributeType::string(),
+            ),
+            (
+                AttributeName::new("annotations").expect("Valid attribute name"),
+                AttributeType::record(HashMap::new()), // Generic record type
+            ),
+            (
+                AttributeName::new("tags").expect("Valid attribute name"),
+                AttributeType::set(AttributeType::string()),
+            ),
         ]
     }
 }
@@ -241,35 +290,39 @@ impl HodeiEntity for ServiceAccount {
         &self.hrn
     }
 
-    fn attributes(&self) -> HashMap<String, RestrictedExpression> {
+    fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
         let mut attrs = HashMap::new();
+
         attrs.insert(
-            "name".to_string(),
-            RestrictedExpression::new_string(self.name.clone()),
+            AttributeName::new("name").expect("Valid attribute name"),
+            AttributeValue::string(&self.name),
         );
 
-        let annotation_map: BTreeMap<String, RestrictedExpression> = self
+        // Convert annotations HashMap to AttributeValue::Record
+        let annotation_values: HashMap<String, AttributeValue> = self
             .annotations
             .iter()
-            .map(|(k, v)| (k.clone(), RestrictedExpression::new_string(v.clone())))
+            .map(|(k, v)| (k.clone(), AttributeValue::string(v)))
             .collect();
         attrs.insert(
-            "annotations".to_string(),
-            RestrictedExpression::new_record(annotation_map).unwrap_or_else(|_| {
-                RestrictedExpression::new_string("error_creating_record".to_string())
-            }),
+            AttributeName::new("annotations").expect("Valid attribute name"),
+            AttributeValue::record(annotation_values),
         );
 
-        let tag_exprs: Vec<RestrictedExpression> = self
+        let tag_values: Vec<AttributeValue> = self
             .tags
             .iter()
-            .map(|t| RestrictedExpression::new_string(t.clone()))
+            .map(|t| AttributeValue::string(t))
             .collect();
-        attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
+        attrs.insert(
+            AttributeName::new("tags").expect("Valid attribute name"),
+            AttributeValue::set(tag_values),
+        );
+
         attrs
     }
 
-    fn parents(&self) -> Vec<EntityUid> {
+    fn parent_hrns(&self) -> Vec<Hrn> {
         Vec::new()
     }
 }
@@ -277,21 +330,53 @@ impl HodeiEntity for ServiceAccount {
 impl Principal for ServiceAccount {}
 impl Resource for ServiceAccount {}
 
-// --- Implementaciones para Namespace ---
+// ============================================================================
+// Namespace Entity
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Namespace {
+    pub hrn: Hrn,
+    pub name: String,
+    pub tags: Vec<String>,
+    pub annotations: HashMap<String, String>,
+}
+
+impl Namespace {
+    /// Create a new Namespace
+    pub fn new(hrn: Hrn, name: String) -> Self {
+        Self {
+            hrn,
+            name,
+            tags: Vec::new(),
+            annotations: HashMap::new(),
+        }
+    }
+}
 
 impl HodeiEntityType for Namespace {
-    fn service_name() -> &'static str {
-        "iam"
-    }
-    fn resource_type_name() -> &'static str {
-        "Namespace"
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
     }
 
-    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
+    fn resource_type_name() -> ResourceTypeName {
+        ResourceTypeName::new("Namespace").expect("Valid resource type")
+    }
+
+    fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
         vec![
-            ("name", Primitive("String")),
-            ("annotations", Primitive("String")),
-            ("tags", Set(Box::new(Primitive("String")))),
+            (
+                AttributeName::new("name").expect("Valid attribute name"),
+                AttributeType::string(),
+            ),
+            (
+                AttributeName::new("annotations").expect("Valid attribute name"),
+                AttributeType::record(HashMap::new()),
+            ),
+            (
+                AttributeName::new("tags").expect("Valid attribute name"),
+                AttributeType::set(AttributeType::string()),
+            ),
         ]
     }
 }
@@ -301,40 +386,47 @@ impl HodeiEntity for Namespace {
         &self.hrn
     }
 
-    fn attributes(&self) -> HashMap<String, RestrictedExpression> {
+    fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
         let mut attrs = HashMap::new();
+
         attrs.insert(
-            "name".to_string(),
-            RestrictedExpression::new_string(self.name.clone()),
+            AttributeName::new("name").expect("Valid attribute name"),
+            AttributeValue::string(&self.name),
         );
 
-        let annotation_map: BTreeMap<String, RestrictedExpression> = self
+        let annotation_values: HashMap<String, AttributeValue> = self
             .annotations
             .iter()
-            .map(|(k, v)| (k.clone(), RestrictedExpression::new_string(v.clone())))
+            .map(|(k, v)| (k.clone(), AttributeValue::string(v)))
             .collect();
         attrs.insert(
-            "annotations".to_string(),
-            RestrictedExpression::new_record(annotation_map).unwrap_or_else(|_| {
-                RestrictedExpression::new_string("error_creating_record".to_string())
-            }),
+            AttributeName::new("annotations").expect("Valid attribute name"),
+            AttributeValue::record(annotation_values),
         );
 
-        let tag_exprs: Vec<RestrictedExpression> = self
+        let tag_values: Vec<AttributeValue> = self
             .tags
             .iter()
-            .map(|t| RestrictedExpression::new_string(t.clone()))
+            .map(|t| AttributeValue::string(t))
             .collect();
-        attrs.insert("tags".to_string(), RestrictedExpression::new_set(tag_exprs));
+        attrs.insert(
+            AttributeName::new("tags").expect("Valid attribute name"),
+            AttributeValue::set(tag_values),
+        );
+
         attrs
     }
 
-    fn parents(&self) -> Vec<EntityUid> {
+    fn parent_hrns(&self) -> Vec<Hrn> {
         Vec::new()
     }
 }
 
 impl Resource for Namespace {}
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod group_tests {
@@ -461,6 +553,28 @@ mod group_tests {
 
         assert_eq!(group.attached_policies().len(), 3);
     }
+
+    #[test]
+    fn test_group_hodei_entity_type() {
+        assert_eq!(Group::service_name().as_str(), "iam");
+        assert_eq!(Group::resource_type_name().as_str(), "Group");
+        assert_eq!(Group::entity_type_name(), "Iam::Group");
+    }
+
+    #[test]
+    fn test_group_attributes() {
+        let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+        let mut group = Group::new(hrn, "Developers".to_string());
+        group.tags.push("tag1".to_string());
+        group.tags.push("tag2".to_string());
+
+        let attrs = group.attributes();
+        assert!(attrs.contains_key(&AttributeName::new("name").unwrap()));
+        assert!(attrs.contains_key(&AttributeName::new("tags").unwrap()));
+
+        let name_attr = attrs.get(&AttributeName::new("name").unwrap()).unwrap();
+        assert_eq!(name_attr.as_string(), Some("Developers"));
+    }
 }
 
 #[cfg(test)]
@@ -548,5 +662,43 @@ mod user_tests {
         user.add_to_group(group3);
 
         assert_eq!(user.groups().len(), 3);
+    }
+
+    #[test]
+    fn test_user_hodei_entity_type() {
+        assert_eq!(User::service_name().as_str(), "iam");
+        assert_eq!(User::resource_type_name().as_str(), "User");
+        assert_eq!(User::entity_type_name(), "Iam::User");
+        assert!(User::is_principal_type());
+    }
+
+    #[test]
+    fn test_user_attributes() {
+        let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());
+        let user = User::new(hrn, "Alice".to_string(), "alice@example.com".to_string());
+
+        let attrs = user.attributes();
+        assert!(attrs.contains_key(&AttributeName::new("name").unwrap()));
+        assert!(attrs.contains_key(&AttributeName::new("email").unwrap()));
+
+        let email_attr = attrs.get(&AttributeName::new("email").unwrap()).unwrap();
+        assert_eq!(email_attr.as_string(), Some("alice@example.com"));
+    }
+
+    #[test]
+    fn test_user_parent_hrns() {
+        let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());
+        let mut user = User::new(hrn, "Alice".to_string(), "alice@example.com".to_string());
+
+        let group1 = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "g1".into());
+        let group2 = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "g2".into());
+
+        user.add_to_group(group1.clone());
+        user.add_to_group(group2.clone());
+
+        let parents = user.parent_hrns();
+        assert_eq!(parents.len(), 2);
+        assert!(parents.contains(&group1));
+        assert!(parents.contains(&group2));
     }
 }

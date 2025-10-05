@@ -1,44 +1,14 @@
-use crate::features::create_scp::error::CreateScpError;
-use crate::shared::application::ports::scp_repository::ScpRepository;
-use crate::shared::domain::scp::ServiceControlPolicy;
+use crate::shared::domain::Policy;
+use crate::shared::domain::ports::PolicyStorage;
+use crate::features::create_scp::error::{CreateScpError, DeleteScpError, UpdateScpError, GetScpError, ListScpsError};
+use crate::features::create_scp::dto::{CreateScpCommand, DeleteScpCommand, UpdateScpCommand, GetScpQuery, ListScpsQuery};
 use async_trait::async_trait;
-use std::sync::Arc;
 
-/// Deprecated: Use CreateScpUnitOfWorkFactory instead
-/// This trait is kept for backwards compatibility but will be removed in future versions
 #[async_trait]
-pub trait ScpPersister {
-    async fn save(&self, scp: ServiceControlPolicy) -> Result<(), CreateScpError>;
-}
-
-/// Unit of Work trait for CreateScp feature
-///
-/// This trait provides transactional boundaries for service control policy creation operations.
-/// It ensures that all operations within a transaction are atomic.
-#[async_trait]
-pub trait CreateScpUnitOfWork: Send + Sync {
-    /// Begin a new transaction
-    async fn begin(&mut self) -> Result<(), CreateScpError>;
-
-    /// Commit the current transaction
-    async fn commit(&mut self) -> Result<(), CreateScpError>;
-
-    /// Rollback the current transaction
-    async fn rollback(&mut self) -> Result<(), CreateScpError>;
-
-    /// Get service control policy repository for this transaction
-    fn scps(&self) -> Arc<dyn ScpRepository>;
-}
-
-/// Factory for creating CreateScpUnitOfWork instances
-///
-/// This allows dependency injection of UnitOfWork creation while keeping the
-/// business logic decoupled from the specific implementation.
-#[async_trait]
-pub trait CreateScpUnitOfWorkFactory: Send + Sync {
-    /// Type of UnitOfWork this factory creates
-    type UnitOfWork: CreateScpUnitOfWork;
-
-    /// Create a new UnitOfWork instance
-    async fn create(&self) -> Result<Self::UnitOfWork, CreateScpError>;
+pub trait ScpPersister: PolicyStorage + Send + Sync {
+    async fn create_scp(&self, command: CreateScpCommand) -> Result<Policy, CreateScpError>;
+    async fn delete_scp(&self, command: DeleteScpCommand) -> Result<(), DeleteScpError>;
+    async fn update_scp(&self, command: UpdateScpCommand) -> Result<Policy, UpdateScpError>;
+    async fn get_scp(&self, query: GetScpQuery) -> Result<Policy, GetScpError>;
+    async fn list_scps(&self, query: ListScpsQuery) -> Result<Vec<Policy>, ListScpsError>;
 }

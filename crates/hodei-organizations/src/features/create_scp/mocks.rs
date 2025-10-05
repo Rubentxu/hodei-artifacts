@@ -1,227 +1,124 @@
-use crate::features::create_scp::error::CreateScpError;
-use crate::features::create_scp::ports::{
-    CreateScpUnitOfWork, CreateScpUnitOfWorkFactory, ScpPersister,
-};
-use crate::shared::application::ports::scp_repository::{ScpRepository, ScpRepositoryError};
-use crate::shared::domain::scp::ServiceControlPolicy;
+use crate::shared::domain::Policy;
+use crate::features::create_scp::ports::ScpPersister;
+use crate::features::create_scp::dto::{CreateScpCommand, DeleteScpCommand, UpdateScpCommand, GetScpQuery, ListScpsQuery};
+use crate::features::create_scp::error::{CreateScpError, DeleteScpError, UpdateScpError, GetScpError, ListScpsError};
+use crate::shared::domain::ports::{PolicyStorage, PolicyStorageError};
 use async_trait::async_trait;
-use kernel::Hrn;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-/// Mock implementation of ScpRepository for testing
-#[derive(Debug, Default)]
-pub struct MockScpRepository {
-    scps: RwLock<HashMap<String, ServiceControlPolicy>>,
-}
-
-impl MockScpRepository {
-    pub fn new() -> Self {
-        Self {
-            scps: RwLock::new(HashMap::new()),
-        }
-    }
-
-    pub fn with_scp(self, scp: ServiceControlPolicy) -> Self {
-        let hrn_string = scp.hrn.to_string();
-        self.scps.write().unwrap().insert(hrn_string, scp);
-        self
-    }
-}
-
-#[async_trait]
-impl ScpRepository for MockScpRepository {
-    async fn save(&self, scp: &ServiceControlPolicy) -> Result<(), ScpRepositoryError> {
-        let mut scps = self.scps.write().unwrap();
-        scps.insert(scp.hrn.to_string(), scp.clone());
-        Ok(())
-    }
-
-    async fn find_by_hrn(
-        &self,
-        hrn: &Hrn,
-    ) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError> {
-        let scps = self.scps.read().unwrap();
-        Ok(scps.get(&hrn.to_string()).cloned())
-    }
-}
-
-/// Deprecated: Use MockCreateScpUnitOfWork instead
-#[derive(Debug, Default)]
 pub struct MockScpPersister {
-    saved_scps: RwLock<Vec<ServiceControlPolicy>>,
+    scps: Arc<Mutex<HashMap<String, Policy>>>,
 }
 
 impl MockScpPersister {
     pub fn new() -> Self {
         Self {
-            saved_scps: RwLock::new(Vec::new()),
+            scps: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn get_saved_scps(&self) -> Vec<ServiceControlPolicy> {
-        self.saved_scps.read().unwrap().clone()
+    pub fn with_scps(scps: HashMap<String, Policy>) -> Self {
+        Self {
+            scps: Arc::new(Mutex::new(scps)),
+        }
+    }
+}
+
+#[async_trait]
+impl PolicyStorage for MockScpPersister {
+    async fn save(&self, policy: Policy) -> Result<(), PolicyStorageError> {
+        let mut scps = self.scps.lock().await;
+        scps.insert(policy.id.to_string(), policy);
+        Ok(())
+    }
+
+    async fn delete(&self, policy_id: &str) -> Result<(), PolicyStorageError> {
+        let mut scps = self.scps.lock().await;
+        scps.remove(policy_id);
+        Ok(())
+    }
+
+    async fn update(&self, policy: Policy) -> Result<(), PolicyStorageError> {
+        let mut scps = self.scps.lock().await;
+        scps.insert(policy.id.to_string(), policy);
+        Ok(())
+    }
+
+    async fn get(&self, policy_id: &str) -> Result<Option<Policy>, PolicyStorageError> {
+        let scps = self.scps.lock().await;
+        Ok(scps.get(policy_id).cloned())
+    }
+
+    async fn list(&self, _limit: Option<u32>, _offset: Option<u32>) -> Result<Vec<Policy>, PolicyStorageError> {
+        let scps = self.scps.lock().await;
+        Ok(scps.values().cloned().collect())
     }
 }
 
 #[async_trait]
 impl ScpPersister for MockScpPersister {
-    async fn save(&self, scp: ServiceControlPolicy) -> Result<(), CreateScpError> {
-        let mut saved_scps = self.saved_scps.write().unwrap();
-        saved_scps.push(scp);
-        Ok(())
-    }
-}
-
-/// Mock SCP Repository for testing with failure support
-pub struct MockScpRepositoryWithFailure {
-    scps: Arc<Mutex<HashMap<String, ServiceControlPolicy>>>,
-    should_fail: bool,
-}
-
-impl MockScpRepositoryWithFailure {
-    pub fn new() -> Self {
-        Self {
-            scps: Arc::new(Mutex::new(HashMap::new())),
-            should_fail: false,
+    async fn create_scp(&self, command: CreateScpCommand) -> Result<Policy, CreateScpError> {
+        let mut scps = self.scps.lock().await;
+        if scps.contains_key(&command.scp_id) {
+            return Err(CreateScpError::ScpAlreadyExists);
         }
+        
+        let policy = Policy {
+            id: crate::shared::domain::Hrn::new("organizations", "scp", &command.scp_id),
+            content: command.scp_content,
+            description: command.description,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        
+        scps.insert(command.scp_id.clone(), policy.clone());
+        Ok(policy)
     }
 
-    pub fn with_failure(should_fail: bool) -> Self {
-        Self {
-            scps: Arc::new(Mutex::new(HashMap::new())),
-            should_fail,
+    async fn delete_scp(&self, command: DeleteScpCommand) -> Result<(), DeleteScpError> {
+        let mut scps = self.scps.lock().await;
+        if !scps.contains_key(&command.scp_id) {
+            return Err(DeleteScpError::ScpNotFound);
         }
-    }
-
-    pub fn get_saved_scps(&self) -> Vec<ServiceControlPolicy> {
-        self.scps.lock().unwrap().values().cloned().collect()
-    }
-}
-
-#[async_trait]
-impl ScpRepository for MockScpRepositoryWithFailure {
-    async fn save(&self, scp: &ServiceControlPolicy) -> Result<(), ScpRepositoryError> {
-        if self.should_fail {
-            return Err(ScpRepositoryError::Storage("Mock failure".to_string()));
-        }
-
-        let mut scps = self.scps.lock().unwrap();
-        scps.insert(scp.hrn.to_string(), scp.clone());
+        
+        scps.remove(&command.scp_id);
         Ok(())
     }
 
-    async fn find_by_hrn(
-        &self,
-        hrn: &Hrn,
-    ) -> Result<Option<ServiceControlPolicy>, ScpRepositoryError> {
-        let scps = self.scps.lock().unwrap();
-        Ok(scps.get(&hrn.to_string()).cloned())
+    async fn update_scp(&self, command: UpdateScpCommand) -> Result<Policy, UpdateScpError> {
+        let mut scps = self.scps.lock().await;
+        let policy = scps.get_mut(&command.scp_id)
+            .ok_or(UpdateScpError::ScpNotFound)?;
+        
+        policy.content = command.scp_content;
+        policy.description = command.description;
+        policy.updated_at = chrono::Utc::now();
+        
+        Ok(policy.clone())
     }
-}
 
-/// Mock UnitOfWork for testing transactional behavior
-pub struct MockCreateScpUnitOfWork {
-    pub should_fail_on_save: bool,
-    pub save_calls: Arc<Mutex<Vec<String>>>,
-    pub transaction_active: bool,
-    scp_repo: Arc<MockScpRepositoryWithFailure>,
-}
-
-impl Default for MockCreateScpUnitOfWork {
-    fn default() -> Self {
-        Self::new()
+    async fn get_scp(&self, query: GetScpQuery) -> Result<Policy, GetScpError> {
+        let scps = self.scps.lock().await;
+        scps.get(&query.scp_id)
+            .cloned()
+            .ok_or(GetScpError::ScpNotFound)
     }
-}
 
-impl MockCreateScpUnitOfWork {
-    pub fn new() -> Self {
-        Self {
-            should_fail_on_save: false,
-            save_calls: Arc::new(Mutex::new(Vec::new())),
-            transaction_active: false,
-            scp_repo: Arc::new(MockScpRepositoryWithFailure::new()),
+    async fn list_scps(&self, query: ListScpsQuery) -> Result<Vec<Policy>, ListScpsError> {
+        let scps = self.scps.lock().await;
+        let mut result: Vec<Policy> = scps.values().cloned().collect();
+        
+        // Apply limit and offset if specified
+        if let Some(offset) = query.offset {
+            result = result.into_iter().skip(offset as usize).collect();
         }
-    }
-
-    pub fn with_failure(should_fail: bool) -> Self {
-        Self {
-            should_fail_on_save: should_fail,
-            save_calls: Arc::new(Mutex::new(Vec::new())),
-            transaction_active: false,
-            scp_repo: Arc::new(MockScpRepositoryWithFailure::with_failure(should_fail)),
+        
+        if let Some(limit) = query.limit {
+            result = result.into_iter().take(limit as usize).collect();
         }
-    }
-
-    pub fn get_saved_scps(&self) -> Vec<ServiceControlPolicy> {
-        self.scp_repo.get_saved_scps()
-    }
-}
-
-#[async_trait]
-impl CreateScpUnitOfWork for MockCreateScpUnitOfWork {
-    async fn begin(&mut self) -> Result<(), CreateScpError> {
-        self.transaction_active = true;
-        Ok(())
-    }
-
-    async fn commit(&mut self) -> Result<(), CreateScpError> {
-        if !self.transaction_active {
-            return Err(CreateScpError::TransactionError(
-                "No transaction in progress".to_string(),
-            ));
-        }
-        self.transaction_active = false;
-        Ok(())
-    }
-
-    async fn rollback(&mut self) -> Result<(), CreateScpError> {
-        if !self.transaction_active {
-            return Err(CreateScpError::TransactionError(
-                "No transaction in progress".to_string(),
-            ));
-        }
-        self.transaction_active = false;
-        Ok(())
-    }
-
-    fn scps(&self) -> Arc<dyn ScpRepository> {
-        self.scp_repo.clone()
-    }
-}
-
-/// Mock UnitOfWorkFactory for testing
-pub struct MockCreateScpUnitOfWorkFactory {
-    pub should_fail_on_save: bool,
-}
-
-impl Default for MockCreateScpUnitOfWorkFactory {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockCreateScpUnitOfWorkFactory {
-    pub fn new() -> Self {
-        Self {
-            should_fail_on_save: false,
-        }
-    }
-
-    pub fn with_failure(should_fail: bool) -> Self {
-        Self {
-            should_fail_on_save: should_fail,
-        }
-    }
-}
-
-#[async_trait]
-impl CreateScpUnitOfWorkFactory for MockCreateScpUnitOfWorkFactory {
-    type UnitOfWork = MockCreateScpUnitOfWork;
-
-    async fn create(&self) -> Result<Self::UnitOfWork, CreateScpError> {
-        Ok(MockCreateScpUnitOfWork::with_failure(
-            self.should_fail_on_save,
-        ))
+        
+        Ok(result)
     }
 }

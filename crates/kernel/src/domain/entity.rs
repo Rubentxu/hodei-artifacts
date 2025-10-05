@@ -1,170 +1,640 @@
-use cedar_policy::{EntityTypeName, EntityUid, Policy, RestrictedExpression};
-use std::collections::HashMap;
-use std::str::FromStr;
+//! Traits y tipos para describir entidades del dominio de forma agnóstica
+//!
+//! Este módulo define las abstracciones fundamentales para que las entidades
+//! de dominio puedan integrarse con el sistema de políticas sin acoplarse a
+//! ninguna implementación específica (como Cedar).
+//!
+//! # Principios de Diseño
+//!
+//! - **Agnóstico**: Sin dependencias de motores de políticas externos
+//! - **Tipo seguro**: Usa Value Objects en lugar de strings primitivos
+//! - **Metadata y Runtime**: Separa información de tipo (metadata) de instancias
+//! - **Extensible**: Permite que bounded contexts definan sus propias entidades
+//!
+//! # Ejemplos
+//!
+//! ```ignore
+//! use kernel::domain::{HodeiEntityType, HodeiEntity, AttributeValue};
+//! use kernel::domain::{ServiceName, ResourceTypeName, AttributeName};
+//!
+//! struct User {
+//!     hrn: Hrn,
+//!     email: String,
+//! }
+//!
+//! impl HodeiEntityType for User {
+//!     fn service_name() -> ServiceName {
+//!         ServiceName::new("iam").unwrap()
+//!     }
+//!
+//!     fn resource_type_name() -> ResourceTypeName {
+//!         ResourceTypeName::new("User").unwrap()
+//!     }
+//! }
+//!
+//! impl HodeiEntity for User {
+//!     fn hrn(&self) -> &Hrn {
+//!         &self.hrn
+//!     }
+//!
+//!     fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
+//!         let mut attrs = HashMap::new();
+//!         attrs.insert(
+//!             AttributeName::new("email").unwrap(),
+//!             AttributeValue::string(&self.email)
+//!         );
+//!         attrs
+//!     }
+//! }
+//! ```
 
-/// Tipos de atributos para describir atributos de esquema Cedar de forma tipada.
-#[derive(Debug, Clone)]
+use crate::domain::{AttributeName, AttributeValue, Hrn, ResourceTypeName, ServiceName};
+use std::collections::HashMap;
+
+// ============================================================================
+// AttributeType - Metadata de tipos de atributos
+// ============================================================================
+
+/// Describe el tipo de un atributo para metadatos de esquema
+///
+/// Este enum se usa para declarar qué tipos de atributos soporta una entidad,
+/// permitiendo validación y generación de esquemas de forma agnóstica.
+///
+/// # Ejemplos
+///
+/// ```
+/// use kernel::domain::AttributeType;
+///
+/// // Primitivos
+/// let string_type = AttributeType::String;
+/// let long_type = AttributeType::Long;
+/// let bool_type = AttributeType::Bool;
+///
+/// // Colecciones
+/// let string_set = AttributeType::Set(Box::new(AttributeType::String));
+///
+/// // Referencias a entidades
+/// let user_ref = AttributeType::EntityRef("User");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttributeType {
-    /// Atributo primitivo (p.ej. "String", "Long", "Bool")
-    Primitive(&'static str),
-    /// Conjunto de otro tipo (Set<T>)
+    /// Tipo booleano
+    Bool,
+    /// Entero de 64 bits
+    Long,
+    /// Cadena de texto
+    String,
+    /// Conjunto (Set) de elementos del tipo especificado
     Set(Box<AttributeType>),
-    /// Referencia a otra entidad por id (EntityId<Tipo>)
-    EntityId(&'static str),
+    /// Registro (Record/Map) con campos tipados
+    /// El HashMap contiene el nombre del campo y su tipo
+    Record(HashMap<String, AttributeType>),
+    /// Referencia a otra entidad por su tipo
+    /// El &'static str debe ser el nombre del tipo de entidad (ej: "User", "Group")
+    EntityRef(&'static str),
 }
 
 impl AttributeType {
-    /// Devuelve la declaración Cedar textual (p.ej. "Set<String>")
-    pub fn to_cedar_decl(&self) -> String {
+    /// Crea un AttributeType::Bool
+    pub const fn bool() -> Self {
+        Self::Bool
+    }
+
+    /// Crea un AttributeType::Long
+    pub const fn long() -> Self {
+        Self::Long
+    }
+
+    /// Crea un AttributeType::String
+    pub const fn string() -> Self {
+        Self::String
+    }
+
+    /// Crea un AttributeType::Set
+    pub fn set(inner: AttributeType) -> Self {
+        Self::Set(Box::new(inner))
+    }
+
+    /// Crea un AttributeType::Record
+    pub fn record(fields: HashMap<String, AttributeType>) -> Self {
+        Self::Record(fields)
+    }
+
+    /// Crea un AttributeType::EntityRef
+    pub const fn entity_ref(entity_type: &'static str) -> Self {
+        Self::EntityRef(entity_type)
+    }
+
+    /// Retorna una representación en string del tipo (útil para debugging y schemas)
+    pub fn type_name(&self) -> String {
         match self {
-            AttributeType::Primitive(name) => name.to_string(),
-            AttributeType::Set(inner) => format!("Set<{}>", inner.to_cedar_decl()),
-            AttributeType::EntityId(entity_ty) => format!("EntityId<{}>", entity_ty),
+            Self::Bool => "Bool".to_string(),
+            Self::Long => "Long".to_string(),
+            Self::String => "String".to_string(),
+            Self::Set(inner) => format!("Set<{}>", inner.type_name()),
+            Self::Record(_) => "Record".to_string(),
+            Self::EntityRef(ty) => format!("EntityRef<{}>", ty),
         }
     }
 }
 
-/// Metadata a nivel de tipo para construir fragmentos de esquema Cedar.
+// ============================================================================
+// HodeiEntityType - Metadata a nivel de tipo
+// ============================================================================
+
+/// Metadata a nivel de tipo para entidades del dominio
 ///
-/// Cada entidad del dominio que quiera integrarse con el motor de políticas
-/// debe implementar este trait (así la generación de esquema es automática).
+/// Este trait debe implementarse en el tipo (struct) de la entidad, no en
+/// instancias. Proporciona información estática sobre la entidad que puede
+/// usarse para generar esquemas, validar políticas, etc.
+///
+/// # Implementación
+///
+/// Todos los métodos son asociados (no requieren `self`), ya que describen
+/// el tipo en sí, no instancias particulares.
+///
+/// # Ejemplo
+///
+/// ```ignore
+/// impl HodeiEntityType for User {
+///     fn service_name() -> ServiceName {
+///         ServiceName::new("iam").unwrap()
+///     }
+///
+///     fn resource_type_name() -> ResourceTypeName {
+///         ResourceTypeName::new("User").unwrap()
+///     }
+///
+///     fn is_principal_type() -> bool {
+///         true // Los usuarios pueden ser principals
+///     }
+///
+///     fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
+///         vec![
+///             (AttributeName::new("email").unwrap(), AttributeType::String),
+///             (AttributeName::new("age").unwrap(), AttributeType::Long),
+///         ]
+///     }
+/// }
+/// ```
 pub trait HodeiEntityType {
-    /// Nombre del servicio (namespace lógico) - se normalizará a PascalCase en Cedar.
-    fn service_name() -> &'static str;
+    /// Nombre del servicio (namespace lógico) al que pertenece esta entidad
+    ///
+    /// Por ejemplo: "iam", "organizations", "supply-chain"
+    fn service_name() -> ServiceName;
 
-    /// Nombre local del tipo de recurso (ej. "User", "Group", "Account").
-    fn resource_type_name() -> &'static str;
+    /// Nombre del tipo de recurso
+    ///
+    /// Por ejemplo: "User", "Group", "Account", "ServiceControlPolicy"
+    fn resource_type_name() -> ResourceTypeName;
 
-    /// Nombre completo del entity type Cedar (Namespace::Tipo).
-    fn cedar_entity_type_name() -> EntityTypeName {
-        let namespace = crate::domain::hrn::Hrn::to_pascal_case(Self::service_name());
-        let type_str = format!("{}::{}", namespace, Self::resource_type_name());
-        EntityTypeName::from_str(&type_str)
-            .expect("Failed to create EntityTypeName from service + resource type")
+    /// Nombre completo del tipo de entidad (Servicio::Tipo)
+    ///
+    /// Este método tiene una implementación por defecto que combina
+    /// el service_name y resource_type_name.
+    ///
+    /// Retorna un string como "Iam::User" o "Organizations::Account"
+    fn entity_type_name() -> String {
+        let service = Self::service_name();
+        let resource = Self::resource_type_name();
+        let namespace = crate::domain::hrn::Hrn::to_pascal_case(service.as_str());
+        format!("{}::{}", namespace, resource.as_str())
     }
 
-    /// DEPRECATED: usar `cedar_entity_type_name` (se mantiene temporalmente por transición).
-    #[allow(deprecated)]
-    fn entity_type_name() -> &'static str {
-        Self::resource_type_name()
-    }
-
-    /// Indica si este tipo puede actuar como Principal en políticas.
+    /// Indica si este tipo puede actuar como Principal en políticas
+    ///
+    /// Un principal es la entidad que realiza una acción (ej: User, ServiceAccount)
     fn is_principal_type() -> bool {
         false
     }
 
-    /// Atributos declarados para generación de esquema.
-    fn cedar_attributes() -> Vec<(&'static str, AttributeType)> {
+    /// Indica si este tipo puede actuar como Resource en políticas
+    ///
+    /// Un resource es la entidad sobre la que se realiza la acción
+    fn is_resource_type() -> bool {
+        true
+    }
+
+    /// Esquema de atributos que declara esta entidad
+    ///
+    /// Retorna una lista de pares (nombre_atributo, tipo_atributo) que
+    /// describe los atributos que las instancias de este tipo pueden tener.
+    ///
+    /// Esto es útil para validación y generación de esquemas.
+    fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
         Vec::new()
     }
 
-    /// Tipos parent conceptuales para relaciones jerárquicas (opcional).
-    fn cedar_parents_types() -> Vec<&'static str> {
+    /// Tipos de entidades que pueden ser parents (jerarquía)
+    ///
+    /// Por ejemplo, un User puede tener como parent un Group.
+    /// Retorna una lista de nombres de tipos de entidad.
+    fn parent_types() -> Vec<String> {
         Vec::new()
     }
 }
 
-/// Representa una instancia concreta (runtime) de una entidad de dominio integrable con Cedar.
+// ============================================================================
+// HodeiEntity - Instancia runtime de una entidad
+// ============================================================================
+
+/// Representa una instancia concreta (runtime) de una entidad del dominio
+///
+/// Este trait se implementa en instancias de entidades y proporciona
+/// acceso a sus datos en runtime.
+///
+/// # Ejemplo
+///
+/// ```ignore
+/// impl HodeiEntity for User {
+///     fn hrn(&self) -> &Hrn {
+///         &self.hrn
+///     }
+///
+///     fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
+///         let mut attrs = HashMap::new();
+///         attrs.insert(
+///             AttributeName::new("email").unwrap(),
+///             AttributeValue::string(&self.email)
+///         );
+///         attrs.insert(
+///             AttributeName::new("active").unwrap(),
+///             AttributeValue::bool(self.is_active)
+///         );
+///         attrs
+///     }
+///
+///     fn parent_hrns(&self) -> Vec<Hrn> {
+///         // Retornar HRNs de los grupos a los que pertenece
+///         self.group_hrns.clone()
+///     }
+/// }
+/// ```
 pub trait HodeiEntity {
-    /// Referencia a su HRN canónico.
-    fn hrn(&self) -> &crate::domain::hrn::Hrn;
+    /// Retorna el HRN (Hodei Resource Name) canónico de esta entidad
+    ///
+    /// El HRN es el identificador único y global de la entidad.
+    fn hrn(&self) -> &Hrn;
 
-    /// Atributos dinámicos en forma de mapa Cedar (RestrictedExpression).
-    fn attributes(&self) -> HashMap<String, RestrictedExpression>;
+    /// Retorna los atributos de esta entidad como mapa clave-valor
+    ///
+    /// Los atributos son propiedades adicionales de la entidad que pueden
+    /// usarse en la evaluación de políticas.
+    fn attributes(&self) -> HashMap<AttributeName, AttributeValue>;
 
-    /// Padres (membership) expresados como EntityUids. Por defecto ninguno.
-    fn parents(&self) -> Vec<EntityUid> {
+    /// Retorna los HRNs de las entidades parent (jerarquía/membership)
+    ///
+    /// Por ejemplo, un User puede retornar los HRNs de los Groups a los que pertenece.
+    /// Por defecto retorna un vector vacío (sin parents).
+    fn parent_hrns(&self) -> Vec<Hrn> {
         Vec::new()
-    }
-
-    /// Convenience: obtener el EntityUid Cedar.
-    fn euid(&self) -> EntityUid {
-        self.hrn().to_euid()
     }
 }
 
-/// Marker trait para entidades que pueden actuar como Principal.
+// ============================================================================
+// Marker Traits para roles en políticas
+// ============================================================================
+
+/// Marker trait para entidades que pueden actuar como Principal
+///
+/// Un Principal es la entidad que realiza una acción (ej: User, ServiceAccount).
+/// Este trait requiere que la entidad implemente tanto `HodeiEntity` (runtime)
+/// como `HodeiEntityType` (metadata).
 pub trait Principal: HodeiEntity + HodeiEntityType {}
 
-/// Marker trait para entidades que pueden actuar como Resource.
+/// Marker trait para entidades que pueden actuar como Resource
+///
+/// Un Resource es la entidad sobre la que se realiza una acción.
+/// Este trait requiere que la entidad implemente tanto `HodeiEntity` (runtime)
+/// como `HodeiEntityType` (metadata).
 pub trait Resource: HodeiEntity + HodeiEntityType {}
 
-/// Define una Acción que puede registrarse en el motor de políticas.
+// ============================================================================
+// ActionTrait - Define acciones del dominio
+// ============================================================================
+
+/// Define una acción que puede realizarse en el sistema
 ///
-/// Una acción se materializa como una entidad Cedar del tipo `<Service>::Action::"Nombre"`.
+/// Las acciones son operaciones que un Principal puede realizar sobre un Resource.
+///
+/// # Ejemplo
+///
+/// ```ignore
+/// pub struct CreateUserAction;
+///
+/// impl ActionTrait for CreateUserAction {
+///     fn name() -> &'static str {
+///         "CreateUser"
+///     }
+///
+///     fn service_name() -> ServiceName {
+///         ServiceName::new("iam").unwrap()
+///     }
+///
+///     fn applies_to_principal() -> String {
+///         "Iam::User".to_string()
+///     }
+///
+///     fn applies_to_resource() -> String {
+///         "Iam::User".to_string()
+///     }
+/// }
+/// ```
 pub trait ActionTrait {
-    /// Nombre identificador único de la acción (ej. "CreateUser").
+    /// Nombre identificador único de la acción
+    ///
+    /// Por ejemplo: "CreateUser", "DeleteGroup", "AttachPolicy"
     fn name() -> &'static str;
 
-    /// Par (PrincipalType, ResourceType) al que aplica.
-    fn applies_to() -> (EntityTypeName, EntityTypeName);
+    /// Nombre del servicio al que pertenece esta acción
+    fn service_name() -> ServiceName;
+
+    /// Nombre completo de la acción (Servicio::Action::"Nombre")
+    ///
+    /// Implementación por defecto que combina service_name y name.
+    fn action_name() -> String {
+        let service = Self::service_name();
+        let namespace = crate::domain::hrn::Hrn::to_pascal_case(service.as_str());
+        format!("{}::Action::\"{}\"", namespace, Self::name())
+    }
+
+    /// Tipo de Principal que puede realizar esta acción
+    ///
+    /// Retorna el nombre completo del tipo (ej: "Iam::User")
+    fn applies_to_principal() -> String;
+
+    /// Tipo de Resource sobre el que se puede realizar esta acción
+    ///
+    /// Retorna el nombre completo del tipo (ej: "Iam::Group")
+    fn applies_to_resource() -> String;
 }
 
-/// Abstracción de almacenamiento de políticas (persistencia).
+// ============================================================================
+// PolicyStorage - Abstracción de persistencia de políticas
+// ============================================================================
+
+/// Abstracción para almacenar y recuperar políticas
+///
+/// Este trait define la interfaz para persistir políticas como strings.
+/// Las políticas se almacenan en su formato textual (ej: Cedar DSL, Rego, etc.)
+/// sin acoplar el kernel a ningún formato específico.
 #[async_trait::async_trait]
 pub trait PolicyStorage: Send + Sync {
-    async fn save_policy(&self, policy: &Policy) -> Result<(), PolicyStorageError>;
+    /// Guarda una política
+    ///
+    /// # Parámetros
+    /// - `id`: Identificador único de la política
+    /// - `policy_text`: El texto de la política en su formato DSL
+    async fn save_policy(&self, id: &str, policy_text: &str) -> Result<(), PolicyStorageError>;
+
+    /// Elimina una política por su ID
+    ///
+    /// Retorna `true` si la política existía y fue eliminada, `false` si no existía.
     async fn delete_policy(&self, id: &str) -> Result<bool, PolicyStorageError>;
-    async fn get_policy_by_id(&self, id: &str) -> Result<Option<Policy>, PolicyStorageError>;
-    async fn load_all_policies(&self) -> Result<Vec<Policy>, PolicyStorageError>;
+
+    /// Recupera una política por su ID
+    ///
+    /// Retorna `None` si la política no existe.
+    async fn get_policy_by_id(&self, id: &str) -> Result<Option<String>, PolicyStorageError>;
+
+    /// Carga todas las políticas almacenadas
+    ///
+    /// Retorna una lista de tuplas (id, policy_text)
+    async fn load_all_policies(&self) -> Result<Vec<(String, String)>, PolicyStorageError>;
 }
 
-/// Errores de la capa de persistencia de políticas.
+/// Errores de la capa de persistencia de políticas
 #[derive(thiserror::Error, Debug)]
 pub enum PolicyStorageError {
+    /// Error genérico del proveedor de almacenamiento
     #[error("Underlying storage error: {0}")]
     ProviderError(#[from] Box<dyn std::error::Error + Send + Sync>),
 
+    /// Error al parsear una política
     #[error("Policy parsing error: {0}")]
     ParsingError(String),
+
+    /// Política no encontrada
+    #[error("Policy not found: {0}")]
+    PolicyNotFound(String),
+
+    /// Error de validación
+    #[error("Validation error: {0}")]
+    ValidationError(String),
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cedar_policy::Policy;
 
-    struct DummyPrincipalType;
-    impl HodeiEntityType for DummyPrincipalType {
-        fn service_name() -> &'static str {
-            "iam"
+    // ========================================================================
+    // Tests de AttributeType
+    // ========================================================================
+
+    #[test]
+    fn attribute_type_primitives() {
+        assert_eq!(AttributeType::bool().type_name(), "Bool");
+        assert_eq!(AttributeType::long().type_name(), "Long");
+        assert_eq!(AttributeType::string().type_name(), "String");
+    }
+
+    #[test]
+    fn attribute_type_set() {
+        let string_set = AttributeType::set(AttributeType::string());
+        assert_eq!(string_set.type_name(), "Set<String>");
+    }
+
+    #[test]
+    fn attribute_type_entity_ref() {
+        let user_ref = AttributeType::entity_ref("User");
+        assert_eq!(user_ref.type_name(), "EntityRef<User>");
+    }
+
+    #[test]
+    fn attribute_type_nested_set() {
+        let nested = AttributeType::set(AttributeType::set(AttributeType::long()));
+        assert_eq!(nested.type_name(), "Set<Set<Long>>");
+    }
+
+    // ========================================================================
+    // Tests de HodeiEntityType
+    // ========================================================================
+
+    struct TestUser;
+
+    impl HodeiEntityType for TestUser {
+        fn service_name() -> ServiceName {
+            ServiceName::new("iam").unwrap()
         }
-        fn resource_type_name() -> &'static str {
-            "User"
+
+        fn resource_type_name() -> ResourceTypeName {
+            ResourceTypeName::new("User").unwrap()
         }
+
         fn is_principal_type() -> bool {
             true
         }
+
+        fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
+            vec![
+                (
+                    AttributeName::new("email").unwrap(),
+                    AttributeType::string(),
+                ),
+                (AttributeName::new("age").unwrap(), AttributeType::long()),
+            ]
+        }
     }
 
-    struct DummyEntityInstance {
-        hrn: crate::domain::hrn::Hrn,
+    #[test]
+    fn entity_type_basic_info() {
+        assert_eq!(TestUser::service_name().as_str(), "iam");
+        assert_eq!(TestUser::resource_type_name().as_str(), "User");
+        assert!(TestUser::is_principal_type());
     }
-    impl DummyEntityInstance {
-        fn new(id: &str) -> Self {
+
+    #[test]
+    fn entity_type_full_name() {
+        let full_name = TestUser::entity_type_name();
+        assert_eq!(full_name, "Iam::User");
+    }
+
+    #[test]
+    fn entity_type_attributes_schema() {
+        let schema = TestUser::attributes_schema();
+        assert_eq!(schema.len(), 2);
+        assert_eq!(schema[0].0.as_str(), "email");
+        assert_eq!(schema[1].0.as_str(), "age");
+    }
+
+    // ========================================================================
+    // Tests de HodeiEntity
+    // ========================================================================
+
+    struct TestUserInstance {
+        hrn: Hrn,
+        email: String,
+        age: i64,
+    }
+
+    impl TestUserInstance {
+        fn new(partition: String, account: String, id: String, email: String, age: i64) -> Self {
             Self {
-                hrn: crate::domain::hrn::Hrn::for_entity_type::<DummyPrincipalType>(
-                    "aws".to_string(),
-                    "123456789012".to_string(),
-                    id.to_string(),
-                ),
+                hrn: Hrn::for_entity_type::<TestUser>(partition, account, id),
+                email,
+                age,
             }
         }
     }
-    impl HodeiEntity for DummyEntityInstance {
-        fn hrn(&self) -> &crate::domain::hrn::Hrn {
+
+    impl HodeiEntity for TestUserInstance {
+        fn hrn(&self) -> &Hrn {
             &self.hrn
         }
-        fn attributes(&self) -> HashMap<String, RestrictedExpression> {
-            HashMap::new()
+
+        fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
+            let mut attrs = HashMap::new();
+            attrs.insert(
+                AttributeName::new("email").unwrap(),
+                AttributeValue::string(&self.email),
+            );
+            attrs.insert(
+                AttributeName::new("age").unwrap(),
+                AttributeValue::long(self.age),
+            );
+            attrs
         }
     }
-    // Removed impl Principal for DummyPrincipalType (it does not implement HodeiEntity)
+
+    #[test]
+    fn entity_instance_hrn() {
+        let user = TestUserInstance::new(
+            "aws".to_string(),
+            "123456789012".to_string(),
+            "alice".to_string(),
+            "alice@example.com".to_string(),
+            30,
+        );
+
+        let hrn = user.hrn();
+        assert_eq!(hrn.service(), "iam");
+        assert_eq!(hrn.resource_id(), "alice");
+    }
+
+    #[test]
+    fn entity_instance_attributes() {
+        let user = TestUserInstance::new(
+            "aws".to_string(),
+            "123456789012".to_string(),
+            "alice".to_string(),
+            "alice@example.com".to_string(),
+            30,
+        );
+
+        let attrs = user.attributes();
+        assert_eq!(attrs.len(), 2);
+
+        let email = attrs.get(&AttributeName::new("email").unwrap()).unwrap();
+        assert_eq!(email.as_string(), Some("alice@example.com"));
+
+        let age = attrs.get(&AttributeName::new("age").unwrap()).unwrap();
+        assert_eq!(age.as_long(), Some(30));
+    }
+
+    // ========================================================================
+    // Tests de ActionTrait
+    // ========================================================================
+
+    struct CreateUserAction;
+
+    impl ActionTrait for CreateUserAction {
+        fn name() -> &'static str {
+            "CreateUser"
+        }
+
+        fn service_name() -> ServiceName {
+            ServiceName::new("iam").unwrap()
+        }
+
+        fn applies_to_principal() -> String {
+            "Iam::User".to_string()
+        }
+
+        fn applies_to_resource() -> String {
+            "Iam::User".to_string()
+        }
+    }
+
+    #[test]
+    fn action_trait_basic() {
+        assert_eq!(CreateUserAction::name(), "CreateUser");
+        assert_eq!(CreateUserAction::service_name().as_str(), "iam");
+    }
+
+    #[test]
+    fn action_trait_full_name() {
+        let action_name = CreateUserAction::action_name();
+        assert_eq!(action_name, "Iam::Action::\"CreateUser\"");
+    }
+
+    #[test]
+    fn action_trait_applies_to() {
+        assert_eq!(CreateUserAction::applies_to_principal(), "Iam::User");
+        assert_eq!(CreateUserAction::applies_to_resource(), "Iam::User");
+    }
+
+    // ========================================================================
+    // Tests de PolicyStorage
+    // ========================================================================
 
     struct InMemoryPolicyStorage {
-        items: std::sync::Mutex<HashMap<String, Policy>>,
+        items: std::sync::Mutex<HashMap<String, String>>,
     }
+
     impl InMemoryPolicyStorage {
         fn new() -> Self {
             Self {
@@ -172,11 +642,12 @@ mod tests {
             }
         }
     }
+
     #[async_trait::async_trait]
     impl PolicyStorage for InMemoryPolicyStorage {
-        async fn save_policy(&self, policy: &Policy) -> Result<(), PolicyStorageError> {
+        async fn save_policy(&self, id: &str, policy_text: &str) -> Result<(), PolicyStorageError> {
             let mut guard = self.items.lock().unwrap();
-            guard.insert(policy.id().to_string(), policy.clone());
+            guard.insert(id.to_string(), policy_text.to_string());
             Ok(())
         }
 
@@ -185,46 +656,47 @@ mod tests {
             Ok(guard.remove(id).is_some())
         }
 
-        async fn get_policy_by_id(&self, id: &str) -> Result<Option<Policy>, PolicyStorageError> {
+        async fn get_policy_by_id(&self, id: &str) -> Result<Option<String>, PolicyStorageError> {
             let guard = self.items.lock().unwrap();
             Ok(guard.get(id).cloned())
         }
 
-        async fn load_all_policies(&self) -> Result<Vec<Policy>, PolicyStorageError> {
+        async fn load_all_policies(&self) -> Result<Vec<(String, String)>, PolicyStorageError> {
             let guard = self.items.lock().unwrap();
-            Ok(guard.values().cloned().collect())
+            Ok(guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
         }
     }
 
-    #[test]
-    fn cedar_entity_type_name_builds() {
-        let et = DummyPrincipalType::cedar_entity_type_name();
-        assert_eq!(et.to_string(), "Iam::User");
-    }
+    #[tokio::test]
+    async fn policy_storage_save_and_retrieve() {
+        let storage = InMemoryPolicyStorage::new();
+        let policy_text = "permit(principal, action, resource);";
 
-    #[test]
-    fn entity_instance_hrn_to_euid() {
-        let instance = DummyEntityInstance::new("alice");
-        let euid = instance.euid();
-        let s = format!("{euid}");
-        assert!(s.contains("Iam::User"));
-        assert!(s.contains("alice"));
+        storage.save_policy("policy1", policy_text).await.unwrap();
+
+        let retrieved = storage.get_policy_by_id("policy1").await.unwrap();
+        assert_eq!(retrieved, Some(policy_text.to_string()));
     }
 
     #[tokio::test]
-    async fn in_memory_policy_storage_roundtrip() {
+    async fn policy_storage_delete() {
         let storage = InMemoryPolicyStorage::new();
-        // Policy mínima válida: policy allow if true;
-        let policy_src = r#"permit(principal, action, resource);"#;
-        let policy =
-            cedar_policy::Policy::parse(None, policy_src).expect("parse simple permit policy");
-        storage.save_policy(&policy).await.unwrap();
-        let loaded = storage
-            .get_policy_by_id(&policy.id().to_string())
-            .await
-            .unwrap();
-        assert!(loaded.is_some());
+        storage.save_policy("policy1", "test policy").await.unwrap();
+
+        let deleted = storage.delete_policy("policy1").await.unwrap();
+        assert!(deleted);
+
+        let retrieved = storage.get_policy_by_id("policy1").await.unwrap();
+        assert!(retrieved.is_none());
+    }
+
+    #[tokio::test]
+    async fn policy_storage_load_all() {
+        let storage = InMemoryPolicyStorage::new();
+        storage.save_policy("p1", "policy 1").await.unwrap();
+        storage.save_policy("p2", "policy 2").await.unwrap();
+
         let all = storage.load_all_policies().await.unwrap();
-        assert_eq!(all.len(), 1);
+        assert_eq!(all.len(), 2);
     }
 }

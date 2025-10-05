@@ -3,14 +3,17 @@ pub mod application;
 pub mod domain;
 pub mod infrastructure;
 
-// Re-exports para tests e integración
-pub use application::{AuthorizationEngine, AuthorizationRequest, EngineBuilder, PolicyStore};
-pub use domain::{
-    ActionTrait, entity_utils,
-    hrn::Hrn,
-    ports::{AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource},
-    schema_assembler::*,
+// Re-exports para tests e integración - only schema-related functionality remains
+pub use application::EngineBuilder;
+
+#[cfg(feature = "legacy_infra")]
+pub use domain::{entity_utils, hrn::Hrn, schema_assembler::*};
+
+// Core ports always available
+pub use domain::ports::{
+    ActionTrait, AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource,
 };
 
-// Re-exports de Cedar comunes en tests
+// Re-exports de Cedar comunes en tests (gated behind legacy_infra)
+#[cfg(feature = "legacy_infra")]
 pub use cedar_policy::{Context, EntityUid, Policy, PolicyId};
