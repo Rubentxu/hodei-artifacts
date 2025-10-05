@@ -32,8 +32,6 @@ pub(crate) use account::Account;
 pub(crate) use ou::OrganizationalUnit;
 pub(crate) use scp::ServiceControlPolicy;
 
-// Re-exportar eventos para conveniencia
-pub use events::*;
 
 #[cfg(test)]
 mod tests {

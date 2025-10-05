@@ -26,7 +26,7 @@ pub mod features;
 // Tests should either:
 // 1. Be moved to src/shared/domain/*_test.rs for unit tests
 // 2. Use only public features API for integration tests
-pub mod shared;
+mod shared;
 
 // ✅ Re-export domain events for external event subscribers
 pub mod events {

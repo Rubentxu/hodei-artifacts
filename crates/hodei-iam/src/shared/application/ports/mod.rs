@@ -6,9 +6,6 @@ use crate::shared::domain::{Group, User};
 use async_trait::async_trait;
 use kernel::Hrn;
 
-// Export authorization ports
-pub mod authorization;
-pub use authorization::{IamPolicyProvider, IamPolicyProviderError};
 
 // Export error types
 pub mod errors;

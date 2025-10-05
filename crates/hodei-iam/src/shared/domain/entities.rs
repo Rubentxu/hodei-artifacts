@@ -1,11 +1,11 @@
 use cedar_policy::{EntityUid, RestrictedExpression};
-use serde::{Deserialize, Serialize};
 use kernel::AttributeType::*;
 /// Domain entities for hodei-iam
 ///
 /// This module defines the core IAM entities: User, Group, ServiceAccount, Namespace
 use kernel::Hrn;
 use kernel::{AttributeType, HodeiEntity, HodeiEntityType, Principal, Resource};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,3 +335,218 @@ impl HodeiEntity for Namespace {
 }
 
 impl Resource for Namespace {}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    #[test]
+    fn test_group_new_creates_empty_collections() {
+        let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+        let group = Group::new(hrn, "Developers".to_string());
+
+        assert_eq!(group.name, "Developers");
+        assert_eq!(group.tags.len(), 0);
+        assert_eq!(group.attached_policies().len(), 0);
+    }
+
+    #[test]
+    fn test_group_attach_policy_idempotent() {
+        let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+        let mut group = Group::new(hrn, "Developers".to_string());
+
+        let policy_hrn = Hrn::new(
+            "hodei".into(),
+            "policies".into(),
+            "default".into(),
+            "Policy".into(),
+            "policy1".into(),
+        );
+
+        // Attach policy twice
+        group.attach_policy(policy_hrn.clone());
+        group.attach_policy(policy_hrn.clone());
+
+        // Should only have one policy
+        assert_eq!(group.attached_policies().len(), 1);
+        assert_eq!(group.attached_policies()[0], policy_hrn);
+    }
+
+    #[test]
+    fn test_group_detach_policy() {
+        let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+        let mut group = Group::new(hrn, "Developers".to_string());
+
+        let policy1 = Hrn::new(
+            "hodei".into(),
+            "policies".into(),
+            "default".into(),
+            "Policy".into(),
+            "p1".into(),
+        );
+        let policy2 = Hrn::new(
+            "hodei".into(),
+            "policies".into(),
+            "default".into(),
+            "Policy".into(),
+            "p2".into(),
+        );
+
+        group.attach_policy(policy1.clone());
+        group.attach_policy(policy2.clone());
+        assert_eq!(group.attached_policies().len(), 2);
+
+        group.detach_policy(&policy1);
+        assert_eq!(group.attached_policies().len(), 1);
+        assert_eq!(group.attached_policies()[0], policy2);
+    }
+
+    #[test]
+    fn test_group_detach_nonexistent_policy_does_nothing() {
+        let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+        let mut group = Group::new(hrn, "Developers".to_string());
+
+        let policy_hrn = Hrn::new(
+            "hodei".into(),
+            "policies".into(),
+            "default".into(),
+            "Policy".into(),
+            "p1".into(),
+        );
+
+        // Detach policy that doesn't exist
+        group.detach_policy(&policy_hrn);
+
+        assert_eq!(group.attached_policies().len(), 0);
+    }
+
+    #[test]
+    fn test_group_name_getter() {
+        let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+        let group = Group::new(hrn, "Developers".to_string());
+
+        assert_eq!(group.group_name(), "Developers");
+    }
+
+    #[test]
+    fn test_group_multiple_policies() {
+        let hrn = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+        let mut group = Group::new(hrn, "Developers".to_string());
+
+        let policy1 = Hrn::new(
+            "hodei".into(),
+            "policies".into(),
+            "default".into(),
+            "Policy".into(),
+            "p1".into(),
+        );
+        let policy2 = Hrn::new(
+            "hodei".into(),
+            "policies".into(),
+            "default".into(),
+            "Policy".into(),
+            "p2".into(),
+        );
+        let policy3 = Hrn::new(
+            "hodei".into(),
+            "policies".into(),
+            "default".into(),
+            "Policy".into(),
+            "p3".into(),
+        );
+
+        group.attach_policy(policy1);
+        group.attach_policy(policy2);
+        group.attach_policy(policy3);
+
+        assert_eq!(group.attached_policies().len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod user_tests {
+    use super::*;
+
+    #[test]
+    fn test_user_new_creates_empty_groups() {
+        let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());
+        let user = User::new(hrn, "Alice".to_string(), "alice@example.com".to_string());
+
+        assert_eq!(user.name, "Alice");
+        assert_eq!(user.email(), "alice@example.com");
+        assert_eq!(user.groups().len(), 0);
+        assert_eq!(user.tags.len(), 0);
+    }
+
+    #[test]
+    fn test_user_add_to_group_idempotent() {
+        let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());
+        let mut user = User::new(hrn, "Alice".to_string(), "alice@example.com".to_string());
+
+        let group_hrn =
+            Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+
+        // Add to group twice
+        user.add_to_group(group_hrn.clone());
+        user.add_to_group(group_hrn.clone());
+
+        // Should only be in group once
+        assert_eq!(user.groups().len(), 1);
+        assert_eq!(user.groups()[0], group_hrn);
+    }
+
+    #[test]
+    fn test_user_remove_from_group() {
+        let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());
+        let mut user = User::new(hrn, "Alice".to_string(), "alice@example.com".to_string());
+
+        let group1 = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "g1".into());
+        let group2 = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "g2".into());
+
+        user.add_to_group(group1.clone());
+        user.add_to_group(group2.clone());
+        assert_eq!(user.groups().len(), 2);
+
+        user.remove_from_group(&group1);
+        assert_eq!(user.groups().len(), 1);
+        assert_eq!(user.groups()[0], group2);
+    }
+
+    #[test]
+    fn test_user_remove_nonexistent_group_does_nothing() {
+        let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());
+        let mut user = User::new(hrn, "Alice".to_string(), "alice@example.com".to_string());
+
+        let group_hrn =
+            Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "group1".into());
+
+        // Remove group user is not in
+        user.remove_from_group(&group_hrn);
+
+        assert_eq!(user.groups().len(), 0);
+    }
+
+    #[test]
+    fn test_user_email_getter() {
+        let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());
+        let user = User::new(hrn, "Alice".to_string(), "alice@example.com".to_string());
+
+        assert_eq!(user.email(), "alice@example.com");
+    }
+
+    #[test]
+    fn test_user_multiple_groups() {
+        let hrn = Hrn::for_entity_type::<User>("hodei".into(), "default".into(), "user1".into());
+        let mut user = User::new(hrn, "Alice".to_string(), "alice@example.com".to_string());
+
+        let group1 = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "g1".into());
+        let group2 = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "g2".into());
+        let group3 = Hrn::for_entity_type::<Group>("hodei".into(), "default".into(), "g3".into());
+
+        user.add_to_group(group1);
+        user.add_to_group(group2);
+        user.add_to_group(group3);
+
+        assert_eq!(user.groups().len(), 3);
+    }
+}

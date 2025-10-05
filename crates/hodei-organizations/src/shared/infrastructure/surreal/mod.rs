@@ -11,10 +11,4 @@ pub mod scp_repository;
 pub use unit_of_work::{
     SurrealUnitOfWork, 
     SurrealUnitOfWorkFactory,
-    TransactionalAccountRepository,
-    TransactionalOuRepository,
-    TransactionalScpRepository,
 };
-pub use account_repository::SurrealAccountRepository;
-pub use ou_repository::SurrealOuRepository;
-pub use scp_repository::SurrealScpRepository;

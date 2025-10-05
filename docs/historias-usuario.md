@@ -9,7 +9,7 @@ Construir un monolito modular donde cada `crate` es un _bounded context_ autóno
 
 *   **Objetivo:** Crear una base arquitectónica limpia, eliminando el acoplamiento indebido y estableciendo los contratos de comunicación en el `shared` kernel.
 
-*   **HU-1.1: Centralizar las Abstracciones de Dominio en el Kernel `shared`**
+*   **HU-1.1: Centralizar las Abstracciones de Dominio en el Kernel `shared`** ✅ COMPLETADA
     *   **Como** arquitecto, **quiero** mover los `traits` y `structs` de dominio compartidos (`Hrn`, `HodeiEntity`, `HodeiEntityType`, `Principal`, `Resource`, `ActionTrait`) desde `policies` al `crate` `shared`.
     *   **Para que** todos los `crates` dependan de un kernel común y estable.
     *   **Algoritmo:**
@@ -20,14 +20,14 @@ Construir un monolito modular donde cada `crate` es un _bounded context_ autóno
         *   El proyecto compila correctamente.
         *   **[Limpieza]** El directorio `crates/policies/src/shared/domain/` ya no contiene los ficheros movidos.
 
-*   **HU-1.2: Sellar los Límites de los Bounded Contexts**
+*   **HU-1.2: Sellar los Límites de los Bounded Contexts** ✅ COMPLETADA
     *   **Como** arquitecto, **quiero** hacer privados los módulos internos (`shared`) de `hodei-iam` y `hodei-organizations`.
     *   **Para que** sea imposible acceder a sus detalles de implementación desde fuera, forzando el uso de la API pública de casos de uso.
     *   **Algoritmo:** En los `lib.rs` de `hodei-iam` y `hodei-organizations`, cambiar `pub mod shared;` a `mod shared;`.
     *   **Criterios de Aceptación:**
         *   Un intento de importar una entidad interna desde otro `crate` (`use hodei_iam::shared::domain::User;`) provoca un error de compilación de visibilidad.
 
-*   **HU-1.3: Definir los Puertos de Evaluación Delegada en `shared`**
+*   **HU-1.3: Definir los Puertos de Evaluación Delegada en `shared`** ✅ COMPLETADA
     *   **Como** arquitecto, **quiero** definir los `traits` `ScpEvaluator` y `IamPolicyEvaluator` en `shared`.
     *   **Para que** `hodei-authorizer` pueda orquestar la evaluación de forma agnóstica.
     *   **Algoritmo:**
