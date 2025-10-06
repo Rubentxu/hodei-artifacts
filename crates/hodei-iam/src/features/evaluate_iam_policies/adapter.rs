@@ -131,7 +131,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_adapter_returns_empty_when_no_policies() {
         let adapter = InMemoryPolicyFinderAdapter::new();
-        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
 
         let result = adapter.get_effective_policies(&principal_hrn).await;
 
@@ -143,7 +143,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_adapter_returns_configured_policies() {
         let adapter = InMemoryPolicyFinderAdapter::new();
-        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
 
         let policy_text = "permit(principal, action, resource);";
         let policy_set = PolicySet::from_str(policy_text).unwrap();
@@ -160,7 +160,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_adapter_clear() {
         let adapter = InMemoryPolicyFinderAdapter::new();
-        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
 
         let policy_text = "permit(principal, action, resource);";
         let policy_set = PolicySet::from_str(policy_text).unwrap();

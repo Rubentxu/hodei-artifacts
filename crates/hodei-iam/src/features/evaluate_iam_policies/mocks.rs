@@ -94,7 +94,7 @@ mod tests {
         let policy_set = PolicySet::from_str(policy_text).unwrap();
         let mock = MockPolicyFinder::new(policy_set.clone());
 
-        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
         let result = mock.get_effective_policies(&principal_hrn).await;
 
         assert!(result.is_ok());
@@ -109,7 +109,7 @@ mod tests {
     async fn test_mock_returns_empty_policy_set() {
         let mock = MockPolicyFinder::empty();
 
-        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
         let result = mock.get_effective_policies(&principal_hrn).await;
 
         assert!(result.is_ok());
@@ -122,7 +122,7 @@ mod tests {
         let error_msg = "Database connection failed".to_string();
         let mock = MockPolicyFinder::with_error(error_msg.clone());
 
-        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
         let result = mock.get_effective_policies(&principal_hrn).await;
 
         assert!(result.is_err());

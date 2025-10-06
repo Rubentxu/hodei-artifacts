@@ -61,8 +61,7 @@ async fn test_create_account_empty_name() {
 
     // Assert
     assert!(result.is_err());
-    let error = result.unwrap_err();
-    assert!(matches!(error, CreateAccountError::InvalidAccountName));
+    assert!(matches!(result.unwrap_err(), CreateAccountError::InvalidAccountName));
 }
 
 #[tokio::test]

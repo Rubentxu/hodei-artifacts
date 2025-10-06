@@ -1,5 +1,4 @@
 //! Use case for evaluating IAM policies
-use std::str::FromStr;
 //!
 //! This use case implements the `IamPolicyEvaluator` trait from the kernel,
 //! making hodei-iam responsible for evaluating its own IAM policies.
@@ -136,6 +135,7 @@ mod tests {
     use crate::features::evaluate_iam_policies::mocks::MockPolicyFinder;
     use cedar_policy::PolicySet;
     use kernel::Hrn;
+    use std::str::FromStr;
 
     #[tokio::test]
     async fn test_evaluate_denies_when_no_policies() {
@@ -168,7 +168,10 @@ mod tests {
                 resource
             );
         "#;
-        let policy_set = PolicySet::from_str(policy_text).unwrap();
+        let policy_set = cedar_policy::Policy::parse(None, policy_text)
+            .map(|p| PolicySet::from_policies([p]))
+            .unwrap()
+            .unwrap();
         let mock_finder = Arc::new(MockPolicyFinder::new(policy_set));
         let use_case = EvaluateIamPoliciesUseCase::new(mock_finder);
 

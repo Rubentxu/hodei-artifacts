@@ -113,7 +113,6 @@ mod tests {
     #[tokio::test]
     async fn test_make_use_case_with_custom_finder() {
         use super::super::mocks::MockPolicyFinder;
-        use cedar_policy::PolicySet;
 
         let mock_finder = Arc::new(MockPolicyFinder::empty());
         let use_case = make_use_case_with_finder(mock_finder);

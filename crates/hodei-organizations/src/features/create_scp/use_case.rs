@@ -5,7 +5,6 @@ use crate::features::create_scp::error::{
     CreateScpError, DeleteScpError, GetScpError, ListScpsError, UpdateScpError,
 };
 use crate::features::create_scp::ports::ScpPersister;
-use async_trait::async_trait;
 use tracing::instrument;
 
 /// Use case for creating a new Service Control Policy
@@ -150,6 +149,7 @@ impl<P: ScpPersister> ListScpsUseCase<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use kernel::Hrn;
 
     // Mock persister for testing

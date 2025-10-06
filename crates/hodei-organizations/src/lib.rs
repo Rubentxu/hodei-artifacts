@@ -35,15 +35,6 @@
 //! use hodei_organizations::events::{AccountCreated, ScpAttached};
 //! ```
 //!
-//! ### Adaptador Cross-Context
-//!
-//! Para integración con el kernel compartido:
-//!
-//! ```rust,ignore
-//! use hodei_organizations::GetEffectiveScpsAdapter;
-//! use kernel::GetEffectiveScpsPort;
-//! ```
-//!
 //! ## Ejemplo de Uso
 //!
 //! ```rust,ignore
@@ -135,84 +126,17 @@ pub mod events {
 }
 
 // ============================================================================
-// Cross-Context Adapter
+// Public Exports - Ports
 // ============================================================================
 
-/// Adaptador que implementa el puerto transversal `GetEffectiveScpsPort` del kernel,
-/// exponiendo el caso de uso interno `GetEffectiveScpsUseCase` de manera desacoplada.
-///
-/// Este adaptador permite a otros bounded contexts (como el autorizador) obtener
-/// las SCPs efectivas sin acoplarse a los detalles internos de este contexto.
-///
-/// # Ejemplo
-///
-/// ```rust,ignore
-/// use hodei_organizations::{GetEffectiveScpsAdapter, GetEffectiveScpsUseCase};
-/// use kernel::GetEffectiveScpsPort;
-///
-/// let use_case = GetEffectiveScpsUseCase::new(scp_repo, org_repo);
-/// let adapter = GetEffectiveScpsAdapter::new(use_case);
-///
-/// // El adaptador implementa GetEffectiveScpsPort
-/// let result = adapter.get_effective_scps(query).await?;
-/// ```
-pub struct GetEffectiveScpsAdapter<ScpRepo, OrgRepo>
-where
-    ScpRepo: features::get_effective_scps::ports::ScpRepositoryPort + Send + Sync,
-    OrgRepo: features::get_effective_scps::ports::OuRepositoryPort
-        + features::get_effective_scps::ports::AccountRepositoryPort
-        + Send
-        + Sync,
-{
-    inner: GetEffectiveScpsUseCase<ScpRepo, OrgRepo>,
+/// Re-exportación de los puertos públicos de cada feature.
+/// Estos traits definen los contratos que los adaptadores deben cumplir.
+pub mod ports {
+    /// Puertos para la feature get_effective_scps
+    pub use crate::features::get_effective_scps::ports::{
+        AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
+    };
 }
-
-impl<ScpRepo, OrgRepo> GetEffectiveScpsAdapter<ScpRepo, OrgRepo>
-where
-    ScpRepo: features::get_effective_scps::ports::ScpRepositoryPort + Send + Sync,
-    OrgRepo: features::get_effective_scps::ports::OuRepositoryPort
-        + features::get_effective_scps::ports::AccountRepositoryPort
-        + Send
-        + Sync,
-{
-    /// Crea un nuevo adaptador wrapeando el caso de uso interno
-    pub fn new(inner: GetEffectiveScpsUseCase<ScpRepo, OrgRepo>) -> Self {
-        Self { inner }
-    }
-}
-
-#[::async_trait::async_trait]
-impl<ScpRepo, OrgRepo> ::kernel::GetEffectiveScpsPort for GetEffectiveScpsAdapter<ScpRepo, OrgRepo>
-where
-    ScpRepo: features::get_effective_scps::ports::ScpRepositoryPort + Send + Sync,
-    OrgRepo: features::get_effective_scps::ports::OuRepositoryPort
-        + features::get_effective_scps::ports::AccountRepositoryPort
-        + Send
-        + Sync,
-{
-    async fn get_effective_scps(
-        &self,
-        query: ::kernel::GetEffectiveScpsQuery,
-    ) -> Result<::cedar_policy::PolicySet, Box<dyn std::error::Error + Send + Sync>> {
-        // Convertir el DTO transversal al DTO interno del caso de uso
-        let internal_query = GetEffectiveScpsQuery {
-            resource_hrn: query.resource_hrn,
-        };
-
-        // Ejecutar caso de uso interno
-        let response = self
-            .inner
-            .execute(internal_query)
-            .await
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-
-        // Retornar el PolicySet
-        Ok(response.policies)
-    }
-}
-
-/// Alias ergonómico para inyección dinámica del puerto transversal
-pub type DynGetEffectiveScpsPort = std::sync::Arc<dyn ::kernel::GetEffectiveScpsPort>;
 
 // ============================================================================
 // DEPRECACIONES TEMPORALES (Para migración - Eliminar en Phase 2)

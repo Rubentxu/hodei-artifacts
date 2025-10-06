@@ -115,7 +115,7 @@ impl AuthorizationEngine {
 
         // 2. Build Cedar action EntityUid
         let action_hrn = kernel::Hrn::action(
-            request.principal_hrn().service().clone(),
+            request.principal_hrn().service(),
             request.action,
         );
         let action_uid_str = action_hrn.entity_uid_string();

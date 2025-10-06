@@ -9,7 +9,7 @@ use kernel::Hrn;
 
 // Export error types
 pub mod errors;
-pub use errors::{GroupRepositoryError, PolicyRepositoryError, UserRepositoryError};
+pub use errors::{GroupRepositoryError, UserRepositoryError};
 
 /// Repository trait for User entity operations
 #[async_trait]

@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn test_policy_view_clone() {
         let view = PolicyView {
-            id: Hrn::parse("hrn:hodei:iam::test:policy/test-policy").unwrap(),
+            id: Hrn::from_string("hrn:hodei:iam::test:policy/test-policy").unwrap(),
             content: "permit(principal, action, resource);".to_string(),
             description: Some("Test".to_string()),
             created_at: chrono::Utc::now(),

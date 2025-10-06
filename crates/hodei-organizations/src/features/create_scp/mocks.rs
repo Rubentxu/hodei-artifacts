@@ -5,7 +5,7 @@ use crate::features::create_scp::error::{
     CreateScpError, DeleteScpError, GetScpError, ListScpsError, UpdateScpError,
 };
 use crate::features::create_scp::ports::ScpPersister;
-use crate::internal::domain::ServiceControlPolicy;
+use crate::internal::domain::scp::ServiceControlPolicy;
 use async_trait::async_trait;
 use kernel::Hrn;
 use std::collections::HashMap;

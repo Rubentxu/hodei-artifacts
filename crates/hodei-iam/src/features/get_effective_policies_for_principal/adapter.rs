@@ -50,7 +50,7 @@ impl<GR: GroupRepository> GroupFinderAdapter<GR> {
 impl<GR: GroupRepository> GroupFinderPort for GroupFinderAdapter<GR> {
     async fn find_groups_by_user_hrn(
         &self,
-        user_hrn: &Hrn,
+        _user_hrn: &Hrn,
     ) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
         // TODO: Implementar cuando GroupRepository tenga find_groups_by_user_hrn
         // Por ahora, obtener todos los grupos y filtrar por membresía

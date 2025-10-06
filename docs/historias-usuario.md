@@ -101,6 +101,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador del sistema (o un servicio de API),
 *   **quiero** crear un nuevo usuario proporcionando su nombre y correo electrónico,
 *   **para** poder registrar nuevos individuos en el sistema.
+- **Estado:** ✅ Completada (use case `CreateUserUseCase` y test `crates/hodei-iam/tests/integration_create_user_comprehensive_test.rs`)
 *   **AC:**
       1.  El sistema debe generar un HRN único y global para el nuevo usuario.
       2.  El usuario se debe persistir en la base de datos de forma transaccional.
@@ -111,6 +112,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador del sistema,
 *   **quiero** crear un nuevo grupo de usuarios proporcionando un nombre,
 *   **para** poder agrupar usuarios con permisos similares.
+- **Estado:** ✅ Completada (use case `CreateGroupUseCase` y test `crates/hodei-iam/tests/integration_create_group_comprehensive_test.rs`)
 *   **AC:**
       1.  El sistema debe generar un HRN único para el nuevo grupo.
       2.  El grupo se debe persistir en la base de datos de forma transaccional.
@@ -121,6 +123,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador del sistema,
 *   **quiero** añadir un usuario existente a un grupo existente,
 *   **para** que el usuario herede los permisos asociados a ese grupo.
+- **Estado:** 🟡 En progreso (la UoW actual `GenericAddUserToGroupUnitOfWork` simula la transacción y sigue pendiente implementar soporte transaccional real)
 *   **AC:**
       1.  La operación debe ser atómica y transaccional, garantizada por un Unit of Work.
       2.  El sistema debe verificar que tanto el usuario como el grupo existen antes de proceder.
@@ -132,6 +135,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador de seguridad,
 *   **quiero** crear una nueva política IAM proporcionando su contenido en lenguaje Cedar,
 *   **para** definir un conjunto de permisos reutilizable.
+- **Estado:** ✅ Completada (feature `create_policy_new` con tests unitarios e integración en `crates/hodei-iam/tests/integration_create_policy_new_test.rs`)
 *   **AC:**
       1.  El contenido de la política debe ser validado sintácticamente.
       2.  Si la política es válida, se debe persistir y asignar un HRN único.
@@ -141,6 +145,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un servicio de autorización,
 *   **quiero** solicitar todas las políticas IAM efectivas para un principal,
 *   **para** poder tomar una decisión de autorización.
+- **Estado:** 🟡 En progreso (existe `GetEffectivePoliciesForPrincipalUseCase`, pero falta test de integración ejercitando la API pública)
 *   **AC:**
       1.  La respuesta debe incluir las políticas directamente adjuntas al usuario y las heredadas de sus grupos.
       2.  La API pública debe devolver las políticas como un `Vec<String>`, sin exponer entidades internas.
@@ -150,6 +155,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador,
 *   **quiero** obtener los detalles de una política IAM por su HRN,
 *   **para** revisar su contenido y descripción.
+- **Estado:** ⏳ Pendiente
 *   **AC:**
       1.  La API debe devolver un DTO (`PolicyDto`) con los detalles de la política.
       2.  Si la política no existe, se debe devolver un error `PolicyNotFound`.
@@ -159,6 +165,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador,
 *   **quiero** actualizar el contenido o la descripción de una política IAM existente,
 *   **para** modificar sus permisos.
+- **Estado:** ⏳ Pendiente (faltan `use_case.rs`, adaptadores y pruebas)
 *   **AC:**
       1.  El nuevo contenido de la política debe ser validado sintácticamente.
       2.  La operación debe ser atómica.
@@ -169,6 +176,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador,
 *   **quiero** borrar una política IAM que ya no se utiliza,
 *   **para** mantener el sistema limpio y seguro.
+- **Estado:** 🟡 En progreso (feature `delete_policy` implementada, falta validar adaptadores reales e integración end-to-end)
 *   **AC:**
       1.  El sistema debería (idealmente) verificar que la política no está adjunta a ningún principal antes de borrarla.
       2.  Si la política no existe, se debe devolver un error `PolicyNotFound`.
@@ -178,6 +186,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador,
 *   **quiero** listar todas las políticas IAM disponibles, con opción de paginación,
 *   **para** tener una visión general de los permisos definidos.
+- **Estado:** ⏳ Pendiente
 *   **AC:**
       1.  La API debe soportar parámetros de `limit` y `offset` para la paginación.
       2.  La respuesta debe ser una lista de DTOs (`Vec<PolicyDto>`).
@@ -191,6 +200,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador de la organización,
 *   **quiero** crear una nueva cuenta bajo una Unidad Organizativa (OU) específica,
 *   **para** aislar recursos y facturación.
+- **Estado:** 🟡 En progreso (use case y tests unitarios listos, falta validar adaptador real y prueba de integración)
 *   **AC:**
       1.  Se debe generar un HRN único para la cuenta.
       2.  La operación debe ser transaccional.
@@ -201,6 +211,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador de la organización,
 *   **quiero** crear una nueva OU bajo una OU padre existente o en la raíz,
 *   **para** estructurar jerárquicamente mis cuentas.
+- **Estado:** 🟡 En progreso (feature `create_ou` completa en lógica y tests unitarios, falta cobertura de integración)
 *   **AC:**
       1.  Se debe validar que la OU padre existe (si se proporciona).
       2.  La operación debe ser transaccional.
@@ -210,6 +221,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador de la organización,
 *   **quiero** mover una cuenta de una OU de origen a una de destino de forma atómica,
 *   **para** reflejar cambios organizacionales sin riesgo de estados inconsistentes.
+- **Estado:** 🟡 En progreso (use case `MoveAccountUseCase` implementado con UoW, falta integración end-to-end y validación con infra real)
 *   **AC:**
       1.  La operación debe ser **atómica y transaccional**.
       2.  Se debe verificar la existencia de la cuenta y de ambas OUs.
@@ -220,6 +232,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador de la organización,
 *   **quiero** crear una nueva SCP con contenido Cedar,
 *   **para** definir barreras de permisos a nivel organizacional.
+- **Estado:** 🟡 En progreso (vertical slice `create_scp` lista, adaptadores reales pendientes)
 *   **AC:**
       1.  El contenido de la SCP debe ser validado sintácticamente.
       2.  La SCP se debe persistir con un HRN único.
@@ -229,6 +242,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador de la organización,
 *   **quiero** adjuntar una SCP existente a una cuenta o a una OU,
 *   **para** aplicar las barreras de permisos definidas en la SCP.
+- **Estado:** 🟡 En progreso (feature `attach_scp` con lógica y tests unitarios, falta validación contra storage real)
 *   **AC:**
       1.  Se debe verificar la existencia de la SCP y del objetivo.
       2.  La operación debe ser transaccional.
@@ -239,6 +253,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un servicio de autorización,
 *   **quiero** obtener todas las SCPs efectivas que se aplican a una entidad (cuenta o OU),
 *   **para** evaluar las barreras de permisos organizacionales.
+- **Estado:** 🟡 En progreso (use case `GetEffectiveScpsUseCase` operativo con tests unitarios, falta integración que produzca `PolicySet` completo)
 *   **AC:**
       1.  La API pública debe devolver un `PolicySet` de Cedar.
       2.  La respuesta debe incluir las SCPs de la entidad y de toda su jerarquía de padres.
@@ -247,18 +262,22 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 **HU-ORG-007: Leer una SCP** (Análoga a HU-IAM-006)
 *   **Como** un administrador, **quiero** obtener los detalles de una SCP por su HRN.
 *   **AC:** Devolver un DTO `ScpDto` o `ScpNotFound`. Test de integración.
+- **Estado:** ⏳ Pendiente
 
 **HU-ORG-008: Actualizar una SCP** (Análoga a HU-IAM-007)
 *   **Como** un administrador, **quiero** actualizar el contenido de una SCP existente.
 *   **AC:** Validar nuevo contenido, operación atómica, error si no existe. Test de integración.
+- **Estado:** ⏳ Pendiente
 
 **HU-ORG-009: Borrar una SCP** (Análoga a HU-IAM-008)
 *   **Como** un administrador, **quiero** borrar una SCP que no esté adjunta a ninguna entidad.
 *   **AC:** Verificar que no esté en uso, error si no existe. Test de integración.
+- **Estado:** ⏳ Pendiente
 
 **HU-ORG-010: Listar SCPs** (Análoga a HU-IAM-009)
 *   **Como** un administrador, **quiero** listar todas las SCPs disponibles con paginación.
 *   **AC:** Soportar `limit`/`offset`. Test de integración.
+- **Estado:** ⏳ Pendiente
 
 ---
 
@@ -268,6 +287,7 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un microservicio o API Gateway,
 *   **quiero** preguntar si un principal tiene permiso para realizar una acción sobre un recurso,
 *   **para** proteger el acceso a los recursos del sistema de forma centralizada.
+- **Estado:** 🟡 En progreso (use case `EvaluatePermissionsUseCase` operativo con pruebas unitarias, depende de completar evaluadores IAM/SCP para cumplir AC)
 *   **AC:**
       1.  La decisión final debe ser `Deny` si CUALQUIER SCP efectiva deniega la acción (principio de "Deny by default").
       2.  Si las SCPs lo permiten, la decisión final debe basarse en las políticas IAM efectivas del principal.

@@ -198,21 +198,41 @@ where
             e
         })?;
 
-        info!("Policy created successfully with HRN: {}", policy.id);
+        // Convert returned domain Policy (with private fields) into the public DTO.
+        // We rely on the Policy's accessor methods instead of private field access.
+        let hrn = match kernel::Hrn::from_string(policy.id().as_str()) {
+            Some(h) => h,
+            None => {
+                let msg = format!(
+                    "Invalid HRN format produced by adapter: {}",
+                    policy.id().as_str()
+                );
+                warn!("{}", msg);
+                return Err(CreatePolicyError::InvalidHrn(msg));
+            }
+        };
+
+        let metadata = policy.metadata();
+        let created_at = metadata.created_at();
+        // Fallback: if updated_at is None (never updated), use created_at for DTO consistency
+        let updated_at = metadata.updated_at().unwrap_or(created_at);
+        let description = metadata.description().map(|s| s.to_string());
+
+        info!("Policy created successfully with HRN: {}", hrn);
 
         // 3. Return DTO
         Ok(PolicyView {
-            id: policy.id,
-            content: policy.content,
-            description: policy.description,
-            created_at: policy.created_at,
-            updated_at: policy.updated_at,
+            id: hrn,
+            content: policy.content().to_string(),
+            description,
+            created_at,
+            updated_at,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // (removed unused import to avoid clippy warning)
     // Tests use mocks from mocks.rs - see use_case_test.rs for full test suite
 }

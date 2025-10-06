@@ -205,7 +205,7 @@ impl MockCreatePolicyPort {
             .lock()
             .unwrap()
             .iter()
-            .any(|p| p.id.to_string().contains(policy_id))
+            .any(|p| p.id().to_string().contains(policy_id))
     }
 }
 
@@ -236,21 +236,14 @@ impl CreatePolicyPort for MockCreatePolicyPort {
             ));
         }
 
-        // Create a mock policy with the command data
-        let hrn = kernel::Hrn::parse(&format!(
-            "hrn:hodei:iam::test-account:policy/{}",
-            command.policy_id
-        ))
-        .map_err(|e| CreatePolicyError::InvalidHrn(e.to_string()))?;
-
-        let now = chrono::Utc::now();
-        let policy = Policy {
-            id: hrn,
-            content: command.policy_content,
-            description: command.description,
-            created_at: now,
-            updated_at: now,
-        };
+        // Create a mock policy with the command data using domain constructors (no private field access)
+        let policy_id_str = format!("hrn:hodei:iam::test-account:policy/{}", command.policy_id);
+        let policy_id = policies::shared::domain::policy::PolicyId::new(policy_id_str);
+        let metadata = policies::shared::domain::policy::PolicyMetadata::new(
+            command.description.clone(),
+            vec![],
+        );
+        let policy = Policy::new(policy_id, command.policy_content, metadata);
 
         // Store the created policy
         self.created_policies.lock().unwrap().push(policy.clone());

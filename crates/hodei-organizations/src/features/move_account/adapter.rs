@@ -19,17 +19,23 @@ impl MoveAccountSurrealUnitOfWorkAdapter {
 impl MoveAccountUnitOfWork for MoveAccountSurrealUnitOfWorkAdapter {
     async fn begin(&mut self) -> Result<(), MoveAccountError> {
         self.inner_uow.begin().await
-            .map_err(|e| MoveAccountError::OuRepositoryError(crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(e.to_string())))
+            .map_err(|e| MoveAccountError::OuRepositoryError(
+                crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(e.to_string())
+            ))
     }
 
     async fn commit(&mut self) -> Result<(), MoveAccountError> {
         self.inner_uow.commit().await
-            .map_err(|e| MoveAccountError::OuRepositoryError(crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(e.to_string())))
+            .map_err(|e| MoveAccountError::OuRepositoryError(
+                crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(e.to_string())
+            ))
     }
 
     async fn rollback(&mut self) -> Result<(), MoveAccountError> {
         self.inner_uow.rollback().await
-            .map_err(|e| MoveAccountError::OuRepositoryError(crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(e.to_string())))
+            .map_err(|e| MoveAccountError::OuRepositoryError(
+                crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(e.to_string())
+            ))
     }
 
     fn accounts(&self) -> std::sync::Arc<dyn crate::internal::application::ports::account_repository::AccountRepository> {

@@ -9,9 +9,13 @@ use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};
 
 /// Mock implementation of AddUserToGroupUnitOfWork for testing
+///
+/// This mock can work with any implementation of UserRepository and GroupRepository,
+/// not just the Mock* versions. This allows it to be used in integration tests
+/// with InMemory repositories.
 pub struct MockAddUserToGroupUnitOfWork {
-    user_repository: Arc<MockUserRepository>,
-    group_repository: Arc<MockGroupRepository>,
+    user_repository: Arc<dyn UserRepository>,
+    group_repository: Arc<dyn GroupRepository>,
     transaction_state: Arc<Mutex<TransactionState>>,
 }
 
@@ -24,9 +28,10 @@ pub enum TransactionState {
 }
 
 impl MockAddUserToGroupUnitOfWork {
+    /// Create a new mock UoW with any repository implementations
     pub fn new(
-        user_repository: Arc<MockUserRepository>,
-        group_repository: Arc<MockGroupRepository>,
+        user_repository: Arc<dyn UserRepository>,
+        group_repository: Arc<dyn GroupRepository>,
     ) -> Self {
         Self {
             user_repository,
@@ -63,15 +68,16 @@ impl AddUserToGroupUnitOfWork for MockAddUserToGroupUnitOfWork {
             return Err("Transaction not active".into());
         }
         *state = TransactionState::RolledBack;
-        self.user_repository.clear();
-        self.group_repository.clear();
+        // Note: Rollback in mock UoW doesn't actually clear data since
+        // trait objects don't expose clear() method. For unit tests,
+        // use MockUserRepository and MockGroupRepository directly.
         Ok(())
     }
 
     fn repositories(&self) -> AddUserToGroupRepositories {
         AddUserToGroupRepositories::new(
-            self.user_repository.clone() as Arc<dyn UserRepository>,
-            self.group_repository.clone() as Arc<dyn GroupRepository>,
+            self.user_repository.clone(),
+            self.group_repository.clone(),
         )
     }
 }

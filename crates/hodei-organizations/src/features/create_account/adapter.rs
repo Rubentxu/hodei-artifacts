@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use crate::features::create_account::error::CreateAccountError;
 use crate::features::create_account::ports::{
     AccountPersister, CreateAccountUnitOfWork, CreateAccountUnitOfWorkFactory,
@@ -5,7 +6,6 @@ use crate::features::create_account::ports::{
 use crate::internal::application::ports::account_repository::AccountRepository;
 use crate::internal::domain::account::Account;
 use async_trait::async_trait;
-use std::sync::Arc;
 
 /// Adapter implementing AccountPersister over any AccountRepository.
 ///

@@ -38,7 +38,7 @@ async fn test_add_user_to_group_basic() {
         .unwrap();
 
     // Add user to group
-    let add_uc = add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let add_uc = add_user_to_group::di::make_test_use_case(user_repo.clone(), group_repo.clone());
     let result = add_uc
         .execute(AddUserToGroupCommand {
             user_hrn: user_view.hrn.clone(),
@@ -79,7 +79,7 @@ async fn test_add_multiple_users_to_same_group() {
 
     // Create multiple users and add them to the group
     let create_user_uc = create_user::di::make_use_case(user_repo.clone());
-    let add_uc = add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let add_uc = add_user_to_group::di::make_test_use_case(user_repo.clone(), group_repo.clone());
 
     let users = vec!["Alice", "Bob", "Charlie"];
 
@@ -135,7 +135,7 @@ async fn test_add_user_to_multiple_groups() {
 
     // Create multiple groups
     let create_group_uc = create_group::di::make_use_case(group_repo.clone());
-    let add_uc = add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let add_uc = add_user_to_group::di::make_test_use_case(user_repo.clone(), group_repo.clone());
 
     let groups = vec!["Developers", "Designers", "Managers"];
 
@@ -195,7 +195,7 @@ async fn test_add_user_to_group_idempotent() {
         .unwrap();
 
     // Add user to group twice
-    let add_uc = add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let add_uc = add_user_to_group::di::make_test_use_case(user_repo.clone(), group_repo.clone());
 
     let result1 = add_uc
         .execute(AddUserToGroupCommand {
@@ -230,7 +230,7 @@ async fn test_complex_user_group_relationships() {
 
     let create_user_uc = create_user::di::make_use_case(user_repo.clone());
     let create_group_uc = create_group::di::make_use_case(group_repo.clone());
-    let add_uc = add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let add_uc = add_user_to_group::di::make_test_use_case(user_repo.clone(), group_repo.clone());
 
     // Create groups
     let dev_group = create_group_uc
@@ -320,7 +320,7 @@ async fn test_add_user_to_nonexistent_group_fails() {
         .unwrap();
 
     // Try to add user to a non-existent group
-    let add_uc = add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let add_uc = add_user_to_group::di::make_test_use_case(user_repo.clone(), group_repo.clone());
     let result = add_uc
         .execute(AddUserToGroupCommand {
             user_hrn: user_view.hrn,
@@ -348,7 +348,7 @@ async fn test_add_nonexistent_user_to_group_fails() {
         .unwrap();
 
     // Try to add a non-existent user to the group
-    let add_uc = add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let add_uc = add_user_to_group::di::make_test_use_case(user_repo.clone(), group_repo.clone());
     let result = add_uc
         .execute(AddUserToGroupCommand {
             user_hrn: "hrn:hodei:iam::default:User/nonexistent".to_string(),
@@ -367,7 +367,7 @@ async fn test_add_many_users_to_many_groups() {
 
     let create_user_uc = create_user::di::make_use_case(user_repo.clone());
     let create_group_uc = create_group::di::make_use_case(group_repo.clone());
-    let add_uc = add_user_to_group::di::make_use_case(user_repo.clone(), group_repo.clone());
+    let add_uc = add_user_to_group::di::make_test_use_case(user_repo.clone(), group_repo.clone());
 
     // Create 5 users
     let mut user_hrns = Vec::new();

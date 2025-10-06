@@ -27,7 +27,7 @@
 //!   - `CreateGroupUseCase`: Create a new IAM group
 //!
 //! - **Policy Management**
-//!   - `CreatePolicyUseCase`: Create IAM policies (identity-based)
+//!   - `CreatePolicyUseCase`: Create IAM policies (identity-based) (new segregated)
 //!   - `GetEffectivePoliciesForPrincipalUseCase`: Query effective policies for a principal
 //!
 //! - **Authorization**
@@ -62,36 +62,27 @@
 //!
 //! These are implementation details and should NOT be accessed directly.
 //! All interactions must go through the public use case APIs.
-
 use cedar_policy::PolicySet;
 use std::str::FromStr;
-
 // ============================================================================
 // INTERNAL MODULE - NOT PUBLIC
 // ============================================================================
 // Contains domain entities, repositories, and infrastructure.
 // This is an implementation detail and must not be exposed.
 mod internal;
-
 // ============================================================================
 // PUBLIC MODULES
 // ============================================================================
-
-/// Public features/use cases module
+///// Public features/use cases module
 pub mod features;
-
 // ============================================================================
 // PUBLIC RE-EXPORTS - USE CASES AND DTOs ONLY
 // ============================================================================
-
 // --- User Management ---
-pub use features::create_user::{CreateUserCommand, CreateUserUseCase};
-
 pub use features::add_user_to_group::{AddUserToGroupCommand, AddUserToGroupUseCase};
-
+pub use features::create_user::{CreateUserCommand, CreateUserUseCase};
 // --- Group Management ---
 pub use features::create_group::{CreateGroupCommand, CreateGroupUseCase};
-
 // --- Policy Management ---
 // TODO: REFACTOR (Phase 2) - create_policy feature is temporarily disabled
 // This feature is monolithic (contains full CRUD) and will be split into separate features:
@@ -102,15 +93,16 @@ pub use features::create_group::{CreateGroupCommand, CreateGroupUseCase};
 //     DeletePolicyUseCase, GetPolicyQuery, GetPolicyUseCase, ListPoliciesQuery, ListPoliciesUseCase,
 //     PolicyView, UpdatePolicyCommand, UpdatePolicyUseCase,
 // };
-
+// New segregated create_policy feature (Phase 2)
+pub use features::create_policy_new::{
+    CreatePolicyCommand, CreatePolicyError, CreatePolicyUseCase, PolicyView,
+};
 pub use features::get_effective_policies_for_principal::{
     EffectivePoliciesResponse, GetEffectivePoliciesForPrincipalUseCase, GetEffectivePoliciesQuery,
     make_use_case as make_get_effective_policies_use_case,
 };
-
 // --- Authorization ---
 pub use features::evaluate_iam_policies::EvaluateIamPoliciesUseCase;
-
 // ============================================================================
 // DOMAIN EVENTS - PUBLIC FOR EVENT SUBSCRIBERS
 // ============================================================================
@@ -119,7 +111,6 @@ pub use features::evaluate_iam_policies::EvaluateIamPoliciesUseCase;
 pub mod events {
     pub use crate::internal::domain::events::{GroupCreated, UserAddedToGroup, UserCreated};
 }
-
 // ============================================================================
 // ADAPTER FOR KERNEL PORTS
 // ============================================================================
@@ -128,7 +119,6 @@ use ::kernel::application::ports::{
 };
 use async_trait::async_trait;
 use std::sync::Arc;
-
 /// Adapter that exposes the internal "get_effective_policies_for_principal" use case
 /// through the cross-cutting port defined in the shared kernel (`EffectivePoliciesQueryPort`).
 ///
@@ -137,13 +127,11 @@ use std::sync::Arc;
 pub struct EffectivePoliciesAdapter<U> {
     inner: U,
 }
-
 impl<U> EffectivePoliciesAdapter<U> {
     pub fn new(inner: U) -> Self {
         Self { inner }
     }
 }
-
 #[async_trait]
 impl<UF, GF, PF> EffectivePoliciesQueryPort
     for EffectivePoliciesAdapter<
@@ -167,9 +155,7 @@ where
             features::get_effective_policies_for_principal::GetEffectivePoliciesQuery {
                 principal_hrn: query.principal_hrn,
             };
-
         let resp = self.inner.execute(internal_query).await?;
-
         // Convert Vec<String> policies to PolicySet
         let policy_set = if resp.policies.is_empty() {
             PolicySet::new()
@@ -179,45 +165,37 @@ where
             PolicySet::from_str(&combined_policies)
                 .map_err(|e| format!("Failed to parse policies: {}", e))?
         };
-
         Ok(EffectivePoliciesResult {
             policies: policy_set,
             policy_count: resp.policy_count,
         })
     }
 }
-
 /// Ergonomic alias for dynamic injection of the cross-cutting port
 pub type DynEffectivePoliciesQueryPort = Arc<dyn EffectivePoliciesQueryPort>;
-
 // ============================================================================
 // POLICY ENGINE CONFIGURATOR - INTERNAL USE ONLY
 // ============================================================================
 // This is needed for initial setup of the policies engine with default IAM entities.
 // It's a bridge to the legacy configuration system and should be refactored.
 pub use internal::application::configure_default_iam_entities;
-
 // ============================================================================
 // TEMPORARY EXPORTS FOR DI CONFIGURATION - TO BE REMOVED
 // ============================================================================
 // TODO: These exports break encapsulation and should be removed once DI is refactored.
 // The DI container should be configured at the application layer (main.rs or api crate)
 // without needing direct access to infrastructure implementations.
-
 #[doc(hidden)]
 pub mod __internal_di_only {
     //! ⚠️ WARNING: This module is for DI configuration ONLY.
     //!
     //! These exports break encapsulation and will be removed in a future refactor.
     //! DO NOT use these in application code. Use the public use case APIs instead.
-
+    pub use crate::internal::application::ports::{GroupRepository, UserRepository};
     pub use crate::internal::infrastructure::persistence::{
         InMemoryGroupRepository, InMemoryUserRepository,
     };
-
-    pub use crate::internal::application::ports::{GroupRepository, UserRepository};
 }
-
 // Re-export for backward compatibility (to be removed)
 #[deprecated(
     since = "0.1.0",
@@ -226,7 +204,6 @@ pub mod __internal_di_only {
 pub mod infrastructure {
     pub use super::__internal_di_only::{InMemoryGroupRepository, InMemoryUserRepository};
 }
-
 #[deprecated(
     since = "0.1.0",
     note = "Direct port access violates encapsulation. Use __internal_di_only for DI config only."
