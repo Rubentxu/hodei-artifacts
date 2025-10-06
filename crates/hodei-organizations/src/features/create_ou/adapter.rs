@@ -31,18 +31,27 @@ impl<OR: OuRepository> OuPersister for OuPersisterAdapter<OR> {
 ///
 /// This adapter wraps the generic SurrealUnitOfWork and exposes only the
 /// operations needed for the create_ou feature.
-pub struct CreateOuSurrealUnitOfWorkAdapter {
-    inner_uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork,
+pub struct CreateOuSurrealUnitOfWorkAdapter<C = surrealdb::engine::any::Any>
+where
+    C: surrealdb::Connection,
+{
+    inner_uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork<C>,
 }
 
-impl CreateOuSurrealUnitOfWorkAdapter {
-    pub fn new(uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork) -> Self {
+impl<C> CreateOuSurrealUnitOfWorkAdapter<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork<C>) -> Self {
         Self { inner_uow: uow }
     }
 }
 
 #[async_trait]
-impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
+impl<C> CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter<C>
+where
+    C: surrealdb::Connection,
+{
     async fn begin(&mut self) -> Result<(), CreateOuError> {
         use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
@@ -74,13 +83,19 @@ impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
 }
 
 /// Factory for creating CreateOuSurrealUnitOfWork instances
-pub struct CreateOuSurrealUnitOfWorkFactoryAdapter {
-    inner_factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory>,
+pub struct CreateOuSurrealUnitOfWorkFactoryAdapter<C = surrealdb::engine::any::Any>
+where
+    C: surrealdb::Connection,
+{
+    inner_factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory<C>>,
 }
 
-impl CreateOuSurrealUnitOfWorkFactoryAdapter {
+impl<C> CreateOuSurrealUnitOfWorkFactoryAdapter<C>
+where
+    C: surrealdb::Connection,
+{
     pub fn new(
-        factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory>,
+        factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory<C>>,
     ) -> Self {
         Self {
             inner_factory: factory,
@@ -89,8 +104,10 @@ impl CreateOuSurrealUnitOfWorkFactoryAdapter {
 }
 
 #[async_trait]
-impl CreateOuUnitOfWorkFactory for CreateOuSurrealUnitOfWorkFactoryAdapter {
-    type UnitOfWork = CreateOuSurrealUnitOfWorkAdapter;
+impl<C> CreateOuUnitOfWorkFactory for CreateOuSurrealUnitOfWorkFactoryAdapter<C>
+where
+    C: surrealdb::Connection,
+{
 
     async fn create(&self) -> Result<Self::UnitOfWork, CreateOuError> {
         use kernel::application::ports::unit_of_work::UnitOfWorkFactory;

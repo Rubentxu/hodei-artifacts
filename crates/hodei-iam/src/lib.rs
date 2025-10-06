@@ -93,10 +93,18 @@ pub use features::create_group::{CreateGroupCommand, CreateGroupUseCase};
 //     DeletePolicyUseCase, GetPolicyQuery, GetPolicyUseCase, ListPoliciesQuery, ListPoliciesUseCase,
 //     PolicyView, UpdatePolicyCommand, UpdatePolicyUseCase,
 // };
-// New segregated create_policy feature (Phase 2)
+
+// New segregated policy features (Phase 2)
 pub use features::create_policy_new::{
     CreatePolicyCommand, CreatePolicyError, CreatePolicyUseCase, PolicyView,
 };
+
+pub use features::get_policy::{
+    GetPolicyUseCase,
+    dto::{GetPolicyQuery, PolicyView as GetPolicyView},
+    error::GetPolicyError,
+};
+
 pub use features::get_effective_policies_for_principal::{
     EffectivePoliciesResponse, GetEffectivePoliciesForPrincipalUseCase, GetEffectivePoliciesQuery,
     make_use_case as make_get_effective_policies_use_case,
