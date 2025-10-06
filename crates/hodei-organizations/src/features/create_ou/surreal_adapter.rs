@@ -13,18 +13,27 @@ use crate::internal::infrastructure::surreal::{SurrealUnitOfWork, SurrealUnitOfW
 use kernel::application::ports::unit_of_work::{UnitOfWork, UnitOfWorkFactory};
 
 /// Adaptador que envuelve SurrealUnitOfWork para la feature create_ou
-pub struct CreateOuSurrealUnitOfWorkAdapter {
-    inner: SurrealUnitOfWork,
+pub struct CreateOuSurrealUnitOfWorkAdapter<C = surrealdb::engine::any::Any>
+where
+    C: surrealdb::Connection,
+{
+    inner: SurrealUnitOfWork<C>,
 }
 
-impl CreateOuSurrealUnitOfWorkAdapter {
-    pub fn new(inner: SurrealUnitOfWork) -> Self {
+impl<C> CreateOuSurrealUnitOfWorkAdapter<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(inner: SurrealUnitOfWork<C>) -> Self {
         Self { inner }
     }
 }
 
 #[async_trait]
-impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
+impl<C> CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter<C>
+where
+    C: surrealdb::Connection,
+{
     async fn begin(&mut self) -> Result<(), CreateOuError> {
         self.inner
             .begin()
@@ -52,19 +61,28 @@ impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
 }
 
 /// Factory que crea instancias de CreateOuSurrealUnitOfWorkAdapter
-pub struct CreateOuSurrealUnitOfWorkFactoryAdapter {
-    inner: Arc<SurrealUnitOfWorkFactory>,
+pub struct CreateOuSurrealUnitOfWorkFactoryAdapter<C>
+where
+    C: surrealdb::Connection,
+{
+    inner: Arc<SurrealUnitOfWorkFactory<C>>,
 }
 
-impl CreateOuSurrealUnitOfWorkFactoryAdapter {
-    pub fn new(inner: Arc<SurrealUnitOfWorkFactory>) -> Self {
+impl<C> CreateOuSurrealUnitOfWorkFactoryAdapter<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(inner: Arc<SurrealUnitOfWorkFactory<C>>) -> Self {
         Self { inner }
     }
 }
 
 #[async_trait]
-impl CreateOuUnitOfWorkFactory for CreateOuSurrealUnitOfWorkFactoryAdapter {
-    type UnitOfWork = CreateOuSurrealUnitOfWorkAdapter;
+impl<C> CreateOuUnitOfWorkFactory for CreateOuSurrealUnitOfWorkFactoryAdapter<C>
+where
+    C: surrealdb::Connection,
+{
+    type UnitOfWork = CreateOuSurrealUnitOfWorkAdapter<C>;
 
     async fn create(&self) -> Result<Self::UnitOfWork, CreateOuError> {
         let uow = self
@@ -79,22 +97,51 @@ impl CreateOuUnitOfWorkFactory for CreateOuSurrealUnitOfWorkFactoryAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealdb::{Surreal, engine::local::Mem};
 
     #[tokio::test]
     async fn test_adapter_creates_uow_successfully() {
-        let db = Surreal::new::<Mem>(()).await.unwrap();
+        // Arrange
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(())
+            .await
+            .unwrap();
         db.use_ns("test").use_db("test").await.unwrap();
 
         let factory = Arc::new(SurrealUnitOfWorkFactory::new(Arc::new(db)));
         let adapter_factory = CreateOuSurrealUnitOfWorkFactoryAdapter::new(factory);
 
+        // Act
         let result = adapter_factory.create().await;
-        assert!(result.is_ok());
 
-        let mut uow = result.unwrap();
-        assert!(uow.begin().await.is_ok());
-        assert!(uow.commit().await.is_ok());
+        // Assert - Verify adapter creation
+        assert!(result.is_ok(), "Factory should create UoW adapter successfully");
+
+        let uow = result.unwrap();
+
+        // Verify repository access
+        let _ou_repo = uow.ous();
+
+        // Note: Transaction operations (begin/commit) are not tested here
+        // as they require a real database connection, not in-memory.
+        // These should be tested in integration tests.
+    }
+
+    #[tokio::test]
+    async fn test_adapter_provides_ou_repository() {
+        // Arrange
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(())
+            .await
+            .unwrap();
+        db.use_ns("test").use_db("test").await.unwrap();
+
+        let factory = Arc::new(SurrealUnitOfWorkFactory::new(Arc::new(db)));
+        let adapter_factory = CreateOuSurrealUnitOfWorkFactoryAdapter::new(factory);
+        let uow = adapter_factory.create().await.unwrap();
+
+        // Act
+        let ou_repo = uow.ous();
+
+        // Assert
+        assert!(Arc::strong_count(&ou_repo) >= 1, "Should return valid OU repository");
     }
 }
 

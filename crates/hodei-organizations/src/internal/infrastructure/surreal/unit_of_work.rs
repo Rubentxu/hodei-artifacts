@@ -10,18 +10,27 @@ use crate::internal::application::ports::ou_repository::OuRepository;
 use crate::internal::application::ports::scp_repository::ScpRepository;
 
 /// Transactional account repository that operates within a UnitOfWork context
-pub struct TransactionalAccountRepository {
-    db: Arc<Surreal<Any>>,
+pub struct TransactionalAccountRepository<C = Any>
+where
+    C: surrealdb::Connection,
+{
+    db: Arc<Surreal<C>>,
 }
 
-impl TransactionalAccountRepository {
-    pub fn new(db: Arc<Surreal<Any>>) -> Self {
+impl<C> TransactionalAccountRepository<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(db: Arc<Surreal<C>>) -> Self {
         Self { db }
     }
 }
 
 #[async_trait]
-impl AccountRepository for TransactionalAccountRepository {
+impl<C> AccountRepository for TransactionalAccountRepository<C>
+where
+    C: surrealdb::Connection,
+{
     async fn save(
         &self,
         account: &crate::internal::domain::account::Account,
@@ -48,18 +57,27 @@ impl AccountRepository for TransactionalAccountRepository {
 }
 
 /// Transactional organizational unit repository that operates within a UnitOfWork context
-pub struct TransactionalOuRepository {
-    db: Arc<Surreal<Any>>,
+pub struct TransactionalOuRepository<C = Any>
+where
+    C: surrealdb::Connection,
+{
+    db: Arc<Surreal<C>>,
 }
 
-impl TransactionalOuRepository {
-    pub fn new(db: Arc<Surreal<Any>>) -> Self {
+impl<C> TransactionalOuRepository<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(db: Arc<Surreal<C>>) -> Self {
         Self { db }
     }
 }
 
 #[async_trait]
-impl OuRepository for TransactionalOuRepository {
+impl<C> OuRepository for TransactionalOuRepository<C>
+where
+    C: surrealdb::Connection,
+{
     async fn save(
         &self,
         ou: &crate::internal::domain::ou::OrganizationalUnit,
@@ -96,12 +114,18 @@ impl OuRepository for TransactionalOuRepository {
 }
 
 /// Transactional service control policy repository that operates within a UnitOfWork context
-pub struct TransactionalScpRepository {
-    db: Arc<Surreal<Any>>,
+pub struct TransactionalScpRepository<C = Any>
+where
+    C: surrealdb::Connection,
+{
+    db: Arc<Surreal<C>>,
 }
 
-impl TransactionalScpRepository {
-    pub fn new(db: Arc<Surreal<Any>>) -> Self {
+impl<C> TransactionalScpRepository<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(db: Arc<Surreal<C>>) -> Self {
         Self { db }
     }
 }
@@ -147,13 +171,19 @@ impl ScpRepository for TransactionalScpRepository {
 ///
 /// This implementation manages database transactions and provides transactional
 /// repository instances that automatically participate in the transaction context.
-pub struct SurrealUnitOfWork {
-    db: Arc<Surreal<Any>>,
+pub struct SurrealUnitOfWork<C = Any>
+where
+    C: surrealdb::Connection,
+{
+    db: Arc<Surreal<C>>,
     transaction_started: bool,
 }
 
-impl SurrealUnitOfWork {
-    pub fn new(db: Arc<Surreal<Any>>) -> Self {
+impl<C> SurrealUnitOfWork<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(db: Arc<Surreal<C>>) -> Self {
         Self {
             db,
             transaction_started: false,
@@ -162,10 +192,13 @@ impl SurrealUnitOfWork {
 }
 
 #[async_trait]
-impl UnitOfWork for SurrealUnitOfWork {
-    type AccountRepository = TransactionalAccountRepository;
-    type OuRepository = TransactionalOuRepository;
-    type ScpRepository = TransactionalScpRepository;
+impl<C> UnitOfWork for SurrealUnitOfWork<C>
+where
+    C: surrealdb::Connection,
+{
+    type AccountRepository = TransactionalAccountRepository<C>;
+    type OuRepository = TransactionalOuRepository<C>;
+    type ScpRepository = TransactionalScpRepository<C>;
 
     async fn begin(&mut self) -> Result<(), UnitOfWorkError> {
         if self.transaction_started {
@@ -175,7 +208,7 @@ impl UnitOfWork for SurrealUnitOfWork {
         }
 
         self.db
-            .query("BEGIN TRANSACTION;")
+            .query("BEGIN TRANSACTION")
             .await
             .map_err(|e| UnitOfWorkError::Transaction(e.to_string()))?;
 
@@ -191,7 +224,7 @@ impl UnitOfWork for SurrealUnitOfWork {
         }
 
         self.db
-            .query("COMMIT TRANSACTION;")
+            .query("COMMIT TRANSACTION")
             .await
             .map_err(|e| UnitOfWorkError::CommitFailed(e.to_string()))?;
 
@@ -207,7 +240,7 @@ impl UnitOfWork for SurrealUnitOfWork {
         }
 
         self.db
-            .query("CANCEL TRANSACTION;")
+            .query("CANCEL TRANSACTION")
             .await
             .map_err(|e| UnitOfWorkError::RollbackFailed(e.to_string()))?;
 
@@ -228,7 +261,10 @@ impl UnitOfWork for SurrealUnitOfWork {
     }
 }
 
-impl Drop for SurrealUnitOfWork {
+impl<C> Drop for SurrealUnitOfWork<C>
+where
+    C: surrealdb::Connection,
+{
     fn drop(&mut self) {
         if self.transaction_started {
             // Auto-rollback on drop if transaction is still active
@@ -236,26 +272,35 @@ impl Drop for SurrealUnitOfWork {
             // guarantee the rollback completes, but we attempt to cancel
             let db = self.db.clone();
             tokio::spawn(async move {
-                let _ = db.query("CANCEL TRANSACTION;").await;
+                let _ = db.query("CANCEL TRANSACTION").await;
             });
         }
     }
 }
 
 /// Factory for creating SurrealUnitOfWork instances
-pub struct SurrealUnitOfWorkFactory {
-    db: Arc<Surreal<Any>>,
+pub struct SurrealUnitOfWorkFactory<C>
+where
+    C: surrealdb::Connection,
+{
+    db: Arc<Surreal<C>>,
 }
 
-impl SurrealUnitOfWorkFactory {
-    pub fn new(db: Arc<Surreal<Any>>) -> Self {
+impl<C> SurrealUnitOfWorkFactory<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(db: Arc<Surreal<C>>) -> Self {
         Self { db }
     }
 }
 
 #[async_trait]
-impl UnitOfWorkFactory for SurrealUnitOfWorkFactory {
-    type UnitOfWork = SurrealUnitOfWork;
+impl<C> UnitOfWorkFactory for SurrealUnitOfWorkFactory<C>
+where
+    C: surrealdb::Connection,
+{
+    type UnitOfWork = SurrealUnitOfWork<C>;
 
     async fn create(&self) -> Result<Self::UnitOfWork, UnitOfWorkError> {
         Ok(SurrealUnitOfWork::new(self.db.clone()))

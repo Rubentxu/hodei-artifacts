@@ -161,16 +161,19 @@ pub mod ports {
 ///
 /// # Ejemplo de Uso
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use hodei_organizations::infrastructure::{
 ///     CreateAccountSurrealUnitOfWorkFactoryAdapter,
 ///     CreateOuSurrealUnitOfWorkFactoryAdapter,
 /// };
-/// use surrealdb::{Surreal, engine::any::Any};
+/// use hodei_organizations::CreateAccountUseCase;
+/// use hodei_organizations::__internal_di_only::SurrealUnitOfWorkFactory;
+/// use surrealdb::{Surreal, engine::remote::ws::Ws};
 /// use std::sync::Arc;
 ///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // En la composition root (main.rs)
-/// let db = Surreal::new::<Any>("ws://localhost:8000").await?;
+/// let db = Surreal::new::<Ws>("ws://localhost:8000").await?;
 /// db.use_ns("hodei").use_db("production").await?;
 ///
 /// let surreal_factory = Arc::new(SurrealUnitOfWorkFactory::new(Arc::new(db)));
@@ -186,6 +189,8 @@ pub mod ports {
 ///     "aws".to_string(),
 ///     "123456789012".to_string(),
 /// );
+/// # Ok(())
+/// # }
 /// ```
 pub mod infrastructure {
     pub use crate::features::create_account::surreal_adapter::{

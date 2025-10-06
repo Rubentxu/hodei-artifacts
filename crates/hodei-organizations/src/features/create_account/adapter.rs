@@ -36,18 +36,27 @@ impl<AR: AccountRepository + Send + Sync> AccountPersister for AccountRepository
 ///
 /// This adapter wraps the generic SurrealUnitOfWork and exposes only the
 /// operations needed for the create_account feature.
-pub struct CreateAccountSurrealUnitOfWorkAdapter {
-    inner_uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork,
+pub struct CreateAccountSurrealUnitOfWorkAdapter<C = surrealdb::engine::any::Any>
+where
+    C: surrealdb::Connection,
+{
+    inner_uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork<C>,
 }
 
-impl CreateAccountSurrealUnitOfWorkAdapter {
-    pub fn new(uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork) -> Self {
+impl<C> CreateAccountSurrealUnitOfWorkAdapter<C>
+where
+    C: surrealdb::Connection,
+{
+    pub fn new(uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork<C>) -> Self {
         Self { inner_uow: uow }
     }
 }
 
 #[async_trait]
-impl CreateAccountUnitOfWork for CreateAccountSurrealUnitOfWorkAdapter {
+impl<C> CreateAccountUnitOfWork for CreateAccountSurrealUnitOfWorkAdapter<C>
+where
+    C: surrealdb::Connection,
+{
     async fn begin(&mut self) -> Result<(), CreateAccountError> {
         use kernel::application::ports::unit_of_work::UnitOfWork;
         self.inner_uow
@@ -79,13 +88,19 @@ impl CreateAccountUnitOfWork for CreateAccountSurrealUnitOfWorkAdapter {
 }
 
 /// Factory for creating CreateAccountSurrealUnitOfWork instances
-pub struct CreateAccountSurrealUnitOfWorkFactoryAdapter {
-    inner_factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory>,
+pub struct CreateAccountSurrealUnitOfWorkFactoryAdapter<C>
+where
+    C: surrealdb::Connection,
+{
+    inner_factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory<C>>,
 }
 
-impl CreateAccountSurrealUnitOfWorkFactoryAdapter {
+impl<C> CreateAccountSurrealUnitOfWorkFactoryAdapter<C>
+where
+    C: surrealdb::Connection,
+{
     pub fn new(
-        factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory>,
+        factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory<C>>,
     ) -> Self {
         Self {
             inner_factory: factory,
@@ -94,8 +109,11 @@ impl CreateAccountSurrealUnitOfWorkFactoryAdapter {
 }
 
 #[async_trait]
-impl CreateAccountUnitOfWorkFactory for CreateAccountSurrealUnitOfWorkFactoryAdapter {
-    type UnitOfWork = CreateAccountSurrealUnitOfWorkAdapter;
+impl<C> CreateAccountUnitOfWorkFactory for CreateAccountSurrealUnitOfWorkFactoryAdapter<C>
+where
+    C: surrealdb::Connection,
+{
+    type UnitOfWork = CreateAccountSurrealUnitOfWorkAdapter<C>;
 
     async fn create(&self) -> Result<Self::UnitOfWork, CreateAccountError> {
         use kernel::application::ports::unit_of_work::UnitOfWorkFactory;

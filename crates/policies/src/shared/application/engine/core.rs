@@ -264,13 +264,15 @@ impl AuthorizationEngine {
         // Translate to Cedar entity
         let cedar_entity = translator::translate_to_cedar_entity(entity)?;
 
-        // Get current entities (read lock)
-        let current_entities = self.entities.read().map_err(|e| {
-            EngineError::EvaluationFailed(format!("Failed to lock entities: {}", e))
-        })?;
+        // Get current entities and clone them (read lock is released after this block)
+        let new_entities = {
+            let current_entities = self.entities.read().map_err(|e| {
+                EngineError::EvaluationFailed(format!("Failed to lock entities: {}", e))
+            })?;
 
-        // Add new entity to existing entities
-        let new_entities = current_entities.clone().add_entities(vec![cedar_entity], None)?;
+            // Add new entity to existing entities
+            current_entities.clone().add_entities(vec![cedar_entity], None)?
+        }; // read lock is released here
 
         // Update entity store (write lock)
         let mut entities = self.entities.write().map_err(|e| {

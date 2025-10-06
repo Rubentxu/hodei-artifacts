@@ -7,7 +7,7 @@ mod tests {
         CreateScpCommand, DeleteScpCommand, ListScpsQuery, UpdateScpCommand,
     };
     use crate::features::create_scp::error::{
-        CreateScpError, DeleteScpError, GetScpError, UpdateScpError,
+        CreateScpError, DeleteScpError, UpdateScpError,
     };
     use crate::features::create_scp::mocks::MockScpPersister;
     use crate::features::create_scp::use_case::{
@@ -16,7 +16,6 @@ mod tests {
     use crate::internal::domain::ServiceControlPolicy;
     use kernel::Hrn;
     use std::collections::HashMap;
-    use std::sync::Arc;
     // Temporal: tests de integración con SurrealDB comentados por problemas de tipo
     // TODO: Reactivar cuando se resuelvan los problemas de tipo entre Any y Db
     // use surrealdb::engine::any::Any;
