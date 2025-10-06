@@ -136,6 +136,70 @@ pub mod ports {
     pub use crate::features::get_effective_scps::ports::{
         AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
     };
+
+    /// Puertos para features transaccionales
+    pub use crate::features::create_account::ports::{
+        CreateAccountUnitOfWork, CreateAccountUnitOfWorkFactory,
+    };
+    pub use crate::features::create_ou::ports::{
+        CreateOuUnitOfWork, CreateOuUnitOfWorkFactory,
+    };
+    pub use crate::features::move_account::ports::{
+        MoveAccountUnitOfWork, MoveAccountUnitOfWorkFactory,
+    };
+}
+
+// ============================================================================
+// Public Exports - Infrastructure Adapters (for Composition Root)
+// ============================================================================
+
+/// Adaptadores de infraestructura para SurrealDB.
+///
+/// Estos adaptadores implementan los puertos de cada feature usando SurrealDB
+/// con transacciones REALES. Solo deben ser usados en la composition root
+/// de la aplicación (main.rs o módulo de configuración).
+///
+/// # Ejemplo de Uso
+///
+/// ```rust,ignore
+/// use hodei_organizations::infrastructure::{
+///     CreateAccountSurrealUnitOfWorkFactoryAdapter,
+///     CreateOuSurrealUnitOfWorkFactoryAdapter,
+/// };
+/// use surrealdb::{Surreal, engine::any::Any};
+/// use std::sync::Arc;
+///
+/// // En la composition root (main.rs)
+/// let db = Surreal::new::<Any>("ws://localhost:8000").await?;
+/// db.use_ns("hodei").use_db("production").await?;
+///
+/// let surreal_factory = Arc::new(SurrealUnitOfWorkFactory::new(Arc::new(db)));
+///
+/// // Crear adaptadores para cada feature
+/// let create_account_factory = CreateAccountSurrealUnitOfWorkFactoryAdapter::new(
+///     surreal_factory.clone()
+/// );
+///
+/// // Inyectar en los casos de uso
+/// let create_account_use_case = CreateAccountUseCase::new(
+///     Arc::new(create_account_factory),
+///     "aws".to_string(),
+///     "123456789012".to_string(),
+/// );
+/// ```
+pub mod infrastructure {
+    pub use crate::features::create_account::surreal_adapter::{
+        CreateAccountSurrealUnitOfWorkAdapter,
+        CreateAccountSurrealUnitOfWorkFactoryAdapter,
+    };
+    pub use crate::features::create_ou::surreal_adapter::{
+        CreateOuSurrealUnitOfWorkAdapter,
+        CreateOuSurrealUnitOfWorkFactoryAdapter,
+    };
+    pub use crate::features::move_account::surreal_adapter::{
+        MoveAccountSurrealUnitOfWorkAdapter,
+        MoveAccountSurrealUnitOfWorkFactoryAdapter,
+    };
 }
 
 // ============================================================================
