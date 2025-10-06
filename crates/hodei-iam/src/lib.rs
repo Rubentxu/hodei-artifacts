@@ -105,6 +105,12 @@ pub use features::get_policy::{
     error::GetPolicyError,
 };
 
+pub use features::delete_policy::{
+    DeletePolicyUseCase,
+    dto::DeletePolicyCommand,
+    error::DeletePolicyError,
+};
+
 pub use features::get_effective_policies_for_principal::{
     EffectivePoliciesResponse, GetEffectivePoliciesForPrincipalUseCase, GetEffectivePoliciesQuery,
     make_use_case as make_get_effective_policies_use_case,
