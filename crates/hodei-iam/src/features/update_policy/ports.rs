@@ -15,10 +15,9 @@
 //! This ensures that implementations and consumers of this port are not forced to depend
 //! on operations they don't need.
 
-use crate::features::update_policy::dto::UpdatePolicyCommand;
+use crate::features::update_policy::dto::{PolicyView, UpdatePolicyCommand};
 use crate::features::update_policy::error::UpdatePolicyError;
 use async_trait::async_trait;
-use policies::shared::domain::Policy;
 
 // Re-exporting validation-related types from create_policy_new as they are identical
 // and shared across features that modify policy content. This avoids duplication.
@@ -62,7 +61,7 @@ pub use crate::features::create_policy_new::{
 ///     async fn update(
 ///         &self,
 ///         command: UpdatePolicyCommand,
-///     ) -> Result<Policy, UpdatePolicyError> {
+///     ) -> Result<PolicyView, UpdatePolicyError> {
 ///         // 1. Find policy by ID
 ///         // 2. Check version for optimistic locking (optional)
 ///         // 3. Apply updates to content and/or description
@@ -73,7 +72,7 @@ pub use crate::features::create_policy_new::{
 /// ```
 #[async_trait]
 pub trait UpdatePolicyPort: Send + Sync {
-    /// Update an existing policy and persist the changes
+    /// Update an existing policy and return the updated view
     ///
     /// # Arguments
     ///
@@ -81,7 +80,7 @@ pub trait UpdatePolicyPort: Send + Sync {
     ///
     /// # Returns
     ///
-    /// The updated `Policy` entity with new metadata (timestamps, etc.)
+    /// The updated `PolicyView` entity with new metadata (timestamps, etc.)
     ///
     /// # Errors
     ///
@@ -102,7 +101,7 @@ pub trait UpdatePolicyPort: Send + Sync {
     /// let policy = port.update(command).await?;
     /// println!("Updated policy with HRN: {}", policy.id);
     /// ```
-    async fn update(&self, command: UpdatePolicyCommand) -> Result<Policy, UpdatePolicyError>;
+    async fn update(&self, command: UpdatePolicyCommand) -> Result<PolicyView, UpdatePolicyError>;
 }
 
 #[cfg(test)]
@@ -113,17 +112,5 @@ mod tests {
     #[test]
     fn test_update_policy_port_is_object_safe() {
         fn _assert_object_safe(_port: &dyn UpdatePolicyPort) {}
-    }
-
-    #[test]
-    fn test_validation_result_reexport() {
-        let result = ValidationResult::valid();
-        assert!(result.is_valid);
-    }
-
-    #[test]
-    fn test_validation_error_reexport() {
-        let error = ValidationError::new("Test error".to_string());
-        assert_eq!(error.message, "Test error");
     }
 }

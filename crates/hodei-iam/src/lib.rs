@@ -105,6 +105,18 @@ pub use features::get_policy::{
     error::GetPolicyError,
 };
 
+pub use features::list_policies::{
+    ListPoliciesUseCase,
+    dto::{ListPoliciesQuery, ListPoliciesResponse, PageInfo, PolicySummary},
+    error::ListPoliciesError,
+};
+
+pub use features::update_policy::{
+    UpdatePolicyUseCase,
+    dto::{UpdatePolicyCommand, PolicyView as UpdatePolicyView},
+    error::UpdatePolicyError,
+};
+
 pub use features::delete_policy::{
     DeletePolicyUseCase,
     dto::DeletePolicyCommand,

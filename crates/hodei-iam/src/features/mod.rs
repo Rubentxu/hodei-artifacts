@@ -15,3 +15,5 @@ pub mod delete_policy;
 pub mod evaluate_iam_policies;
 pub mod get_effective_policies_for_principal;
 pub mod get_policy;
+pub mod list_policies;
+pub mod update_policy;

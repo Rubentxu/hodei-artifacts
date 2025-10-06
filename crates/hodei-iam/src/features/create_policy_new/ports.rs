@@ -166,6 +166,24 @@ pub struct ValidationWarning {
     pub severity: String,
 }
 
+impl ValidationWarning {
+    /// Create a new validation warning with default severity
+    pub fn new(message: String) -> Self {
+        Self {
+            message,
+            severity: "medium".to_string(),
+        }
+    }
+
+    /// Create a validation warning with custom severity
+    pub fn with_severity(message: String, severity: String) -> Self {
+        Self {
+            message,
+            severity,
+        }
+    }
+}
+
 /// Errors that can occur during policy validation
 #[derive(Debug, thiserror::Error)]
 pub enum PolicyValidationError {

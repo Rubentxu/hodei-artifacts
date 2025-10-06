@@ -8,6 +8,7 @@
 //! - error.rs            -> Feature-specific error types
 //! - ports.rs            -> Segregated interface definitions (ISP)
 //! - use_case.rs         -> Core business logic (CreatePolicyUseCase)
+//! - validator.rs        -> Cedar policy validator implementation
 //! - adapter.rs          -> Infrastructure adapter implementations
 //! - di.rs               -> Dependency Injection helpers
 //! - mocks.rs            -> Test-only mock implementations of ports
@@ -17,6 +18,7 @@
 //! - Command / View DTOs
 //! - Use case
 //! - Error and Port traits
+//! - Validator implementation
 //!
 //! Internal mocks remain private (or test-gated) to avoid leaking test utilities
 //! across crate boundaries.
@@ -33,6 +35,7 @@ mod dto;
 mod error;
 mod ports;
 mod use_case;
+mod validator;
 // Mocks are kept internal (they are used by unit tests inside the crate)
 mod mocks;
 // Externalized concrete infrastructure + DI modules
@@ -48,6 +51,7 @@ pub use ports::{
     ValidationWarning,
 };
 pub use use_case::CreatePolicyUseCase;
+pub use validator::CedarPolicyValidator;
 // ---------------------------------------------------------------------------
 // TEST SUPPORT (Optional re-export under cfg(test))
 // ---------------------------------------------------------------------------

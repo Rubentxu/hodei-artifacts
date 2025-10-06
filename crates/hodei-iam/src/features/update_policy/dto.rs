@@ -129,33 +129,19 @@ impl UpdatePolicyCommand {
 ///
 /// This DTO represents a policy that has been successfully updated.
 /// It contains all the information about the policy including metadata.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use hodei_iam::PolicyView;
-///
-/// // After updating a policy, you receive a PolicyView:
-/// let view: PolicyView = use_case.execute(command).await?;
-/// println!("Policy updated: {}", view.id);
-/// println!("New content: {}", view.content);
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyView {
     /// Hierarchical Resource Name (HRN) of the policy
-    pub id: Hrn,
+    pub hrn: Hrn,
+
+    /// Policy name/ID
+    pub name: String,
 
     /// The Cedar policy content as stored
     pub content: String,
 
     /// Optional description of the policy
     pub description: Option<String>,
-
-    /// Timestamp when the policy was created
-    pub created_at: chrono::DateTime<chrono::Utc>,
-
-    /// Timestamp when the policy was last updated
-    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[cfg(test)]
@@ -244,26 +230,25 @@ mod tests {
     #[test]
     fn test_policy_view_clone() {
         let view = PolicyView {
-            id: Hrn::from_string("hrn:hodei:iam::test:policy/test-policy").unwrap(),
+            hrn: Hrn::from_string("hrn:hodei:iam::test:policy/test-policy").unwrap(),
+            name: "test-policy".to_string(),
             content: "permit(principal, action, resource);".to_string(),
             description: Some("Test".to_string()),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
         };
 
         let cloned = view.clone();
-        assert_eq!(cloned.id, view.id);
+        assert_eq!(cloned.hrn, view.hrn);
+        assert_eq!(cloned.name, view.name);
         assert_eq!(cloned.content, view.content);
     }
 
     #[test]
     fn test_policy_view_serialization() {
         let view = PolicyView {
-            id: Hrn::from_string("hrn:hodei:iam::test:policy/test-policy").unwrap(),
+            hrn: Hrn::from_string("hrn:hodei:iam::test:policy/test-policy").unwrap(),
+            name: "test-policy".to_string(),
             content: "permit(principal, action, resource);".to_string(),
             description: Some("Test".to_string()),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
         };
 
         let json = serde_json::to_string(&view).unwrap();

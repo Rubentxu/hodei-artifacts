@@ -155,22 +155,39 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador,
 *   **quiero** obtener los detalles de una política IAM por su HRN,
 *   **para** revisar su contenido y descripción.
-- **Estado:** ⏳ Pendiente
+- **Estado:** ✅ Completada (feature `get_policy` con 9 tests unitarios + 3 tests de integración, ver `docs/HU-IAM-006-COMPLETION-SUMMARY.md`)
 *   **AC:**
-      1.  La API debe devolver un DTO (`PolicyDto`) con los detalles de la política.
+      1.  La API debe devolver un DTO (`PolicyView`) con los detalles de la política.
       2.  Si la política no existe, se debe devolver un error `PolicyNotFound`.
       3.  **[Test de Integración]** Debe existir un test que use el `GetPolicyUseCase` público para recuperar una política creada previamente (usando un persister en memoria).
+*   **Implementación:**
+      - Feature completa en `crates/hodei-iam/src/features/get_policy/`
+      - `GetPolicyUseCase` con validación de tipo HRN
+      - `PolicyReader` port segregado (ISP)
+      - `InMemoryPolicyReader` para testing
+      - Tests unitarios: 9 pasando (adapters, mocks, use case)
+      - Tests de integración: 3 pasando en `tests/integration_get_policy_test.rs`
+      - API pública: `GetPolicyQuery`, `PolicyView`, `GetPolicyError`
 
 **HU-IAM-007: Actualizar una política IAM**
 *   **Como** un administrador,
 *   **quiero** actualizar el contenido o la descripción de una política IAM existente,
-*   **para** modificar sus permisos.
-- **Estado:** ⏳ Pendiente (faltan `use_case.rs`, adaptadores y pruebas)
+*   **para** modificar sus permisos sin tener que borrar y recrear la política.
+- **Estado:** ✅ Completada (feature `update_policy` con 37 tests unitarios + 11 tests de integración, ver `docs/HU-IAM-007-COMPLETION-SUMMARY.md`)
 *   **AC:**
-      1.  El nuevo contenido de la política debe ser validado sintácticamente.
-      2.  La operación debe ser atómica.
+      1.  El nuevo contenido de la política debe ser validado sintácticamente usando Cedar antes de persistir cualquier cambio.
+      2.  La operación debe ser atómica - si falla la validación o persistencia, no se aplica ningún cambio.
       3.  Si la política no existe, se debe devolver un error `PolicyNotFound`.
       4.  **[Test de Integración]** Debe existir un test que use el `UpdatePolicyUseCase` público para modificar una política y verifique que el cambio se ha persistido.
+*   **Implementación:**
+      - Feature completa en `crates/hodei-iam/src/features/update_policy/`
+      - `UpdatePolicyUseCase` con validación Cedar integrada
+      - `UpdatePolicyPort` segregado (ISP)
+      - `InMemoryUpdatePolicyAdapter` para testing
+      - `CedarPolicyValidator` compartido con otras features
+      - Tests unitarios: 37 pasando (DTOs, errores, mocks, adapters, use case)
+      - Tests de integración: 11 pasando en `tests/integration_update_policy_test.rs`
+      - API pública: `UpdatePolicyCommand`, `PolicyView`, `UpdatePolicyError`
 
 **HU-IAM-008: Borrar una política IAM**
 *   **Como** un administrador,
@@ -186,11 +203,20 @@ Tras la aclaración, el código demuestra una arquitectura interna de Bounded Co
 *   **Como** un administrador,
 *   **quiero** listar todas las políticas IAM disponibles, con opción de paginación,
 *   **para** tener una visión general de los permisos definidos.
-- **Estado:** ⏳ Pendiente
+- **Estado:** ✅ Completada (feature `list_policies` con 9 tests unitarios + 12 tests de integración, ver `docs/HU-IAM-009-COMPLETION-SUMMARY.md`)
 *   **AC:**
       1.  La API debe soportar parámetros de `limit` y `offset` para la paginación.
-      2.  La respuesta debe ser una lista de DTOs (`Vec<PolicyDto>`).
+      2.  La respuesta debe ser una lista de DTOs (`Vec<PolicySummary>`).
       3.  **[Test de Integración]** Debe existir un test que cree varias políticas y luego use el `ListPoliciesUseCase` público para verificar que la paginación (`limit` y `offset`) funciona como se espera.
+*   **Implementación:**
+      - Feature completa en `crates/hodei-iam/src/features/list_policies/`
+      - `ListPoliciesUseCase` con validación de paginación
+      - `PolicyLister` port segregado (ISP)
+      - `InMemoryPolicyLister` con ordenamiento consistente
+      - Tests unitarios: 9 pasando (use case, mocks, ports)
+      - Tests de integración: 12 pasando en `tests/integration_list_policies_test.rs`
+      - API pública: `ListPoliciesQuery`, `ListPoliciesResponse`, `PageInfo`, `PolicySummary`, `ListPoliciesError`
+      - Paginación completa: limit (1-100, default 50), offset, navegación (next/previous)
 
 ---
 
