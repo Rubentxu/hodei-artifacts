@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use crate::features::move_account::error::MoveAccountError;
 use crate::features::move_account::ports::{MoveAccountUnitOfWork, MoveAccountUnitOfWorkFactory};
-use crate::shared::application::ports::account_repository::AccountRepository;
-use crate::shared::application::ports::ou_repository::OuRepository;
-use crate::shared::domain::account::Account;
-use crate::shared::domain::ou::OrganizationalUnit;
+use crate::internal::application::ports::account_repository::AccountRepository;
+use crate::internal::application::ports::ou_repository::OuRepository;
+use crate::internal::domain::account::Account;
+use crate::internal::domain::ou::OrganizationalUnit;
 
 /// Mock UnitOfWork for testing transactional behavior
 pub struct MockMoveAccountUnitOfWork {
@@ -50,7 +50,7 @@ impl MoveAccountUnitOfWork for MockMoveAccountUnitOfWork {
     async fn commit(&mut self) -> Result<(), MoveAccountError> {
         if !self.transaction_active {
             return Err(MoveAccountError::OuRepositoryError(
-                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(
                     "No transaction in progress".to_string(),
                 ),
             ));
@@ -62,7 +62,7 @@ impl MoveAccountUnitOfWork for MockMoveAccountUnitOfWork {
     async fn rollback(&mut self) -> Result<(), MoveAccountError> {
         if !self.transaction_active {
             return Err(MoveAccountError::OuRepositoryError(
-                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(
                     "No transaction in progress".to_string(),
                 ),
             ));
@@ -99,7 +99,7 @@ impl AccountRepository for MockAccountRepository {
         hrn: &Hrn,
     ) -> Result<
         Option<Account>,
-        crate::shared::application::ports::account_repository::AccountRepositoryError,
+        crate::internal::application::ports::account_repository::AccountRepositoryError,
     > {
         // Return a mock account for testing
         // Match by resource_id instead of full string representation
@@ -124,13 +124,13 @@ impl AccountRepository for MockAccountRepository {
     async fn save(
         &self,
         account: &Account,
-    ) -> Result<(), crate::shared::application::ports::account_repository::AccountRepositoryError>
+    ) -> Result<(), crate::internal::application::ports::account_repository::AccountRepositoryError>
     {
         let mut calls = self.save_calls.lock().unwrap();
         calls.push(format!("account:{}", account.hrn));
 
         if self.should_fail_on_save {
-            Err(crate::shared::application::ports::account_repository::AccountRepositoryError::DatabaseError("Mock save failure".to_string()))
+            Err(crate::internal::application::ports::account_repository::AccountRepositoryError::DatabaseError("Mock save failure".to_string()))
         } else {
             Ok(())
         }
@@ -150,7 +150,7 @@ impl OuRepository for MockOuRepository {
         hrn: &Hrn,
     ) -> Result<
         Option<OrganizationalUnit>,
-        crate::shared::application::ports::ou_repository::OuRepositoryError,
+        crate::internal::application::ports::ou_repository::OuRepositoryError,
     > {
         // Return mock OUs for testing
         // Match by resource_id instead of full string representation
@@ -212,13 +212,13 @@ impl OuRepository for MockOuRepository {
     async fn save(
         &self,
         ou: &OrganizationalUnit,
-    ) -> Result<(), crate::shared::application::ports::ou_repository::OuRepositoryError> {
+    ) -> Result<(), crate::internal::application::ports::ou_repository::OuRepositoryError> {
         let mut calls = self.save_calls.lock().unwrap();
         calls.push(format!("ou:{}", ou.hrn));
 
         if self.should_fail_on_save {
             Err(
-                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(
                     "Mock save failure".to_string(),
                 ),
             )

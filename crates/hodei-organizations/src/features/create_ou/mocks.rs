@@ -2,8 +2,8 @@ use crate::features::create_ou::error::CreateOuError;
 use crate::features::create_ou::ports::{
     CreateOuUnitOfWork, CreateOuUnitOfWorkFactory, OuPersister,
 };
-use crate::shared::application::ports::ou_repository::OuRepository;
-use crate::shared::domain::ou::OrganizationalUnit;
+use crate::internal::application::ports::ou_repository::OuRepository;
+use crate::internal::domain::ou::OrganizationalUnit;
 use async_trait::async_trait;
 use kernel::Hrn;
 use std::collections::HashMap;
@@ -62,10 +62,10 @@ impl OuRepository for MockOuRepository {
     async fn save(
         &self,
         ou: &OrganizationalUnit,
-    ) -> Result<(), crate::shared::application::ports::ou_repository::OuRepositoryError> {
+    ) -> Result<(), crate::internal::application::ports::ou_repository::OuRepositoryError> {
         if self.should_fail {
             return Err(
-                crate::shared::application::ports::ou_repository::OuRepositoryError::DatabaseError(
+                crate::internal::application::ports::ou_repository::OuRepositoryError::DatabaseError(
                     "Mock failure".to_string(),
                 ),
             );
@@ -81,7 +81,7 @@ impl OuRepository for MockOuRepository {
         hrn: &Hrn,
     ) -> Result<
         Option<OrganizationalUnit>,
-        crate::shared::application::ports::ou_repository::OuRepositoryError,
+        crate::internal::application::ports::ou_repository::OuRepositoryError,
     > {
         let ous = self.ous.lock().unwrap();
         Ok(ous.get(&hrn.to_string()).cloned())

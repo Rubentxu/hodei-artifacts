@@ -1,6 +1,6 @@
 use thiserror::Error;
-use crate::shared::application::ports::account_repository::AccountRepositoryError;
-use crate::shared::application::ports::ou_repository::OuRepositoryError;
+use crate::internal::application::ports::account_repository::AccountRepositoryError;
+use crate::internal::application::ports::ou_repository::OuRepositoryError;
 
 #[derive(Debug, Error)]
 pub enum MoveAccountError {

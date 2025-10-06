@@ -1,10 +1,10 @@
 use crate::features::get_effective_scps::ports::{
     AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
 };
-use crate::shared::application::ports::account_repository::AccountRepositoryError;
-use crate::shared::application::ports::ou_repository::OuRepositoryError;
-use crate::shared::application::ports::scp_repository::ScpRepositoryError;
-use crate::shared::domain::{Account, OrganizationalUnit, ServiceControlPolicy};
+use crate::internal::application::ports::account_repository::AccountRepositoryError;
+use crate::internal::application::ports::ou_repository::OuRepositoryError;
+use crate::internal::application::ports::scp_repository::ScpRepositoryError;
+use crate::internal::domain::{Account, OrganizationalUnit, ServiceControlPolicy};
 use async_trait::async_trait;
 use kernel::Hrn;
 use std::collections::HashMap;

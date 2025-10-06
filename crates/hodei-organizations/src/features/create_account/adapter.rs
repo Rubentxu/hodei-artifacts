@@ -2,8 +2,8 @@ use crate::features::create_account::error::CreateAccountError;
 use crate::features::create_account::ports::{
     AccountPersister, CreateAccountUnitOfWork, CreateAccountUnitOfWorkFactory,
 };
-use crate::shared::application::ports::account_repository::AccountRepository;
-use crate::shared::domain::account::Account;
+use crate::internal::application::ports::account_repository::AccountRepository;
+use crate::internal::domain::account::Account;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -37,11 +37,11 @@ impl<AR: AccountRepository + Send + Sync> AccountPersister for AccountRepository
 /// This adapter wraps the generic SurrealUnitOfWork and exposes only the
 /// operations needed for the create_account feature.
 pub struct CreateAccountSurrealUnitOfWorkAdapter {
-    inner_uow: crate::shared::infrastructure::surreal::SurrealUnitOfWork,
+    inner_uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork,
 }
 
 impl CreateAccountSurrealUnitOfWorkAdapter {
-    pub fn new(uow: crate::shared::infrastructure::surreal::SurrealUnitOfWork) -> Self {
+    pub fn new(uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork) -> Self {
         Self { inner_uow: uow }
     }
 }
@@ -80,12 +80,12 @@ impl CreateAccountUnitOfWork for CreateAccountSurrealUnitOfWorkAdapter {
 
 /// Factory for creating CreateAccountSurrealUnitOfWork instances
 pub struct CreateAccountSurrealUnitOfWorkFactoryAdapter {
-    inner_factory: Arc<crate::shared::infrastructure::surreal::SurrealUnitOfWorkFactory>,
+    inner_factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory>,
 }
 
 impl CreateAccountSurrealUnitOfWorkFactoryAdapter {
     pub fn new(
-        factory: Arc<crate::shared::infrastructure::surreal::SurrealUnitOfWorkFactory>,
+        factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory>,
     ) -> Self {
         Self {
             inner_factory: factory,

@@ -2,8 +2,8 @@ use crate::features::create_account::error::CreateAccountError;
 use crate::features::create_account::ports::{
     AccountPersister, CreateAccountUnitOfWork, CreateAccountUnitOfWorkFactory,
 };
-use crate::shared::application::ports::account_repository::AccountRepository;
-use crate::shared::domain::account::Account;
+use crate::internal::application::ports::account_repository::AccountRepository;
+use crate::internal::domain::account::Account;
 use async_trait::async_trait;
 use kernel::Hrn;
 use std::collections::HashMap;
@@ -62,11 +62,11 @@ impl AccountRepository for MockAccountRepository {
     async fn save(
         &self,
         account: &Account,
-    ) -> Result<(), crate::shared::application::ports::account_repository::AccountRepositoryError>
+    ) -> Result<(), crate::internal::application::ports::account_repository::AccountRepositoryError>
     {
         if self.should_fail {
             return Err(
-                crate::shared::application::ports::account_repository::AccountRepositoryError::DatabaseError(
+                crate::internal::application::ports::account_repository::AccountRepositoryError::DatabaseError(
                     "Mock failure".to_string(),
                 ),
             );
@@ -82,7 +82,7 @@ impl AccountRepository for MockAccountRepository {
         hrn: &Hrn,
     ) -> Result<
         Option<Account>,
-        crate::shared::application::ports::account_repository::AccountRepositoryError,
+        crate::internal::application::ports::account_repository::AccountRepositoryError,
     > {
         let accounts = self.accounts.lock().unwrap();
         Ok(accounts.get(&hrn.to_string()).cloned())

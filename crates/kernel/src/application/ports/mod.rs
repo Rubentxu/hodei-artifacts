@@ -2,6 +2,7 @@
 //!
 //! This module contains the contract definitions (ports) that define
 //! the interfaces between the application layer and infrastructure layer.
+pub mod auth_context;
 pub mod authorization;
 pub mod event_bus;
 pub mod unit_of_work;
@@ -60,10 +61,13 @@ pub mod organizations {
 }
 
 // Re-export commonly used types
+pub use auth_context::{AuthContextError, AuthContextProvider, SessionMetadata};
+pub use authorization::{
+    AuthorizationError, EvaluationDecision, EvaluationRequest, IamPolicyEvaluator, ScpEvaluator,
+};
 pub use event_bus::{
     DomainEvent, EventBus, EventEnvelope, EventHandler, EventPublisher, Subscription,
 };
-pub use authorization::{EvaluationRequest, EvaluationDecision, ScpEvaluator, IamPolicyEvaluator, AuthorizationError};
 pub use iam::{EffectivePoliciesQuery, EffectivePoliciesQueryPort, EffectivePoliciesResult};
 pub use organizations::{GetEffectiveScpsPort, GetEffectiveScpsQuery};
 pub use unit_of_work::{UnitOfWork, UnitOfWorkError, UnitOfWorkFactory};

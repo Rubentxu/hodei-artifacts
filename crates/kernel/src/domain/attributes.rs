@@ -509,4 +509,354 @@ mod tests {
         assert_eq!(bool_val.as_record(), None);
         assert_eq!(bool_val.as_entity_ref(), None);
     }
+
+    // ========================================================================
+    // Tests adicionales: Estructuras anidadas profundas
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_deeply_nested_records() {
+        let mut level3 = HashMap::new();
+        level3.insert("value".to_string(), AttributeValue::long(42));
+
+        let mut level2 = HashMap::new();
+        level2.insert("nested".to_string(), AttributeValue::record(level3));
+
+        let mut level1 = HashMap::new();
+        level1.insert("data".to_string(), AttributeValue::record(level2));
+
+        let root = AttributeValue::record(level1);
+
+        // Navegar por la estructura
+        let record1 = root.as_record().unwrap();
+        let data = record1.get("data").unwrap();
+        let record2 = data.as_record().unwrap();
+        let nested = record2.get("nested").unwrap();
+        let record3 = nested.as_record().unwrap();
+        let value = record3.get("value").unwrap();
+
+        assert_eq!(value.as_long(), Some(42));
+    }
+
+    #[test]
+    fn attribute_value_deeply_nested_sets() {
+        let level4 = AttributeValue::set(vec![AttributeValue::long(1), AttributeValue::long(2)]);
+        let level3 = AttributeValue::set(vec![level4]);
+        let level2 = AttributeValue::set(vec![level3]);
+        let level1 = AttributeValue::set(vec![level2]);
+
+        assert!(level1.is_set());
+        let set1 = level1.as_set().unwrap();
+        assert_eq!(set1.len(), 1);
+
+        let set2 = set1[0].as_set().unwrap();
+        assert_eq!(set2.len(), 1);
+
+        let set3 = set2[0].as_set().unwrap();
+        assert_eq!(set3.len(), 1);
+
+        let set4 = set3[0].as_set().unwrap();
+        assert_eq!(set4.len(), 2);
+    }
+
+    #[test]
+    fn attribute_value_mixed_nested_structures() {
+        // Set que contiene Records que contienen Sets
+        let mut inner_record = HashMap::new();
+        inner_record.insert(
+            "tags".to_string(),
+            AttributeValue::set(vec![
+                AttributeValue::string("admin"),
+                AttributeValue::string("developer"),
+            ]),
+        );
+
+        let set_of_records = AttributeValue::set(vec![
+            AttributeValue::record(inner_record.clone()),
+            AttributeValue::record(inner_record),
+        ]);
+
+        let outer_set = set_of_records.as_set().unwrap();
+        assert_eq!(outer_set.len(), 2);
+
+        let first_record = outer_set[0].as_record().unwrap();
+        let tags = first_record.get("tags").unwrap();
+        assert_eq!(tags.as_set().unwrap().len(), 2);
+    }
+
+    // ========================================================================
+    // Tests adicionales: Sets con tipos mixtos
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_heterogeneous_set() {
+        let mixed_set = AttributeValue::set(vec![
+            AttributeValue::long(42),
+            AttributeValue::string("hello"),
+            AttributeValue::bool(true),
+        ]);
+
+        let items = mixed_set.as_set().unwrap();
+        assert_eq!(items.len(), 3);
+        assert!(items[0].is_long());
+        assert!(items[1].is_string());
+        assert!(items[2].is_bool());
+    }
+
+    #[test]
+    fn attribute_value_empty_collections() {
+        let empty_set = AttributeValue::empty_set();
+        assert_eq!(empty_set.as_set().unwrap().len(), 0);
+
+        let empty_record = AttributeValue::empty_record();
+        assert_eq!(empty_record.as_record().unwrap().len(), 0);
+    }
+
+    // ========================================================================
+    // Tests adicionales: Igualdad y clonación
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_equality() {
+        let val1 = AttributeValue::long(42);
+        let val2 = AttributeValue::long(42);
+        let val3 = AttributeValue::long(43);
+
+        assert_eq!(val1, val2);
+        assert_ne!(val1, val3);
+    }
+
+    #[test]
+    fn attribute_value_equality_complex() {
+        let mut map1 = HashMap::new();
+        map1.insert("name".to_string(), AttributeValue::string("Alice"));
+        map1.insert("age".to_string(), AttributeValue::long(30));
+
+        let mut map2 = HashMap::new();
+        map2.insert("name".to_string(), AttributeValue::string("Alice"));
+        map2.insert("age".to_string(), AttributeValue::long(30));
+
+        let record1 = AttributeValue::record(map1);
+        let record2 = AttributeValue::record(map2);
+
+        assert_eq!(record1, record2);
+    }
+
+    #[test]
+    fn attribute_value_clone() {
+        let original = AttributeValue::set(vec![
+            AttributeValue::long(1),
+            AttributeValue::string("test"),
+        ]);
+
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+
+        // Verificar que es una copia profunda
+        assert_eq!(cloned.as_set().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn attribute_value_clone_deep_structure() {
+        let mut inner = HashMap::new();
+        inner.insert("value".to_string(), AttributeValue::long(100));
+
+        let mut outer = HashMap::new();
+        outer.insert("inner".to_string(), AttributeValue::record(inner));
+
+        let original = AttributeValue::record(outer);
+        let cloned = original.clone();
+
+        assert_eq!(original, cloned);
+    }
+
+    // ========================================================================
+    // Tests adicionales: Display para estructuras complejas
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_display_set() {
+        let set = AttributeValue::set(vec![
+            AttributeValue::long(1),
+            AttributeValue::long(2),
+            AttributeValue::long(3),
+        ]);
+        let display = format!("{}", set);
+        assert_eq!(display, "[1, 2, 3]");
+    }
+
+    #[test]
+    fn attribute_value_display_empty_set() {
+        let set = AttributeValue::empty_set();
+        let display = format!("{}", set);
+        assert_eq!(display, "[]");
+    }
+
+    #[test]
+    fn attribute_value_display_entity_ref() {
+        let entity_ref = AttributeValue::entity_ref("hrn:partition:service::account:resource/id");
+        let display = format!("{}", entity_ref);
+        assert!(display.contains("EntityRef"));
+        assert!(display.contains("hrn:partition:service::account:resource/id"));
+    }
+
+    // ========================================================================
+    // Tests adicionales: Serialización con casos edge
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_serialization_empty_collections() {
+        let empty_set = AttributeValue::empty_set();
+        let json = serde_json::to_string(&empty_set).unwrap();
+        let deserialized: AttributeValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(empty_set, deserialized);
+
+        let empty_record = AttributeValue::empty_record();
+        let json = serde_json::to_string(&empty_record).unwrap();
+        let deserialized: AttributeValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(empty_record, deserialized);
+    }
+
+    #[test]
+    fn attribute_value_serialization_entity_ref() {
+        let entity_ref = AttributeValue::entity_ref("hrn:aws:iam::123:user/alice");
+        let json = serde_json::to_string(&entity_ref).unwrap();
+        let deserialized: AttributeValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(entity_ref, deserialized);
+    }
+
+    #[test]
+    fn attribute_value_serialization_nested_structure() {
+        let mut inner = HashMap::new();
+        inner.insert("city".to_string(), AttributeValue::string("Madrid"));
+
+        let mut outer = HashMap::new();
+        outer.insert("address".to_string(), AttributeValue::record(inner));
+        outer.insert("active".to_string(), AttributeValue::bool(true));
+
+        let value = AttributeValue::record(outer);
+        let json = serde_json::to_string(&value).unwrap();
+        let deserialized: AttributeValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(value, deserialized);
+    }
+
+    #[test]
+    fn attribute_value_serialization_heterogeneous_set() {
+        let mixed = AttributeValue::set(vec![
+            AttributeValue::long(42),
+            AttributeValue::string("test"),
+            AttributeValue::bool(false),
+        ]);
+
+        let json = serde_json::to_string(&mixed).unwrap();
+        let deserialized: AttributeValue = serde_json::from_str(&json).unwrap();
+        assert_eq!(mixed, deserialized);
+    }
+
+    // ========================================================================
+    // Tests adicionales: Conversiones From con edge cases
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_from_empty_string() {
+        let value: AttributeValue = "".into();
+        assert_eq!(value.as_string(), Some(""));
+    }
+
+    #[test]
+    fn attribute_value_from_negative_numbers() {
+        let value: AttributeValue = (-42i64).into();
+        assert_eq!(value.as_long(), Some(-42));
+
+        let value2: AttributeValue = (-100i32).into();
+        assert_eq!(value2.as_long(), Some(-100));
+    }
+
+    #[test]
+    fn attribute_value_from_max_min_values() {
+        let max_val: AttributeValue = i64::MAX.into();
+        assert_eq!(max_val.as_long(), Some(i64::MAX));
+
+        let min_val: AttributeValue = i64::MIN.into();
+        assert_eq!(min_val.as_long(), Some(i64::MIN));
+    }
+
+    #[test]
+    fn attribute_value_from_empty_vec() {
+        let empty_vec: Vec<AttributeValue> = vec![];
+        let value: AttributeValue = empty_vec.into();
+        assert!(value.is_set());
+        assert_eq!(value.as_set().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn attribute_value_from_empty_hashmap() {
+        let empty_map: HashMap<String, AttributeValue> = HashMap::new();
+        let value: AttributeValue = empty_map.into();
+        assert!(value.is_record());
+        assert_eq!(value.as_record().unwrap().len(), 0);
+    }
+
+    // ========================================================================
+    // Tests adicionales: type_name para diferentes casos
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_type_name_for_all_variants() {
+        assert_eq!(AttributeValue::bool(true).type_name(), "Bool");
+        assert_eq!(AttributeValue::long(42).type_name(), "Long");
+        assert_eq!(AttributeValue::string("test").type_name(), "String");
+        assert_eq!(AttributeValue::empty_set().type_name(), "Set");
+        assert_eq!(AttributeValue::empty_record().type_name(), "Record");
+        assert_eq!(AttributeValue::entity_ref("id").type_name(), "EntityRef");
+    }
+
+    // ========================================================================
+    // Tests adicionales: Records con claves especiales
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_record_with_special_keys() {
+        let mut map = HashMap::new();
+        map.insert("key-with-hyphens".to_string(), AttributeValue::long(1));
+        map.insert("key_with_underscores".to_string(), AttributeValue::long(2));
+        map.insert("keyWithCamelCase".to_string(), AttributeValue::long(3));
+        map.insert("key.with.dots".to_string(), AttributeValue::long(4));
+
+        let record = AttributeValue::record(map);
+        let rec = record.as_record().unwrap();
+
+        assert_eq!(rec.get("key-with-hyphens").unwrap().as_long(), Some(1));
+        assert_eq!(rec.get("key_with_underscores").unwrap().as_long(), Some(2));
+        assert_eq!(rec.get("keyWithCamelCase").unwrap().as_long(), Some(3));
+        assert_eq!(rec.get("key.with.dots").unwrap().as_long(), Some(4));
+    }
+
+    #[test]
+    fn attribute_value_record_unicode_keys() {
+        let mut map = HashMap::new();
+        map.insert("名前".to_string(), AttributeValue::string("田中"));
+        map.insert("città".to_string(), AttributeValue::string("Roma"));
+
+        let record = AttributeValue::record(map);
+        let rec = record.as_record().unwrap();
+
+        assert_eq!(rec.get("名前").unwrap().as_string(), Some("田中"));
+        assert_eq!(rec.get("città").unwrap().as_string(), Some("Roma"));
+    }
+
+    // ========================================================================
+    // Tests adicionales: Verificación de construcción de helpers
+    // ========================================================================
+
+    #[test]
+    fn attribute_value_constructor_consistency() {
+        // Verificar que los constructores helper funcionan igual que las variantes directas
+        assert_eq!(AttributeValue::bool(true), AttributeValue::Bool(true));
+        assert_eq!(AttributeValue::long(42), AttributeValue::Long(42));
+        assert_eq!(
+            AttributeValue::string("test"),
+            AttributeValue::String("test".to_string())
+        );
+    }
 }

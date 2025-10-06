@@ -3,8 +3,8 @@ use crate::features::create_account::error::CreateAccountError;
 use crate::features::create_account::ports::{
     CreateAccountUnitOfWork, CreateAccountUnitOfWorkFactory,
 };
-use crate::shared::domain::account::Account;
-use crate::shared::domain::events::AccountCreated;
+use crate::internal::domain::account::Account;
+use crate::internal::domain::events::AccountCreated;
 use kernel::EventPublisher;
 use kernel::Hrn;
 use kernel::application::ports::event_bus::EventEnvelope;

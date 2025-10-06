@@ -694,4 +694,306 @@ mod tests {
         let deserialized: AttributeName = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, name);
     }
+
+    // ========================================================================
+    // Tests adicionales: PartialEq y Eq
+    // ========================================================================
+
+    #[test]
+    fn service_name_equality() {
+        let name1 = ServiceName::new("iam").unwrap();
+        let name2 = ServiceName::new("iam").unwrap();
+        let name3 = ServiceName::new("organizations").unwrap();
+
+        assert_eq!(name1, name2);
+        assert_ne!(name1, name3);
+    }
+
+    #[test]
+    fn resource_type_name_equality() {
+        let name1 = ResourceTypeName::new("User").unwrap();
+        let name2 = ResourceTypeName::new("User").unwrap();
+        let name3 = ResourceTypeName::new("Group").unwrap();
+
+        assert_eq!(name1, name2);
+        assert_ne!(name1, name3);
+    }
+
+    #[test]
+    fn attribute_name_equality() {
+        let name1 = AttributeName::new("email").unwrap();
+        let name2 = AttributeName::new("email").unwrap();
+        let name3 = AttributeName::new("username").unwrap();
+
+        assert_eq!(name1, name2);
+        assert_ne!(name1, name3);
+    }
+
+    // ========================================================================
+    // Tests adicionales: Hash
+    // ========================================================================
+
+    #[test]
+    fn service_name_hash() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(ServiceName::new("iam").unwrap());
+        set.insert(ServiceName::new("iam").unwrap()); // Duplicado
+        set.insert(ServiceName::new("organizations").unwrap());
+
+        assert_eq!(set.len(), 2); // Solo dos únicos
+    }
+
+    #[test]
+    fn resource_type_name_hash() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(ResourceTypeName::new("User").unwrap());
+        set.insert(ResourceTypeName::new("User").unwrap()); // Duplicado
+        set.insert(ResourceTypeName::new("Group").unwrap());
+
+        assert_eq!(set.len(), 2); // Solo dos únicos
+    }
+
+    #[test]
+    fn attribute_name_hash() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(AttributeName::new("email").unwrap());
+        set.insert(AttributeName::new("email").unwrap()); // Duplicado
+        set.insert(AttributeName::new("username").unwrap());
+
+        assert_eq!(set.len(), 2); // Solo dos únicos
+    }
+
+    // ========================================================================
+    // Tests adicionales: Clone
+    // ========================================================================
+
+    #[test]
+    fn service_name_clone() {
+        let original = ServiceName::new("iam").unwrap();
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        assert_eq!(original.as_str(), cloned.as_str());
+    }
+
+    #[test]
+    fn resource_type_name_clone() {
+        let original = ResourceTypeName::new("User").unwrap();
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        assert_eq!(original.as_str(), cloned.as_str());
+    }
+
+    #[test]
+    fn attribute_name_clone() {
+        let original = AttributeName::new("email").unwrap();
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        assert_eq!(original.as_str(), cloned.as_str());
+    }
+
+    // ========================================================================
+    // Tests adicionales: AsRef<str>
+    // ========================================================================
+
+    #[test]
+    fn service_name_as_ref() {
+        let name = ServiceName::new("iam").unwrap();
+        let str_ref: &str = name.as_ref();
+        assert_eq!(str_ref, "iam");
+    }
+
+    #[test]
+    fn resource_type_name_as_ref() {
+        let name = ResourceTypeName::new("User").unwrap();
+        let str_ref: &str = name.as_ref();
+        assert_eq!(str_ref, "User");
+    }
+
+    #[test]
+    fn attribute_name_as_ref() {
+        let name = AttributeName::new("email").unwrap();
+        let str_ref: &str = name.as_ref();
+        assert_eq!(str_ref, "email");
+    }
+
+    // ========================================================================
+    // Tests adicionales: into_inner
+    // ========================================================================
+
+    #[test]
+    fn service_name_into_inner() {
+        let name = ServiceName::new("iam").unwrap();
+        let inner = name.into_inner();
+        assert_eq!(inner, "iam");
+    }
+
+    #[test]
+    fn resource_type_name_into_inner() {
+        let name = ResourceTypeName::new("User").unwrap();
+        let inner = name.into_inner();
+        assert_eq!(inner, "User");
+    }
+
+    #[test]
+    fn attribute_name_into_inner() {
+        let name = AttributeName::new("email").unwrap();
+        let inner = name.into_inner();
+        assert_eq!(inner, "email");
+    }
+
+    // ========================================================================
+    // Tests adicionales: Edge cases de validación
+    // ========================================================================
+
+    #[test]
+    fn service_name_single_character() {
+        let name = ServiceName::new("a").unwrap();
+        assert_eq!(name.as_str(), "a");
+    }
+
+    #[test]
+    fn service_name_all_numbers_valid() {
+        // Los números están permitidos en kebab-case
+        let result = ServiceName::new("123");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn service_name_special_characters_fail() {
+        assert!(ServiceName::new("iam@service").is_err());
+        assert!(ServiceName::new("iam.service").is_err());
+        assert!(ServiceName::new("iam service").is_err());
+    }
+
+    #[test]
+    fn resource_type_name_single_character() {
+        let name = ResourceTypeName::new("U").unwrap();
+        assert_eq!(name.as_str(), "U");
+    }
+
+    #[test]
+    fn resource_type_name_all_uppercase() {
+        let name = ResourceTypeName::new("IAM").unwrap();
+        assert_eq!(name.as_str(), "IAM");
+    }
+
+    #[test]
+    fn resource_type_name_starts_with_lowercase_middle_uppercase() {
+        let result = ResourceTypeName::new("userGroup");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn attribute_name_single_character() {
+        let name = AttributeName::new("a").unwrap();
+        assert_eq!(name.as_str(), "a");
+    }
+
+    #[test]
+    fn attribute_name_all_uppercase() {
+        let name = AttributeName::new("EMAIL").unwrap();
+        assert_eq!(name.as_str(), "EMAIL");
+    }
+
+    #[test]
+    fn attribute_name_mixed_underscore_camelcase() {
+        let name = AttributeName::new("user_IdValue").unwrap();
+        assert_eq!(name.as_str(), "user_IdValue");
+    }
+
+    // ========================================================================
+    // Tests adicionales: Casos límite de longitud
+    // ========================================================================
+
+    #[test]
+    fn service_name_almost_max_length() {
+        let name = "a".repeat(ServiceName::MAX_LENGTH - 1);
+        let result = ServiceName::new(&name);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn resource_type_name_almost_max_length() {
+        let mut name = String::from("A");
+        name.push_str(&"a".repeat(ResourceTypeName::MAX_LENGTH - 2));
+        let result = ResourceTypeName::new(&name);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn attribute_name_almost_max_length() {
+        let name = "a".repeat(AttributeName::MAX_LENGTH - 1);
+        let result = AttributeName::new(&name);
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Tests adicionales: ValidationError details
+    // ========================================================================
+
+    #[test]
+    fn validation_error_too_long_shows_values() {
+        let long_name = "a".repeat(ServiceName::MAX_LENGTH + 5);
+        let result = ServiceName::new(&long_name);
+
+        match result {
+            Err(ValidationError::TooLong { max, actual }) => {
+                assert_eq!(max, ServiceName::MAX_LENGTH);
+                assert_eq!(actual, ServiceName::MAX_LENGTH + 5);
+            }
+            _ => panic!("Expected TooLong error"),
+        }
+    }
+
+    #[test]
+    fn validation_error_invalid_pattern_has_reason() {
+        let result = ServiceName::new("-iam");
+
+        match result {
+            Err(ValidationError::InvalidPattern { reason }) => {
+                assert!(!reason.is_empty());
+            }
+            _ => panic!("Expected InvalidPattern error"),
+        }
+    }
+
+    #[test]
+    fn validation_error_invalid_format_has_reason() {
+        let result = ServiceName::new("IAM");
+
+        match result {
+            Err(ValidationError::InvalidFormat(reason)) => {
+                assert!(!reason.is_empty());
+            }
+            _ => panic!("Expected InvalidFormat error"),
+        }
+    }
+
+    // ========================================================================
+    // Tests adicionales: Display con diferentes casos
+    // ========================================================================
+
+    #[test]
+    fn service_name_display_preserves_format() {
+        let name = ServiceName::new("supply-chain-v2").unwrap();
+        assert_eq!(format!("{}", name), "supply-chain-v2");
+    }
+
+    #[test]
+    fn resource_type_name_display_preserves_case() {
+        let name = ResourceTypeName::new("ServiceControlPolicy").unwrap();
+        assert_eq!(format!("{}", name), "ServiceControlPolicy");
+    }
+
+    #[test]
+    fn attribute_name_display_preserves_format() {
+        let name = AttributeName::new("created_at_timestamp").unwrap();
+        assert_eq!(format!("{}", name), "created_at_timestamp");
+    }
 }

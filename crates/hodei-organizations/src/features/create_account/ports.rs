@@ -1,6 +1,6 @@
 use crate::features::create_account::error::CreateAccountError;
-use crate::shared::application::ports::account_repository::AccountRepository;
-use crate::shared::domain::account::Account;
+use crate::internal::application::ports::account_repository::AccountRepository;
+use crate::internal::domain::account::Account;
 use async_trait::async_trait;
 use std::sync::Arc;
 

@@ -32,6 +32,9 @@ pub mod entity;
 pub mod hrn;
 pub mod value_objects;
 
+#[cfg(test)]
+mod hrn_test;
+
 // Re-export de tipos fundamentales para uso directo por consumidores.
 pub use entity::{
     ActionTrait, AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStorageError,

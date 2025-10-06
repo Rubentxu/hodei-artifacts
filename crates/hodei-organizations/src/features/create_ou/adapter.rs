@@ -2,8 +2,8 @@ use crate::features::create_ou::error::CreateOuError;
 use crate::features::create_ou::ports::{
     CreateOuUnitOfWork, CreateOuUnitOfWorkFactory, OuPersister,
 };
-use crate::shared::application::ports::ou_repository::OuRepository;
-use crate::shared::domain::ou::OrganizationalUnit;
+use crate::internal::application::ports::ou_repository::OuRepository;
+use crate::internal::domain::ou::OrganizationalUnit;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -32,11 +32,11 @@ impl<OR: OuRepository> OuPersister for OuPersisterAdapter<OR> {
 /// This adapter wraps the generic SurrealUnitOfWork and exposes only the
 /// operations needed for the create_ou feature.
 pub struct CreateOuSurrealUnitOfWorkAdapter {
-    inner_uow: crate::shared::infrastructure::surreal::SurrealUnitOfWork,
+    inner_uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork,
 }
 
 impl CreateOuSurrealUnitOfWorkAdapter {
-    pub fn new(uow: crate::shared::infrastructure::surreal::SurrealUnitOfWork) -> Self {
+    pub fn new(uow: crate::internal::infrastructure::surreal::SurrealUnitOfWork) -> Self {
         Self { inner_uow: uow }
     }
 }
@@ -75,12 +75,12 @@ impl CreateOuUnitOfWork for CreateOuSurrealUnitOfWorkAdapter {
 
 /// Factory for creating CreateOuSurrealUnitOfWork instances
 pub struct CreateOuSurrealUnitOfWorkFactoryAdapter {
-    inner_factory: Arc<crate::shared::infrastructure::surreal::SurrealUnitOfWorkFactory>,
+    inner_factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory>,
 }
 
 impl CreateOuSurrealUnitOfWorkFactoryAdapter {
     pub fn new(
-        factory: Arc<crate::shared::infrastructure::surreal::SurrealUnitOfWorkFactory>,
+        factory: Arc<crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory>,
     ) -> Self {
         Self {
             inner_factory: factory,

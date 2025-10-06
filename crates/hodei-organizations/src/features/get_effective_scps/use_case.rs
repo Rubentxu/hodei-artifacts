@@ -3,7 +3,7 @@ use crate::features::get_effective_scps::error::GetEffectiveScpsError;
 use crate::features::get_effective_scps::ports::{
     AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
 };
-use crate::shared::domain::scp::ServiceControlPolicy;
+use crate::internal::domain::scp::ServiceControlPolicy;
 use cedar_policy::PolicySet;
 use kernel::Hrn;
 use tracing::{info, warn};

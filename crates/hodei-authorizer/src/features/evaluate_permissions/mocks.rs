@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::features::evaluate_permissions::dto::{
@@ -7,11 +6,12 @@ use crate::features::evaluate_permissions::dto::{
 };
 use crate::features::evaluate_permissions::error::EvaluatePermissionsResult;
 use crate::features::evaluate_permissions::ports::{
-    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics, EntityResolverError,
-    EntityResolverPort,
+    AuthorizationCache, AuthorizationLogger, AuthorizationMetrics,
 };
 use ::kernel::Hrn;
-use cedar_policy::EntityUid;
+use kernel::application::ports::authorization::{
+    AuthorizationError, EvaluationDecision, EvaluationRequest, IamPolicyEvaluator, ScpEvaluator,
+};
 
 /// Mock Authorization Cache for testing
 #[derive(Debug, Default, Clone)]
@@ -144,161 +144,100 @@ impl AuthorizationMetrics for MockAuthorizationMetrics {
     }
 }
 
-/// Mock Entity for testing authorization
+// ============================================================================
+// Mock Evaluators for New Architecture
+// ============================================================================
+
+/// Mock SCP Evaluator that can be configured to allow or deny
 #[derive(Debug, Clone)]
-pub struct MockHodeiEntity {
-    hrn: Hrn,
-    euid: EntityUid,
-    attributes: HashMap<String, cedar_policy::RestrictedExpression>,
+pub struct MockScpEvaluator {
+    should_deny: bool,
 }
 
-impl MockHodeiEntity {
-    pub fn new(hrn: Hrn, euid: EntityUid) -> Self {
-        Self {
-            hrn,
-            euid,
-            attributes: HashMap::new(),
-        }
-    }
-
-    pub fn with_attribute(
-        mut self,
-        key: String,
-        value: cedar_policy::RestrictedExpression,
-    ) -> Self {
-        self.attributes.insert(key, value);
-        self
+impl Default for MockScpEvaluator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-impl policies::domain::HodeiEntity for MockHodeiEntity {
-    fn hrn(&self) -> &Hrn {
-        &self.hrn
-    }
-
-    fn euid(&self) -> EntityUid {
-        self.euid.clone()
-    }
-
-    fn attributes(&self) -> HashMap<String, cedar_policy::RestrictedExpression> {
-        self.attributes.clone()
-    }
-}
-
-/// Mock Entity Resolver for testing
-#[derive(Debug, Default, Clone)]
-pub struct MockEntityResolver {
-    entities: Arc<Mutex<HashMap<String, MockHodeiEntity>>>,
-}
-
-impl MockEntityResolver {
+impl MockScpEvaluator {
     pub fn new() -> Self {
-        Self {
-            entities: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { should_deny: false }
     }
 
-    pub fn with_entity(self, entity: MockHodeiEntity) -> Self {
-        let hrn_str = entity.hrn.to_string();
-        let mut entities = self.entities.lock().unwrap();
-        entities.insert(hrn_str, entity);
-        drop(entities);
-        self
-    }
-
-    pub fn get_resolved_count(&self) -> usize {
-        let entities = self.entities.lock().unwrap();
-        entities.len()
+    pub fn with_deny() -> Self {
+        Self { should_deny: true }
     }
 }
 
 #[async_trait]
-impl EntityResolverPort for MockEntityResolver {
-    async fn resolve(
+impl ScpEvaluator for MockScpEvaluator {
+    async fn evaluate_scps(
         &self,
-        hrn: &Hrn,
-    ) -> Result<Box<dyn policies::domain::HodeiEntity>, EntityResolverError> {
-        let entities = self.entities.lock().unwrap();
-        entities
-            .get(&hrn.to_string())
-            .map(|e| Box::new(e.clone()) as Box<dyn policies::domain::HodeiEntity>)
-            .ok_or_else(|| EntityResolverError::NotFound(hrn.clone()))
-    }
-
-    async fn resolve_batch(
-        &self,
-        hrns: &[Hrn],
-    ) -> Result<Vec<Box<dyn policies::domain::HodeiEntity>>, EntityResolverError> {
-        let entities = self.entities.lock().unwrap();
-        let mut resolved = Vec::new();
-        let mut not_found = Vec::new();
-
-        for hrn in hrns {
-            if let Some(entity) = entities.get(&hrn.to_string()) {
-                resolved.push(Box::new(entity.clone()) as Box<dyn policies::domain::HodeiEntity>);
+        request: EvaluationRequest,
+    ) -> Result<EvaluationDecision, AuthorizationError> {
+        Ok(EvaluationDecision {
+            principal_hrn: request.principal_hrn,
+            action_name: request.action_name,
+            resource_hrn: request.resource_hrn,
+            decision: !self.should_deny,
+            reason: if self.should_deny {
+                "Denied by SCP mock".to_string()
             } else {
-                not_found.push(hrn.clone());
-            }
-        }
-
-        if !not_found.is_empty() {
-            return Err(EntityResolverError::BatchResolutionFailed(not_found));
-        }
-
-        Ok(resolved)
+                "Allowed by SCP mock".to_string()
+            },
+        })
     }
 }
 
-/// Mock SCP Repository for testing
+/// Mock IAM Policy Evaluator that can be configured to allow or deny
 #[derive(Debug, Clone)]
-pub struct MockScpRepository;
+pub struct MockIamPolicyEvaluator {
+    should_deny: bool,
+}
 
-/// Mock Org Repository for testing
-#[derive(Debug, Clone)]
-pub struct MockOrgRepository;
+impl Default for MockIamPolicyEvaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-/// Helper functions for creating test data
-pub mod test_helpers {
-    use super::*;
-    use crate::features::evaluate_permissions::dto::AuthorizationContext;
-
-    /// Create a test HRN
-    pub fn create_test_hrn(resource_type: &str, resource_id: &str) -> Hrn {
-        Hrn::new(
-            "aws".to_string(),
-            "hodei".to_string(),
-            "us-east-1".to_string(),
-            resource_type.to_string(),
-            resource_id.to_string(),
-        )
+impl MockIamPolicyEvaluator {
+    pub fn new() -> Self {
+        Self { should_deny: false }
     }
 
-    /// Create a test authorization request
-    pub fn create_test_request(
-        principal_hrn: Hrn,
-        action: String,
-        resource_hrn: Hrn,
-    ) -> AuthorizationRequest {
-        AuthorizationRequest {
-            principal: principal_hrn,
-            action,
-            resource: resource_hrn,
-            context: None,
-        }
+    pub fn with_deny() -> Self {
+        Self { should_deny: true }
     }
+}
 
-    /// Create a test authorization request with context
-    pub fn create_test_request_with_context(
-        principal_hrn: Hrn,
-        action: String,
-        resource_hrn: Hrn,
-        context: AuthorizationContext,
-    ) -> AuthorizationRequest {
-        AuthorizationRequest {
-            principal: principal_hrn,
-            action,
-            resource: resource_hrn,
-            context: Some(context),
-        }
+#[async_trait]
+impl IamPolicyEvaluator for MockIamPolicyEvaluator {
+    async fn evaluate_iam_policies(
+        &self,
+        request: EvaluationRequest,
+    ) -> Result<EvaluationDecision, AuthorizationError> {
+        Ok(EvaluationDecision {
+            principal_hrn: request.principal_hrn,
+            action_name: request.action_name,
+            resource_hrn: request.resource_hrn,
+            decision: !self.should_deny,
+            reason: if self.should_deny {
+                "Denied by IAM mock".to_string()
+            } else {
+                "Allowed by IAM mock".to_string()
+            },
+        })
+    }
+}
+
+/// Mock Entity Resolver for testing (simplified placeholder)
+#[derive(Debug, Default, Clone)]
+pub struct MockEntityResolver;
+
+impl MockEntityResolver {
+    pub fn new() -> Self {
+        Self
     }
 }

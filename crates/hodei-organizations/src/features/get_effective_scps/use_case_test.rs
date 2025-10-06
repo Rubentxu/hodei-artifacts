@@ -3,7 +3,7 @@ use crate::features::get_effective_scps::mocks::{
     MockAccountRepositoryPort, MockOuRepositoryPort, MockScpRepositoryPort,
 };
 use crate::features::get_effective_scps::use_case::GetEffectiveScpsUseCase;
-use crate::shared::domain::{Account, OrganizationalUnit, ServiceControlPolicy};
+use crate::internal::domain::{Account, OrganizationalUnit, ServiceControlPolicy};
 use kernel::Hrn;
 
 #[tokio::test]

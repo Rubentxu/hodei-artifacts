@@ -1,6 +1,6 @@
 use crate::features::create_ou::adapter::CreateOuSurrealUnitOfWorkFactoryAdapter;
 use crate::features::create_ou::use_case::CreateOuUseCase;
-use crate::shared::infrastructure::surreal::SurrealUnitOfWorkFactory;
+use crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory;
 use std::sync::Arc;
 
 /// Create an instance of the CreateOuUseCase with SurrealDB UoW

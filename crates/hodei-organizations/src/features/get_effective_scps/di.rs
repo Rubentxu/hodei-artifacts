@@ -2,9 +2,9 @@ use crate::features::get_effective_scps::adapter::{
     AccountRepositoryAdapter, OuRepositoryAdapter, ScpRepositoryAdapter,
 };
 use crate::features::get_effective_scps::use_case::GetEffectiveScpsUseCase;
-use crate::shared::application::ports::account_repository::AccountRepository;
-use crate::shared::application::ports::ou_repository::OuRepository;
-use crate::shared::application::ports::scp_repository::ScpRepository;
+use crate::internal::application::ports::account_repository::AccountRepository;
+use crate::internal::application::ports::ou_repository::OuRepository;
+use crate::internal::application::ports::scp_repository::ScpRepository;
 
 /// Adaptador combinado que expone tanto cuentas como OUs
 pub struct OrgRepositoryAdapter<AR, OR>
@@ -40,8 +40,8 @@ where
         &self,
         hrn: &kernel::Hrn,
     ) -> Result<
-        Option<crate::shared::domain::Account>,
-        crate::shared::application::ports::account_repository::AccountRepositoryError,
+        Option<crate::internal::domain::Account>,
+        crate::internal::application::ports::account_repository::AccountRepositoryError,
     > {
         self.account_adapter.find_account_by_hrn(hrn).await
     }
@@ -58,8 +58,8 @@ where
         &self,
         hrn: &kernel::Hrn,
     ) -> Result<
-        Option<crate::shared::domain::OrganizationalUnit>,
-        crate::shared::application::ports::ou_repository::OuRepositoryError,
+        Option<crate::internal::domain::OrganizationalUnit>,
+        crate::internal::application::ports::ou_repository::OuRepositoryError,
     > {
         self.ou_adapter.find_ou_by_hrn(hrn).await
     }

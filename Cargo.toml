@@ -1,14 +1,33 @@
 [workspace]
 # Active workspace members (only core libs + root app). Root crate (.) kept to allow the API binary.
+# NOTE: hodei-artifacts-api (root ".") temporarily has stub implementation during policies migration
 members = [
     "crates/kernel",
     "crates/policies",
     "crates/hodei-iam",
     "crates/hodei-organizations",
     "crates/hodei-authorizer",
-    ".",
+    ".", # Stub implementation - original code in src_disabled_migration_needed/
 ]
 resolver = "2"
+
+# Optimización de profiles para tests rápidos
+[profile.dev]
+opt-level = 0
+debug = true
+split-debuginfo = "unpacked"  # Faster linking on Linux
+incremental = true
+
+[profile.test]
+inherits = "dev"
+opt-level = 0
+
+# Profile optimizado para desarrollo con tests rápidos
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 1  # Optimización mínima para balance velocidad/debug
+debug = true
+incremental = true
 
 [workspace.package]
 edition = "2024"
@@ -90,74 +109,14 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "Hodei main API binary depending on internal bounded-context crates"
+description = "Hodei API stub - Temporarily disabled during policies crate migration"
 
-[features]
-default = []
-embedded = ["policies/embedded"]
+# Configuración recomendada para tests rápidos:
+# cargo nextest run --lib -p kernel -p hodei-organizations -p hodei-iam -p hodei-authorizer
 
 [[bin]]
 name = "hodei-artifacts-api"
 path = "src/main.rs"
 
 [dependencies]
-# Internal bounded contexts (all library crates)
-kernel = { path = "crates/kernel" }
-policies = { path = "crates/policies", features = ["mem"] }
-hodei-iam = { path = "crates/hodei-iam" }
-hodei-organizations = { path = "crates/hodei-organizations" }
-hodei-authorizer = { path = "crates/hodei-authorizer" }
-
-# Core (pull from workspace to keep single-source versions)
-tokio = { workspace = true }
-axum = { workspace = true, features = ["macros", "multipart"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tower = { workspace = true }
-tower-http = { workspace = true }
-http = "1.1.0"
-async-trait = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-
-# Auth / Policy
-cedar-policy = { workspace = true }
-
-# Observability / metrics
-metrics = { workspace = true }
-
-# Time / data
-chrono = { workspace = true }
-uuid = { workspace = true }
-
-# Networking / HTTP client (if needed by API layer)
-hyper = { workspace = true }
-reqwest = { workspace = true }
-
-# OpenAPI/Swagger
-utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
-
-# Configuration
-dotenvy = "0.15"
-
-# AWS (if needed at API level; otherwise move to infrastructure-specific crate later)
-aws-config = { workspace = true }
-
-# Testing (only if integration tests live here; otherwise move to [dev-dependencies])
-testcontainers = { workspace = true, optional = true }
-testcontainers-modules = { workspace = true, optional = true }
-
-[dev-dependencies]
-surrealdb = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
-tracing = { workspace = true }
-anyhow = { workspace = true }
-# Internal crates available for integration tests if needed
-hodei-organizations = { path = "crates/hodei-organizations" }
-hodei-authorizer = { path = "crates/hodei-authorizer" }
-hodei-iam = { path = "crates/hodei-iam" }
-policies = { path = "crates/policies", features = ["mem"] }
-kernel = { path = "crates/kernel" }
+# Minimal dependencies for stub binary

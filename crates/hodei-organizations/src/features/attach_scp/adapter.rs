@@ -1,14 +1,14 @@
 use crate::features::attach_scp::ports::{
     AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
 };
-use crate::shared::application::ports::account_repository::{
+use crate::internal::application::ports::account_repository::{
     AccountRepository, AccountRepositoryError,
 };
-use crate::shared::application::ports::ou_repository::{OuRepository, OuRepositoryError};
-use crate::shared::application::ports::scp_repository::{ScpRepository, ScpRepositoryError};
-use crate::shared::domain::account::Account;
-use crate::shared::domain::ou::OrganizationalUnit;
-use crate::shared::domain::scp::ServiceControlPolicy;
+use crate::internal::application::ports::ou_repository::{OuRepository, OuRepositoryError};
+use crate::internal::application::ports::scp_repository::{ScpRepository, ScpRepositoryError};
+use crate::internal::domain::account::Account;
+use crate::internal::domain::ou::OrganizationalUnit;
+use crate::internal::domain::scp::ServiceControlPolicy;
 use async_trait::async_trait;
 use kernel::Hrn;
 

@@ -3,7 +3,7 @@ use crate::features::attach_scp::mocks::{
     MockAccountRepositoryPort, MockOuRepositoryPort, MockScpRepositoryPort,
 };
 use crate::features::attach_scp::use_case::AttachScpUseCase;
-use crate::shared::domain::{Account, OrganizationalUnit, ServiceControlPolicy};
+use crate::internal::domain::{Account, OrganizationalUnit, ServiceControlPolicy};
 use kernel::Hrn;
 
 #[tokio::test]

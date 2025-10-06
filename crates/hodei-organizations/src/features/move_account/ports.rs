@@ -1,6 +1,6 @@
 use crate::features::move_account::error::MoveAccountError;
-use crate::shared::domain::account::Account;
-use crate::shared::domain::ou::OrganizationalUnit;
+use crate::internal::domain::account::Account;
+use crate::internal::domain::ou::OrganizationalUnit;
 use async_trait::async_trait;
 use kernel::Hrn;
 use std::sync::Arc;
@@ -23,10 +23,10 @@ pub trait MoveAccountUnitOfWork: Send + Sync {
     /// Get account repository for this transaction
     fn accounts(
         &self,
-    ) -> Arc<dyn crate::shared::application::ports::account_repository::AccountRepository>;
+    ) -> Arc<dyn crate::internal::application::ports::account_repository::AccountRepository>;
 
     /// Get OU repository for this transaction
-    fn ous(&self) -> Arc<dyn crate::shared::application::ports::ou_repository::OuRepository>;
+    fn ous(&self) -> Arc<dyn crate::internal::application::ports::ou_repository::OuRepository>;
 }
 
 /// Simplified UnitOfWorkFactory trait for MoveAccountUseCase

@@ -12,7 +12,7 @@ use crate::features::evaluate_permissions::ports::{
     AuthorizationCache, AuthorizationLogger, AuthorizationMetrics,
 };
 use kernel::application::ports::authorization::{
-    EvaluationRequest, EvaluationDecision, ScpEvaluator, IamPolicyEvaluator, AuthorizationError,
+    EvaluationRequest, IamPolicyEvaluator, ScpEvaluator,
 };
 
 /// Use case for evaluating authorization permissions with multi-layer security
@@ -115,14 +115,17 @@ where
 
         // Convert to kernel's EvaluationRequest
         let eval_request = EvaluationRequest {
-            principal: request.principal.clone(),
-            action: request.action.clone(),
-            resource: request.resource.clone(),
+            principal_hrn: request.principal.clone(),
+            action_name: request.action.clone(),
+            resource_hrn: request.resource.clone(),
         };
 
         // Step 1: Evaluate SCPs first (higher precedence in evaluation - deny overrides)
         info!("Evaluating SCPs for resource");
-        let scp_decision = self.org_evaluator.evaluate_scps(eval_request.clone()).await
+        let scp_decision = self
+            .org_evaluator
+            .evaluate_scps(eval_request.clone())
+            .await
             .map_err(|e| {
                 EvaluatePermissionsError::OrganizationBoundaryProviderError(format!(
                     "Failed to evaluate SCPs: {}",
@@ -143,7 +146,10 @@ where
 
         // Step 2: Evaluate IAM policies
         info!("Evaluating IAM policies for principal");
-        let iam_decision = self.iam_evaluator.evaluate_iam_policies(eval_request).await
+        let iam_decision = self
+            .iam_evaluator
+            .evaluate_iam_policies(eval_request)
+            .await
             .map_err(|e| {
                 EvaluatePermissionsError::IamPolicyProviderError(format!(
                     "Failed to evaluate IAM policies: {}",

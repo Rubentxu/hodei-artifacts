@@ -3,7 +3,7 @@ use crate::features::attach_scp::error::AttachScpError;
 use crate::features::attach_scp::ports::{
     AccountRepositoryPort, OuRepositoryPort, ScpRepositoryPort,
 };
-use crate::shared::domain::events::{ScpAttached, ScpTargetType};
+use crate::internal::domain::events::{ScpAttached, ScpTargetType};
 use kernel::EventPublisher;
 use kernel::Hrn;
 use kernel::application::ports::event_bus::EventEnvelope;

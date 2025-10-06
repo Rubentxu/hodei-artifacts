@@ -1,6 +1,6 @@
 use crate::features::create_scp::adapter::CreateScpSurrealUnitOfWorkFactoryAdapter;
 use crate::features::create_scp::use_case::CreateScpUseCase;
-use crate::shared::infrastructure::surreal::SurrealUnitOfWorkFactory;
+use crate::internal::infrastructure::surreal::SurrealUnitOfWorkFactory;
 use std::sync::Arc;
 
 /// Create an instance of the CreateScpUseCase with SurrealDB UoW

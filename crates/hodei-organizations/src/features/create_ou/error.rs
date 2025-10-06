@@ -1,4 +1,4 @@
-use crate::shared::application::ports::ou_repository::OuRepositoryError;
+use crate::internal::application::ports::ou_repository::OuRepositoryError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

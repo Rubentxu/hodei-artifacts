@@ -699,4 +699,445 @@ mod tests {
         let all = storage.load_all_policies().await.unwrap();
         assert_eq!(all.len(), 2);
     }
+
+    // ========================================================================
+    // Tests adicionales para AttributeType::Record
+    // ========================================================================
+
+    #[test]
+    fn attribute_type_record_simple() {
+        let mut fields = HashMap::new();
+        fields.insert("name".to_string(), AttributeType::string());
+        fields.insert("age".to_string(), AttributeType::long());
+
+        let record = AttributeType::record(fields);
+        assert_eq!(record.type_name(), "Record");
+    }
+
+    #[test]
+    fn attribute_type_record_nested() {
+        let mut inner_record = HashMap::new();
+        inner_record.insert("street".to_string(), AttributeType::string());
+        inner_record.insert("city".to_string(), AttributeType::string());
+
+        let mut outer_record = HashMap::new();
+        outer_record.insert("name".to_string(), AttributeType::string());
+        outer_record.insert("address".to_string(), AttributeType::record(inner_record));
+
+        let record = AttributeType::record(outer_record);
+        assert_eq!(record.type_name(), "Record");
+    }
+
+    #[test]
+    fn attribute_type_record_with_sets() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "tags".to_string(),
+            AttributeType::set(AttributeType::string()),
+        );
+        fields.insert(
+            "scores".to_string(),
+            AttributeType::set(AttributeType::long()),
+        );
+
+        let record = AttributeType::record(fields);
+        assert_eq!(record.type_name(), "Record");
+    }
+
+    #[test]
+    fn attribute_type_deeply_nested() {
+        let level3 = AttributeType::set(AttributeType::long());
+        let level2 = AttributeType::set(level3);
+        let level1 = AttributeType::set(level2);
+
+        assert_eq!(level1.type_name(), "Set<Set<Set<Long>>>");
+    }
+
+    // ========================================================================
+    // Tests para parent_types en HodeiEntityType
+    // ========================================================================
+
+    struct TestUserWithParents;
+
+    impl HodeiEntityType for TestUserWithParents {
+        fn service_name() -> ServiceName {
+            ServiceName::new("iam").unwrap()
+        }
+
+        fn resource_type_name() -> ResourceTypeName {
+            ResourceTypeName::new("User").unwrap()
+        }
+
+        fn is_principal_type() -> bool {
+            true
+        }
+
+        fn parent_types() -> Vec<String> {
+            vec!["Iam::Group".to_string(), "Iam::Role".to_string()]
+        }
+    }
+
+    #[test]
+    fn entity_type_parent_types() {
+        let parents = TestUserWithParents::parent_types();
+        assert_eq!(parents.len(), 2);
+        assert!(parents.contains(&"Iam::Group".to_string()));
+        assert!(parents.contains(&"Iam::Role".to_string()));
+    }
+
+    #[test]
+    fn entity_type_parent_types_empty_by_default() {
+        let parents = TestUser::parent_types();
+        assert_eq!(parents.len(), 0);
+    }
+
+    // ========================================================================
+    // Tests para parent_hrns en HodeiEntity
+    // ========================================================================
+
+    struct TestUserWithParentHrns {
+        hrn: Hrn,
+        email: String,
+        group_hrns: Vec<Hrn>,
+    }
+
+    impl TestUserWithParentHrns {
+        fn new(
+            partition: String,
+            account: String,
+            id: String,
+            email: String,
+            groups: Vec<Hrn>,
+        ) -> Self {
+            Self {
+                hrn: Hrn::for_entity_type::<TestUser>(partition, account, id),
+                email,
+                group_hrns: groups,
+            }
+        }
+    }
+
+    impl HodeiEntity for TestUserWithParentHrns {
+        fn hrn(&self) -> &Hrn {
+            &self.hrn
+        }
+
+        fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
+            let mut attrs = HashMap::new();
+            attrs.insert(
+                AttributeName::new("email").unwrap(),
+                AttributeValue::string(&self.email),
+            );
+            attrs
+        }
+
+        fn parent_hrns(&self) -> Vec<Hrn> {
+            self.group_hrns.clone()
+        }
+    }
+
+    #[test]
+    fn entity_parent_hrns() {
+        let group1 = Hrn::for_entity_type::<TestUser>(
+            "aws".to_string(),
+            "123456789012".to_string(),
+            "admins".to_string(),
+        );
+        let group2 = Hrn::for_entity_type::<TestUser>(
+            "aws".to_string(),
+            "123456789012".to_string(),
+            "developers".to_string(),
+        );
+
+        let user = TestUserWithParentHrns::new(
+            "aws".to_string(),
+            "123456789012".to_string(),
+            "alice".to_string(),
+            "alice@example.com".to_string(),
+            vec![group1.clone(), group2.clone()],
+        );
+
+        let parents = user.parent_hrns();
+        assert_eq!(parents.len(), 2);
+        assert_eq!(parents[0], group1);
+        assert_eq!(parents[1], group2);
+    }
+
+    #[test]
+    fn entity_parent_hrns_empty_by_default() {
+        let user = TestUserInstance::new(
+            "aws".to_string(),
+            "123456789012".to_string(),
+            "alice".to_string(),
+            "alice@example.com".to_string(),
+            30,
+        );
+
+        let parents = user.parent_hrns();
+        assert_eq!(parents.len(), 0);
+    }
+
+    // ========================================================================
+    // Tests para Principal y Resource marker traits
+    // ========================================================================
+
+    struct TestPrincipal {
+        hrn: Hrn,
+    }
+
+    impl HodeiEntityType for TestPrincipal {
+        fn service_name() -> ServiceName {
+            ServiceName::new("iam").unwrap()
+        }
+
+        fn resource_type_name() -> ResourceTypeName {
+            ResourceTypeName::new("Principal").unwrap()
+        }
+
+        fn is_principal_type() -> bool {
+            true
+        }
+    }
+
+    impl HodeiEntity for TestPrincipal {
+        fn hrn(&self) -> &Hrn {
+            &self.hrn
+        }
+
+        fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
+            HashMap::new()
+        }
+    }
+
+    impl Principal for TestPrincipal {}
+
+    struct TestResource {
+        hrn: Hrn,
+    }
+
+    impl HodeiEntityType for TestResource {
+        fn service_name() -> ServiceName {
+            ServiceName::new("iam").unwrap()
+        }
+
+        fn resource_type_name() -> ResourceTypeName {
+            ResourceTypeName::new("Resource").unwrap()
+        }
+
+        fn is_resource_type() -> bool {
+            true
+        }
+    }
+
+    impl HodeiEntity for TestResource {
+        fn hrn(&self) -> &Hrn {
+            &self.hrn
+        }
+
+        fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
+            HashMap::new()
+        }
+    }
+
+    impl Resource for TestResource {}
+
+    #[test]
+    fn principal_trait_implementation() {
+        let principal = TestPrincipal {
+            hrn: Hrn::for_entity_type::<TestPrincipal>(
+                "aws".to_string(),
+                "123456789012".to_string(),
+                "test-principal".to_string(),
+            ),
+        };
+
+        // Verificar que implementa HodeiEntity
+        assert_eq!(principal.hrn().resource_id(), "test-principal");
+        assert_eq!(TestPrincipal::is_principal_type(), true);
+    }
+
+    #[test]
+    fn resource_trait_implementation() {
+        let resource = TestResource {
+            hrn: Hrn::for_entity_type::<TestResource>(
+                "aws".to_string(),
+                "123456789012".to_string(),
+                "test-resource".to_string(),
+            ),
+        };
+
+        // Verificar que implementa HodeiEntity
+        assert_eq!(resource.hrn().resource_id(), "test-resource");
+        assert_eq!(TestResource::is_resource_type(), true);
+    }
+
+    // ========================================================================
+    // Tests para is_resource_type con valor por defecto
+    // ========================================================================
+
+    #[test]
+    fn entity_type_is_resource_by_default() {
+        // TestUser no sobrescribe is_resource_type, debería ser true por defecto
+        assert_eq!(TestUser::is_resource_type(), true);
+    }
+
+    #[test]
+    fn entity_type_is_not_principal_by_default() {
+        struct DefaultEntity;
+
+        impl HodeiEntityType for DefaultEntity {
+            fn service_name() -> ServiceName {
+                ServiceName::new("test").unwrap()
+            }
+
+            fn resource_type_name() -> ResourceTypeName {
+                ResourceTypeName::new("Default").unwrap()
+            }
+        }
+
+        // is_principal_type() debería ser false por defecto
+        assert_eq!(DefaultEntity::is_principal_type(), false);
+        // is_resource_type() debería ser true por defecto
+        assert_eq!(DefaultEntity::is_resource_type(), true);
+    }
+
+    // ========================================================================
+    // Tests adicionales para PolicyStorage con errores
+    // ========================================================================
+
+    struct FailingPolicyStorage;
+
+    #[async_trait::async_trait]
+    impl PolicyStorage for FailingPolicyStorage {
+        async fn save_policy(
+            &self,
+            _id: &str,
+            _policy_text: &str,
+        ) -> Result<(), PolicyStorageError> {
+            Err(PolicyStorageError::ValidationError(
+                "Invalid policy".to_string(),
+            ))
+        }
+
+        async fn delete_policy(&self, _id: &str) -> Result<bool, PolicyStorageError> {
+            Err(PolicyStorageError::PolicyNotFound("Not found".to_string()))
+        }
+
+        async fn get_policy_by_id(&self, _id: &str) -> Result<Option<String>, PolicyStorageError> {
+            Err(PolicyStorageError::ParsingError("Parse failed".to_string()))
+        }
+
+        async fn load_all_policies(&self) -> Result<Vec<(String, String)>, PolicyStorageError> {
+            Err(PolicyStorageError::ProviderError(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, "Provider error"),
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_storage_save_validation_error() {
+        let storage = FailingPolicyStorage;
+        let result = storage.save_policy("p1", "invalid").await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PolicyStorageError::ValidationError(msg) => {
+                assert_eq!(msg, "Invalid policy");
+            }
+            _ => panic!("Expected ValidationError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_storage_delete_not_found_error() {
+        let storage = FailingPolicyStorage;
+        let result = storage.delete_policy("p1").await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PolicyStorageError::PolicyNotFound(msg) => {
+                assert_eq!(msg, "Not found");
+            }
+            _ => panic!("Expected PolicyNotFound"),
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_storage_get_parsing_error() {
+        let storage = FailingPolicyStorage;
+        let result = storage.get_policy_by_id("p1").await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PolicyStorageError::ParsingError(msg) => {
+                assert_eq!(msg, "Parse failed");
+            }
+            _ => panic!("Expected ParsingError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_storage_load_all_provider_error() {
+        let storage = FailingPolicyStorage;
+        let result = storage.load_all_policies().await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PolicyStorageError::ProviderError(_) => {
+                // Success - we got the expected error type
+            }
+            _ => panic!("Expected ProviderError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn policy_storage_get_nonexistent_returns_none() {
+        let storage = InMemoryPolicyStorage::new();
+        let result = storage.get_policy_by_id("nonexistent").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn policy_storage_delete_nonexistent_returns_false() {
+        let storage = InMemoryPolicyStorage::new();
+        let deleted = storage.delete_policy("nonexistent").await.unwrap();
+        assert!(!deleted);
+    }
+
+    #[tokio::test]
+    async fn policy_storage_update_existing() {
+        let storage = InMemoryPolicyStorage::new();
+
+        // Guardar política inicial
+        storage.save_policy("p1", "version 1").await.unwrap();
+        let v1 = storage.get_policy_by_id("p1").await.unwrap();
+        assert_eq!(v1, Some("version 1".to_string()));
+
+        // Actualizar con nueva versión
+        storage.save_policy("p1", "version 2").await.unwrap();
+        let v2 = storage.get_policy_by_id("p1").await.unwrap();
+        assert_eq!(v2, Some("version 2".to_string()));
+    }
+
+    // ========================================================================
+    // Tests para attributes_schema por defecto
+    // ========================================================================
+
+    #[test]
+    fn entity_type_attributes_schema_empty_by_default() {
+        struct MinimalEntity;
+
+        impl HodeiEntityType for MinimalEntity {
+            fn service_name() -> ServiceName {
+                ServiceName::new("test").unwrap()
+            }
+
+            fn resource_type_name() -> ResourceTypeName {
+                ResourceTypeName::new("Minimal").unwrap()
+            }
+        }
+
+        let schema = MinimalEntity::attributes_schema();
+        assert_eq!(schema.len(), 0);
+    }
 }

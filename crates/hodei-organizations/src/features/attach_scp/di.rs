@@ -2,9 +2,9 @@ use crate::features::attach_scp::adapter::{
     AccountRepositoryAdapter, OuRepositoryAdapter, ScpRepositoryAdapter,
 };
 use crate::features::attach_scp::use_case::AttachScpUseCase;
-use crate::shared::application::ports::account_repository::AccountRepository;
-use crate::shared::application::ports::ou_repository::OuRepository;
-use crate::shared::application::ports::scp_repository::ScpRepository;
+use crate::internal::application::ports::account_repository::AccountRepository;
+use crate::internal::application::ports::ou_repository::OuRepository;
+use crate::internal::application::ports::scp_repository::ScpRepository;
 use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 

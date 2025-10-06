@@ -1,9 +1,9 @@
-use crate::shared::application::ports::account_repository::AccountRepositoryError;
-use crate::shared::application::ports::ou_repository::OuRepositoryError;
-use crate::shared::application::ports::scp_repository::ScpRepositoryError;
-use crate::shared::domain::account::Account;
-use crate::shared::domain::ou::OrganizationalUnit;
-use crate::shared::domain::scp::ServiceControlPolicy;
+use crate::internal::application::ports::account_repository::AccountRepositoryError;
+use crate::internal::application::ports::ou_repository::OuRepositoryError;
+use crate::internal::application::ports::scp_repository::ScpRepositoryError;
+use crate::internal::domain::account::Account;
+use crate::internal::domain::ou::OrganizationalUnit;
+use crate::internal::domain::scp::ServiceControlPolicy;
 use kernel::Hrn;
 
 /// Port for retrieving service control policies

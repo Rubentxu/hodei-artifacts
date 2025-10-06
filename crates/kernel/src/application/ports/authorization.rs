@@ -1,4 +1,5 @@
 use crate::domain::Hrn;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -31,15 +32,17 @@ pub enum AuthorizationError {
     InvalidPolicyFormat,
 }
 
+#[async_trait]
 pub trait ScpEvaluator: Send + Sync {
-    fn evaluate_scps(
+    async fn evaluate_scps(
         &self,
         request: EvaluationRequest,
     ) -> Result<EvaluationDecision, AuthorizationError>;
 }
 
+#[async_trait]
 pub trait IamPolicyEvaluator: Send + Sync {
-    fn evaluate_iam_policies(
+    async fn evaluate_iam_policies(
         &self,
         request: EvaluationRequest,
     ) -> Result<EvaluationDecision, AuthorizationError>;

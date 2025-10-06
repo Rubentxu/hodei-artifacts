@@ -1,4 +1,4 @@
-use crate::shared::application::ports::{AccountRepository, OuRepository};
+use crate::internal::application::ports::{AccountRepository, OuRepository};
 use crate::features::move_account::use_case::MoveAccountUseCase;
 use crate::features::move_account::adapter::{AccountRepositoryAdapter, OuRepositoryAdapter};
 

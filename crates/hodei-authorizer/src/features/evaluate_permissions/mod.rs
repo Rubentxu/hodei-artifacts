@@ -68,9 +68,7 @@ pub use di::{EvaluatePermissionsContainer, EvaluatePermissionsContainerBuilder, 
 
 // Re-export mocks for testing
 #[cfg(test)]
-pub use mocks::{
-    MockAuthorizationCache, MockAuthorizationLogger, MockAuthorizationMetrics, test_helpers,
-};
+pub use mocks::{MockAuthorizationCache, MockAuthorizationLogger, MockAuthorizationMetrics};
 
 /// Feature version and metadata
 pub const FEATURE_VERSION: &str = "1.0.0";
@@ -193,9 +191,21 @@ pub mod utils {
 
 #[cfg(test)]
 mod feature_tests {
-    use super::mocks::test_helpers;
+
     use super::*;
+    use kernel::Hrn;
     use std::time::Duration;
+
+    // Test helpers
+    fn create_test_hrn(resource_type: &str, resource_id: &str) -> Hrn {
+        Hrn::new(
+            "aws".to_string(),
+            "test".to_string(),
+            "default".to_string(),
+            resource_type.to_string(),
+            resource_id.to_string(),
+        )
+    }
 
     #[test]
     fn test_feature_version() {
@@ -231,8 +241,8 @@ mod feature_tests {
 
     #[test]
     fn test_utils_generate_cache_key() {
-        let principal = test_helpers::create_test_hrn("user", "alice");
-        let resource = test_helpers::create_test_hrn("bucket", "test-bucket");
+        let principal = create_test_hrn("user", "alice");
+        let resource = create_test_hrn("bucket", "test-bucket");
         let request = AuthorizationRequest::new(principal, "read".to_string(), resource);
 
         let cache_key = utils::generate_cache_key(&request);
@@ -242,8 +252,8 @@ mod feature_tests {
 
     #[test]
     fn test_utils_validate_request() {
-        let principal = test_helpers::create_test_hrn("user", "alice");
-        let resource = test_helpers::create_test_hrn("bucket", "test-bucket");
+        let principal = create_test_hrn("user", "alice");
+        let resource = create_test_hrn("bucket", "test-bucket");
 
         // Valid request
         let valid_request =
@@ -262,8 +272,8 @@ mod feature_tests {
 
     #[test]
     fn test_utils_ensure_context() {
-        let principal = test_helpers::create_test_hrn("user", "alice");
-        let resource = test_helpers::create_test_hrn("bucket", "test-bucket");
+        let principal = create_test_hrn("user", "alice");
+        let resource = create_test_hrn("bucket", "test-bucket");
         let mut request = AuthorizationRequest::new(principal, "read".to_string(), resource);
 
         assert!(request.context.is_none());

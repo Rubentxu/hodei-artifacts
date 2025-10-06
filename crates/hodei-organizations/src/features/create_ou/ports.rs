@@ -1,6 +1,6 @@
 use crate::features::create_ou::error::CreateOuError;
-use crate::shared::application::ports::ou_repository::OuRepository;
-use crate::shared::domain::ou::OrganizationalUnit;
+use crate::internal::application::ports::ou_repository::OuRepository;
+use crate::internal::domain::ou::OrganizationalUnit;
 use async_trait::async_trait;
 use std::sync::Arc;
 

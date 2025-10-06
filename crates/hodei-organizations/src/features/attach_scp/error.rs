@@ -1,7 +1,7 @@
 use thiserror::Error;
-use crate::shared::application::ports::scp_repository::ScpRepositoryError;
-use crate::shared::application::ports::account_repository::AccountRepositoryError;
-use crate::shared::application::ports::ou_repository::OuRepositoryError;
+use crate::internal::application::ports::scp_repository::ScpRepositoryError;
+use crate::internal::application::ports::account_repository::AccountRepositoryError;
+use crate::internal::application::ports::ou_repository::OuRepositoryError;
 
 /// Error type for attach SCP use case
 #[derive(Debug, Error)]

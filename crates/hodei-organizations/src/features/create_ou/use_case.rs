@@ -1,7 +1,7 @@
 use crate::features::create_ou::dto::{CreateOuCommand, OuView};
 use crate::features::create_ou::error::CreateOuError;
 use crate::features::create_ou::ports::{CreateOuUnitOfWork, CreateOuUnitOfWorkFactory};
-use crate::shared::domain::ou::OrganizationalUnit;
+use crate::internal::domain::ou::OrganizationalUnit;
 use std::sync::Arc;
 
 /// Use case for creating organizational units with transactional guarantees
