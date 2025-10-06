@@ -5,8 +5,8 @@ mod tests {
         MockAddUserToGroupUnitOfWork, MockGroupRepository, MockUserRepository,
     };
     use super::super::use_case::AddUserToGroupUseCase;
-    use crate::shared::application::ports::UserRepository;
-    use crate::shared::domain::{Group, User};
+    use crate::internal::application::ports::UserRepository;
+    use crate::internal::domain::{Group, User};
     use kernel::Hrn;
     use std::sync::Arc;
 

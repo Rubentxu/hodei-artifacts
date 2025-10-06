@@ -1,5 +1,5 @@
 use super::ports::{CreateUserRepositories, CreateUserUnitOfWork};
-use crate::shared::application::ports::UserRepository;
+use crate::internal::application::ports::UserRepository;
 use std::error::Error as StdError;
 use std::sync::Arc;
 

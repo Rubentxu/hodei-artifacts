@@ -11,9 +11,9 @@ use crate::features::create_policy::dto::{
 use crate::features::create_policy::error::{
     CreatePolicyError, DeletePolicyError, GetPolicyError, ListPoliciesError, UpdatePolicyError,
 };
-use crate::shared::domain::Policy;
-use crate::shared::domain::ports::PolicyStorage;
 use async_trait::async_trait;
+use kernel::Hrn;
+use policies::shared::domain::Policy;
 
 /// Port for validating IAM policy content
 ///
@@ -70,10 +70,11 @@ pub enum PolicyValidationError {
 
 /// Port for persisting IAM policies
 ///
-/// This port combines the base PolicyStorage trait with CRUD operations
-/// specific to IAM policy management.
+/// This port defines CRUD operations for IAM policy management.
+/// Following ISP (Interface Segregation Principle), this port only includes
+/// operations needed by the policy management features.
 #[async_trait]
-pub trait PolicyPersister: PolicyStorage + Send + Sync {
+pub trait PolicyPersister: Send + Sync {
     async fn create_policy(
         &self,
         command: CreatePolicyCommand,

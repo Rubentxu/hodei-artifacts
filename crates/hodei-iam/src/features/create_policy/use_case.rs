@@ -12,9 +12,10 @@ use crate::features::create_policy::error::{
     CreatePolicyError, DeletePolicyError, GetPolicyError, ListPoliciesError, UpdatePolicyError,
 };
 use crate::features::create_policy::ports::{PolicyPersister, PolicyValidator};
-use crate::shared::domain::{Hrn, Policy};
 use async_trait::async_trait;
 use chrono::Utc;
+use kernel::Hrn;
+use policies::shared::domain::Policy;
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -67,7 +68,15 @@ where
         }
 
         // Create policy entity
-        let hrn = Hrn::new("iam", "policy", &command.policy_id);
+        // TODO: REFACTOR - This needs proper HRN construction with all parameters
+        // For now, using parse as a temporary solution
+        let hrn = Hrn::parse(&format!(
+            "hrn:hodei:iam::unknown-account:policy/{}",
+            command.policy_id
+        ))
+        .map_err(|e| {
+            CreatePolicyError::InvalidPolicyContent(format!("Invalid policy ID: {}", e))
+        })?;
         let now = Utc::now();
 
         let policy = Policy {

@@ -214,7 +214,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::domain::{Group, User};
+    use crate::internal::domain::{Group, User};
     use async_trait::async_trait;
     use std::sync::Arc;
 
@@ -270,14 +270,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_valid_user_and_policies() {
-        let user_hrn = Hrn::new("iam", "user", "alice");
-        let user = User {
-            hrn: user_hrn.clone(),
-            name: "Alice".to_string(),
-            email: "alice@example.com".to_string(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
+        let user_hrn = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "User".to_string(),
+            "alice".to_string(),
+        );
+        let user = User::new(
+            user_hrn.clone(),
+            "Alice".to_string(),
+            "alice@example.com".to_string(),
+        );
 
         let user_finder = Arc::new(MockUserFinder { users: vec![user] });
         let group_finder = Arc::new(MockGroupFinder { groups: vec![] });
@@ -305,24 +309,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_user_and_group_policies() {
-        let user_hrn = Hrn::new("iam", "user", "bob");
-        let group_hrn = Hrn::new("iam", "group", "developers");
+        let user_hrn = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "User".to_string(),
+            "bob".to_string(),
+        );
+        let group_hrn = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "Group".to_string(),
+            "developers".to_string(),
+        );
 
-        let user = User {
-            hrn: user_hrn.clone(),
-            name: "Bob".to_string(),
-            email: "bob@example.com".to_string(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
+        let user = User::new(
+            user_hrn.clone(),
+            "Bob".to_string(),
+            "bob@example.com".to_string(),
+        );
 
-        let group = Group {
-            hrn: group_hrn.clone(),
-            name: "Developers".to_string(),
-            description: Some("Developer group".to_string()),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
+        let group = Group::new(group_hrn.clone(), "Developers".to_string());
 
         let user_finder = Arc::new(MockUserFinder { users: vec![user] });
         let group_finder = Arc::new(MockGroupFinder {
@@ -358,7 +366,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_user_not_found() {
-        let user_hrn = Hrn::new("iam", "user", "nonexistent");
+        let user_hrn = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "User".to_string(),
+            "nonexistent".to_string(),
+        );
 
         let user_finder = Arc::new(MockUserFinder { users: vec![] });
         let group_finder = Arc::new(MockGroupFinder { groups: vec![] });
@@ -404,7 +418,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_invalid_principal_type() {
-        let resource_hrn = Hrn::new("s3", "bucket", "my-bucket");
+        let resource_hrn = Hrn::new(
+            "aws".to_string(),
+            "s3".to_string(),
+            "default".to_string(),
+            "bucket".to_string(),
+            "my-bucket".to_string(),
+        );
 
         let user_finder = Arc::new(MockUserFinder { users: vec![] });
         let group_finder = Arc::new(MockGroupFinder { groups: vec![] });

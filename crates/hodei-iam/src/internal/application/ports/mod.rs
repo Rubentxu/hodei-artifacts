@@ -2,7 +2,7 @@
 ///
 /// This module defines the traits (ports) that the application layer uses
 /// to interact with infrastructure concerns like persistence.
-use crate::shared::domain::{Group, User};
+use crate::internal::domain::{Group, User};
 use async_trait::async_trait;
 use kernel::Hrn;
 

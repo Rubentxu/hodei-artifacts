@@ -1,5 +1,6 @@
+use kernel::Hrn;
+use policies::shared::domain::Policy;
 use serde::{Deserialize, Serialize};
-use crate::shared::domain::{Hrn, Policy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreatePolicyCommand {
@@ -51,3 +52,6 @@ impl From<Policy> for PolicyDto {
         }
     }
 }
+
+/// Alias for PolicyDto to match naming convention used in exports
+pub type PolicyView = PolicyDto;

@@ -7,4 +7,5 @@ pub mod dto;
 pub mod ports;
 pub mod use_case;
 
+pub use dto::CreateUserCommand;
 pub use use_case::CreateUserUseCase;

@@ -9,8 +9,8 @@ use crate::features::create_policy::ports::{
     PolicyPersister, PolicyValidationError, PolicyValidator, ValidationError, ValidationResult,
     ValidationWarning,
 };
-use crate::shared::domain::Policy;
-use crate::shared::domain::ports::{PolicyStorage, PolicyStorageError};
+use crate::internal::domain::Policy;
+use crate::internal::domain::ports::{PolicyStorage, PolicyStorageError};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ impl PolicyPersister for MockPolicyPersister {
         }
 
         let policy = Policy {
-            id: crate::shared::domain::Hrn::new("iam", "policy", &command.policy_id),
+            id: crate::internal::domain::Hrn::new("iam", "policy", &command.policy_id),
             content: command.policy_content,
             description: command.description,
             created_at: chrono::Utc::now(),

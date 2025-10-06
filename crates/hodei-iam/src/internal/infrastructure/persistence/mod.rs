@@ -1,7 +1,7 @@
-use crate::shared::application::ports::{
+use crate::internal::application::ports::{
     GroupRepository, GroupRepositoryError, UserRepository, UserRepositoryError,
 };
-use crate::shared::domain::{Group, User};
+use crate::internal::domain::{Group, User};
 /// In-memory repository implementations for testing
 ///
 /// These repositories store data in memory using RwLock for thread-safe access

@@ -1,6 +1,6 @@
 use super::adapter::GenericCreateGroupUnitOfWork;
 use super::use_case::CreateGroupUseCase;
-use crate::shared::application::ports::GroupRepository;
+use crate::internal::application::ports::GroupRepository;
 use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 

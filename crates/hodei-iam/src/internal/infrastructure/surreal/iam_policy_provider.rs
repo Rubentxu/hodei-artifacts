@@ -1,7 +1,7 @@
-use crate::shared::application::ports::{
+use crate::internal::application::ports::{
     GroupRepository, IamPolicyProvider, IamPolicyProviderError, UserRepository,
 };
-use crate::shared::infrastructure::surreal::{
+use crate::internal::infrastructure::surreal::{
     SurrealGroupRepository, SurrealUserRepository, policy_repository::IamPolicyRepository,
 };
 use async_trait::async_trait;

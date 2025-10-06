@@ -1,4 +1,4 @@
-use crate::shared::application::ports::{GroupRepository, UserRepository};
+use crate::internal::application::ports::{GroupRepository, UserRepository};
 use std::error::Error as StdError;
 
 /// Unit of Work for the add_user_to_group feature

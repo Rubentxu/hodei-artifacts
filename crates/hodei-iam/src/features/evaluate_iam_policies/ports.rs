@@ -1,41 +1,77 @@
 //! Ports (interfaces) for the evaluate_iam_policies feature
 //!
 //! This module defines the ports (trait interfaces) that the use case depends on.
-//! Following the Interface Segregation Principle (SOLID), each port is specific
-//! to this feature's needs.
+//! Following the Interface Segregation Principle (SOLID), this port is specific
+//! to IAM policy evaluation needs.
 
 use async_trait::async_trait;
-use kernel::application::ports::authorization::AuthorizationError;
-use kernel::domain::Hrn;
+use cedar_policy::PolicySet;
+use kernel::Hrn;
 
-/// Port for finding IAM policies associated with a principal
+/// Port for finding and retrieving IAM policies
 ///
-/// This port abstracts the retrieval of policies that apply to a given principal.
-/// It may include:
-/// - Direct policies attached to the user
-/// - Policies inherited from groups the user belongs to
-/// - Policies attached to roles the user has assumed
+/// This port abstracts the retrieval of effective IAM policies for a principal.
+/// It follows ISP by providing only the operations needed for policy evaluation.
+///
+/// # Responsibilities
+///
+/// - Retrieve all effective policies for a given principal
+/// - Return policies as a Cedar PolicySet ready for evaluation
 ///
 /// # Segregation
-/// This port is segregated specifically for this feature and does not include
-/// any CRUD operations or other concerns.
+///
+/// This port is segregated specifically for policy retrieval during evaluation.
+/// It does NOT include:
+/// - Policy CRUD operations (those are in separate features)
+/// - Policy validation (that's in create_policy feature)
+/// - Entity management (that's in other features)
 #[async_trait]
 pub trait PolicyFinderPort: Send + Sync {
-    /// Get all policy documents (as Cedar policy strings) that apply to the principal
+    /// Get the effective IAM policies for a principal
+    ///
+    /// This method retrieves all IAM policies that apply to the given principal,
+    /// including:
+    /// - Policies directly attached to the principal
+    /// - Policies attached to groups the principal belongs to
+    /// - Policies inherited through organizational hierarchy
     ///
     /// # Arguments
-    /// * `principal_hrn` - The HRN of the principal (user, service account, etc.)
+    ///
+    /// * `principal_hrn` - The HRN of the principal (user, service account)
     ///
     /// # Returns
-    /// A vector of Cedar policy document strings, or an error if retrieval fails
     ///
-    /// # Example
-    /// ```ignore
-    /// let policies = policy_finder.get_policies_for_principal(&user_hrn).await?;
-    /// // Returns: vec!["permit(principal == User::\"alice\", action, resource);"]
-    /// ```
-    async fn get_policies_for_principal(
+    /// A `PolicySet` containing all effective policies, ready for Cedar evaluation.
+    /// Returns an empty `PolicySet` if no policies are found (implicit deny).
+    ///
+    /// # Errors
+    ///
+    /// Returns `PolicyFinderError` if:
+    /// - The principal does not exist
+    /// - Database/repository errors occur
+    /// - Policy parsing fails
+    async fn get_effective_policies(
         &self,
         principal_hrn: &Hrn,
-    ) -> Result<Vec<String>, AuthorizationError>;
+    ) -> Result<PolicySet, PolicyFinderError>;
+}
+
+/// Errors that can occur during policy retrieval
+#[derive(Debug, thiserror::Error)]
+pub enum PolicyFinderError {
+    /// Principal not found in the system
+    #[error("Principal not found: {0}")]
+    PrincipalNotFound(String),
+
+    /// Repository/database error
+    #[error("Repository error: {0}")]
+    RepositoryError(String),
+
+    /// Policy parsing error
+    #[error("Policy parsing error: {0}")]
+    PolicyParseError(String),
+
+    /// Internal error
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }

@@ -1,8 +1,8 @@
 use super::ports::{AddUserToGroupRepositories, AddUserToGroupUnitOfWork};
-use crate::shared::application::ports::{
+use crate::internal::application::ports::{
     GroupRepository, GroupRepositoryError, UserRepository, UserRepositoryError,
 };
-use crate::shared::domain::{Group, User};
+use crate::internal::domain::{Group, User};
 use kernel::Hrn;
 use std::collections::HashMap;
 use std::error::Error as StdError;

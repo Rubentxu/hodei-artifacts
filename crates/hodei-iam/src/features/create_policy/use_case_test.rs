@@ -13,7 +13,7 @@ mod tests {
         CreatePolicyUseCase, DeletePolicyUseCase, GetPolicyUseCase, ListPoliciesUseCase,
         UpdatePolicyUseCase,
     };
-    use crate::shared::domain::{Hrn, Policy};
+    use crate::internal::domain::{Hrn, Policy};
     use std::collections::HashMap;
     use std::sync::Arc;
 

@@ -1,5 +1,5 @@
-use crate::shared::application::ports::{GroupRepository, GroupRepositoryError};
-use crate::shared::domain::Group;
+use crate::internal::application::ports::{GroupRepository, GroupRepositoryError};
+use crate::internal::domain::Group;
 use async_trait::async_trait;
 use kernel::Hrn;
 use surrealdb::Surreal;

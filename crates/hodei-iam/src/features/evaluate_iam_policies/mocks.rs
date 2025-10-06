@@ -1,230 +1,136 @@
-//! Mock implementations for testing evaluate_iam_policies feature
+//! Mock implementations for testing the evaluate_iam_policies feature
 //!
 //! This module provides mock implementations of the ports used by the
-//! evaluate_iam_policies use case, enabling isolated unit testing.
+//! evaluate_iam_policies use case, facilitating unit testing without
+//! requiring real infrastructure.
 
 use async_trait::async_trait;
-use kernel::application::ports::authorization::AuthorizationError;
-use kernel::domain::Hrn;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use cedar_policy::PolicySet;
+use kernel::Hrn;
 
-use super::ports::PolicyFinderPort;
+use super::ports::{PolicyFinderError, PolicyFinderPort};
 
 /// Mock implementation of PolicyFinderPort for testing
 ///
-/// This mock allows tests to configure which policies should be returned
-/// for specific principals, enabling various test scenarios.
-#[derive(Clone)]
+/// This mock allows tests to control what policies are returned,
+/// enabling testing of different scenarios:
+/// - Empty policy sets (implicit deny)
+/// - Specific policy sets (test allow/deny logic)
+/// - Error conditions (test error handling)
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::features::evaluate_iam_policies::mocks::MockPolicyFinder;
+/// use cedar_policy::PolicySet;
+///
+/// // Return specific policies
+/// let policy_set = PolicySet::from_str("permit(principal, action, resource);").unwrap();
+/// let mock = MockPolicyFinder::new(policy_set);
+///
+/// // Simulate errors
+/// let mock = MockPolicyFinder::with_error("Database error".to_string());
+/// ```
 pub struct MockPolicyFinder {
-    /// Map of principal HRN to policy documents
-    policies: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// The policy set to return (if no error)
+    policy_set: Option<PolicySet>,
+    /// Error to return (if set)
+    error: Option<String>,
 }
 
 impl MockPolicyFinder {
-    /// Create a new mock policy finder with no policies
-    pub fn new() -> Self {
+    /// Create a new mock that returns the given policy set
+    ///
+    /// # Arguments
+    ///
+    /// * `policy_set` - The PolicySet to return from get_effective_policies
+    pub fn new(policy_set: PolicySet) -> Self {
         Self {
-            policies: Arc::new(Mutex::new(HashMap::new())),
+            policy_set: Some(policy_set),
+            error: None,
         }
     }
 
-    /// Create a mock that returns specific policies for any principal
-    pub fn with_policies(policies: Vec<String>) -> Self {
-        let mut map = HashMap::new();
-        map.insert("*".to_string(), policies);
+    /// Create a new mock that returns an error
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - The error message to return
+    pub fn with_error(error: String) -> Self {
         Self {
-            policies: Arc::new(Mutex::new(map)),
+            policy_set: None,
+            error: Some(error),
         }
     }
 
-    /// Configure policies for a specific principal
-    pub fn add_policies_for_principal(&self, principal_hrn: &str, policies: Vec<String>) {
-        let mut map = self.policies.lock().unwrap();
-        map.insert(principal_hrn.to_string(), policies);
-    }
-
-    /// Clear all configured policies
-    pub fn clear(&self) {
-        let mut map = self.policies.lock().unwrap();
-        map.clear();
-    }
-}
-
-impl Default for MockPolicyFinder {
-    fn default() -> Self {
-        Self::new()
+    /// Create a new mock that returns an empty policy set
+    pub fn empty() -> Self {
+        Self::new(PolicySet::new())
     }
 }
 
 #[async_trait]
 impl PolicyFinderPort for MockPolicyFinder {
-    async fn get_policies_for_principal(
-        &self,
-        principal_hrn: &Hrn,
-    ) -> Result<Vec<String>, AuthorizationError> {
-        let map = self.policies.lock().unwrap();
-
-        // First try exact match
-        if let Some(policies) = map.get(&principal_hrn.to_string()) {
-            return Ok(policies.clone());
-        }
-
-        // Fall back to wildcard
-        if let Some(policies) = map.get("*") {
-            return Ok(policies.clone());
-        }
-
-        // No policies configured
-        Ok(Vec::new())
-    }
-}
-
-/// Mock that always returns an error
-pub struct MockPolicyFinderWithError {
-    error_message: String,
-}
-
-impl MockPolicyFinderWithError {
-    pub fn new(error_message: String) -> Self {
-        Self { error_message }
-    }
-}
-
-#[async_trait]
-impl PolicyFinderPort for MockPolicyFinderWithError {
-    async fn get_policies_for_principal(
+    async fn get_effective_policies(
         &self,
         _principal_hrn: &Hrn,
-    ) -> Result<Vec<String>, AuthorizationError> {
-        Err(AuthorizationError::EvaluationFailed(
-            self.error_message.clone(),
-        ))
-    }
-}
+    ) -> Result<PolicySet, PolicyFinderError> {
+        if let Some(error_msg) = &self.error {
+            return Err(PolicyFinderError::RepositoryError(error_msg.clone()));
+        }
 
-/// Mock that returns empty policies (for implicit deny testing)
-pub struct MockEmptyPolicyFinder;
-
-impl MockEmptyPolicyFinder {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for MockEmptyPolicyFinder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl PolicyFinderPort for MockEmptyPolicyFinder {
-    async fn get_policies_for_principal(
-        &self,
-        _principal_hrn: &Hrn,
-    ) -> Result<Vec<String>, AuthorizationError> {
-        Ok(Vec::new())
+        Ok(self.policy_set.clone().unwrap_or_else(PolicySet::new))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[tokio::test]
-    async fn test_mock_policy_finder_empty() {
-        let mock = MockPolicyFinder::new();
-        let hrn = Hrn::new(
-            "iam".to_string(),
-            "us-east-1".to_string(),
-            "123456789012".to_string(),
-            "user".to_string(),
-            "alice".to_string(),
-        );
+    async fn test_mock_returns_configured_policy_set() {
+        let policy_text = "permit(principal, action, resource);";
+        let policy_set = PolicySet::from_str(policy_text).unwrap();
+        let mock = MockPolicyFinder::new(policy_set.clone());
 
-        let result = mock.get_policies_for_principal(&hrn).await.unwrap();
-        assert_eq!(result.len(), 0);
+        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let result = mock.get_effective_policies(&principal_hrn).await;
+
+        assert!(result.is_ok());
+        let returned_set = result.unwrap();
+        assert_eq!(
+            returned_set.policies().count(),
+            policy_set.policies().count()
+        );
     }
 
     #[tokio::test]
-    async fn test_mock_policy_finder_with_policies() {
-        let policies = vec!["permit(principal, action, resource);".to_string()];
-        let mock = MockPolicyFinder::with_policies(policies.clone());
+    async fn test_mock_returns_empty_policy_set() {
+        let mock = MockPolicyFinder::empty();
 
-        let hrn = Hrn::new(
-            "iam".to_string(),
-            "us-east-1".to_string(),
-            "123456789012".to_string(),
-            "user".to_string(),
-            "alice".to_string(),
-        );
+        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let result = mock.get_effective_policies(&principal_hrn).await;
 
-        let result = mock.get_policies_for_principal(&hrn).await.unwrap();
-        assert_eq!(result, policies);
+        assert!(result.is_ok());
+        let returned_set = result.unwrap();
+        assert_eq!(returned_set.policies().count(), 0);
     }
 
     #[tokio::test]
-    async fn test_mock_policy_finder_specific_principal() {
-        let mock = MockPolicyFinder::new();
+    async fn test_mock_returns_configured_error() {
+        let error_msg = "Database connection failed".to_string();
+        let mock = MockPolicyFinder::with_error(error_msg.clone());
 
-        let alice_hrn = Hrn::new(
-            "iam".to_string(),
-            "us-east-1".to_string(),
-            "123456789012".to_string(),
-            "user".to_string(),
-            "alice".to_string(),
-        );
+        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+        let result = mock.get_effective_policies(&principal_hrn).await;
 
-        let bob_hrn = Hrn::new(
-            "iam".to_string(),
-            "us-east-1".to_string(),
-            "123456789012".to_string(),
-            "user".to_string(),
-            "bob".to_string(),
-        );
-
-        mock.add_policies_for_principal(
-            &alice_hrn.to_string(),
-            vec!["permit(principal == Iam::User::\"alice\", action, resource);".to_string()],
-        );
-
-        let alice_result = mock.get_policies_for_principal(&alice_hrn).await.unwrap();
-        assert_eq!(alice_result.len(), 1);
-
-        let bob_result = mock.get_policies_for_principal(&bob_hrn).await.unwrap();
-        assert_eq!(bob_result.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_mock_policy_finder_with_error() {
-        let mock = MockPolicyFinderWithError::new("Database connection failed".to_string());
-
-        let hrn = Hrn::new(
-            "iam".to_string(),
-            "us-east-1".to_string(),
-            "123456789012".to_string(),
-            "user".to_string(),
-            "alice".to_string(),
-        );
-
-        let result = mock.get_policies_for_principal(&hrn).await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_mock_empty_policy_finder() {
-        let mock = MockEmptyPolicyFinder::new();
-
-        let hrn = Hrn::new(
-            "iam".to_string(),
-            "us-east-1".to_string(),
-            "123456789012".to_string(),
-            "user".to_string(),
-            "alice".to_string(),
+        let error = result.unwrap_err();
+        assert!(matches!(error, PolicyFinderError::RepositoryError(_)));
+        assert_eq!(
+            error.to_string(),
+            format!("Repository error: {}", error_msg)
         );
-
-        let result = mock.get_policies_for_principal(&hrn).await.unwrap();
-        assert_eq!(result.len(), 0);
     }
 }

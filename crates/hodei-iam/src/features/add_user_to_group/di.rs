@@ -1,6 +1,6 @@
 use super::adapter::GenericAddUserToGroupUnitOfWork;
 use super::use_case::AddUserToGroupUseCase;
-use crate::shared::application::ports::{GroupRepository, UserRepository};
+use crate::internal::application::ports::{GroupRepository, UserRepository};
 use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 

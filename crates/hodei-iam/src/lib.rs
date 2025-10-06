@@ -1,75 +1,139 @@
-//! hodei-iam: Default IAM entities for the policies engine
+//! # hodei-iam
 //!
-//! This crate provides a standard set of Identity and Access Management entities
-//! that can be used with the policies engine. It follows the same Vertical Slice
-//! Architecture (VSA) with hexagonal architecture as the policies crate.
+//! IAM (Identity and Access Management) Bounded Context for Hodei Artifacts.
 //!
-//! # Structure
-//! - `shared/domain`: Core IAM entities (User, Group, ServiceAccount, Namespace) and actions
-//! - `shared/application`: Ports (repository traits) and DI configurator
-//! - `shared/infrastructure`: Infrastructure adapters (in-memory repositories for testing)
-//! - `features`: IAM-specific features/use cases (create_user, create_group, add_user_to_group)
+//! This crate provides IAM functionality following **Vertical Slice Architecture (VSA)**
+//! with **Clean Architecture** principles.
 //!
-//! # Example
+//! ## Architecture Principles
+//!
+//! - **Encapsulation**: Internal domain entities, repositories, and infrastructure
+//!   are NOT exposed publicly. Only use case APIs are public.
+//! - **Vertical Slice Architecture**: Each feature is self-contained with its own
+//!   ports, adapters, DTOs, and use case.
+//! - **Interface Segregation**: Each feature defines minimal, specific ports.
+//!
+//! ## Public API
+//!
+//! This crate exposes **only use cases (features)** through its public API.
+//!
+//! ### Available Features
+//!
+//! - **User Management**
+//!   - `CreateUserUseCase`: Create a new IAM user
+//!   - `AddUserToGroupUseCase`: Add a user to a group
+//!
+//! - **Group Management**
+//!   - `CreateGroupUseCase`: Create a new IAM group
+//!
+//! - **Policy Management**
+//!   - `CreatePolicyUseCase`: Create IAM policies (identity-based)
+//!   - `GetEffectivePoliciesForPrincipalUseCase`: Query effective policies for a principal
+//!
+//! - **Authorization**
+//!   - `EvaluateIamPoliciesUseCase`: Evaluate IAM policies for authorization decisions
+//!
+//! ## Usage Example
+//!
 //! ```ignore
-//! use hodei_iam::shared::application::configure_default_iam_entities;
-//! use policies::shared::application::di_helpers;
+//! use hodei_iam::{CreateUserUseCase, CreateUserCommand};
 //!
-//! # async fn example() -> anyhow::Result<()> {
-//! // Build an engine with default IAM entities
-//! let (engine, store) = di_helpers::build_engine_mem(configure_default_iam_entities).await?;
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Use cases are injected with their dependencies through DI
+//! let use_case = CreateUserUseCase::new(/* dependencies */);
+//!
+//! let command = CreateUserCommand {
+//!     user_hrn: "hrn:hodei:iam::account123:user/alice".to_string(),
+//!     name: "Alice".to_string(),
+//!     email: Some("alice@example.com".to_string()),
+//! };
+//!
+//! let result = use_case.execute(command).await?;
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ## Internal Structure (NOT PUBLIC)
+//!
+//! The `internal` module contains:
+//! - Domain entities (User, Group, Policy)
+//! - Repository ports
+//! - Infrastructure adapters
+//!
+//! These are implementation details and should NOT be accessed directly.
+//! All interactions must go through the public use case APIs.
+
+use cedar_policy::PolicySet;
+use std::str::FromStr;
+
+// ============================================================================
+// INTERNAL MODULE - NOT PUBLIC
+// ============================================================================
+// Contains domain entities, repositories, and infrastructure.
+// This is an implementation detail and must not be exposed.
+mod internal;
+
+// ============================================================================
+// PUBLIC MODULES
+// ============================================================================
+
+/// Public features/use cases module
 pub mod features;
-// TODO: REFACTOR - shared should be private, but tests in tests/ directory need it
-// Tests should either:
-// 1. Be moved to src/shared/domain/*_test.rs for unit tests
-// 2. Use only public features API for integration tests
-mod shared;
 
-// ✅ Re-export domain events for external event subscribers
-pub mod events {
-    pub use crate::shared::domain::events::{GroupCreated, UserAddedToGroup, UserCreated};
-}
+// ============================================================================
+// PUBLIC RE-EXPORTS - USE CASES AND DTOs ONLY
+// ============================================================================
 
-// ✅ Re-export infrastructure repositories for DI configuration
-pub mod infrastructure {
-    pub use crate::shared::infrastructure::persistence::{
-        InMemoryGroupRepository, InMemoryUserRepository,
-    };
-}
+// --- User Management ---
+pub use features::create_user::{CreateUserCommand, CreateUserUseCase};
 
-// ✅ Re-export application ports for external DI configuration
-pub mod ports {
-    pub use crate::shared::application::ports::{GroupRepository, UserRepository};
-}
+pub use features::add_user_to_group::{AddUserToGroupCommand, AddUserToGroupUseCase};
 
-// ❌ NO exportar entidades de dominio - son INTERNAS
-// Solo se accede a este crate a través de sus casos de uso (features)
+// --- Group Management ---
+pub use features::create_group::{CreateGroupCommand, CreateGroupUseCase};
 
-// ✅ Re-export features/casos de uso para acceso externo
-pub use features::{
-    add_user_to_group::AddUserToGroupUseCase,
-    create_group::CreateGroupUseCase,
-    create_user::CreateUserUseCase,
-    get_effective_policies_for_principal::{
-        EffectivePoliciesResponse, GetEffectivePoliciesQuery,
-        make_use_case as make_get_effective_policies_use_case,
-    },
+// --- Policy Management ---
+// TODO: REFACTOR (Phase 2) - create_policy feature is temporarily disabled
+// This feature is monolithic (contains full CRUD) and will be split into separate features:
+// - create_policy, delete_policy, update_policy, get_policy, list_policies
+// Each will follow ISP with segregated ports
+// pub use features::create_policy::{
+//     CreatePolicyCommand, CreatePolicyError, CreatePolicyUseCase, DeletePolicyCommand,
+//     DeletePolicyUseCase, GetPolicyQuery, GetPolicyUseCase, ListPoliciesQuery, ListPoliciesUseCase,
+//     PolicyView, UpdatePolicyCommand, UpdatePolicyUseCase,
+// };
+
+pub use features::get_effective_policies_for_principal::{
+    EffectivePoliciesResponse, GetEffectivePoliciesForPrincipalUseCase, GetEffectivePoliciesQuery,
+    make_use_case as make_get_effective_policies_use_case,
 };
 
+// --- Authorization ---
+pub use features::evaluate_iam_policies::EvaluateIamPoliciesUseCase;
+
+// ============================================================================
+// DOMAIN EVENTS - PUBLIC FOR EVENT SUBSCRIBERS
+// ============================================================================
+/// Domain events emitted by IAM features.
+/// These are public to allow external event subscribers (e.g., audit logs, notifications).
+pub mod events {
+    pub use crate::internal::domain::events::{GroupCreated, UserAddedToGroup, UserCreated};
+}
+
+// ============================================================================
+// ADAPTER FOR KERNEL PORTS
+// ============================================================================
 use ::kernel::application::ports::{
     EffectivePoliciesQuery, EffectivePoliciesQueryPort, EffectivePoliciesResult,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// Adaptador que expone el caso de uso interno de "get_effective_policies_for_principal"
-/// mediante el puerto transversal definido en el kernel compartido (`EffectivePoliciesQueryPort`).
+/// Adapter that exposes the internal "get_effective_policies_for_principal" use case
+/// through the cross-cutting port defined in the shared kernel (`EffectivePoliciesQueryPort`).
 ///
-/// Esto desacopla a consumidores (p.ej. authorizer) de los detalles internos del
-/// bounded context IAM, cumpliendo DIP y evitando dependencias innecesarias.
+/// This decouples consumers (e.g., authorizer) from internal details of the IAM bounded context,
+/// adhering to DIP and avoiding unnecessary dependencies.
 pub struct EffectivePoliciesAdapter<U> {
     inner: U,
 }
@@ -98,7 +162,7 @@ where
         &self,
         query: EffectivePoliciesQuery,
     ) -> Result<EffectivePoliciesResult, Box<dyn std::error::Error + Send + Sync>> {
-        // Traducir el DTO transversal al DTO interno del caso de uso
+        // Translate cross-cutting DTO to internal use case DTO
         let internal_query =
             features::get_effective_policies_for_principal::GetEffectivePoliciesQuery {
                 principal_hrn: query.principal_hrn,
@@ -106,15 +170,67 @@ where
 
         let resp = self.inner.execute(internal_query).await?;
 
+        // Convert Vec<String> policies to PolicySet
+        let policy_set = if resp.policies.is_empty() {
+            PolicySet::new()
+        } else {
+            // Concatenate all policy strings and parse as PolicySet
+            let combined_policies = resp.policies.join("\n");
+            PolicySet::from_str(&combined_policies)
+                .map_err(|e| format!("Failed to parse policies: {}", e))?
+        };
+
         Ok(EffectivePoliciesResult {
-            policies: resp.policies,
+            policies: policy_set,
             policy_count: resp.policy_count,
         })
     }
 }
 
-/// Alias ergonómico para inyección dinámica del puerto transversal
+/// Ergonomic alias for dynamic injection of the cross-cutting port
 pub type DynEffectivePoliciesQueryPort = Arc<dyn EffectivePoliciesQueryPort>;
 
-// ✅ Configurador para policies engine (necesario para setup inicial)
-pub use shared::application::configure_default_iam_entities;
+// ============================================================================
+// POLICY ENGINE CONFIGURATOR - INTERNAL USE ONLY
+// ============================================================================
+// This is needed for initial setup of the policies engine with default IAM entities.
+// It's a bridge to the legacy configuration system and should be refactored.
+pub use internal::application::configure_default_iam_entities;
+
+// ============================================================================
+// TEMPORARY EXPORTS FOR DI CONFIGURATION - TO BE REMOVED
+// ============================================================================
+// TODO: These exports break encapsulation and should be removed once DI is refactored.
+// The DI container should be configured at the application layer (main.rs or api crate)
+// without needing direct access to infrastructure implementations.
+
+#[doc(hidden)]
+pub mod __internal_di_only {
+    //! ⚠️ WARNING: This module is for DI configuration ONLY.
+    //!
+    //! These exports break encapsulation and will be removed in a future refactor.
+    //! DO NOT use these in application code. Use the public use case APIs instead.
+
+    pub use crate::internal::infrastructure::persistence::{
+        InMemoryGroupRepository, InMemoryUserRepository,
+    };
+
+    pub use crate::internal::application::ports::{GroupRepository, UserRepository};
+}
+
+// Re-export for backward compatibility (to be removed)
+#[deprecated(
+    since = "0.1.0",
+    note = "Direct infrastructure access violates encapsulation. Use __internal_di_only for DI config only."
+)]
+pub mod infrastructure {
+    pub use super::__internal_di_only::{InMemoryGroupRepository, InMemoryUserRepository};
+}
+
+#[deprecated(
+    since = "0.1.0",
+    note = "Direct port access violates encapsulation. Use __internal_di_only for DI config only."
+)]
+pub mod ports {
+    pub use super::__internal_di_only::{GroupRepository, UserRepository};
+}

@@ -1,179 +1,176 @@
-//! Adapters for the evaluate_iam_policies feature
+//! Adapter implementations for the evaluate_iam_policies feature
 //!
-//! This module provides concrete implementations of the ports defined for this feature.
-//! Following hexagonal architecture, adapters connect the use case to external infrastructure
-//! (repositories, databases, etc.).
+//! This module provides concrete implementations of the ports defined for
+//! IAM policy evaluation.
+//!
+//! # TODO: REFACTOR (Phase 2)
+//!
+//! This is a temporary stub implementation that allows compilation.
+//! In Phase 2, this will be properly integrated with the repository layer
+//! to retrieve actual policies from storage.
 
 use async_trait::async_trait;
-use kernel::application::ports::authorization::AuthorizationError;
-use kernel::domain::Hrn;
-use std::sync::Arc;
-use tracing::{debug, warn};
+use cedar_policy::PolicySet;
+use kernel::Hrn;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
-use super::ports::PolicyFinderPort;
+use super::ports::{PolicyFinderError, PolicyFinderPort};
 
-/// Adapter that uses a policy repository to find IAM policies
+/// In-memory adapter for policy finding (for testing and development)
 ///
-/// This adapter is responsible for:
-/// 1. Querying the policy repository for policies attached to a principal
-/// 2. Querying policies inherited from groups the principal belongs to
-/// 3. Combining and returning all applicable policy documents
+/// This adapter stores policies in memory and returns them for any principal.
+/// It's intended for testing and will be replaced with a real repository adapter
+/// in Phase 2.
 ///
-/// # Future Enhancements
-/// - Support for role-based policies
-/// - Policy caching for performance
-/// - Policy filtering based on conditions
-pub struct PolicyRepositoryAdapter<PR, UR, GR>
-where
-    PR: Send + Sync,
-    UR: Send + Sync,
-    GR: Send + Sync,
-{
-    /// Repository for IAM policy operations
-    policy_repo: Arc<PR>,
-
-    /// Repository for user operations (to get user's groups)
-    user_repo: Arc<UR>,
-
-    /// Repository for group operations (to get group policies)
-    group_repo: Arc<GR>,
+/// # Architecture
+///
+/// This adapter lives in the infrastructure layer and implements the
+/// PolicyFinderPort defined in the application layer (ports.rs).
+pub struct InMemoryPolicyFinderAdapter {
+    /// Map of principal HRN to PolicySet
+    policies: Arc<RwLock<HashMap<String, PolicySet>>>,
 }
 
-impl<PR, UR, GR> PolicyRepositoryAdapter<PR, UR, GR>
-where
-    PR: Send + Sync,
-    UR: Send + Sync,
-    GR: Send + Sync,
-{
-    /// Create a new policy repository adapter
-    ///
-    /// # Arguments
-    /// * `policy_repo` - Repository for IAM policies
-    /// * `user_repo` - Repository for users (to resolve group memberships)
-    /// * `group_repo` - Repository for groups (to get group policies)
-    pub fn new(policy_repo: Arc<PR>, user_repo: Arc<UR>, group_repo: Arc<GR>) -> Self {
+impl InMemoryPolicyFinderAdapter {
+    /// Create a new in-memory adapter with no policies
+    pub fn new() -> Self {
         Self {
-            policy_repo,
-            user_repo,
-            group_repo,
+            policies: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+
+    /// Add policies for a specific principal
+    ///
+    /// # Arguments
+    ///
+    /// * `principal_hrn` - The HRN of the principal
+    /// * `policy_set` - The PolicySet to associate with this principal
+    pub fn add_policies_for_principal(&self, principal_hrn: String, policy_set: PolicySet) {
+        let mut policies = self.policies.write().unwrap();
+        policies.insert(principal_hrn, policy_set);
+    }
+
+    /// Clear all stored policies
+    pub fn clear(&self) {
+        let mut policies = self.policies.write().unwrap();
+        policies.clear();
+    }
 }
 
-// Note: Full implementation requires repository traits to be defined first
-// This is a placeholder showing the structure. The actual implementation will:
-// 1. Query policies directly attached to the principal
-// 2. If principal is a User, get their groups
-// 3. Query policies attached to those groups
-// 4. Combine all policies and return as Vec<String>
-
-// Temporary simple implementation that returns empty policies
-// This allows the feature to compile and be tested with mocks
-impl<PR, UR, GR> PolicyRepositoryAdapter<PR, UR, GR>
-where
-    PR: Send + Sync,
-    UR: Send + Sync,
-    GR: Send + Sync,
-{
-    /// Get policies directly attached to a principal
-    ///
-    /// This is a helper method that will query the policy repository
-    async fn get_direct_policies(&self, _principal_hrn: &Hrn) -> Result<Vec<String>, AuthorizationError> {
-        // TODO: Implement when PolicyRepository trait is ready
-        // For now, return empty to allow compilation
-        debug!("Getting direct policies (not yet implemented)");
-        Ok(Vec::new())
-    }
-
-    /// Get group memberships for a user
-    ///
-    /// This is a helper method that will query the user repository
-    async fn get_user_groups(&self, _user_hrn: &Hrn) -> Result<Vec<Hrn>, AuthorizationError> {
-        // TODO: Implement when UserRepository trait includes group lookup
-        debug!("Getting user groups (not yet implemented)");
-        Ok(Vec::new())
-    }
-
-    /// Get policies attached to groups
-    ///
-    /// This is a helper method that will query policies for each group
-    async fn get_group_policies(&self, _group_hrns: &[Hrn]) -> Result<Vec<String>, AuthorizationError> {
-        // TODO: Implement when PolicyRepository supports group queries
-        debug!("Getting group policies (not yet implemented)");
-        Ok(Vec::new())
+impl Default for InMemoryPolicyFinderAdapter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[async_trait]
-impl<PR, UR, GR> PolicyFinderPort for PolicyRepositoryAdapter<PR, UR, GR>
-where
-    PR: Send + Sync,
-    UR: Send + Sync,
-    GR: Send + Sync,
-{
-    async fn get_policies_for_principal(
+impl PolicyFinderPort for InMemoryPolicyFinderAdapter {
+    async fn get_effective_policies(
         &self,
         principal_hrn: &Hrn,
-    ) -> Result<Vec<String>, AuthorizationError> {
-        debug!(
-            principal = %principal_hrn,
-            "Finding IAM policies for principal"
-        );
+    ) -> Result<PolicySet, PolicyFinderError> {
+        let policies = self.policies.read().unwrap();
 
-        // Step 1: Get direct policies attached to the principal
-        let mut all_policies = self.get_direct_policies(principal_hrn).await?;
-
-        // Step 2: If principal is a user, get policies from groups
-        if principal_hrn.service() == "iam" && principal_hrn.resource_type() == "user" {
-            debug!("Principal is a user, checking group memberships");
-
-            let groups = self.get_user_groups(principal_hrn).await?;
-
-            if !groups.is_empty() {
-                debug!(group_count = groups.len(), "User belongs to groups");
-                let group_policies = self.get_group_policies(&groups).await?;
-                all_policies.extend(group_policies);
-            }
+        // Try to find policies for this specific principal
+        if let Some(policy_set) = policies.get(&principal_hrn.to_string()) {
+            return Ok(policy_set.clone());
         }
 
-        debug!(
-            policy_count = all_policies.len(),
-            principal = %principal_hrn,
-            "Found IAM policies for principal"
-        );
+        // Return empty policy set if no policies found
+        Ok(PolicySet::new())
+    }
+}
 
-        Ok(all_policies)
+/// SurrealDB adapter for policy finding
+///
+/// This adapter retrieves policies from SurrealDB storage.
+///
+/// # TODO: IMPLEMENTATION
+///
+/// This is a stub that will be implemented in Phase 2 when we integrate
+/// with the actual repository layer.
+pub struct SurrealPolicyFinderAdapter {
+    // TODO: Add SurrealDB connection pool
+}
+
+impl SurrealPolicyFinderAdapter {
+    /// Create a new SurrealDB adapter
+    ///
+    /// # TODO
+    ///
+    /// Accept SurrealDB connection pool as parameter
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Default for SurrealPolicyFinderAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl PolicyFinderPort for SurrealPolicyFinderAdapter {
+    async fn get_effective_policies(
+        &self,
+        _principal_hrn: &Hrn,
+    ) -> Result<PolicySet, PolicyFinderError> {
+        // TODO: Implement actual database query
+        // For now, return empty policy set
+        Ok(PolicySet::new())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Mock repositories for testing
-    struct MockPolicyRepo;
-    struct MockUserRepo;
-    struct MockGroupRepo;
+    use std::str::FromStr;
 
     #[tokio::test]
-    async fn test_adapter_compiles() {
-        let policy_repo = Arc::new(MockPolicyRepo);
-        let user_repo = Arc::new(MockUserRepo);
-        let group_repo = Arc::new(MockGroupRepo);
+    async fn test_in_memory_adapter_returns_empty_when_no_policies() {
+        let adapter = InMemoryPolicyFinderAdapter::new();
+        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
 
-        let adapter = PolicyRepositoryAdapter::new(policy_repo, user_repo, group_repo);
+        let result = adapter.get_effective_policies(&principal_hrn).await;
 
-        let hrn = Hrn::new(
-            "iam".to_string(),
-            "us-east-1".to_string(),
-            "123456789012".to_string(),
-            "user".to_string(),
-            "alice".to_string(),
-        );
-
-        // Should return empty policies for now
-        let result = adapter.get_policies_for_principal(&hrn).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 0);
+        let policy_set = result.unwrap();
+        assert_eq!(policy_set.policies().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_adapter_returns_configured_policies() {
+        let adapter = InMemoryPolicyFinderAdapter::new();
+        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+
+        let policy_text = "permit(principal, action, resource);";
+        let policy_set = PolicySet::from_str(policy_text).unwrap();
+
+        adapter.add_policies_for_principal(principal_hrn.to_string(), policy_set.clone());
+
+        let result = adapter.get_effective_policies(&principal_hrn).await;
+
+        assert!(result.is_ok());
+        let returned_set = result.unwrap();
+        assert_eq!(returned_set.policies().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_adapter_clear() {
+        let adapter = InMemoryPolicyFinderAdapter::new();
+        let principal_hrn = Hrn::parse("hrn:hodei:iam::account123:user/alice").unwrap();
+
+        let policy_text = "permit(principal, action, resource);";
+        let policy_set = PolicySet::from_str(policy_text).unwrap();
+        adapter.add_policies_for_principal(principal_hrn.to_string(), policy_set);
+
+        adapter.clear();
+
+        let result = adapter.get_effective_policies(&principal_hrn).await;
+        assert!(result.is_ok());
+        let returned_set = result.unwrap();
+        assert_eq!(returned_set.policies().count(), 0);
     }
 }

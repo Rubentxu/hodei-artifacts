@@ -1,77 +1,90 @@
 //! Adapter implementations for the create_policy feature
+use std::str::FromStr;
 //!
 //! This module provides concrete implementations of the ports defined for
 //! policy management, including validation and persistence adapters.
+//!
+//! # TODO: REFACTOR
+//! This is a temporary stub implementation. In Phase 2 of the refactoring,
+//! this feature will be:
+//! 1. Split into separate features (create, delete, update, get, list)
+//! 2. Moved to the appropriate bounded context
+//! 3. Properly integrated with the policies crate validation
 
 use crate::features::create_policy::ports::{
     PolicyValidationError, PolicyValidator, ValidationError, ValidationResult, ValidationWarning,
 };
 use async_trait::async_trait;
-use policies::features::validate_policy::{ValidatePolicyQuery, ValidatePolicyUseCase};
-use std::sync::Arc;
 
-/// Adapter that implements PolicyValidator using the policies crate's validation service
+/// Temporary stub adapter for policy validation
 ///
-/// This adapter delegates policy validation to the policies crate, maintaining
-/// the architectural boundary and keeping Cedar-specific logic isolated.
+/// This is a placeholder implementation that allows the code to compile.
+/// It performs basic Cedar syntax validation.
 ///
-/// # Architecture
-/// - This adapter lives in the infrastructure layer
-/// - It translates between hodei-iam's domain concepts and the policies crate's API
-/// - No direct Cedar dependencies in hodei-iam
-pub struct PoliciesValidatorAdapter {
-    validate_policy_use_case: Arc<ValidatePolicyUseCase>,
+/// # TODO
+/// Replace with proper integration to policies crate validation once
+/// the policies crate features are refactored.
+pub struct StubPolicyValidatorAdapter;
+
+impl StubPolicyValidatorAdapter {
+    /// Create a new stub adapter instance
+    pub fn new() -> Self {
+        Self
+    }
 }
 
-impl PoliciesValidatorAdapter {
-    /// Create a new adapter instance
-    ///
-    /// # Arguments
-    /// * `validate_policy_use_case` - The validation use case from the policies crate
-    pub fn new(validate_policy_use_case: Arc<ValidatePolicyUseCase>) -> Self {
-        Self {
-            validate_policy_use_case,
-        }
+impl Default for StubPolicyValidatorAdapter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[async_trait]
-impl PolicyValidator for PoliciesValidatorAdapter {
+impl PolicyValidator for StubPolicyValidatorAdapter {
     async fn validate_policy(
         &self,
         policy_content: &str,
     ) -> Result<ValidationResult, PolicyValidationError> {
-        // Build query for the policies crate
-        let query = ValidatePolicyQuery::new(policy_content.to_string());
+        // Basic validation: check if the policy content is not empty
+        // and contains basic Cedar policy structure
 
-        // Delegate validation to policies crate
-        let result = self
-            .validate_policy_use_case
-            .execute(&query)
-            .await
-            .map_err(|e| PolicyValidationError::ServiceError(e.to_string()))?;
+        if policy_content.trim().is_empty() {
+            return Ok(ValidationResult {
+                is_valid: false,
+                errors: vec![ValidationError {
+                    message: "Policy content cannot be empty".to_string(),
+                    line: None,
+                    column: None,
+                }],
+                warnings: vec![],
+            });
+        }
 
-        // Convert the result to our domain types
-        Ok(ValidationResult {
-            is_valid: result.is_valid,
-            errors: result
-                .errors
-                .into_iter()
-                .map(|e| ValidationError {
-                    message: e.message,
-                    line: e.line,
-                    column: e.column,
+        // Try to parse as Cedar PolicySet to validate syntax
+        match cedar_policy::PolicySet::from_str(policy_content) {
+            Ok(_) => Ok(ValidationResult {
+                is_valid: true,
+                errors: vec![],
+                warnings: vec![],
+            }),
+            Err(parse_errors) => {
+                let errors: Vec<ValidationError> = parse_errors
+                    .errors()
+                    .iter()
+                    .map(|e| ValidationError {
+                        message: e.to_string(),
+                        line: None,
+                        column: None,
+                    })
+                    .collect();
+
+                Ok(ValidationResult {
+                    is_valid: false,
+                    errors,
+                    warnings: vec![],
                 })
-                .collect(),
-            warnings: result
-                .warnings
-                .into_iter()
-                .map(|w| ValidationWarning {
-                    message: w.message,
-                    severity: w.severity,
-                })
-                .collect(),
-        })
+            }
+        }
     }
 }
 
@@ -79,6 +92,45 @@ impl PolicyValidator for PoliciesValidatorAdapter {
 mod tests {
     use super::*;
 
-    // Integration tests would go here, testing the adapter with a real
-    // ValidatePolicyUseCase instance. For now, unit tests will use mocks.
+    #[tokio::test]
+    async fn test_stub_validator_rejects_empty_policy() {
+        let validator = StubPolicyValidatorAdapter::new();
+        let result = validator.validate_policy("").await.unwrap();
+
+        assert!(!result.is_valid);
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].message.contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn test_stub_validator_accepts_valid_cedar_syntax() {
+        let validator = StubPolicyValidatorAdapter::new();
+        let valid_policy = r#"
+            permit(
+                principal,
+                action,
+                resource
+            );
+        "#;
+
+        let result = validator.validate_policy(valid_policy).await.unwrap();
+
+        assert!(
+            result.is_valid,
+            "Expected valid policy, got errors: {:?}",
+            result.errors
+        );
+        assert_eq!(result.errors.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_stub_validator_rejects_invalid_cedar_syntax() {
+        let validator = StubPolicyValidatorAdapter::new();
+        let invalid_policy = "this is not valid cedar syntax";
+
+        let result = validator.validate_policy(invalid_policy).await.unwrap();
+
+        assert!(!result.is_valid);
+        assert!(!result.errors.is_empty());
+    }
 }

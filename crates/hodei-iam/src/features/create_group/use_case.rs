@@ -1,6 +1,6 @@
 use super::dto::{CreateGroupCommand, GroupView};
 use super::ports::CreateGroupUnitOfWork;
-use crate::shared::domain::{Group, events::GroupCreated};
+use crate::internal::domain::{Group, events::GroupCreated};
 use kernel::EventPublisher;
 use kernel::Hrn;
 use kernel::application::ports::event_bus::EventEnvelope;

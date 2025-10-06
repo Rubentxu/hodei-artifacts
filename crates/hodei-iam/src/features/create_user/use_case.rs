@@ -1,6 +1,6 @@
 use super::dto::{CreateUserCommand, UserView};
 use super::ports::CreateUserUnitOfWork;
-use crate::shared::domain::{User, events::UserCreated};
+use crate::internal::domain::{User, events::UserCreated};
 use kernel::EventPublisher;
 use kernel::Hrn;
 use kernel::application::ports::event_bus::EventEnvelope;

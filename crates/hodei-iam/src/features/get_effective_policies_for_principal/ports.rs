@@ -4,7 +4,7 @@
 //! Following the Interface Segregation Principle (SOLID), each port is specific
 //! to this feature's needs.
 
-use crate::shared::domain::{Group, User};
+use crate::internal::domain::{Group, User};
 use async_trait::async_trait;
 use kernel::domain::Hrn;
 

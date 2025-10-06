@@ -1,94 +1,145 @@
 //! Dependency Injection configuration for evaluate_iam_policies feature
 //!
-//! This module provides factory functions to wire up the use case with its dependencies.
-//! Following the Dependency Inversion Principle, it creates concrete implementations
-//! and injects them into the use case.
+//! This module provides factory functions to construct the use case with its dependencies.
+//! Following the Dependency Inversion Principle, dependencies are injected as trait objects.
+//!
+//! # TODO: REFACTOR (Phase 2)
+//!
+//! This is a temporary implementation. In Phase 2, when we properly integrate
+//! with repositories, this will be updated to inject real infrastructure adapters.
 
 use std::sync::Arc;
 
-use kernel::application::ports::authorization::IamPolicyEvaluator;
-use policies::features::evaluate_policies::EvaluatePoliciesUseCase;
+use super::adapter::{InMemoryPolicyFinderAdapter, SurrealPolicyFinderAdapter};
+use super::ports::PolicyFinderPort;
+use super::use_case::EvaluateIamPoliciesUseCase;
 
-use super::{adapter::PolicyRepositoryAdapter, use_case::EvaluateIamPoliciesUseCase};
-
-/// Create the evaluate_iam_policies use case with all dependencies
+/// Create the evaluate_iam_policies use case with in-memory dependencies
 ///
-/// This function wires up the use case with:
-/// - Policy repository adapter (for finding IAM policies)
-/// - Policy evaluator from policies crate (for Cedar evaluation)
-///
-/// # Type Parameters
-/// * `PR` - Policy repository type
-/// * `UR` - User repository type
-/// * `GR` - Group repository type
-///
-/// # Arguments
-/// * `policy_repo` - Repository for IAM policies
-/// * `user_repo` - Repository for users (to resolve group memberships)
-/// * `group_repo` - Repository for groups (to get group policies)
+/// This factory is useful for testing and development.
 ///
 /// # Returns
-/// An Arc-wrapped implementation of IamPolicyEvaluator
+///
+/// A configured `EvaluateIamPoliciesUseCase` with in-memory adapters
 ///
 /// # Example
-/// ```ignore
-/// use std::sync::Arc;
-/// use hodei_iam::features::evaluate_iam_policies::di::make_iam_policy_evaluator;
 ///
-/// let policy_repo = Arc::new(SurrealPolicyRepository::new(db.clone()));
-/// let user_repo = Arc::new(SurrealUserRepository::new(db.clone()));
-/// let group_repo = Arc::new(SurrealGroupRepository::new(db.clone()));
+/// ```rust,ignore
+/// use hodei_iam::features::evaluate_iam_policies::di;
 ///
-/// let evaluator = make_iam_policy_evaluator(policy_repo, user_repo, group_repo);
+/// let use_case = di::make_in_memory_use_case();
 /// ```
-pub fn make_iam_policy_evaluator<PR, UR, GR>(
-    policy_repo: Arc<PR>,
-    user_repo: Arc<UR>,
-    group_repo: Arc<GR>,
-) -> Arc<dyn IamPolicyEvaluator>
+pub fn make_in_memory_use_case() -> EvaluateIamPoliciesUseCase<InMemoryPolicyFinderAdapter> {
+    let policy_finder = Arc::new(InMemoryPolicyFinderAdapter::new());
+    EvaluateIamPoliciesUseCase::new(policy_finder)
+}
+
+/// Create the evaluate_iam_policies use case with a custom policy finder
+///
+/// This factory allows injecting a custom implementation of PolicyFinderPort,
+/// which is useful for testing with mocks or for providing alternative implementations.
+///
+/// # Arguments
+///
+/// * `policy_finder` - Implementation of PolicyFinderPort to use
+///
+/// # Returns
+///
+/// A configured `EvaluateIamPoliciesUseCase` with the provided adapter
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use hodei_iam::features::evaluate_iam_policies::{di, mocks::MockPolicyFinder};
+/// use cedar_policy::PolicySet;
+///
+/// let mock_finder = Arc::new(MockPolicyFinder::empty());
+/// let use_case = di::make_use_case_with_finder(mock_finder);
+/// ```
+pub fn make_use_case_with_finder<P>(policy_finder: Arc<P>) -> EvaluateIamPoliciesUseCase<P>
 where
-    PR: Send + Sync + 'static,
-    UR: Send + Sync + 'static,
-    GR: Send + Sync + 'static,
+    P: PolicyFinderPort,
 {
-    // Create policy finder adapter
-    let policy_finder = Arc::new(PolicyRepositoryAdapter::new(
-        policy_repo,
-        user_repo,
-        group_repo,
-    ));
+    EvaluateIamPoliciesUseCase::new(policy_finder)
+}
 
-    // Create policy evaluator from policies crate (stateless, reusable)
-    let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-    // Create and return the use case
-    Arc::new(EvaluateIamPoliciesUseCase::new(
-        policy_finder,
-        policy_evaluator,
-    ))
+/// Create the evaluate_iam_policies use case with SurrealDB dependencies
+///
+/// This factory creates the use case with adapters that connect to SurrealDB.
+///
+/// # TODO: IMPLEMENTATION
+///
+/// In Phase 2, this will accept a SurrealDB connection pool as a parameter
+/// and inject it into the adapters.
+///
+/// # Returns
+///
+/// A configured `EvaluateIamPoliciesUseCase` with SurrealDB adapters
+///
+/// # Example (Future)
+///
+/// ```rust,ignore
+/// use hodei_iam::features::evaluate_iam_policies::di;
+///
+/// let db_pool = /* SurrealDB connection pool */;
+/// let use_case = di::make_surreal_use_case(db_pool);
+/// ```
+pub fn make_surreal_use_case() -> EvaluateIamPoliciesUseCase<SurrealPolicyFinderAdapter> {
+    let policy_finder = Arc::new(SurrealPolicyFinderAdapter::new());
+    EvaluateIamPoliciesUseCase::new(policy_finder)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::Hrn;
+    use kernel::application::ports::authorization::{EvaluationRequest, IamPolicyEvaluator};
 
-    // Mock repositories for testing DI
-    struct MockPolicyRepo;
-    struct MockUserRepo;
-    struct MockGroupRepo;
+    #[tokio::test]
+    async fn test_make_in_memory_use_case() {
+        let use_case = make_in_memory_use_case();
 
-    #[test]
-    fn test_make_iam_policy_evaluator_creates_evaluator() {
-        // Arrange
-        let policy_repo = Arc::new(MockPolicyRepo);
-        let user_repo = Arc::new(MockUserRepo);
-        let group_repo = Arc::new(MockGroupRepo);
+        let request = EvaluationRequest {
+            principal_hrn: Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap(),
+            action_name: "read".to_string(),
+            resource_hrn: Hrn::from_string("hrn:hodei:artifact::account123:artifact/doc1").unwrap(),
+        };
 
-        // Act
-        let evaluator = make_iam_policy_evaluator(policy_repo, user_repo, group_repo);
+        // Should not panic and should return a decision
+        let result = use_case.evaluate_iam_policies(request).await;
+        assert!(result.is_ok());
+    }
 
-        // Assert
-        // Just verify it compiles and creates the evaluator
-        assert!(Arc::strong_count(&evaluator) == 1);
+    #[tokio::test]
+    async fn test_make_use_case_with_custom_finder() {
+        use super::super::mocks::MockPolicyFinder;
+        use cedar_policy::PolicySet;
+
+        let mock_finder = Arc::new(MockPolicyFinder::empty());
+        let use_case = make_use_case_with_finder(mock_finder);
+
+        let request = EvaluationRequest {
+            principal_hrn: Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap(),
+            action_name: "read".to_string(),
+            resource_hrn: Hrn::from_string("hrn:hodei:artifact::account123:artifact/doc1").unwrap(),
+        };
+
+        let result = use_case.evaluate_iam_policies(request).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_make_surreal_use_case() {
+        let use_case = make_surreal_use_case();
+
+        let request = EvaluationRequest {
+            principal_hrn: Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap(),
+            action_name: "read".to_string(),
+            resource_hrn: Hrn::from_string("hrn:hodei:artifact::account123:artifact/doc1").unwrap(),
+        };
+
+        // Should not panic and should return a decision
+        let result = use_case.evaluate_iam_policies(request).await;
+        assert!(result.is_ok());
     }
 }

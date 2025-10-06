@@ -1,5 +1,5 @@
 use super::ports::{AddUserToGroupRepositories, AddUserToGroupUnitOfWork};
-use crate::shared::application::ports::{GroupRepository, UserRepository};
+use crate::internal::application::ports::{GroupRepository, UserRepository};
 use std::error::Error as StdError;
 use std::sync::Arc;
 

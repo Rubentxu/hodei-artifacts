@@ -5,7 +5,7 @@
 
 use super::adapter::{GroupFinderAdapter, PolicyFinderAdapter, UserFinderAdapter};
 use super::use_case::GetEffectivePoliciesForPrincipalUseCase;
-use crate::shared::application::ports::{GroupRepository, UserRepository};
+use crate::internal::application::ports::{GroupRepository, UserRepository};
 use std::sync::Arc;
 
 /// Create a GetEffectivePoliciesForPrincipalUseCase with in-memory repositories
@@ -41,7 +41,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::infrastructure::persistence::{InMemoryGroupRepository, InMemoryUserRepository};
+    use crate::internal::infrastructure::persistence::{InMemoryGroupRepository, InMemoryUserRepository};
 
     #[test]
     fn test_make_use_case() {

@@ -1,4 +1,4 @@
-use crate::shared::application::ports::UserRepository;
+use crate::internal::application::ports::UserRepository;
 use std::error::Error as StdError;
 
 /// Unit of Work for the create_user feature

@@ -1,4 +1,4 @@
-use crate::shared::domain::{Group, Namespace, ServiceAccount, User};
+use crate::internal::domain::{Group, Namespace, ServiceAccount, User};
 use kernel::Hrn;
 /// DI Configurator for hodei-iam
 /// 

@@ -1,6 +1,6 @@
 use super::adapter::GenericCreateUserUnitOfWork;
 use super::use_case::CreateUserUseCase;
-use crate::shared::application::ports::UserRepository;
+use crate::internal::application::ports::UserRepository;
 use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 

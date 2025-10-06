@@ -13,3 +13,14 @@ pub mod use_case;
 pub mod mocks;
 #[cfg(test)]
 pub mod use_case_test;
+
+// Re-export public API
+pub use dto::{
+    CreatePolicyCommand, DeletePolicyCommand, GetPolicyQuery, ListPoliciesQuery, PolicyView,
+    UpdatePolicyCommand,
+};
+pub use error::CreatePolicyError;
+pub use use_case::{
+    CreatePolicyUseCase, DeletePolicyUseCase, GetPolicyUseCase, ListPoliciesUseCase,
+    UpdatePolicyUseCase,
+};

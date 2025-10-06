@@ -6,11 +6,8 @@
 use crate::features::get_effective_policies_for_principal::ports::{
     GroupFinderPort, PolicyFinderPort, UserFinderPort,
 };
-use crate::shared::application::ports::{
-    GroupRepository, GroupRepositoryError, PolicyRepositoryError, UserRepository,
-    UserRepositoryError,
-};
-use crate::shared::domain::{Group, User};
+use crate::internal::application::ports::{GroupRepository, UserRepository};
+use crate::internal::domain::{Group, User};
 use kernel::Hrn;
 use std::sync::Arc;
 
@@ -27,8 +24,14 @@ impl<UR: UserRepository> UserFinderAdapter<UR> {
 
 #[async_trait::async_trait]
 impl<UR: UserRepository> UserFinderPort for UserFinderAdapter<UR> {
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, UserRepositoryError> {
-        self.repository.find_by_hrn(hrn).await
+    async fn find_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
+        self.repository
+            .find_by_hrn(hrn)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 }
 
@@ -47,32 +50,45 @@ impl<GR: GroupRepository> GroupFinderAdapter<GR> {
 impl<GR: GroupRepository> GroupFinderPort for GroupFinderAdapter<GR> {
     async fn find_groups_by_user_hrn(
         &self,
-        _user_hrn: &Hrn,
-    ) -> Result<Vec<Group>, GroupRepositoryError> {
-        // Marcar uso explícito del repositorio para evitar warning de campo no usado
-        let _ = &self.repository;
+        user_hrn: &Hrn,
+    ) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
+        // TODO: Implementar cuando GroupRepository tenga find_groups_by_user_hrn
+        // Por ahora, obtener todos los grupos y filtrar por membresía
+        let all_groups = self
+            .repository
+            .find_all()
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
-        // TODO (pendiente): Implementar resolución real de grupos.
-        Ok(vec![])
+        // Filtrar grupos donde el usuario es miembro
+        let user_groups: Vec<Group> = all_groups
+            .into_iter()
+            .filter(|group| {
+                // Verificar si el usuario está en la lista de miembros del grupo
+                // Asumiendo que Group tiene alguna forma de verificar membresía
+                group.attached_policy_hrns.iter().any(|_| {
+                    // TODO: Esta lógica necesita ser implementada correctamente
+                    // cuando tengamos la estructura de datos de membresía
+                    false
+                })
+            })
+            .collect();
+
+        Ok(user_groups)
     }
 }
 
-/// Adaptador que conecta PolicyFinderPort con repositorio de políticas
+/// Adaptador que conecta PolicyFinderPort con búsqueda de políticas
 ///
-/// NOTA: Actualmente no existe un PolicyRepository en hodei-iam.
-/// Las políticas se gestionan en el crate 'policies'.
-/// Este adaptador es un placeholder que devuelve políticas vacías.
-///
-/// En una implementación completa, necesitaríamos:
-/// 1. Un PolicyRepository en hodei-iam que almacene la relación principal->policy
-/// 2. O una integración con el crate 'policies' para buscar políticas por principal
-pub struct PolicyFinderAdapter {
-    // Placeholder - en el futuro inyectaríamos el repositorio real aquí
-}
+/// NOTA: Las políticas IAM no se almacenan en hodei-iam, sino que se
+/// obtienen desde el authorization engine o el crate policies.
+/// Este adapter actúa como un puente temporal hasta que se implemente
+/// la integración completa.
+pub struct PolicyFinderAdapter;
 
 impl PolicyFinderAdapter {
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 }
 
@@ -87,9 +103,12 @@ impl PolicyFinderPort for PolicyFinderAdapter {
     async fn find_policies_by_principal(
         &self,
         _principal_hrn: &Hrn,
-    ) -> Result<Vec<String>, PolicyRepositoryError> {
-        // TODO: Implementar cuando tengamos PolicyRepository
+    ) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+        // TODO: Implementar integración con el motor de políticas
         // Por ahora devolvemos un vector vacío
+        // En una implementación real, esto consultaría:
+        // 1. Políticas directamente adjuntas al principal
+        // 2. Políticas heredadas de grupos
         Ok(vec![])
     }
 }
@@ -97,7 +116,7 @@ impl PolicyFinderPort for PolicyFinderAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::infrastructure::persistence::InMemoryUserRepository;
+    use crate::internal::infrastructure::persistence::InMemoryUserRepository;
 
     #[tokio::test]
     async fn test_user_finder_adapter() {

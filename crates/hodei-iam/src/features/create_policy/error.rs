@@ -3,13 +3,12 @@
 //! This module defines all error types that can occur during IAM policy
 //! management operations.
 
-use crate::shared::application::ports::PolicyStorageError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CreatePolicyError {
     #[error("Policy storage error: {0}")]
-    StorageError(#[from] PolicyStorageError),
+    StorageError(String),
 
     #[error("Invalid policy content: {0}")]
     InvalidPolicyContent(String),
@@ -24,7 +23,7 @@ pub enum CreatePolicyError {
 #[derive(Debug, Error)]
 pub enum DeletePolicyError {
     #[error("Policy storage error: {0}")]
-    StorageError(#[from] PolicyStorageError),
+    StorageError(String),
 
     #[error("Policy not found")]
     PolicyNotFound,
@@ -33,7 +32,7 @@ pub enum DeletePolicyError {
 #[derive(Debug, Error)]
 pub enum UpdatePolicyError {
     #[error("Policy storage error: {0}")]
-    StorageError(#[from] PolicyStorageError),
+    StorageError(String),
 
     #[error("Policy not found")]
     PolicyNotFound,
@@ -48,7 +47,7 @@ pub enum UpdatePolicyError {
 #[derive(Debug, Error)]
 pub enum GetPolicyError {
     #[error("Policy storage error: {0}")]
-    StorageError(#[from] PolicyStorageError),
+    StorageError(String),
 
     #[error("Policy not found")]
     PolicyNotFound,
@@ -57,5 +56,5 @@ pub enum GetPolicyError {
 #[derive(Debug, Error)]
 pub enum ListPoliciesError {
     #[error("Policy storage error: {0}")]
-    StorageError(#[from] PolicyStorageError),
+    StorageError(String),
 }

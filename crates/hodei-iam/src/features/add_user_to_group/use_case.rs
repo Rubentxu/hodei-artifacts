@@ -1,6 +1,6 @@
 use super::dto::AddUserToGroupCommand;
 use super::ports::AddUserToGroupUnitOfWork;
-use crate::shared::domain::events::UserAddedToGroup;
+use crate::internal::domain::events::UserAddedToGroup;
 use kernel::EventPublisher;
 use kernel::Hrn;
 use kernel::application::ports::event_bus::EventEnvelope;

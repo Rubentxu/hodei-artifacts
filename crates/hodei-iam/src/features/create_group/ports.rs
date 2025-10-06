@@ -1,4 +1,4 @@
-use crate::shared::application::ports::GroupRepository;
+use crate::internal::application::ports::GroupRepository;
 use std::error::Error as StdError;
 
 /// Unit of Work for the create_group feature
