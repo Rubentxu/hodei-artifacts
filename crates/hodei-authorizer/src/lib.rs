@@ -52,6 +52,7 @@ pub mod application;
 pub mod contracts;
 pub mod dto;
 pub mod features;
+pub mod infrastructure;
 
 // Re-export evaluate permissions feature
 pub use features::evaluate_permissions::{
@@ -64,3 +65,6 @@ pub use features::evaluate_permissions::{
     ports::OrganizationBoundaryProvider as EvalOrgProvider,
     use_case::EvaluatePermissionsUseCase,
 };
+
+// Re-export infrastructure components
+pub use infrastructure::SurrealOrganizationBoundaryProvider;

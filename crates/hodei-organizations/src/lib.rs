@@ -141,9 +141,7 @@ pub mod ports {
     pub use crate::features::create_account::ports::{
         CreateAccountUnitOfWork, CreateAccountUnitOfWorkFactory,
     };
-    pub use crate::features::create_ou::ports::{
-        CreateOuUnitOfWork, CreateOuUnitOfWorkFactory,
-    };
+    pub use crate::features::create_ou::ports::{CreateOuUnitOfWork, CreateOuUnitOfWorkFactory};
     pub use crate::features::move_account::ports::{
         MoveAccountUnitOfWork, MoveAccountUnitOfWorkFactory,
     };
@@ -194,16 +192,13 @@ pub mod ports {
 /// ```
 pub mod infrastructure {
     pub use crate::features::create_account::surreal_adapter::{
-        CreateAccountSurrealUnitOfWorkAdapter,
-        CreateAccountSurrealUnitOfWorkFactoryAdapter,
+        CreateAccountSurrealUnitOfWorkAdapter, CreateAccountSurrealUnitOfWorkFactoryAdapter,
     };
     pub use crate::features::create_ou::surreal_adapter::{
-        CreateOuSurrealUnitOfWorkAdapter,
-        CreateOuSurrealUnitOfWorkFactoryAdapter,
+        CreateOuSurrealUnitOfWorkAdapter, CreateOuSurrealUnitOfWorkFactoryAdapter,
     };
     pub use crate::features::move_account::surreal_adapter::{
-        MoveAccountSurrealUnitOfWorkAdapter,
-        MoveAccountSurrealUnitOfWorkFactoryAdapter,
+        MoveAccountSurrealUnitOfWorkAdapter, MoveAccountSurrealUnitOfWorkFactoryAdapter,
     };
 }
 
@@ -242,4 +237,52 @@ pub mod __internal_di_only {
     pub use crate::internal::infrastructure::surreal::{
         SurrealUnitOfWork, SurrealUnitOfWorkFactory,
     };
+}
+
+// ============================================================================
+// Public Exports - Internal for Cross-Crate Infrastructure
+// ============================================================================
+
+/// Módulo público para permitir que hodei-authorizer acceda a los repositorios
+/// y entidades de dominio necesarias para implementar OrganizationBoundaryProvider.
+///
+/// ⚠️ IMPORTANTE: Este módulo expone internals por necesidad arquitectónica.
+/// Solo debe ser usado por adaptadores de infraestructura en hodei-authorizer.
+pub mod internal_api {
+    /// Repositorios de la capa de aplicación
+    pub mod application {
+        pub mod ports {
+            pub mod account_repository {
+                pub use crate::internal::application::ports::account_repository::{
+                    AccountRepository, AccountRepositoryError,
+                };
+            }
+            pub mod ou_repository {
+                pub use crate::internal::application::ports::ou_repository::{
+                    OuRepository, OuRepositoryError,
+                };
+            }
+            pub mod scp_repository {
+                pub use crate::internal::application::ports::scp_repository::{
+                    ScpRepository, ScpRepositoryError,
+                };
+            }
+        }
+    }
+
+    /// Entidades de dominio (necesarias para los repositorios)
+    pub mod domain {
+        pub use crate::internal::domain::account::Account;
+        pub use crate::internal::domain::ou::OrganizationalUnit;
+        pub use crate::internal::domain::scp::ServiceControlPolicy;
+    }
+
+    /// Implementaciones de infraestructura SurrealDB
+    pub mod infrastructure {
+        pub mod surreal {
+            pub use crate::internal::infrastructure::surreal::{
+                SurrealAccountRepository, SurrealOuRepository, SurrealScpRepository,
+            };
+        }
+    }
 }
