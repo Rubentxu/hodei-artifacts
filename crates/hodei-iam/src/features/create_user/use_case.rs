@@ -1,4 +1,5 @@
 use super::dto::{CreateUserCommand, UserView};
+use super::error::CreateUserError;
 use super::ports::CreateUserUnitOfWork;
 use crate::internal::domain::{User, events::UserCreated};
 use kernel::EventPublisher;
@@ -26,12 +27,12 @@ impl<U: CreateUserUnitOfWork> CreateUserUseCase<U> {
         self
     }
 
-    pub async fn execute(&self, cmd: CreateUserCommand) -> Result<UserView, anyhow::Error> {
+    pub async fn execute(&self, cmd: CreateUserCommand) -> Result<UserView, CreateUserError> {
         // Begin transaction
         self.uow
             .begin()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))?;
+            .map_err(|e| CreateUserError::TransactionBeginFailed(e.to_string()))?;
 
         // Execute business logic within transaction
         let result = self.execute_in_transaction(&cmd).await;
@@ -42,7 +43,7 @@ impl<U: CreateUserUnitOfWork> CreateUserUseCase<U> {
                 self.uow
                     .commit()
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))?;
+                    .map_err(|e| CreateUserError::TransactionCommitFailed(e.to_string()))?;
 
                 // Publish domain event after successful commit
                 if let Some(publisher) = &self.event_publisher {
@@ -78,7 +79,7 @@ impl<U: CreateUserUnitOfWork> CreateUserUseCase<U> {
     async fn execute_in_transaction(
         &self,
         cmd: &CreateUserCommand,
-    ) -> Result<UserView, anyhow::Error> {
+    ) -> Result<UserView, CreateUserError> {
         let repos = self.uow.repositories();
 
         // Generate a unique HRN using the type-safe constructor

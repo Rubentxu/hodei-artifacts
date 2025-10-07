@@ -15,10 +15,10 @@
 ### 🔴 Lo que necesita ATENCIÓN (40% pendiente)
 1. 🔴 **14+ warnings del compilador** (URGENTE - 2-4h)
 2. 🔴 **Acoplamiento infraestructura → aplicación** en `hodei-organizations` (IMPORTANTE - 1-2 días)
-3. 🟡 **3 features con `anyhow::Error`** (MEJORA - 1 día)
-   - `add_user_to_group`
-   - `create_group`
-   - `create_user`
+3. ✅ **Errores específicos implementados** (COMPLETADO)
+   - `add_user_to_group` → `AddUserToGroupError`
+   - `create_group` → `CreateGroupError`
+   - `create_user` → `CreateUserError`
 
 ## 🎯 Próximos Pasos (Orden Recomendado)
 
@@ -35,10 +35,7 @@ DÍA 1-2 (8-16h) → Historia 4: Refactorizar OrganizationBoundary
 ├─ Tests unitarios + integración (4-6h)
 └─ Verificación (2h)
 
-DÍA 3 (6-8h) → Historia 5: Errores Específicos
-├─ add_user_to_group (2h)
-├─ create_group (2h)
-├─ create_user (2h)
+
 └─ Integración final (2h)
 ```
 
@@ -131,7 +128,7 @@ Al terminar las 3 historias, deberías tener:
 
 **¡Manos a la obra! 🚀**
 
-**Tiempo estimado total: 2-3 días**
+**Tiempo estimado total: 1-2 días**
 **Primera historia (Historia 6): 2-4 horas**
 
-Comienza por Historia 6 para tener un build limpio, luego continúa con las demás.
+Comienza por Historia 6 para tener un build limpio, luego continúa con Historia 4.

@@ -79,10 +79,12 @@ pub mod features;
 // PUBLIC RE-EXPORTS - USE CASES AND DTOs ONLY
 // ============================================================================
 // --- User Management ---
-pub use features::add_user_to_group::{AddUserToGroupCommand, AddUserToGroupUseCase};
-pub use features::create_user::{CreateUserCommand, CreateUserUseCase};
+pub use features::add_user_to_group::{
+    AddUserToGroupCommand, AddUserToGroupError, AddUserToGroupUseCase,
+};
+pub use features::create_user::{CreateUserCommand, CreateUserError, CreateUserUseCase};
 // --- Group Management ---
-pub use features::create_group::{CreateGroupCommand, CreateGroupUseCase};
+pub use features::create_group::{CreateGroupCommand, CreateGroupError, CreateGroupUseCase};
 // --- Policy Management ---
 // TODO: REFACTOR (Phase 2) - create_policy feature is temporarily disabled
 // This feature is monolithic (contains full CRUD) and will be split into separate features:
@@ -113,14 +115,12 @@ pub use features::list_policies::{
 
 pub use features::update_policy::{
     UpdatePolicyUseCase,
-    dto::{UpdatePolicyCommand, PolicyView as UpdatePolicyView},
+    dto::{PolicyView as UpdatePolicyView, UpdatePolicyCommand},
     error::UpdatePolicyError,
 };
 
 pub use features::delete_policy::{
-    DeletePolicyUseCase,
-    dto::DeletePolicyCommand,
-    error::DeletePolicyError,
+    DeletePolicyUseCase, dto::DeletePolicyCommand, error::DeletePolicyError,
 };
 
 pub use features::get_effective_policies_for_principal::{

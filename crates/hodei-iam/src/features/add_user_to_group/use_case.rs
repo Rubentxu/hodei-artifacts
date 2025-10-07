@@ -1,4 +1,5 @@
 use super::dto::AddUserToGroupCommand;
+use super::error::AddUserToGroupError;
 use super::ports::AddUserToGroupUnitOfWork;
 use crate::internal::domain::events::UserAddedToGroup;
 use kernel::EventPublisher;
@@ -26,18 +27,18 @@ impl<U: AddUserToGroupUnitOfWork> AddUserToGroupUseCase<U> {
         self
     }
 
-    pub async fn execute(&self, cmd: AddUserToGroupCommand) -> Result<(), anyhow::Error> {
+    pub async fn execute(&self, cmd: AddUserToGroupCommand) -> Result<(), AddUserToGroupError> {
         // Parse HRNs
         let user_hrn = Hrn::from_string(&cmd.user_hrn)
-            .ok_or_else(|| anyhow::anyhow!("Invalid user HRN: {}", cmd.user_hrn))?;
+            .ok_or_else(|| AddUserToGroupError::InvalidUserHrn(cmd.user_hrn.clone()))?;
         let group_hrn = Hrn::from_string(&cmd.group_hrn)
-            .ok_or_else(|| anyhow::anyhow!("Invalid group HRN: {}", cmd.group_hrn))?;
+            .ok_or_else(|| AddUserToGroupError::InvalidGroupHrn(cmd.group_hrn.clone()))?;
 
         // Begin transaction
         self.uow
             .begin()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))?;
+            .map_err(|e| AddUserToGroupError::TransactionBeginFailed(e.to_string()))?;
 
         // Execute business logic within transaction
         let result = self.execute_in_transaction(&user_hrn, &group_hrn).await;
@@ -48,7 +49,7 @@ impl<U: AddUserToGroupUnitOfWork> AddUserToGroupUseCase<U> {
                 self.uow
                     .commit()
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))?;
+                    .map_err(|e| AddUserToGroupError::TransactionCommitFailed(e.to_string()))?;
 
                 // Publish domain event after successful commit
                 if let Some(publisher) = &self.event_publisher {
@@ -82,7 +83,7 @@ impl<U: AddUserToGroupUnitOfWork> AddUserToGroupUseCase<U> {
         &self,
         user_hrn: &Hrn,
         group_hrn: &Hrn,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<(), AddUserToGroupError> {
         let repos = self.uow.repositories();
 
         // Validate that the group exists to maintain consistency
@@ -92,7 +93,7 @@ impl<U: AddUserToGroupUnitOfWork> AddUserToGroupUseCase<U> {
             .await?
             .is_none()
         {
-            return Err(anyhow::anyhow!("Group not found: {}", group_hrn));
+            return Err(AddUserToGroupError::GroupNotFound(group_hrn.to_string()));
         }
 
         // Load the user
@@ -100,7 +101,7 @@ impl<U: AddUserToGroupUnitOfWork> AddUserToGroupUseCase<U> {
             .user_repository
             .find_by_hrn(user_hrn)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("User not found: {}", user_hrn))?;
+            .ok_or_else(|| AddUserToGroupError::UserNotFound(user_hrn.to_string()))?;
 
         // Add user to group (domain logic handles idempotency)
         user.add_to_group(group_hrn.clone());

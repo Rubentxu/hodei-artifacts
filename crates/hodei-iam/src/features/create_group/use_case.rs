@@ -1,4 +1,5 @@
 use super::dto::{CreateGroupCommand, GroupView};
+use super::error::CreateGroupError;
 use super::ports::CreateGroupUnitOfWork;
 use crate::internal::domain::{Group, events::GroupCreated};
 use kernel::EventPublisher;
@@ -26,12 +27,12 @@ impl<U: CreateGroupUnitOfWork> CreateGroupUseCase<U> {
         self
     }
 
-    pub async fn execute(&self, cmd: CreateGroupCommand) -> Result<GroupView, anyhow::Error> {
+    pub async fn execute(&self, cmd: CreateGroupCommand) -> Result<GroupView, CreateGroupError> {
         // Begin transaction
         self.uow
             .begin()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to begin transaction: {}", e))?;
+            .map_err(|e| CreateGroupError::TransactionBeginFailed(e.to_string()))?;
 
         // Execute business logic within transaction
         let result = self.execute_in_transaction(&cmd).await;
@@ -42,7 +43,7 @@ impl<U: CreateGroupUnitOfWork> CreateGroupUseCase<U> {
                 self.uow
                     .commit()
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to commit transaction: {}", e))?;
+                    .map_err(|e| CreateGroupError::TransactionCommitFailed(e.to_string()))?;
 
                 // Publish domain event after successful commit
                 if let Some(publisher) = &self.event_publisher {
@@ -77,7 +78,7 @@ impl<U: CreateGroupUnitOfWork> CreateGroupUseCase<U> {
     async fn execute_in_transaction(
         &self,
         cmd: &CreateGroupCommand,
-    ) -> Result<GroupView, anyhow::Error> {
+    ) -> Result<GroupView, CreateGroupError> {
         let repos = self.uow.repositories();
 
         // Generate a unique HRN using the type-safe constructor

@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::dto::AddUserToGroupCommand;
+    use super::super::error::AddUserToGroupError;
     use super::super::mocks::{
         MockAddUserToGroupUnitOfWork, MockGroupRepository, MockUserRepository,
     };
@@ -99,8 +100,10 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("User not found"));
+        match result.unwrap_err() {
+            AddUserToGroupError::UserNotFound(_) => {}
+            _ => panic!("Expected UserNotFound error"),
+        }
 
         // Verify transaction was rolled back
         assert_eq!(
@@ -149,8 +152,10 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Group not found"));
+        match result.unwrap_err() {
+            AddUserToGroupError::GroupNotFound(_) => {}
+            _ => panic!("Expected GroupNotFound error"),
+        }
 
         // Verify transaction was rolled back
         assert_eq!(
@@ -182,8 +187,10 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Invalid user HRN"));
+        match result.unwrap_err() {
+            AddUserToGroupError::InvalidUserHrn(_) => {}
+            _ => panic!("Expected InvalidUserHrn error"),
+        }
     }
 
     #[tokio::test]
@@ -214,8 +221,10 @@ mod tests {
 
         // Assert
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("Invalid group HRN"));
+        match result.unwrap_err() {
+            AddUserToGroupError::InvalidGroupHrn(_) => {}
+            _ => panic!("Expected InvalidGroupHrn error"),
+        }
     }
 
     #[tokio::test]

@@ -52,13 +52,12 @@
   ```
 - **Impacto**: Inversión de dependencias (infraestructura → aplicación)
 
-#### 5. Implementación de Errores Específicos (Historia 5) - 🟡 PARCIAL
-- **Estado**: Parcialmente implementado
-- **Features con `anyhow::Error` (PENDIENTES)**:
-  - ❌ `add_user_to_group/use_case.rs` - Línea 27: `Result<(), anyhow::Error>`
-  - ❌ `create_group/use_case.rs` - Línea 27: `Result<GroupView, anyhow::Error>`
-  - ❌ `create_user/use_case.rs` - Línea 27: `Result<UserView, anyhow::Error>`
+#### 5. Implementación de Errores Específicos (Historia 5) - ✅ COMPLETADA
+- **Estado**: Completamente implementado
 - **Features con errores específicos (COMPLETADAS)**:
+  - ✅ `add_user_to_group/` - Usa `AddUserToGroupError`
+  - ✅ `create_group/` - Usa `CreateGroupError`
+  - ✅ `create_user/` - Usa `CreateUserError`
   - ✅ `create_policy_new/` - Usa `CreatePolicyError`
   - ✅ `delete_policy/` - Usa `DeletePolicyError`
   - ✅ `update_policy/` - Usa `UpdatePolicyError`
@@ -424,7 +423,7 @@ Optimizar la suite de tests para maximizar cobertura y velocidad de ejecución, 
 | Historia 3: Separación CRUD Políticas | 🔴 ALTA | ✅ COMPLETA | 100% | ✅ |
 | **Historia 6: Eliminar Warnings** | **⚡ CRÍTICA** | **🟡 PENDIENTE** | **0%** | **N/A** |
 | **Historia 4: Acoplamiento Infra** | **🟡 ALTA** | **🟡 PENDIENTE** | **0%** | **❌** |
-| **Historia 5: Errores Específicos** | **🟡 MEDIA** | **🟡 PARCIAL** | **60%** | **🟡** |
+| **Historia 5: Errores Específicos** | **🟡 MEDIA** | **✅ COMPLETA** | **100%** | **✅** |
 | Historia 7: Optimización Tests | 🟢 BAJA | 🟡 MEJORA CONTINUA | 80% | 🟡 |
 
 ### Próximos Pasos Recomendados
@@ -434,7 +433,7 @@ Optimizar la suite de tests para maximizar cobertura y velocidad de ejecución, 
    - 🟡 Historia 4: Refactorizar `OrganizationBoundaryProvider` (1-2 días)
 
 2. **Corto Plazo (Siguiente Sprint)**:
-   - 🟡 Historia 5: Implementar errores específicos para los 3 casos de uso (1 día)
+   - (Ninguna pendiente)
 
 3. **Mejora Continua**:
    - 🟢 Historia 7: Incrementar cobertura de tests (ongoing)

@@ -4,6 +4,7 @@
 pub mod adapter;
 pub mod di;
 pub mod dto;
+pub mod error;
 pub mod mocks;
 pub mod ports;
 pub mod use_case;
@@ -11,4 +12,5 @@ pub mod use_case;
 // pub mod use_case_test;
 
 pub use dto::AddUserToGroupCommand;
+pub use error::AddUserToGroupError;
 pub use use_case::AddUserToGroupUseCase;
