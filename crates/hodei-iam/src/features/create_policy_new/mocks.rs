@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 /// - Return success/failure
 /// - Inject specific validation errors
 /// - Simulate service failures
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct MockPolicyValidator {
     /// If true, the validate_policy call will fail with a service error
@@ -38,11 +39,13 @@ pub struct MockPolicyValidator {
 
 impl MockPolicyValidator {
     /// Create a new mock validator that will succeed
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Create a mock that will fail validation with the given errors
+    #[allow(dead_code)]
     pub fn with_errors(errors: Vec<String>) -> Self {
         Self {
             validation_errors: errors,
@@ -51,6 +54,7 @@ impl MockPolicyValidator {
     }
 
     /// Create a mock that will fail with a service error
+    #[allow(dead_code)]
     pub fn with_service_error() -> Self {
         Self {
             should_fail_service: true,
@@ -59,11 +63,13 @@ impl MockPolicyValidator {
     }
 
     /// Add a validation warning
+    #[allow(dead_code)]
     pub fn add_warning(&mut self, message: String, severity: String) {
         self.validation_warnings.push((message, severity));
     }
 
     /// Get the number of times validate_policy was called
+    #[allow(dead_code)]
     pub fn get_call_count(&self) -> usize {
         *self.call_count.lock().unwrap()
     }
@@ -124,6 +130,7 @@ impl PolicyValidator for MockPolicyValidator {
 /// - Track created policies
 /// - Simulate storage errors
 /// - Simulate duplicate policy errors
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct MockCreatePolicyPort {
     /// If true, create() will fail with a storage error
@@ -156,11 +163,13 @@ impl Default for MockCreatePolicyPort {
 
 impl MockCreatePolicyPort {
     /// Create a new mock port that will succeed
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Create a mock that will fail with a storage error
+    #[allow(dead_code)]
     pub fn with_storage_error() -> Self {
         Self {
             should_fail_storage: true,
@@ -169,6 +178,7 @@ impl MockCreatePolicyPort {
     }
 
     /// Create a mock that will fail with PolicyAlreadyExists error
+    #[allow(dead_code)]
     pub fn with_duplicate_error() -> Self {
         Self {
             should_fail_duplicate: true,
@@ -177,6 +187,7 @@ impl MockCreatePolicyPort {
     }
 
     /// Create a mock with pre-existing policy IDs
+    #[allow(dead_code)]
     pub fn with_existing_policies(policy_ids: Vec<String>) -> Self {
         Self {
             existing_policy_ids: policy_ids,
@@ -185,21 +196,25 @@ impl MockCreatePolicyPort {
     }
 
     /// Get the number of successfully created policies
+    #[allow(dead_code)]
     pub fn get_created_count(&self) -> usize {
         self.created_policies.lock().unwrap().len()
     }
 
     /// Get the number of times create was called
+    #[allow(dead_code)]
     pub fn get_call_count(&self) -> usize {
         *self.call_count.lock().unwrap()
     }
 
     /// Get a clone of all created policies
+    #[allow(dead_code)]
     pub fn get_created_policies(&self) -> Vec<Policy> {
         self.created_policies.lock().unwrap().clone()
     }
 
     /// Check if a specific policy ID was created
+    #[allow(dead_code)]
     pub fn has_policy(&self, policy_id: &str) -> bool {
         self.created_policies
             .lock()

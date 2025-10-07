@@ -82,7 +82,6 @@ pub struct PageInfo {
 
 impl PageInfo {
     pub fn from_query(query: &ListPoliciesQuery, total_count: u64, actual_count: usize) -> Self {
-        let limit = query.effective_limit();
         let offset = query.effective_offset();
 
         Self {
@@ -138,4 +137,3 @@ impl ListPoliciesResponse {
         }
     }
 }
-

@@ -10,6 +10,7 @@ use kernel::{ActionTrait, domain::value_objects::ServiceName};
 // ============================================================================
 
 /// Action for creating a new user
+#[allow(dead_code)]
 pub struct CreateUserAction;
 
 impl ActionTrait for CreateUserAction {
@@ -35,6 +36,7 @@ impl ActionTrait for CreateUserAction {
 // ============================================================================
 
 /// Action for creating a new group
+#[allow(dead_code)]
 pub struct CreateGroupAction;
 
 impl ActionTrait for CreateGroupAction {
@@ -60,6 +62,7 @@ impl ActionTrait for CreateGroupAction {
 // ============================================================================
 
 /// Action for deleting a user
+#[allow(dead_code)]
 pub struct DeleteUserAction;
 
 impl ActionTrait for DeleteUserAction {
@@ -85,6 +88,7 @@ impl ActionTrait for DeleteUserAction {
 // ============================================================================
 
 /// Action for deleting a group
+#[allow(dead_code)]
 pub struct DeleteGroupAction;
 
 impl ActionTrait for DeleteGroupAction {
@@ -110,6 +114,7 @@ impl ActionTrait for DeleteGroupAction {
 // ============================================================================
 
 /// Action for adding a user to a group
+#[allow(dead_code)]
 pub struct AddUserToGroupAction;
 
 impl ActionTrait for AddUserToGroupAction {
@@ -135,6 +140,7 @@ impl ActionTrait for AddUserToGroupAction {
 // ============================================================================
 
 /// Action for removing a user from a group
+#[allow(dead_code)]
 pub struct RemoveUserFromGroupAction;
 
 impl ActionTrait for RemoveUserFromGroupAction {

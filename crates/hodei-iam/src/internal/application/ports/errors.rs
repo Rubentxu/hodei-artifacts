@@ -78,6 +78,7 @@ pub enum GroupRepositoryError {
 }
 
 /// Errors that can occur during Policy repository operations
+#[allow(dead_code)]
 #[derive(Debug, Error, Clone)]
 pub enum PolicyRepositoryError {
     #[error("Policy not found: {0}")]

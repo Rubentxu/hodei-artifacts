@@ -79,7 +79,7 @@ impl PolicyFinderPort for MockPolicyFinder {
             return Err(PolicyFinderError::RepositoryError(error_msg.clone()));
         }
 
-        Ok(self.policy_set.clone().unwrap_or_else(PolicySet::new))
+        Ok(self.policy_set.clone().unwrap_or_default())
     }
 }
 

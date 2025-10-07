@@ -150,11 +150,10 @@ impl ScpPersister for SurrealScpPersister {
             }
         }
 
-        if let Some(limit) = query.limit {
-            if scps.len() > limit as usize {
+        if let Some(limit) = query.limit
+            && scps.len() > limit as usize {
                 scps.truncate(limit as usize);
             }
-        }
 
         Ok(scps.into_iter().map(Self::to_dto).collect())
     }

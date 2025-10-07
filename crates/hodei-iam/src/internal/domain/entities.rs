@@ -112,7 +112,7 @@ impl HodeiEntity for User {
         let tag_values: Vec<AttributeValue> = self
             .tags
             .iter()
-            .map(|t| AttributeValue::string(t))
+            .map(AttributeValue::string)
             .collect();
         attrs.insert(
             AttributeName::new("tags").expect("Valid attribute name"),
@@ -215,7 +215,7 @@ impl HodeiEntity for Group {
         let tag_values: Vec<AttributeValue> = self
             .tags
             .iter()
-            .map(|t| AttributeValue::string(t))
+            .map(AttributeValue::string)
             .collect();
         attrs.insert(
             AttributeName::new("tags").expect("Valid attribute name"),
@@ -314,7 +314,7 @@ impl HodeiEntity for ServiceAccount {
         let tag_values: Vec<AttributeValue> = self
             .tags
             .iter()
-            .map(|t| AttributeValue::string(t))
+            .map(AttributeValue::string)
             .collect();
         attrs.insert(
             AttributeName::new("tags").expect("Valid attribute name"),
@@ -409,7 +409,7 @@ impl HodeiEntity for Namespace {
         let tag_values: Vec<AttributeValue> = self
             .tags
             .iter()
-            .map(|t| AttributeValue::string(t))
+            .map(AttributeValue::string)
             .collect();
         attrs.insert(
             AttributeName::new("tags").expect("Valid attribute name"),

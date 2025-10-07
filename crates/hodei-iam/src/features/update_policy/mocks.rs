@@ -19,6 +19,12 @@ pub struct MockPolicyValidator {
     should_fail: bool,
 }
 
+impl Default for MockPolicyValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockPolicyValidator {
     pub fn new() -> Self {
         Self {
@@ -81,6 +87,12 @@ pub struct MockUpdatePolicyPort {
     policies: Mutex<HashMap<String, (String, Option<String>)>>, // id -> (content, description)
     should_fail: bool,
     should_return_not_found: bool,
+}
+
+impl Default for MockUpdatePolicyPort {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockUpdatePolicyPort {

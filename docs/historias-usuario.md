@@ -1,323 +1,481 @@
-### Revisión de Código Actualizada
+# Historias de Usuario - Hodei Artifacts
 
-#### 1. Análisis General
+## Estado Actual de la Implementación (Auditoría)
 
-Tras la aclaración, el código demuestra una arquitectura interna de Bounded Context más robusta de lo que parecía inicialmente. El patrón de tener un núcleo de dominio (`core`/`internal`) compartido por las features del `crate` es pragmático y correcto. La adopción del nombre `internal` y la privatización del módulo han resuelto las principales inconsistencias de encapsulamiento, lo que representa un gran paso adelante. La estructura VSA y el uso de puertos segregados se mantienen como puntos fuertes. Sin embargo, persisten algunas inconsistencias críticas, como la implementación ficticia del patrón Unit of Work y la fuga de un adaptador en la API pública de `hodei-organizations`. Además, la existencia de *feature slices* monolíticas para operaciones CRUD sigue siendo un área de mejora para alinear el código completamente con la VSA.
+### ✅ Implementaciones Completadas
 
-#### 2. Puntos Fuertes
+#### 1. Shared Kernel (Historia 1) - ✅ COMPLETADA
+- **Estado**: Implementado correctamente
+- **Ubicación**: `crates/kernel/`
+- **Evidencia**:
+  - Existe el crate `kernel` como shared kernel
+  - Contiene `domain/`, `application/`, `infrastructure/`
+  - Exporta `Hrn`, `DomainEvent`, `AuthContextProvider`, etc.
+  - Los bounded contexts (`hodei-iam`, `hodei-organizations`) tienen módulos `internal/` privados
 
--   **Excelente Encapsulamiento del Bounded Context:** Con el cambio de `shared` a `internal` y su declaración como módulo privado (`mod internal;`), el `crate` ahora impone un fuerte encapsulamiento. Los detalles de implementación como entidades de dominio y repositorios están correctamente protegidos, haciendo que el compilador garantice los límites arquitectónicos.
--   **Estructura VSA por Feature:** La mayoría de las features siguen una estructura de "rebanada vertical" clara y cohesiva.
--   **Segregación de Interfaces (ISP):** Se definen puertos (`traits`) específicos para cada caso de uso, promoviendo un bajo acoplamiento y alta cohesión.
--   **Inyección de Dependencias:** El código depende de abstracciones, lo que facilita las pruebas y la flexibilidad.
--   **Tests Unitarios Sólidos:** Los `use_case_test.rs` demuestran un claro enfoque en probar la lógica de negocio de forma aislada mediante el uso de mocks.
--   **APIs basadas en DTOs:** Las interfaces públicas de los casos de uso están bien definidas mediante DTOs, evitando la fuga de entidades de dominio.
+#### 2. Encapsulamiento de Bounded Contexts (Historia 2) - ✅ MAYORMENTE COMPLETADA
+- **Estado**: Implementado con advertencias de deprecación
+- **Ubicación**: `crates/hodei-iam/src/lib.rs`, `crates/hodei-organizations/src/lib.rs`
+- **Evidencia**:
+  - Módulo `internal/` es privado en ambos crates
+  - Solo se exportan casos de uso y DTOs
+  - Existen exports deprecados en `__internal_di_only` para DI (temporal)
+  - Documentación clara con rustdoc sobre API pública
 
----
+#### 3. Separación de Features CRUD de Políticas (Historia 3) - ✅ COMPLETADA
+- **Estado**: Implementado correctamente
+- **Ubicación**: `crates/hodei-iam/src/features/`
+- **Evidencia**:
+  - ✅ `create_policy_new/` - Feature completa con VSA
+  - ✅ `delete_policy/` - Feature completa con VSA
+  - ✅ `update_policy/` - Feature completa con VSA
+  - ✅ `get_policy/` - Feature completa con VSA
+  - ✅ `list_policies/` - Feature completa con VSA
+  - Cada feature tiene: `use_case.rs`, `ports.rs`, `dto.rs`, `error.rs`, `adapter.rs`, `di.rs`, `mocks.rs`, `use_case_test.rs`
+  - Tests de integración presentes para cada feature
 
-#### 3. Críticas, Inconsistencias y Mejoras (Punto por Punto)
+### 🟡 Implementaciones Parciales
 
-1.  **Implementación Ficticia de Unit of Work (UoW)**
-  -   **Identificar el Problema:** `crates/hodei-iam/src/features/add_user_to_group/adapter.rs` (y similares en `create_user`, `create_group`).
-  -   **Describir la Inconsistencia:** La implementación `Generic...UnitOfWork` no gestiona una transacción real de base de datos. Utiliza un `std::sync::Mutex<bool>` para simular el estado de una transacción.
-  -   **Explicar el Impacto:** Esto es extremadamente peligroso en un entorno de producción. A pesar de que el código *parece* transaccional, no ofrece ninguna garantía de atomicidad. Si una operación de guardado falla a mitad del caso de uso, el sistema quedará en un estado inconsistente sin posibilidad de rollback real. Esto rompe la fiabilidad de las operaciones que modifican múltiples agregados.
-  -   **Proponer una Solución Concreta:** La implementación del UoW debe delegar en el mecanismo de transacciones real de la base de datos subyacente (p. ej., SurrealDB). El adaptador debe iniciar, confirmar o revertir una transacción de base de datos real.
+#### 4. Eliminación de Acoplamiento en Infraestructura (Historia 4) - 🟡 PENDIENTE
+- **Estado**: NO implementado - Problema persiste
+- **Ubicación**: `crates/hodei-organizations/src/internal/infrastructure/surreal/organization_boundary_provider.rs`
+- **Problema Identificado**: 
+  ```rust
+  // Líneas 1-3: Importa el caso de uso
+  use crate::features::get_effective_scps::di::get_effective_scps_use_case;
+  use crate::features::get_effective_scps::dto::GetEffectiveScpsCommand;
+  use crate::features::get_effective_scps::use_case::GetEffectiveScpsUseCase;
+  
+  // Líneas 38-49: Crea y ejecuta el caso de uso desde infraestructura
+  let use_case = get_effective_scps_use_case(scp_repository, account_repository, ou_repository);
+  let result = use_case.execute(command).await
+  ```
+- **Impacto**: Inversión de dependencias (infraestructura → aplicación)
 
-    ```rust
-    // Ejemplo conceptual para un UoW real con SurrealDB
-    // Fichero: crates/hodei-organizations/src/internal/infrastructure/surreal/unit_of_work.rs
-    
-    pub struct SurrealUnitOfWork {
-        // El cliente de DB se pasa en el constructor.
-        // La transacción se inicia en `begin`.
-        db: Surreal<Any>,
-        // Podría contener un objeto de transacción si el driver lo soporta.
-    }
+#### 5. Implementación de Errores Específicos (Historia 5) - 🟡 PARCIAL
+- **Estado**: Parcialmente implementado
+- **Features con `anyhow::Error` (PENDIENTES)**:
+  - ❌ `add_user_to_group/use_case.rs` - Línea 27: `Result<(), anyhow::Error>`
+  - ❌ `create_group/use_case.rs` - Línea 27: `Result<GroupView, anyhow::Error>`
+  - ❌ `create_user/use_case.rs` - Línea 27: `Result<UserView, anyhow::Error>`
+- **Features con errores específicos (COMPLETADAS)**:
+  - ✅ `create_policy_new/` - Usa `CreatePolicyError`
+  - ✅ `delete_policy/` - Usa `DeletePolicyError`
+  - ✅ `update_policy/` - Usa `UpdatePolicyError`
+  - ✅ `get_policy/` - Usa `GetPolicyError`
+  - ✅ `list_policies/` - Usa `ListPoliciesError`
 
-    #[async_trait]
-    impl UnitOfWork for SurrealUnitOfWork {
-        async fn begin(&mut self) -> Result<(), UnitOfWorkError> {
-            // Inicia una transacción REAL en la base de datos.
-            self.db.query("BEGIN TRANSACTION;").await?;
-            Ok(())
-        }
-    
-        async fn commit(&mut self) -> Result<(), UnitOfWorkError> {
-            self.db.query("COMMIT TRANSACTION;").await?;
-            Ok(())
-        }
-    
-        async fn rollback(&mut self) -> Result<(), UnitOfWorkError> {
-            self.db.query("CANCEL TRANSACTION;").await?;
-            Ok(())
-        }
-        
-        // ... los métodos que devuelven repositorios ahora usarían `self.db`.
-    }
-    ```
+### 🔴 Problemas de Calidad Detectados
 
-2.  **Feature Slice Monolítica para CRUD**
-  -   **Identificar el Problema:** `crates/hodei-iam/src/features/create_policy/use_case.rs` y `ports.rs`.
-  -   **Describir la Inconsistencia:** El módulo `create_policy` en realidad maneja `Create`, `Delete`, `Update`, `Get` y `List`. Esto viola la **Regla #4 (VSA por Feature)**.
-  -   **Explicar el Impacto:** El puerto `PolicyPersister` se vuelve demasiado grande (violando ISP) y la cohesión del módulo disminuye.
-  -   **Proponer una Solución Concreta:** Dividir el módulo en features individuales: `create_policy`, `delete_policy`, `update_policy`, `get_policy` y `list_policies`, cada una con su propia estructura VSA y su puerto segregado.
-
-3.  **Fuga de un Adaptador en la API Pública del Crate**
-  -   **Identificar el Problema:** `crates/hodei-organizations/src/lib.rs`.
-  -   **Describir la Inconsistencia:** El `crate` exporta públicamente `GetEffectiveScpsAdapter`. Un adaptador es un detalle de implementación de la capa de infraestructura. La API pública de un Bounded Context solo debe exponer sus capacidades (casos de uso) y los DTOs asociados.
-  -   **Explicar el Impacto:** Esto crea un acoplamiento indebido. El `crate` consumidor (`hodei-authorizer`) no solo necesita saber sobre el puerto (`GetEffectiveScpsPort`), sino también sobre su implementación específica (`GetEffectiveScpsAdapter`). La construcción y el cableado de adaptadores deben ocurrir en la "composition root" de la aplicación (p. ej., en `main.rs`), no dentro de la biblioteca.
-  -   **Proponer una Solución Concreta:** Eliminar la exportación pública del adaptador. El `crate` `hodei-organizations` debe exponer el puerto y una función constructora para el caso de uso. El `crate` `hodei-authorizer` dependerá del puerto, y la aplicación principal se encargará de crear el adaptador y realizar la inyección.
-
-    ```rust
-    // Antes (en crates/hodei-organizations/src/lib.rs)
-    pub struct GetEffectiveScpsAdapter<...> { ... }
-    pub use ... GetEffectiveScpsAdapter;
-
-    // Después (en crates/hodei-organizations/src/lib.rs)
-    // El struct GetEffectiveScpsAdapter y su implementación se mueven al crate de aplicación
-    // (o a un crate "glue" de infraestructura), NO se exponen aquí.
-    // Lo que sí se expone es el caso de uso y su constructor.
-    pub use features::get_effective_scps::{
-        GetEffectiveScpsUseCase, 
-        di::get_effective_scps_use_case // Un constructor para el caso de uso.
-    };
-
-    // En main.rs o composition root:
-    // 1. Crear repositorios de `hodei-organizations`.
-    // 2. Usar `get_effective_scps_use_case` para crear la instancia del caso de uso.
-    // 3. Crear el `GetEffectiveScpsAdapter` envolviendo el caso de uso.
-    // 4. Inyectar el adaptador (como `Arc<dyn GetEffectiveScpsPort>`) en `hodei-authorizer`.
-    ```
-
-
+#### Warnings del Compilador (14 warnings)
+```
+1. unused import: `ValidationWarning` en create_policy_new/validator.rs:12
+2. unused import: `async_trait::async_trait` en get_policy/use_case.rs:3
+3. unused variable: `limit` en list_policies/dto.rs:85
+4. enum `PolicyRepositoryError` is never used en internal/application/ports/errors.rs:82
+5. struct `CreateUserAction` is never constructed en internal/domain/actions.rs:13
+6. struct `CreateGroupAction` is never constructed en internal/domain/actions.rs:38
+7. struct `DeleteUserAction` is never constructed en internal/domain/actions.rs:63
+8. struct `DeleteGroupAction` is never constructed
+9. struct `AddUserToGroupAction` is never constructed
+10. struct `RemoveUserFromGroupAction` is never constructed
+11. struct `MockPolicyValidator` is never constructed
+12. struct `MockCreatePolicyPort` is never constructed
+13. Múltiples métodos asociados no usados en mocks
+14. Redundant closures en varios archivos
+```
 
 ---
 
-### Historias de Usuario Completas y Actualizadas
+## 📋 Plan de Implementación - Historias Pendientes
 
-#### Bounded Context: IAM (`hodei-iam`)
+### Prioridad de Implementación
 
-**HU-IAM-001: Creación de un nuevo usuario**
-*   **Como** un administrador del sistema (o un servicio de API),
-*   **quiero** crear un nuevo usuario proporcionando su nombre y correo electrónico,
-*   **para** poder registrar nuevos individuos en el sistema.
-- **Estado:** ✅ Completada (use case `CreateUserUseCase` y test `crates/hodei-iam/tests/integration_create_user_comprehensive_test.rs`)
-*   **AC:**
-      1.  El sistema debe generar un HRN único y global para el nuevo usuario.
-      2.  El usuario se debe persistir en la base de datos de forma transaccional.
-      3.  Tras la creación exitosa, se debe emitir un evento de dominio `UserCreated`.
-      4.  **[Test de Integración]** Debe existir un test de integración que invoque el caso de uso `CreateUserUseCase` a través de la API pública del `crate` (`hodei_iam::features::create_user::di::make_use_case`), usando un repositorio en memoria (`InMemoryUserRepository`) y verifique que el usuario se crea correctamente sin acceder a ningún módulo `internal`.
-
-**HU-IAM-002: Creación de un nuevo grupo**
-*   **Como** un administrador del sistema,
-*   **quiero** crear un nuevo grupo de usuarios proporcionando un nombre,
-*   **para** poder agrupar usuarios con permisos similares.
-- **Estado:** ✅ Completada (use case `CreateGroupUseCase` y test `crates/hodei-iam/tests/integration_create_group_comprehensive_test.rs`)
-*   **AC:**
-      1.  El sistema debe generar un HRN único para el nuevo grupo.
-      2.  El grupo se debe persistir en la base de datos de forma transaccional.
-      3.  Tras la creación exitosa, se debe emitir un evento de dominio `GroupCreated`.
-      4.  **[Test de Integración]** Debe existir un test de integración que utilice la API pública del `crate` (`make_create_group_uc`) con un repositorio en memoria para confirmar la creación del grupo y la correcta formación del DTO de respuesta (`GroupView`).
-
-**HU-IAM-003: Añadir un usuario a un grupo**
-*   **Como** un administrador del sistema,
-*   **quiero** añadir un usuario existente a un grupo existente,
-*   **para** que el usuario herede los permisos asociados a ese grupo.
-- **Estado:** 🟡 En progreso (la UoW actual `GenericAddUserToGroupUnitOfWork` simula la transacción y sigue pendiente implementar soporte transaccional real)
-*   **AC:**
-      1.  La operación debe ser atómica y transaccional, garantizada por un Unit of Work.
-      2.  El sistema debe verificar que tanto el usuario como el grupo existen antes de proceder.
-      3.  La operación debe ser idempotente.
-      4.  Tras la asignación exitosa, se debe emitir un evento `UserAddedToGroup`.
-      5.  **[Test de Integración]** Debe existir un test que, usando la API pública, cree un usuario y un grupo, llame al `AddUserToGroupUseCase`, y verifique que la entidad `User` fue actualizada correctamente.
-
-**HU-IAM-004: Creación de una política IAM**
-*   **Como** un administrador de seguridad,
-*   **quiero** crear una nueva política IAM proporcionando su contenido en lenguaje Cedar,
-*   **para** definir un conjunto de permisos reutilizable.
-- **Estado:** ✅ Completada (feature `create_policy_new` con tests unitarios e integración en `crates/hodei-iam/tests/integration_create_policy_new_test.rs`)
-*   **AC:**
-      1.  El contenido de la política debe ser validado sintácticamente.
-      2.  Si la política es válida, se debe persistir y asignar un HRN único.
-      3.  **[Test de Integración]** Debe existir un test que utilice el `CreatePolicyUseCase` con mocks para sus puertos y valide la lógica del caso de uso.
-
-**HU-IAM-005: Consultar políticas efectivas de un principal**
-*   **Como** un servicio de autorización,
-*   **quiero** solicitar todas las políticas IAM efectivas para un principal,
-*   **para** poder tomar una decisión de autorización.
-- **Estado:** 🟡 En progreso (existe `GetEffectivePoliciesForPrincipalUseCase`, pero falta test de integración ejercitando la API pública)
-*   **AC:**
-      1.  La respuesta debe incluir las políticas directamente adjuntas al usuario y las heredadas de sus grupos.
-      2.  La API pública debe devolver las políticas como un `Vec<String>`, sin exponer entidades internas.
-      3.  **[Test de Integración]** Debe existir un test que use la API pública del `GetEffectivePoliciesForPrincipalUseCase` con mocks para sus puertos, simulando diferentes escenarios de herencia y verificando la agregación de políticas.
-
-**HU-IAM-006: Leer una política IAM**
-*   **Como** un administrador,
-*   **quiero** obtener los detalles de una política IAM por su HRN,
-*   **para** revisar su contenido y descripción.
-- **Estado:** ✅ Completada (feature `get_policy` con 9 tests unitarios + 3 tests de integración, ver `docs/HU-IAM-006-COMPLETION-SUMMARY.md`)
-*   **AC:**
-      1.  La API debe devolver un DTO (`PolicyView`) con los detalles de la política.
-      2.  Si la política no existe, se debe devolver un error `PolicyNotFound`.
-      3.  **[Test de Integración]** Debe existir un test que use el `GetPolicyUseCase` público para recuperar una política creada previamente (usando un persister en memoria).
-*   **Implementación:**
-      - Feature completa en `crates/hodei-iam/src/features/get_policy/`
-      - `GetPolicyUseCase` con validación de tipo HRN
-      - `PolicyReader` port segregado (ISP)
-      - `InMemoryPolicyReader` para testing
-      - Tests unitarios: 9 pasando (adapters, mocks, use case)
-      - Tests de integración: 3 pasando en `tests/integration_get_policy_test.rs`
-      - API pública: `GetPolicyQuery`, `PolicyView`, `GetPolicyError`
-
-**HU-IAM-007: Actualizar una política IAM**
-*   **Como** un administrador,
-*   **quiero** actualizar el contenido o la descripción de una política IAM existente,
-*   **para** modificar sus permisos sin tener que borrar y recrear la política.
-- **Estado:** ✅ Completada (feature `update_policy` con 37 tests unitarios + 11 tests de integración, ver `docs/HU-IAM-007-COMPLETION-SUMMARY.md`)
-*   **AC:**
-      1.  El nuevo contenido de la política debe ser validado sintácticamente usando Cedar antes de persistir cualquier cambio.
-      2.  La operación debe ser atómica - si falla la validación o persistencia, no se aplica ningún cambio.
-      3.  Si la política no existe, se debe devolver un error `PolicyNotFound`.
-      4.  **[Test de Integración]** Debe existir un test que use el `UpdatePolicyUseCase` público para modificar una política y verifique que el cambio se ha persistido.
-*   **Implementación:**
-      - Feature completa en `crates/hodei-iam/src/features/update_policy/`
-      - `UpdatePolicyUseCase` con validación Cedar integrada
-      - `UpdatePolicyPort` segregado (ISP)
-      - `InMemoryUpdatePolicyAdapter` para testing
-      - `CedarPolicyValidator` compartido con otras features
-      - Tests unitarios: 37 pasando (DTOs, errores, mocks, adapters, use case)
-      - Tests de integración: 11 pasando en `tests/integration_update_policy_test.rs`
-      - API pública: `UpdatePolicyCommand`, `PolicyView`, `UpdatePolicyError`
-
-**HU-IAM-008: Borrar una política IAM**
-*   **Como** un administrador,
-*   **quiero** borrar una política IAM que ya no se utiliza,
-*   **para** mantener el sistema limpio y seguro.
-- **Estado:** 🟡 En progreso (feature `delete_policy` implementada, falta validar adaptadores reales e integración end-to-end)
-*   **AC:**
-      1.  El sistema debería (idealmente) verificar que la política no está adjunta a ningún principal antes de borrarla.
-      2.  Si la política no existe, se debe devolver un error `PolicyNotFound`.
-      3.  **[Test de Integración]** Debe existir un test que use el `DeletePolicyUseCase` público para borrar una política y verifique que ya no se puede recuperar.
-
-**HU-IAM-009: Listar políticas IAM**
-*   **Como** un administrador,
-*   **quiero** listar todas las políticas IAM disponibles, con opción de paginación,
-*   **para** tener una visión general de los permisos definidos.
-- **Estado:** ✅ Completada (feature `list_policies` con 9 tests unitarios + 12 tests de integración, ver `docs/HU-IAM-009-COMPLETION-SUMMARY.md`)
-*   **AC:**
-      1.  La API debe soportar parámetros de `limit` y `offset` para la paginación.
-      2.  La respuesta debe ser una lista de DTOs (`Vec<PolicySummary>`).
-      3.  **[Test de Integración]** Debe existir un test que cree varias políticas y luego use el `ListPoliciesUseCase` público para verificar que la paginación (`limit` y `offset`) funciona como se espera.
-*   **Implementación:**
-      - Feature completa en `crates/hodei-iam/src/features/list_policies/`
-      - `ListPoliciesUseCase` con validación de paginación
-      - `PolicyLister` port segregado (ISP)
-      - `InMemoryPolicyLister` con ordenamiento consistente
-      - Tests unitarios: 9 pasando (use case, mocks, ports)
-      - Tests de integración: 12 pasando en `tests/integration_list_policies_test.rs`
-      - API pública: `ListPoliciesQuery`, `ListPoliciesResponse`, `PageInfo`, `PolicySummary`, `ListPoliciesError`
-      - Paginación completa: limit (1-100, default 50), offset, navegación (next/previous)
+1. **🔴 CRÍTICA** - Historia 6: Eliminar Warnings del Compilador
+2. **🟡 ALTA** - Historia 4: Eliminación de Acoplamiento en Infraestructura
+3. **🟡 MEDIA** - Historia 5: Implementación de Errores Específicos
+4. **🟢 BAJA** - Historia 7: Optimización de Tests y Cobertura
 
 ---
 
-#### Bounded Context: Organizations (`hodei-organizations`)
+## Historia 6: Eliminar Warnings del Compilador ⚡ CRÍTICA
 
-**HU-ORG-001: Creación de una nueva cuenta**
-*   **Como** un administrador de la organización,
-*   **quiero** crear una nueva cuenta bajo una Unidad Organizativa (OU) específica,
-*   **para** aislar recursos y facturación.
-- **Estado:** 🟡 En progreso (use case y tests unitarios listos, falta validar adaptador real y prueba de integración)
-*   **AC:**
-      1.  Se debe generar un HRN único para la cuenta.
-      2.  La operación debe ser transaccional.
-      3.  Se debe emitir un evento `AccountCreated`.
-      4.  **[Test de Integración]** Debe existir un test que use la API pública (`make_create_account_uc`) con un UoW en memoria para validar la creación.
+**Prioridad:** ⚡ CRÍTICA  
+**Bounded Context:** `hodei-iam`, `policies`  
+**Tipo:** Limpieza de Código / Calidad  
+**Dependencias:** Ninguna
 
-**HU-ORG-002: Creación de una nueva Unidad Organizativa (OU)**
-*   **Como** un administrador de la organización,
-*   **quiero** crear una nueva OU bajo una OU padre existente o en la raíz,
-*   **para** estructurar jerárquicamente mis cuentas.
-- **Estado:** 🟡 En progreso (feature `create_ou` completa en lógica y tests unitarios, falta cobertura de integración)
-*   **AC:**
-      1.  Se debe validar que la OU padre existe (si se proporciona).
-      2.  La operación debe ser transaccional.
-      3.  **[Test de Integración]** Debe existir un test que use la API pública para crear una jerarquía de OUs y valide que las entidades se persisten correctamente.
+### 📋 Descripción del Problema
 
-**HU-ORG-003: Mover una cuenta entre OUs**
-*   **Como** un administrador de la organización,
-*   **quiero** mover una cuenta de una OU de origen a una de destino de forma atómica,
-*   **para** reflejar cambios organizacionales sin riesgo de estados inconsistentes.
-- **Estado:** 🟡 En progreso (use case `MoveAccountUseCase` implementado con UoW, falta integración end-to-end y validación con infra real)
-*   **AC:**
-      1.  La operación debe ser **atómica y transaccional**.
-      2.  Se debe verificar la existencia de la cuenta y de ambas OUs.
-      3.  Se debe emitir un evento `AccountMoved`.
-      4.  **[Test de Integración]** Debe existir un test que configure un estado inicial, invoque el `MoveAccountUseCase` a través de su API pública, y verifique el estado final, confirmando la atomicidad.
+**Problema Identificado:** El proyecto tiene 14+ warnings del compilador que afectan la calidad del código y dificultan la detección de problemas reales.
 
-**HU-ORG-004: Creación de una Política de Control de Servicio (SCP)**
-*   **Como** un administrador de la organización,
-*   **quiero** crear una nueva SCP con contenido Cedar,
-*   **para** definir barreras de permisos a nivel organizacional.
-- **Estado:** 🟡 En progreso (vertical slice `create_scp` lista, adaptadores reales pendientes)
-*   **AC:**
-      1.  El contenido de la SCP debe ser validado sintácticamente.
-      2.  La SCP se debe persistir con un HRN único.
-      3.  **[Test de Integración]** Debe existir un test que use la API pública del `CreateScpUseCase` para validar la creación.
+**Impacto:**
+- Ruido en los builds que oculta warnings importantes
+- Código muerto que aumenta la superficie de mantenimiento
+- Violación de las reglas de calidad (compilación sin warnings)
 
-**HU-ORG-005: Adjuntar una SCP a una cuenta o a una OU**
-*   **Como** un administrador de la organización,
-*   **quiero** adjuntar una SCP existente a una cuenta o a una OU,
-*   **para** aplicar las barreras de permisos definidas en la SCP.
-- **Estado:** 🟡 En progreso (feature `attach_scp` con lógica y tests unitarios, falta validación contra storage real)
-*   **AC:**
-      1.  Se debe verificar la existencia de la SCP y del objetivo.
-      2.  La operación debe ser transaccional.
-      3.  Se debe emitir un evento `ScpAttached`.
-      4.  **[Test de Integración]** Debe existir un test que, usando la API pública, cree una SCP y una OU, llame al `AttachScpUseCase`, y verifique que la OU fue actualizada.
+### 🎯 Objetivo
 
-**HU-ORG-006: Consultar SCPs efectivas para una entidad**
-*   **Como** un servicio de autorización,
-*   **quiero** obtener todas las SCPs efectivas que se aplican a una entidad (cuenta o OU),
-*   **para** evaluar las barreras de permisos organizacionales.
-- **Estado:** 🟡 En progreso (use case `GetEffectiveScpsUseCase` operativo con tests unitarios, falta integración que produzca `PolicySet` completo)
-*   **AC:**
-      1.  La API pública debe devolver un `PolicySet` de Cedar.
-      2.  La respuesta debe incluir las SCPs de la entidad y de toda su jerarquía de padres.
-      3.  **[Test de Integración]** Debe existir un test que construya una jerarquía, adjunte SCPs, y use el `GetEffectiveScpsUseCase` (a través de su puerto) para verificar la lógica de agregación.
+Eliminar todos los warnings del compilador para tener un build limpio que cumpla con `cargo clippy --all` sin advertencias.
 
-**HU-ORG-007: Leer una SCP** (Análoga a HU-IAM-006)
-*   **Como** un administrador, **quiero** obtener los detalles de una SCP por su HRN.
-*   **AC:** Devolver un DTO `ScpDto` o `ScpNotFound`. Test de integración.
-- **Estado:** ⏳ Pendiente
+### ✅ Tareas de Implementación
 
-**HU-ORG-008: Actualizar una SCP** (Análoga a HU-IAM-007)
-*   **Como** un administrador, **quiero** actualizar el contenido de una SCP existente.
-*   **AC:** Validar nuevo contenido, operación atómica, error si no existe. Test de integración.
-- **Estado:** ⏳ Pendiente
+| Estado | Tarea | Descripción | Ubicación |
+|--------|-------|-------------|-----------|
+| ○ | 6.1 | Eliminar import no usado `ValidationWarning` | `crates/hodei-iam/src/features/create_policy_new/validator.rs:12` |
+| ○ | 6.2 | Eliminar import no usado `async_trait::async_trait` | `crates/hodei-iam/src/features/get_policy/use_case.rs:3` |
+| ○ | 6.3 | Usar variable `limit` o prefijar con `_` | `crates/hodei-iam/src/features/list_policies/dto.rs:85` |
+| ○ | 6.4 | Eliminar o usar `PolicyRepositoryError` | `crates/hodei-iam/src/internal/application/ports/errors.rs:82` |
+| ○ | 6.5 | Eliminar o usar `CreateUserAction` | `crates/hodei-iam/src/internal/domain/actions.rs:13` |
+| ○ | 6.6 | Eliminar o usar `CreateGroupAction` | `crates/hodei-iam/src/internal/domain/actions.rs:38` |
+| ○ | 6.7 | Eliminar o usar `DeleteUserAction` | `crates/hodei-iam/src/internal/domain/actions.rs:63` |
+| ○ | 6.8 | Eliminar o usar `DeleteGroupAction` | `internal/domain/actions.rs` |
+| ○ | 6.9 | Eliminar o usar `AddUserToGroupAction` | `internal/domain/actions.rs` |
+| ○ | 6.10 | Eliminar o usar `RemoveUserFromGroupAction` | `internal/domain/actions.rs` |
+| ○ | 6.11 | Agregar `#[allow(dead_code)]` o eliminar `MockPolicyValidator` | `create_policy_new/mocks.rs` |
+| ○ | 6.12 | Agregar `#[allow(dead_code)]` o eliminar `MockCreatePolicyPort` | `create_policy_new/mocks.rs` |
+| ○ | 6.13 | Eliminar métodos no usados en mocks o marcar con `#[allow(dead_code)]` | Varios archivos de mocks |
+| ○ | 6.14 | Simplificar closures redundantes | Varios archivos |
+| ○ | 6.15 | Resolver warning de `policies` crate | `crates/policies/` |
+| ○ | 6.16 | Verificar compilación sin warnings | `cargo check --all` |
+| ○ | 6.17 | Ejecutar clippy sin warnings | `cargo clippy --all -- -D warnings` |
+| ○ | 6.18 | Ejecutar todos los tests | `cargo nextest run` |
 
-**HU-ORG-009: Borrar una SCP** (Análoga a HU-IAM-008)
-*   **Como** un administrador, **quiero** borrar una SCP que no esté adjunta a ninguna entidad.
-*   **AC:** Verificar que no esté en uso, error si no existe. Test de integración.
-- **Estado:** ⏳ Pendiente
+### 🧪 Estrategia de Testing
 
-**HU-ORG-010: Listar SCPs** (Análoga a HU-IAM-009)
-*   **Como** un administrador, **quiero** listar todas las SCPs disponibles con paginación.
-*   **AC:** Soportar `limit`/`offset`. Test de integración.
-- **Estado:** ⏳ Pendiente
+**Verificación:**
+- `cargo check --all` debe completar sin warnings
+- `cargo clippy --all -- -D warnings` debe pasar (warnings como errores)
+- Todos los tests deben seguir pasando
+
+### 📊 Criterios de Aceptación
+
+- [ ] `cargo check --all` completa sin warnings
+- [ ] `cargo clippy --all -- -D warnings` pasa sin errores
+- [ ] Todos los tests pasan (100% de tests previos siguen funcionando)
+- [ ] No se ha eliminado código que será necesario en el futuro (usar `#[allow(dead_code)]` con comentario)
 
 ---
 
-#### Bounded Context: Authorizer (`hodei-authorizer`)
+## Historia 4: Eliminación de Acoplamiento en Infraestructura 🟡 ALTA
 
-**HU-AUTH-001: Evaluar una solicitud de autorización completa**
-*   **Como** un microservicio o API Gateway,
-*   **quiero** preguntar si un principal tiene permiso para realizar una acción sobre un recurso,
-*   **para** proteger el acceso a los recursos del sistema de forma centralizada.
-- **Estado:** 🟡 En progreso (use case `EvaluatePermissionsUseCase` operativo con pruebas unitarias, depende de completar evaluadores IAM/SCP para cumplir AC)
-*   **AC:**
-      1.  La decisión final debe ser `Deny` si CUALQUIER SCP efectiva deniega la acción (principio de "Deny by default").
-      2.  Si las SCPs lo permiten, la decisión final debe basarse en las políticas IAM efectivas del principal.
-      3.  Si no hay ninguna política IAM que permita explícitamente la acción, la decisión es `Deny`.
-      4.  La decisión final, la razón y las métricas de evaluación deben ser registradas.
-      5.  Los resultados deben ser cacheados para optimizar el rendimiento.
-      6.  **[Test de Integración]** Debe existir un test que construya el `EvaluatePermissionsUseCase` inyectando *mocks* para los puertos `EffectivePoliciesQueryPort` y `GetEffectiveScpsPort`, y valide todos los escenarios de decisión (IAM permite/deniega vs. SCP permite/deniega).
+**Prioridad:** 🟡 ALTA  
+**Bounded Context:** `hodei-organizations`  
+**Tipo:** Refactorización Arquitectónica  
+**Dependencias:** Historia 6
+
+### 📋 Descripción del Problema
+
+**Inconsistencia Identificada:** `SurrealOrganizationBoundaryProvider` (infraestructura) depende y ejecuta el caso de uso `GetEffectiveScpsUseCase` (aplicación), invirtiendo la dirección de dependencias de Clean Architecture.
+
+**Código Problemático:**
+```rust
+// En organization_boundary_provider.rs, líneas 1-3
+use crate::features::get_effective_scps::di::get_effective_scps_use_case;
+use crate::features::get_effective_scps::dto::GetEffectiveScpsCommand;
+use crate::features::get_effective_scps::use_case::GetEffectiveScpsUseCase;
+
+// Líneas 38-49: Crea el caso de uso desde infraestructura
+let use_case = get_effective_scps_use_case(scp_repository, account_repository, ou_repository);
+let result = use_case.execute(command).await
+```
+
+**Impacto:**
+- Inversión del flujo de control (infraestructura → aplicación)
+- Ciclo de dependencias conceptual
+- Duplicación de lógica de negocio entre caso de uso y adaptador
+- Viola principios de Clean Architecture
+
+### 🎯 Objetivo
+
+Reimplementar `SurrealOrganizationBoundaryProvider` para que contenga su propia lógica de negocio usando repositorios directamente, sin depender de casos de uso.
+
+### ✅ Tareas de Implementación
+
+| Estado | Tarea | Descripción | Ubicación |
+|--------|-------|-------------|-----------|
+| ○ | 4.1 | Documentar algoritmo de `GetEffectiveScpsUseCase` | Crear documento de especificación |
+| ○ | 4.2 | Extraer lógica de negocio a algoritmo reutilizable | Módulo privado compartido o trait |
+| ○ | 4.3 | Refactorizar constructor de `SurrealOrganizationBoundaryProvider` | Inyectar repositorios, no crear internamente |
+| ○ | 4.4 | Implementar método `get_effective_scps_for` con lógica directa | Sin usar caso de uso |
+| ○ | 4.5 | Paso 1: Determinar si HRN es Account o OU | Parsing del HRN |
+| ○ | 4.6 | Paso 2: Cargar entidad usando repositorio apropiado | `AccountRepository` o `OuRepository` |
+| ○ | 4.7 | Paso 3: Obtener SCPs directamente adjuntos | De Account o OU |
+| ○ | 4.8 | Paso 4: Recorrer jerarquía de OUs hacia raíz | Algoritmo recursivo/iterativo |
+| ○ | 4.9 | Paso 5: Recolectar HRNs de SCPs en cada nivel | Acumulación |
+| ○ | 4.10 | Paso 6: Cargar contenido de SCPs usando `ScpRepository` | Batch load si es posible |
+| ○ | 4.11 | Paso 7: Construir y devolver `PolicySet` de Cedar | Parsear políticas |
+| ○ | 4.12 | Eliminar imports de caso de uso | Líneas 1-3 del archivo |
+| ○ | 4.13 | Crear mocks para los 3 repositorios | Tests unitarios |
+| ○ | 4.14 | Crear tests unitarios del adaptador | `organization_boundary_provider_test.rs` |
+| ○ | 4.15 | Test: Jerarquía simple (Account → OU → Root) | Unit test |
+| ○ | 4.16 | Test: Jerarquía profunda (múltiples niveles de OU) | Unit test |
+| ○ | 4.17 | Test: Account sin OU padre (edge case) | Unit test |
+| ○ | 4.18 | Test: OU sin SCPs adjuntos | Unit test |
+| ○ | 4.19 | Test: Error al cargar entidad | Unit test |
+| ○ | 4.20 | Verificar que `GetEffectiveScpsUseCase` sigue funcionando | Sus propios tests deben pasar |
+| ○ | 4.21 | Crear tests de integración con testcontainers | Si no existen |
+| ○ | 4.22 | Verificar compilación | `cargo check` |
+| ○ | 4.23 | Resolver warnings | `cargo clippy` |
+| ○ | 4.24 | Ejecutar todos los tests | `cargo nextest run` |
+
+### 🧪 Estrategia de Testing
+
+**Tests Unitarios (Adaptador):**
+- Mock de `SurrealAccountRepository`, `SurrealOuRepository`, `SurrealScpRepository`
+- Escenarios:
+  1. Account directo con SCPs
+  2. Account en OU con SCPs en ambos niveles
+  3. Jerarquía profunda (Account → OU nivel 3 → OU nivel 2 → OU nivel 1 → Root)
+  4. Account/OU sin SCPs adjuntos
+  5. Error al cargar entidad
+  6. Error al cargar SCP
+- Verificar construcción correcta del `PolicySet`
+- Cobertura > 90%
+
+**Tests de Integración:**
+- Levantar SurrealDB con testcontainers
+- Crear jerarquía completa: Root OU → Child OU → Account
+- Adjuntar SCPs en cada nivel
+- Verificar políticas efectivas agregadas correctamente
+- Test de performance con jerarquía profunda (10+ niveles)
+
+**Tests de Regresión:**
+- Todos los tests existentes de `GetEffectiveScpsUseCase` deben seguir pasando
+- Tests de `hodei-authorizer` que usan `OrganizationBoundaryProvider` deben pasar
+
+### 📊 Criterios de Aceptación
+
+- [ ] `SurrealOrganizationBoundaryProvider` no importa ni usa `GetEffectiveScpsUseCase`
+- [ ] Implementa la lógica directamente usando repositorios inyectados
+- [ ] Tests unitarios del adaptador tienen > 90% coverage
+- [ ] Tests de integración pasan
+- [ ] Tests de regresión del caso de uso pasan
+- [ ] El código compila sin errores y warnings
+- [ ] No hay degradación de performance
+
+---
+
+## Historia 5: Implementación de Errores Específicos 🟡 MEDIA
+
+**Prioridad:** 🟡 MEDIA  
+**Bounded Context:** `hodei-iam`  
+**Tipo:** Mejora de Calidad  
+**Dependencias:** Historia 6
+
+### 📋 Descripción del Problema
+
+**Inconsistencia Identificada:** 3 casos de uso en `hodei-iam` devuelven `Result<..., anyhow::Error>` en lugar de errores específicos con `thiserror`.
+
+**Casos de Uso Afectados:**
+1. `add_user_to_group/use_case.rs` - `Result<(), anyhow::Error>`
+2. `create_group/use_case.rs` - `Result<GroupView, anyhow::Error>`
+3. `create_user/use_case.rs` - `Result<UserView, anyhow::Error>`
+
+**Impacto:**
+- Oculta los posibles fallos de cada operación
+- El consumidor no puede manejar errores programáticamente
+- Obliga a tratar errores como cadenas de texto (frágil)
+- Dificulta debugging y observabilidad
+- Inconsistencia con el resto de features que usan errores específicos
+
+### 🎯 Objetivo
+
+Crear tipos de error específicos con `thiserror` para los 3 casos de uso que actualmente usan `anyhow::Error`, siguiendo el patrón de las features de políticas.
+
+### ✅ Tareas de Implementación
+
+| Estado | Tarea | Descripción | Ubicación |
+|--------|-------|-------------|-----------|
+| ○ | 5.1 | **Feature: add_user_to_group** - Crear `error.rs` | `features/add_user_to_group/error.rs` |
+| ○ | 5.2 | Definir enum `AddUserToGroupError` | Con `#[derive(Debug, Error)]` |
+| ○ | 5.3 | Variante: `UserNotFound(String)` | Error específico |
+| ○ | 5.4 | Variante: `GroupNotFound(String)` | Error específico |
+| ○ | 5.5 | Variante: `InvalidUserHrn(String)` | Error específico |
+| ○ | 5.6 | Variante: `InvalidGroupHrn(String)` | Error específico |
+| ○ | 5.7 | Variante: `TransactionError(String)` | Error genérico de transacción |
+| ○ | 5.8 | Variante: `RepositoryError(String)` | Error genérico de repositorio |
+| ○ | 5.9 | Actualizar firma de `execute` | `Result<(), AddUserToGroupError>` |
+| ○ | 5.10 | Mapear errores en `execute` | Convertir errores internos |
+| ○ | 5.11 | Actualizar tests unitarios | Verificar variantes de error |
+| ○ | 5.12 | Actualizar `mod.rs` | Re-exportar error |
+| ○ | 5.13 | **Feature: create_group** - Crear `error.rs` | `features/create_group/error.rs` |
+| ○ | 5.14 | Definir enum `CreateGroupError` | Con `#[derive(Debug, Error)]` |
+| ○ | 5.15 | Variante: `DuplicateGroup(String)` | Si ya existe |
+| ○ | 5.16 | Variante: `InvalidGroupName(String)` | Validación falló |
+| ○ | 5.17 | Variante: `InvalidGroupHrn(String)` | HRN mal formado |
+| ○ | 5.18 | Variante: `TransactionError(String)` | Error de transacción |
+| ○ | 5.19 | Variante: `RepositoryError(String)` | Error de repositorio |
+| ○ | 5.20 | Actualizar firma de `execute` | `Result<GroupView, CreateGroupError>` |
+| ○ | 5.21 | Mapear errores en `execute` | Convertir errores internos |
+| ○ | 5.22 | Actualizar tests unitarios | Verificar variantes de error |
+| ○ | 5.23 | Actualizar `mod.rs` | Re-exportar error |
+| ○ | 5.24 | **Feature: create_user** - Crear `error.rs` | `features/create_user/error.rs` |
+| ○ | 5.25 | Definir enum `CreateUserError` | Con `#[derive(Debug, Error)]` |
+| ○ | 5.26 | Variante: `DuplicateUser(String)` | Si ya existe |
+| ○ | 5.27 | Variante: `InvalidUserName(String)` | Validación falló |
+| ○ | 5.28 | Variante: `InvalidEmail(String)` | Email inválido |
+| ○ | 5.29 | Variante: `InvalidUserHrn(String)` | HRN mal formado |
+| ○ | 5.30 | Variante: `TransactionError(String)` | Error de transacción |
+| ○ | 5.31 | Variante: `RepositoryError(String)` | Error de repositorio |
+| ○ | 5.32 | Actualizar firma de `execute` | `Result<UserView, CreateUserError>` |
+| ○ | 5.33 | Mapear errores en `execute` | Convertir errores internos |
+| ○ | 5.34 | Actualizar tests unitarios | Verificar variantes de error |
+| ○ | 5.35 | Actualizar `mod.rs` | Re-exportar error |
+| ○ | 5.36 | **Todos** - Verificar traits `Send + Sync` | Para uso con async |
+| ○ | 5.37 | Actualizar handlers HTTP si existen | Mapeo a códigos HTTP |
+| ○ | 5.38 | Actualizar `lib.rs` | Re-exportar errores públicamente |
+| ○ | 5.39 | Verificar compilación | `cargo check` |
+| ○ | 5.40 | Resolver warnings | `cargo clippy` |
+| ○ | 5.41 | Ejecutar todos los tests | `cargo nextest run` |
+
+### 🧪 Estrategia de Testing
+
+**Tests Unitarios (por cada feature):**
+- Test: Error `UserNotFound` se propaga correctamente
+- Test: Error `InvalidHrn` se lanza con HRN malformado
+- Test: Error `TransactionError` se lanza si commit falla
+- Test: Mapeo correcto de errores de repositorio
+- Test: Mensaje de error es descriptivo
+- Cobertura > 90% para cada variante de error
+
+**Tests de Integración:**
+- Verificar que los errores se propagan correctamente a la capa HTTP
+- Verificar códigos HTTP correctos (404 para NotFound, 400 para Invalid, 500 para Internal)
+
+### 📊 Criterios de Aceptación
+
+- [ ] Los 3 casos de uso tienen enum de error específico
+- [ ] Todos los errores implementan `Error + Send + Sync`
+- [ ] Mensajes de error son descriptivos con contexto
+- [ ] Tests unitarios verifican cada variante de error
+- [ ] Los errores se re-exportan en `lib.rs` para consumidores
+- [ ] El código compila sin errores y warnings
+- [ ] Todos los tests pasan
+- [ ] No hay uso de `anyhow::Error` en firmas públicas de casos de uso
+
+---
+
+## Historia 7: Optimización de Tests y Cobertura 🟢 BAJA
+
+**Prioridad:** 🟢 BAJA (Mejora Continua)  
+**Bounded Context:** Todos  
+**Tipo:** Mejora de Calidad / Testing  
+**Dependencias:** Historias 4, 5, 6
+
+### 📋 Descripción
+
+Optimizar la suite de tests para maximizar cobertura y velocidad de ejecución, asegurando que todos los bounded contexts tienen > 90% de cobertura de código.
+
+### 🎯 Objetivo
+
+- Cobertura de código > 90% en todos los crates
+- Tests unitarios rápidos (< 5s por crate)
+- Tests de integración aislados y reproducibles
+- Uso eficiente de `cargo nextest` para paralelización
+
+### ✅ Tareas de Implementación
+
+| Estado | Tarea | Descripción | Ubicación |
+|--------|-------|-------------|-----------|
+| ○ | 7.1 | Instalar y configurar `cargo-tarpaulin` o `cargo-llvm-cov` | Para medir cobertura |
+| ○ | 7.2 | Generar reporte de cobertura actual | Baseline |
+| ○ | 7.3 | Identificar módulos con < 90% cobertura | Por crate |
+| ○ | 7.4 | Agregar tests faltantes para `kernel` | Unit tests |
+| ○ | 7.5 | Agregar tests faltantes para `hodei-iam` | Unit tests |
+| ○ | 7.6 | Agregar tests faltantes para `hodei-organizations` | Unit tests |
+| ○ | 7.7 | Agregar tests faltantes para `hodei-authorizer` | Unit tests |
+| ○ | 7.8 | Optimizar tests de integración con testcontainers | Reusar contenedores |
+| ○ | 7.9 | Configurar `nextest` profiles | En `.config/nextest.toml` |
+| ○ | 7.10 | Crear script de CI para cobertura | En `.github/workflows/` |
+| ○ | 7.11 | Documentar estrategia de testing | En `TESTING.md` |
+| ○ | 7.12 | Verificar tiempos de ejecución | `cargo nextest run --timings` |
+
+### 📊 Criterios de Aceptación
+
+- [ ] Todos los crates tienen > 90% cobertura de código
+- [ ] Tests unitarios ejecutan en < 5s por crate
+- [ ] Tests de integración son reproducibles
+- [ ] CI reporta cobertura automáticamente
+- [ ] Documentación de testing está actualizada
+
+---
+
+## 📊 Resumen Ejecutivo
+
+### Estado Global
+
+| Historia | Prioridad | Estado | Completitud | Tests |
+|----------|-----------|--------|-------------|-------|
+| Historia 1: Shared Kernel | ⚡ CRÍTICA | ✅ COMPLETA | 100% | ✅ |
+| Historia 2: Encapsulamiento | ⚡ CRÍTICA | ✅ COMPLETA | 95% | ✅ |
+| Historia 3: Separación CRUD Políticas | 🔴 ALTA | ✅ COMPLETA | 100% | ✅ |
+| **Historia 6: Eliminar Warnings** | **⚡ CRÍTICA** | **🟡 PENDIENTE** | **0%** | **N/A** |
+| **Historia 4: Acoplamiento Infra** | **🟡 ALTA** | **🟡 PENDIENTE** | **0%** | **❌** |
+| **Historia 5: Errores Específicos** | **🟡 MEDIA** | **🟡 PARCIAL** | **60%** | **🟡** |
+| Historia 7: Optimización Tests | 🟢 BAJA | 🟡 MEJORA CONTINUA | 80% | 🟡 |
+
+### Próximos Pasos Recomendados
+
+1. **Inmediato (Sprint Actual)**:
+   - ⚡ Historia 6: Eliminar todos los warnings (2-4 horas)
+   - 🟡 Historia 4: Refactorizar `OrganizationBoundaryProvider` (1-2 días)
+
+2. **Corto Plazo (Siguiente Sprint)**:
+   - 🟡 Historia 5: Implementar errores específicos para los 3 casos de uso (1 día)
+
+3. **Mejora Continua**:
+   - 🟢 Historia 7: Incrementar cobertura de tests (ongoing)
+
+### Métricas de Calidad Actuales
+
+```
+✅ Arquitectura: BUENA (8/10)
+  - Bounded Contexts bien definidos
+  - VSA implementado correctamente
+  - Kernel compartido apropiado
+
+🟡 Calidad de Código: ACEPTABLE (6/10)
+  - 14+ warnings del compilador
+  - Algunos usos de anyhow::Error
+  - Código muerto en mocks
+
+🟡 Testing: BUENA (7/10)
+  - Tests unitarios presentes
+  - Tests de integración con testcontainers
+  - Cobertura estimada: 70-85%
+
+🔴 Acoplamiento: NECESITA MEJORA (5/10)
+  - Acoplamiento infraestructura → aplicación en organizations
+```
+
+### Estimación de Esfuerzo Total
+
+- Historia 6: **2-4 horas** (limpieza simple)
+- Historia 4: **1-2 días** (refactorización compleja con tests)
+- Historia 5: **1 día** (repetitivo pero directo)
+- **Total: 2-3 días de trabajo**
+
+---
+
+## Checklist de Verificación Final
+
+Al completar cada historia, verificar:
+
+- [ ] El código compila sin errores (`cargo check --all`)
+- [ ] No hay warnings (`cargo clippy --all -- -D warnings`)
+- [ ] Todos los tests pasan (`cargo nextest run`)
+- [ ] La arquitectura VSA se respeta (cada feature autocontenida)
+- [ ] Los puertos están segregados (ISP)
+- [ ] No hay acoplamiento directo entre bounded contexts
+- [ ] Los tests unitarios usan mocks para todas las dependencias
+- [ ] Se usa `tracing` para logging (no `println!`)
+- [ ] Los nombres de archivos siguen Clean Architecture
+- [ ] El kernel solo contiene elementos verdaderamente compartidos
+- [ ] Los eventos de dominio se verifican en tests
+- [ ] La documentación está actualizada
+
+---
+
+**Última Actualización**: 2025-01-XX  
+**Próxima Revisión**: Después de completar Historia 6

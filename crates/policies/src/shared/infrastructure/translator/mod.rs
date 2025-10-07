@@ -135,7 +135,7 @@ pub fn translate_attribute_value(
                 cedar_map.insert(key.to_string(), cedar_value);
             }
 
-            RestrictedExpression::new_record(cedar_map.into_iter())
+            RestrictedExpression::new_record(cedar_map)
                 .map_err(|e| TranslatorError::CedarError(e.to_string()))
         }
 

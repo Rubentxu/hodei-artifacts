@@ -9,7 +9,7 @@ use std::str::FromStr;
 use tracing::{debug, warn};
 
 use super::ports::{
-    PolicyValidationError, PolicyValidator, ValidationError, ValidationResult, ValidationWarning,
+    PolicyValidationError, PolicyValidator, ValidationError, ValidationResult,
 };
 
 /// Cedar-based policy validator

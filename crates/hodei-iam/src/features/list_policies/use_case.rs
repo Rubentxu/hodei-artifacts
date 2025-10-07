@@ -101,13 +101,12 @@ where
     /// Validate pagination parameters
     fn validate_pagination(&self, query: &ListPoliciesQuery) -> Result<(), ListPoliciesError> {
         // El effective_limit ya hace bound checking, pero podemos agregar validaciones adicionales
-        if let Some(limit) = query.limit {
-            if limit == 0 {
+        if let Some(limit) = query.limit
+            && limit == 0 {
                 return Err(ListPoliciesError::InvalidPagination(
                     "Limit must be greater than 0".to_string(),
                 ));
             }
-        }
 
         Ok(())
     }

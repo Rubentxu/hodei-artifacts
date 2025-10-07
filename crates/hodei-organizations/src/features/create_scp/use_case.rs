@@ -93,13 +93,12 @@ impl<P: ScpPersister> UpdateScpUseCase<P> {
         }
 
         // Validate name if provided
-        if let Some(ref name) = command.name {
-            if name.is_empty() {
+        if let Some(ref name) = command.name
+            && name.is_empty() {
                 return Err(UpdateScpError::ValidationError(
                     "SCP name cannot be empty".to_string(),
                 ));
             }
-        }
 
         self.persister.update_scp(command).await
     }
@@ -134,13 +133,12 @@ impl<P: ScpPersister> ListScpsUseCase<P> {
     #[instrument(skip(self))]
     pub async fn execute(&self, query: ListScpsQuery) -> Result<Vec<ScpDto>, ListScpsError> {
         // Validate pagination parameters
-        if let Some(limit) = query.limit {
-            if limit == 0 || limit > 1000 {
+        if let Some(limit) = query.limit
+            && (limit == 0 || limit > 1000) {
                 return Err(ListScpsError::InvalidPagination(
                     "Limit must be between 1 and 1000".to_string(),
                 ));
             }
-        }
 
         self.persister.list_scps(query).await
     }
