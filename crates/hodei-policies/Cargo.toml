@@ -1,0 +1,25 @@
+[package]
+name = "hodei-policies"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+# Core dependencies
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+# Kernel for agnostic types
+kernel = { path = "../kernel" }
+
+# Cedar Policy Engine
+cedar-policy = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+mockall = { workspace = true }
