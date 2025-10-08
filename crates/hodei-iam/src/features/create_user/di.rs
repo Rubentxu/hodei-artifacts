@@ -1,6 +1,7 @@
-use std::sync::Arc;
-use super::ports::{CreateUserPort, HrnGenerator};
+use super::ports::CreateUserPort;
 use super::use_case::CreateUserUseCase;
+use crate::infrastructure::hrn_generator::HrnGenerator;
+use std::sync::Arc;
 
 /// Factory for creating CreateUserUseCase instances
 ///

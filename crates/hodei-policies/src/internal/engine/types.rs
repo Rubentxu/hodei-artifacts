@@ -225,9 +225,7 @@ impl PolicyDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kernel::domain::{
-        AttributeName, AttributeType, AttributeValue, ResourceTypeName, ServiceName,
-    };
+    use kernel::domain::{AttributeName, AttributeValue, ResourceTypeName, ServiceName};
     use kernel::{HodeiEntity, HodeiEntityType, Hrn};
     use std::collections::HashMap;
 

@@ -1,7 +1,7 @@
-use crate::internal::domain::User;
-use async_trait::async_trait;
-use kernel::Hrn;
+use super::dto::UserPersistenceDto;
 use super::error::CreateUserError;
+use crate::infrastructure::hrn_generator::HrnGenerator;
+use async_trait::async_trait;
 
 /// Port for persisting users
 ///
@@ -13,25 +13,10 @@ pub trait CreateUserPort: Send + Sync {
     /// Save a user to the persistence layer
     ///
     /// # Arguments
-    /// * `user` - The user entity to save
+    /// * `user_dto` - The user data transfer object to save
     ///
     /// # Returns
     /// * `Ok(())` if the user was saved successfully
     /// * `Err(CreateUserError)` if there was an error saving the user
-    async fn save_user(&self, user: &User) -> Result<(), CreateUserError>;
-}
-
-/// Port for generating HRNs
-///
-/// This port abstracts HRN generation, allowing different implementations
-/// (e.g., UUID-based, sequential, etc.)
-pub trait HrnGenerator: Send + Sync {
-    /// Generate a new HRN for a user
-    ///
-    /// # Arguments
-    /// * `name` - The name of the user (used for HRN generation)
-    ///
-    /// # Returns
-    /// * A new HRN for the user
-    fn new_user_hrn(&self, name: &str) -> Hrn;
+    async fn save_user(&self, user_dto: &UserPersistenceDto) -> Result<(), CreateUserError>;
 }

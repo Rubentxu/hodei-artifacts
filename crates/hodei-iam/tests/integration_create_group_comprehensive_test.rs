@@ -2,16 +2,24 @@
 /// Uses only public API from hodei_iam crate
 use hodei_iam::{
     features::create_group::{self, dto::CreateGroupCommand},
-    infrastructure::in_memory::InMemoryGroupAdapter,
     infrastructure::hrn_generator::UuidHrnGenerator,
+    infrastructure::surreal::SurrealGroupAdapter,
+    surrealdb::{Surreal, engine::local::Mem},
 };
 use std::sync::Arc;
 
 #[tokio::test]
 async fn test_create_group_with_valid_name() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Developers".to_string(),
@@ -29,9 +37,16 @@ async fn test_create_group_with_valid_name() {
 
 #[tokio::test]
 async fn test_create_group_multiple_tags() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Admin Team".to_string(),
@@ -54,9 +69,16 @@ async fn test_create_group_multiple_tags() {
 
 #[tokio::test]
 async fn test_create_group_no_tags() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Simple Group".to_string(),
@@ -72,9 +94,16 @@ async fn test_create_group_no_tags() {
 
 #[tokio::test]
 async fn test_create_group_hrn_format() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Test Group".to_string(),
@@ -100,9 +129,16 @@ async fn test_create_group_hrn_format() {
 
 #[tokio::test]
 async fn test_create_group_unique_ids() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Same Name".to_string(),
@@ -118,9 +154,16 @@ async fn test_create_group_unique_ids() {
 
 #[tokio::test]
 async fn test_create_groups_batch() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let groups = vec!["Engineering", "Marketing", "Sales", "Support"];
 
@@ -145,9 +188,16 @@ async fn test_create_groups_batch() {
 
 #[tokio::test]
 async fn test_create_group_persistence() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Persistent Group".to_string(),
@@ -162,9 +212,16 @@ async fn test_create_group_persistence() {
 
 #[tokio::test]
 async fn test_create_group_with_special_characters() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "DevOps-Team_2024 (β)".to_string(),
@@ -180,9 +237,16 @@ async fn test_create_group_with_special_characters() {
 
 #[tokio::test]
 async fn test_create_group_long_name() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let long_name = "A".repeat(200);
     let command = CreateGroupCommand {
@@ -199,9 +263,16 @@ async fn test_create_group_long_name() {
 
 #[tokio::test]
 async fn test_create_group_empty_name() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "".to_string(),
@@ -217,9 +288,16 @@ async fn test_create_group_empty_name() {
 
 #[tokio::test]
 async fn test_create_multiple_groups_different_tags() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     // Create group with engineering tags
     let cmd1 = CreateGroupCommand {
@@ -243,9 +321,16 @@ async fn test_create_multiple_groups_different_tags() {
 
 #[tokio::test]
 async fn test_create_group_verify_initial_state() {
-    let adapter = Arc::new(InMemoryGroupAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealGroupAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "New Group".to_string(),

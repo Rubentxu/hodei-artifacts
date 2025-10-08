@@ -44,10 +44,7 @@ pub mod di;
 // ---------------------------------------------------------------------------
 pub use dto::{CreatePolicyCommand, PolicyView};
 pub use error::CreatePolicyError;
-pub use ports::{
-    CreatePolicyPort, PolicyValidationError, PolicyValidator, ValidationError, ValidationResult,
-    ValidationWarning,
-};
+pub use ports::{CreatePolicyPort, PolicyValidationError, PolicyValidator, ValidationResult};
 pub use use_case::CreatePolicyUseCase;
 pub use validator::CedarPolicyValidator;
 // ---------------------------------------------------------------------------

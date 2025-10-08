@@ -22,4 +22,13 @@ pub enum EvaluatePoliciesError {
 
     #[error("Schema building failed: {0}")]
     SchemaError(String),
+
+    #[error("Schema not found: {0}")]
+    SchemaNotFound(String),
+
+    #[error("Schema loading failed: {0}")]
+    SchemaLoadError(String),
+
+    #[error("Strict mode requires schema but none was found")]
+    StrictModeSchemaRequired,
 }

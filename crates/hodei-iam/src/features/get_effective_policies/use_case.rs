@@ -150,11 +150,13 @@ where
         );
 
         // Step 3: Get groups to which the principal belongs
-        let groups = self
-            .group_finder
-            .find_groups_by_user_hrn(&user.hrn)
-            .await
-            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
+        let groups =
+            self.group_finder
+                .find_groups_by_user_hrn(&Hrn::from_string(&user.hrn).ok_or_else(|| {
+                    GetEffectivePoliciesError::InvalidPrincipalHrn(user.hrn.clone())
+                })?)
+                .await
+                .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
         info!(
             group_count = groups.len(),
@@ -166,11 +168,13 @@ where
         let mut effective_policies = HodeiPolicySet::default();
 
         // Step 4: Collect direct policies from the principal
-        let principal_policies = self
-            .policy_finder
-            .find_policies_by_principal(&user.hrn)
-            .await
-            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
+        let principal_policies =
+            self.policy_finder
+                .find_policies_by_principal(&Hrn::from_string(&user.hrn).ok_or_else(|| {
+                    GetEffectivePoliciesError::InvalidPrincipalHrn(user.hrn.clone())
+                })?)
+                .await
+                .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
         debug!(
             direct_policy_count = principal_policies.len(),
@@ -186,7 +190,9 @@ where
         for group in &groups {
             let group_policies = self
                 .policy_finder
-                .find_policies_by_principal(&group.hrn)
+                .find_policies_by_principal(&Hrn::from_string(&group.hrn).ok_or_else(|| {
+                    GetEffectivePoliciesError::InvalidPrincipalHrn(group.hrn.clone())
+                })?)
                 .await
                 .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 

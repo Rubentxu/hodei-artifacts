@@ -1,41 +1,241 @@
-//! Hodei Artifacts API - Temporarily Disabled During Migration
-//! 
-//! The policies crate has been refactored:
-//! - Old: policies::features::create_policy::*
-//! - New: policies::infrastructure::validator::*
-//! 
-//! Policy CRUD operations have been moved to domain crates:
-//! - IAM policies: hodei-iam
-//! - SCPs: hodei-organizations
+//! Hodei Artifacts API - Main Entry Point
 //!
-//! To restore the API, the following migrations are needed:
-//! 1. Update all imports from policies::features::* to new locations
-//! 2. Migrate policy CRUD handlers to use hodei-iam
-//! 3. Update AppState to remove obsolete use cases
-//! 4. Reimplement playground/analysis features or remove them
-//!
-//! See src_disabled_migration_needed/ for the original code.
+//! This is the main entry point for the Hodei Artifacts API server.
+//! It handles:
+//! - Application configuration loading
+//! - Logging initialization
+//! - Bootstrap and dependency injection (composition root)
+//! - Axum server setup and routing
+//! - Graceful shutdown handling
 
-fn main() {
-    eprintln!("╔══════════════════════════════════════════════════════════════════════════════╗");
-    eprintln!("║                                                                              ║");
-    eprintln!("║  Hodei Artifacts API - MIGRATION IN PROGRESS                                ║");
-    eprintln!("║                                                                              ║");
-    eprintln!("║  The API binary has been temporarily disabled during the policies crate      ║");
-    eprintln!("║  refactoring. The domain crates (kernel, hodei-iam, hodei-organizations,    ║");
-    eprintln!("║  hodei-authorizer) are fully functional and tested.                         ║");
-    eprintln!("║                                                                              ║");
-    eprintln!("║  For API migration details, see:                                            ║");
-    eprintln!("║  - src_disabled_migration_needed/README.md                                  ║");
-    eprintln!("║  - TEST_COVERAGE_EXPANSION_SUMMARY.md                                       ║");
-    eprintln!("║                                                                              ║");
-    eprintln!("║  Test coverage stats:                                                       ║");
-    eprintln!("║  ✅ kernel:              222 tests (91.58%% domain coverage)                ║");
-    eprintln!("║  ✅ hodei-organizations: 100 tests                                          ║");
-    eprintln!("║  ✅ hodei-iam:            53 tests                                          ║");
-    eprintln!("║  ✅ hodei-authorizer:     11 tests                                          ║");
-    eprintln!("║                                                                              ║");
-    eprintln!("╚══════════════════════════════════════════════════════════════════════════════╝");
-    
-    std::process::exit(1);
+mod app_state;
+mod bootstrap;
+mod config;
+mod handlers;
+
+use crate::bootstrap::{BootstrapConfig, bootstrap};
+use crate::config::Config;
+use crate::handlers::health::health_check;
+use axum::{
+    Router,
+    routing::{delete, get, post, put},
+};
+use std::time::Duration;
+use tower_http::{
+    cors::CorsLayer,
+    timeout::TimeoutLayer,
+    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+};
+use tracing::{Level, info, warn};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Load configuration
+    let config = Config::from_env();
+    config.validate()?;
+
+    // 2. Initialize logging
+    initialize_logging(&config)?;
+
+    info!("🚀 Starting Hodei Artifacts API");
+    info!("📋 Configuration loaded");
+    info!("   Server: {}", config.server_address());
+    info!("   Database: {}", config.database.db_type);
+    info!("   Schema storage: {}", config.schema.storage_type);
+    info!(
+        "   IAM schema registration: {}",
+        config.schema.register_iam_on_startup
+    );
+
+    // 3. Bootstrap application (composition root)
+    let bootstrap_config = BootstrapConfig {
+        register_iam_schema: config.schema.register_iam_on_startup,
+        schema_version: config.schema.version.clone(),
+        validate_schemas: config.schema.validate,
+    };
+
+    let app_state = bootstrap(bootstrap_config).await.map_err(|e| {
+        eprintln!("Bootstrap failed: {}", e);
+        std::process::exit(1);
+    })?;
+
+    // 4. Build Axum router
+    let app = build_router(app_state, &config);
+
+    // 5. Start server
+    let listener = tokio::net::TcpListener::bind(config.server_address()).await?;
+    let addr = listener.local_addr()?;
+
+    info!("✅ Hodei Artifacts API is ready");
+    info!("🌐 Listening on http://{}", addr);
+    info!("📊 Health check: http://{}/health", addr);
+    info!("📖 API documentation: http://{}/docs", addr);
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    info!("👋 Hodei Artifacts API shut down gracefully");
+    Ok(())
+}
+
+/// Initialize logging based on configuration
+fn initialize_logging(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(format!(
+            "hodei_artifacts_api={},hodei_iam={},hodei_policies={},kernel={}",
+            config.logging.level, config.logging.level, config.logging.level, config.logging.level
+        ))
+    });
+
+    match config.logging.format.as_str() {
+        "json" => {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt::layer().json())
+                .init();
+        }
+        "compact" => {
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt::layer().compact())
+                .init();
+        }
+        _ => {
+            // Default to "pretty"
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt::layer().pretty())
+                .init();
+        }
+    }
+
+    Ok(())
+}
+
+/// Build the Axum router with all routes and middleware
+fn build_router<S>(app_state: crate::app_state::AppState<S>, config: &Config) -> Router
+where
+    S: hodei_policies::features::build_schema::ports::SchemaStoragePort
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    Router::new()
+        // Health check endpoint
+        .route("/health", get(health_check))
+        .route("/health/ready", get(health_check))
+        .route("/health/live", get(health_check))
+        // API v1 routes
+        .nest("/api/v1", api_v1_routes(app_state))
+        // Middleware layers (applied in reverse order)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(TimeoutLayer::new(Duration::from_secs(
+            config.server.request_timeout_secs,
+        )))
+        .layer(CorsLayer::permissive()) // TODO: Configure CORS properly for production
+}
+
+/// API v1 routes
+fn api_v1_routes<S>(app_state: crate::app_state::AppState<S>) -> Router
+where
+    S: hodei_policies::features::build_schema::ports::SchemaStoragePort
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    Router::new()
+        // Schema management
+        .route("/schemas/build", post(handlers::schemas::build_schema))
+        .route("/schemas/load", get(handlers::schemas::load_schema))
+        .route(
+            "/schemas/register-iam",
+            post(handlers::schemas::register_iam_schema),
+        )
+        // Policy validation and evaluation
+        .route(
+            "/policies/validate",
+            post(handlers::policies::validate_policy),
+        )
+        .route(
+            "/policies/evaluate",
+            post(handlers::policies::evaluate_policies),
+        )
+        // IAM Policy Management
+        .route("/iam/policies", post(handlers::iam::create_policy))
+        .route("/iam/policies", get(handlers::iam::list_policies))
+        .route("/iam/policies/get", post(handlers::iam::get_policy))
+        .route("/iam/policies/update", put(handlers::iam::update_policy))
+        .route("/iam/policies/delete", delete(handlers::iam::delete_policy))
+        // Playground routes
+        .route(
+            "/playground/evaluate",
+            post(handlers::playground::playground_evaluate),
+        )
+        // TODO: Add more routes as needed
+        // .route("/users", post(handlers::users::create_user))
+        // .route("/users/:id", get(handlers::users::get_user))
+        // .route("/groups", post(handlers::groups::create_group))
+        .with_state(app_state)
+}
+
+/// Graceful shutdown signal handler
+///
+/// This function listens for shutdown signals (SIGTERM, SIGINT/Ctrl+C)
+/// and returns when one is received, triggering graceful shutdown.
+async fn shutdown_signal() {
+    use tokio::signal;
+
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            warn!("Received Ctrl+C signal");
+        }
+        _ = terminate => {
+            warn!("Received SIGTERM signal");
+        }
+    }
+
+    info!("Starting graceful shutdown...");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_validation() {
+        let config = Config::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap() {
+        let bootstrap_config = BootstrapConfig::default();
+        let result = bootstrap(bootstrap_config).await;
+        assert!(result.is_ok(), "Bootstrap should succeed");
+    }
 }

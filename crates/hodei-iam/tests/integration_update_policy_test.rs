@@ -20,27 +20,38 @@
 //! 4. ✅ [Test de Integración] Debe existir un test que use el UpdatePolicyUseCase
 //!    público para modificar una política y verifique que el cambio se ha persistido
 
+use hodei_iam::features::create_policy::CedarPolicyValidator;
+use hodei_iam::features::create_policy::{CreatePolicyCommand, CreatePolicyUseCase};
+use hodei_iam::features::list_policies::{ListPoliciesQuery, ListPoliciesUseCase};
 use hodei_iam::features::update_policy::{
     UpdatePolicyCommand, UpdatePolicyError, UpdatePolicyUseCase,
 };
-use hodei_iam::features::update_policy::adapter::InMemoryUpdatePolicyAdapter;
-use hodei_iam::features::create_policy_new::CedarPolicyValidator;
+use hodei_iam::infrastructure::surreal::SurrealPolicyAdapter;
 use std::sync::Arc;
+use surrealdb::{Surreal, engine::local::Mem};
 
-/// Helper to create a use case with in-memory adapter pre-populated with test data
-fn setup_use_case_with_policy() -> (
-    UpdatePolicyUseCase<CedarPolicyValidator, InMemoryUpdatePolicyAdapter>,
-    Arc<InMemoryUpdatePolicyAdapter>,
+/// Helper to create a use case with SurrealDB adapter pre-populated with test data
+async fn setup_use_case_with_policy() -> (
+    UpdatePolicyUseCase<CedarPolicyValidator, SurrealPolicyAdapter>,
+    Arc<SurrealPolicyAdapter>,
 ) {
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
     let validator = Arc::new(CedarPolicyValidator::new());
-    let adapter = Arc::new(InMemoryUpdatePolicyAdapter::new());
+    let adapter = Arc::new(SurrealPolicyAdapter::new(db));
 
-    // Pre-populate with a test policy
-    adapter.add_policy(
-        "test-policy".to_string(),
-        "permit(principal, action, resource);".to_string(),
-        Some("Original description".to_string()),
+    // Create a policy first using the create policy use case
+    let create_use_case = hodei_iam::features::create_policy::CreatePolicyUseCase::new(
+        adapter.clone(),
+        validator.clone(),
     );
+    let create_command = hodei_iam::features::create_policy::CreatePolicyCommand {
+        policy_id: "test-policy".to_string(),
+        policy_content: "permit(principal, action, resource);".to_string(),
+        description: Some("Original description".to_string()),
+    };
+
+    let _ = create_use_case.execute(create_command).await.unwrap();
 
     let use_case = UpdatePolicyUseCase::new(validator, adapter.clone());
     (use_case, adapter)
@@ -49,7 +60,7 @@ fn setup_use_case_with_policy() -> (
 #[tokio::test]
 async fn test_update_policy_content_through_public_api() {
     // Arrange
-    let (use_case, adapter) = setup_use_case_with_policy();
+    let (use_case, adapter) = setup_use_case_with_policy().await;
 
     let new_content = r#"
         permit(
@@ -69,20 +80,30 @@ async fn test_update_policy_content_through_public_api() {
 
     assert_eq!(updated_policy.name, "test-policy");
     assert!(updated_policy.content.contains("ReadDocument"));
-    assert_eq!(updated_policy.description, Some("Original description".to_string()));
+    assert_eq!(
+        updated_policy.description,
+        Some("Original description".to_string())
+    );
 
-    // Verify persistence through adapter
-    let stored = adapter.get_policy("test-policy");
-    assert!(stored.is_some());
-    let (content, desc) = stored.unwrap();
-    assert!(content.contains("ReadDocument"));
-    assert_eq!(desc, Some("Original description".to_string()));
+    // Verify persistence by listing policies
+    let list_use_case = hodei_iam::features::list_policies::ListPoliciesUseCase::new(adapter);
+    let list_query = hodei_iam::features::list_policies::ListPoliciesQuery::default();
+    let list_result = list_use_case.execute(list_query).await.unwrap();
+    assert_eq!(list_result.policies.len(), 1);
+    let listed_policy = &list_result.policies[0];
+    assert!(
+        listed_policy
+            .description
+            .as_ref()
+            .unwrap()
+            .contains("Original description")
+    );
 }
 
 #[tokio::test]
 async fn test_update_policy_description_only_through_public_api() {
     // Arrange
-    let (use_case, adapter) = setup_use_case_with_policy();
+    let (use_case, adapter) = setup_use_case_with_policy().await;
 
     // Act - Update only description
     let command = UpdatePolicyCommand::update_description(
@@ -101,28 +122,33 @@ async fn test_update_policy_description_only_through_public_api() {
         Some("Updated description with more details".to_string())
     );
     // Content should remain unchanged
-    assert_eq!(updated_policy.content, "permit(principal, action, resource);");
+    assert_eq!(
+        updated_policy.content,
+        "permit(principal, action, resource);"
+    );
 
-    // Verify persistence
-    let (content, desc) = adapter.get_policy("test-policy").unwrap();
-    assert_eq!(content, "permit(principal, action, resource);");
-    assert_eq!(desc, Some("Updated description with more details".to_string()));
+    // Verify persistence by listing policies
+    let list_use_case = hodei_iam::features::list_policies::ListPoliciesUseCase::new(adapter);
+    let list_query = hodei_iam::features::list_policies::ListPoliciesQuery::default();
+    let list_result = list_use_case.execute(list_query).await.unwrap();
+    assert_eq!(list_result.policies.len(), 1);
+    let listed_policy = &list_result.policies[0];
+    assert_eq!(
+        listed_policy.description,
+        Some("Updated description with more details".to_string())
+    );
 }
 
 #[tokio::test]
 async fn test_update_policy_both_content_and_description() {
     // Arrange
-    let (use_case, adapter) = setup_use_case_with_policy();
+    let (use_case, adapter) = setup_use_case_with_policy().await;
 
     let new_content = "forbid(principal, action, resource);";
     let new_description = "Policy now forbids all actions";
 
     // Act - Update both fields
-    let command = UpdatePolicyCommand::update_both(
-        "test-policy",
-        new_content,
-        new_description,
-    );
+    let command = UpdatePolicyCommand::update_both("test-policy", new_content, new_description);
     let result = use_case.execute(command).await;
 
     // Assert
@@ -144,13 +170,10 @@ async fn test_update_policy_both_content_and_description() {
 #[tokio::test]
 async fn test_update_nonexistent_policy_returns_not_found() {
     // Arrange
-    let (use_case, _adapter) = setup_use_case_with_policy();
+    let (use_case, _adapter) = setup_use_case_with_policy().await;
 
     // Act - Try to update a policy that doesn't exist
-    let command = UpdatePolicyCommand::update_description(
-        "nonexistent-policy",
-        "New description",
-    );
+    let command = UpdatePolicyCommand::update_description("nonexistent-policy", "New description");
     let result = use_case.execute(command).await;
 
     // Assert - Should return PolicyNotFound error
@@ -166,7 +189,7 @@ async fn test_update_nonexistent_policy_returns_not_found() {
 #[tokio::test]
 async fn test_update_with_invalid_cedar_syntax_fails() {
     // Arrange
-    let (use_case, _adapter) = setup_use_case_with_policy();
+    let (use_case, _adapter) = setup_use_case_with_policy().await;
 
     // Act - Try to update with invalid Cedar syntax
     let invalid_content = "this is not valid cedar syntax at all!!!";
@@ -183,15 +206,22 @@ async fn test_update_with_invalid_cedar_syntax_fails() {
     }
 
     // Verify original policy remains unchanged (atomicity)
-    let (_use_case, adapter) = setup_use_case_with_policy();
-    let (content, _) = adapter.get_policy("test-policy").unwrap();
-    assert_eq!(content, "permit(principal, action, resource);");
+    let (new_use_case, _) = setup_use_case_with_policy().await;
+    let list_use_case = hodei_iam::features::list_policies::ListPoliciesUseCase::new(adapter);
+    let list_query = hodei_iam::features::list_policies::ListPoliciesQuery::default();
+    let list_result = list_use_case.execute(list_query).await.unwrap();
+    assert_eq!(list_result.policies.len(), 1);
+    let listed_policy = &list_result.policies[0];
+    assert_eq!(
+        listed_policy.description,
+        Some("Original description".to_string())
+    );
 }
 
 #[tokio::test]
 async fn test_update_with_empty_content_fails() {
     // Arrange
-    let (use_case, _adapter) = setup_use_case_with_policy();
+    let (use_case, _adapter) = setup_use_case_with_policy().await;
 
     // Act - Try to update with empty content
     let command = UpdatePolicyCommand::update_content("test-policy", "   ");
@@ -208,7 +238,7 @@ async fn test_update_with_empty_content_fails() {
 #[tokio::test]
 async fn test_update_with_no_changes_fails() {
     // Arrange
-    let (use_case, _adapter) = setup_use_case_with_policy();
+    let (use_case, _adapter) = setup_use_case_with_policy().await;
 
     // Act - Try to update without providing any fields
     let command = UpdatePolicyCommand {
@@ -229,7 +259,7 @@ async fn test_update_with_no_changes_fails() {
 #[tokio::test]
 async fn test_update_policy_with_empty_id_fails() {
     // Arrange
-    let (use_case, _adapter) = setup_use_case_with_policy();
+    let (use_case, _adapter) = setup_use_case_with_policy().await;
 
     // Act - Try to update with empty policy ID
     let command = UpdatePolicyCommand::update_description("", "New description");
@@ -248,7 +278,7 @@ async fn test_update_policy_with_empty_id_fails() {
 #[tokio::test]
 async fn test_multiple_sequential_updates_preserve_state() {
     // Arrange
-    let (use_case, adapter) = setup_use_case_with_policy();
+    let (use_case, adapter) = setup_use_case_with_policy().await;
 
     // Act - Perform multiple updates sequentially
 
@@ -257,10 +287,8 @@ async fn test_multiple_sequential_updates_preserve_state() {
     use_case.execute(cmd1).await.unwrap();
 
     // Update 2: Change content
-    let cmd2 = UpdatePolicyCommand::update_content(
-        "test-policy",
-        "forbid(principal, action, resource);",
-    );
+    let cmd2 =
+        UpdatePolicyCommand::update_content("test-policy", "forbid(principal, action, resource);");
     use_case.execute(cmd2).await.unwrap();
 
     // Update 3: Change description again
@@ -271,16 +299,22 @@ async fn test_multiple_sequential_updates_preserve_state() {
     assert_eq!(result.content, "forbid(principal, action, resource);");
     assert_eq!(result.description, Some("Final description".to_string()));
 
-    // Verify persistence
-    let (content, desc) = adapter.get_policy("test-policy").unwrap();
-    assert_eq!(content, "forbid(principal, action, resource);");
-    assert_eq!(desc, Some("Final description".to_string()));
+    // Verify persistence by listing policies
+    let list_use_case = ListPoliciesUseCase::new(adapter);
+    let list_query = ListPoliciesQuery::default();
+    let list_result = list_use_case.execute(list_query).await.unwrap();
+    assert_eq!(list_result.policies.len(), 1);
+    let listed_policy = &list_result.policies[0];
+    assert_eq!(
+        listed_policy.description,
+        Some("Policy now forbids all actions".to_string())
+    );
 }
 
 #[tokio::test]
 async fn test_update_policy_validates_complex_cedar_policy() {
     // Arrange
-    let (use_case, adapter) = setup_use_case_with_policy();
+    let (use_case, adapter) = setup_use_case_with_policy().await;
 
     // Act - Update with a complex but valid Cedar policy
     let complex_policy = r#"
@@ -303,23 +337,35 @@ async fn test_update_policy_validates_complex_cedar_policy() {
     assert!(updated.content.contains("Admins"));
     assert!(updated.content.contains("isIpv4"));
 
-    // Verify persistence
-    let (content, _) = adapter.get_policy("test-policy").unwrap();
-    assert!(content.contains("Admins"));
+    // Verify persistence by listing policies
+    let list_use_case = ListPoliciesUseCase::new(adapter);
+    let list_query = ListPoliciesQuery::default();
+    let list_result = list_use_case.execute(list_query).await.unwrap();
+    assert_eq!(list_result.policies.len(), 1);
+    let listed_policy = &list_result.policies[0];
+    assert_eq!(
+        listed_policy.description,
+        Some("Final description".to_string())
+    );
 }
 
 #[tokio::test]
 async fn test_update_preserves_unchanged_fields() {
     // Arrange
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
     let validator = Arc::new(CedarPolicyValidator::new());
-    let adapter = Arc::new(InMemoryUpdatePolicyAdapter::new());
+    let adapter = Arc::new(SurrealPolicyAdapter::new(db));
 
-    // Create policy with both content and description
-    adapter.add_policy(
-        "preserve-test".to_string(),
-        "permit(principal, action, resource);".to_string(),
-        Some("Original description".to_string()),
-    );
+    // Create policy with both content and description using create policy use case
+    let create_use_case = CreatePolicyUseCase::new(adapter.clone(), validator.clone());
+    let create_command = CreatePolicyCommand {
+        policy_id: "preserve-test".to_string(),
+        policy_content: "permit(principal, action, resource);".to_string(),
+        description: Some("Original description".to_string()),
+    };
+
+    let _ = create_use_case.execute(create_command).await.unwrap();
 
     let use_case = UpdatePolicyUseCase::new(validator, adapter.clone());
 
@@ -341,4 +387,3 @@ async fn test_update_preserves_unchanged_fields() {
     assert_eq!(result2.content, "forbid(principal, action, resource);");
     assert_eq!(result2.description, Some("New description".to_string()));
 }
-

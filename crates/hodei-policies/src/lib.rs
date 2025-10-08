@@ -15,3 +15,7 @@ pub(crate) mod internal;
 // API pública
 pub mod api;
 pub use api::*;
+
+// Re-export EngineBuilder for dependency injection purposes
+// This is required for composition roots to wire up the registration use cases
+pub use internal::engine::builder::EngineBuilder;

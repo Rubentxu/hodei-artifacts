@@ -1,4 +1,4 @@
-//! Integration tests for `create_policy_new` feature
+//! Integration tests for `create_policy` feature
 //!
 //! These tests exercise the full vertical slice (use case + adapter) in a
 //! near-production scenario using the in-memory adapter. They verify:
@@ -22,12 +22,13 @@
 //! cargo test -p hodei-iam --test integration_create_policy_new_test
 //! ```
 
-use hodei_iam::features::create_policy_new::{
-    CreatePolicyCommand, CreatePolicyError, CreatePolicyUseCase, PolicyView,
-    adapter::InMemoryCreatePolicyAdapter, di,
-    PolicyValidationError, PolicyValidator, ValidationError, ValidationResult,
+use hodei_iam::features::create_policy::{
+    CreatePolicyCommand, CreatePolicyError, CreatePolicyUseCase, PolicyValidationError,
+    PolicyValidator, PolicyView, ValidationResult, di,
 };
+use hodei_iam::infrastructure::surreal::SurrealPolicyAdapter;
 use std::sync::Arc;
+use surrealdb::{Surreal, engine::local::Mem};
 
 // Re-use the types from the feature for validation (in real scenario, use Cedar validator)
 use async_trait::async_trait;
@@ -81,7 +82,7 @@ impl PolicyValidator for IntegrationMockValidator {
         let errors = self
             .errors
             .iter()
-            .map(|msg| ValidationError::new(msg.clone()))
+            .map(|msg| hodei_iam::features::create_policy::ports::ValidationError::new(msg.clone()))
             .collect();
 
         Ok(ValidationResult {
@@ -92,11 +93,13 @@ impl PolicyValidator for IntegrationMockValidator {
     }
 }
 
-fn build_use_case(
+async fn build_use_case(
     account_id: &str,
     validator: Arc<IntegrationMockValidator>,
-) -> CreatePolicyUseCase<InMemoryCreatePolicyAdapter, IntegrationMockValidator> {
-    let adapter = Arc::new(InMemoryCreatePolicyAdapter::new(account_id));
+) -> CreatePolicyUseCase<SurrealPolicyAdapter, IntegrationMockValidator> {
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealPolicyAdapter::new(db));
     CreatePolicyUseCase::new(adapter, validator)
 }
 
@@ -116,7 +119,7 @@ fn valid_command(policy_id: &str) -> CreatePolicyCommand {
 async fn integration_create_policy_success() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-001", validator);
+    let use_case = build_use_case("test-account-001", validator).await;
     let command = valid_command("allow-read-documents");
 
     // Act
@@ -138,7 +141,10 @@ async fn integration_create_policy_success() {
 async fn integration_create_policy_with_di_helper() {
     // Arrange - using DI helper
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = di::in_memory_use_case("test-account-002", validator);
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealPolicyAdapter::new(db));
+    let use_case = di::use_case_with_port(adapter, validator);
     let command = CreatePolicyCommand {
         policy_id: "policy-via-di".to_string(),
         policy_content: "forbid(principal, action, resource);".to_string(),
@@ -160,7 +166,7 @@ async fn integration_create_policy_with_di_helper() {
 async fn integration_create_multiple_policies_different_ids() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-003", validator);
+    let use_case = build_use_case("test-account-003", validator).await;
 
     // Act - create first policy
     let cmd1 = valid_command("policy-alpha");
@@ -184,7 +190,7 @@ async fn integration_create_multiple_policies_different_ids() {
 async fn integration_create_policy_fails_on_duplicate_id() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-004", validator);
+    let use_case = build_use_case("test-account-004", validator).await;
 
     // Act - create first policy
     let cmd1 = valid_command("duplicate-policy");
@@ -212,7 +218,7 @@ async fn integration_create_policy_fails_on_validation_error() {
         "Syntax error: missing semicolon".to_string(),
         "Semantic error: unknown action".to_string(),
     ]));
-    let use_case = build_use_case("test-account-005", validator);
+    let use_case = build_use_case("test-account-005", validator).await;
     let command = valid_command("invalid-policy");
 
     // Act
@@ -233,7 +239,7 @@ async fn integration_create_policy_fails_on_validation_error() {
 async fn integration_create_policy_fails_on_validation_service_error() {
     // Arrange - validator configured to fail
     let validator = Arc::new(IntegrationMockValidator::with_service_error());
-    let use_case = build_use_case("test-account-006", validator);
+    let use_case = build_use_case("test-account-006", validator).await;
     let command = valid_command("service-error-policy");
 
     // Act
@@ -253,7 +259,7 @@ async fn integration_create_policy_fails_on_validation_service_error() {
 async fn integration_create_policy_fails_on_empty_id() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-007", validator);
+    let use_case = build_use_case("test-account-007", validator).await;
     let command = CreatePolicyCommand {
         policy_id: "".to_string(),
         policy_content: "permit(principal, action, resource);".to_string(),
@@ -275,7 +281,7 @@ async fn integration_create_policy_fails_on_empty_id() {
 async fn integration_create_policy_fails_on_empty_content() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-008", validator);
+    let use_case = build_use_case("test-account-008", validator).await;
     let command = CreatePolicyCommand {
         policy_id: "empty-content".to_string(),
         policy_content: "   ".to_string(),
@@ -297,7 +303,7 @@ async fn integration_create_policy_fails_on_empty_content() {
 async fn integration_create_policy_with_large_content() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-009", validator);
+    let use_case = build_use_case("test-account-009", validator).await;
 
     // Generate large policy content (realistic size ~50KB)
     let base_clause = "permit(principal, action, resource);";
@@ -326,7 +332,7 @@ async fn integration_create_policy_with_large_content() {
 async fn integration_policy_view_serialization() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-010", validator);
+    let use_case = build_use_case("test-account-010", validator).await;
     let command = valid_command("serialization-test");
 
     // Act
@@ -336,8 +342,14 @@ async fn integration_policy_view_serialization() {
     let json = serde_json::to_string(&view).expect("Should serialize to JSON");
     // Note: HRN serialization may not contain the literal string "policy/serialization-test"
     // so we check for key fields instead
-    assert!(json.contains("serialization-test"), "JSON should contain policy id");
-    assert!(json.contains("Integration test policy"), "JSON should contain description");
+    assert!(
+        json.contains("serialization-test"),
+        "JSON should contain policy id"
+    );
+    assert!(
+        json.contains("Integration test policy"),
+        "JSON should contain description"
+    );
 
     // Assert - verify PolicyView can be deserialized from JSON
     let deserialized: PolicyView =
@@ -375,7 +387,7 @@ async fn integration_command_serialization() {
 async fn integration_create_policy_with_special_characters_in_id() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-011", validator);
+    let use_case = build_use_case("test-account-011", validator).await;
     let command = CreatePolicyCommand {
         policy_id: "policy-with-dashes-and-123".to_string(),
         policy_content: "permit(principal, action, resource);".to_string(),
@@ -399,7 +411,7 @@ async fn integration_create_policy_with_special_characters_in_id() {
 async fn integration_timestamps_are_consistent() {
     // Arrange
     let validator = Arc::new(IntegrationMockValidator::new());
-    let use_case = build_use_case("test-account-012", validator);
+    let use_case = build_use_case("test-account-012", validator).await;
     let command = valid_command("timestamp-test");
 
     // Capture time before creation

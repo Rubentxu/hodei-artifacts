@@ -1,6 +1,7 @@
-use super::dto::{CreateUserCommand, UserView};
+use super::dto::{CreateUserCommand, UserPersistenceDto, UserView};
 use super::error::CreateUserError;
-use super::ports::{CreateUserPort, HrnGenerator};
+use super::ports::CreateUserPort;
+use crate::infrastructure::hrn_generator::HrnGenerator;
 use crate::internal::domain::User;
 use std::sync::Arc;
 
@@ -40,13 +41,20 @@ impl<P: CreateUserPort, G: HrnGenerator> CreateUserUseCase<P, G> {
     pub async fn execute(&self, cmd: CreateUserCommand) -> Result<UserView, CreateUserError> {
         // Generate a unique HRN using the HRN generator
         let hrn = self.hrn_generator.new_user_hrn(&cmd.name);
-        
+
         // Create the user domain entity
         let user = User::new(hrn.clone(), cmd.name, cmd.email);
-        
-        // Persist the user
-        self.persister.save_user(&user).await?;
-        
+
+        // Convert to DTO and persist the user
+        let user_dto = UserPersistenceDto {
+            hrn: hrn.to_string(),
+            name: user.name.clone(),
+            email: user.email.clone(),
+            group_hrns: user.group_hrns.iter().map(|hrn| hrn.to_string()).collect(),
+            tags: user.tags.clone(),
+        };
+        self.persister.save_user(&user_dto).await?;
+
         // Return the view
         Ok(UserView {
             hrn: hrn.to_string(),

@@ -282,7 +282,7 @@ pub trait HodeiEntityType {
 ///     }
 /// }
 /// ```
-pub trait HodeiEntity: std::fmt::Debug {
+pub trait HodeiEntity: std::fmt::Debug + Send + Sync {
     /// Retorna el HRN (Hodei Resource Name) canónico de esta entidad
     ///
     /// El HRN es el identificador único y global de la entidad.

@@ -20,6 +20,7 @@
 use crate::features::update_policy::dto::{PolicyView, UpdatePolicyCommand};
 use crate::features::update_policy::error::UpdatePolicyError;
 use crate::features::update_policy::ports::{PolicyValidator, UpdatePolicyPort};
+use hodei_policies::features::validate_policy::dto::ValidatePolicyCommand;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
@@ -130,7 +131,10 @@ where
     /// println!("Updated policy: {}", result.hrn);
     /// ```
     #[instrument(skip(self, command), fields(policy_id = %command.policy_id))]
-    pub async fn execute(&self, command: UpdatePolicyCommand) -> Result<PolicyView, UpdatePolicyError> {
+    pub async fn execute(
+        &self,
+        command: UpdatePolicyCommand,
+    ) -> Result<PolicyView, UpdatePolicyError> {
         info!("Updating policy: {}", command.policy_id);
 
         // Validate policy ID
@@ -155,24 +159,25 @@ where
             }
 
             info!("Validating new policy content");
-            let validation_result = self.validator.validate_policy(content).await
+            let validation_command = ValidatePolicyCommand {
+                content: content.clone(),
+            };
+            let validation_result = self
+                .validator
+                .validate(validation_command)
+                .await
                 .map_err(|e| UpdatePolicyError::ValidationFailed(e.to_string()))?;
 
             if !validation_result.is_valid || !validation_result.errors.is_empty() {
-                warn!("Policy validation failed: {:?}", validation_result.errors);
-                let error_messages: Vec<String> = validation_result
-                    .errors
-                    .iter()
-                    .map(|e| e.message.clone())
-                    .collect();
-                return Err(UpdatePolicyError::InvalidPolicyContent(
-                    error_messages.join("; "),
-                ));
+                warn!(
+                    "Policy validation failed with {} errors",
+                    validation_result.errors.len()
+                );
+                let error_messages = validation_result.errors.join(", ");
+                return Err(UpdatePolicyError::InvalidPolicyContent(error_messages));
             }
 
-            if !validation_result.warnings.is_empty() {
-                info!("Policy has warnings: {:?}", validation_result.warnings);
-            }
+            // Note: ValidationResult from hodei-policies doesn't include warnings field
         }
 
         // Update the policy through the port
@@ -199,7 +204,7 @@ mod tests {
 
         let command = UpdatePolicyCommand::update_content(
             "test-policy",
-            "permit(principal, action, resource);"
+            "permit(principal, action, resource);",
         );
 
         // Act
@@ -218,10 +223,7 @@ mod tests {
         let port = Arc::new(MockUpdatePolicyPort::new());
         let use_case = UpdatePolicyUseCase::new(validator, port);
 
-        let command = UpdatePolicyCommand::update_description(
-            "test-policy",
-            "Updated description"
-        );
+        let command = UpdatePolicyCommand::update_description("test-policy", "Updated description");
 
         // Act
         let result = use_case.execute(command).await;
@@ -306,15 +308,12 @@ mod tests {
     async fn test_update_policy_invalid_content_fails() {
         // Arrange
         let validator = Arc::new(MockPolicyValidator::with_errors(vec![
-            "Syntax error: invalid token".to_string()
+            "Syntax error: invalid token".to_string(),
         ]));
         let port = Arc::new(MockUpdatePolicyPort::new());
         let use_case = UpdatePolicyUseCase::new(validator, port);
 
-        let command = UpdatePolicyCommand::update_content(
-            "test-policy",
-            "invalid cedar syntax!!!"
-        );
+        let command = UpdatePolicyCommand::update_content("test-policy", "invalid cedar syntax!!!");
 
         // Act
         let result = use_case.execute(command).await;
@@ -334,10 +333,7 @@ mod tests {
         let port = Arc::new(MockUpdatePolicyPort::with_not_found_error());
         let use_case = UpdatePolicyUseCase::new(validator, port);
 
-        let command = UpdatePolicyCommand::update_content(
-            "nonexistent",
-            "permit(...);"
-        );
+        let command = UpdatePolicyCommand::update_content("nonexistent", "permit(...);");
 
         // Act
         let result = use_case.execute(command).await;

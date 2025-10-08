@@ -1,7 +1,7 @@
-use crate::internal::domain::{User, Group};
+use super::dto::{GroupLookupDto, UserLookupDto, UserPersistenceDto};
+use super::error::AddUserToGroupError;
 use async_trait::async_trait;
 use kernel::Hrn;
-use super::error::AddUserToGroupError;
 
 /// Port for finding users by HRN
 ///
@@ -16,10 +16,13 @@ pub trait UserFinder: Send + Sync {
     /// * `hrn` - The HRN of the user to find
     ///
     /// # Returns
-    /// * `Ok(Some(User))` if the user was found
+    /// * `Ok(Some(UserLookupDto))` if the user was found
     /// * `Ok(None)` if no user with that HRN exists
     /// * `Err(AddUserToGroupError)` if there was an error during lookup
-    async fn find_user_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, AddUserToGroupError>;
+    async fn find_user_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<UserLookupDto>, AddUserToGroupError>;
 }
 
 /// Port for finding groups by HRN
@@ -35,10 +38,13 @@ pub trait GroupFinder: Send + Sync {
     /// * `hrn` - The HRN of the group to find
     ///
     /// # Returns
-    /// * `Ok(Some(Group))` if the group was found
+    /// * `Ok(Some(GroupLookupDto))` if the group was found
     /// * `Ok(None)` if no group with that HRN exists
     /// * `Err(AddUserToGroupError)` if there was an error during lookup
-    async fn find_group_by_hrn(&self, hrn: &Hrn) -> Result<Option<Group>, AddUserToGroupError>;
+    async fn find_group_by_hrn(
+        &self,
+        hrn: &Hrn,
+    ) -> Result<Option<GroupLookupDto>, AddUserToGroupError>;
 }
 
 /// Port for persisting users
@@ -51,10 +57,10 @@ pub trait UserGroupPersister: Send + Sync {
     /// Save a user to the persistence layer
     ///
     /// # Arguments
-    /// * `user` - The user entity to save
+    /// * `user_dto` - The user data transfer object to save
     ///
     /// # Returns
     /// * `Ok(())` if the user was saved successfully
     /// * `Err(AddUserToGroupError)` if there was an error saving the user
-    async fn save_user(&self, user: &User) -> Result<(), AddUserToGroupError>;
+    async fn save_user(&self, user_dto: &UserPersistenceDto) -> Result<(), AddUserToGroupError>;
 }

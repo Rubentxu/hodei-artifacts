@@ -4,15 +4,18 @@
 //! It provides a simple, thread-safe storage implementation without external dependencies.
 
 use async_trait::async_trait;
-use kernel::{Hrn, domain::policy::{HodeiPolicy, PolicyId}};
+use kernel::{
+    Hrn,
+    domain::policy::{HodeiPolicy, PolicyId},
+};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-use tracing::{debug, info, warn};
+use std::sync::RwLock;
+use tracing::{info, warn};
 
 // Import the port trait
-use crate::features::create_policy::ports::{CreatePolicyPort, PolicyValidator, ValidationResult, PolicyValidationError};
 use crate::features::create_policy::dto::CreatePolicyCommand;
 use crate::features::create_policy::error::CreatePolicyError;
+use crate::features::create_policy::ports::CreatePolicyPort;
 
 /// In-memory adapter for CreatePolicyPort
 pub struct InMemoryCreatePolicyAdapter {
@@ -50,7 +53,7 @@ impl InMemoryCreatePolicyAdapter {
 impl CreatePolicyPort for InMemoryCreatePolicyAdapter {
     async fn create(&self, command: CreatePolicyCommand) -> Result<HodeiPolicy, CreatePolicyError> {
         info!("Creating policy with ID: {}", command.policy_id);
-        
+
         // Basic input validation
         if command.policy_id.trim().is_empty() {
             return Err(CreatePolicyError::InvalidPolicyId(

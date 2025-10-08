@@ -13,6 +13,14 @@ pub struct MockPolicyLister {
 }
 
 impl MockPolicyLister {
+    /// Create a new mock lister
+    pub fn new() -> Self {
+        Self {
+            policies: vec![],
+            should_fail: false,
+        }
+    }
+
     /// Create a new empty mock lister
     pub fn empty() -> Self {
         Self {
@@ -124,4 +132,3 @@ mod tests {
         ));
     }
 }
-

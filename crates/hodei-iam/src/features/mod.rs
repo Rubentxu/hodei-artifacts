@@ -8,14 +8,14 @@
 /// - Adapters (infrastructure implementations)
 /// - Tests (unit and integration)
 ///
-/// TEMPORARY: Deshabilitando todas las features excepto create_policy para estabilización incremental
-// pub mod add_user_to_group;
-// pub mod create_group;
+pub mod add_user_to_group;
+pub mod create_group;
 pub mod create_policy;
-// pub mod create_user;
-// pub mod delete_policy;
-// pub mod evaluate_iam_policies;
-// pub mod get_effective_policies;
-// pub mod get_policy;
-// pub mod list_policies;
-// pub mod update_policy;
+pub mod create_user;
+pub mod delete_policy;
+pub mod evaluate_iam_policies;
+pub mod get_effective_policies;
+pub mod get_policy;
+pub mod list_policies;
+pub mod register_iam_schema;
+pub mod update_policy;

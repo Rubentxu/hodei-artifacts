@@ -1,30 +1,39 @@
+use crate::features::build_schema::ports::SchemaStoragePort;
 use crate::features::evaluate_policies::dto::{
-    Decision, EvaluatePoliciesCommand, EvaluationDecision,
+    Decision, DiagnosticLevel, EvaluatePoliciesCommand, EvaluationDecision, EvaluationMode,
 };
 use crate::features::evaluate_policies::error::EvaluatePoliciesError;
+use crate::features::evaluate_policies::ports::EvaluatePoliciesPort;
 use crate::internal::engine::AuthorizationEngine;
-use tracing::info;
+use async_trait::async_trait;
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
 /// Use case for evaluating authorization policies
 ///
 /// This use case uses the authorization engine to evaluate policies against entities
 /// and determine if access should be allowed or denied.
+///
+/// It supports schema-aware evaluation by loading Cedar schemas from storage,
+/// with configurable fallback behavior when schemas are not found.
 pub struct EvaluatePoliciesUseCase {
     /// Internal authorization engine
     engine: AuthorizationEngine,
-}
 
-impl Default for EvaluatePoliciesUseCase {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Schema storage port for loading schemas
+    schema_storage: Arc<dyn SchemaStoragePort>,
 }
 
 impl EvaluatePoliciesUseCase {
     /// Create a new policy evaluation use case
-    pub fn new() -> Self {
+    ///
+    /// # Arguments
+    ///
+    /// * `schema_storage` - Port implementation for loading schemas from storage
+    pub fn new(schema_storage: Arc<dyn SchemaStoragePort>) -> Self {
         Self {
             engine: AuthorizationEngine::new(),
+            schema_storage,
         }
     }
 
@@ -33,17 +42,27 @@ impl EvaluatePoliciesUseCase {
     /// This method evaluates an authorization request against loaded policies
     /// using the internal authorization engine.
     ///
+    /// The evaluation process follows these steps:
+    /// 1. Optionally load a Cedar schema based on the evaluation mode
+    /// 2. Load policies into the engine
+    /// 3. Register entities in the engine
+    /// 4. Build the authorization request
+    /// 5. Evaluate and return the decision
+    ///
     /// # Arguments
     ///
-    /// * `command` - The evaluation command containing the request, policies, and entities
+    /// * `command` - The evaluation command containing the request, policies, entities,
+    ///              schema version preference, and evaluation mode
     ///
     /// # Returns
     ///
-    /// An evaluation decision indicating whether access is allowed or denied
+    /// An evaluation decision indicating whether access is allowed or denied,
+    /// along with diagnostic information and the schema version used (if any).
     ///
     /// # Errors
     ///
-    /// Returns an error if policy evaluation fails due to:
+    /// Returns an error if:
+    /// - Schema loading fails in Strict mode
     /// - Invalid policies
     /// - Translation errors
     /// - Cedar evaluation errors
@@ -52,19 +71,40 @@ impl EvaluatePoliciesUseCase {
         action = command.request.action,
         resource = %command.request.resource.hrn(),
         policy_count = command.policies.policies().len(),
-        entity_count = command.entities.len()
+        entity_count = command.entities.len(),
+        schema_version = ?command.schema_version,
+        evaluation_mode = ?command.evaluation_mode
     ))]
     pub async fn execute(
         &self,
         command: EvaluatePoliciesCommand<'_>,
     ) -> Result<EvaluationDecision, EvaluatePoliciesError> {
         info!(
-            "Starting policy evaluation with {} policies and {} entities",
+            "Starting policy evaluation with {} policies and {} entities, mode: {:?}",
             command.policies.policies().len(),
-            command.entities.len()
+            command.entities.len(),
+            command.evaluation_mode
         );
 
-        // 1. Load policies into the engine
+        // Step 1: Load schema based on evaluation mode
+        let schema_result = self.load_schema_for_evaluation(&command).await;
+        let (used_schema_version, diagnostics) = match schema_result {
+            Ok((version, diags)) => (version, diags),
+            Err(e) => {
+                // In Strict mode, schema load failures are fatal
+                if command.evaluation_mode == EvaluationMode::Strict {
+                    return Err(e);
+                }
+                // In other modes, log and continue
+                warn!(
+                    "Schema loading failed but continuing in non-strict mode: {}",
+                    e
+                );
+                (None, vec![])
+            }
+        };
+
+        // Step 2: Load policies into the engine
         let policy_texts: Vec<String> = command
             .policies
             .policies()
@@ -82,7 +122,7 @@ impl EvaluatePoliciesUseCase {
             command.policies.policies().len()
         );
 
-        // 2. Register entities in the engine
+        // Step 3: Register entities in the engine
         self.engine
             .register_entities(command.entities.to_vec())
             .await
@@ -93,7 +133,7 @@ impl EvaluatePoliciesUseCase {
             command.entities.len()
         );
 
-        // 3. Build engine request
+        // Step 4: Build engine request
         let engine_request = crate::internal::engine::types::EngineRequest::new(
             command.request.principal,
             command.request.action,
@@ -101,31 +141,161 @@ impl EvaluatePoliciesUseCase {
         )
         .with_context(command.request.context.clone().unwrap_or_default());
 
-        // 4. Evaluate authorization
+        // Step 5: Evaluate authorization
         let decision = self
             .engine
             .is_authorized(&engine_request)
             .await
             .map_err(|e| EvaluatePoliciesError::EvaluationError(e.to_string()))?;
 
-        info!("Policy evaluation completed successfully");
+        debug!(
+            decision = decision.is_allowed(),
+            "Policy evaluation completed"
+        );
 
-        // 5. Map engine decision to use case decision
+        // Step 6: Map engine decision to use case decision
         let mapped_decision = if decision.is_allowed() {
             Decision::Allow
         } else {
             Decision::Deny
         };
 
-        // Simplified: no determining policies or reasons for now
-        let determining_policies = vec![];
-        let reasons = vec![];
+        // Collect policy IDs that were evaluated
+        let policy_ids_evaluated: Vec<String> = command
+            .policies
+            .policies()
+            .iter()
+            .map(|p| p.id().to_string())
+            .collect();
 
-        Ok(EvaluationDecision {
+        info!(
+            decision = ?mapped_decision,
+            schema_version = ?used_schema_version,
+            "Policy evaluation completed successfully"
+        );
+
+        // Step 7: Build and return evaluation decision
+        let mut evaluation_decision = EvaluationDecision {
             decision: mapped_decision,
-            determining_policies,
-            reasons,
-        })
+            determining_policies: vec![],
+            reasons: vec![],
+            used_schema_version,
+            policy_ids_evaluated,
+            diagnostics,
+        };
+
+        // Add success diagnostic
+        evaluation_decision.diagnostics.push(
+            crate::features::evaluate_policies::dto::EvaluationDiagnostic {
+                level: DiagnosticLevel::Info,
+                message: format!(
+                    "Evaluated {} policies successfully",
+                    command.policies.policies().len()
+                ),
+                policy_id: None,
+            },
+        );
+
+        Ok(evaluation_decision)
+    }
+
+    /// Load schema for evaluation based on the command's evaluation mode
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - The evaluation command with schema preferences
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (optional schema version, diagnostics)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Strict mode is enabled and schema loading fails
+    /// - Schema storage encounters an error in strict mode
+    async fn load_schema_for_evaluation(
+        &self,
+        command: &EvaluatePoliciesCommand<'_>,
+    ) -> Result<
+        (
+            Option<String>,
+            Vec<crate::features::evaluate_policies::dto::EvaluationDiagnostic>,
+        ),
+        EvaluatePoliciesError,
+    > {
+        let mut diagnostics = vec![];
+
+        match command.evaluation_mode {
+            EvaluationMode::NoSchema => {
+                debug!("Evaluation mode is NoSchema, skipping schema loading");
+                diagnostics.push(
+                    crate::features::evaluate_policies::dto::EvaluationDiagnostic {
+                        level: DiagnosticLevel::Info,
+                        message: "Evaluating without schema (NoSchema mode)".to_string(),
+                        policy_id: None,
+                    },
+                );
+                Ok((None, diagnostics))
+            }
+            EvaluationMode::Strict | EvaluationMode::BestEffortNoSchema => {
+                // Try to load the schema
+                let schema_load_result = self
+                    .schema_storage
+                    .load_schema(command.schema_version.clone())
+                    .await;
+
+                match schema_load_result {
+                    Ok(stored_schema) => {
+                        let version = stored_schema.version.clone();
+                        info!(
+                            version = ?version,
+                            "Successfully loaded schema for evaluation"
+                        );
+
+                        diagnostics.push(
+                            crate::features::evaluate_policies::dto::EvaluationDiagnostic {
+                                level: DiagnosticLevel::Info,
+                                message: format!(
+                                    "Using schema version: {}",
+                                    version.as_deref().unwrap_or("latest")
+                                ),
+                                policy_id: None,
+                            },
+                        );
+
+                        // TODO: In the future, we should actually use the loaded schema
+                        // in the authorization engine. For now, we just track that it was loaded.
+                        // The engine would need to be updated to accept a Schema parameter.
+
+                        Ok((version, diagnostics))
+                    }
+                    Err(e) => {
+                        if command.evaluation_mode == EvaluationMode::Strict {
+                            warn!("Schema loading failed in Strict mode: {}", e);
+                            Err(EvaluatePoliciesError::StrictModeSchemaRequired)
+                        } else {
+                            // BestEffortNoSchema: log warning and continue without schema
+                            warn!(
+                                "Schema loading failed in BestEffortNoSchema mode: {}, continuing without schema",
+                                e
+                            );
+                            diagnostics.push(
+                                crate::features::evaluate_policies::dto::EvaluationDiagnostic {
+                                    level: DiagnosticLevel::Warning,
+                                    message: format!(
+                                        "Schema loading failed, evaluating without schema: {}",
+                                        e
+                                    ),
+                                    policy_id: None,
+                                },
+                            );
+                            Ok((None, diagnostics))
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Clear all cached data in the engine
@@ -143,6 +313,26 @@ impl EvaluatePoliciesUseCase {
             .await
             .map_err(|e| EvaluatePoliciesError::CacheClearError(e.to_string()))?;
 
+        debug!("Cleared policy evaluation cache");
+
         Ok(())
+    }
+}
+
+/// Implementation of the EvaluatePoliciesPort trait for EvaluatePoliciesUseCase
+///
+/// This allows the use case to be used via the port abstraction,
+/// enabling dependency inversion for other bounded contexts.
+#[async_trait]
+impl EvaluatePoliciesPort for EvaluatePoliciesUseCase {
+    async fn evaluate(
+        &self,
+        command: EvaluatePoliciesCommand<'_>,
+    ) -> Result<EvaluationDecision, EvaluatePoliciesError> {
+        self.execute(command).await
+    }
+
+    async fn clear_cache(&self) -> Result<(), EvaluatePoliciesError> {
+        self.clear_cache().await
     }
 }

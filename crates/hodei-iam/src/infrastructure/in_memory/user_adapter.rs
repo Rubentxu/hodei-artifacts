@@ -10,20 +10,23 @@ use std::sync::{Arc, RwLock};
 use tracing::{debug, info, warn};
 
 // Import ports from features
-use crate::features::create_user::ports::CreateUserPort;
 use crate::features::add_user_to_group::ports::UserFinder;
 use crate::features::add_user_to_group::ports::UserGroupPersister;
+use crate::features::create_user::ports::CreateUserPort;
 
 // Import errors from features
-use crate::features::create_user::error::CreateUserError;
 use crate::features::add_user_to_group::error::AddUserToGroupError;
+use crate::features::create_user::error::CreateUserError;
 
-// Import internal domain entities
-use crate::internal::domain::User;
+// Import DTOs
+use crate::features::add_user_to_group::dto::{
+    UserLookupDto, UserPersistenceDto as AddUserToGroupUserPersistenceDto,
+};
+use crate::features::create_user::dto::UserPersistenceDto;
 
 /// In-memory adapter for User operations
 pub struct InMemoryUserAdapter {
-    store: RwLock<HashMap<String, User>>,
+    store: RwLock<HashMap<String, UserLookupDto>>,
 }
 
 impl InMemoryUserAdapter {
@@ -45,9 +48,9 @@ impl InMemoryUserAdapter {
 impl CreateUserPort for InMemoryUserAdapter {
     async fn save_user(&self, user: &User) -> Result<(), CreateUserError> {
         info!("Saving user with HRN: {}", user.hrn);
-        
+
         let resource_id = user.hrn.resource_id();
-        
+
         // Check uniqueness
         if self.exists(&user.hrn) {
             return Err(CreateUserError::UserAlreadyExists(user.hrn.to_string()));
@@ -68,17 +71,17 @@ impl CreateUserPort for InMemoryUserAdapter {
 impl UserFinder for InMemoryUserAdapter {
     async fn find_user_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, AddUserToGroupError> {
         debug!("Finding user by HRN: {}", hrn);
-        
+
         let resource_id = hrn.resource_id();
         let guard = self.store.read().unwrap();
         let user = guard.get(&resource_id).cloned();
-        
+
         if user.is_some() {
             info!("User found");
         } else {
             info!("User not found");
         }
-        
+
         Ok(user)
     }
 }
@@ -87,9 +90,9 @@ impl UserFinder for InMemoryUserAdapter {
 impl UserGroupPersister for InMemoryUserAdapter {
     async fn save_user(&self, user: &User) -> Result<(), AddUserToGroupError> {
         info!("Updating user with HRN: {}", user.hrn);
-        
+
         let resource_id = user.hrn.resource_id();
-        
+
         let mut guard = self.store.write().map_err(|_| {
             warn!("RwLock poisoned while updating user");
             AddUserToGroupError::StorageError("Internal storage lock poisoned".to_string())

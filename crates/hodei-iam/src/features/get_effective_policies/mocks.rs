@@ -5,17 +5,17 @@
 //! without requiring real infrastructure (databases, services, etc.).
 
 use async_trait::async_trait;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
-use crate::internal::domain::{Group, User};
-use crate::features::get_effective_policies::ports::{UserFinderPort, GroupFinderPort, PolicyFinderPort};
-use kernel::domain::{Hrn, HodeiPolicy};
+use crate::features::get_effective_policies::{
+    dto::{GroupLookupDto, UserLookupDto},
+    ports::{GroupFinderPort, PolicyFinderPort, UserFinderPort},
+};
+use kernel::domain::{HodeiPolicy, Hrn};
 
 // Mock implementations for testing
 #[derive(Debug, Clone)]
 pub struct MockUserFinderPort {
-    user: Option<User>,
+    user: Option<UserLookupDto>,
     should_fail: bool,
 }
 
@@ -27,7 +27,7 @@ impl MockUserFinderPort {
         }
     }
 
-    pub fn with_user(mut self, user: User) -> Self {
+    pub fn with_user(mut self, user: UserLookupDto) -> Self {
         self.user = Some(user);
         self
     }
@@ -40,7 +40,10 @@ impl MockUserFinderPort {
 
 #[async_trait]
 impl UserFinderPort for MockUserFinderPort {
-    async fn find_by_hrn(&self, _hrn: &Hrn) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn find_by_hrn(
+        &self,
+        _hrn: &Hrn,
+    ) -> Result<Option<UserLookupDto>, Box<dyn std::error::Error + Send + Sync>> {
         if self.should_fail {
             return Err("Mock user finder failure".into());
         }
@@ -50,7 +53,7 @@ impl UserFinderPort for MockUserFinderPort {
 
 #[derive(Debug, Clone)]
 pub struct MockGroupFinderPort {
-    groups: Vec<Group>,
+    groups: Vec<GroupLookupDto>,
     should_fail: bool,
 }
 
@@ -62,7 +65,7 @@ impl MockGroupFinderPort {
         }
     }
 
-    pub fn with_groups(mut self, groups: Vec<Group>) -> Self {
+    pub fn with_groups(mut self, groups: Vec<GroupLookupDto>) -> Self {
         self.groups = groups;
         self
     }
@@ -75,7 +78,10 @@ impl MockGroupFinderPort {
 
 #[async_trait]
 impl GroupFinderPort for MockGroupFinderPort {
-    async fn find_groups_by_user_hrn(&self, _user_hrn: &Hrn) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn find_groups_by_user_hrn(
+        &self,
+        _user_hrn: &Hrn,
+    ) -> Result<Vec<GroupLookupDto>, Box<dyn std::error::Error + Send + Sync>> {
         if self.should_fail {
             return Err("Mock group finder failure".into());
         }
@@ -110,7 +116,10 @@ impl MockPolicyFinderPort {
 
 #[async_trait]
 impl PolicyFinderPort for MockPolicyFinderPort {
-    async fn find_policies_by_principal(&self, _principal_hrn: &Hrn) -> Result<Vec<HodeiPolicy>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn find_policies_by_principal(
+        &self,
+        _principal_hrn: &Hrn,
+    ) -> Result<Vec<HodeiPolicy>, Box<dyn std::error::Error + Send + Sync>> {
         if self.should_fail {
             return Err("Mock policy finder failure".into());
         }

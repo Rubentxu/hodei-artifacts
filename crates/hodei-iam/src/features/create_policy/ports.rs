@@ -18,9 +18,8 @@
 use crate::features::create_policy::dto::CreatePolicyCommand;
 use crate::features::create_policy::error::CreatePolicyError;
 use async_trait::async_trait;
+// use hodei_policies::features::validate_policy::ValidatePolicyPort; // Temporarily disabled - unused
 use kernel::domain::policy::HodeiPolicy;
-use hodei_policies::features::validate_policy::ValidatePolicyPort;
-
 
 /// Port for validating IAM policy content
 ///
@@ -43,127 +42,9 @@ use hodei_policies::features::validate_policy::ValidatePolicyPort;
 /// - True separation of implementation from interface
 pub use hodei_policies::features::validate_policy::ValidatePolicyPort as PolicyValidator;
 
-/// Result of policy validation
-///
-/// This struct contains the outcome of validating a Cedar policy,
-/// including any errors or warnings found.
-#[derive(Debug, Clone)]
-pub struct ValidationResult {
-    /// Whether the policy is syntactically and semantically valid
-    pub is_valid: bool,
-
-    /// List of validation errors that prevent the policy from being used
-    pub errors: Vec<ValidationError>,
-
-    /// List of warnings that don't prevent usage but should be addressed
-    pub warnings: Vec<ValidationWarning>,
-}
-
-impl ValidationResult {
-    /// Create a successful validation result with no errors
-    pub fn valid() -> Self {
-        Self {
-            is_valid: true,
-            errors: vec![],
-            warnings: vec![],
-        }
-    }
-
-    /// Create a failed validation result with errors
-    pub fn invalid(errors: Vec<ValidationError>) -> Self {
-        Self {
-            is_valid: false,
-            errors,
-            warnings: vec![],
-        }
-    }
-}
-
-/// A validation error with optional location information
-///
-/// Provides details about what is wrong with the policy,
-/// including the location in the source text if available.
-#[derive(Debug, Clone)]
-pub struct ValidationError {
-    /// Human-readable error message
-    pub message: String,
-
-    /// Line number where the error occurred (1-based, optional)
-    pub line: Option<usize>,
-
-    /// Column number where the error occurred (1-based, optional)
-    pub column: Option<usize>,
-}
-
-impl ValidationError {
-    /// Create a new validation error with message only
-    pub fn new(message: String) -> Self {
-        Self {
-            message,
-            line: None,
-            column: None,
-        }
-    }
-
-    /// Create a validation error with location information
-    pub fn with_location(message: String, line: usize, column: usize) -> Self {
-        Self {
-            message,
-            line: Some(line),
-            column: Some(column),
-        }
-    }
-}
-
-/// A validation warning
-///
-/// Warnings indicate potential issues that don't prevent the policy
-/// from being used, but should be reviewed.
-#[derive(Debug, Clone)]
-pub struct ValidationWarning {
-    /// Human-readable warning message
-    pub message: String,
-
-    /// Severity level (e.g., "low", "medium", "high")
-    pub severity: String,
-}
-
-impl ValidationWarning {
-    /// Create a new validation warning with default severity
-    pub fn new(message: String) -> Self {
-        Self {
-            message,
-            severity: "medium".to_string(),
-        }
-    }
-
-    /// Create a validation warning with custom severity
-    pub fn with_severity(message: String, severity: String) -> Self {
-        Self {
-            message,
-            severity,
-        }
-    }
-}
-
-/// Errors that can occur during policy validation
-#[derive(Debug, thiserror::Error)]
-pub enum PolicyValidationError {
-    /// The validation service itself encountered an error
-    ///
-    /// This is different from the policy being invalid - it means
-    /// the validation process couldn't complete.
-    #[error("validation service error: {0}")]
-    ServiceError(String),
-
-    /// The validation service is temporarily unavailable
-    #[error("validation service unavailable")]
-    ServiceUnavailable,
-
-    /// Timeout while waiting for validation result
-    #[error("validation timeout after {0}ms")]
-    Timeout(u64),
-}
+/// Re-export validation result types from hodei-policies
+pub use hodei_policies::features::validate_policy::dto::ValidationResult;
+pub use hodei_policies::features::validate_policy::error::ValidatePolicyError as PolicyValidationError;
 
 /// Port for creating IAM policies
 ///
@@ -248,50 +129,5 @@ pub trait CreatePolicyPort: Send + Sync {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_validation_result_valid() {
-        let result = ValidationResult::valid();
-        assert!(result.is_valid);
-        assert!(result.errors.is_empty());
-        assert!(result.warnings.is_empty());
-    }
-
-    #[test]
-    fn test_validation_result_invalid() {
-        let errors = vec![ValidationError::new("Syntax error".to_string())];
-        let result = ValidationResult::invalid(errors);
-        assert!(!result.is_valid);
-        assert_eq!(result.errors.len(), 1);
-    }
-
-    #[test]
-    fn test_validation_error_with_location() {
-        let error = ValidationError::with_location("Missing semicolon".to_string(), 10, 25);
-        assert_eq!(error.message, "Missing semicolon");
-        assert_eq!(error.line, Some(10));
-        assert_eq!(error.column, Some(25));
-    }
-
-    #[test]
-    fn test_validation_error_without_location() {
-        let error = ValidationError::new("General error".to_string());
-        assert_eq!(error.message, "General error");
-        assert_eq!(error.line, None);
-        assert_eq!(error.column, None);
-    }
-
-    #[test]
-    fn test_policy_validation_error_display() {
-        let error = PolicyValidationError::ServiceError("Connection failed".to_string());
-        assert_eq!(
-            error.to_string(),
-            "validation service error: Connection failed"
-        );
-    }
-
-    #[test]
-    fn test_policy_validation_timeout_display() {
-        let error = PolicyValidationError::Timeout(5000);
-        assert_eq!(error.to_string(), "validation timeout after 5000ms");
-    }
+    // Tests removed - validation types are now re-exported from hodei-policies
 }

@@ -1,7 +1,6 @@
-use super::dto::AddUserToGroupCommand;
+use super::dto::{AddUserToGroupCommand, UserPersistenceDto};
 use super::error::AddUserToGroupError;
-use super::ports::{UserFinder, GroupFinder, UserGroupPersister};
-use crate::internal::domain::User;
+use super::ports::{GroupFinder, UserFinder, UserGroupPersister};
 use kernel::Hrn;
 use std::sync::Arc;
 
@@ -25,11 +24,7 @@ impl<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> AddUserToGroupUseC
     /// * `user_finder` - Implementation of UserFinder for user lookup
     /// * `group_finder` - Implementation of GroupFinder for group lookup
     /// * `user_persister` - Implementation of UserGroupPersister for user persistence
-    pub fn new(
-        user_finder: Arc<UF>,
-        group_finder: Arc<GF>,
-        user_persister: Arc<UP>,
-    ) -> Self {
+    pub fn new(user_finder: Arc<UF>, group_finder: Arc<GF>, user_persister: Arc<UP>) -> Self {
         Self {
             user_finder,
             group_finder,
@@ -49,24 +44,41 @@ impl<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> AddUserToGroupUseC
         // Parse and validate HRNs
         let user_hrn = Hrn::from_string(&cmd.user_hrn)
             .ok_or_else(|| AddUserToGroupError::InvalidUserHrn(cmd.user_hrn.clone()))?;
-        
+
         let group_hrn = Hrn::from_string(&cmd.group_hrn)
             .ok_or_else(|| AddUserToGroupError::InvalidGroupHrn(cmd.group_hrn.clone()))?;
 
         // Find the user
-        let user = self.user_finder.find_user_by_hrn(&user_hrn).await?
+        let user_dto = self
+            .user_finder
+            .find_user_by_hrn(&user_hrn)
+            .await?
             .ok_or_else(|| AddUserToGroupError::UserNotFound(cmd.user_hrn.clone()))?;
 
         // Find the group
-        let _group = self.group_finder.find_group_by_hrn(&group_hrn).await?
+        let _group_dto = self
+            .group_finder
+            .find_group_by_hrn(&group_hrn)
+            .await?
             .ok_or_else(|| AddUserToGroupError::GroupNotFound(cmd.group_hrn.clone()))?;
 
-        // Add user to group
-        let mut updated_user = user;
-        updated_user.add_to_group(group_hrn);
+        // Add user to group by creating updated DTO
+        let mut updated_group_hrns = user_dto.group_hrns.clone();
+        if !updated_group_hrns.contains(&group_hrn.to_string()) {
+            updated_group_hrns.push(group_hrn.to_string());
+        }
+
+        // Create updated user DTO for persistence
+        let updated_user_dto = UserPersistenceDto {
+            hrn: user_dto.hrn,
+            name: user_dto.name,
+            email: user_dto.email,
+            group_hrns: updated_group_hrns,
+            tags: user_dto.tags,
+        };
 
         // Persist the updated user
-        self.user_persister.save_user(&updated_user).await?;
+        self.user_persister.save_user(&updated_user_dto).await?;
 
         Ok(())
     }

@@ -20,7 +20,7 @@ use crate::features::create_policy::dto::{CreatePolicyCommand, PolicyView};
 use crate::features::create_policy::error::CreatePolicyError;
 use crate::features::create_policy::ports::CreatePolicyPort;
 use hodei_policies::features::validate_policy::ValidatePolicyPort;
-use hodei_policies::validate_policy::dto::{ValidatePolicyCommand, ValidationResult};
+// use hodei_policies::validate_policy::dto::{ValidatePolicyCommand, ValidationResult}; // Temporarily disabled - unused
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 

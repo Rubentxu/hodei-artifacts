@@ -1,7 +1,7 @@
-use crate::internal::domain::Group;
-use async_trait::async_trait;
-use kernel::Hrn;
+use super::dto::GroupPersistenceDto;
 use super::error::CreateGroupError;
+use crate::infrastructure::hrn_generator::HrnGenerator;
+use async_trait::async_trait;
 
 /// Port for persisting groups
 ///
@@ -13,25 +13,10 @@ pub trait CreateGroupPort: Send + Sync {
     /// Save a group to the persistence layer
     ///
     /// # Arguments
-    /// * `group` - The group entity to save
+    /// * `group_dto` - The group data transfer object to save
     ///
     /// # Returns
     /// * `Ok(())` if the group was saved successfully
     /// * `Err(CreateGroupError)` if there was an error saving the group
-    async fn save_group(&self, group: &Group) -> Result<(), CreateGroupError>;
-}
-
-/// Port for generating HRNs
-///
-/// This port abstracts HRN generation, allowing different implementations
-/// (e.g., UUID-based, sequential, etc.)
-pub trait HrnGenerator: Send + Sync {
-    /// Generate a new HRN for a group
-    ///
-    /// # Arguments
-    /// * `name` - The name of the group (used for HRN generation)
-    ///
-    /// # Returns
-    /// * A new HRN for the group
-    fn new_group_hrn(&self, name: &str) -> Hrn;
+    async fn save_group(&self, group_dto: &GroupPersistenceDto) -> Result<(), CreateGroupError>;
 }

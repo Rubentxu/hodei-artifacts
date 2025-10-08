@@ -1,6 +1,7 @@
-use std::sync::Arc;
-use super::ports::{CreateGroupPort, HrnGenerator};
+use super::ports::CreateGroupPort;
 use super::use_case::CreateGroupUseCase;
+use crate::infrastructure::hrn_generator::HrnGenerator;
+use std::sync::Arc;
 
 /// Factory for creating CreateGroupUseCase instances
 ///

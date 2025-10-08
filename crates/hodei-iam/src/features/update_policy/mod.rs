@@ -35,10 +35,7 @@ pub mod use_case;
 // ---------------------------------------------------------------------------
 pub use dto::{PolicyView, UpdatePolicyCommand};
 pub use error::UpdatePolicyError;
-pub use ports::{
-    PolicyValidationError, PolicyValidator, UpdatePolicyPort, ValidationError, ValidationResult,
-    ValidationWarning,
-};
+pub use ports::{PolicyValidationError, PolicyValidator, UpdatePolicyPort, ValidationResult};
 pub use use_case::UpdatePolicyUseCase;
 
 // ---------------------------------------------------------------------------

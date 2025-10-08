@@ -1,6 +1,7 @@
-use super::dto::{CreateGroupCommand, GroupView};
+use super::dto::{CreateGroupCommand, GroupPersistenceDto, GroupView};
 use super::error::CreateGroupError;
-use super::ports::{CreateGroupPort, HrnGenerator};
+use super::ports::CreateGroupPort;
+use crate::infrastructure::hrn_generator::HrnGenerator;
 use crate::internal::domain::Group;
 use std::sync::Arc;
 
@@ -40,13 +41,18 @@ impl<P: CreateGroupPort, G: HrnGenerator> CreateGroupUseCase<P, G> {
     pub async fn execute(&self, cmd: CreateGroupCommand) -> Result<GroupView, CreateGroupError> {
         // Generate a unique HRN using the HRN generator
         let hrn = self.hrn_generator.new_group_hrn(&cmd.group_name);
-        
+
         // Create the group domain entity
         let group = Group::new(hrn.clone(), cmd.group_name, None);
-        
-        // Persist the group
-        self.persister.save_group(&group).await?;
-        
+
+        // Convert to DTO and persist the group
+        let group_dto = GroupPersistenceDto {
+            hrn: hrn.to_string(),
+            name: group.name.clone(),
+            tags: group.tags.clone(),
+        };
+        self.persister.save_group(&group_dto).await?;
+
         // Return the view
         Ok(GroupView {
             hrn: hrn.to_string(),

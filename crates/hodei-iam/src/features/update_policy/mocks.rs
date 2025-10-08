@@ -7,10 +7,8 @@ use std::sync::Mutex;
 
 use super::dto::{PolicyView, UpdatePolicyCommand};
 use super::error::UpdatePolicyError;
-use super::ports::{
-    PolicyValidationError, PolicyValidator, UpdatePolicyPort, ValidationError, ValidationResult,
-    ValidationWarning,
-};
+use super::ports::{PolicyValidationError, PolicyValidator, UpdatePolicyPort, ValidationResult};
+use hodei_policies::features::validate_policy::dto::ValidatePolicyCommand;
 
 /// Mock PolicyValidator for testing
 pub struct MockPolicyValidator {
@@ -53,31 +51,21 @@ impl MockPolicyValidator {
 
 #[async_trait]
 impl PolicyValidator for MockPolicyValidator {
-    async fn validate_policy(&self, _policy_content: &str) -> Result<ValidationResult, PolicyValidationError> {
+    async fn validate(
+        &self,
+        _command: ValidatePolicyCommand,
+    ) -> Result<ValidationResult, PolicyValidationError> {
         if self.should_fail {
-            return Err(PolicyValidationError::ServiceError(
-                "Mock validation service error".to_string()
+            return Err(PolicyValidationError::ValidationError(
+                "Mock validation service error".to_string(),
             ));
         }
 
         let is_valid = self.errors.is_empty();
 
-        let errors = self
-            .errors
-            .iter()
-            .map(|msg| ValidationError::new(msg.clone()))
-            .collect();
-
-        let warnings = self
-            .warnings
-            .iter()
-            .map(|msg| ValidationWarning::new(msg.clone()))
-            .collect();
-
         Ok(ValidationResult {
             is_valid,
-            errors,
-            warnings,
+            errors: self.errors.clone(),
         })
     }
 }
@@ -100,7 +88,10 @@ impl MockUpdatePolicyPort {
         let mut policies = HashMap::new();
         policies.insert(
             "test-policy".to_string(),
-            ("permit(principal, action, resource);".to_string(), Some("Test policy".to_string()))
+            (
+                "permit(principal, action, resource);".to_string(),
+                Some("Test policy".to_string()),
+            ),
         );
 
         Self {
@@ -185,7 +176,10 @@ mod tests {
     #[tokio::test]
     async fn test_mock_validator_success() {
         let validator = MockPolicyValidator::new();
-        let result = validator.validate_policy("permit(...);").await;
+        let command = ValidatePolicyCommand {
+            content: "permit(...);".to_string(),
+        };
+        let result = validator.validate(command).await;
         assert!(result.is_ok());
         let validation = result.unwrap();
         assert!(validation.is_valid);
@@ -195,7 +189,10 @@ mod tests {
     #[tokio::test]
     async fn test_mock_validator_with_errors() {
         let validator = MockPolicyValidator::with_errors(vec!["Error 1".to_string()]);
-        let result = validator.validate_policy("invalid").await;
+        let command = ValidatePolicyCommand {
+            content: "invalid".to_string(),
+        };
+        let result = validator.validate(command).await;
         assert!(result.is_ok());
         let validation = result.unwrap();
         assert!(!validation.is_valid);
@@ -216,6 +213,9 @@ mod tests {
         let command = UpdatePolicyCommand::update_description("nonexistent", "Description");
         let result = port.update(command).await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), UpdatePolicyError::PolicyNotFound(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            UpdatePolicyError::PolicyNotFound(_)
+        ));
     }
 }

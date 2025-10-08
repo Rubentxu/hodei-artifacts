@@ -136,7 +136,7 @@ impl BatchUploadUseCase {
             let all_failed_via_response =
                 success_count == 0 && failure_count > 0 && had_response_level_failures == failure_count;
 
-            if failure_count == 0 || (!mixed_outcome_rollback && !all_failed_via_response) {
+            if failure_count == 0 || !(mixed_outcome_rollback || all_failed_via_response) {
                 self.transaction_manager.commit_transaction().await?;
                 info!("Batch transaction committed successfully");
             } else {

@@ -4,9 +4,9 @@
 //! Following the Interface Segregation Principle (SOLID), each port is specific
 //! to this feature's needs.
 
-use crate::internal::domain::{Group, User};
+use super::dto::{GroupLookupDto, UserLookupDto};
 use async_trait::async_trait;
-use kernel::domain::{Hrn, HodeiPolicy};
+use kernel::domain::{HodeiPolicy, Hrn};
 
 /// Port for finding users by HRN
 ///
@@ -27,7 +27,7 @@ pub trait UserFinderPort: Send + Sync {
     async fn find_by_hrn(
         &self,
         hrn: &Hrn,
-    ) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Option<UserLookupDto>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Port for finding groups that a user belongs to
@@ -49,7 +49,7 @@ pub trait GroupFinderPort: Send + Sync {
     async fn find_groups_by_user_hrn(
         &self,
         user_hrn: &Hrn,
-    ) -> Result<Vec<Group>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Vec<GroupLookupDto>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Port for finding policy documents associated with a principal

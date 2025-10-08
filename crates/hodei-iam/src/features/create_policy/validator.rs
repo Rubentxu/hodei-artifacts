@@ -4,9 +4,9 @@
 //! using the hodei-policies crate to validate policy syntax.
 
 use async_trait::async_trait;
-use tracing::{debug, warn};
+use tracing::debug;
 
-use super::ports::{PolicyValidationError, PolicyValidator, ValidationError, ValidationResult};
+use super::ports::PolicyValidator;
 use hodei_policies::features::validate_policy::dto::{
     ValidatePolicyCommand, ValidationResult as PoliciesValidationResult,
 };

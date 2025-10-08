@@ -45,10 +45,10 @@
 use std::sync::Arc;
 use tracing::instrument;
 
-
 use crate::features::create_policy::ports::{CreatePolicyPort, PolicyValidator};
 use crate::features::create_policy::use_case::CreatePolicyUseCase;
-use crate::infrastructure::in_memory::create_policy_adapter::InMemoryCreatePolicyAdapter;
+// In-memory adapter temporarily disabled - using SurrealDB for persistence
+// use crate::infrastructure::in_memory::create_policy_adapter::InMemoryCreatePolicyAdapter;
 
 /// High‑level factory providing explicit build functions.
 pub struct CreatePolicyUseCaseFactory;
@@ -82,17 +82,17 @@ impl CreatePolicyUseCaseFactory {
 /// Build a use case wired to the in‑memory adapter (dev/testing).
 ///
 /// Returns a fully constructed `CreatePolicyUseCase` ready for execution.
-#[instrument(skip(validator), level = "debug")]
-pub fn in_memory_use_case<V>(
-    account_id: &str,
-    validator: Arc<V>,
-) -> CreatePolicyUseCase<InMemoryCreatePolicyAdapter, V>
-where
-    V: PolicyValidator,
-{
-    let adapter = Arc::new(InMemoryCreatePolicyAdapter::new(account_id.to_string()));
-    CreatePolicyUseCase::new(adapter, validator)
-}
+// #[instrument(skip(validator), level = "debug")]
+// pub fn in_memory_use_case<V>(
+//     account_id: &str,
+//     validator: Arc<V>,
+// ) -> CreatePolicyUseCase<InMemoryCreatePolicyAdapter, V>
+// where
+//     V: PolicyValidator,
+// {
+//     let adapter = Arc::new(InMemoryCreatePolicyAdapter::new(account_id.to_string()));
+//     CreatePolicyUseCase::new(adapter, validator)
+// }
 
 /// Build a use case with an externally provided port implementation.
 ///

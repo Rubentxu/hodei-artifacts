@@ -2,16 +2,24 @@
 /// Uses only public API from hodei_iam crate
 use hodei_iam::{
     features::create_user::{self, dto::CreateUserCommand},
-    infrastructure::in_memory::InMemoryUserAdapter,
     infrastructure::hrn_generator::UuidHrnGenerator,
+    infrastructure::surreal::SurrealUserAdapter,
 };
 use std::sync::Arc;
+use surrealdb::{Surreal, engine::local::Mem};
 
 #[tokio::test]
 async fn test_create_user_with_valid_email() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "John Doe".to_string(),
@@ -31,9 +39,16 @@ async fn test_create_user_with_valid_email() {
 
 #[tokio::test]
 async fn test_create_user_multiple_tags() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Jane Smith".to_string(),
@@ -57,9 +72,16 @@ async fn test_create_user_multiple_tags() {
 
 #[tokio::test]
 async fn test_create_user_no_tags() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Bob".to_string(),
@@ -76,9 +98,16 @@ async fn test_create_user_no_tags() {
 
 #[tokio::test]
 async fn test_create_user_hrn_format() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Test User".to_string(),
@@ -105,9 +134,16 @@ async fn test_create_user_hrn_format() {
 
 #[tokio::test]
 async fn test_create_user_unique_ids() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Same Name".to_string(),
@@ -124,9 +160,16 @@ async fn test_create_user_unique_ids() {
 
 #[tokio::test]
 async fn test_create_users_batch() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let users = vec![
         ("Alice", "alice@test.com"),
@@ -156,9 +199,16 @@ async fn test_create_users_batch() {
 
 #[tokio::test]
 async fn test_create_user_email_validation_format() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     // Test with various email formats
     let valid_emails = vec![
@@ -187,9 +237,16 @@ async fn test_create_user_email_validation_format() {
 
 #[tokio::test]
 async fn test_create_user_persistence() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Persistent User".to_string(),
@@ -205,9 +262,16 @@ async fn test_create_user_persistence() {
 
 #[tokio::test]
 async fn test_create_user_empty_name() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "".to_string(),
@@ -224,9 +288,16 @@ async fn test_create_user_empty_name() {
 
 #[tokio::test]
 async fn test_create_user_special_characters_in_name() {
-    let adapter = Arc::new(InMemoryUserAdapter::new());
-    let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "test-account".to_string()));
-    let use_case = create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
+    db.use_ns("test").use_db("iam").await.unwrap();
+    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let hrn_generator = Arc::new(UuidHrnGenerator::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        "test-account".to_string(),
+    ));
+    let use_case =
+        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "José García-López O'Brien".to_string(),
