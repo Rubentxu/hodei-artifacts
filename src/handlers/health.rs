@@ -6,9 +6,21 @@
 
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Health check response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Alias for HealthStatus to maintain backward compatibility
+pub type HealthStatus = HealthResponse;
+
+/// Health check response
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "status": "healthy",
+    "version": "0.1.0",
+    "service": "hodei-artifacts-api",
+    "timestamp": "2024-01-15T10:30:00Z"
+}))]
 pub struct HealthResponse {
     /// Service status
     pub status: String,
@@ -39,6 +51,14 @@ pub struct HealthResponse {
 ///   "timestamp": "2024-01-15T10:30:00Z"
 /// }
 /// ```
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "health",
+    responses(
+        (status = 200, description = "Service is healthy", body = HealthResponse)
+    )
+)]
 pub async fn health_check() -> impl IntoResponse {
     let response = HealthResponse {
         status: "healthy".to_string(),

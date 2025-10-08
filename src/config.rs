@@ -132,7 +132,7 @@ impl Default for DatabaseConfig {
 impl Default for SchemaConfig {
     fn default() -> Self {
         Self {
-            register_iam_on_startup: true,
+            register_iam_on_startup: false,
             version: None,
             validate: true,
             storage_type: "surrealdb".to_string(),

@@ -26,6 +26,7 @@ pub mod app_state;
 pub mod bootstrap;
 pub mod config;
 pub mod handlers;
+pub mod openapi;
 
 // Re-export commonly used types for external consumers
 pub use app_state::AppState;
@@ -34,3 +35,4 @@ pub use config::Config;
 
 // Re-export handler modules
 pub use handlers::{health, policies, schemas};
+pub use openapi::create_api_doc;

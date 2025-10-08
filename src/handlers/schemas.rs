@@ -14,9 +14,10 @@ use axum::{
 };
 use hodei_policies::features::build_schema::ports::SchemaStoragePort;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Request to build a schema
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BuildSchemaRequest {
     /// Optional schema version
     pub version: Option<String>,
@@ -30,7 +31,7 @@ fn default_validate() -> bool {
 }
 
 /// Response from building a schema
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BuildSchemaResponse {
     /// Number of entity types in the schema
     pub entity_count: usize,
@@ -45,7 +46,7 @@ pub struct BuildSchemaResponse {
 }
 
 /// Request to register IAM schema
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegisterIamSchemaRequest {
     /// Optional schema version
     pub version: Option<String>,
@@ -55,7 +56,7 @@ pub struct RegisterIamSchemaRequest {
 }
 
 /// Response from registering IAM schema
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegisterIamSchemaResponse {
     /// Number of entity types registered
     pub entity_types_registered: usize,
@@ -82,6 +83,16 @@ pub struct RegisterIamSchemaResponse {
 /// # Returns
 ///
 /// A JSON response with the build result or an error
+#[utoipa::path(
+    post,
+    path = "/api/v1/schemas/build",
+    tag = "schemas",
+    request_body = BuildSchemaRequest,
+    responses(
+        (status = 200, description = "Schema built successfully", body = BuildSchemaResponse),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn build_schema<S>(
     State(state): State<AppState<S>>,
     Json(request): Json<BuildSchemaRequest>,
@@ -120,6 +131,15 @@ where
 /// # Returns
 ///
 /// A JSON response with the loaded schema information or an error
+#[utoipa::path(
+    get,
+    path = "/api/v1/schemas/load",
+    tag = "schemas",
+    responses(
+        (status = 200, description = "Schema loaded successfully", body = serde_json::Value),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn load_schema<S>(
     State(_state): State<AppState<S>>,
 ) -> Result<Json<serde_json::Value>, ApiError>
@@ -147,6 +167,16 @@ where
 /// # Returns
 ///
 /// A JSON response with the registration result or an error
+#[utoipa::path(
+    post,
+    path = "/api/v1/schemas/register-iam",
+    tag = "schemas",
+    request_body = RegisterIamSchemaRequest,
+    responses(
+        (status = 200, description = "IAM schema registered successfully", body = RegisterIamSchemaResponse),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn register_iam_schema<S>(
     State(state): State<AppState<S>>,
     Json(request): Json<RegisterIamSchemaRequest>,

@@ -15,7 +15,7 @@ use hodei_policies::features::build_schema::ports::SchemaStoragePort;
 use serde::{Deserialize, Serialize};
 
 /// Request to validate a policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ValidatePolicyRequest {
     /// Cedar policy content to validate
     pub content: String,
@@ -29,7 +29,7 @@ fn default_use_schema() -> bool {
 }
 
 /// Response from policy validation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ValidatePolicyResponse {
     /// Whether the policy is valid
     pub is_valid: bool,
@@ -38,7 +38,7 @@ pub struct ValidatePolicyResponse {
 }
 
 /// Request to evaluate policies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EvaluatePoliciesRequest {
     /// Principal HRN (e.g., "hrn:aws:iam::123:user/alice")
     pub principal_hrn: String,
@@ -59,7 +59,7 @@ pub struct EvaluatePoliciesRequest {
 }
 
 /// Response from policy evaluation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EvaluatePoliciesResponse {
     /// Decision: "Allow" or "Deny"
     pub decision: String,
@@ -76,7 +76,7 @@ pub struct EvaluatePoliciesResponse {
 }
 
 /// Diagnostic information from policy evaluation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DiagnosticInfo {
     /// Diagnostic level: "info", "warning", "error"
     pub level: String,
@@ -118,6 +118,17 @@ pub struct DiagnosticInfo {
 ///   "warnings": []
 /// }
 /// ```
+#[utoipa::path(
+    post,
+    path = "/api/v1/policies/validate",
+    tag = "policies",
+    request_body = ValidatePolicyRequest,
+    responses(
+        (status = 200, description = "Policy validated successfully", body = ValidatePolicyResponse),
+        (status = 400, description = "Invalid policy content"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn validate_policy<S>(
     State(state): State<AppState<S>>,
     Json(request): Json<ValidatePolicyRequest>,
@@ -181,6 +192,17 @@ where
 ///   "diagnostics": []
 /// }
 /// ```
+#[utoipa::path(
+    post,
+    path = "/api/v1/policies/evaluate",
+    tag = "policies",
+    request_body = EvaluatePoliciesRequest,
+    responses(
+        (status = 200, description = "Policies evaluated successfully", body = EvaluatePoliciesResponse),
+        (status = 400, description = "Invalid evaluation request"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn evaluate_policies<S>(
     State(_state): State<AppState<S>>,
     Json(_request): Json<EvaluatePoliciesRequest>,

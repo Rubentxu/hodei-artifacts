@@ -12,10 +12,12 @@ mod app_state;
 mod bootstrap;
 mod config;
 mod handlers;
+mod openapi;
 
 use crate::bootstrap::{BootstrapConfig, bootstrap};
 use crate::config::Config;
 use crate::handlers::health::health_check;
+use crate::openapi::create_api_doc;
 use axum::{
     Router,
     routing::{delete, get, post, put},
@@ -28,6 +30,7 @@ use tower_http::{
 };
 use tracing::{Level, info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use utoipa_swagger_ui::SwaggerUi;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -130,6 +133,8 @@ where
         .route("/health/live", get(health_check))
         // API v1 routes
         .nest("/api/v1", api_v1_routes(app_state))
+        // Swagger UI - serve at /swagger-ui
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", create_api_doc()))
         // Middleware layers (applied in reverse order)
         .layer(
             TraceLayer::new_for_http()

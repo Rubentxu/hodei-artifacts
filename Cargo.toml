@@ -64,6 +64,10 @@ reqwest = { version = "0.12.23", features = ["json"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6.6", features = ["cors", "trace", "timeout", "compression-br"] }
 
+# OpenAPI / Swagger
+utoipa = { version = "5.4.0", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
+
 # Storage / DB / messaging
 redis = { version = "0.32.5", features = ["tokio-comp"] }
 lapin = "3.6.0"
@@ -119,6 +123,8 @@ description = "Hodei API stub - Temporarily disabled during policies crate migra
 name = "hodei-artifacts-api"
 path = "src/main.rs"
 
+
+
 [dependencies]
 # Core dependencies
 kernel = { path = "crates/kernel" }
@@ -151,3 +157,7 @@ surrealdb = { workspace = true }
 # Error handling
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+
+# OpenAPI / Swagger
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }

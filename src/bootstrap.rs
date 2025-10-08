@@ -93,8 +93,7 @@ pub async fn bootstrap(
 
     // Step 2: Create IAM infrastructure
     info!("🔐 Initializing IAM infrastructure");
-    let iam_infrastructure =
-        initialize_iam_infrastructure(schema_storage.db().clone().into()).await?;
+    let iam_infrastructure = initialize_iam_infrastructure(schema_storage.db().clone()).await?;
 
     // Step 3: Create shared components
     info!("🔧 Creating shared components");
@@ -304,7 +303,7 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
 ///
 /// Creates all IAM-related infrastructure components that depend on the database.
 async fn initialize_iam_infrastructure(
-    db: Arc<Surreal<surrealdb::engine::any::Any>>,
+    db: Arc<Surreal<surrealdb::engine::local::Db>>,
 ) -> Result<IamInfrastructure, Box<dyn std::error::Error + Send + Sync>> {
     info!("Creating IAM infrastructure adapters");
 
@@ -384,8 +383,8 @@ struct UseCases<S: hodei_policies::features::build_schema::ports::SchemaStorageP
     >,
     update_policy: Arc<
         hodei_iam::features::update_policy::use_case::UpdatePolicyUseCase<
-            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
             ValidatePolicyUseCase<S>,
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
         >,
     >,
     delete_policy: Arc<
@@ -486,8 +485,8 @@ where
     // Update policy use case
     let update_policy = Arc::new(
         hodei_iam::features::update_policy::use_case::UpdatePolicyUseCase::new(
-            policy_adapter.clone(),
             validate_policy.clone(),
+            policy_adapter.clone(),
         ),
     );
 

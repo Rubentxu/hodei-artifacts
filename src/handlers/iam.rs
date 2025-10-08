@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 /// Request to create a new IAM policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreatePolicyRequest {
     pub policy_id: String,
     pub policy_content: String,
@@ -28,9 +28,9 @@ pub struct CreatePolicyRequest {
 }
 
 /// Response from policy creation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreatePolicyResponse {
-    pub hrn: Hrn,
+    pub hrn: String,
     pub content: String,
     pub description: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -38,15 +38,15 @@ pub struct CreatePolicyResponse {
 }
 
 /// Request to get a policy by HRN
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct GetPolicyRequest {
-    pub policy_hrn: Hrn,
+    pub policy_hrn: String,
 }
 
 /// Response from getting a policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct GetPolicyResponse {
-    pub hrn: Hrn,
+    pub hrn: String,
     pub name: String,
     pub content: String,
     pub description: Option<String>,
@@ -55,7 +55,7 @@ pub struct GetPolicyResponse {
 }
 
 /// Query parameters for listing policies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ListPoliciesQueryParams {
     #[serde(default = "default_limit")]
     pub limit: usize,
@@ -68,16 +68,16 @@ fn default_limit() -> usize {
 }
 
 /// Response from listing policies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ListPoliciesResponse {
     pub policies: Vec<PolicySummary>,
     pub page_info: PageInfo,
 }
 
 /// Policy summary for listing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PolicySummary {
-    pub hrn: Hrn,
+    pub hrn: String,
     pub name: String,
     pub description: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -85,7 +85,7 @@ pub struct PolicySummary {
 }
 
 /// Pagination information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PageInfo {
     pub total_count: usize,
     pub has_next_page: bool,
@@ -93,18 +93,18 @@ pub struct PageInfo {
 }
 
 /// Request to update an existing policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdatePolicyRequest {
-    pub policy_hrn: Hrn,
+    pub policy_hrn: String,
     pub policy_content: String,
     #[serde(default)]
     pub description: Option<String>,
 }
 
 /// Response from policy update
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UpdatePolicyResponse {
-    pub hrn: Hrn,
+    pub hrn: String,
     pub content: String,
     pub description: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -112,15 +112,15 @@ pub struct UpdatePolicyResponse {
 }
 
 /// Request to delete a policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DeletePolicyRequest {
-    pub policy_hrn: Hrn,
+    pub policy_hrn: String,
 }
 
 /// Response from policy deletion
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DeletePolicyResponse {
-    pub deleted_hrn: Hrn,
+    pub deleted_hrn: String,
     pub message: String,
 }
 
@@ -129,6 +129,17 @@ pub struct DeletePolicyResponse {
 // ============================================================================
 
 /// Handler to create a new IAM policy
+#[utoipa::path(
+    post,
+    path = "/api/v1/iam/policies",
+    tag = "iam",
+    request_body = CreatePolicyRequest,
+    responses(
+        (status = 200, description = "Policy created successfully", body = CreatePolicyResponse),
+        (status = 400, description = "Invalid policy content"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn create_policy<S>(
     State(state): State<AppState<S>>,
     Json(request): Json<CreatePolicyRequest>,
@@ -153,12 +164,12 @@ where
             hodei_iam::features::create_policy::error::CreatePolicyError::InvalidPolicyId(msg) => {
                 IamApiError::BadRequest(format!("Invalid policy ID: {}", msg))
             }
-            hodei_iam::features::create_policy::error::CreatePolicyError::InvalidPolicyContent(msg) => {
-                IamApiError::BadRequest(format!("Invalid policy content: {}", msg))
-            }
-            hodei_iam::features::create_policy::error::CreatePolicyError::PolicyAlreadyExists(id) => {
-                IamApiError::Conflict(format!("Policy already exists: {}", id))
-            }
+            hodei_iam::features::create_policy::error::CreatePolicyError::InvalidPolicyContent(
+                msg,
+            ) => IamApiError::BadRequest(format!("Invalid policy content: {}", msg)),
+            hodei_iam::features::create_policy::error::CreatePolicyError::PolicyAlreadyExists(
+                id,
+            ) => IamApiError::Conflict(format!("Policy already exists: {}", id)),
             hodei_iam::features::create_policy::error::CreatePolicyError::ValidationFailed(msg) => {
                 IamApiError::InternalServerError(format!("Validation service error: {}", msg))
             }
@@ -174,7 +185,7 @@ where
         })?;
 
     Ok(Json(CreatePolicyResponse {
-        hrn: policy_view.id,
+        hrn: policy_view.id.to_string(),
         content: policy_view.content,
         description: policy_view.description,
         created_at: policy_view.created_at,
@@ -183,6 +194,18 @@ where
 }
 
 /// Handler to get a policy by HRN
+#[utoipa::path(
+    post,
+    path = "/api/v1/iam/policies/get",
+    tag = "iam",
+    request_body = GetPolicyRequest,
+    responses(
+        (status = 200, description = "Policy retrieved successfully", body = GetPolicyResponse),
+        (status = 400, description = "Invalid HRN format"),
+        (status = 404, description = "Policy not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn get_policy<S>(
     State(state): State<AppState<S>>,
     Json(request): Json<GetPolicyRequest>,
@@ -190,28 +213,25 @@ pub async fn get_policy<S>(
 where
     S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
-    let query = hodei_iam::features::get_policy::dto::GetPolicyQuery {
-        policy_hrn: request.policy_hrn,
-    };
+    let policy_hrn = kernel::Hrn::from_string(&request.policy_hrn)
+        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
 
-    let policy_view = state
-        .get_policy
-        .execute(query)
-        .await
-        .map_err(|e| match e {
-            hodei_iam::features::get_policy::error::GetPolicyError::PolicyNotFound(msg) => {
-                IamApiError::NotFound(format!("Policy not found: {}", msg))
-            }
-            hodei_iam::features::get_policy::error::GetPolicyError::InvalidHrn(msg) => {
-                IamApiError::BadRequest(format!("Invalid HRN: {}", msg))
-            }
-            hodei_iam::features::get_policy::error::GetPolicyError::RepositoryError(msg) => {
-                IamApiError::InternalServerError(format!("Repository error: {}", msg))
-            }
-        })?;
+    let query = hodei_iam::features::get_policy::dto::GetPolicyQuery { policy_hrn };
+
+    let policy_view = state.get_policy.execute(query).await.map_err(|e| match e {
+        hodei_iam::features::get_policy::error::GetPolicyError::PolicyNotFound(msg) => {
+            IamApiError::NotFound(format!("Policy not found: {}", msg))
+        }
+        hodei_iam::features::get_policy::error::GetPolicyError::InvalidHrn(msg) => {
+            IamApiError::BadRequest(format!("Invalid HRN: {}", msg))
+        }
+        hodei_iam::features::get_policy::error::GetPolicyError::RepositoryError(msg) => {
+            IamApiError::InternalServerError(format!("Repository error: {}", msg))
+        }
+    })?;
 
     Ok(Json(GetPolicyResponse {
-        hrn: policy_view.hrn.clone(),
+        hrn: policy_view.hrn.to_string(),
         name: policy_view.name,
         content: policy_view.content,
         description: policy_view.description,
@@ -221,6 +241,19 @@ where
 }
 
 /// Handler to list policies with pagination
+#[utoipa::path(
+    get,
+    path = "/api/v1/iam/policies",
+    tag = "iam",
+    params(
+        ("limit" = Option<u32>, Query, description = "Maximum number of policies to return"),
+        ("offset" = Option<u32>, Query, description = "Number of policies to skip")
+    ),
+    responses(
+        (status = 200, description = "Policies listed successfully", body = ListPoliciesResponse),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn list_policies<S>(
     State(state): State<AppState<S>>,
     Query(query): Query<ListPoliciesQueryParams>,
@@ -244,9 +277,9 @@ where
             hodei_iam::features::list_policies::error::ListPoliciesError::InvalidQuery(msg) => {
                 IamApiError::BadRequest(format!("Invalid query: {}", msg))
             }
-            hodei_iam::features::list_policies::error::ListPoliciesError::InvalidPagination(msg) => {
-                IamApiError::BadRequest(format!("Invalid pagination: {}", msg))
-            }
+            hodei_iam::features::list_policies::error::ListPoliciesError::InvalidPagination(
+                msg,
+            ) => IamApiError::BadRequest(format!("Invalid pagination: {}", msg)),
             hodei_iam::features::list_policies::error::ListPoliciesError::RepositoryError(msg) => {
                 IamApiError::InternalServerError(format!("Repository error: {}", msg))
             }
@@ -260,7 +293,7 @@ where
         .policies
         .into_iter()
         .map(|p| PolicySummary {
-            hrn: p.hrn,
+            hrn: p.hrn.to_string(),
             name: p.name,
             description: p.description,
             created_at: chrono::Utc::now(), // TODO: Add timestamps to domain
@@ -279,6 +312,18 @@ where
 }
 
 /// Handler to update an existing policy
+#[utoipa::path(
+    put,
+    path = "/api/v1/iam/policies/update",
+    tag = "iam",
+    request_body = UpdatePolicyRequest,
+    responses(
+        (status = 200, description = "Policy updated successfully", body = UpdatePolicyResponse),
+        (status = 400, description = "Invalid policy content"),
+        (status = 404, description = "Policy not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn update_policy<S>(
     State(state): State<AppState<S>>,
     Json(request): Json<UpdatePolicyRequest>,
@@ -287,7 +332,7 @@ where
     S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let command = hodei_iam::features::update_policy::dto::UpdatePolicyCommand {
-        policy_hrn: request.policy_hrn,
+        policy_id: request.policy_hrn.to_string(),
         policy_content: Some(request.policy_content),
         description: request.description,
     };
@@ -300,9 +345,9 @@ where
             hodei_iam::features::update_policy::error::UpdatePolicyError::PolicyNotFound(msg) => {
                 IamApiError::NotFound(format!("Policy not found: {}", msg))
             }
-            hodei_iam::features::update_policy::error::UpdatePolicyError::InvalidPolicyContent(msg) => {
-                IamApiError::BadRequest(format!("Invalid policy content: {}", msg))
-            }
+            hodei_iam::features::update_policy::error::UpdatePolicyError::InvalidPolicyContent(
+                msg,
+            ) => IamApiError::BadRequest(format!("Invalid policy content: {}", msg)),
             hodei_iam::features::update_policy::error::UpdatePolicyError::InvalidPolicyId(msg) => {
                 IamApiError::BadRequest(format!("Invalid policy ID: {}", msg))
             }
@@ -318,12 +363,12 @@ where
             hodei_iam::features::update_policy::error::UpdatePolicyError::VersionConflict => {
                 IamApiError::Conflict("Policy was modified by another process".to_string())
             }
-            hodei_iam::features::update_policy::error::UpdatePolicyError::PolicyInUseConflict(msg) => {
-                IamApiError::Conflict(format!("Policy in use: {}", msg))
-            }
-            hodei_iam::features::update_policy::error::UpdatePolicyError::SystemPolicyProtected(msg) => {
-                IamApiError::BadRequest(format!("System policy protected: {}", msg))
-            }
+            hodei_iam::features::update_policy::error::UpdatePolicyError::PolicyInUseConflict(
+                msg,
+            ) => IamApiError::Conflict(format!("Policy in use: {}", msg)),
+            hodei_iam::features::update_policy::error::UpdatePolicyError::SystemPolicyProtected(
+                msg,
+            ) => IamApiError::BadRequest(format!("System policy protected: {}", msg)),
             hodei_iam::features::update_policy::error::UpdatePolicyError::ValidationFailed(msg) => {
                 IamApiError::InternalServerError(format!("Validation service error: {}", msg))
             }
@@ -336,15 +381,26 @@ where
         })?;
 
     Ok(Json(UpdatePolicyResponse {
-        hrn: policy_view.id,
+        hrn: policy_view.hrn.to_string(),
         content: policy_view.content,
         description: policy_view.description,
-        created_at: policy_view.created_at,
-        updated_at: policy_view.updated_at,
+        created_at: chrono::Utc::now(), // TODO: Add timestamps to domain PolicyView
+        updated_at: chrono::Utc::now(),
     }))
 }
 
-/// Handler to delete a policy
+/// Handler to delete a policy by HRN
+#[utoipa::path(
+    delete,
+    path = "/api/v1/iam/policies/delete",
+    tag = "iam",
+    request_body = DeletePolicyRequest,
+    responses(
+        (status = 200, description = "Policy deleted successfully", body = DeletePolicyResponse),
+        (status = 404, description = "Policy not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn delete_policy<S>(
     State(state): State<AppState<S>>,
     Json(request): Json<DeletePolicyRequest>,
@@ -353,7 +409,7 @@ where
     S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let command = hodei_iam::features::delete_policy::dto::DeletePolicyCommand {
-        policy_hrn: request.policy_hrn.clone(),
+        policy_id: request.policy_hrn.to_string(),
     };
 
     state
@@ -373,9 +429,9 @@ where
             hodei_iam::features::delete_policy::error::DeletePolicyError::PolicyInUse(msg) => {
                 IamApiError::Conflict(format!("Policy in use: {}", msg))
             }
-            hodei_iam::features::delete_policy::error::DeletePolicyError::SystemPolicyProtected(msg) => {
-                IamApiError::BadRequest(format!("System policy protected: {}", msg))
-            }
+            hodei_iam::features::delete_policy::error::DeletePolicyError::SystemPolicyProtected(
+                msg,
+            ) => IamApiError::BadRequest(format!("System policy protected: {}", msg)),
             hodei_iam::features::delete_policy::error::DeletePolicyError::StorageError(msg) => {
                 IamApiError::InternalServerError(format!("Storage error: {}", msg))
             }

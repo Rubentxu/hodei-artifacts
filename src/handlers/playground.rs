@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Request for playground policy evaluation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PlaygroundEvaluateRequest {
     /// Optional inline Cedar schema (JSON format)
     /// If None, must provide schema_version
@@ -38,7 +38,7 @@ pub struct PlaygroundEvaluateRequest {
 }
 
 /// Authorization request DTO for playground evaluation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PlaygroundAuthorizationRequestDto {
     /// The principal (user/service) making the request
     pub principal: String,
@@ -55,7 +55,7 @@ pub struct PlaygroundAuthorizationRequestDto {
 }
 
 /// Attribute value DTO for context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum AttributeValueDto {
     /// String value
@@ -66,14 +66,14 @@ pub enum AttributeValueDto {
     Bool(bool),
     /// Entity reference (HRN)
     EntityRef(String),
-    /// Set of values
-    Set(Vec<AttributeValueDto>),
-    /// Record (map) of values
-    Record(HashMap<String, AttributeValueDto>),
+    /// Set of string values (simplified to avoid recursion)
+    Set(Vec<String>),
+    /// Record of string values (simplified to avoid recursion)
+    Record(HashMap<String, String>),
 }
 
 /// Response from playground policy evaluation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PlaygroundEvaluateResponse {
     /// The authorization decision (Allow/Deny)
     pub decision: String,
@@ -89,7 +89,7 @@ pub struct PlaygroundEvaluateResponse {
 }
 
 /// Determining policy DTO
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DeterminingPolicyDto {
     /// The policy ID or inline index
     pub policy_id: String,
@@ -102,7 +102,7 @@ pub struct DeterminingPolicyDto {
 }
 
 /// Evaluation diagnostics DTO
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct EvaluationDiagnosticsDto {
     /// Total number of policies evaluated
     pub total_policies: usize,
@@ -179,6 +179,17 @@ pub struct EvaluationDiagnosticsDto {
 ///   "errors": []
 /// }
 /// ```
+#[utoipa::path(
+    post,
+    path = "/api/v1/playground/evaluate",
+    tag = "playground",
+    request_body = PlaygroundEvaluateRequest,
+    responses(
+        (status = 200, description = "Policy evaluation completed successfully", body = PlaygroundEvaluateResponse),
+        (status = 400, description = "Invalid request parameters"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 pub async fn playground_evaluate<S>(
     State(state): State<AppState<S>>,
     Json(request): Json<PlaygroundEvaluateRequest>,
@@ -257,15 +268,16 @@ fn convert_attribute_value(dto: AttributeValueDto) -> Result<AttributeValue, Str
             Ok(AttributeValue::EntityRef(hrn))
         }
         AttributeValueDto::Set(values) => {
-            let converted_values: Result<Vec<AttributeValue>, String> =
-                values.into_iter().map(convert_attribute_value).collect();
-            Ok(AttributeValue::Set(converted_values?))
+            let converted_values: Vec<AttributeValue> = values
+                .into_iter()
+                .map(|s| AttributeValue::String(s))
+                .collect();
+            Ok(AttributeValue::Set(converted_values))
         }
         AttributeValueDto::Record(record) => {
             let mut converted_record = HashMap::new();
             for (key, value) in record {
-                let converted_value = convert_attribute_value(value)?;
-                converted_record.insert(key, converted_value);
+                converted_record.insert(key, AttributeValue::String(value));
             }
             Ok(AttributeValue::Record(converted_record))
         }
@@ -366,10 +378,7 @@ mod tests {
 
     #[test]
     fn test_convert_attribute_value_set() {
-        let dto = AttributeValueDto::Set(vec![
-            AttributeValueDto::String("a".to_string()),
-            AttributeValueDto::String("b".to_string()),
-        ]);
+        let dto = AttributeValueDto::Set(vec!["a".to_string(), "b".to_string()]);
         let result = convert_attribute_value(dto).unwrap();
         assert!(matches!(result, AttributeValue::Set(v) if v.len() == 2));
     }
@@ -377,10 +386,7 @@ mod tests {
     #[test]
     fn test_convert_attribute_value_record() {
         let mut record = HashMap::new();
-        record.insert(
-            "key".to_string(),
-            AttributeValueDto::String("value".to_string()),
-        );
+        record.insert("key".to_string(), "value".to_string());
 
         let dto = AttributeValueDto::Record(record);
         let result = convert_attribute_value(dto).unwrap();

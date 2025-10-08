@@ -52,8 +52,8 @@ pub struct AppState<S: SchemaStoragePort + Clone> {
     /// Use case for updating IAM policies
     pub update_policy: Arc<
         UpdatePolicyUseCase<
-            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
             ValidatePolicyUseCase<S>,
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
         >,
     >,
 
@@ -134,8 +134,8 @@ impl<S: SchemaStoragePort + Clone> AppState<S> {
         >,
         update_policy: Arc<
             UpdatePolicyUseCase<
-                hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
                 ValidatePolicyUseCase<S>,
+                hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
             >,
         >,
         delete_policy: Arc<
