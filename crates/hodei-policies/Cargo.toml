@@ -23,3 +23,4 @@ tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 mockall = { workspace = true }
+tracing-subscriber = { workspace = true }

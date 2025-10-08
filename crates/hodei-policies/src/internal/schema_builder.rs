@@ -1,29 +1,19 @@
 use crate::features::evaluate_policies::error::EvaluatePoliciesError;
 use cedar_policy::{Schema, SchemaFragment};
 use kernel::{AttributeValue, HodeiEntity};
+use std::collections::HashSet;
+use std::fmt::Write;
 
-/// Builds a Cedar schema from entity instances using DSL generation
+/// Builds a Cedar schema from entity instances using the entities' type metadata
 ///
 /// This function generates Cedar schema DSL fragments based on the entity types
-/// and attributes observed in the provided entity instances. It's inspired by
-/// the schema_assembler.rs approach but adapted for runtime schema generation.
-///
-/// # Arguments
-/// * `entities` - Slice of entity references to analyze for schema generation
-///
-/// # Returns
-/// A Cedar `Schema` containing entity type definitions
-///
-/// # Implementation Notes
-/// This is a simplified implementation that infers schema from entity instances.
-/// A complete implementation would use `HodeiEntityType::attributes_schema()`
-/// for type-level schema definitions rather than instance-level inference.
+/// observed in the provided entity instances, following the pattern from
+/// the legacy policies crate schema_assembler.
+#[allow(dead_code)]
 pub(crate) fn build_schema_from_entities(
     entities: &[&dyn HodeiEntity],
 ) -> Result<Schema, EvaluatePoliciesError> {
-    use std::fmt::Write;
-
-    let mut processed_types = std::collections::HashSet::new();
+    let mut processed_types = HashSet::new();
     let mut schema_fragments = Vec::new();
 
     // Process each entity to extract type information
@@ -36,54 +26,17 @@ pub(crate) fn build_schema_from_entities(
         }
         processed_types.insert(full_type_name.clone());
 
-        // Parse namespace and entity name (e.g., "Iam::User" -> namespace: "Iam", entity: "User")
-        let parts: Vec<&str> = full_type_name.split("::").collect();
-        if parts.len() != 2 {
-            continue; // Skip malformed type names
-        }
-
-        let namespace = parts[0];
-        let entity_name = parts[1];
-
-        // Collect attributes from this entity instance
-        let mut attributes = Vec::new();
-        for (attr_name, attr_value) in entity.attributes() {
-            let cedar_type = attribute_value_to_cedar_type(&attr_value);
-            attributes.push((attr_name.as_str().to_string(), cedar_type));
-        }
-
-        // Generate Cedar DSL for this entity type
-        let mut dsl = String::new();
-
-        // Write namespace block
-        writeln!(dsl, "namespace {} {{", namespace).unwrap();
-
-        // Write entity definition
-        writeln!(dsl, "    entity {} {{", entity_name).unwrap();
-
-        // Write attributes
-        for (i, (name, cedar_type)) in attributes.iter().enumerate() {
-            if i < attributes.len() - 1 {
-                writeln!(dsl, "        {}: {},", name, cedar_type).unwrap();
-            } else {
-                writeln!(dsl, "        {}: {}", name, cedar_type).unwrap();
-            }
-        }
-
-        // Close entity and namespace
-        writeln!(dsl, "    }};").unwrap();
-        writeln!(dsl, "}}").unwrap();
-
-        // Parse the DSL into a SchemaFragment
-        match SchemaFragment::from_cedarschema_str(&dsl) {
-            Ok((fragment, _warnings)) => {
+        // Generate schema fragment for this entity type
+        match generate_fragment_for_entity(*entity) {
+            Ok(fragment) => {
                 schema_fragments.push(fragment);
             }
             Err(e) => {
                 // Log warning but continue with other fragments
-                eprintln!(
-                    "Warning: Failed to parse schema fragment for {}: {}",
-                    full_type_name, e
+                tracing::warn!(
+                    "Failed to generate schema fragment for {}: {}",
+                    full_type_name,
+                    e
                 );
             }
         }
@@ -94,7 +47,78 @@ pub(crate) fn build_schema_from_entities(
         .map_err(|e| EvaluatePoliciesError::SchemaError(format!("Failed to build schema: {}", e)))
 }
 
+/// Generate a Cedar SchemaFragment for a given entity instance
+///
+/// This function follows the pattern from the legacy policies crate schema_assembler
+/// to generate proper schema fragments that include entity attributes.
+#[allow(dead_code)]
+fn generate_fragment_for_entity(
+    entity: &dyn HodeiEntity,
+) -> Result<SchemaFragment, EvaluatePoliciesError> {
+    let full_type_name = entity.hrn().entity_type_name();
+
+    // Parse namespace and entity name (e.g., "Iam::User" -> namespace: "Iam", entity: "User")
+    let parts: Vec<&str> = full_type_name.split("::").collect();
+    if parts.len() != 2 {
+        return Err(EvaluatePoliciesError::SchemaError(format!(
+            "Invalid entity type name: {}",
+            full_type_name
+        )));
+    }
+
+    let namespace = parts[0];
+    let entity_name = parts[1];
+
+    // Convert namespace to Pascal case (e.g., "iam" -> "Iam")
+    let namespace_pascal =
+        namespace.chars().next().unwrap().to_uppercase().to_string() + &namespace[1..];
+
+    // Generate Cedar DSL for this entity type
+    let mut dsl = String::new();
+
+    // Write namespace block
+    writeln!(dsl, "namespace {} {{", namespace_pascal).map_err(|e| {
+        EvaluatePoliciesError::SchemaError(format!("Failed to write namespace: {}", e))
+    })?;
+
+    // Write entity definition with attributes
+    writeln!(dsl, "    entity {} {{", entity_name).map_err(|e| {
+        EvaluatePoliciesError::SchemaError(format!("Failed to write entity: {}", e))
+    })?;
+
+    // Add attributes based on the entity's attributes
+    let attrs = entity.attributes();
+    for (i, (name, value)) in attrs.iter().enumerate() {
+        let cedar_type = attribute_value_to_cedar_type(value);
+        if i < attrs.len() - 1 {
+            writeln!(dsl, "        {}: {},", name.as_str(), cedar_type).map_err(|e| {
+                EvaluatePoliciesError::SchemaError(format!("Failed to write attribute: {}", e))
+            })?;
+        } else {
+            writeln!(dsl, "        {}: {}", name.as_str(), cedar_type).map_err(|e| {
+                EvaluatePoliciesError::SchemaError(format!("Failed to write attribute: {}", e))
+            })?;
+        }
+    }
+
+    // Close entity and namespace
+    writeln!(dsl, "    }};").map_err(|e| {
+        EvaluatePoliciesError::SchemaError(format!("Failed to close entity: {}", e))
+    })?;
+    writeln!(dsl, "}}").map_err(|e| {
+        EvaluatePoliciesError::SchemaError(format!("Failed to close namespace: {}", e))
+    })?;
+
+    // Parse the DSL into a SchemaFragment
+    SchemaFragment::from_cedarschema_str(&dsl)
+        .map_err(|e| {
+            EvaluatePoliciesError::SchemaError(format!("Failed to parse schema fragment: {}", e))
+        })
+        .map(|(fragment, _warnings)| fragment)
+}
+
 /// Converts an AttributeValue to its Cedar type representation
+#[allow(dead_code)]
 fn attribute_value_to_cedar_type(value: &AttributeValue) -> String {
     match value {
         AttributeValue::String(_) => "String".to_string(),

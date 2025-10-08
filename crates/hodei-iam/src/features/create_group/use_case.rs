@@ -1,101 +1,55 @@
 use super::dto::{CreateGroupCommand, GroupView};
 use super::error::CreateGroupError;
-use super::ports::CreateGroupUnitOfWork;
-use crate::internal::domain::{Group, events::GroupCreated};
-use kernel::EventPublisher;
-use kernel::Hrn;
-use kernel::application::ports::event_bus::EventEnvelope;
-use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use super::ports::{CreateGroupPort, HrnGenerator};
+use crate::internal::domain::Group;
 use std::sync::Arc;
 
-/// Use case for creating a new group with transactional integrity
-pub struct CreateGroupUseCase<U: CreateGroupUnitOfWork> {
-    uow: Arc<U>,
-    event_publisher: Option<Arc<InMemoryEventBus>>,
+/// Use case for creating a new group
+///
+/// This use case orchestrates the group creation process:
+/// 1. Generates a new HRN for the group
+/// 2. Creates a Group entity
+/// 3. Persists the group through the port
+/// 4. Returns a GroupView DTO
+pub struct CreateGroupUseCase<P: CreateGroupPort, G: HrnGenerator> {
+    persister: Arc<P>,
+    hrn_generator: Arc<G>,
 }
 
-impl<U: CreateGroupUnitOfWork> CreateGroupUseCase<U> {
-    pub fn new(uow: Arc<U>) -> Self {
+impl<P: CreateGroupPort, G: HrnGenerator> CreateGroupUseCase<P, G> {
+    /// Create a new instance of the use case
+    ///
+    /// # Arguments
+    /// * `persister` - Implementation of CreateGroupPort for persistence
+    /// * `hrn_generator` - Implementation of HrnGenerator for HRN generation
+    pub fn new(persister: Arc<P>, hrn_generator: Arc<G>) -> Self {
         Self {
-            uow,
-            event_publisher: None,
+            persister,
+            hrn_generator,
         }
     }
 
-    pub fn with_event_publisher(mut self, publisher: Arc<InMemoryEventBus>) -> Self {
-        self.event_publisher = Some(publisher);
-        self
-    }
-
+    /// Execute the create group use case
+    ///
+    /// # Arguments
+    /// * `cmd` - CreateGroupCommand containing group details
+    ///
+    /// # Returns
+    /// * Ok(GroupView) if the group was created successfully
+    /// * Err(CreateGroupError) if there was an error
     pub async fn execute(&self, cmd: CreateGroupCommand) -> Result<GroupView, CreateGroupError> {
-        // Begin transaction
-        self.uow
-            .begin()
-            .await
-            .map_err(|e| CreateGroupError::TransactionBeginFailed(e.to_string()))?;
-
-        // Execute business logic within transaction
-        let result = self.execute_in_transaction(&cmd).await;
-
-        // Handle transaction outcome
-        match result {
-            Ok(view) => {
-                self.uow
-                    .commit()
-                    .await
-                    .map_err(|e| CreateGroupError::TransactionCommitFailed(e.to_string()))?;
-
-                // Publish domain event after successful commit
-                if let Some(publisher) = &self.event_publisher {
-                    let group_hrn = Hrn::from_string(&view.hrn).expect("Invalid HRN in view");
-
-                    let event = GroupCreated {
-                        group_hrn,
-                        name: view.name.clone(),
-                        created_at: chrono::Utc::now(),
-                    };
-
-                    let envelope = EventEnvelope::new(event)
-                        .with_metadata("aggregate_type".to_string(), "Group".to_string());
-
-                    if let Err(e) = publisher.publish_with_envelope(envelope).await {
-                        tracing::warn!("Failed to publish GroupCreated event: {}", e);
-                        // Don't fail the use case if event publishing fails
-                    }
-                }
-
-                Ok(view)
-            }
-            Err(e) => {
-                if let Err(rollback_err) = self.uow.rollback().await {
-                    tracing::error!("Failed to rollback transaction: {}", rollback_err);
-                }
-                Err(e)
-            }
-        }
-    }
-
-    async fn execute_in_transaction(
-        &self,
-        cmd: &CreateGroupCommand,
-    ) -> Result<GroupView, CreateGroupError> {
-        let repos = self.uow.repositories();
-
-        // Generate a unique HRN using the type-safe constructor
-        let group_id = uuid::Uuid::new_v4().to_string();
-        let hrn =
-            Hrn::for_entity_type::<Group>("hodei".to_string(), "default".to_string(), group_id);
-
+        // Generate a unique HRN using the HRN generator
+        let hrn = self.hrn_generator.new_group_hrn(&cmd.group_name);
+        
         // Create the group domain entity
-        let mut group = Group::new(hrn, cmd.group_name.clone());
-        group.tags = cmd.tags.clone();
-
+        let group = Group::new(hrn.clone(), cmd.group_name, None);
+        
         // Persist the group
-        repos.group_repository.save(&group).await?;
-
+        self.persister.save_group(&group).await?;
+        
         // Return the view
         Ok(GroupView {
-            hrn: group.hrn.to_string(),
+            hrn: hrn.to_string(),
             name: group.name,
             tags: group.tags,
         })

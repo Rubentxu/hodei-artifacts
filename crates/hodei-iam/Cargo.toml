@@ -4,19 +4,25 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-policies = { path = "../policies" }
+# Internal crates
+hodei-policies = { path = "../hodei-policies" }
 kernel = { path = "../kernel" }
-cedar-policy = { workspace = true }
+
+# External dependencies from workspace
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 surrealdb = { workspace = true }
-anyhow = "1.0"
-async-trait = "0.1"
 tokio = { workspace = true }
-uuid = { version = "1.0", features = ["v4", "serde"] }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+# Additional dependencies
+anyhow = "1.0"
+uuid = { version = "1.18", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }
+tokio-test = "0.4"
+mockall = "0.13"

@@ -51,7 +51,7 @@ pub fn make_in_memory_use_case() -> EvaluateIamPoliciesUseCase<InMemoryPolicyFin
 ///
 /// ```rust,ignore
 /// use hodei_iam::features::evaluate_iam_policies::{di, mocks::MockPolicyFinder};
-/// use cedar_policy::PolicySet;
+/// 
 ///
 /// let mock_finder = Arc::new(MockPolicyFinder::empty());
 /// let use_case = di::make_use_case_with_finder(mock_finder);

@@ -90,7 +90,7 @@ where
             })?;
 
         debug!(
-            policy_count = policy_set.policies().count(),
+            policy_count = policy_set.policies().len(),
             "Retrieved policies"
         );
 
@@ -99,7 +99,7 @@ where
         // For now, we'll do a simple stub evaluation
 
         // Check if there are any policies
-        if policy_set.policies().count() == 0 {
+        if policy_set.policies().len() == 0 {
             warn!("No policies found for principal, denying by default");
             return Ok(EvaluationDecision {
                 principal_hrn: request.principal_hrn.clone(),
@@ -132,10 +132,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::evaluate_iam_policies::mocks::MockPolicyFinder;
-    use cedar_policy::PolicySet;
+    use crate::features::evaluate_iam_policies::mocks::MockPolicyFinder;   
     use kernel::Hrn;
     use std::str::FromStr;
+    use kernel::domain::HodeiPolicySet;
 
     #[tokio::test]
     async fn test_evaluate_denies_when_no_policies() {
@@ -168,7 +168,7 @@ mod tests {
                 resource
             );
         "#;
-        let policy_set = cedar_policy::Policy::parse(None, policy_text)
+        let policy_set = HodeiPolicySet::parse(None, policy_text)
             .map(|p| PolicySet::from_policies([p]))
             .unwrap()
             .unwrap();

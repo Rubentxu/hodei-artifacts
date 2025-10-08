@@ -1,16 +1,16 @@
-/// Feature: Add User to Group
-///
-/// This feature allows adding existing users to existing groups in the IAM system
-pub mod adapter;
-pub mod di;
+//! Add user to group feature module
+//!
+//! This module implements the vertical slice for adding users to groups.
+//! It follows the Clean Architecture and Vertical Slice Architecture patterns.
+
 pub mod dto;
 pub mod error;
-pub mod mocks;
 pub mod ports;
 pub mod use_case;
-// TODO: REFACTOR (Phase 2) - use_case_test.rs needs to be updated after refactoring
-// pub mod use_case_test;
+pub mod di;
+mod use_case_test;
 
+// Re-export the main types for convenience
 pub use dto::AddUserToGroupCommand;
 pub use error::AddUserToGroupError;
 pub use use_case::AddUserToGroupUseCase;

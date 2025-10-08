@@ -1,8 +1,8 @@
 //! Dependency Injection helpers for Update Policy feature
 
-use super::adapter::InMemoryUpdatePolicyAdapter;
 use super::use_case::UpdatePolicyUseCase;
-use crate::features::create_policy_new::CedarPolicyValidator;
+use crate::features::create_policy::CedarPolicyValidator;
+use crate::infrastructure::in_memory::update_policy_adapter::InMemoryUpdatePolicyAdapter;
 use std::sync::Arc;
 
 /// Create an UpdatePolicyUseCase with in-memory adapter

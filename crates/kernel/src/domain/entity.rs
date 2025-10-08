@@ -136,6 +136,18 @@ impl AttributeType {
             Self::EntityRef(ty) => format!("EntityRef<{}>", ty),
         }
     }
+
+    /// Retorna la declaración de tipo para el schema de Cedar
+    pub fn to_cedar_decl(&self) -> String {
+        match self {
+            Self::Bool => "Bool".to_string(),
+            Self::Long => "Long".to_string(),
+            Self::String => "String".to_string(),
+            Self::Set(inner) => format!("Set<{}>", inner.to_cedar_decl()),
+            Self::Record(_) => "Record".to_string(),
+            Self::EntityRef(ty) => format!("EntityRef<{}>", ty),
+        }
+    }
 }
 
 // ============================================================================
@@ -270,7 +282,7 @@ pub trait HodeiEntityType {
 ///     }
 /// }
 /// ```
-pub trait HodeiEntity {
+pub trait HodeiEntity: std::fmt::Debug {
     /// Retorna el HRN (Hodei Resource Name) canónico de esta entidad
     ///
     /// El HRN es el identificador único y global de la entidad.
@@ -288,6 +300,42 @@ pub trait HodeiEntity {
     /// Por defecto retorna un vector vacío (sin parents).
     fn parent_hrns(&self) -> Vec<Hrn> {
         Vec::new()
+    }
+
+    /// Retorna los atributos de esta entidad en formato compatible con Cedar
+    ///
+    /// Esta es una extensión opcional del trait que permite a las entidades
+    /// proporcionar sus atributos en un formato que Cedar puede entender directamente.
+    /// Por defecto, convierte los atributos estándar a un formato compatible.
+    fn cedar_attributes(&self) -> Option<Vec<(String, crate::domain::AttributeType)>> {
+        // Convertir los atributos estándar a formato Cedar
+        let mut cedar_attrs = Vec::new();
+        for (name, value) in self.attributes() {
+            let cedar_type = match value {
+                AttributeValue::String(_) => crate::domain::AttributeType::string(),
+                AttributeValue::Long(_) => crate::domain::AttributeType::long(),
+                AttributeValue::Bool(_) => crate::domain::AttributeType::bool(),
+                AttributeValue::Set(set) => {
+                    if let Some(first) = set.first() {
+                        let element_type = match first {
+                            AttributeValue::String(_) => crate::domain::AttributeType::string(),
+                            AttributeValue::Long(_) => crate::domain::AttributeType::long(),
+                            AttributeValue::Bool(_) => crate::domain::AttributeType::bool(),
+                            AttributeValue::Set(_) => crate::domain::AttributeType::string(), // Anidado, usar String
+                            AttributeValue::Record(_) => crate::domain::AttributeType::string(),
+                            AttributeValue::EntityRef(_) => crate::domain::AttributeType::string(),
+                        };
+                        crate::domain::AttributeType::set(element_type)
+                    } else {
+                        crate::domain::AttributeType::set(crate::domain::AttributeType::string())
+                    }
+                }
+                AttributeValue::Record(_) => crate::domain::AttributeType::string(), // Simplificado
+                AttributeValue::EntityRef(_) => crate::domain::AttributeType::string(), // Simplificado
+            };
+            cedar_attrs.push((name.as_str().to_string(), cedar_type));
+        }
+        Some(cedar_attrs)
     }
 }
 
@@ -515,6 +563,7 @@ mod tests {
     // Tests de HodeiEntity
     // ========================================================================
 
+    #[derive(Debug)]
     struct TestUserInstance {
         hrn: Hrn,
         email: String,
@@ -795,6 +844,7 @@ mod tests {
     // Tests para parent_hrns en HodeiEntity
     // ========================================================================
 
+    #[derive(Debug)]
     struct TestUserWithParentHrns {
         hrn: Hrn,
         email: String,
@@ -881,6 +931,7 @@ mod tests {
     // Tests para Principal y Resource marker traits
     // ========================================================================
 
+    #[derive(Debug)]
     struct TestPrincipal {
         hrn: Hrn,
     }
@@ -911,6 +962,7 @@ mod tests {
 
     impl Principal for TestPrincipal {}
 
+    #[derive(Debug)]
     struct TestResource {
         hrn: Hrn,
     }

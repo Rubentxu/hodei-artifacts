@@ -1,33 +1,21 @@
-//! Error types for List Policies feature
-
 use thiserror::Error;
 
-#[derive(Debug, Error, Clone, PartialEq)]
+/// Errors that can occur during policy listing operations
+#[derive(Debug, Error)]
 pub enum ListPoliciesError {
-    #[error("Repository error: {0}")]
-    RepositoryError(String),
-
+    /// Database-related error
+    #[error("Database error: {0}")]
+    Database(String),
+    /// Invalid query parameters
+    #[error("Invalid query parameters: {0}")]
+    InvalidQuery(String),
+    /// Invalid pagination parameters
     #[error("Invalid pagination parameters: {0}")]
     InvalidPagination(String),
-
+    /// Repository error
+    #[error("Repository error: {0}")]
+    RepositoryError(String),
+    /// Internal error
     #[error("Internal error: {0}")]
-    InternalError(String),
+    Internal(String),
 }
-
-impl ListPoliciesError {
-    pub fn is_client_error(&self) -> bool {
-        matches!(self, ListPoliciesError::InvalidPagination(_))
-    }
-
-    pub fn is_server_error(&self) -> bool {
-        matches!(
-            self,
-            ListPoliciesError::RepositoryError(_) | ListPoliciesError::InternalError(_)
-        )
-    }
-
-    pub fn is_retryable(&self) -> bool {
-        matches!(self, ListPoliciesError::RepositoryError(_))
-    }
-}
-

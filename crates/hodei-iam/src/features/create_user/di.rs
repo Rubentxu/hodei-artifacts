@@ -1,21 +1,28 @@
-use super::adapter::GenericCreateUserUnitOfWork;
-use super::use_case::CreateUserUseCase;
-use crate::internal::application::ports::UserRepository;
-use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
+use super::ports::{CreateUserPort, HrnGenerator};
+use super::use_case::CreateUserUseCase;
 
-/// Dependency Injection for create_user feature with Unit of Work
-pub fn make_use_case(
-    user_repo: Arc<dyn UserRepository>,
-) -> CreateUserUseCase<GenericCreateUserUnitOfWork> {
-    let create_user_uow = Arc::new(GenericCreateUserUnitOfWork::new(user_repo));
-    CreateUserUseCase::new(create_user_uow)
-}
+/// Factory for creating CreateUserUseCase instances
+///
+/// This factory encapsulates the dependency injection logic for the
+/// CreateUserUseCase, making it easier to construct instances with
+/// different implementations of the ports.
+pub struct CreateUserUseCaseFactory;
 
-pub fn make_use_case_with_events(
-    user_repo: Arc<dyn UserRepository>,
-    event_bus: Arc<InMemoryEventBus>,
-) -> CreateUserUseCase<GenericCreateUserUnitOfWork> {
-    let create_user_uow = Arc::new(GenericCreateUserUnitOfWork::new(user_repo));
-    CreateUserUseCase::new(create_user_uow).with_event_publisher(event_bus)
+impl CreateUserUseCaseFactory {
+    /// Build a CreateUserUseCase instance
+    ///
+    /// # Arguments
+    /// * `persister` - Implementation of CreateUserPort for persistence
+    /// * `hrn_generator` - Implementation of HrnGenerator for HRN generation
+    ///
+    /// # Returns
+    /// * A new CreateUserUseCase instance
+    pub fn build<P, G>(persister: Arc<P>, hrn_generator: Arc<G>) -> CreateUserUseCase<P, G>
+    where
+        P: CreateUserPort,
+        G: HrnGenerator,
+    {
+        CreateUserUseCase::new(persister, hrn_generator)
+    }
 }

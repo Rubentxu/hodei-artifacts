@@ -1,5 +1,7 @@
 use crate::features::validate_policy::dto::{ValidatePolicyCommand, ValidationResult};
 use crate::features::validate_policy::error::ValidatePolicyError;
+use crate::features::validate_policy::port::ValidatePolicyPort;
+use async_trait::async_trait;
 use tracing::{info, warn};
 
 pub struct ValidatePolicyUseCase;
@@ -19,6 +21,13 @@ impl ValidatePolicyUseCase {
         &self,
         command: ValidatePolicyCommand,
     ) -> Result<ValidationResult, ValidatePolicyError> {
+        self.validate(command).await
+    }
+}
+
+#[async_trait]
+impl ValidatePolicyPort for ValidatePolicyUseCase {
+    async fn validate(&self, command: ValidatePolicyCommand) -> Result<ValidationResult, ValidatePolicyError> {
         info!("Validating policy syntax");
 
         // Validate input: check if content is empty or whitespace

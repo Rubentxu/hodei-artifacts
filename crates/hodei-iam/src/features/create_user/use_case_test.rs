@@ -1,10 +1,10 @@
-use super::dto::CreateUserCommand;
+usesuper::dto::CreateUserCommand;
 use super::error::CreateUserError;
 use super::ports::{CreateUserRepositories, CreateUserUnitOfWork};
 use super::use_case::CreateUserUseCase;
 use crate::internal::application::ports::{UserRepository, UserRepositoryError};
 use crate::internal::domain::User;
-use kernel::Hrn;
+usekernel::Hrn;
 use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -35,7 +35,7 @@ impl MockUserRepository {
 
 #[async_trait::async_trait]
 impl UserRepository for MockUserRepository {
-    async fn save(&self, user: &User) -> Result<(), UserRepositoryError> {
+async fn save(&self, user: &User) -> Result<(), UserRepositoryError> {
         let result = *self.save_result.lock().await;
         if result.is_ok() {
             self.saved_users.lock().await.push(user.clone());
@@ -52,7 +52,7 @@ impl UserRepository for MockUserRepository {
     }
 }
 
-// Mock Unit of Work
+//Mock Unit of Work
 struct MockCreateUserUnitOfWork {
     repo: Arc<dyn UserRepository>,
     begin_result: Result<(), Box<dyn std::error::Error + Send + Sync>>,
@@ -76,7 +76,7 @@ impl MockCreateUserUnitOfWork {
         }
     }
 
-    fn set_begin_result(&mut self, result: Result<(), Box<dyn std::error::Error + Send + Sync>>) {
+    fn set_begin_result(&mutself, result: Result<(), Box<dyn std::error::Error + Send + Sync>>) {
         self.begin_result = result;
     }
 
@@ -84,7 +84,7 @@ impl MockCreateUserUnitOfWork {
         self.commit_result = result;
     }
 
-    fn set_rollback_result(
+    fnset_rollback_result(
         &mut self,
         result: Result<(), Box<dyn std::error::Error + Send + Sync>>,
     ) {
@@ -95,7 +95,7 @@ impl MockCreateUserUnitOfWork {
         *self.begin_called.lock().await
     }
 
-    async fn was_commit_called(&self) -> bool {
+    async fnwas_commit_called(&self) -> bool {
         *self.commit_called.lock().await
     }
 
@@ -130,7 +130,7 @@ impl CreateUserUnitOfWork for MockCreateUserUnitOfWork {
 async fn test_create_user_success() {
     let mock_repo = Arc::new(MockUserRepository::new());
     let mock_uow = Arc::new(MockCreateUserUnitOfWork::new(mock_repo.clone()));
-    let use_case = CreateUserUseCase::new(mock_uow);
+    let use_case= CreateUserUseCase::new(mock_uow);
 
     let cmd = CreateUserCommand {
         name: "John Doe".to_string(),
@@ -153,7 +153,7 @@ async fn test_create_user_success() {
     assert!(uow.was_commit_called().await);
     assert!(!uow.was_rollback_called().await);
 
-    // Verify user was saved
+    //Verify user was saved
     let saved_users = mock_repo.get_saved_users().await;
     assert_eq!(saved_users.len(), 1);
     assert_eq!(saved_users[0].name, "John Doe");
@@ -161,7 +161,7 @@ async fn test_create_user_success() {
 
 #[tokio::test]
 async fn test_create_user_transaction_begin_failure() {
-    let mock_repo = Arc::new(MockUserRepository::new());
+    let mock_repo= Arc::new(MockUserRepository::new());
     let mut mock_uow = MockCreateUserUnitOfWork::new(mock_repo);
     mock_uow.set_begin_result(Err("Transaction begin failed".into()));
     let mock_uow = Arc::new(mock_uow);
@@ -176,7 +176,7 @@ async fn test_create_user_transaction_begin_failure() {
     let result = use_case.execute(cmd).await;
 
     assert!(result.is_err());
-    match result.err().unwrap() {
+    match result.err().unwrap(){
         CreateUserError::TransactionBeginFailed(msg) => {
             assert!(msg.contains("Transaction begin failed"));
         }
@@ -201,7 +201,7 @@ async fn test_create_user_transaction_commit_failure() {
     let cmd = CreateUserCommand {
         name: "John Doe".to_string(),
         email: "john@example.com".to_string(),
-        tags: vec![],
+tags: vec![],
     };
 
     let result = use_case.execute(cmd).await;
@@ -226,14 +226,14 @@ async fn test_create_user_repository_save_failure() {
     let mock_repo = Arc::new(MockUserRepository::new());
     mock_repo.set_save_result(Err(UserRepositoryError::DatabaseError(
         "Save failed".to_string(),
-    )));
+   )));
     let mock_uow = Arc::new(MockCreateUserUnitOfWork::new(mock_repo));
     let use_case = CreateUserUseCase::new(mock_uow);
 
     let cmd = CreateUserCommand {
         name: "John Doe".to_string(),
         email: "john@example.com".to_string(),
-        tags: vec![],
+        tags:vec![],
     };
 
     let result = use_case.execute(cmd).await;
@@ -257,31 +257,31 @@ async fn test_create_user_repository_save_failure() {
 async fn test_create_user_with_event_publisher() {
     let mock_repo = Arc::new(MockUserRepository::new());
     let mock_uow = Arc::new(MockCreateUserUnitOfWork::new(mock_repo.clone()));
-    let event_bus = Arc::new(InMemoryEventBus::new());
+    let event_bus =Arc::new(InMemoryEventBus::new());
     let use_case = CreateUserUseCase::new(mock_uow).with_event_publisher(event_bus);
 
     let cmd = CreateUserCommand {
         name: "John Doe".to_string(),
         email: "john@example.com".to_string(),
         tags: vec![],
-    };
+   };
 
     let result = use_case.execute(cmd).await;
 
     assert!(result.is_ok());
 
-    // Verify event was published (check if event_bus has events)
+// Verify event was published (check if event_bus has events)
     // Since InMemoryEventBus doesn't expose internals easily, we just ensure no panic
 }
 
 #[tokio::test]
 async fn test_create_user_no_tags() {
     let mock_repo = Arc::new(MockUserRepository::new());
-    let mock_uow = Arc::new(MockCreateUserUnitOfWork::new(mock_repo.clone()));
+    letmock_uow = Arc::new(MockCreateUserUnitOfWork::new(mock_repo.clone()));
     let use_case = CreateUserUseCase::new(mock_uow);
 
     let cmd = CreateUserCommand {
-        name: "Jane Doe".to_string(),
+        name: "JaneDoe".to_string(),
         email: "jane@example.com".to_string(),
         tags: vec![],
     };
@@ -292,7 +292,7 @@ async fn test_create_user_no_tags() {
     let view = result.unwrap();
     assert_eq!(view.tags.len(), 0);
 
-    let saved_users = mock_repo.get_saved_users().await;
+    let saved_users= mock_repo.get_saved_users().await;
     assert_eq!(saved_users[0].tags.len(), 0);
 }
 
@@ -312,11 +312,114 @@ async fn test_create_user_multiple_tags() {
 
     assert!(result.is_ok());
     let view = result.unwrap();
-    assert_eq!(view.tags.len(), 3);
+assert_eq!(view.tags.len(), 3);
     assert!(view.tags.contains(&"dev".to_string()));
     assert!(view.tags.contains(&"admin".to_string()));
     assert!(view.tags.contains(&"lead".to_string()));
 
     let saved_users = mock_repo.get_saved_users().await;
     assert_eq!(saved_users[0].tags, view.tags);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::dto::{CreateUserCommand, UserView};
+    use super::super::error::CreateUserError;
+    use super::super::ports::{CreateUserPort, HrnGenerator};
+    use super::super::use_case::CreateUserUseCase;
+    use crate::internal::domain::User;
+    use kernel::Hrn;
+    use std::sync::Arc;
+
+    // Mock implementation of CreateUserPort
+    struct MockUserPersister {
+        should_fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl CreateUserPort for MockUserPersister {
+        asyncfn save_user(&self, _user: &User) -> Result<(), CreateUserError> {
+            if self.should_fail {
+                Err(CreateUserError::PersistenceError("Failed to save user".to_string()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    // Mock implementation of HrnGenerator
+   struct MockHrnGenerator {
+        hrn: Hrn,
+    }
+
+    impl HrnGenerator for MockHrnGenerator {
+        fn new_user_hrn(&self, _name: &str) -> Hrn {
+            self.hrn.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fntest_create_user_success() {
+        // Arrange
+        let hrn = Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
+        );
+        
+       let persister = Arc::new(MockUserPersister { should_fail: false });
+        let hrn_generator = Arc::new(MockHrnGenerator { hrn: hrn.clone() });
+        let use_case = CreateUserUseCase::new(persister, hrn_generator);
+        
+        let command = CreateUserCommand {
+name: "Test User".to_string(),
+            email: "test@example.com".to_string(),
+            tags: vec!["test".to_string()],
+        };
+
+        // Act
+        let result = use_case.execute(command).await;
+
+        // Assert
+        assert!(result.is_ok());
+        let user_view =result.unwrap();
+        assert_eq!(user_view.hrn, hrn.to_string());
+        assert_eq!(user_view.name, "Test User");
+        assert_eq!(user_view.email, "test@example.com");
+        assert_eq!(user_view.tags, vec!["test".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_create_user_persistence_error() {
+        // Arrange
+        let hrn = Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
+        );
+        
+        let persister = Arc::new(MockUserPersister { should_fail: true});
+        let hrn_generator = Arc::new(MockHrnGenerator { hrn });
+        let use_case = CreateUserUseCase::new(persister, hrn_generator);
+        
+        let command = CreateUserCommand {
+            name: "Test User".to_string(),
+            email: "test@example.com".to_string(),
+tags: vec![],
+        };
+
+        // Act
+        let result = use_case.execute(command).await;
+
+        // Assert
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CreateUserError::PersistenceError(_) => (),
+            _ => panic!("Expected PersistenceError"),
+        }
+    }
 }

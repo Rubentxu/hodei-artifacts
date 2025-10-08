@@ -1,7 +1,7 @@
-pub mod actions;
-/// Domain layer for hodei-iam
-pub mod entities;
-pub mod events;
+//! Domain models for the IAM bounded context
 
-// Re-export for convenience
-pub use entities::{Group, Namespace, ServiceAccount, User};
+pub(crate) mod user;
+pub(crate) mod group;
+
+pub(crate) use user::User;
+pub(crate) use group::Group;

@@ -5,7 +5,7 @@
 //! to IAM policy evaluation needs.
 
 use async_trait::async_trait;
-use cedar_policy::PolicySet;
+use kernel::domain::HodeiPolicySet;
 use kernel::Hrn;
 
 /// Port for finding and retrieving IAM policies
@@ -16,7 +16,7 @@ use kernel::Hrn;
 /// # Responsibilities
 ///
 /// - Retrieve all effective policies for a given principal
-/// - Return policies as a Cedar PolicySet ready for evaluation
+/// - Return policies as a PolicySet ready for evaluation
 ///
 /// # Segregation
 ///
@@ -53,7 +53,7 @@ pub trait PolicyFinderPort: Send + Sync {
     async fn get_effective_policies(
         &self,
         principal_hrn: &Hrn,
-    ) -> Result<PolicySet, PolicyFinderError>;
+    ) -> Result<HodeiPolicySet, PolicyFinderError>;
 }
 
 /// Errors that can occur during policy retrieval

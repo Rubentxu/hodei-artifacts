@@ -1,4 +1,3 @@
-use kernel::Hrn;
 use kernel::domain::policy::HodeiPolicySet;
 use std::collections::HashMap;
 
@@ -10,9 +9,9 @@ pub struct EvaluatePoliciesCommand<'a> {
 }
 
 pub struct AuthorizationRequest<'a> {
-    pub principal_hrn: &'a Hrn,
+    pub principal: &'a dyn kernel::HodeiEntity,
     pub action: &'a str,
-    pub resource_hrn: &'a Hrn,
+    pub resource: &'a dyn kernel::HodeiEntity,
     pub context: Option<HashMap<String, serde_json::Value>>, // Contexto simple para la evaluación
 }
 
@@ -23,6 +22,7 @@ pub enum Decision {
     Deny,
 }
 
+#[derive(Debug)]
 pub struct EvaluationDecision {
     pub decision: Decision,
     pub determining_policies: Vec<String>, // IDs de las políticas que llevaron a la decisión

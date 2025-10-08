@@ -1,32 +1,37 @@
-use crate::internal::application::ports::UserRepository;
-use std::error::Error as StdError;
+use crate::internal::domain::User;
+use async_trait::async_trait;
+use kernel::Hrn;
+use super::error::CreateUserError;
 
-/// Unit of Work for the create_user feature
+/// Port for persisting users
 ///
-/// Ensures transactional integrity when creating a new user.
-#[async_trait::async_trait]
-pub trait CreateUserUnitOfWork: Send + Sync {
-    /// Begin a new transaction
-    async fn begin(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Commit the transaction
-    async fn commit(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Rollback the transaction
-    async fn rollback(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Access repositories within the transaction context
-    fn repositories(&self) -> CreateUserRepositories;
+/// This port abstracts user persistence operations.
+/// Following the Interface Segregation Principle (ISP), this port
+/// contains only the operations needed by the create_user feature.
+#[async_trait]
+pub trait CreateUserPort: Send + Sync {
+    /// Save a user to the persistence layer
+    ///
+    /// # Arguments
+    /// * `user` - The user entity to save
+    ///
+    /// # Returns
+    /// * `Ok(())` if the user was saved successfully
+    /// * `Err(CreateUserError)` if there was an error saving the user
+    async fn save_user(&self, user: &User) -> Result<(), CreateUserError>;
 }
 
-/// Repository bundle for create_user feature
-#[derive(Clone)]
-pub struct CreateUserRepositories {
-    pub user_repository: std::sync::Arc<dyn UserRepository>,
-}
-
-impl CreateUserRepositories {
-    pub fn new(user_repository: std::sync::Arc<dyn UserRepository>) -> Self {
-        Self { user_repository }
-    }
+/// Port for generating HRNs
+///
+/// This port abstracts HRN generation, allowing different implementations
+/// (e.g., UUID-based, sequential, etc.)
+pub trait HrnGenerator: Send + Sync {
+    /// Generate a new HRN for a user
+    ///
+    /// # Arguments
+    /// * `name` - The name of the user (used for HRN generation)
+    ///
+    /// # Returns
+    /// * A new HRN for the user
+    fn new_user_hrn(&self, name: &str) -> Hrn;
 }

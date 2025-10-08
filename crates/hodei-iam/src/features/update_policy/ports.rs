@@ -19,10 +19,10 @@ use crate::features::update_policy::dto::{PolicyView, UpdatePolicyCommand};
 use crate::features::update_policy::error::UpdatePolicyError;
 use async_trait::async_trait;
 
-// Re-exporting validation-related types from create_policy_new as they are identical
+// Re-exporting validation-related types from create_policy as they are identical
 // and shared across features that modify policy content. This avoids duplication.
 // In a more advanced scenario, these could live in a shared `validation` module.
-pub use crate::features::create_policy_new::{
+pub use crate::features::create_policy::{
     PolicyValidationError, PolicyValidator, ValidationError, ValidationResult, ValidationWarning,
 };
 

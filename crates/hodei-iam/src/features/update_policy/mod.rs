@@ -21,9 +21,7 @@
 //! - System-protected policies may have restricted update capabilities
 //! - Updated timestamp is automatically tracked
 //! - Optimistic locking via version/etag (future enhancement)
-//!
-//! Re-exports below expose only what the application layer needs.
-pub mod adapter;
+
 pub mod di;
 pub mod dto;
 pub mod error;

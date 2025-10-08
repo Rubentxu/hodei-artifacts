@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 /// Translates an HRN to a Cedar EntityUid.
 /// Algorithm: format!("{}::\"{}\"", hrn.entity_type_name(), hrn.resource_id())
+#[allow(dead_code)]
 pub(crate) fn to_cedar_euid(hrn: &Hrn) -> Result<EntityUid, EvaluatePoliciesError> {
     // Simplified: use the full entity_type_name as the type name
     let type_name = EntityTypeName::from_str(&hrn.entity_type_name()).map_err(|e| {
@@ -16,19 +17,23 @@ pub(crate) fn to_cedar_euid(hrn: &Hrn) -> Result<EntityUid, EvaluatePoliciesErro
 }
 
 /// Translates a HodeiEntity to a Cedar Entity.
-/// Simplified version: only basic attributes
+/// Simplified version that creates entities without schema validation
+#[allow(dead_code)]
 pub(crate) fn to_cedar_entity(entity: &dyn HodeiEntity) -> Result<Entity, EvaluatePoliciesError> {
     let uid = to_cedar_euid(entity.hrn())?;
 
-    // Simplified: create entity with no attributes for now
+    // Create entities with no attributes to avoid schema validation issues
     let attrs = HashMap::new();
 
+    // Use Entity::new without passing entities to avoid schema validation
+    // This allows basic functionality to work without complex schema matching
     Entity::new(uid, attrs, std::collections::HashSet::new()).map_err(|e| {
         EvaluatePoliciesError::TranslationError(format!("Entity creation failed: {}", e))
     })
 }
 
 /// Translates a HodeiPolicySet to a Cedar PolicySet.
+#[allow(dead_code)]
 pub(crate) fn to_cedar_policy_set(
     set: &HodeiPolicySet,
 ) -> Result<PolicySet, EvaluatePoliciesError> {

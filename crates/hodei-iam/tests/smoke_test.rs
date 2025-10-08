@@ -23,13 +23,13 @@ async fn test_async_runtime() {
 }
 
 #[test]
-fn test_repositories_can_be_instantiated() {
-    // Test that we can create repository instances
-    use hodei_iam::infrastructure::InMemoryGroupRepository;
-    use hodei_iam::infrastructure::InMemoryUserRepository;
+fn test_adapters_can_be_instantiated() {
+    // Test that we can create adapter instances
+    use hodei_iam::infrastructure::in_memory::{InMemoryUserAdapter, InMemoryGroupAdapter, InMemoryPolicyAdapter};
 
-    let _user_repo = InMemoryUserRepository::new();
-    let _group_repo = InMemoryGroupRepository::new();
+    let _user_adapter = InMemoryUserAdapter::new();
+    let _group_adapter = InMemoryGroupAdapter::new();
+    let _policy_adapter = InMemoryPolicyAdapter::new("test-account".to_string());
 
-    assert!(true, "Repositories instantiated successfully");
+    assert!(true, "Adapters instantiated successfully");
 }

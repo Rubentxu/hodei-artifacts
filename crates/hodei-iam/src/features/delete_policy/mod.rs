@@ -7,13 +7,12 @@
 //! - error.rs            -> Feature-specific error types
 //! - ports.rs            -> Segregated interface definition (DeletePolicyPort)
 //! - use_case.rs         -> Core business logic (DeletePolicyUseCase)
-//! - adapter.rs          -> Infrastructure adapter implementations (stub/in-memory)
 //! - di.rs               -> Dependency Injection helpers
 //! - mocks.rs            -> Test-only mock implementations of the port
 //! - use_case_test.rs    -> Unit tests for the use case
 //!
 //! Re-exports below expose only what the application layer needs.
-pub mod adapter;
+
 pub mod di;
 pub mod dto;
 pub mod error;

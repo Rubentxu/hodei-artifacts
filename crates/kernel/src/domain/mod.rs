@@ -30,6 +30,7 @@
 pub mod attributes;
 pub mod entity;
 pub mod hrn;
+pub mod policy;
 pub mod value_objects;
 
 #[cfg(test)]
@@ -47,3 +48,6 @@ pub use value_objects::{AttributeName, ResourceTypeName, ServiceName, Validation
 
 // Re-export de tipos de atributos agnósticos
 pub use attributes::AttributeValue;
+
+// Re-export de tipos de políticas agnósticos
+pub use policy::{HodeiPolicy, HodeiPolicySet, PolicyId};

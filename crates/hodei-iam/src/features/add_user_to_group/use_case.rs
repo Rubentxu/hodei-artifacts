@@ -1,113 +1,72 @@
 use super::dto::AddUserToGroupCommand;
 use super::error::AddUserToGroupError;
-use super::ports::AddUserToGroupUnitOfWork;
-use crate::internal::domain::events::UserAddedToGroup;
-use kernel::EventPublisher;
+use super::ports::{UserFinder, GroupFinder, UserGroupPersister};
+use crate::internal::domain::User;
 use kernel::Hrn;
-use kernel::application::ports::event_bus::EventEnvelope;
-use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
 use std::sync::Arc;
 
-/// Use case for adding a user to a group with transactional integrity
-pub struct AddUserToGroupUseCase<U: AddUserToGroupUnitOfWork> {
-    uow: Arc<U>,
-    event_publisher: Option<Arc<InMemoryEventBus>>,
+/// Use case for adding a user to a group
+///
+/// This use case orchestrates the process of adding a user to a group:
+/// 1. Validates and parses the HRNs
+/// 2. Finds the user and group
+/// 3. Adds the user to the group
+/// 4. Persists the updated user
+pub struct AddUserToGroupUseCase<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> {
+    user_finder: Arc<UF>,
+    group_finder: Arc<GF>,
+    user_persister: Arc<UP>,
 }
 
-impl<U: AddUserToGroupUnitOfWork> AddUserToGroupUseCase<U> {
-    pub fn new(uow: Arc<U>) -> Self {
+impl<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> AddUserToGroupUseCase<UF, GF, UP> {
+    /// Create a new instance of the use case
+    ///
+    /// # Arguments
+    /// * `user_finder` - Implementation of UserFinder for user lookup
+    /// * `group_finder` - Implementation of GroupFinder for group lookup
+    /// * `user_persister` - Implementation of UserGroupPersister for user persistence
+    pub fn new(
+        user_finder: Arc<UF>,
+        group_finder: Arc<GF>,
+        user_persister: Arc<UP>,
+    ) -> Self {
         Self {
-            uow,
-            event_publisher: None,
+            user_finder,
+            group_finder,
+            user_persister,
         }
     }
 
-    pub fn with_event_publisher(mut self, publisher: Arc<InMemoryEventBus>) -> Self {
-        self.event_publisher = Some(publisher);
-        self
-    }
-
+    /// Execute the add user to group use case
+    ///
+    /// # Arguments
+    /// * `cmd` - AddUserToGroupCommand containing user and group HRNs
+    ///
+    /// # Returns
+    /// * Ok(()) if the user was successfully added to the group
+    /// * Err(AddUserToGroupError) if there was an error
     pub async fn execute(&self, cmd: AddUserToGroupCommand) -> Result<(), AddUserToGroupError> {
-        // Parse HRNs
+        // Parse and validate HRNs
         let user_hrn = Hrn::from_string(&cmd.user_hrn)
             .ok_or_else(|| AddUserToGroupError::InvalidUserHrn(cmd.user_hrn.clone()))?;
+        
         let group_hrn = Hrn::from_string(&cmd.group_hrn)
             .ok_or_else(|| AddUserToGroupError::InvalidGroupHrn(cmd.group_hrn.clone()))?;
 
-        // Begin transaction
-        self.uow
-            .begin()
-            .await
-            .map_err(|e| AddUserToGroupError::TransactionBeginFailed(e.to_string()))?;
+        // Find the user
+        let user = self.user_finder.find_user_by_hrn(&user_hrn).await?
+            .ok_or_else(|| AddUserToGroupError::UserNotFound(cmd.user_hrn.clone()))?;
 
-        // Execute business logic within transaction
-        let result = self.execute_in_transaction(&user_hrn, &group_hrn).await;
+        // Find the group
+        let _group = self.group_finder.find_group_by_hrn(&group_hrn).await?
+            .ok_or_else(|| AddUserToGroupError::GroupNotFound(cmd.group_hrn.clone()))?;
 
-        // Handle transaction outcome
-        match result {
-            Ok(_) => {
-                self.uow
-                    .commit()
-                    .await
-                    .map_err(|e| AddUserToGroupError::TransactionCommitFailed(e.to_string()))?;
-
-                // Publish domain event after successful commit
-                if let Some(publisher) = &self.event_publisher {
-                    let event = UserAddedToGroup {
-                        user_hrn: user_hrn.clone(),
-                        group_hrn: group_hrn.clone(),
-                        added_at: chrono::Utc::now(),
-                    };
-
-                    let envelope = EventEnvelope::new(event)
-                        .with_metadata("aggregate_type".to_string(), "Group".to_string());
-
-                    if let Err(e) = publisher.publish_with_envelope(envelope).await {
-                        tracing::warn!("Failed to publish UserAddedToGroup event: {}", e);
-                        // Don't fail the use case if event publishing fails
-                    }
-                }
-
-                Ok(())
-            }
-            Err(e) => {
-                if let Err(rollback_err) = self.uow.rollback().await {
-                    tracing::error!("Failed to rollback transaction: {}", rollback_err);
-                }
-                Err(e)
-            }
-        }
-    }
-
-    async fn execute_in_transaction(
-        &self,
-        user_hrn: &Hrn,
-        group_hrn: &Hrn,
-    ) -> Result<(), AddUserToGroupError> {
-        let repos = self.uow.repositories();
-
-        // Validate that the group exists to maintain consistency
-        if repos
-            .group_repository
-            .find_by_hrn(group_hrn)
-            .await?
-            .is_none()
-        {
-            return Err(AddUserToGroupError::GroupNotFound(group_hrn.to_string()));
-        }
-
-        // Load the user
-        let mut user = repos
-            .user_repository
-            .find_by_hrn(user_hrn)
-            .await?
-            .ok_or_else(|| AddUserToGroupError::UserNotFound(user_hrn.to_string()))?;
-
-        // Add user to group (domain logic handles idempotency)
-        user.add_to_group(group_hrn.clone());
+        // Add user to group
+        let mut updated_user = user;
+        updated_user.add_to_group(group_hrn);
 
         // Persist the updated user
-        repos.user_repository.save(&user).await?;
+        self.user_persister.save_user(&updated_user).await?;
 
         Ok(())
     }

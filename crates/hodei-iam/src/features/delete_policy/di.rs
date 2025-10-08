@@ -36,7 +36,7 @@
 use std::sync::Arc;
 use tracing::instrument;
 
-use crate::features::delete_policy::adapter::InMemoryDeletePolicyAdapter;
+use crate::infrastructure::in_memory::delete_policy_adapter::InMemoryDeletePolicyAdapter;
 use crate::features::delete_policy::ports::DeletePolicyPort;
 use crate::features::delete_policy::use_case::DeletePolicyUseCase;
 

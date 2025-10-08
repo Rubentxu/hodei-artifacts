@@ -1,32 +1,37 @@
-use crate::internal::application::ports::GroupRepository;
-use std::error::Error as StdError;
+use crate::internal::domain::Group;
+use async_trait::async_trait;
+use kernel::Hrn;
+use super::error::CreateGroupError;
 
-/// Unit of Work for the create_group feature
+/// Port for persisting groups
 ///
-/// Ensures transactional integrity when creating a new group.
-#[async_trait::async_trait]
-pub trait CreateGroupUnitOfWork: Send + Sync {
-    /// Begin a new transaction
-    async fn begin(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Commit the transaction
-    async fn commit(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Rollback the transaction
-    async fn rollback(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Access repositories within the transaction context
-    fn repositories(&self) -> CreateGroupRepositories;
+/// This port abstracts group persistence operations.
+/// Following the Interface Segregation Principle (ISP), this port
+/// contains only the operations needed by the create_group feature.
+#[async_trait]
+pub trait CreateGroupPort: Send + Sync {
+    /// Save a group to the persistence layer
+    ///
+    /// # Arguments
+    /// * `group` - The group entity to save
+    ///
+    /// # Returns
+    /// * `Ok(())` if the group was saved successfully
+    /// * `Err(CreateGroupError)` if there was an error saving the group
+    async fn save_group(&self, group: &Group) -> Result<(), CreateGroupError>;
 }
 
-/// Repository bundle for create_group feature
-#[derive(Clone)]
-pub struct CreateGroupRepositories {
-    pub group_repository: std::sync::Arc<dyn GroupRepository>,
-}
-
-impl CreateGroupRepositories {
-    pub fn new(group_repository: std::sync::Arc<dyn GroupRepository>) -> Self {
-        Self { group_repository }
-    }
+/// Port for generating HRNs
+///
+/// This port abstracts HRN generation, allowing different implementations
+/// (e.g., UUID-based, sequential, etc.)
+pub trait HrnGenerator: Send + Sync {
+    /// Generate a new HRN for a group
+    ///
+    /// # Arguments
+    /// * `name` - The name of the group (used for HRN generation)
+    ///
+    /// # Returns
+    /// * A new HRN for the group
+    fn new_group_hrn(&self, name: &str) -> Hrn;
 }

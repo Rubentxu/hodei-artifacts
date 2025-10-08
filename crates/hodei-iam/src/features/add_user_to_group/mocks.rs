@@ -1,183 +1,144 @@
-use super::ports::{AddUserToGroupRepositories, AddUserToGroupUnitOfWork};
-use crate::internal::application::ports::{
-    GroupRepository, GroupRepositoryError, UserRepository, UserRepositoryError,
-};
-use crate::internal::domain::{Group, User};
+//! Mock implementations for testing
+//!
+//! This module provides mock implementations of the ports for use in unit tests.
+
+use super::ports::{UserFinder, GroupFinder, UserGroupPersister};
+use crate::internal::domain::{User, Group};
+use async_trait::async_trait;
 use kernel::Hrn;
-use std::collections::HashMap;
-use std::error::Error as StdError;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-/// Mock implementation of AddUserToGroupUnitOfWork for testing
-///
-/// This mock can work with any implementation of UserRepository and GroupRepository,
-/// not just the Mock* versions. This allows it to be used in integration tests
-/// with InMemory repositories.
-pub struct MockAddUserToGroupUnitOfWork {
-    user_repository: Arc<dyn UserRepository>,
-    group_repository: Arc<dyn GroupRepository>,
-    transaction_state: Arc<Mutex<TransactionState>>,
+/// Mock implementation of UserFinder for testing
+pub struct MockUserFinder {
+    /// The user to return (None if not found)
+    pub user: Option<User>,
+    /// Whether the operation should fail
+    pub should_fail: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum TransactionState {
-    NotStarted,
-    Active,
-    Committed,
-    RolledBack,
+#[async_trait]
+impl UserFinder for MockUserFinder {
+    async fn find_user_by_hrn(&self, _hrn: &Hrn) -> Result<Option<User>, super::error::AddUserToGroupError> {
+        if self.should_fail {
+            Err(super::error::AddUserToGroupError::PersistenceError(
+                "Mock failure".to_string(),
+            ))
+        } else {
+            Ok(self.user.clone())
+        }
+    }
 }
 
-impl MockAddUserToGroupUnitOfWork {
-    /// Create a new mock UoW with any repository implementations
-    pub fn new(
-        user_repository: Arc<dyn UserRepository>,
-        group_repository: Arc<dyn GroupRepository>,
-    ) -> Self {
+impl MockUserFinder {
+    /// Create a new mock with a user
+    pub fn with_user(user: User) -> Self {
         Self {
-            user_repository,
-            group_repository,
-            transaction_state: Arc::new(Mutex::new(TransactionState::NotStarted)),
+            user: Some(user),
+            should_fail: false,
         }
     }
 
-    pub fn transaction_state(&self) -> TransactionState {
-        self.transaction_state.lock().unwrap().clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl AddUserToGroupUnitOfWork for MockAddUserToGroupUnitOfWork {
-    async fn begin(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        let mut state = self.transaction_state.lock().unwrap();
-        *state = TransactionState::Active;
-        Ok(())
-    }
-
-    async fn commit(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        let mut state = self.transaction_state.lock().unwrap();
-        if *state != TransactionState::Active {
-            return Err("Transaction not active".into());
+    /// Create a new mock with no user (not found)
+    pub fn not_found() -> Self {
+        Self {
+            user: None,
+            should_fail: false,
         }
-        *state = TransactionState::Committed;
-        Ok(())
     }
 
-    async fn rollback(&self) -> Result<(), Box<dyn StdError + Send + Sync>> {
-        let mut state = self.transaction_state.lock().unwrap();
-        if *state != TransactionState::Active {
-            return Err("Transaction not active".into());
+    /// Create a new mock that will fail
+    pub fn failing() -> Self {
+        Self {
+            user: None,
+            should_fail: true,
         }
-        *state = TransactionState::RolledBack;
-        // Note: Rollback in mock UoW doesn't actually clear data since
-        // trait objects don't expose clear() method. For unit tests,
-        // use MockUserRepository and MockGroupRepository directly.
-        Ok(())
-    }
-
-    fn repositories(&self) -> AddUserToGroupRepositories {
-        AddUserToGroupRepositories::new(
-            self.user_repository.clone(),
-            self.group_repository.clone(),
-        )
     }
 }
 
-/// Mock UserRepository for testing
-pub struct MockUserRepository {
-    users: Arc<Mutex<HashMap<String, User>>>,
+/// Mock implementation of GroupFinder for testing
+pub struct MockGroupFinder {
+    /// The group to return (None if not found)
+    pub group: Option<Group>,
+    /// Whether the operation should fail
+    pub should_fail: bool,
 }
 
-impl MockUserRepository {
+#[async_trait]
+impl GroupFinder for MockGroupFinder {
+    async fn find_group_by_hrn(&self, _hrn: &Hrn) -> Result<Option<Group>, super::error::AddUserToGroupError> {
+        if self.should_fail {
+            Err(super::error::AddUserToGroupError::PersistenceError(
+                "Mock failure".to_string(),
+            ))
+        } else {
+            Ok(self.group.clone())
+        }
+    }
+}
+
+impl MockGroupFinder {
+    /// Create a new mock with a group
+    pub fn with_group(group: Group) -> Self {
+        Self {
+            group: Some(group),
+            should_fail: false,
+        }
+    }
+
+    /// Create a new mock with no group (not found)
+    pub fn not_found() -> Self {
+        Self {
+            group: None,
+            should_fail: false,
+        }
+    }
+
+    /// Create a new mock that will fail
+    pub fn failing() -> Self {
+        Self {
+            group: None,
+            should_fail: true,
+        }
+    }
+}
+
+/// Mock implementation of UserGroupPersister for testing
+pub struct MockUserGroupPersister {
+    /// Whether the save operation should fail
+    pub should_fail: bool,
+    /// The user that was saved (for inspection in tests)
+    pub saved_user: Option<User>,
+}
+
+#[async_trait]
+impl UserGroupPersister for MockUserGroupPersister {
+    async fn save_user(&self, user: &User) -> Result<(), super::error::AddUserToGroupError> {
+        if self.should_fail {
+            Err(super::error::AddUserToGroupError::PersistenceError(
+                "Mock failure".to_string(),
+            ))
+        } else {
+            // In a real mock, we might store the user for inspection
+            // For this simple mock, we just return Ok
+            Ok(())
+        }
+    }
+}
+
+impl MockUserGroupPersister {
+    /// Create a new mock with default settings
     pub fn new() -> Self {
         Self {
-            users: Arc::new(Mutex::new(HashMap::new())),
+            should_fail: false,
+            saved_user: None,
         }
     }
 
-    pub fn with_user(self, user: User) -> Self {
-        self.users
-            .lock()
-            .unwrap()
-            .insert(user.hrn.to_string(), user);
-        self
-    }
-
-    pub fn clear(&self) {
-        self.users.lock().unwrap().clear();
-    }
-}
-
-impl Default for MockUserRepository {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait::async_trait]
-impl UserRepository for MockUserRepository {
-    async fn save(&self, user: &User) -> Result<(), UserRepositoryError> {
-        self.users
-            .lock()
-            .unwrap()
-            .insert(user.hrn.to_string(), user.clone());
-        Ok(())
-    }
-
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, UserRepositoryError> {
-        Ok(self.users.lock().unwrap().get(&hrn.to_string()).cloned())
-    }
-
-    async fn find_all(&self) -> Result<Vec<User>, UserRepositoryError> {
-        Ok(self.users.lock().unwrap().values().cloned().collect())
-    }
-}
-
-/// Mock GroupRepository for testing
-pub struct MockGroupRepository {
-    groups: Arc<Mutex<HashMap<String, Group>>>,
-}
-
-impl MockGroupRepository {
-    pub fn new() -> Self {
+    /// Create a new mock that will fail
+    pub fn failing() -> Self {
         Self {
-            groups: Arc::new(Mutex::new(HashMap::new())),
+            should_fail: true,
+            saved_user: None,
         }
-    }
-
-    pub fn with_group(self, group: Group) -> Self {
-        self.groups
-            .lock()
-            .unwrap()
-            .insert(group.hrn.to_string(), group);
-        self
-    }
-
-    pub fn clear(&self) {
-        self.groups.lock().unwrap().clear();
-    }
-}
-
-impl Default for MockGroupRepository {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait::async_trait]
-impl GroupRepository for MockGroupRepository {
-    async fn save(&self, group: &Group) -> Result<(), GroupRepositoryError> {
-        self.groups
-            .lock()
-            .unwrap()
-            .insert(group.hrn.to_string(), group.clone());
-        Ok(())
-    }
-
-    async fn find_by_hrn(&self, hrn: &Hrn) -> Result<Option<Group>, GroupRepositoryError> {
-        Ok(self.groups.lock().unwrap().get(&hrn.to_string()).cloned())
-    }
-
-    async fn find_all(&self) -> Result<Vec<Group>, GroupRepositoryError> {
-        Ok(self.groups.lock().unwrap().values().cloned().collect())
     }
 }

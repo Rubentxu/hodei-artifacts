@@ -1,40 +1,60 @@
-use crate::internal::application::ports::{GroupRepository, UserRepository};
-use std::error::Error as StdError;
+use crate::internal::domain::{User, Group};
+use async_trait::async_trait;
+use kernel::Hrn;
+use super::error::AddUserToGroupError;
 
-/// Unit of Work for the add_user_to_group feature
+/// Port for finding users by HRN
 ///
-/// Ensures transactional integrity when adding a user to a group.
-/// Both the user lookup/update and group validation must succeed or fail atomically.
-#[async_trait::async_trait]
-pub trait AddUserToGroupUnitOfWork: Send + Sync {
-    /// Begin a new transaction
-    async fn begin(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Commit the transaction
-    async fn commit(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Rollback the transaction
-    async fn rollback(&self) -> Result<(), Box<dyn StdError + Send + Sync>>;
-
-    /// Access repositories within the transaction context
-    fn repositories(&self) -> AddUserToGroupRepositories;
+/// This port abstracts user lookup operations.
+/// Following the Interface Segregation Principle (ISP), this port
+/// contains only the operations needed by the add_user_to_group feature.
+#[async_trait]
+pub trait UserFinder: Send + Sync {
+    /// Find a user by HRN
+    ///
+    /// # Arguments
+    /// * `hrn` - The HRN of the user to find
+    ///
+    /// # Returns
+    /// * `Ok(Some(User))` if the user was found
+    /// * `Ok(None)` if no user with that HRN exists
+    /// * `Err(AddUserToGroupError)` if there was an error during lookup
+    async fn find_user_by_hrn(&self, hrn: &Hrn) -> Result<Option<User>, AddUserToGroupError>;
 }
 
-/// Repository bundle for add_user_to_group feature
-#[derive(Clone)]
-pub struct AddUserToGroupRepositories {
-    pub user_repository: std::sync::Arc<dyn UserRepository>,
-    pub group_repository: std::sync::Arc<dyn GroupRepository>,
+/// Port for finding groups by HRN
+///
+/// This port abstracts group lookup operations.
+/// Following the Interface Segregation Principle (ISP), this port
+/// contains only the operations needed by the add_user_to_group feature.
+#[async_trait]
+pub trait GroupFinder: Send + Sync {
+    /// Find a group by HRN
+    ///
+    /// # Arguments
+    /// * `hrn` - The HRN of the group to find
+    ///
+    /// # Returns
+    /// * `Ok(Some(Group))` if the group was found
+    /// * `Ok(None)` if no group with that HRN exists
+    /// * `Err(AddUserToGroupError)` if there was an error during lookup
+    async fn find_group_by_hrn(&self, hrn: &Hrn) -> Result<Option<Group>, AddUserToGroupError>;
 }
 
-impl AddUserToGroupRepositories {
-    pub fn new(
-        user_repository: std::sync::Arc<dyn UserRepository>,
-        group_repository: std::sync::Arc<dyn GroupRepository>,
-    ) -> Self {
-        Self {
-            user_repository,
-            group_repository,
-        }
-    }
+/// Port for persisting users
+///
+/// This port abstracts user persistence operations.
+/// Following the Interface Segregation Principle (ISP), this port
+/// contains only the operations needed by the add_user_to_group feature.
+#[async_trait]
+pub trait UserGroupPersister: Send + Sync {
+    /// Save a user to the persistence layer
+    ///
+    /// # Arguments
+    /// * `user` - The user entity to save
+    ///
+    /// # Returns
+    /// * `Ok(())` if the user was saved successfully
+    /// * `Err(AddUserToGroupError)` if there was an error saving the user
+    async fn save_user(&self, user: &User) -> Result<(), AddUserToGroupError>;
 }

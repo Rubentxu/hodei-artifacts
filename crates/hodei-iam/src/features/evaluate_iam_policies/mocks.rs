@@ -5,7 +5,7 @@
 //! requiring real infrastructure.
 
 use async_trait::async_trait;
-use cedar_policy::PolicySet;
+use kernel::domain::policy::HodeiPolicySet;
 use kernel::Hrn;
 
 use super::ports::{PolicyFinderError, PolicyFinderPort};
@@ -22,7 +22,6 @@ use super::ports::{PolicyFinderError, PolicyFinderPort};
 ///
 /// ```rust,ignore
 /// use crate::features::evaluate_iam_policies::mocks::MockPolicyFinder;
-/// use cedar_policy::PolicySet;
 ///
 /// // Return specific policies
 /// let policy_set = PolicySet::from_str("permit(principal, action, resource);").unwrap();
@@ -33,7 +32,7 @@ use super::ports::{PolicyFinderError, PolicyFinderPort};
 /// ```
 pub struct MockPolicyFinder {
     /// The policy set to return (if no error)
-    policy_set: Option<PolicySet>,
+    policy_set: Option<HodeiPolicySet>,
     /// Error to return (if set)
     error: Option<String>,
 }
@@ -44,7 +43,7 @@ impl MockPolicyFinder {
     /// # Arguments
     ///
     /// * `policy_set` - The PolicySet to return from get_effective_policies
-    pub fn new(policy_set: PolicySet) -> Self {
+    pub fn new(policy_set: HodeiPolicySet) -> Self {
         Self {
             policy_set: Some(policy_set),
             error: None,
@@ -65,7 +64,7 @@ impl MockPolicyFinder {
 
     /// Create a new mock that returns an empty policy set
     pub fn empty() -> Self {
-        Self::new(PolicySet::new())
+        Self::new(HodeiPolicySet::default())
     }
 }
 
@@ -74,7 +73,7 @@ impl PolicyFinderPort for MockPolicyFinder {
     async fn get_effective_policies(
         &self,
         _principal_hrn: &Hrn,
-    ) -> Result<PolicySet, PolicyFinderError> {
+    ) -> Result<HodeiPolicySet, PolicyFinderError> {
         if let Some(error_msg) = &self.error {
             return Err(PolicyFinderError::RepositoryError(error_msg.clone()));
         }

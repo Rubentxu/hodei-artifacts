@@ -1,4 +1,4 @@
-//! Use Case: List Policies
+//!Use Case: List Policies
 
 use std::sync::Arc;
 use tracing::{debug, info, instrument};
@@ -7,16 +7,16 @@ use super::dto::{ListPoliciesQuery, ListPoliciesResponse};
 use super::error::ListPoliciesError;
 use super::ports::PolicyLister;
 
-/// Use case para listar políticas IAM con paginación
+/// Use case forlisting IAM policies with pagination
 ///
-/// Este caso de uso orquesta el listado de políticas:
-/// 1. Valida los parámetros de paginación
-/// 2. Delega la consulta al puerto de persistencia
-/// 3. Retorna la respuesta con metadatos de paginación
+/// This use case orchestrates the listing of policies:
+/// 1. Validates the pagination parameters
+/// 2. Delegates the query to the persistence port
+/// 3. Returns the response with pagination metadata
 ///
 /// # Type Parameters
 ///
-/// - `L`: Implementation of `PolicyLister` for data retrieval
+/// - `L`: Implementation of`PolicyLister` for data retrieval
 ///
 /// # Example
 ///
@@ -31,7 +31,7 @@ use super::ports::PolicyLister;
 /// let response = use_case.execute(query).await?;
 ///
 /// println!("Found {} policies", response.policies.len());
-/// if response.page_info.has_next_page {
+///if response.page_info.has_next_page {
 ///     println!("There are more pages available");
 /// }
 /// ```
@@ -53,7 +53,7 @@ where
     ///
     /// * `lister` - Implementation of `PolicyLister` for data retrieval
     pub fn new(lister: Arc<L>) -> Self {
-        Self { lister }
+        Self{ lister }
     }
 
     /// Execute the list policies use case
@@ -65,29 +65,31 @@ where
     /// # Returns
     ///
     /// On success, returns `Ok(ListPoliciesResponse)` with the list of policies
-    /// and pagination metadata.
+   /// and pagination metadata.
     ///
     /// # Errors
     ///
     /// - `ListPoliciesError::InvalidPagination` - Invalid pagination parameters
     /// - `ListPoliciesError::RepositoryError` - Database or storage failure
     /// - `ListPoliciesError::InternalError` - Unexpected error
-    #[instrument(skip(self), fields(limit = ?query.limit, offset = ?query.offset))]
+#[instrument(skip(self), fields(limit = ?query.limit, offset = ?query.offset))]
     pub async fn execute(
         &self,
         query: ListPoliciesQuery,
     ) -> Result<ListPoliciesResponse, ListPoliciesError> {
         info!(
             "Listing policies with limit={} offset={}",
-            query.effective_limit(),
-            query.effective_offset()
+query.limit,
+            query.offset
         );
 
-        // Validar parámetros de paginación
+        // Validate pagination parameters
         self.validate_pagination(&query)?;
 
-        // Delegar al puerto
-        let response = self.lister.list(query).await?;
+        // Delegate to the port
+        let response = self.lister.list(query).await.map_err(|e| {
+            ListPoliciesError::RepositoryError(e.to_string())
+        })?;
 
         debug!(
             "Retrieved {} policies, total_count={}",
@@ -100,13 +102,17 @@ where
 
     /// Validate pagination parameters
     fn validate_pagination(&self, query: &ListPoliciesQuery) -> Result<(), ListPoliciesError> {
-        // El effective_limit ya hace bound checking, pero podemos agregar validaciones adicionales
-        if let Some(limit) = query.limit
-            && limit == 0 {
-                return Err(ListPoliciesError::InvalidPagination(
-                    "Limit must be greater than 0".to_string(),
-                ));
-            }
+        if query.limit == 0 {
+            return Err(ListPoliciesError::InvalidPagination(
+                "Limit must be greater than 0".to_string(),
+            ));
+        }
+
+        if query.limit > 100 {
+            return Err(ListPoliciesError::InvalidPagination(
+                "Limit must be less than or equal to 100".to_string(),
+            ));
+        }
 
         Ok(())
     }
@@ -119,7 +125,7 @@ mod tests {
     use crate::features::list_policies::mocks::MockPolicyLister;
     use kernel::Hrn;
 
-    fn create_test_policy(id: &str) -> PolicySummary {
+    fn create_test_policy(id: &str) ->PolicySummary {
         PolicySummary {
             hrn: Hrn::new(
                 "aws".to_string(),
@@ -128,7 +134,7 @@ mod tests {
                 "Policy".to_string(),
                 id.to_string(),
             ),
-            name: format!("Policy {}", id),
+            name:format!("Policy {}", id),
             description: Some(format!("Test policy {}", id)),
         }
     }
@@ -139,7 +145,7 @@ mod tests {
         let policies = vec![
             create_test_policy("policy1"),
             create_test_policy("policy2"),
-            create_test_policy("policy3"),
+           create_test_policy("policy3"),
         ];
         let lister = MockPolicyLister::with_policies(policies);
         let use_case = ListPoliciesUseCase::new(Arc::new(lister));
@@ -163,9 +169,9 @@ mod tests {
             policies.push(create_test_policy(&format!("policy{}", i)));
         }
         let lister = MockPolicyLister::with_policies(policies);
-        let use_case = ListPoliciesUseCase::new(Arc::new(lister));
+        let use_case =ListPoliciesUseCase::new(Arc::new(lister));
 
-        // Act - First page
+        // Act -First page
         let query = ListPoliciesQuery::with_pagination(10, 0);
         let result = use_case.execute(query).await;
 
@@ -179,7 +185,7 @@ mod tests {
 
         // Act - Second page
         let query = ListPoliciesQuery::with_pagination(10, 10);
-        let result = use_case.execute(query).await;
+        let result= use_case.execute(query).await;
 
         // Assert - Second page
         assert!(result.is_ok());
@@ -189,7 +195,7 @@ mod tests {
         assert!(response.page_info.has_previous_page);
     }
 
-    #[tokio::test]
+   #[tokio::test]
     async fn test_list_policies_empty() {
         // Arrange
         let lister = MockPolicyLister::empty();
@@ -207,15 +213,15 @@ mod tests {
         assert!(!response.page_info.has_next_page);
     }
 
-    #[tokio::test]
+#[tokio::test]
     async fn test_list_policies_invalid_limit() {
         // Arrange
         let lister = MockPolicyLister::empty();
         let use_case = ListPoliciesUseCase::new(Arc::new(lister));
 
         // Act
-        let query = ListPoliciesQuery {
-            limit: Some(0),
+        let query = ListPoliciesQuery{
+limit: Some(0),
             offset: None,
         };
         let result = use_case.execute(query).await;
@@ -224,7 +230,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             ListPoliciesError::InvalidPagination(_) => {}
-            e => panic!("Expected InvalidPagination, got: {:?}", e),
+            e => panic!("Expected InvalidPagination, got:{:?}", e),
         }
     }
 
@@ -235,7 +241,7 @@ mod tests {
         let use_case = ListPoliciesUseCase::new(Arc::new(lister));
 
         // Act
-        let query = ListPoliciesQuery::default();
+let query = ListPoliciesQuery::default();
         let result = use_case.execute(query).await;
 
         // Assert

@@ -1,104 +1,58 @@
 use super::dto::{CreateUserCommand, UserView};
 use super::error::CreateUserError;
-use super::ports::CreateUserUnitOfWork;
-use crate::internal::domain::{User, events::UserCreated};
-use kernel::EventPublisher;
-use kernel::Hrn;
-use kernel::application::ports::event_bus::EventEnvelope;
-use kernel::infrastructure::in_memory_event_bus::InMemoryEventBus;
+use super::ports::{CreateUserPort, HrnGenerator};
+use crate::internal::domain::User;
 use std::sync::Arc;
 
-/// Use case for creating a new user with transactional integrity
-pub struct CreateUserUseCase<U: CreateUserUnitOfWork> {
-    uow: Arc<U>,
-    event_publisher: Option<Arc<InMemoryEventBus>>,
+/// Use case for creating a new user
+///
+/// This use case orchestrates the user creation process:
+/// 1. Generates a new HRN for the user
+/// 2. Creates a User entity
+/// 3. Persists the user through the port
+/// 4. Returns a UserView DTO
+pub struct CreateUserUseCase<P: CreateUserPort, G: HrnGenerator> {
+    persister: Arc<P>,
+    hrn_generator: Arc<G>,
 }
 
-impl<U: CreateUserUnitOfWork> CreateUserUseCase<U> {
-    pub fn new(uow: Arc<U>) -> Self {
+impl<P: CreateUserPort, G: HrnGenerator> CreateUserUseCase<P, G> {
+    /// Create a new instance of the use case
+    ///
+    /// # Arguments
+    /// * `persister` - Implementation of CreateUserPort for persistence
+    /// * `hrn_generator` - Implementation of HrnGenerator for HRN generation
+    pub fn new(persister: Arc<P>, hrn_generator: Arc<G>) -> Self {
         Self {
-            uow,
-            event_publisher: None,
+            persister,
+            hrn_generator,
         }
     }
 
-    pub fn with_event_publisher(mut self, publisher: Arc<InMemoryEventBus>) -> Self {
-        self.event_publisher = Some(publisher);
-        self
-    }
-
+    /// Execute the create user use case
+    ///
+    /// # Arguments
+    /// * `cmd` - CreateUserCommand containing user details
+    ///
+    /// # Returns
+    /// * Ok(UserView) if the user was created successfully
+    /// * Err(CreateUserError) if there was an error
     pub async fn execute(&self, cmd: CreateUserCommand) -> Result<UserView, CreateUserError> {
-        // Begin transaction
-        self.uow
-            .begin()
-            .await
-            .map_err(|e| CreateUserError::TransactionBeginFailed(e.to_string()))?;
-
-        // Execute business logic within transaction
-        let result = self.execute_in_transaction(&cmd).await;
-
-        // Handle transaction outcome
-        match result {
-            Ok(view) => {
-                self.uow
-                    .commit()
-                    .await
-                    .map_err(|e| CreateUserError::TransactionCommitFailed(e.to_string()))?;
-
-                // Publish domain event after successful commit
-                if let Some(publisher) = &self.event_publisher {
-                    let user_hrn = Hrn::from_string(&view.hrn).expect("Invalid HRN in view");
-
-                    let event = UserCreated {
-                        user_hrn,
-                        username: view.name.clone(),
-                        email: view.email.clone(),
-                        created_at: chrono::Utc::now(),
-                    };
-
-                    let envelope = EventEnvelope::new(event)
-                        .with_metadata("aggregate_type".to_string(), "User".to_string());
-
-                    if let Err(e) = publisher.publish_with_envelope(envelope).await {
-                        tracing::warn!("Failed to publish UserCreated event: {}", e);
-                        // Don't fail the use case if event publishing fails
-                    }
-                }
-
-                Ok(view)
-            }
-            Err(e) => {
-                if let Err(rollback_err) = self.uow.rollback().await {
-                    tracing::error!("Failed to rollback transaction: {}", rollback_err);
-                }
-                Err(e)
-            }
-        }
-    }
-
-    async fn execute_in_transaction(
-        &self,
-        cmd: &CreateUserCommand,
-    ) -> Result<UserView, CreateUserError> {
-        let repos = self.uow.repositories();
-
-        // Generate a unique HRN using the type-safe constructor
-        let user_id = uuid::Uuid::new_v4().to_string();
-        let hrn = Hrn::for_entity_type::<User>("hodei".to_string(), "default".to_string(), user_id);
-
+        // Generate a unique HRN using the HRN generator
+        let hrn = self.hrn_generator.new_user_hrn(&cmd.name);
+        
         // Create the user domain entity
-        let mut user = User::new(hrn, cmd.name.clone(), cmd.email.clone());
-        user.tags = cmd.tags.clone();
-
+        let user = User::new(hrn.clone(), cmd.name, cmd.email);
+        
         // Persist the user
-        repos.user_repository.save(&user).await?;
-
+        self.persister.save_user(&user).await?;
+        
         // Return the view
         Ok(UserView {
-            hrn: user.hrn.to_string(),
+            hrn: hrn.to_string(),
             name: user.name,
             email: user.email,
-            groups: Vec::new(),
+            groups: Vec::new(), // New user has no groups
             tags: user.tags,
         })
     }

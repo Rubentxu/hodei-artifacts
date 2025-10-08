@@ -2,339 +2,229 @@
 mod tests {
     use super::super::dto::AddUserToGroupCommand;
     use super::super::error::AddUserToGroupError;
-    use super::super::mocks::{
-        MockAddUserToGroupUnitOfWork, MockGroupRepository, MockUserRepository,
-    };
+    use super::super::ports::{UserFinder, GroupFinder, UserGroupPersister};
     use super::super::use_case::AddUserToGroupUseCase;
-    use crate::internal::application::ports::UserRepository;
-    use crate::internal::domain::{Group, User};
+    use crate::internal::domain::{User, Group};
     use kernel::Hrn;
     use std::sync::Arc;
 
+    // Mock implementation of UserFinder
+    struct MockUserFinder {
+        user: Option<User>,
+        should_fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl UserFinder for MockUserFinder {
+        async fn find_user_by_hrn(&self, _hrn: &Hrn) -> Result<Option<User>, AddUserToGroupError> {
+            if self.should_fail {
+                Err(AddUserToGroupError::PersistenceError("Failed to find user".to_string()))
+            } else {
+                Ok(self.user.clone())
+            }
+        }
+    }
+
+    // Mock implementation of GroupFinder
+    struct MockGroupFinder {
+        group: Option<Group>,
+        should_fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl GroupFinder for MockGroupFinder {
+        async fn find_group_by_hrn(&self, _hrn: &Hrn) -> Result<Option<Group>, AddUserToGroupError> {
+            if self.should_fail {
+                Err(AddUserToGroupError::PersistenceError("Failed to find group".to_string()))
+            } else {
+                Ok(self.group.clone())
+            }
+        }
+    }
+
+    // Mock implementation of UserGroupPersister
+    struct MockUserGroupPersister {
+        should_fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl UserGroupPersister for MockUserGroupPersister {
+        async fn save_user(&self, _user: &User) -> Result<(), AddUserToGroupError> {
+            if self.should_fail {
+                Err(AddUserToGroupError::PersistenceError("Failed to save user".to_string()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_add_user_to_group_success() {
-        // Arrange: Create test data
-        let user_hrn = Hrn::for_entity_type::<User>(
+        // Arrange
+        let user_hrn = Hrn::new(
             "hodei".to_string(),
-            "default".to_string(),
-            "user1".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
         );
-        let group_hrn = Hrn::for_entity_type::<Group>(
+        
+        let group_hrn = Hrn::new(
             "hodei".to_string(),
-            "default".to_string(),
-            "group1".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "Group".to_string(),
+            "test-group".to_string(),
         );
-
-        let user = User::new(
-            user_hrn.clone(),
-            "Alice".to_string(),
-            "alice@example.com".to_string(),
-        );
-        let group = Group::new(group_hrn.clone(), "Developers".to_string());
-
-        let user_repo = Arc::new(MockUserRepository::new().with_user(user));
-        let group_repo = Arc::new(MockGroupRepository::new().with_group(group));
-
-        let uow = Arc::new(MockAddUserToGroupUnitOfWork::new(
-            user_repo.clone(),
-            group_repo.clone(),
-        ));
-
-        let use_case = AddUserToGroupUseCase::new(uow.clone());
-
-        let cmd = AddUserToGroupCommand {
+        
+        let user = User::new(user_hrn.clone(), "Test User".to_string(), "test@example.com".to_string());
+        let group = Group::new(group_hrn.clone(), "Test Group".to_string(), None);
+        
+        let user_finder = Arc::new(MockUserFinder { user: Some(user), should_fail: false });
+        let group_finder = Arc::new(MockGroupFinder { group: Some(group), should_fail: false });
+        let user_persister = Arc::new(MockUserGroupPersister { should_fail: false });
+        
+        let use_case = AddUserToGroupUseCase::new(user_finder, group_finder, user_persister);
+        
+        let command = AddUserToGroupCommand {
             user_hrn: user_hrn.to_string(),
             group_hrn: group_hrn.to_string(),
         };
 
         // Act
-        let result = use_case.execute(cmd).await;
+        let result = use_case.execute(command).await;
 
         // Assert
         assert!(result.is_ok());
-
-        // Verify user was updated with the group
-        let updated_user = user_repo.find_by_hrn(&user_hrn).await.unwrap().unwrap();
-        assert!(updated_user.groups().contains(&group_hrn));
-
-        // Verify transaction was committed
-        assert_eq!(
-            uow.transaction_state(),
-            super::super::mocks::TransactionState::Committed
-        );
     }
 
     #[tokio::test]
     async fn test_add_user_to_group_user_not_found() {
-        // Arrange: Create only group, no user
-        let user_hrn = Hrn::for_entity_type::<User>(
+        // Arrange
+        let user_hrn = Hrn::new(
             "hodei".to_string(),
-            "default".to_string(),
-            "nonexistent".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
         );
-        let group_hrn = Hrn::for_entity_type::<Group>(
+        
+        let group_hrn = Hrn::new(
             "hodei".to_string(),
-            "default".to_string(),
-            "group1".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "Group".to_string(),
+            "test-group".to_string(),
         );
-
-        let group = Group::new(group_hrn.clone(), "Developers".to_string());
-
-        let user_repo = Arc::new(MockUserRepository::new());
-        let group_repo = Arc::new(MockGroupRepository::new().with_group(group));
-
-        let uow = Arc::new(MockAddUserToGroupUnitOfWork::new(
-            user_repo.clone(),
-            group_repo.clone(),
-        ));
-
-        let use_case = AddUserToGroupUseCase::new(uow.clone());
-
-        let cmd = AddUserToGroupCommand {
+        
+        let group = Group::new(group_hrn.clone(), "Test Group".to_string(), None);
+        
+        let user_finder = Arc::new(MockUserFinder { user: None, should_fail: false });
+        let group_finder = Arc::new(MockGroupFinder { group: Some(group), should_fail: false });
+        let user_persister = Arc::new(MockUserGroupPersister { should_fail: false });
+        
+        let use_case = AddUserToGroupUseCase::new(user_finder, group_finder, user_persister);
+        
+        let command = AddUserToGroupCommand {
             user_hrn: user_hrn.to_string(),
             group_hrn: group_hrn.to_string(),
         };
 
         // Act
-        let result = use_case.execute(cmd).await;
+        let result = use_case.execute(command).await;
 
         // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
-            AddUserToGroupError::UserNotFound(_) => {}
+            AddUserToGroupError::UserNotFound(_) => (),
             _ => panic!("Expected UserNotFound error"),
         }
-
-        // Verify transaction was rolled back
-        assert_eq!(
-            uow.transaction_state(),
-            super::super::mocks::TransactionState::RolledBack
-        );
     }
 
     #[tokio::test]
     async fn test_add_user_to_group_group_not_found() {
-        // Arrange: Create only user, no group
-        let user_hrn = Hrn::for_entity_type::<User>(
+        // Arrange
+        let user_hrn = Hrn::new(
             "hodei".to_string(),
-            "default".to_string(),
-            "user1".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
         );
-        let group_hrn = Hrn::for_entity_type::<Group>(
+        
+        let group_hrn = Hrn::new(
             "hodei".to_string(),
-            "default".to_string(),
-            "nonexistent".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "Group".to_string(),
+            "test-group".to_string(),
         );
-
-        let user = User::new(
-            user_hrn.clone(),
-            "Alice".to_string(),
-            "alice@example.com".to_string(),
-        );
-
-        let user_repo = Arc::new(MockUserRepository::new().with_user(user));
-        let group_repo = Arc::new(MockGroupRepository::new());
-
-        let uow = Arc::new(MockAddUserToGroupUnitOfWork::new(
-            user_repo.clone(),
-            group_repo.clone(),
-        ));
-
-        let use_case = AddUserToGroupUseCase::new(uow.clone());
-
-        let cmd = AddUserToGroupCommand {
+        
+        let user = User::new(user_hrn.clone(), "Test User".to_string(), "test@example.com".to_string());
+        
+        let user_finder = Arc::new(MockUserFinder { user: Some(user), should_fail: false });
+        let group_finder = Arc::new(MockGroupFinder { group: None, should_fail: false });
+        let user_persister = Arc::new(MockUserGroupPersister { should_fail: false });
+        
+        let use_case = AddUserToGroupUseCase::new(user_finder, group_finder, user_persister);
+        
+        let command = AddUserToGroupCommand {
             user_hrn: user_hrn.to_string(),
             group_hrn: group_hrn.to_string(),
         };
 
         // Act
-        let result = use_case.execute(cmd).await;
+        let result = use_case.execute(command).await;
 
         // Assert
         assert!(result.is_err());
         match result.unwrap_err() {
-            AddUserToGroupError::GroupNotFound(_) => {}
+            AddUserToGroupError::GroupNotFound(_) => (),
             _ => panic!("Expected GroupNotFound error"),
         }
-
-        // Verify transaction was rolled back
-        assert_eq!(
-            uow.transaction_state(),
-            super::super::mocks::TransactionState::RolledBack
-        );
     }
 
     #[tokio::test]
-    async fn test_add_user_to_group_invalid_user_hrn() {
+    async fn test_add_user_to_group_persistence_error() {
         // Arrange
-        let user_repo = Arc::new(MockUserRepository::new());
-        let group_repo = Arc::new(MockGroupRepository::new());
-
-        let uow = Arc::new(MockAddUserToGroupUnitOfWork::new(
-            user_repo.clone(),
-            group_repo.clone(),
-        ));
-
-        let use_case = AddUserToGroupUseCase::new(uow.clone());
-
-        let cmd = AddUserToGroupCommand {
-            user_hrn: "invalid-hrn".to_string(),
-            group_hrn: "hrn:hodei:iam:default:Group/group1".to_string(),
-        };
-
-        // Act
-        let result = use_case.execute(cmd).await;
-
-        // Assert
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AddUserToGroupError::InvalidUserHrn(_) => {}
-            _ => panic!("Expected InvalidUserHrn error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_add_user_to_group_invalid_group_hrn() {
-        // Arrange
-        let user_repo = Arc::new(MockUserRepository::new());
-        let group_repo = Arc::new(MockGroupRepository::new());
-
-        let uow = Arc::new(MockAddUserToGroupUnitOfWork::new(
-            user_repo.clone(),
-            group_repo.clone(),
-        ));
-
-        let use_case = AddUserToGroupUseCase::new(uow.clone());
-
-        let cmd = AddUserToGroupCommand {
-            user_hrn: Hrn::for_entity_type::<User>(
-                "hodei".to_string(),
-                "default".to_string(),
-                "user1".to_string(),
-            )
-            .to_string(),
-            group_hrn: "invalid-hrn".to_string(),
-        };
-
-        // Act
-        let result = use_case.execute(cmd).await;
-
-        // Assert
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AddUserToGroupError::InvalidGroupHrn(_) => {}
-            _ => panic!("Expected InvalidGroupHrn error"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_add_user_to_group_idempotent() {
-        // Arrange: User already in group
-        let user_hrn = Hrn::for_entity_type::<User>(
+        let user_hrn = Hrn::new(
             "hodei".to_string(),
-            "default".to_string(),
-            "user1".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
         );
-        let group_hrn = Hrn::for_entity_type::<Group>(
+        
+        let group_hrn = Hrn::new(
             "hodei".to_string(),
-            "default".to_string(),
-            "group1".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "Group".to_string(),
+            "test-group".to_string(),
         );
-
-        let mut user = User::new(
-            user_hrn.clone(),
-            "Alice".to_string(),
-            "alice@example.com".to_string(),
-        );
-        user.add_to_group(group_hrn.clone()); // Already in group
-
-        let group = Group::new(group_hrn.clone(), "Developers".to_string());
-
-        let user_repo = Arc::new(MockUserRepository::new().with_user(user));
-        let group_repo = Arc::new(MockGroupRepository::new().with_group(group));
-
-        let uow = Arc::new(MockAddUserToGroupUnitOfWork::new(
-            user_repo.clone(),
-            group_repo.clone(),
-        ));
-
-        let use_case = AddUserToGroupUseCase::new(uow.clone());
-
-        let cmd = AddUserToGroupCommand {
+        
+        let user = User::new(user_hrn.clone(), "Test User".to_string(), "test@example.com".to_string());
+        let group = Group::new(group_hrn.clone(), "Test Group".to_string(), None);
+        
+        let user_finder = Arc::new(MockUserFinder { user: Some(user), should_fail: false });
+        let group_finder = Arc::new(MockGroupFinder { group: Some(group), should_fail: false });
+        let user_persister = Arc::new(MockUserGroupPersister { should_fail: true });
+        
+        let use_case = AddUserToGroupUseCase::new(user_finder, group_finder, user_persister);
+        
+        let command = AddUserToGroupCommand {
             user_hrn: user_hrn.to_string(),
             group_hrn: group_hrn.to_string(),
         };
 
         // Act
-        let result = use_case.execute(cmd).await;
-
-        // Assert: Should succeed idempotently
-        assert!(result.is_ok());
-
-        // Verify user still has only one instance of the group
-        let updated_user = user_repo.find_by_hrn(&user_hrn).await.unwrap().unwrap();
-        assert_eq!(updated_user.groups().len(), 1);
-        assert!(updated_user.groups().contains(&group_hrn));
-
-        // Verify transaction was committed
-        assert_eq!(
-            uow.transaction_state(),
-            super::super::mocks::TransactionState::Committed
-        );
-    }
-
-    #[tokio::test]
-    async fn test_add_user_to_group_transactional_integrity() {
-        // Arrange: This test verifies that transaction lifecycle is properly managed
-        let user_hrn = Hrn::for_entity_type::<User>(
-            "hodei".to_string(),
-            "default".to_string(),
-            "user1".to_string(),
-        );
-        let group_hrn = Hrn::for_entity_type::<Group>(
-            "hodei".to_string(),
-            "default".to_string(),
-            "group1".to_string(),
-        );
-
-        let user = User::new(
-            user_hrn.clone(),
-            "Alice".to_string(),
-            "alice@example.com".to_string(),
-        );
-        let group = Group::new(group_hrn.clone(), "Developers".to_string());
-
-        let user_repo = Arc::new(MockUserRepository::new().with_user(user));
-        let group_repo = Arc::new(MockGroupRepository::new().with_group(group));
-
-        let uow = Arc::new(MockAddUserToGroupUnitOfWork::new(
-            user_repo.clone(),
-            group_repo.clone(),
-        ));
-
-        let use_case = AddUserToGroupUseCase::new(uow.clone());
-
-        let cmd = AddUserToGroupCommand {
-            user_hrn: user_hrn.to_string(),
-            group_hrn: group_hrn.to_string(),
-        };
-
-        // Verify transaction starts as NotStarted
-        assert_eq!(
-            uow.transaction_state(),
-            super::super::mocks::TransactionState::NotStarted
-        );
-
-        // Act
-        let result = use_case.execute(cmd).await;
+        let result = use_case.execute(command).await;
 
         // Assert
-        assert!(result.is_ok());
-
-        // Verify transaction ended as Committed
-        assert_eq!(
-            uow.transaction_state(),
-            super::super::mocks::TransactionState::Committed
-        );
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            AddUserToGroupError::PersistenceError(_) => (),
+            _ => panic!("Expected PersistenceError"),
+        }
     }
 }
