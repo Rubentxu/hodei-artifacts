@@ -31,9 +31,9 @@
 //! This segregation replaces the former monolithic `create_policy` feature and
 //! enforces Interface Segregation (ISP) strictly.
 pub mod dto;
-pub(crate) mod error;
+pub mod error;
 pub mod ports;
-mod use_case;
+pub mod use_case;
 mod validator;
 // Mocks are kept internal (they are used by unit tests inside the crate)
 mod mocks;

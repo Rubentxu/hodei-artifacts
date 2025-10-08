@@ -23,7 +23,7 @@
 pub mod dto;
 pub mod error;
 pub mod ports;
-mod use_case;
+pub mod use_case;
 // Mocks are kept internal (they are used by unit tests inside the crate)
 mod mocks;
 
