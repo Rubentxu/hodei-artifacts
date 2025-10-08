@@ -1,0 +1,17 @@
+{
+  "info": {
+    "name": "Hodei Artifacts API - Complete Collection",
+    "_postman_id": "8c7b1f74-5f9b-4d5d-9c12-2c5c3d2e1a2b",
+    "description": "Colección completa para probar la API REST de Hodei Artifacts.\n\n## Features\n- Health checks\n- Schema management\n- Policy validation & evaluation\n- IAM Policy CRUD operations\n- Playground (ad-hoc policy testing)\n\n## Setup\n1. Create an environment with variable: `baseUrl` = `http://localhost:8080/api/v1`\n2. Run requests in order (IAM section extracts variables for chaining)\n3. Playground requests are independent and showcase various scenarios",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080/api/v1",
+      "type": "string"
+    }
+  ],
+  "item": []
+}
