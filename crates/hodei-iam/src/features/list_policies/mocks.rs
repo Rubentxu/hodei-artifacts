@@ -58,9 +58,9 @@ impl PolicyLister for MockPolicyLister {
             ));
         }
 
-        let total_count = self.policies.len() as u64;
-        let limit = query.effective_limit() as usize;
-        let offset = query.effective_offset() as usize;
+        let total_count = self.policies.len();
+        let limit = query.limit;
+        let offset = query.offset;
 
         let page_policies: Vec<PolicySummary> = self
             .policies
@@ -70,10 +70,15 @@ impl PolicyLister for MockPolicyLister {
             .cloned()
             .collect();
 
-        let actual_count = page_policies.len();
-        let page_info = PageInfo::from_query(&query, total_count, actual_count);
+        let has_next_page = (offset + limit) < total_count;
+        let has_previous_page = offset > 0;
 
-        Ok(ListPoliciesResponse::new(page_policies, page_info))
+        Ok(ListPoliciesResponse::new(
+            page_policies,
+            total_count,
+            has_next_page,
+            has_previous_page,
+        ))
     }
 }
 

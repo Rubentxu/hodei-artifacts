@@ -4,6 +4,11 @@
 //! injected throughout the application. All use cases are stored as trait objects
 //! to enable dependency inversion and testability.
 
+use hodei_iam::features::create_policy::use_case::CreatePolicyUseCase;
+use hodei_iam::features::delete_policy::use_case::DeletePolicyUseCase;
+use hodei_iam::features::get_policy::use_case::GetPolicyUseCase;
+use hodei_iam::features::list_policies::use_case::ListPoliciesUseCase;
+use hodei_iam::features::update_policy::use_case::UpdatePolicyUseCase;
 use hodei_policies::features::build_schema::ports::SchemaStoragePort;
 use hodei_policies::features::playground_evaluate::use_case::PlaygroundEvaluateUseCase;
 use hodei_policies::features::validate_policy::use_case::ValidatePolicyUseCase;
@@ -23,6 +28,41 @@ pub struct AppState<S: SchemaStoragePort + Clone> {
     /// Use case for registering IAM schema
     pub register_iam_schema:
         Arc<hodei_iam::features::register_iam_schema::RegisterIamSchemaUseCase>,
+
+    /// Use case for creating IAM policies
+    pub create_policy: Arc<
+        CreatePolicyUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+            ValidatePolicyUseCase<S>,
+        >,
+    >,
+
+    /// Use case for getting IAM policies
+    pub get_policy: Arc<
+        GetPolicyUseCase<hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter>,
+    >,
+
+    /// Use case for listing IAM policies
+    pub list_policies: Arc<
+        ListPoliciesUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+        >,
+    >,
+
+    /// Use case for updating IAM policies
+    pub update_policy: Arc<
+        UpdatePolicyUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+            ValidatePolicyUseCase<S>,
+        >,
+    >,
+
+    /// Use case for deleting IAM policies
+    pub delete_policy: Arc<
+        DeletePolicyUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+        >,
+    >,
 
     /// Use case for registering entity types
     #[allow(dead_code)]
@@ -51,10 +91,6 @@ pub struct AppState<S: SchemaStoragePort + Clone> {
 
     /// Use case for playground policy evaluation
     pub playground_evaluate: Arc<PlaygroundEvaluateUseCase>,
-    // TODO: Add IAM use cases when needed
-    // pub create_user: Arc<dyn ...>,
-    // pub create_group: Arc<dyn ...>,
-    // etc.
 }
 
 impl<S: SchemaStoragePort + Clone> AppState<S> {
@@ -80,6 +116,33 @@ impl<S: SchemaStoragePort + Clone> AppState<S> {
         register_iam_schema: Arc<
             hodei_iam::features::register_iam_schema::RegisterIamSchemaUseCase,
         >,
+        create_policy: Arc<
+            CreatePolicyUseCase<
+                hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+                ValidatePolicyUseCase<S>,
+            >,
+        >,
+        get_policy: Arc<
+            GetPolicyUseCase<
+                hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+            >,
+        >,
+        list_policies: Arc<
+            ListPoliciesUseCase<
+                hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+            >,
+        >,
+        update_policy: Arc<
+            UpdatePolicyUseCase<
+                hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+                ValidatePolicyUseCase<S>,
+            >,
+        >,
+        delete_policy: Arc<
+            DeletePolicyUseCase<
+                hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+            >,
+        >,
         register_entity_type: Arc<
             hodei_policies::features::register_entity_type::RegisterEntityTypeUseCase,
         >,
@@ -104,6 +167,11 @@ impl<S: SchemaStoragePort + Clone> AppState<S> {
             validate_policy,
             evaluate_policies,
             playground_evaluate,
+            create_policy,
+            get_policy,
+            list_policies,
+            update_policy,
+            delete_policy,
         }
     }
 }

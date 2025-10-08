@@ -31,7 +31,7 @@ use super::ports::PolicyLister;
 /// let response = use_case.execute(query).await?;
 ///
 /// println!("Found {} policies", response.policies.len());
-///if response.page_info.has_next_page {
+///if response.has_next_page {
 ///     println!("There are more pages available");
 /// }
 /// ```
@@ -53,7 +53,7 @@ where
     ///
     /// * `lister` - Implementation of `PolicyLister` for data retrieval
     pub fn new(lister: Arc<L>) -> Self {
-        Self{ lister }
+        Self { lister }
     }
 
     /// Execute the list policies use case
@@ -65,36 +65,37 @@ where
     /// # Returns
     ///
     /// On success, returns `Ok(ListPoliciesResponse)` with the list of policies
-   /// and pagination metadata.
+    /// and pagination metadata.
     ///
     /// # Errors
     ///
     /// - `ListPoliciesError::InvalidPagination` - Invalid pagination parameters
     /// - `ListPoliciesError::RepositoryError` - Database or storage failure
     /// - `ListPoliciesError::InternalError` - Unexpected error
-#[instrument(skip(self), fields(limit = ?query.limit, offset = ?query.offset))]
+    #[instrument(skip(self), fields(limit = ?query.limit, offset = ?query.offset))]
     pub async fn execute(
         &self,
         query: ListPoliciesQuery,
     ) -> Result<ListPoliciesResponse, ListPoliciesError> {
         info!(
             "Listing policies with limit={} offset={}",
-query.limit,
-            query.offset
+            query.limit, query.offset
         );
 
         // Validate pagination parameters
         self.validate_pagination(&query)?;
 
         // Delegate to the port
-        let response = self.lister.list(query).await.map_err(|e| {
-            ListPoliciesError::RepositoryError(e.to_string())
-        })?;
+        let response = self
+            .lister
+            .list(query)
+            .await
+            .map_err(|e| ListPoliciesError::RepositoryError(e.to_string()))?;
 
         debug!(
             "Retrieved {} policies, total_count={}",
             response.policies.len(),
-            response.page_info.total_count
+            response.total_count
         );
 
         Ok(response)
@@ -125,7 +126,7 @@ mod tests {
     use crate::features::list_policies::mocks::MockPolicyLister;
     use kernel::Hrn;
 
-    fn create_test_policy(id: &str) ->PolicySummary {
+    fn create_test_policy(id: &str) -> PolicySummary {
         PolicySummary {
             hrn: Hrn::new(
                 "aws".to_string(),
@@ -134,7 +135,7 @@ mod tests {
                 "Policy".to_string(),
                 id.to_string(),
             ),
-            name:format!("Policy {}", id),
+            name: format!("Policy {}", id),
             description: Some(format!("Test policy {}", id)),
         }
     }
@@ -145,7 +146,7 @@ mod tests {
         let policies = vec![
             create_test_policy("policy1"),
             create_test_policy("policy2"),
-           create_test_policy("policy3"),
+            create_test_policy("policy3"),
         ];
         let lister = MockPolicyLister::with_policies(policies);
         let use_case = ListPoliciesUseCase::new(Arc::new(lister));
@@ -158,7 +159,7 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.policies.len(), 3);
-        assert_eq!(response.page_info.total_count, 3);
+        assert_eq!(response.total_count, 3);
     }
 
     #[tokio::test]
@@ -169,7 +170,7 @@ mod tests {
             policies.push(create_test_policy(&format!("policy{}", i)));
         }
         let lister = MockPolicyLister::with_policies(policies);
-        let use_case =ListPoliciesUseCase::new(Arc::new(lister));
+        let use_case = ListPoliciesUseCase::new(Arc::new(lister));
 
         // Act -First page
         let query = ListPoliciesQuery::with_pagination(10, 0);
@@ -179,23 +180,23 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.policies.len(), 10);
-        assert_eq!(response.page_info.total_count, 25);
-        assert!(response.page_info.has_next_page);
-        assert!(!response.page_info.has_previous_page);
+        assert_eq!(response.total_count, 25);
+        assert!(response.has_next_page);
+        assert!(!response.has_previous_page);
 
         // Act - Second page
         let query = ListPoliciesQuery::with_pagination(10, 10);
-        let result= use_case.execute(query).await;
+        let result = use_case.execute(query).await;
 
         // Assert - Second page
         assert!(result.is_ok());
         let response = result.unwrap();
         assert_eq!(response.policies.len(), 10);
-        assert!(response.page_info.has_next_page);
-        assert!(response.page_info.has_previous_page);
+        assert!(response.has_next_page);
+        assert!(response.has_previous_page);
     }
 
-   #[tokio::test]
+    #[tokio::test]
     async fn test_list_policies_empty() {
         // Arrange
         let lister = MockPolicyLister::empty();
@@ -209,20 +210,20 @@ mod tests {
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.policies.is_empty());
-        assert_eq!(response.page_info.total_count, 0);
-        assert!(!response.page_info.has_next_page);
+        assert_eq!(response.total_count, 0);
+        assert!(!response.has_next_page);
     }
 
-#[tokio::test]
+    #[tokio::test]
     async fn test_list_policies_invalid_limit() {
         // Arrange
         let lister = MockPolicyLister::empty();
         let use_case = ListPoliciesUseCase::new(Arc::new(lister));
 
         // Act
-        let query = ListPoliciesQuery{
-limit: Some(0),
-            offset: None,
+        let query = ListPoliciesQuery {
+            limit: 0,
+            offset: 0,
         };
         let result = use_case.execute(query).await;
 
@@ -241,7 +242,7 @@ limit: Some(0),
         let use_case = ListPoliciesUseCase::new(Arc::new(lister));
 
         // Act
-let query = ListPoliciesQuery::default();
+        let query = ListPoliciesQuery::default();
         let result = use_case.execute(query).await;
 
         // Assert

@@ -91,13 +91,22 @@ pub async fn bootstrap(
     info!("📦 Initializing infrastructure adapters");
     let schema_storage = initialize_schema_storage().await?;
 
-    // Step 2: Create shared components
+    // Step 2: Create IAM infrastructure
+    info!("🔐 Initializing IAM infrastructure");
+    let iam_infrastructure =
+        initialize_iam_infrastructure(schema_storage.db().clone().into()).await?;
+
+    // Step 3: Create shared components
     info!("🔧 Creating shared components");
     let engine_builder = create_engine_builder();
 
-    // Step 3: Instantiate use cases with dependency injection
+    // Step 4: Create use cases
     info!("🏗️  Instantiating use cases");
-    let use_cases = create_use_cases(engine_builder.clone(), schema_storage.clone());
+    let use_cases = create_use_cases(
+        engine_builder.clone(),
+        schema_storage.clone(),
+        iam_infrastructure.policy_adapter,
+    );
 
     // Step 4: Optionally register IAM schema
     let schema_version = if config.register_iam_schema {
@@ -127,6 +136,11 @@ pub async fn bootstrap(
     let app_state = AppState::new(
         schema_version.clone(),
         use_cases.register_iam_schema,
+        use_cases.create_policy,
+        use_cases.get_policy,
+        use_cases.list_policies,
+        use_cases.update_policy,
+        use_cases.delete_policy,
         use_cases.register_entity_type,
         use_cases.register_action_type,
         use_cases.build_schema,
@@ -148,6 +162,13 @@ pub async fn bootstrap(
 #[derive(Clone)]
 pub struct SurrealSchemaAdapter {
     db: Arc<Surreal<surrealdb::engine::local::Db>>,
+}
+
+impl SurrealSchemaAdapter {
+    /// Get a reference to the underlying database
+    pub fn db(&self) -> &Arc<Surreal<surrealdb::engine::local::Db>> {
+        &self.db
+    }
 }
 
 impl SurrealSchemaAdapter {
@@ -279,6 +300,27 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
     }
 }
 
+/// Initialize IAM infrastructure adapters
+///
+/// Creates all IAM-related infrastructure components that depend on the database.
+async fn initialize_iam_infrastructure(
+    db: Arc<Surreal<surrealdb::engine::any::Any>>,
+) -> Result<IamInfrastructure, Box<dyn std::error::Error + Send + Sync>> {
+    info!("Creating IAM infrastructure adapters");
+
+    // Create policy adapter
+    let policy_adapter =
+        Arc::new(hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter::new(db));
+
+    info!("✅ IAM infrastructure adapters initialized");
+    Ok(IamInfrastructure { policy_adapter })
+}
+
+/// Struct to hold all IAM infrastructure components
+struct IamInfrastructure {
+    policy_adapter: Arc<hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter>,
+}
+
 /// Initialize schema storage adapter
 ///
 /// Uses SurrealDB embedded for persistence.
@@ -322,6 +364,35 @@ struct UseCases<S: hodei_policies::features::build_schema::ports::SchemaStorageP
     validate_policy: Arc<ValidatePolicyUseCase<S>>,
     evaluate_policies: Arc<EvaluatePoliciesUseCase>,
     playground_evaluate: Arc<PlaygroundEvaluateUseCase>,
+    policy_adapter: Arc<hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter>,
+    // IAM Policy Management Use Cases
+    create_policy: Arc<
+        hodei_iam::features::create_policy::use_case::CreatePolicyUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+            ValidatePolicyUseCase<S>,
+        >,
+    >,
+    get_policy: Arc<
+        hodei_iam::features::get_policy::use_case::GetPolicyUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+        >,
+    >,
+    list_policies: Arc<
+        hodei_iam::features::list_policies::use_case::ListPoliciesUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+        >,
+    >,
+    update_policy: Arc<
+        hodei_iam::features::update_policy::use_case::UpdatePolicyUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+            ValidatePolicyUseCase<S>,
+        >,
+    >,
+    delete_policy: Arc<
+        hodei_iam::features::delete_policy::use_case::DeletePolicyUseCase<
+            hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter,
+        >,
+    >,
 }
 
 /// Create all use cases with proper dependency injection
@@ -340,6 +411,7 @@ struct UseCases<S: hodei_policies::features::build_schema::ports::SchemaStorageP
 fn create_use_cases<S>(
     engine_builder: Arc<Mutex<hodei_policies::EngineBuilder>>,
     schema_storage: Arc<S>,
+    policy_adapter: Arc<hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter>,
 ) -> UseCases<S>
 where
     S: hodei_policies::features::build_schema::ports::SchemaStoragePort + Clone + 'static,
@@ -388,6 +460,44 @@ where
     info!("  - Creating PlaygroundEvaluateUseCase");
     let playground_evaluate = create_playground_evaluate_use_case(schema_storage.clone());
 
+    // 10. Create IAM Policy Management Use Cases
+    info!("  - Creating IAM Policy Management Use Cases");
+
+    // Create policy use case
+    let create_policy = Arc::new(
+        hodei_iam::features::create_policy::use_case::CreatePolicyUseCase::new(
+            policy_adapter.clone(),
+            validate_policy.clone(),
+        ),
+    );
+
+    // Get policy use case
+    let get_policy = Arc::new(
+        hodei_iam::features::get_policy::use_case::GetPolicyUseCase::new(policy_adapter.clone()),
+    );
+
+    // List policies use case
+    let list_policies = Arc::new(
+        hodei_iam::features::list_policies::use_case::ListPoliciesUseCase::new(
+            policy_adapter.clone(),
+        ),
+    );
+
+    // Update policy use case
+    let update_policy = Arc::new(
+        hodei_iam::features::update_policy::use_case::UpdatePolicyUseCase::new(
+            policy_adapter.clone(),
+            validate_policy.clone(),
+        ),
+    );
+
+    // Delete policy use case
+    let delete_policy = Arc::new(
+        hodei_iam::features::delete_policy::use_case::DeletePolicyUseCase::new(
+            policy_adapter.clone(),
+        ),
+    );
+
     UseCases {
         register_iam_schema,
         register_entity_type,
@@ -397,6 +507,12 @@ where
         validate_policy,
         evaluate_policies,
         playground_evaluate,
+        policy_adapter,
+        create_policy,
+        get_policy,
+        list_policies,
+        update_policy,
+        delete_policy,
     }
 }
 
