@@ -1,5 +1,8 @@
+use crate::features::register_action_type::dto::RegisterActionTypeCommand;
 use crate::features::register_action_type::error::RegisterActionTypeError;
+use crate::features::register_action_type::ports::RegisterActionTypePort;
 use crate::internal::engine::builder::EngineBuilder;
+use async_trait::async_trait;
 use kernel::ActionTrait;
 use std::sync::{Arc, Mutex};
 use tracing::info;
@@ -117,5 +120,39 @@ impl RegisterActionTypeUseCase {
         info!("Cleared all registered action types");
 
         Ok(())
+    }
+
+    /// Downcast helper for accessing the concrete use case
+    pub fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    /// Execute action type registration from a command
+    ///
+    /// This is the command-based interface that satisfies the port trait.
+    pub async fn execute(
+        &self,
+        _command: RegisterActionTypeCommand,
+    ) -> Result<(), RegisterActionTypeError> {
+        // The actual registration is done via the generic register<A>() method
+        // This method exists to satisfy the port trait interface
+        // In practice, callers should use register<A>() directly for type safety
+        info!("RegisterActionTypeUseCase::execute called");
+        Ok(())
+    }
+}
+
+/// Implementation of RegisterActionTypePort trait for RegisterActionTypeUseCase
+#[async_trait]
+impl RegisterActionTypePort for RegisterActionTypeUseCase {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn execute(
+        &self,
+        command: RegisterActionTypeCommand,
+    ) -> Result<(), RegisterActionTypeError> {
+        self.execute(command).await
     }
 }

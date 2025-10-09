@@ -209,3 +209,19 @@ where
         })
     }
 }
+
+// Implement the use case port trait
+use crate::features::create_policy::ports::CreatePolicyUseCasePort;
+use async_trait::async_trait;
+
+#[async_trait]
+impl<P, V> CreatePolicyUseCasePort for CreatePolicyUseCase<P, V>
+where
+    P: CreatePolicyPort + Send + Sync,
+    V: ValidatePolicyPort + Send + Sync,
+{
+    async fn execute(&self, command: CreatePolicyCommand) -> Result<PolicyView, CreatePolicyError> {
+        // Delegate to the existing implementation
+        self.execute(command).await
+    }
+}

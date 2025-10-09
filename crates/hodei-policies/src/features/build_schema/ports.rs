@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use cedar_policy::Schema;
 
+use crate::features::build_schema::dto::{BuildSchemaCommand, BuildSchemaResult};
 use crate::features::build_schema::error::BuildSchemaError;
 
 /// Stored schema data retrieved from storage
@@ -41,6 +42,31 @@ impl StoredSchema {
         Schema::from_schema_fragments(vec![])
             .map_err(|e| BuildSchemaError::SchemaBuildError(e.to_string()))
     }
+}
+
+/// Port trait for building and persisting Cedar schemas
+///
+/// This trait defines the contract for schema building operations.
+/// It represents the use case's public interface.
+#[async_trait]
+pub trait BuildSchemaPort: Send + Sync {
+    /// Build and persist the Cedar schema
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - Configuration for the schema building process
+    ///
+    /// # Returns
+    ///
+    /// A result containing the schema ID and JSON representation
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if schema building or persistence fails
+    async fn execute(
+        &self,
+        command: BuildSchemaCommand,
+    ) -> Result<BuildSchemaResult, BuildSchemaError>;
 }
 
 /// Port for schema storage operations

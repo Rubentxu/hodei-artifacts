@@ -6,9 +6,9 @@
 //! This is a bootstrapping feature that should be executed during application startup
 //! to ensure that the Cedar schema includes all IAM-specific types.
 
-pub mod di;
 pub mod dto;
 pub mod error;
+pub mod factories;
 pub mod ports;
 pub mod use_case;
 
@@ -16,7 +16,6 @@ pub mod use_case;
 mod use_case_test;
 
 // Re-export for convenience
-pub use di::RegisterIamSchemaUseCaseFactory;
 pub use dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};
 pub use error::RegisterIamSchemaError;
 pub use ports::RegisterIamSchemaPort;

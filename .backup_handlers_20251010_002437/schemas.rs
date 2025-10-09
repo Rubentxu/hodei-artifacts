@@ -93,10 +93,12 @@ pub struct RegisterIamSchemaResponse {
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn build_schema(
-    State(state): State<AppState>,
+pub async fn build_schema<S>(
+    State(state): State<AppState<S>>,
     Json(request): Json<BuildSchemaRequest>,
 ) -> Result<Json<BuildSchemaResponse>, ApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let command = hodei_policies::features::build_schema::dto::BuildSchemaCommand {
         version: request.version,
@@ -138,9 +140,11 @@ pub async fn build_schema(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn load_schema(
-    State(_state): State<AppState>,
+pub async fn load_schema<S>(
+    State(_state): State<AppState<S>>,
 ) -> Result<Json<serde_json::Value>, ApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     // TODO: Implement schema loading
     // For now, return a stub response
@@ -173,10 +177,12 @@ pub async fn load_schema(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn register_iam_schema(
-    State(state): State<AppState>,
+pub async fn register_iam_schema<S>(
+    State(state): State<AppState<S>>,
     Json(request): Json<RegisterIamSchemaRequest>,
 ) -> Result<Json<RegisterIamSchemaResponse>, ApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let command = hodei_iam::features::register_iam_schema::RegisterIamSchemaCommand::new()
         .with_validation(request.validate);

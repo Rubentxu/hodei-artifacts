@@ -18,6 +18,12 @@ use crate::internal::domain::artifact::Artifact;
 use crate::internal::domain::group::Group;
 use crate::internal::domain::user::User;
 use async_trait::async_trait;
+use hodei_policies::build_schema::dto::BuildSchemaCommand;
+use hodei_policies::build_schema::ports::BuildSchemaPort;
+use hodei_policies::register_action_type::RegisterActionTypeUseCase;
+use hodei_policies::register_action_type::ports::RegisterActionTypePort;
+use hodei_policies::register_entity_type::RegisterEntityTypeUseCase;
+use hodei_policies::register_entity_type::ports::RegisterEntityTypePort;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -29,65 +35,22 @@ use tracing::{info, warn};
 ///
 /// # Architecture
 ///
-/// This is an orchestration use case that coordinates multiple operations:
-/// 1. Entity type registration via RegisterEntityTypeUseCase
-/// 2. Action type registration via RegisterActionTypeUseCase
-/// 3. Schema building via BuildSchemaUseCase (trait object for flexibility)
+/// This is an orchestration use case that coordinates multiple operations via ports:
+/// 1. Entity type registration via RegisterEntityTypePort
+/// 2. Action type registration via RegisterActionTypePort
+/// 3. Schema building via BuildSchemaPort
 ///
-/// All dependencies are injected via use cases (not ports), enabling full testability
+/// All dependencies are injected via ports (traits), enabling full testability
 /// and compliance with the Dependency Inversion Principle.
 pub struct RegisterIamSchemaUseCase {
-    /// Use case for registering entity types
-    entity_type_registrar: Arc<hodei_policies::register_entity_type::RegisterEntityTypeUseCase>,
+    /// Port for registering entity types
+    entity_type_registrar: Arc<dyn RegisterEntityTypePort>,
 
-    /// Use case for registering action types
-    action_type_registrar: Arc<hodei_policies::register_action_type::RegisterActionTypeUseCase>,
+    /// Port for registering action types
+    action_type_registrar: Arc<dyn RegisterActionTypePort>,
 
-    /// Schema builder port (trait object for flexibility)
-    schema_builder: Arc<dyn SchemaBuilderPort>,
-}
-
-/// Internal port for schema building abstraction
-///
-/// This trait allows us to inject different schema building implementations
-/// without exposing the generic parameter in the use case struct.
-#[async_trait]
-trait SchemaBuilderPort: Send + Sync {
-    async fn build_and_persist(
-        &self,
-        version: Option<String>,
-        validate: bool,
-    ) -> Result<(String, String, bool), RegisterIamSchemaError>;
-}
-
-/// Adapter that wraps BuildSchemaUseCase to implement SchemaBuilderPort
-struct BuildSchemaAdapter<S: hodei_policies::build_schema::ports::SchemaStoragePort> {
-    use_case: hodei_policies::build_schema::BuildSchemaUseCase<S>,
-}
-
-#[async_trait]
-impl<S: hodei_policies::build_schema::ports::SchemaStoragePort + 'static> SchemaBuilderPort
-    for BuildSchemaAdapter<S>
-{
-    async fn build_and_persist(
-        &self,
-        version: Option<String>,
-        validate: bool,
-    ) -> Result<(String, String, bool), RegisterIamSchemaError> {
-        let build_command =
-            hodei_policies::build_schema::dto::BuildSchemaCommand { version, validate };
-
-        let result = self.use_case.execute(build_command).await.map_err(|e| {
-            warn!("Schema building failed: {}", e);
-            RegisterIamSchemaError::SchemaBuildError(format!("Failed to build IAM schema: {}", e))
-        })?;
-
-        Ok((
-            result.version.unwrap_or_else(|| "latest".to_string()),
-            result.schema_id,
-            result.validated,
-        ))
-    }
+    /// Port for building and persisting schemas
+    schema_builder: Arc<dyn BuildSchemaPort>,
 }
 
 impl RegisterIamSchemaUseCase {
@@ -95,20 +58,18 @@ impl RegisterIamSchemaUseCase {
     ///
     /// # Arguments
     ///
-    /// * `entity_type_registrar` - Use case for registering entity types
-    /// * `action_type_registrar` - Use case for registering action types
-    /// * `schema_builder` - Use case for building and persisting schemas (generic)
-    pub fn new<S: hodei_policies::build_schema::ports::SchemaStoragePort + 'static>(
-        entity_type_registrar: Arc<hodei_policies::register_entity_type::RegisterEntityTypeUseCase>,
-        action_type_registrar: Arc<hodei_policies::register_action_type::RegisterActionTypeUseCase>,
-        schema_builder: hodei_policies::build_schema::BuildSchemaUseCase<S>,
+    /// * `entity_type_registrar` - Port for registering entity types
+    /// * `action_type_registrar` - Port for registering action types
+    /// * `schema_builder` - Port for building and persisting schemas
+    pub fn new(
+        entity_type_registrar: Arc<dyn RegisterEntityTypePort>,
+        action_type_registrar: Arc<dyn RegisterActionTypePort>,
+        schema_builder: Arc<dyn BuildSchemaPort>,
     ) -> Self {
         Self {
             entity_type_registrar,
             action_type_registrar,
-            schema_builder: Arc::new(BuildSchemaAdapter {
-                use_case: schema_builder,
-            }),
+            schema_builder,
         }
     }
 
@@ -152,24 +113,40 @@ impl RegisterIamSchemaUseCase {
         info!("Starting IAM schema registration");
 
         // Step 1: Register all IAM entity types
-        let entity_count = self.register_entity_types()?;
+        let entity_count = self.register_entity_types().await?;
         info!(
             entity_count = entity_count,
             "Successfully registered IAM entity types"
         );
 
         // Step 2: Register all IAM action types
-        let action_count = self.register_action_types()?;
+        let action_count = self.register_action_types().await?;
         info!(
             action_count = action_count,
             "Successfully registered IAM action types"
         );
 
         // Step 3: Build and persist the schema
-        let (schema_version, schema_id, validated) = self
+        let build_command = BuildSchemaCommand {
+            version: command.version.clone(),
+            validate: command.validate,
+        };
+
+        let build_result = self
             .schema_builder
-            .build_and_persist(command.version.clone(), command.validate)
-            .await?;
+            .execute(build_command)
+            .await
+            .map_err(|e| {
+                warn!("Schema building failed: {}", e);
+                RegisterIamSchemaError::SchemaBuildError(format!(
+                    "Failed to build IAM schema: {}",
+                    e
+                ))
+            })?;
+
+        let schema_version = build_result.version.unwrap_or_else(|| "latest".to_string());
+        let schema_id = build_result.schema_id;
+        let validated = build_result.validated;
 
         info!(
             schema_version = %schema_version,
@@ -204,6 +181,10 @@ impl RegisterIamSchemaUseCase {
     /// - Group
     /// - Artifact
     ///
+    /// Note: We need to downcast to the concrete use case to call the generic register method.
+    /// This is a limitation of the current design where the port trait doesn't support
+    /// generic registration.
+    ///
     /// # Returns
     ///
     /// The number of entity types successfully registered
@@ -211,11 +192,23 @@ impl RegisterIamSchemaUseCase {
     /// # Errors
     ///
     /// Returns an error if any entity type registration fails
-    fn register_entity_types(&self) -> Result<usize, RegisterIamSchemaError> {
+    async fn register_entity_types(&self) -> Result<usize, RegisterIamSchemaError> {
         let mut count = 0;
 
+        // We need to downcast to access the generic register method
+        // This is safe because we control the factory and know the concrete type
+        let concrete_uc = self
+            .entity_type_registrar
+            .as_any()
+            .downcast_ref::<RegisterEntityTypeUseCase>()
+            .ok_or_else(|| {
+                RegisterIamSchemaError::EntityTypeRegistrationError(
+                    "Failed to downcast entity type registrar".to_string(),
+                )
+            })?;
+
         // Register User entity type
-        self.entity_type_registrar.register::<User>().map_err(|e| {
+        concrete_uc.register::<User>().map_err(|e| {
             RegisterIamSchemaError::EntityTypeRegistrationError(format!(
                 "Failed to register User entity type: {}",
                 e
@@ -224,25 +217,21 @@ impl RegisterIamSchemaUseCase {
         count += 1;
 
         // Register Group entity type
-        self.entity_type_registrar
-            .register::<Group>()
-            .map_err(|e| {
-                RegisterIamSchemaError::EntityTypeRegistrationError(format!(
-                    "Failed to register Group entity type: {}",
-                    e
-                ))
-            })?;
+        concrete_uc.register::<Group>().map_err(|e| {
+            RegisterIamSchemaError::EntityTypeRegistrationError(format!(
+                "Failed to register Group entity type: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         // Register Artifact entity type
-        self.entity_type_registrar
-            .register::<Artifact>()
-            .map_err(|e| {
-                RegisterIamSchemaError::EntityTypeRegistrationError(format!(
-                    "Failed to register Artifact entity type: {}",
-                    e
-                ))
-            })?;
+        concrete_uc.register::<Artifact>().map_err(|e| {
+            RegisterIamSchemaError::EntityTypeRegistrationError(format!(
+                "Failed to register Artifact entity type: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         Ok(count)
@@ -265,6 +254,8 @@ impl RegisterIamSchemaUseCase {
     /// - ListArtifacts
     /// - ShareArtifact
     ///
+    /// Note: We need to downcast to the concrete use case to call the generic register method.
+    ///
     /// # Returns
     ///
     /// The number of action types successfully registered
@@ -272,55 +263,58 @@ impl RegisterIamSchemaUseCase {
     /// # Errors
     ///
     /// Returns an error if any action type registration fails
-    fn register_action_types(&self) -> Result<usize, RegisterIamSchemaError> {
+    async fn register_action_types(&self) -> Result<usize, RegisterIamSchemaError> {
         let mut count = 0;
 
-        // Register CreateUser action
-        self.action_type_registrar
-            .register::<CreateUserAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register CreateUser action: {}",
-                    e
-                ))
+        // We need to downcast to access the generic register method
+        let concrete_uc = self
+            .action_type_registrar
+            .as_any()
+            .downcast_ref::<RegisterActionTypeUseCase>()
+            .ok_or_else(|| {
+                RegisterIamSchemaError::ActionTypeRegistrationError(
+                    "Failed to downcast action type registrar".to_string(),
+                )
             })?;
+
+        // Register CreateUser action
+        concrete_uc.register::<CreateUserAction>().map_err(|e| {
+            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
+                "Failed to register CreateUser action: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         // Register DeleteUser action
-        self.action_type_registrar
-            .register::<DeleteUserAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register DeleteUser action: {}",
-                    e
-                ))
-            })?;
+        concrete_uc.register::<DeleteUserAction>().map_err(|e| {
+            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
+                "Failed to register DeleteUser action: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         // Register CreateGroup action
-        self.action_type_registrar
-            .register::<CreateGroupAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register CreateGroup action: {}",
-                    e
-                ))
-            })?;
+        concrete_uc.register::<CreateGroupAction>().map_err(|e| {
+            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
+                "Failed to register CreateGroup action: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         // Register DeleteGroup action
-        self.action_type_registrar
-            .register::<DeleteGroupAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register DeleteGroup action: {}",
-                    e
-                ))
-            })?;
+        concrete_uc.register::<DeleteGroupAction>().map_err(|e| {
+            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
+                "Failed to register DeleteGroup action: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         // Register AddUserToGroup action
-        self.action_type_registrar
+        concrete_uc
             .register::<AddUserToGroupAction>()
             .map_err(|e| {
                 RegisterIamSchemaError::ActionTypeRegistrationError(format!(
@@ -331,7 +325,7 @@ impl RegisterIamSchemaUseCase {
         count += 1;
 
         // Register RemoveUserFromGroup action
-        self.action_type_registrar
+        concrete_uc
             .register::<RemoveUserFromGroupAction>()
             .map_err(|e| {
                 RegisterIamSchemaError::ActionTypeRegistrationError(format!(
@@ -342,7 +336,7 @@ impl RegisterIamSchemaUseCase {
         count += 1;
 
         // Register UploadArtifact action
-        self.action_type_registrar
+        concrete_uc
             .register::<UploadArtifactAction>()
             .map_err(|e| {
                 RegisterIamSchemaError::ActionTypeRegistrationError(format!(
@@ -353,7 +347,7 @@ impl RegisterIamSchemaUseCase {
         count += 1;
 
         // Register DownloadArtifact action
-        self.action_type_registrar
+        concrete_uc
             .register::<DownloadArtifactAction>()
             .map_err(|e| {
                 RegisterIamSchemaError::ActionTypeRegistrationError(format!(
@@ -364,18 +358,16 @@ impl RegisterIamSchemaUseCase {
         count += 1;
 
         // Register ViewArtifact action
-        self.action_type_registrar
-            .register::<ViewArtifactAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register ViewArtifact action: {}",
-                    e
-                ))
-            })?;
+        concrete_uc.register::<ViewArtifactAction>().map_err(|e| {
+            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
+                "Failed to register ViewArtifact action: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         // Register UpdateArtifact action
-        self.action_type_registrar
+        concrete_uc
             .register::<UpdateArtifactAction>()
             .map_err(|e| {
                 RegisterIamSchemaError::ActionTypeRegistrationError(format!(
@@ -386,7 +378,7 @@ impl RegisterIamSchemaUseCase {
         count += 1;
 
         // Register DeleteArtifact action
-        self.action_type_registrar
+        concrete_uc
             .register::<DeleteArtifactAction>()
             .map_err(|e| {
                 RegisterIamSchemaError::ActionTypeRegistrationError(format!(
@@ -397,25 +389,21 @@ impl RegisterIamSchemaUseCase {
         count += 1;
 
         // Register ListArtifacts action
-        self.action_type_registrar
-            .register::<ListArtifactsAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register ListArtifacts action: {}",
-                    e
-                ))
-            })?;
+        concrete_uc.register::<ListArtifactsAction>().map_err(|e| {
+            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
+                "Failed to register ListArtifacts action: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         // Register ShareArtifact action
-        self.action_type_registrar
-            .register::<ShareArtifactAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register ShareArtifact action: {}",
-                    e
-                ))
-            })?;
+        concrete_uc.register::<ShareArtifactAction>().map_err(|e| {
+            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
+                "Failed to register ShareArtifact action: {}",
+                e
+            ))
+        })?;
         count += 1;
 
         Ok(count)

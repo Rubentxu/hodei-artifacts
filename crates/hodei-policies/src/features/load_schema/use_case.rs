@@ -1,6 +1,7 @@
 use crate::features::load_schema::dto::{LoadSchemaCommand, LoadSchemaResult};
 use crate::features::load_schema::error::LoadSchemaError;
-use crate::features::load_schema::ports::SchemaStoragePort;
+use crate::features::load_schema::ports::{LoadSchemaPort, SchemaStoragePort};
+use async_trait::async_trait;
 use cedar_policy::Schema;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -157,5 +158,16 @@ impl<S: SchemaStoragePort> LoadSchemaUseCase<S> {
             .list_schema_versions()
             .await
             .map_err(|e| LoadSchemaError::SchemaStorageError(e.to_string()))
+    }
+}
+
+/// Implementation of LoadSchemaPort trait for LoadSchemaUseCase
+#[async_trait]
+impl<S: SchemaStoragePort> LoadSchemaPort for LoadSchemaUseCase<S> {
+    async fn execute(
+        &self,
+        command: LoadSchemaCommand,
+    ) -> Result<LoadSchemaResult, LoadSchemaError> {
+        self.execute(command).await
     }
 }

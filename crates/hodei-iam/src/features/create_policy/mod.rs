@@ -38,7 +38,7 @@ mod validator;
 // Mocks are kept internal (they are used by unit tests inside the crate)
 mod mocks;
 
-pub mod di;
+pub mod factories;
 // ---------------------------------------------------------------------------
 // PUBLIC RE-EXPORTS (Feature API Surface)
 // ---------------------------------------------------------------------------

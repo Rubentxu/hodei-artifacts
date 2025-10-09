@@ -1,11 +1,81 @@
 //! Data Transfer Objects for the register_action_type feature
-//!
-//! This feature uses direct generic method calls on the use case,
-//! so no command DTOs are needed. This file exists for architectural
-//! consistency with the VSA pattern.
-//!
-//! The registration is done via: `use_case.register::<MyAction>()`
-//! instead of passing a command object.
 
-// Placeholder: No DTOs needed for this feature
-// Registration is direct and generic via the use case method
+use serde::{Deserialize, Serialize};
+
+/// Command for registering an action type
+///
+/// This command encapsulates the data needed to register an action type
+/// in the Cedar schema builder. It serves as the input contract for the
+/// use case when using the command-based interface.
+///
+/// Note: In practice, direct generic registration via `use_case.register::<A>()`
+/// is preferred for type safety, but this command exists to satisfy the
+/// port trait interface for architectural consistency.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterActionTypeCommand {
+    /// The name of the action type being registered
+    pub action_name: String,
+
+    /// Optional description of what this action represents
+    pub description: Option<String>,
+}
+
+impl RegisterActionTypeCommand {
+    /// Create a new action type registration command
+    ///
+    /// # Arguments
+    ///
+    /// * `action_name` - The name of the action to register
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use hodei_policies::features::register_action_type::dto::RegisterActionTypeCommand;
+    ///
+    /// let command = RegisterActionTypeCommand::new("CreateUser".to_string());
+    /// ```
+    pub fn new(action_name: String) -> Self {
+        Self {
+            action_name,
+            description: None,
+        }
+    }
+
+    /// Create a new action type registration command with description
+    ///
+    /// # Arguments
+    ///
+    /// * `action_name` - The name of the action to register
+    /// * `description` - A description of what this action represents
+    pub fn with_description(action_name: String, description: String) -> Self {
+        Self {
+            action_name,
+            description: Some(description),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_command() {
+        let command = RegisterActionTypeCommand::new("CreateUser".to_string());
+        assert_eq!(command.action_name, "CreateUser");
+        assert!(command.description.is_none());
+    }
+
+    #[test]
+    fn test_command_with_description() {
+        let command = RegisterActionTypeCommand::with_description(
+            "CreateUser".to_string(),
+            "Creates a new user in the system".to_string(),
+        );
+        assert_eq!(command.action_name, "CreateUser");
+        assert_eq!(
+            command.description,
+            Some("Creates a new user in the system".to_string())
+        );
+    }
+}

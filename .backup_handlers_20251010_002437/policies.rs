@@ -129,10 +129,12 @@ pub struct DiagnosticInfo {
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn validate_policy(
-    State(state): State<AppState>,
+pub async fn validate_policy<S>(
+    State(state): State<AppState<S>>,
     Json(request): Json<ValidatePolicyRequest>,
 ) -> Result<Json<ValidatePolicyResponse>, ApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let command = hodei_policies::features::validate_policy::dto::ValidatePolicyCommand {
         content: request.content,
@@ -201,10 +203,12 @@ pub async fn validate_policy(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn evaluate_policies(
-    State(_state): State<AppState>,
+pub async fn evaluate_policies<S>(
+    State(_state): State<AppState<S>>,
     Json(_request): Json<EvaluatePoliciesRequest>,
 ) -> Result<Json<EvaluatePoliciesResponse>, ApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     // TODO: Implement policy evaluation
     // This requires:

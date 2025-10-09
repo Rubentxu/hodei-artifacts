@@ -125,6 +125,52 @@ pub trait CreatePolicyPort: Send + Sync {
     async fn create(&self, command: CreatePolicyCommand) -> Result<HodeiPolicy, CreatePolicyError>;
 }
 
+/// Port for the CreatePolicy use case
+///
+/// This trait represents the public interface of the CreatePolicy use case.
+/// It's what handlers and other components will depend on, following the
+/// Dependency Inversion Principle.
+///
+/// # Purpose
+///
+/// By defining this trait, we ensure that:
+/// - The use case can be easily mocked for testing
+/// - The implementation can be swapped without affecting consumers
+/// - The public API is explicit and documented
+///
+/// # Example Usage in Handler
+///
+/// ```rust,ignore
+/// async fn create_policy_handler(
+///     State(state): State<AppState>,
+///     Json(request): Json<CreatePolicyRequest>,
+/// ) -> Result<Json<PolicyView>, ApiError> {
+///     let command = CreatePolicyCommand { ... };
+///     let view = state.create_policy.execute(command).await?;
+///     Ok(Json(view))
+/// }
+/// ```
+#[async_trait]
+pub trait CreatePolicyUseCasePort: Send + Sync {
+    /// Execute the create policy use case
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - The command containing policy details
+    ///
+    /// # Returns
+    ///
+    /// A `PolicyView` DTO with the created policy information
+    ///
+    /// # Errors
+    ///
+    /// Returns `CreatePolicyError` if validation or persistence fails
+    async fn execute(
+        &self,
+        command: CreatePolicyCommand,
+    ) -> Result<crate::features::create_policy::dto::PolicyView, CreatePolicyError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

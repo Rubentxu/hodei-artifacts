@@ -24,6 +24,7 @@
 
 pub mod app_state;
 pub mod bootstrap;
+pub mod composition_root;
 pub mod config;
 pub mod handlers;
 pub mod openapi;
@@ -31,6 +32,7 @@ pub mod openapi;
 // Re-export commonly used types for external consumers
 pub use app_state::AppState;
 pub use bootstrap::{BootstrapConfig, bootstrap};
+pub use composition_root::CompositionRoot;
 pub use config::Config;
 
 // Re-export handler modules

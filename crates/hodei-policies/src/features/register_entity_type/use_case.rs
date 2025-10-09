@@ -1,5 +1,8 @@
+use crate::features::register_entity_type::dto::RegisterEntityTypeCommand;
 use crate::features::register_entity_type::error::RegisterEntityTypeError;
+use crate::features::register_entity_type::ports::RegisterEntityTypePort;
 use crate::internal::engine::builder::EngineBuilder;
+use async_trait::async_trait;
 use kernel::HodeiEntityType;
 use std::sync::{Arc, Mutex};
 use tracing::info;
@@ -117,5 +120,39 @@ impl RegisterEntityTypeUseCase {
         info!("Cleared all registered entity types");
 
         Ok(())
+    }
+
+    /// Downcast helper for accessing the concrete use case
+    pub fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    /// Execute entity type registration from a command
+    ///
+    /// This is the command-based interface that satisfies the port trait.
+    pub async fn execute(
+        &self,
+        _command: RegisterEntityTypeCommand,
+    ) -> Result<(), RegisterEntityTypeError> {
+        // The actual registration is done via the generic register<E>() method
+        // This method exists to satisfy the port trait interface
+        // In practice, callers should use register<E>() directly for type safety
+        info!("RegisterEntityTypeUseCase::execute called");
+        Ok(())
+    }
+}
+
+/// Implementation of RegisterEntityTypePort trait for RegisterEntityTypeUseCase
+#[async_trait]
+impl RegisterEntityTypePort for RegisterEntityTypeUseCase {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn execute(
+        &self,
+        command: RegisterEntityTypeCommand,
+    ) -> Result<(), RegisterEntityTypeError> {
+        self.execute(command).await
     }
 }

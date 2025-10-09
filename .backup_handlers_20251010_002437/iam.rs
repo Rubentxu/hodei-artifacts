@@ -140,10 +140,12 @@ pub struct DeletePolicyResponse {
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn create_policy(
-    State(state): State<AppState>,
+pub async fn create_policy<S>(
+    State(state): State<AppState<S>>,
     Json(request): Json<CreatePolicyRequest>,
 ) -> Result<Json<CreatePolicyResponse>, IamApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let command = hodei_iam::features::create_policy::dto::CreatePolicyCommand {
         policy_id: request.policy_id,
@@ -204,10 +206,12 @@ pub async fn create_policy(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn get_policy(
-    State(state): State<AppState>,
+pub async fn get_policy<S>(
+    State(state): State<AppState<S>>,
     Json(request): Json<GetPolicyRequest>,
 ) -> Result<Json<GetPolicyResponse>, IamApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let policy_hrn = kernel::Hrn::from_string(&request.policy_hrn)
         .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
@@ -250,10 +254,12 @@ pub async fn get_policy(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn list_policies(
-    State(state): State<AppState>,
+pub async fn list_policies<S>(
+    State(state): State<AppState<S>>,
     Query(query): Query<ListPoliciesQueryParams>,
 ) -> Result<Json<ListPoliciesResponse>, IamApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let list_query = hodei_iam::features::list_policies::dto::ListPoliciesQuery {
         limit: query.limit,
@@ -318,10 +324,12 @@ pub async fn list_policies(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn update_policy(
-    State(state): State<AppState>,
+pub async fn update_policy<S>(
+    State(state): State<AppState<S>>,
     Json(request): Json<UpdatePolicyRequest>,
 ) -> Result<Json<UpdatePolicyResponse>, IamApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let command = hodei_iam::features::update_policy::dto::UpdatePolicyCommand {
         policy_id: request.policy_hrn.to_string(),
@@ -393,10 +401,12 @@ pub async fn update_policy(
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn delete_policy(
-    State(state): State<AppState>,
+pub async fn delete_policy<S>(
+    State(state): State<AppState<S>>,
     Json(request): Json<DeletePolicyRequest>,
 ) -> Result<Json<DeletePolicyResponse>, IamApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     let command = hodei_iam::features::delete_policy::dto::DeletePolicyCommand {
         policy_id: request.policy_hrn.to_string(),

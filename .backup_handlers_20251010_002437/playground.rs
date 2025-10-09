@@ -190,10 +190,12 @@ pub struct EvaluationDiagnosticsDto {
         (status = 500, description = "Internal server error")
     )
 )]
-pub async fn playground_evaluate(
-    State(state): State<AppState>,
+pub async fn playground_evaluate<S>(
+    State(state): State<AppState<S>>,
     Json(request): Json<PlaygroundEvaluateRequest>,
 ) -> Result<Json<PlaygroundEvaluateResponse>, ApiError>
+where
+    S: SchemaStoragePort + Clone + Send + Sync + 'static,
 {
     // Convert HTTP DTO to domain DTO
     let command = convert_to_command(request)

@@ -7,7 +7,8 @@
 use super::dto::{EvaluationDiagnostics, PlaygroundEvaluateCommand, PlaygroundEvaluateResult};
 use super::error::PlaygroundEvaluateError;
 use super::ports::{
-    ContextConverterPort, PolicyEvaluatorPort, PolicyValidatorPort, SchemaLoaderPort,
+    ContextConverterPort, PlaygroundEvaluatePort, PolicyEvaluatorPort, PolicyValidatorPort,
+    SchemaLoaderPort,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -209,19 +210,7 @@ impl PlaygroundEvaluateUseCase {
     }
 }
 
-/// Async trait implementation for the port abstraction
-///
-/// This allows the use case to be used via a port trait if needed
-/// for higher-level orchestration or composition.
-#[async_trait]
-pub trait PlaygroundEvaluatePort: Send + Sync {
-    /// Execute a playground evaluation
-    async fn evaluate(
-        &self,
-        command: PlaygroundEvaluateCommand,
-    ) -> Result<PlaygroundEvaluateResult, PlaygroundEvaluateError>;
-}
-
+/// Implementation of PlaygroundEvaluatePort trait for PlaygroundEvaluateUseCase
 #[async_trait]
 impl PlaygroundEvaluatePort for PlaygroundEvaluateUseCase {
     async fn evaluate(

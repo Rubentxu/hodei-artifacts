@@ -135,3 +135,35 @@ pub trait ContextConverterPort: Send + Sync {
         PlaygroundEvaluateError,
     >;
 }
+
+/// Port trait for playground policy evaluation
+///
+/// This trait defines the contract for the playground evaluation use case.
+/// It represents the use case's public interface.
+#[async_trait]
+pub trait PlaygroundEvaluatePort: Send + Sync {
+    /// Execute a playground evaluation
+    ///
+    /// This method evaluates authorization requests against inline policies
+    /// and schemas in a playground environment without requiring persistence.
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - The evaluation command containing policies, schema, and request
+    ///
+    /// # Returns
+    ///
+    /// The evaluation result with decision, diagnostics, and determining policies
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Schema loading fails
+    /// - Policy validation fails
+    /// - Policy evaluation fails
+    /// - Context conversion fails
+    async fn evaluate(
+        &self,
+        command: super::dto::PlaygroundEvaluateCommand,
+    ) -> Result<super::dto::PlaygroundEvaluateResult, PlaygroundEvaluateError>;
+}

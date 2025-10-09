@@ -1,6 +1,6 @@
-pub mod di;
 pub mod dto;
 pub mod error;
+pub mod factories;
 pub mod mocks;
 pub mod ports;
 pub mod use_case;

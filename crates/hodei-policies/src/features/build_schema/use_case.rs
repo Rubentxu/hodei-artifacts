@@ -1,7 +1,8 @@
 use crate::features::build_schema::dto::{BuildSchemaCommand, BuildSchemaResult};
 use crate::features::build_schema::error::BuildSchemaError;
-use crate::features::build_schema::ports::SchemaStoragePort;
+use crate::features::build_schema::ports::{BuildSchemaPort, SchemaStoragePort};
 use crate::internal::engine::builder::EngineBuilder;
+use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
@@ -204,5 +205,16 @@ impl<S: SchemaStoragePort> BuildSchemaUseCase<S> {
     #[cfg(test)]
     pub(crate) fn builder(&self) -> &Arc<Mutex<EngineBuilder>> {
         &self.builder
+    }
+}
+
+/// Implementation of BuildSchemaPort trait for BuildSchemaUseCase
+#[async_trait]
+impl<S: SchemaStoragePort> BuildSchemaPort for BuildSchemaUseCase<S> {
+    async fn execute(
+        &self,
+        command: BuildSchemaCommand,
+    ) -> Result<BuildSchemaResult, BuildSchemaError> {
+        self.execute(command).await
     }
 }

@@ -61,9 +61,9 @@
 //! ```
 
 pub mod adapters;
-pub mod di;
 pub mod dto;
 pub mod error;
+pub mod factories;
 pub mod ports;
 pub mod use_case;
 
@@ -74,12 +74,14 @@ pub mod mocks;
 mod use_case_test;
 
 // Re-export for convenience
-pub use di::PlaygroundEvaluateUseCaseFactory;
 pub use dto::{
     AttributeValue, Decision, DeterminingPolicy, EvaluationDiagnostics,
     PlaygroundAuthorizationRequest, PlaygroundEvaluateCommand, PlaygroundEvaluateResult,
     PolicyEffect,
 };
 pub use error::PlaygroundEvaluateError;
-pub use ports::{ContextConverterPort, PolicyEvaluatorPort, PolicyValidatorPort, SchemaLoaderPort};
-pub use use_case::{PlaygroundEvaluatePort, PlaygroundEvaluateUseCase};
+pub use ports::{
+    ContextConverterPort, PlaygroundEvaluatePort, PolicyEvaluatorPort, PolicyValidatorPort,
+    SchemaLoaderPort,
+};
+pub use use_case::PlaygroundEvaluateUseCase;
