@@ -138,8 +138,7 @@ async fn test_create_user_unique_ids() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Same Name".to_string(),
@@ -164,8 +163,7 @@ async fn test_create_users_batch() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let users = vec![
         ("Alice", "alice@test.com"),
@@ -203,8 +201,7 @@ async fn test_create_user_email_validation_format() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     // Test with various email formats
     let valid_emails = vec![
@@ -241,8 +238,7 @@ async fn test_create_user_persistence() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Persistent User".to_string(),
@@ -266,8 +262,7 @@ async fn test_create_user_empty_name() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "".to_string(),
@@ -292,8 +287,7 @@ async fn test_create_user_special_characters_in_name() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "José García-López O'Brien".to_string(),

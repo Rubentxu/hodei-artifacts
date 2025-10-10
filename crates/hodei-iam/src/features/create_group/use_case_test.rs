@@ -40,7 +40,7 @@ async fn test_create_group_success() {
     let view = result.unwrap();
     assert_eq!(view.name, "Admins");
     assert_eq!(view.hrn, "hrn:hodei:iam::default:Group/test-group-123");
-    assert_eq!(view.tags, Vec::<String>::new());
+    assert_eq!(view.tags, vec!["admin".to_string()]);
 }
 
 /// Test that group creation fails when the repository fails

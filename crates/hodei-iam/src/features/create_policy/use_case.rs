@@ -82,6 +82,18 @@ impl CreatePolicyUseCase {
         &self,
         command: CreatePolicyCommand,
     ) -> Result<PolicyView, CreatePolicyError> {
+        let mut command = command;
+
+        // Validate policy id
+        let normalized_policy_id = command.policy_id.trim();
+        if normalized_policy_id.is_empty() {
+            warn!("Policy creation failed: empty policy id");
+            return Err(CreatePolicyError::InvalidPolicyId(
+                "Policy ID cannot be empty".to_string(),
+            ));
+        }
+        command.policy_id = normalized_policy_id.to_string();
+
         info!("Creating policy with id: {}", command.policy_id);
 
         // Validate input
@@ -91,7 +103,6 @@ impl CreatePolicyUseCase {
         }
 
         // Validate policy syntax using hodei-policies
-        info!("Validating policy content");
         let validation_command =
             hodei_policies::features::validate_policy::dto::ValidatePolicyCommand {
                 content: command.policy_content.clone(),
@@ -115,7 +126,7 @@ impl CreatePolicyUseCase {
         info!("Policy validation successful, persisting policy");
 
         // Create the policy through the port
-        let policy = self.policy_port.create(command).await?;
+        let policy = self.policy_port.create(command.clone()).await?;
 
         info!("Policy created successfully: {}", policy.id());
 
@@ -127,14 +138,14 @@ impl CreatePolicyUseCase {
             "hodei".to_string(),
             "iam".to_string(),
             "default".to_string(), // TODO: Get from context
-            "Policy".to_string(),
+            "policy".to_string(),
             policy.id().to_string(),
         );
 
         let view = PolicyView {
             id: policy_hrn,
             content: policy.content().to_string(),
-            description: None, // Policy doesn't have description in kernel
+            description: command.description.clone(),
             created_at: now,
             updated_at: now,
         };

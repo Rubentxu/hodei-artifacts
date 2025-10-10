@@ -28,7 +28,13 @@ impl PrincipalResolverPort for MockPrincipalResolver {
     > {
         // Create a simple mock user entity
         let user = MockUser {
-            hrn: Hrn::from_string("hrn:hodei:iam:default:User/test-user").unwrap(),
+            hrn: Hrn::new(
+                "hodei".to_string(),
+                "iam".to_string(),
+                "default".to_string(),
+                "User".to_string(),
+                "test-user".to_string(),
+            ),
             name: "Test User".to_string(),
         };
         Ok(Box::new(user))
@@ -48,7 +54,13 @@ impl ResourceResolverPort for MockResourceResolver {
     > {
         // Create a simple mock resource entity
         let resource = MockResource {
-            hrn: Hrn::from_string("hrn:hodei:iam:default:Resource/test-resource").unwrap(),
+            hrn: Hrn::new(
+                "hodei".to_string(),
+                "iam".to_string(),
+                "default".to_string(),
+                "Resource".to_string(),
+                "test-resource".to_string(),
+            ),
             name: "Test Resource".to_string(),
         };
         Ok(Box::new(resource))
@@ -166,9 +178,21 @@ async fn test_evaluate_iam_policies_success() {
 
     // Execute
     let request = EvaluationRequest {
-        principal_hrn: Hrn::from_string("hrn:hodei:iam:default:User/test-user").unwrap(),
+        principal_hrn: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
+        ),
         action_name: "read".to_string(),
-        resource_hrn: Hrn::from_string("hrn:hodei:iam:default:Resource/test-resource").unwrap(),
+        resource_hrn: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "Resource".to_string(),
+            "test-resource".to_string(),
+        ),
     };
 
     let result = use_case.evaluate_iam_policies(request).await;
@@ -197,9 +221,21 @@ async fn test_evaluate_iam_policies_finder_error() {
 
     // Execute
     let request = EvaluationRequest {
-        principal_hrn: Hrn::from_string("hrn:hodei:iam:default:User/test-user").unwrap(),
+        principal_hrn: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
+        ),
         action_name: "read".to_string(),
-        resource_hrn: Hrn::from_string("hrn:hodei:iam:default:Resource/test-resource").unwrap(),
+        resource_hrn: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "Resource".to_string(),
+            "test-resource".to_string(),
+        ),
     };
 
     let result = use_case.evaluate_iam_policies(request).await;
@@ -230,9 +266,21 @@ async fn test_evaluate_iam_policies_empty_policy_set() {
 
     // Execute
     let request = EvaluationRequest {
-        principal_hrn: Hrn::from_string("hrn:hodei:iam:default:User/test-user").unwrap(),
+        principal_hrn: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
+        ),
         action_name: "read".to_string(),
-        resource_hrn: Hrn::from_string("hrn:hodei:iam:default:Resource/test-resource").unwrap(),
+        resource_hrn: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "Resource".to_string(),
+            "test-resource".to_string(),
+        ),
     };
 
     let result = use_case.evaluate_iam_policies(request).await;

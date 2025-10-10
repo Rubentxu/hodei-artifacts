@@ -24,6 +24,7 @@ use crate::features::get_effective_policies::ports::{
 };
 use kernel::domain::Hrn;
 use kernel::domain::policy::HodeiPolicySet;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -104,8 +105,9 @@ impl GetEffectivePoliciesUseCase {
 
         // Validate that the resource type is valid for a principal
         let resource_type_lower = principal_hrn.resource_type.to_string().to_lowercase();
-        match resource_type_lower.as_str() {
-            "user" | "service-account" => {
+        let normalized_principal_type = resource_type_lower.replace(['-', '_'], "");
+        match normalized_principal_type.as_str() {
+            "user" | "serviceaccount" => {
                 debug!("Valid principal type: {}", resource_type_lower);
             }
             _ => {
@@ -154,8 +156,9 @@ impl GetEffectivePoliciesUseCase {
             groups.len()
         );
 
-        // Initialize the policy set
+        // Initialize the policy set and tracker to avoid duplicates
         let mut effective_policies = HodeiPolicySet::default();
+        let mut policy_ids: HashSet<String> = HashSet::new();
 
         // Step 4: Collect direct policies from the principal
         let principal_policies =
@@ -173,7 +176,10 @@ impl GetEffectivePoliciesUseCase {
 
         // Add principal policies to the set
         for policy in principal_policies {
-            effective_policies.add(policy);
+            let policy_id = policy.id().to_string();
+            if policy_ids.insert(policy_id) {
+                effective_policies.add(policy);
+            }
         }
 
         // Step 5: Collect policies from all groups
@@ -195,7 +201,10 @@ impl GetEffectivePoliciesUseCase {
 
             // Add group policies to the set
             for policy in group_policies {
-                effective_policies.add(policy);
+                let policy_id = policy.id().to_string();
+                if policy_ids.insert(policy_id) {
+                    effective_policies.add(policy);
+                }
             }
         }
 

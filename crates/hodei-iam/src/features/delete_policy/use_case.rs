@@ -102,10 +102,13 @@ impl DeletePolicyUseCase {
     /// ```
     #[instrument(skip(self, command), fields(policy_id = %command.policy_id))]
     pub async fn execute(&self, command: DeletePolicyCommand) -> Result<(), DeletePolicyError> {
-        info!("Deleting policy with id: {}", command.policy_id);
+        let mut command = command;
+
+        let normalized_policy_id = command.policy_id.trim();
+        info!("Deleting policy with id: {}", normalized_policy_id);
 
         // Validate input
-        if command.policy_id.is_empty() {
+        if normalized_policy_id.is_empty() {
             warn!("Policy deletion failed: empty policy ID");
             return Err(DeletePolicyError::InvalidPolicyId(
                 "Policy ID cannot be empty".to_string(),
@@ -113,16 +116,18 @@ impl DeletePolicyUseCase {
         }
 
         // Validate policy ID format (basic alphanumeric + hyphens + underscores)
-        if !is_valid_policy_id(&command.policy_id) {
+        if !is_valid_policy_id(normalized_policy_id) {
             warn!(
                 "Policy deletion failed: invalid policy ID format: {}",
-                command.policy_id
+                normalized_policy_id
             );
             return Err(DeletePolicyError::InvalidPolicyId(format!(
                 "Policy ID '{}' contains invalid characters. Only alphanumeric, hyphens, and underscores are allowed.",
-                command.policy_id
+                normalized_policy_id
             )));
         }
+
+        command.policy_id = normalized_policy_id.to_string();
 
         // Delete policy through port
         info!("Deleting policy from storage");

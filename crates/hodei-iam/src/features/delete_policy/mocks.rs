@@ -68,7 +68,9 @@ impl Default for MockDeletePolicyPort {
 impl MockDeletePolicyPort {
     /// Create a new mock port that will succeed (with no existing policies)
     pub fn new() -> Self {
-        Self::default()
+        let port = Self::default();
+        port.add_policy("test-policy".to_string());
+        port
     }
 
     /// Create a mock that will fail with a storage error

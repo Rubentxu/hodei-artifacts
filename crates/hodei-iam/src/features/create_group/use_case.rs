@@ -45,6 +45,8 @@ impl CreateGroupUseCase {
 
         // Create the group domain entity
         let group = Group::new(hrn.clone(), cmd.group_name, None);
+        let mut group = group;
+        group.tags = cmd.tags;
 
         // Convert to DTO and persist the group
         let group_dto = GroupPersistenceDto {

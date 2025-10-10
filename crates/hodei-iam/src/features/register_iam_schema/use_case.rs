@@ -8,18 +8,12 @@ use crate::features::register_iam_schema::dto::{
 };
 use crate::features::register_iam_schema::error::RegisterIamSchemaError;
 use crate::features::register_iam_schema::ports::RegisterIamSchemaPort;
-use crate::internal::domain::actions::{
-    AddUserToGroupAction, CreateGroupAction, CreateUserAction, DeleteGroupAction, DeleteUserAction,
-    RemoveUserFromGroupAction,
-};
-use crate::internal::domain::group::Group;
-use crate::internal::domain::user::User;
 use async_trait::async_trait;
 use hodei_policies::build_schema::dto::BuildSchemaCommand;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
-use hodei_policies::register_action_type::RegisterActionTypeUseCase;
+use hodei_policies::register_action_type::dto::RegisterActionTypeCommand;
 use hodei_policies::register_action_type::ports::RegisterActionTypePort;
-use hodei_policies::register_entity_type::RegisterEntityTypeUseCase;
+use hodei_policies::register_entity_type::dto::RegisterEntityTypeCommand;
 use hodei_policies::register_entity_type::ports::RegisterEntityTypePort;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -191,35 +185,24 @@ impl RegisterIamSchemaUseCase {
     async fn register_entity_types(&self) -> Result<usize, RegisterIamSchemaError> {
         let mut count = 0;
 
-        // We need to downcast to access the generic register method
-        // This is safe because we control the factory and know the concrete type
-        let concrete_uc = self
-            .entity_type_registrar
-            .as_any()
-            .downcast_ref::<RegisterEntityTypeUseCase>()
-            .ok_or_else(|| {
-                RegisterIamSchemaError::EntityTypeRegistrationError(
-                    "Failed to downcast entity type registrar".to_string(),
-                )
-            })?;
+        let commands = vec![
+            RegisterEntityTypeCommand::new("User".to_string()),
+            RegisterEntityTypeCommand::new("Group".to_string()),
+        ];
 
-        // Register User entity type
-        concrete_uc.register::<User>().map_err(|e| {
-            RegisterIamSchemaError::EntityTypeRegistrationError(format!(
-                "Failed to register User entity type: {}",
-                e
-            ))
-        })?;
-        count += 1;
-
-        // Register Group entity type
-        concrete_uc.register::<Group>().map_err(|e| {
-            RegisterIamSchemaError::EntityTypeRegistrationError(format!(
-                "Failed to register Group entity type: {}",
-                e
-            ))
-        })?;
-        count += 1;
+        for command in commands {
+            self
+                .entity_type_registrar
+                .execute(command)
+                .await
+                .map_err(|e| {
+                    RegisterIamSchemaError::EntityTypeRegistrationError(format!(
+                        "Failed to register entity type: {}",
+                        e
+                    ))
+                })?;
+            count += 1;
+        }
 
         Ok(count)
     }
@@ -246,74 +229,28 @@ impl RegisterIamSchemaUseCase {
     async fn register_action_types(&self) -> Result<usize, RegisterIamSchemaError> {
         let mut count = 0;
 
-        // We need to downcast to access the generic register method
-        let concrete_uc = self
-            .action_type_registrar
-            .as_any()
-            .downcast_ref::<RegisterActionTypeUseCase>()
-            .ok_or_else(|| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(
-                    "Failed to downcast action type registrar".to_string(),
-                )
-            })?;
+        let commands = vec![
+            RegisterActionTypeCommand::new("CreateUser".to_string()),
+            RegisterActionTypeCommand::new("DeleteUser".to_string()),
+            RegisterActionTypeCommand::new("CreateGroup".to_string()),
+            RegisterActionTypeCommand::new("DeleteGroup".to_string()),
+            RegisterActionTypeCommand::new("AddUserToGroup".to_string()),
+            RegisterActionTypeCommand::new("RemoveUserFromGroup".to_string()),
+        ];
 
-        // Register CreateUser action
-        concrete_uc.register::<CreateUserAction>().map_err(|e| {
-            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                "Failed to register CreateUser action: {}",
-                e
-            ))
-        })?;
-        count += 1;
-
-        // Register DeleteUser action
-        concrete_uc.register::<DeleteUserAction>().map_err(|e| {
-            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                "Failed to register DeleteUser action: {}",
-                e
-            ))
-        })?;
-        count += 1;
-
-        // Register CreateGroup action
-        concrete_uc.register::<CreateGroupAction>().map_err(|e| {
-            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                "Failed to register CreateGroup action: {}",
-                e
-            ))
-        })?;
-        count += 1;
-
-        // Register DeleteGroup action
-        concrete_uc.register::<DeleteGroupAction>().map_err(|e| {
-            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                "Failed to register DeleteGroup action: {}",
-                e
-            ))
-        })?;
-        count += 1;
-
-        // Register AddUserToGroup action
-        concrete_uc
-            .register::<AddUserToGroupAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register AddUserToGroup action: {}",
-                    e
-                ))
-            })?;
-        count += 1;
-
-        // Register RemoveUserFromGroup action
-        concrete_uc
-            .register::<RemoveUserFromGroupAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register RemoveUserFromGroup action: {}",
-                    e
-                ))
-            })?;
-        count += 1;
+        for command in commands {
+            self
+                .action_type_registrar
+                .execute(command)
+                .await
+                .map_err(|e| {
+                    RegisterIamSchemaError::ActionTypeRegistrationError(format!(
+                        "Failed to register action type: {}",
+                        e
+                    ))
+                })?;
+            count += 1;
+        }
 
         Ok(count)
     }

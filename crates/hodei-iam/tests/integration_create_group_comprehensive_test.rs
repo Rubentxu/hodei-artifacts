@@ -1,7 +1,7 @@
 /// Comprehensive integration tests for create_group feature
 /// Uses only public API from hodei_iam crate
 use hodei_iam::{
-    features::create_group::{dto::CreateGroupCommand, factories, ports::CreateGroupUseCasePort},
+    features::create_group::{dto::CreateGroupCommand, factories},
     infrastructure::hrn_generator::UuidHrnGenerator,
     infrastructure::surreal::SurrealGroupAdapter,
 };
@@ -157,8 +157,7 @@ async fn test_create_groups_batch() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let groups = vec!["Engineering", "Marketing", "Sales", "Support"];
 
@@ -191,15 +190,14 @@ async fn test_create_group_persistence() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Persistent Group".to_string(),
         tags: vec!["test".to_string()],
     };
 
-    let created = use_case.execute(command).await.unwrap();
+    let _created = use_case.execute(command).await.unwrap();
 
     // Verify group was actually persisted
     // This would require additional methods in the adapter for testing purposes
@@ -215,8 +213,7 @@ async fn test_create_group_with_special_characters() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "DevOps-Team_2024 (β)".to_string(),
@@ -240,8 +237,7 @@ async fn test_create_group_long_name() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let long_name = "A".repeat(200);
     let command = CreateGroupCommand {
@@ -266,8 +262,7 @@ async fn test_create_group_empty_name() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "".to_string(),
@@ -291,8 +286,7 @@ async fn test_create_multiple_groups_different_tags() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     // Create group with engineering tags
     let cmd1 = CreateGroupCommand {
@@ -324,15 +318,14 @@ async fn test_create_group_verify_initial_state() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "New Group".to_string(),
         tags: vec!["tag1".to_string()],
     };
 
-    let created = use_case.execute(command).await.unwrap();
+    let _created = use_case.execute(command).await.unwrap();
 
     // Verify the group was created with correct initial state
     // This would require additional methods in the adapter for testing purposes

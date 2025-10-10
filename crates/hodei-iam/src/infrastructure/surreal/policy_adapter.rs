@@ -8,6 +8,7 @@
 //! - DeletePolicyPort: Delete policies
 
 use async_trait::async_trait;
+use serde::Deserialize;
 use kernel::Hrn;
 use std::sync::Arc;
 use surrealdb::Surreal;
@@ -39,6 +40,22 @@ use crate::features::update_policy::error::UpdatePolicyError;
 // Import kernel policy types
 use kernel::domain::policy::{HodeiPolicy, PolicyId};
 
+/// Intermediate structure for deserializing HodeiPolicy from SurrealDB
+#[derive(Debug, Clone, Deserialize)]
+struct HodeiPolicyDbRow {
+    /// The SurrealDB Thing ID (will be converted to PolicyId)
+    id: surrealdb::sql::Thing,
+    /// The policy content
+    content: String,
+}
+
+impl From<HodeiPolicyDbRow> for HodeiPolicy {
+    fn from(row: HodeiPolicyDbRow) -> Self {
+        let policy_id = PolicyId::new(row.id.id.to_string());
+        HodeiPolicy::new(policy_id, row.content)
+    }
+}
+
 /// SurrealDB adapter for Policy persistence operations
 pub struct SurrealPolicyAdapter<C: surrealdb::Connection> {
     db: Arc<Surreal<C>>,
@@ -61,7 +78,7 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
             "hodei".to_string(),
             "iam".to_string(),
             "default".to_string(), // This should come from context
-            "Policy".to_string(),
+            "policy".to_string(),
             command.policy_id.clone(),
         );
 
@@ -72,14 +89,19 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
         let policy_table = "policy";
         let policy_id = policy_hrn.resource_id();
 
-        let created: Result<Option<HodeiPolicy>, surrealdb::Error> = self
+        let content_value = serde_json::json!({
+            "content": policy.content()
+        });
+        
+        let created: Result<Option<HodeiPolicyDbRow>, surrealdb::Error> = self
             .db
             .create((policy_table, policy_id))
-            .content(policy.clone())
+            .content(content_value)
             .await;
 
         match created {
-            Ok(Some(created_policy)) => {
+            Ok(Some(db_row)) => {
+                let created_policy = HodeiPolicy::from(db_row);
                 info!("Policy created successfully");
                 Ok(created_policy)
             }
@@ -91,7 +113,12 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
             }
             Err(e) => {
                 error!("Database error while creating policy: {}", e);
-                Err(CreatePolicyError::StorageError(e.to_string()))
+                // Check if it's a duplicate record error
+                if e.to_string().contains("already exists") {
+                    Err(CreatePolicyError::PolicyAlreadyExists(command.policy_id))
+                } else {
+                    Err(CreatePolicyError::StorageError(e.to_string()))
+                }
             }
         }
     }
@@ -105,11 +132,12 @@ impl<C: surrealdb::Connection> PolicyReader for SurrealPolicyAdapter<C> {
         let policy_table = "policy";
         let policy_id = hrn.resource_id();
 
-        let result: Result<Option<HodeiPolicy>, surrealdb::Error> =
+        let result: Result<Option<HodeiPolicyDbRow>, surrealdb::Error> =
             self.db.select((policy_table, policy_id)).await;
 
         match result {
-            Ok(Some(policy)) => {
+            Ok(Some(db_row)) => {
+                let policy = HodeiPolicy::from(db_row);
                 debug!("Policy found: {}", hrn);
                 Ok(GetPolicyView {
                     hrn: hrn.clone(),

@@ -94,6 +94,13 @@ impl MockUpdatePolicyPort {
                 Some("Test policy".to_string()),
             ),
         );
+        policies.insert(
+            "complex-policy".to_string(),
+            (
+                "permit(principal, action, resource);".to_string(),
+                Some("Complex policy".to_string()),
+            ),
+        );
 
         Self {
             policies: Mutex::new(policies),
