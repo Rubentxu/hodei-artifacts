@@ -1,15 +1,14 @@
-//! Shared ports for the hodei-iam crate
+//! HRN generator trait for infrastructure implementations
 //!
-//! This module contains traits that are shared by multiple features
-//! within the hodei-iam crate. Following the Interface Segregation
-//! Principle (ISP), these traits should be minimal and focused.
+//! This trait provides a unified interface for HRN generation
+//! across all bounded contexts in the system.
 
-use kernel::Hrn;
+use crate::Hrn;
 
-/// Shared HRN generator trait for all features
+/// Shared HRN generator trait for all bounded contexts
 ///
 /// This trait provides a unified interface for HRN generation
-/// across all features in the hodei-iam crate.
+/// across all bounded contexts in the system.
 pub trait HrnGenerator: Send + Sync {
     /// Generate a new HRN for a user
     ///

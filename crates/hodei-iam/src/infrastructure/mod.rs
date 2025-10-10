@@ -2,4 +2,3 @@
 
 pub mod surreal;
 pub mod hrn_generator;
-pub mod in_memory;

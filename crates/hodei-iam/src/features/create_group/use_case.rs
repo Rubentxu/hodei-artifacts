@@ -1,9 +1,9 @@
 use super::dto::{CreateGroupCommand, GroupPersistenceDto, GroupView};
 use super::error::CreateGroupError;
 use super::ports::{CreateGroupPort, CreateGroupUseCasePort};
-use crate::infrastructure::hrn_generator::HrnGenerator;
 use crate::internal::domain::Group;
 use async_trait::async_trait;
+use kernel::HrnGenerator;
 use std::sync::Arc;
 
 /// Use case for creating a new group

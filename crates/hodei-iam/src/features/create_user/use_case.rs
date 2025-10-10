@@ -1,9 +1,9 @@
 use super::dto::{CreateUserCommand, UserPersistenceDto, UserView};
 use super::error::CreateUserError;
 use super::ports::{CreateUserPort, CreateUserUseCasePort};
-use crate::infrastructure::hrn_generator::HrnGenerator;
 use crate::internal::domain::User;
 use async_trait::async_trait;
+use kernel::HrnGenerator;
 use std::sync::Arc;
 
 /// Use case for creating a new user

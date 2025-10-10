@@ -37,7 +37,7 @@ pub use application::ports::{
 };
 
 // Re-export infrastructure implementations
-pub use infrastructure::InMemoryEventBus;
+pub use infrastructure::{HrnGenerator, InMemoryEventBus};
 
 // Re-export shared domain (kernel) symbols
 pub use domain::{

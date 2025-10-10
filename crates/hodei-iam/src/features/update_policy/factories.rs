@@ -1,22 +1,7 @@
 //! Dependency Injection helpers for Update Policy feature
 
 use super::use_case::UpdatePolicyUseCase;
-// use crate::features::create_policy::CedarPolicyValidator; // Temporarily disabled - unused
-// Temporarily disabled - adapter out of sync with current ports
-// use crate::infrastructure::in_memory::update_policy_adapter::InMemoryUpdatePolicyAdapter;
 use std::sync::Arc;
-
-// /// Create an UpdatePolicyUseCase with in-memory adapter
-// ///
-// /// TEMPORARILY DISABLED: In-memory adapter is out of sync with current ports.
-// /// Use SurrealDB adapter or mocks instead.
-/*
-pub fn make_update_policy_uc() -> UpdatePolicyUseCase<CedarPolicyValidator, InMemoryUpdatePolicyAdapter> {
-    let validator = Arc::new(CedarPolicyValidator::new());
-    let adapter = Arc::new(InMemoryUpdatePolicyAdapter::new());
-    UpdatePolicyUseCase::new(validator, adapter)
-}
-*/
 
 /// Create an UpdatePolicyUseCase with custom validator and adapter
 pub fn make_update_policy_uc_with<V: ?Sized, P: ?Sized>(
@@ -33,32 +18,4 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Temporarily disabled - in-memory adapter out of sync
-    /*
-    use crate::features::update_policy::dto::UpdatePolicyCommand;
-
-    #[tokio::test]
-    async fn test_make_update_policy_uc() {
-        let use_case = make_update_policy_uc();
-
-        // Add a test policy to the adapter
-        let adapter = Arc::new(InMemoryUpdatePolicyAdapter::new());
-        adapter.add_policy(
-            "test-policy".to_string(),
-            "permit(principal, action, resource);".to_string(),
-            Some("Test".to_string()),
-        );
-
-        let use_case_with_data = UpdatePolicyUseCase::new(
-            Arc::new(CedarPolicyValidator::new()),
-            adapter,
-        );
-
-        let command = UpdatePolicyCommand::update_description("test-policy", "Updated");
-        let result = use_case_with_data.execute(command).await;
-
-        assert!(result.is_ok());
-    }
-    */
 }

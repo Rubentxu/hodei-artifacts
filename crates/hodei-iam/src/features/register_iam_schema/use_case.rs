@@ -9,12 +9,9 @@ use crate::features::register_iam_schema::dto::{
 use crate::features::register_iam_schema::error::RegisterIamSchemaError;
 use crate::features::register_iam_schema::ports::RegisterIamSchemaPort;
 use crate::internal::domain::actions::{
-    AddUserToGroupAction, CreateGroupAction, CreateUserAction, DeleteArtifactAction,
-    DeleteGroupAction, DeleteUserAction, DownloadArtifactAction, ListArtifactsAction,
-    RemoveUserFromGroupAction, ShareArtifactAction, UpdateArtifactAction, UploadArtifactAction,
-    ViewArtifactAction,
+    AddUserToGroupAction, CreateGroupAction, CreateUserAction, DeleteGroupAction, DeleteUserAction,
+    RemoveUserFromGroupAction,
 };
-use crate::internal::domain::artifact::Artifact;
 use crate::internal::domain::group::Group;
 use crate::internal::domain::user::User;
 use async_trait::async_trait;
@@ -179,7 +176,6 @@ impl RegisterIamSchemaUseCase {
     /// This method registers:
     /// - User
     /// - Group
-    /// - Artifact
     ///
     /// Note: We need to downcast to the concrete use case to call the generic register method.
     /// This is a limitation of the current design where the port trait doesn't support
@@ -225,15 +221,6 @@ impl RegisterIamSchemaUseCase {
         })?;
         count += 1;
 
-        // Register Artifact entity type
-        concrete_uc.register::<Artifact>().map_err(|e| {
-            RegisterIamSchemaError::EntityTypeRegistrationError(format!(
-                "Failed to register Artifact entity type: {}",
-                e
-            ))
-        })?;
-        count += 1;
-
         Ok(count)
     }
 
@@ -246,13 +233,6 @@ impl RegisterIamSchemaUseCase {
     /// - DeleteGroup
     /// - AddUserToGroup
     /// - RemoveUserFromGroup
-    /// - UploadArtifact
-    /// - DownloadArtifact
-    /// - ViewArtifact
-    /// - UpdateArtifact
-    /// - DeleteArtifact
-    /// - ListArtifacts
-    /// - ShareArtifact
     ///
     /// Note: We need to downcast to the concrete use case to call the generic register method.
     ///
@@ -333,77 +313,6 @@ impl RegisterIamSchemaUseCase {
                     e
                 ))
             })?;
-        count += 1;
-
-        // Register UploadArtifact action
-        concrete_uc
-            .register::<UploadArtifactAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register UploadArtifact action: {}",
-                    e
-                ))
-            })?;
-        count += 1;
-
-        // Register DownloadArtifact action
-        concrete_uc
-            .register::<DownloadArtifactAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register DownloadArtifact action: {}",
-                    e
-                ))
-            })?;
-        count += 1;
-
-        // Register ViewArtifact action
-        concrete_uc.register::<ViewArtifactAction>().map_err(|e| {
-            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                "Failed to register ViewArtifact action: {}",
-                e
-            ))
-        })?;
-        count += 1;
-
-        // Register UpdateArtifact action
-        concrete_uc
-            .register::<UpdateArtifactAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register UpdateArtifact action: {}",
-                    e
-                ))
-            })?;
-        count += 1;
-
-        // Register DeleteArtifact action
-        concrete_uc
-            .register::<DeleteArtifactAction>()
-            .map_err(|e| {
-                RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                    "Failed to register DeleteArtifact action: {}",
-                    e
-                ))
-            })?;
-        count += 1;
-
-        // Register ListArtifacts action
-        concrete_uc.register::<ListArtifactsAction>().map_err(|e| {
-            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                "Failed to register ListArtifacts action: {}",
-                e
-            ))
-        })?;
-        count += 1;
-
-        // Register ShareArtifact action
-        concrete_uc.register::<ShareArtifactAction>().map_err(|e| {
-            RegisterIamSchemaError::ActionTypeRegistrationError(format!(
-                "Failed to register ShareArtifact action: {}",
-                e
-            ))
-        })?;
         count += 1;
 
         Ok(count)
