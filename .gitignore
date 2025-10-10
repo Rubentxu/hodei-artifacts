@@ -2,7 +2,6 @@
 /target/
 **/target/
 **/*.rlib
-scripts
 Cargo.lock
 e2e/screenshot*.png
 e2e/package-lock.json
