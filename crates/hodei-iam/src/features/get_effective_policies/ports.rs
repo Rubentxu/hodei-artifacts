@@ -5,6 +5,7 @@
 //! to this feature's needs.
 
 use super::dto::{GroupLookupDto, UserLookupDto};
+use super::error::GetEffectivePoliciesError;
 use async_trait::async_trait;
 use kernel::domain::{HodeiPolicy, Hrn};
 
@@ -27,7 +28,7 @@ pub trait UserFinderPort: Send + Sync {
     async fn find_by_hrn(
         &self,
         hrn: &Hrn,
-    ) -> Result<Option<UserLookupDto>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Option<UserLookupDto>, GetEffectivePoliciesError>;
 }
 
 /// Port for finding groups that a user belongs to
@@ -49,7 +50,7 @@ pub trait GroupFinderPort: Send + Sync {
     async fn find_groups_by_user_hrn(
         &self,
         user_hrn: &Hrn,
-    ) -> Result<Vec<GroupLookupDto>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Vec<GroupLookupDto>, GetEffectivePoliciesError>;
 }
 
 /// Port for finding policy documents associated with a principal
@@ -74,5 +75,5 @@ pub trait PolicyFinderPort: Send + Sync {
     async fn find_policies_by_principal(
         &self,
         principal_hrn: &Hrn,
-    ) -> Result<Vec<HodeiPolicy>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Vec<HodeiPolicy>, GetEffectivePoliciesError>;
 }

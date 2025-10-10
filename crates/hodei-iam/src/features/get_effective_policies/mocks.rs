@@ -8,6 +8,7 @@ use async_trait::async_trait;
 
 use crate::features::get_effective_policies::{
     dto::{GroupLookupDto, UserLookupDto},
+    error::GetEffectivePoliciesError,
     ports::{GroupFinderPort, PolicyFinderPort, UserFinderPort},
 };
 use kernel::domain::{HodeiPolicy, Hrn};
@@ -45,9 +46,11 @@ impl UserFinderPort for MockUserFinderPort {
     async fn find_by_hrn(
         &self,
         _hrn: &Hrn,
-    ) -> Result<Option<UserLookupDto>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<UserLookupDto>, GetEffectivePoliciesError> {
         if self.should_fail {
-            return Err("Mock user finder failure".into());
+            return Err(GetEffectivePoliciesError::RepositoryError(
+                "Mock user finder failure".to_string(),
+            ));
         }
         Ok(self.user.clone())
     }
@@ -85,9 +88,11 @@ impl GroupFinderPort for MockGroupFinderPort {
     async fn find_groups_by_user_hrn(
         &self,
         _user_hrn: &Hrn,
-    ) -> Result<Vec<GroupLookupDto>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<GroupLookupDto>, GetEffectivePoliciesError> {
         if self.should_fail {
-            return Err("Mock group finder failure".into());
+            return Err(GetEffectivePoliciesError::RepositoryError(
+                "Mock group finder failure".to_string(),
+            ));
         }
         Ok(self.groups.clone())
     }
@@ -125,9 +130,11 @@ impl PolicyFinderPort for MockPolicyFinderPort {
     async fn find_policies_by_principal(
         &self,
         _principal_hrn: &Hrn,
-    ) -> Result<Vec<HodeiPolicy>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<HodeiPolicy>, GetEffectivePoliciesError> {
         if self.should_fail {
-            return Err("Mock policy finder failure".into());
+            return Err(GetEffectivePoliciesError::RepositoryError(
+                "Mock policy finder failure".to_string(),
+            ));
         }
         Ok(self.policies.clone())
     }

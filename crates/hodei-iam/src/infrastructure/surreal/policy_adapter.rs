@@ -26,6 +26,7 @@ use crate::features::create_policy::dto::CreatePolicyCommand;
 use crate::features::create_policy::error::CreatePolicyError;
 
 use crate::features::delete_policy::error::DeletePolicyError;
+use crate::features::get_effective_policies::error::GetEffectivePoliciesError;
 use crate::features::get_policy::dto::PolicyView as GetPolicyView;
 use crate::features::get_policy::error::GetPolicyError;
 use crate::features::list_policies::dto::{ListPoliciesQuery, ListPoliciesResponse, PolicySummary};
@@ -309,7 +310,7 @@ impl<C: surrealdb::Connection> PolicyFinderPort for SurrealPolicyAdapter<C> {
     async fn find_policies_by_principal(
         &self,
         principal_hrn: &Hrn,
-    ) -> Result<Vec<HodeiPolicy>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<HodeiPolicy>, GetEffectivePoliciesError> {
         debug!("Finding policies for principal: {}", principal_hrn);
 
         // This is a graph query in SurrealDB - find all policies attached to the principal
@@ -320,11 +321,11 @@ impl<C: surrealdb::Connection> PolicyFinderPort for SurrealPolicyAdapter<C> {
             .query(query)
             .bind(("principal_hrn", principal_hrn.to_string()))
             .await
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
         let policies: Vec<surrealdb::sql::Object> = result
             .take(0)
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
         // Convert surreal objects to HodeiPolicy
         let mut hodei_policies = Vec::new();

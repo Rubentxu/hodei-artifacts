@@ -18,6 +18,7 @@ use crate::features::get_effective_policies::ports::GroupFinderPort;
 // Import errors from features
 use crate::features::add_user_to_group::error::AddUserToGroupError;
 use crate::features::create_group::error::CreateGroupError;
+use crate::features::get_effective_policies::error::GetEffectivePoliciesError;
 
 // Import internal domain entities (for internal use only)
 use crate::internal::domain::Group;
@@ -116,7 +117,7 @@ impl GroupFinderPort for SurrealGroupAdapter {
     async fn find_groups_by_user_hrn(
         &self,
         user_hrn: &Hrn,
-    ) -> Result<Vec<GroupLookupDto>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<GroupLookupDto>, GetEffectivePoliciesError> {
         info!("Finding groups for user: {}", user_hrn);
 
         // Query all groups where the user is a member
@@ -126,9 +127,11 @@ impl GroupFinderPort for SurrealGroupAdapter {
             SELECT * FROM group
         "#;
 
-        let mut result = self.db.query(query).await?;
+        let mut result = self.db.query(query).await
+            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
-        let groups: Vec<Group> = result.take(0)?;
+        let groups: Vec<Group> = result.take(0)
+            .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
         // Convert to DTOs
         let group_dtos: Vec<GroupLookupDto> = groups

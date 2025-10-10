@@ -20,6 +20,7 @@ use crate::features::get_effective_policies::ports::UserFinderPort;
 // Import errors from features
 use crate::features::add_user_to_group::error::AddUserToGroupError;
 use crate::features::create_user::error::CreateUserError;
+use crate::features::get_effective_policies::error::GetEffectivePoliciesError;
 
 // Import internal domain entities (for internal use only)
 use crate::internal::domain::User;
@@ -181,7 +182,7 @@ impl UserFinderPort for SurrealUserAdapter {
     async fn find_by_hrn(
         &self,
         hrn: &Hrn,
-    ) -> Result<Option<UserLookupDto>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<UserLookupDto>, GetEffectivePoliciesError> {
         debug!("Finding user by HRN for policy lookup: {}", hrn);
 
         let user_table = "user";
@@ -212,7 +213,7 @@ impl UserFinderPort for SurrealUserAdapter {
             }
             Err(e) => {
                 error!("Database error while finding user for policy lookup: {}", e);
-                Err(Box::new(e))
+                Err(GetEffectivePoliciesError::RepositoryError(e.to_string()))
             }
         }
     }
