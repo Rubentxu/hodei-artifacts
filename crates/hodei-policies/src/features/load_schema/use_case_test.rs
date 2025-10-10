@@ -11,6 +11,7 @@ mod tests {
 
     // Mock storage implementation for testing
     #[derive(Default)]
+    #[allow(clippy::type_complexity)]
     struct MockSchemaStorage {
         schemas: Arc<Mutex<HashMap<String, (String, Option<String>)>>>,
         latest_id: Arc<Mutex<Option<String>>>,

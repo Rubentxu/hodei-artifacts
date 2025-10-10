@@ -27,6 +27,9 @@ pub mod use_case;
 // Mocks are kept internal (they are used by unit tests inside the crate)
 mod mocks;
 
+#[cfg(test)]
+mod use_case_test;
+
 // ---------------------------------------------------------------------------
 // PUBLIC RE-EXPORTS (Feature API Surface)
 // ---------------------------------------------------------------------------

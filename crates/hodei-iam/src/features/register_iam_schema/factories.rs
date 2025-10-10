@@ -111,6 +111,7 @@ mod tests {
     /// Simple in-memory mock storage for schema persistence
     #[derive(Clone)]
     struct MockSchemaStorage {
+        #[allow(clippy::type_complexity)]
         saved: std::sync::Arc<std::sync::Mutex<Vec<(String, Option<String>)>>>,
     }
 

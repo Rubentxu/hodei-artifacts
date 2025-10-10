@@ -18,6 +18,9 @@ pub mod use_case;
 
 #[cfg(test)]
 mod mocks;
+mod use_case_test;
+
+
 
 // Public API
 pub use dto::{GetPolicyQuery, PolicyView};

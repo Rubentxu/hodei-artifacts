@@ -117,6 +117,11 @@ impl HodeiPolicySet {
     pub fn is_empty(&self) -> bool {
         self.policies.is_empty()
     }
+
+    /// Returns true if the set contains the specified policy.
+    pub fn contains(&self, policy: &HodeiPolicy) -> bool {
+        self.policies.contains(policy)
+    }
 }
 
 impl Default for HodeiPolicySet {

@@ -58,23 +58,30 @@ pub fn create_group_use_case(
 /// # Returns
 ///
 /// Arc<dyn CreateGroupUseCasePort> - The use case as a trait object
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::features::create_group::dto::CreateGroupCommand;
     use crate::features::create_group::mocks::{MockCreateGroupPort, MockHrnGenerator};
+    use kernel::Hrn;
 
     #[tokio::test]
     async fn test_factory_creates_use_case() {
         let persister: Arc<dyn CreateGroupPort> = Arc::new(MockCreateGroupPort::new());
-        let hrn_generator: Arc<dyn HrnGenerator> = Arc::new(MockHrnGenerator::new());
+        let test_hrn = Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "Group".to_string(),
+            "test-group".to_string(),
+        );
+        let hrn_generator: Arc<dyn HrnGenerator> = Arc::new(MockHrnGenerator::new(test_hrn));
 
         let use_case = create_group_use_case(persister, hrn_generator);
 
         let command = CreateGroupCommand {
             group_name: "test-group".to_string(),
-            tags: None,
+            tags: Vec::new(),
         };
 
         let result = use_case.execute(command).await;

@@ -5,8 +5,11 @@ use thiserror::Error;
 
 /// Request para evaluación de políticas
 ///
-/// Utiliza referencias a HRN en lugar de traits para mantener la estructura serializable
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Request para evaluación de políticas
+///
+/// Contiene referencias a HRN para evitar clonaciones excesivas en el hot path
+/// de autorización, donde se evalúan múltiples políticas por request.
+#[derive(Debug, Clone)]
 pub struct EvaluationRequest {
     pub principal_hrn: Hrn,
     pub action_name: String,

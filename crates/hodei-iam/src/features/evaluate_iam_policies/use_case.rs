@@ -208,9 +208,9 @@ impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
         );
 
         Ok(KernelEvaluationDecision {
-            principal_hrn: request.principal_hrn,
-            action_name: request.action_name,
-            resource_hrn: request.resource_hrn,
+            principal_hrn: request.principal_hrn.clone(),
+            action_name: request.action_name.to_string(),
+            resource_hrn: request.resource_hrn.clone(),
             decision,
             reason,
         })

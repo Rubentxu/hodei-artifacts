@@ -10,10 +10,12 @@ pub mod dto;
 pub mod error;
 pub mod factories;
 pub mod ports;
-pub mod use_case;
 
+pub mod use_case;
 #[cfg(test)]
 mod use_case_test;
+#[cfg(test)]
+mod mocks;
 
 // Re-export for convenience
 pub use dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};

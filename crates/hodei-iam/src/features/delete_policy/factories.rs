@@ -50,7 +50,6 @@ pub fn create_delete_policy_use_case(
 /// # Returns
 ///
 /// Arc<dyn DeletePolicyUseCasePort> - The use case as a trait object
-
 #[cfg(test)]
 mod tests {
     use super::*;

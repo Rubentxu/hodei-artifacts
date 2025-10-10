@@ -39,6 +39,11 @@ mod validator;
 mod mocks;
 
 pub mod factories;
+
+
+#[cfg(test)]
+mod use_case_test;
+
 // ---------------------------------------------------------------------------
 // PUBLIC RE-EXPORTS (Feature API Surface)
 // ---------------------------------------------------------------------------

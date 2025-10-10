@@ -465,12 +465,16 @@ mod tests {
         let config = RocksDbConfig::default();
         assert!(config.validate().is_ok());
 
-        let mut invalid_config = RocksDbConfig::default();
-        invalid_config.path = "".to_string();
+        let invalid_config = RocksDbConfig {
+            path: "".to_string(),
+            ..Default::default()
+        };
         assert!(invalid_config.validate().is_err());
 
-        let mut invalid_config = RocksDbConfig::default();
-        invalid_config.max_open_files = 0;
+        let invalid_config = RocksDbConfig {
+            max_open_files: 0,
+            ..Default::default()
+        };
         assert!(invalid_config.validate().is_err());
     }
 }

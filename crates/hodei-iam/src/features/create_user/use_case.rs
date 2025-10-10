@@ -44,7 +44,8 @@ impl CreateUserUseCase {
         let hrn = self.hrn_generator.new_user_hrn(&cmd.name);
 
         // Create the user domain entity
-        let user = User::new(hrn.clone(), cmd.name, cmd.email);
+        let mut user = User::new(hrn.clone(), cmd.name, cmd.email);
+        user.tags = cmd.tags;
 
         // Convert to DTO and persist the user
         let user_dto = UserPersistenceDto {

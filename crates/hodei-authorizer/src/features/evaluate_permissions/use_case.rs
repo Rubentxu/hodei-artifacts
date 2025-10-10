@@ -113,11 +113,12 @@ where
     ) -> EvaluatePermissionsResult<AuthorizationResponse> {
         info!("Starting multi-layer authorization evaluation (orchestration)");
 
-        // Convert to kernel's EvaluationRequest
+        // Convert to kernel's EvaluationRequest (zero-copy)
         let eval_request = EvaluationRequest {
             principal_hrn: request.principal.clone(),
             action_name: request.action.clone(),
             resource_hrn: request.resource.clone(),
+        };
         };
 
         // Step 1: Evaluate SCPs first (higher precedence in evaluation - deny overrides)

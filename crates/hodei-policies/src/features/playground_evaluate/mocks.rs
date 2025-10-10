@@ -21,6 +21,7 @@ pub struct MockSchemaLoader {
     /// The schema to return (if successful)
     pub schema_result: Arc<Mutex<Result<Schema, PlaygroundEvaluateError>>>,
     /// Track calls to load_schema
+    #[allow(clippy::type_complexity)]
     pub load_calls: Arc<Mutex<Vec<(Option<String>, Option<String>)>>>,
 }
 

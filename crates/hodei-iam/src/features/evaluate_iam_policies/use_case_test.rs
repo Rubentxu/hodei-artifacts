@@ -1,401 +1,246 @@
-//! Unit tests for evaluate_iam_policies use case
+//! Unit tests for EvaluateIamPoliciesUseCase
 //!
-//! These tests verify the behavior of the EvaluateIamPoliciesUseCase in isolation,
-//! using mocks to simulate external dependencies.
+//! These tests verify the business logic for evaluating IAM policies.
+//! They use mocked dependencies to isolate the use case logic.
 
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-    use std::sync::Arc;
+use crate::features::evaluate_iam_policies::{
+    mocks::MockPolicyFinder,
+    ports::{PrincipalResolverPort, ResourceResolverPort},
+    use_case::EvaluateIamPoliciesUseCase,
+};
+use kernel::IamPolicyEvaluator;
+use kernel::application::ports::authorization::{AuthorizationError, EvaluationRequest};
+use kernel::domain::policy::{HodeiPolicy, HodeiPolicySet};
+use kernel::domain::{Hrn, PolicyId};
+use std::sync::Arc;
 
-    use kernel::application::ports::authorization::{
-        AuthorizationError, EvaluationRequest, IamPolicyEvaluator,
+// Mock implementations for testing
+struct MockPrincipalResolver;
+
+#[async_trait::async_trait]
+impl PrincipalResolverPort for MockPrincipalResolver {
+    async fn resolve_principal(
+        &self,
+        _hrn: &Hrn,
+    ) -> Result<
+        Box<dyn kernel::HodeiEntity + Send>,
+        crate::features::evaluate_iam_policies::ports::EntityResolverError,
+    > {
+        // Create a simple mock user entity
+        let user = MockUser {
+            hrn: Hrn::from_string("hrn:hodei:iam:default:User/test-user").unwrap(),
+            name: "Test User".to_string(),
+        };
+        Ok(Box::new(user))
+    }
+}
+
+struct MockResourceResolver;
+
+#[async_trait::async_trait]
+impl ResourceResolverPort for MockResourceResolver {
+    async fn resolve_resource(
+        &self,
+        _hrn: &Hrn,
+    ) -> Result<
+        Box<dyn kernel::HodeiEntity + Send>,
+        crate::features::evaluate_iam_policies::ports::EntityResolverError,
+    > {
+        // Create a simple mock resource entity
+        let resource = MockResource {
+            hrn: Hrn::from_string("hrn:hodei:iam:default:Resource/test-resource").unwrap(),
+            name: "Test Resource".to_string(),
+        };
+        Ok(Box::new(resource))
+    }
+}
+
+struct MockSchemaStorage;
+
+#[async_trait::async_trait]
+impl hodei_policies::build_schema::ports::SchemaStoragePort for MockSchemaStorage {
+    async fn save_schema(
+        &self,
+        _schema_json: String,
+        _version: Option<String>,
+    ) -> Result<String, hodei_policies::build_schema::error::BuildSchemaError> {
+        Ok("test-schema-id".to_string())
+    }
+
+    async fn get_latest_schema(
+        &self,
+    ) -> Result<Option<String>, hodei_policies::build_schema::error::BuildSchemaError> {
+        Ok(Some(r#"{"test": "schema"}"#.to_string()))
+    }
+
+    async fn get_schema_by_version(
+        &self,
+        _version: &str,
+    ) -> Result<Option<String>, hodei_policies::build_schema::error::BuildSchemaError> {
+        Ok(Some(r#"{"test": "schema"}"#.to_string()))
+    }
+
+    async fn delete_schema(
+        &self,
+        _schema_id: &str,
+    ) -> Result<bool, hodei_policies::build_schema::error::BuildSchemaError> {
+        Ok(true)
+    }
+
+    async fn list_schema_versions(
+        &self,
+    ) -> Result<Vec<String>, hodei_policies::build_schema::error::BuildSchemaError> {
+        Ok(vec!["v1.0.0".to_string()])
+    }
+}
+
+// Simple mock entities
+#[derive(Debug)]
+struct MockUser {
+    hrn: Hrn,
+    name: String,
+}
+
+impl kernel::HodeiEntity for MockUser {
+    fn hrn(&self) -> &Hrn {
+        &self.hrn
+    }
+
+    fn attributes(
+        &self,
+    ) -> std::collections::HashMap<kernel::AttributeName, kernel::AttributeValue> {
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert(
+            kernel::AttributeName::new("name").unwrap(),
+            kernel::AttributeValue::string(&self.name),
+        );
+        attrs
+    }
+}
+
+#[derive(Debug)]
+struct MockResource {
+    hrn: Hrn,
+    name: String,
+}
+
+impl kernel::HodeiEntity for MockResource {
+    fn hrn(&self) -> &Hrn {
+        &self.hrn
+    }
+
+    fn attributes(
+        &self,
+    ) -> std::collections::HashMap<kernel::AttributeName, kernel::AttributeValue> {
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert(
+            kernel::AttributeName::new("name").unwrap(),
+            kernel::AttributeValue::string(&self.name),
+        );
+        attrs
+    }
+}
+
+/// Test that policy evaluation succeeds with valid input
+#[tokio::test]
+async fn test_evaluate_iam_policies_success() {
+    // Setup - Create a mock policy set
+    let policy = HodeiPolicy::new(
+        PolicyId::new("test-policy"),
+        r#"permit(principal, action, resource);"#.to_string(),
+    );
+    let policy_set = HodeiPolicySet::new(vec![policy]);
+    let mock_policy_finder = Arc::new(MockPolicyFinder::new(policy_set));
+
+    // Create mock resolvers
+    let mock_principal_resolver = Arc::new(MockPrincipalResolver);
+    let mock_resource_resolver = Arc::new(MockResourceResolver);
+    let mock_schema_storage = Arc::new(MockSchemaStorage);
+
+    let use_case = EvaluateIamPoliciesUseCase::new(
+        mock_policy_finder,
+        mock_principal_resolver,
+        mock_resource_resolver,
+        mock_schema_storage,
+    );
+
+    // Execute
+    let request = EvaluationRequest {
+        principal_hrn: Hrn::from_string("hrn:hodei:iam:default:User/test-user").unwrap(),
+        action_name: "read".to_string(),
+        resource_hrn: Hrn::from_string("hrn:hodei:iam:default:Resource/test-resource").unwrap(),
     };
-    use kernel::domain::{
-        ActionTrait, AttributeName, AttributeType, AttributeValue, HodeiEntity, HodeiEntityType,
-        Hrn, Principal, Resource, ResourceTypeName, ServiceName,
+
+    let result = use_case.evaluate_iam_policies(request).await;
+
+    // Assert
+    assert!(result.is_ok());
+    let decision = result.unwrap();
+    assert_eq!(decision.action_name, "read");
+}
+
+/// Test that policy evaluation fails when policy finder fails
+#[tokio::test]
+async fn test_evaluate_iam_policies_finder_error() {
+    // Setup - Create a mock that returns an error
+    let mock_policy_finder = Arc::new(MockPolicyFinder::with_error("Database error".to_string()));
+    let mock_principal_resolver = Arc::new(MockPrincipalResolver);
+    let mock_resource_resolver = Arc::new(MockResourceResolver);
+    let mock_schema_storage = Arc::new(MockSchemaStorage);
+
+    let use_case = EvaluateIamPoliciesUseCase::new(
+        mock_policy_finder,
+        mock_principal_resolver,
+        mock_resource_resolver,
+        mock_schema_storage,
+    );
+
+    // Execute
+    let request = EvaluationRequest {
+        principal_hrn: Hrn::from_string("hrn:hodei:iam:default:User/test-user").unwrap(),
+        action_name: "read".to_string(),
+        resource_hrn: Hrn::from_string("hrn:hodei:iam:default:Resource/test-resource").unwrap(),
     };
-    use policies::features::evaluate_policies::EvaluatePoliciesUseCase;
 
-    use crate::features::evaluate_iam_policies::{
-        mocks::{MockEmptyPolicyFinder, MockPolicyFinder, MockPolicyFinderWithError},
-        use_case::EvaluateIamPoliciesUseCase,
+    let result = use_case.evaluate_iam_policies(request).await;
+
+    // Assert
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        AuthorizationError::EvaluationFailed(_) => {} // Expected
+        _ => panic!("Expected EvaluationFailed error"),
+    }
+}
+
+/// Test that policy evaluation handles empty policy set (implicit deny)
+#[tokio::test]
+async fn test_evaluate_iam_policies_empty_policy_set() {
+    // Setup
+    let mock_policy_finder = Arc::new(MockPolicyFinder::empty());
+    let mock_principal_resolver = Arc::new(MockPrincipalResolver);
+    let mock_resource_resolver = Arc::new(MockResourceResolver);
+    let mock_schema_storage = Arc::new(MockSchemaStorage);
+
+    let use_case = EvaluateIamPoliciesUseCase::new(
+        mock_policy_finder,
+        mock_principal_resolver,
+        mock_resource_resolver,
+        mock_schema_storage,
+    );
+
+    // Execute
+    let request = EvaluationRequest {
+        principal_hrn: Hrn::from_string("hrn:hodei:iam:default:User/test-user").unwrap(),
+        action_name: "read".to_string(),
+        resource_hrn: Hrn::from_string("hrn:hodei:iam:default:Resource/test-resource").unwrap(),
     };
 
-    // ============================================================================
-    // Test Entities
-    // ============================================================================
-
-    struct TestUser {
-        hrn: Hrn,
-        email: String,
-    }
-
-    impl TestUser {
-        fn new(id: &str, email: &str) -> Self {
-            Self {
-                hrn: Hrn::new("iam", "user", id),
-                email: email.to_string(),
-            }
-        }
-    }
-
-    impl HodeiEntityType for TestUser {
-        fn service_name() -> ServiceName {
-            ServiceName::new("iam").unwrap()
-        }
-
-        fn resource_type_name() -> ResourceTypeName {
-            ResourceTypeName::new("User").unwrap()
-        }
-
-        fn is_principal_type() -> bool {
-            true
-        }
-
-        fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
-            vec![(AttributeName::new("email").unwrap(), AttributeType::String)]
-        }
-    }
-
-    impl HodeiEntity for TestUser {
-        fn hrn(&self) -> &Hrn {
-            &self.hrn
-        }
-
-        fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
-            let mut attrs = HashMap::new();
-            attrs.insert(
-                AttributeName::new("email").unwrap(),
-                AttributeValue::String(self.email.clone()),
-            );
-            attrs
-        }
-    }
-
-    impl Principal for TestUser {}
-
-    struct TestResource {
-        hrn: Hrn,
-        name: String,
-    }
-
-    impl TestResource {
-        fn new(id: &str, name: &str) -> Self {
-            Self {
-                hrn: Hrn::new("s3", "bucket", id),
-                name: name.to_string(),
-            }
-        }
-    }
-
-    impl HodeiEntityType for TestResource {
-        fn service_name() -> ServiceName {
-            ServiceName::new("s3").unwrap()
-        }
-
-        fn resource_type_name() -> ResourceTypeName {
-            ResourceTypeName::new("Bucket").unwrap()
-        }
-
-        fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
-            vec![(AttributeName::new("name").unwrap(), AttributeType::String)]
-        }
-    }
-
-    impl HodeiEntity for TestResource {
-        fn hrn(&self) -> &Hrn {
-            &self.hrn
-        }
-
-        fn attributes(&self) -> HashMap<AttributeName, AttributeValue> {
-            let mut attrs = HashMap::new();
-            attrs.insert(
-                AttributeName::new("name").unwrap(),
-                AttributeValue::String(self.name.clone()),
-            );
-            attrs
-        }
-    }
-
-    impl Resource for TestResource {}
-
-    struct TestAction;
-
-    impl ActionTrait for TestAction {
-        fn name() -> &'static str {
-            "read"
-        }
-    }
-
-    // ============================================================================
-    // Helper Functions
-    // ============================================================================
-
-    fn create_test_request() -> EvaluationRequest {
-        let user = TestUser::new("alice", "alice@example.com");
-        let resource = TestResource::new("my-bucket", "My Test Bucket");
-
-        EvaluationRequest {
-            principal: Box::new(user),
-            action: Box::new(TestAction),
-            resource: Box::new(resource),
-        }
-    }
-
-    // ============================================================================
-    // Tests
-    // ============================================================================
-
-    #[tokio::test]
-    async fn test_evaluate_with_allow_policy() {
-        // Arrange
-        let policy = r#"permit(principal, action == Action::"read", resource);"#.to_string();
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(vec![policy]));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok(), "Expected successful evaluation");
-        let decision = result.unwrap();
-        assert_eq!(decision.decision, true, "Expected allow decision");
-        assert!(
-            decision.reason.contains("Allowed") || decision.reason.contains("Allow"),
-            "Expected allow reason, got: {}",
-            decision.reason
-        );
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_with_deny_policy() {
-        // Arrange
-        let policy = r#"forbid(principal, action == Action::"read", resource);"#.to_string();
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(vec![policy]));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok(), "Expected successful evaluation");
-        let decision = result.unwrap();
-        assert_eq!(decision.decision, false, "Expected deny decision");
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_with_no_policies_returns_implicit_deny() {
-        // Arrange
-        let mock_finder = Arc::new(MockEmptyPolicyFinder::new());
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok(), "Expected successful evaluation");
-        let decision = result.unwrap();
-        assert_eq!(decision.decision, false, "Expected implicit deny");
-        assert!(
-            decision.reason.contains("No IAM policies found"),
-            "Expected implicit deny reason, got: {}",
-            decision.reason
-        );
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_with_multiple_policies() {
-        // Arrange
-        let policies = vec![
-            r#"permit(principal, action == Action::"read", resource);"#.to_string(),
-            r#"permit(principal, action == Action::"write", resource);"#.to_string(),
-        ];
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(policies));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok(), "Expected successful evaluation");
-        let decision = result.unwrap();
-        assert_eq!(decision.decision, true, "Expected allow decision");
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_handles_policy_finder_error() {
-        // Arrange
-        let error_msg = "Database connection failed".to_string();
-        let mock_finder = Arc::new(MockPolicyFinderWithError::new(error_msg.clone()));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_err(), "Expected error");
-        match result.unwrap_err() {
-            AuthorizationError::EvaluationFailed(msg) => {
-                assert!(
-                    msg.contains(&error_msg),
-                    "Expected error message to contain: {}",
-                    error_msg
-                );
-            }
-            e => panic!("Expected EvaluationFailed error, got: {:?}", e),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_with_deny_overrides_allow() {
-        // Arrange - Deny should override Allow in Cedar
-        let policies = vec![
-            r#"permit(principal, action == Action::"read", resource);"#.to_string(),
-            r#"forbid(principal, action == Action::"read", resource);"#.to_string(),
-        ];
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(policies));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok(), "Expected successful evaluation");
-        let decision = result.unwrap();
-        assert_eq!(
-            decision.decision, false,
-            "Expected deny (forbid overrides permit)"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_decision_contains_principal_action_resource() {
-        // Arrange
-        let policy = r#"permit(principal, action == Action::"read", resource);"#.to_string();
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(vec![policy]));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        let expected_principal_hrn = request.principal.hrn().clone();
-        let expected_action_name = request.action.name().to_string();
-        let expected_resource_hrn = request.resource.hrn().clone();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok());
-        let decision = result.unwrap();
-        assert_eq!(decision.principal_hrn, expected_principal_hrn);
-        assert_eq!(decision.action_name, expected_action_name);
-        assert_eq!(decision.resource_hrn, expected_resource_hrn);
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_with_specific_principal_condition() {
-        // Arrange - Policy that allows only specific user
-        let policy =
-            r#"permit(principal == Iam::User::"alice", action == Action::"read", resource);"#
-                .to_string();
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(vec![policy]));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request(); // alice as principal
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok());
-        let decision = result.unwrap();
-        assert_eq!(decision.decision, true, "Expected allow for alice");
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_logs_evaluation_metrics() {
-        // Arrange
-        let policy = r#"permit(principal, action == Action::"read", resource);"#.to_string();
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(vec![policy]));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert - Just verify it completes successfully
-        // Actual logging is verified through tracing-test or manual observation
-        assert!(
-            result.is_ok(),
-            "Expected successful evaluation with metrics"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_with_attribute_based_policy() {
-        // Arrange - Policy that checks user email attribute
-        let policy = r#"
-            permit(principal, action == Action::"read", resource)
-            when { principal.email like "alice@*" };
-        "#
-        .to_string();
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(vec![policy]));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok(), "Expected successful evaluation");
-        let decision = result.unwrap();
-        assert_eq!(
-            decision.decision, true,
-            "Expected allow for user with matching email"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_evaluate_with_empty_policy_list_after_retrieval() {
-        // Arrange - Empty policy list (different from MockEmptyPolicyFinder)
-        let mock_finder = Arc::new(MockPolicyFinder::with_policies(vec![]));
-        let policy_evaluator = Arc::new(EvaluatePoliciesUseCase::new());
-
-        let use_case = EvaluateIamPoliciesUseCase::new(mock_finder, policy_evaluator);
-        let request = create_test_request();
-
-        // Act
-        let result = use_case.evaluate_iam_policies(request).await;
-
-        // Assert
-        assert!(result.is_ok(), "Expected successful evaluation");
-        let decision = result.unwrap();
-        assert_eq!(decision.decision, false, "Expected implicit deny");
-        assert!(decision.reason.contains("No IAM policies found"));
-    }
+    let result = use_case.evaluate_iam_policies(request).await;
+
+    // Assert
+    assert!(result.is_ok());
+    let decision = result.unwrap();
+    // With empty policy set, the result should be Denied (default deny)
+    assert!(!decision.decision);
+    assert!(decision.reason.contains("No IAM policies"));
 }

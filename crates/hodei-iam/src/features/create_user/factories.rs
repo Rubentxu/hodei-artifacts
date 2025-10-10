@@ -50,18 +50,26 @@ mod tests {
     use super::*;
     use crate::features::create_user::dto::CreateUserCommand;
     use crate::features::create_user::mocks::{MockCreateUserPort, MockHrnGenerator};
+    use kernel::Hrn;
 
     #[tokio::test]
     async fn test_factory_creates_use_case() {
         let persister: Arc<dyn CreateUserPort> = Arc::new(MockCreateUserPort::new());
-        let hrn_generator: Arc<dyn HrnGenerator> = Arc::new(MockHrnGenerator::new());
+        let test_hrn = Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "account123".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
+        );
+        let hrn_generator: Arc<dyn HrnGenerator> = Arc::new(MockHrnGenerator::new(test_hrn));
 
         let use_case = create_user_use_case(persister, hrn_generator);
 
         let command = CreateUserCommand {
             name: "test-user".to_string(),
             email: "test@example.com".to_string(),
-            tags: None,
+            tags: Vec::new(),
         };
 
         let result = use_case.execute(command).await;

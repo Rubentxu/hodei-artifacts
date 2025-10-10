@@ -13,6 +13,7 @@ mod tests {
 
     // Mock storage implementation for testing
     #[derive(Default)]
+    #[allow(clippy::type_complexity)]
     struct MockSchemaStorage {
         saved_schemas: Arc<Mutex<Vec<(String, Option<String>)>>>,
         should_fail: Arc<Mutex<bool>>,
