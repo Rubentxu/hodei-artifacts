@@ -2,7 +2,7 @@ use super::dto::{AuthorizationRequest, Decision, EvaluatePoliciesCommand, Evalua
 use super::error::EvaluatePoliciesError;
 use super::use_case::EvaluatePoliciesUseCase;
 use crate::features::build_schema::error::BuildSchemaError;
-use crate::features::build_schema::ports::{SchemaStoragePort, StoredSchema};
+use crate::features::build_schema::ports::SchemaStoragePort;
 use async_trait::async_trait;
 use kernel::domain::policy::{HodeiPolicy, HodeiPolicySet, PolicyId};
 use kernel::{AttributeValue, HodeiEntity, HodeiEntityType, Hrn};
@@ -31,6 +31,7 @@ impl MockSchemaStorage {
         }
     }
 
+    #[allow(dead_code)]
     fn with_failure() -> Self {
         Self {
             should_fail: true,
@@ -241,6 +242,7 @@ impl HodeiEntity for MockDocument {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct MockGroup {
     hrn: Hrn,
     name: String,

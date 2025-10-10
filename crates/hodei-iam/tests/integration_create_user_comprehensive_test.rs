@@ -1,7 +1,7 @@
 /// Comprehensive integration tests for create_user feature
 /// Uses only public API from hodei_iam crate
 use hodei_iam::{
-    features::create_user::{self, dto::CreateUserCommand},
+    features::create_user::{dto::CreateUserCommand, factories, ports::CreateUserUseCasePort},
     infrastructure::hrn_generator::UuidHrnGenerator,
     infrastructure::surreal::SurrealUserAdapter,
 };
@@ -18,8 +18,7 @@ async fn test_create_user_with_valid_email() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "John Doe".to_string(),
@@ -47,8 +46,7 @@ async fn test_create_user_multiple_tags() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Jane Smith".to_string(),
@@ -80,8 +78,7 @@ async fn test_create_user_no_tags() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Bob".to_string(),
@@ -106,8 +103,7 @@ async fn test_create_user_hrn_format() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_user::di::CreateUserUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_user_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateUserCommand {
         name: "Test User".to_string(),

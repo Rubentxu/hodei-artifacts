@@ -33,11 +33,6 @@ use tracing::{info, instrument, warn};
 /// 3. Updates the policy through the port
 /// 4. Returns success or appropriate error
 ///
-/// # Type Parameters
-///
-/// - `V`: Implementation of `PolicyValidator` for syntax validation
-/// - `P`: Implementation of `UpdatePolicyPort` for persistence
-///
 /// # Example
 ///
 /// ```rust,ignore
@@ -59,24 +54,21 @@ use tracing::{info, instrument, warn};
 ///     Err(e) => eprintln!("Update failed: {}", e),
 /// }
 /// ```
-pub struct UpdatePolicyUseCase<V: ?Sized, P: ?Sized>
-where
-    V: PolicyValidator,
-    P: UpdatePolicyPort,
-{
+pub struct UpdatePolicyUseCase {
     /// Validator for checking Cedar policy syntax
-    validator: Arc<V>,
+    validator: Arc<dyn PolicyValidator>,
 
     /// Port for updating policies (only update operation)
-    policy_port: Arc<P>,
+    policy_port: Arc<dyn UpdatePolicyPort>,
 }
 
-impl<V: ?Sized, P: ?Sized> UpdatePolicyUseCase<V, P>
-where
-    V: PolicyValidator,
-    P: UpdatePolicyPort,
-{
+impl UpdatePolicyUseCase {
     /// Create a new instance of the use case
+    ///
+    /// # Arguments
+    ///
+    /// * `validator` - Implementation of `PolicyValidator` for syntax validation
+    /// * `policy_port` - Implementation of `UpdatePolicyPort` for persistence
     ///
     /// # Arguments
     ///
@@ -91,7 +83,10 @@ where
     ///     Arc::new(policy_port)
     /// );
     /// ```
-    pub fn new(validator: Arc<V>, policy_port: Arc<P>) -> Self {
+    pub fn new(
+        validator: Arc<dyn PolicyValidator>,
+        policy_port: Arc<dyn UpdatePolicyPort>,
+    ) -> Self {
         Self {
             validator,
             policy_port,
@@ -193,11 +188,7 @@ where
 
 // Implement UpdatePolicyPort trait for the use case to enable trait object usage
 #[async_trait]
-impl<V: ?Sized, P: ?Sized> UpdatePolicyPort for UpdatePolicyUseCase<V, P>
-where
-    V: PolicyValidator + Send + Sync,
-    P: UpdatePolicyPort + Send + Sync,
-{
+impl UpdatePolicyPort for UpdatePolicyUseCase {
     async fn update(&self, command: UpdatePolicyCommand) -> Result<PolicyView, UpdatePolicyError> {
         self.execute(command).await
     }

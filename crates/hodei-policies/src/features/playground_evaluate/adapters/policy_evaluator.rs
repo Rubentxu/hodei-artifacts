@@ -315,6 +315,6 @@ mod tests {
 
     #[test]
     fn test_default_constructor() {
-        let _evaluator = PolicyEvaluatorAdapter::default();
+        let _evaluator = PolicyEvaluatorAdapter;
     }
 }

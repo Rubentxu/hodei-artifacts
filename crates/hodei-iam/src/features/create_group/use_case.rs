@@ -13,18 +13,18 @@ use std::sync::Arc;
 /// 2. Creates a Group entity
 /// 3. Persists the group through the port
 /// 4. Returns a GroupView DTO
-pub struct CreateGroupUseCase<P: CreateGroupPort, G: HrnGenerator> {
-    persister: Arc<P>,
-    hrn_generator: Arc<G>,
+pub struct CreateGroupUseCase {
+    persister: Arc<dyn CreateGroupPort>,
+    hrn_generator: Arc<dyn HrnGenerator>,
 }
 
-impl<P: CreateGroupPort, G: HrnGenerator> CreateGroupUseCase<P, G> {
+impl CreateGroupUseCase {
     /// Create a new instance of the use case
     ///
     /// # Arguments
     /// * `persister` - Implementation of CreateGroupPort for persistence
     /// * `hrn_generator` - Implementation of HrnGenerator for HRN generation
-    pub fn new(persister: Arc<P>, hrn_generator: Arc<G>) -> Self {
+    pub fn new(persister: Arc<dyn CreateGroupPort>, hrn_generator: Arc<dyn HrnGenerator>) -> Self {
         Self {
             persister,
             hrn_generator,
@@ -64,7 +64,7 @@ impl<P: CreateGroupPort, G: HrnGenerator> CreateGroupUseCase<P, G> {
 }
 
 #[async_trait]
-impl<P: CreateGroupPort, G: HrnGenerator> CreateGroupUseCasePort for CreateGroupUseCase<P, G> {
+impl CreateGroupUseCasePort for CreateGroupUseCase {
     async fn execute(&self, command: CreateGroupCommand) -> Result<GroupView, CreateGroupError> {
         self.execute(command).await
     }

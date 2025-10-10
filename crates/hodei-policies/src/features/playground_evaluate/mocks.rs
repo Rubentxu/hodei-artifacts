@@ -3,9 +3,7 @@
 //! These mocks are used for unit testing the PlaygroundEvaluateUseCase
 //! without requiring actual Cedar engine integration.
 
-use super::dto::{
-    AttributeValue, Decision, DeterminingPolicy, PlaygroundAuthorizationRequest, PolicyEffect,
-};
+use super::dto::{AttributeValue, Decision, DeterminingPolicy, PlaygroundAuthorizationRequest};
 use super::error::PlaygroundEvaluateError;
 use super::ports::{
     ContextConverterPort, PolicyEvaluatorPort, PolicyValidatorPort, SchemaLoaderPort,

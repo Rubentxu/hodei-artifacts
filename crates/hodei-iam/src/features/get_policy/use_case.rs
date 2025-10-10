@@ -10,19 +10,13 @@ use super::ports::{GetPolicyUseCasePort, PolicyReader};
 use kernel::Hrn;
 
 /// Caso de uso: Obtener una política IAM por su HRN
-pub struct GetPolicyUseCase<R>
-where
-    R: PolicyReader + ?Sized,
-{
-    reader: Arc<R>,
+pub struct GetPolicyUseCase {
+    reader: Arc<dyn PolicyReader>,
 }
 
-impl<R> GetPolicyUseCase<R>
-where
-    R: PolicyReader + ?Sized,
-{
+impl GetPolicyUseCase {
     /// Crea una nueva instancia del caso de uso
-    pub fn new(reader: Arc<R>) -> Self {
+    pub fn new(reader: Arc<dyn PolicyReader>) -> Self {
         Self { reader }
     }
 
@@ -49,10 +43,7 @@ where
 
 // Implement PolicyReader trait for the use case to enable trait object usage
 #[async_trait]
-impl<R> PolicyReader for GetPolicyUseCase<R>
-where
-    R: PolicyReader + Send + Sync + ?Sized,
-{
+impl PolicyReader for GetPolicyUseCase {
     async fn get_by_hrn(&self, hrn: &Hrn) -> Result<PolicyView, GetPolicyError> {
         let query = GetPolicyQuery {
             policy_hrn: hrn.clone(),
@@ -62,10 +53,7 @@ where
 }
 
 #[async_trait]
-impl<R> GetPolicyUseCasePort for GetPolicyUseCase<R>
-where
-    R: PolicyReader + Send + Sync + ?Sized,
-{
+impl GetPolicyUseCasePort for GetPolicyUseCase {
     async fn execute(&self, query: GetPolicyQuery) -> Result<PolicyView, GetPolicyError> {
         self.execute(query).await
     }

@@ -8,7 +8,6 @@
 use std::sync::Arc;
 use tracing::info;
 
-use crate::features::get_policy::dto::PolicyView;
 use crate::features::get_policy::ports::{GetPolicyUseCasePort, PolicyReader};
 use crate::features::get_policy::use_case::GetPolicyUseCase;
 
@@ -39,30 +38,10 @@ pub fn create_get_policy_use_case(
     Arc::new(GetPolicyUseCase::new(policy_reader))
 }
 
-/// Alternative factory that accepts owned dependencies
-///
-/// This is useful when you have dependencies that are not yet wrapped in Arc
-/// and you want the factory to handle the Arc wrapping.
-///
-/// # Arguments
-///
-/// * `policy_reader` - Port for reading policies
-///
-/// # Returns
-///
-/// Arc<dyn GetPolicyUseCasePort> - The use case as a trait object
-pub fn create_get_policy_use_case_from_owned<P>(policy_reader: P) -> Arc<dyn GetPolicyUseCasePort>
-where
-    P: PolicyReader + 'static,
-{
-    info!("Creating GetPolicy use case from owned dependencies");
-    Arc::new(GetPolicyUseCase::new(Arc::new(policy_reader)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::get_policy::dto::GetPolicyQuery;
+    use crate::features::get_policy::dto::{GetPolicyQuery, PolicyView};
     use crate::features::get_policy::mocks::MockPolicyReader;
 
     #[tokio::test]
@@ -90,37 +69,6 @@ mod tests {
                 "default".to_string(),
                 "Policy".to_string(),
                 "test-policy".to_string(),
-            ),
-        };
-        let result = use_case.execute(query).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_factory_from_owned_works() {
-        let policy = PolicyView {
-            hrn: kernel::Hrn::new(
-                "hodei".to_string(),
-                "iam".to_string(),
-                "default".to_string(),
-                "Policy".to_string(),
-                "owned".to_string(),
-            ),
-            name: "owned-policy".to_string(),
-            content: "permit(principal, action, resource);".to_string(),
-            description: None,
-        };
-        let policy_reader = MockPolicyReader::with_policy(policy);
-
-        let use_case = create_get_policy_use_case_from_owned(policy_reader);
-
-        let query = GetPolicyQuery {
-            policy_hrn: kernel::Hrn::new(
-                "hodei".to_string(),
-                "iam".to_string(),
-                "default".to_string(),
-                "Policy".to_string(),
-                "owned".to_string(),
             ),
         };
         let result = use_case.execute(query).await;

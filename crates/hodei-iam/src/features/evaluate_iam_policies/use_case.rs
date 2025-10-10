@@ -56,36 +56,21 @@ use hodei_policies::features::evaluate_policies::{
 /// 5. Map result back to kernel types
 /// 6. Return authorization decision
 ///
-/// # Type Parameters
-///
-/// - `PF`: Policy finder implementation
-/// - `PR`: Principal resolver implementation
-/// - `RR`: Resource resolver implementation
-pub struct EvaluateIamPoliciesUseCase<PF, PR, RR>
-where
-    PF: PolicyFinderPort,
-    PR: PrincipalResolverPort,
-    RR: ResourceResolverPort,
-{
+pub struct EvaluateIamPoliciesUseCase {
     /// Port for retrieving effective policies
-    policy_finder: Arc<PF>,
+    policy_finder: Arc<dyn PolicyFinderPort>,
 
     /// Port for resolving principal entities
-    principal_resolver: Arc<PR>,
+    principal_resolver: Arc<dyn PrincipalResolverPort>,
 
     /// Port for resolving resource entities
-    resource_resolver: Arc<RR>,
+    resource_resolver: Arc<dyn ResourceResolverPort>,
 
     /// Use case from hodei-policies for Cedar evaluation
     policies_evaluator: EvaluatePoliciesUseCase,
 }
 
-impl<PF, PR, RR> EvaluateIamPoliciesUseCase<PF, PR, RR>
-where
-    PF: PolicyFinderPort,
-    PR: PrincipalResolverPort,
-    RR: ResourceResolverPort,
-{
+impl EvaluateIamPoliciesUseCase {
     /// Create a new instance of the use case
     ///
     /// # Arguments
@@ -95,9 +80,9 @@ where
     /// * `resource_resolver` - Port for resolving resource entities
     /// * `schema_storage` - Port for schema storage (required by policies evaluator)
     pub fn new(
-        policy_finder: Arc<PF>,
-        principal_resolver: Arc<PR>,
-        resource_resolver: Arc<RR>,
+        policy_finder: Arc<dyn PolicyFinderPort>,
+        principal_resolver: Arc<dyn PrincipalResolverPort>,
+        resource_resolver: Arc<dyn ResourceResolverPort>,
         schema_storage: Arc<dyn SchemaStoragePort>,
     ) -> Self {
         Self {
@@ -110,12 +95,7 @@ where
 }
 
 #[async_trait]
-impl<PF, PR, RR> IamPolicyEvaluator for EvaluateIamPoliciesUseCase<PF, PR, RR>
-where
-    PF: PolicyFinderPort + Send + Sync,
-    PR: PrincipalResolverPort + Send + Sync,
-    RR: ResourceResolverPort + Send + Sync,
-{
+impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
     #[instrument(
         skip(self, request),
         fields(
@@ -237,12 +217,7 @@ where
     }
 }
 
-impl<PF, PR, RR> EvaluateIamPoliciesUseCase<PF, PR, RR>
-where
-    PF: PolicyFinderPort,
-    PR: PrincipalResolverPort,
-    RR: ResourceResolverPort,
-{
+impl EvaluateIamPoliciesUseCase {
     /// Map PolicyFinderError to AuthorizationError
     fn map_policy_finder_error(error: PolicyFinderError) -> AuthorizationError {
         match error {
@@ -407,6 +382,7 @@ mod tests {
         }
 
         pub struct MockPrincipalResolver {
+            #[allow(dead_code)]
             entity: Option<Box<dyn HodeiEntity + Send>>,
             should_error: bool,
         }
@@ -448,6 +424,7 @@ mod tests {
         }
 
         pub struct MockResourceResolver {
+            #[allow(dead_code)]
             entity: Option<Box<dyn HodeiEntity + Send>>,
             should_error: bool,
         }

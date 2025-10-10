@@ -31,10 +31,6 @@ use tracing::{info, instrument, warn};
 /// 2. Deletes the policy through the port
 /// 3. Returns success or appropriate error
 ///
-/// # Type Parameters
-///
-/// - `P`: Implementation of `DeletePolicyPort` for persistence
-///
 /// # Example
 ///
 /// ```rust,ignore
@@ -53,18 +49,12 @@ use tracing::{info, instrument, warn};
 ///     Err(e) => eprintln!("Deletion failed: {}", e),
 /// }
 /// ```
-pub struct DeletePolicyUseCase<P>
-where
-    P: DeletePolicyPort + ?Sized,
-{
+pub struct DeletePolicyUseCase {
     /// Port for deleting policies (only delete operation)
-    policy_port: Arc<P>,
+    policy_port: Arc<dyn DeletePolicyPort>,
 }
 
-impl<P> DeletePolicyUseCase<P>
-where
-    P: DeletePolicyPort + ?Sized,
-{
+impl DeletePolicyUseCase {
     /// Create a new instance of the use case
     ///
     /// # Arguments
@@ -76,7 +66,7 @@ where
     /// ```rust,ignore
     /// let use_case = DeletePolicyUseCase::new(Arc::new(policy_port));
     /// ```
-    pub fn new(policy_port: Arc<P>) -> Self {
+    pub fn new(policy_port: Arc<dyn DeletePolicyPort>) -> Self {
         Self { policy_port }
     }
 
@@ -151,10 +141,7 @@ where
 
 // Implement DeletePolicyPort trait for the use case to enable trait object usage
 #[async_trait]
-impl<P> DeletePolicyPort for DeletePolicyUseCase<P>
-where
-    P: DeletePolicyPort + Send + Sync + ?Sized,
-{
+impl DeletePolicyPort for DeletePolicyUseCase {
     async fn delete(&self, policy_id: &str) -> Result<(), DeletePolicyError> {
         let command = DeletePolicyCommand {
             policy_id: policy_id.to_string(),
@@ -165,10 +152,7 @@ where
 
 // Implement DeletePolicyUseCasePort trait for the use case
 #[async_trait]
-impl<P> DeletePolicyUseCasePort for DeletePolicyUseCase<P>
-where
-    P: DeletePolicyPort + Send + Sync + ?Sized,
-{
+impl DeletePolicyUseCasePort for DeletePolicyUseCase {
     async fn execute(&self, command: DeletePolicyCommand) -> Result<(), DeletePolicyError> {
         self.execute(command).await
     }

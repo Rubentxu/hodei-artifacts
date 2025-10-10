@@ -146,11 +146,10 @@ impl CompositionRoot {
 
         // 2.2. Create policy use case
         info!("  ├─ CreatePolicyPort");
-        let create_policy =
-            hodei_iam::features::create_policy::factories::create_create_policy_use_case(
-                policy_adapter.clone(),
-                policy_ports.validate_policy.clone(),
-            );
+        let create_policy = hodei_iam::features::create_policy::factories::create_policy_use_case(
+            policy_adapter.clone(),
+            policy_ports.validate_policy.clone(),
+        );
 
         // 2.3. Get policy port
         info!("  ├─ GetPolicyPort");

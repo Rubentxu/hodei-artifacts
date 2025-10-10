@@ -9,11 +9,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// Health check response
-///
 /// Alias for HealthStatus to maintain backward compatibility
-pub type HealthStatus = HealthResponse;
-
-/// Health check response
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = json!({
     "status": "healthy",

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::dto::{ListPoliciesQuery, ListPoliciesResponse, PageInfo, PolicySummary};
+use super::dto::{ListPoliciesQuery, ListPoliciesResponse, PolicySummary};
 use super::error::ListPoliciesError;
 use super::ports::PolicyLister;
 

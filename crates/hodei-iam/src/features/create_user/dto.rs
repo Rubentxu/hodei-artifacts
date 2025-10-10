@@ -33,11 +33,11 @@ pub struct UserPersistenceDto {
 
 impl UserPersistenceDto {
     /// Create a new UserPersistenceDto
-    pub fn new(hrn: String, name: String, email: String) -> Self {
+    pub fn new(hrn: impl Into<String>, name: impl Into<String>, email: impl Into<String>) -> Self {
         Self {
-            hrn,
-            name,
-            email,
+            hrn: hrn.into(),
+            name: name.into(),
+            email: email.into(),
             group_hrns: Vec::new(),
             tags: Vec::new(),
         }

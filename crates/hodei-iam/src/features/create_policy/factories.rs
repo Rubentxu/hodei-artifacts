@@ -33,12 +33,12 @@ use crate::features::create_policy::use_case::CreatePolicyUseCase;
 /// let policy_repo = Arc::new(SurrealPolicyAdapter::new(db));
 /// let validator = hodei_policies_validate_port;
 ///
-/// let create_policy = create_create_policy_use_case(
+/// let create_policy = create_policy_use_case(
 ///     policy_repo,
 ///     validator,
 /// );
 /// ```
-pub fn create_create_policy_use_case(
+pub fn create_policy_use_case(
     policy_port: Arc<dyn CreatePolicyPort>,
     validator: Arc<dyn PolicyValidator>,
 ) -> Arc<dyn CreatePolicyUseCasePort> {
@@ -57,7 +57,7 @@ mod tests {
         let policy_port: Arc<dyn CreatePolicyPort> = Arc::new(MockCreatePolicyPort::new());
         let validator: Arc<dyn PolicyValidator> = Arc::new(MockPolicyValidator::new());
 
-        let use_case = create_create_policy_use_case(policy_port, validator);
+        let use_case = create_policy_use_case(policy_port, validator);
 
         let command = CreatePolicyCommand {
             policy_id: "test-policy".to_string(),

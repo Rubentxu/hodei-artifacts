@@ -265,10 +265,8 @@ fn convert_attribute_value(dto: AttributeValueDto) -> Result<AttributeValue, Str
             Ok(AttributeValue::EntityRef(hrn))
         }
         AttributeValueDto::Set(values) => {
-            let converted_values: Vec<AttributeValue> = values
-                .into_iter()
-                .map(|s| AttributeValue::String(s))
-                .collect();
+            let converted_values: Vec<AttributeValue> =
+                values.into_iter().map(AttributeValue::String).collect();
             Ok(AttributeValue::Set(converted_values))
         }
         AttributeValueDto::Record(record) => {
@@ -361,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_convert_attribute_value_entity_ref_valid() {
-        let dto = AttributeValueDto::EntityRef("hodei::iam::default::User::alice".to_string());
+        let dto = AttributeValueDto::EntityRef("hrn:hodei:iam::default:User/alice".to_string());
         let result = convert_attribute_value(dto).unwrap();
         assert!(matches!(result, AttributeValue::EntityRef(_)));
     }
@@ -397,9 +395,9 @@ mod tests {
             schema_version: None,
             inline_policies: vec!["permit(principal, action, resource);".to_string()],
             request: PlaygroundAuthorizationRequestDto {
-                principal: "hodei::iam::default::User::alice".to_string(),
-                action: "hodei::api::Action::read".to_string(),
-                resource: "hodei::storage::default::Document::doc1".to_string(),
+                principal: "hrn:hodei:iam::default:User/alice".to_string(),
+                action: "hrn:hodei:api::default:Action/read".to_string(),
+                resource: "hrn:hodei:storage::default:Document/doc1".to_string(),
                 context: HashMap::new(),
             },
         };

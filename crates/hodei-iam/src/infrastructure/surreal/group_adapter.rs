@@ -127,10 +127,14 @@ impl GroupFinderPort for SurrealGroupAdapter {
             SELECT * FROM group
         "#;
 
-        let mut result = self.db.query(query).await
+        let mut result = self
+            .db
+            .query(query)
+            .await
             .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
-        let groups: Vec<Group> = result.take(0)
+        let groups: Vec<Group> = result
+            .take(0)
             .map_err(|e| GetEffectivePoliciesError::RepositoryError(e.to_string()))?;
 
         // Convert to DTOs
@@ -150,12 +154,10 @@ impl GroupFinderPort for SurrealGroupAdapter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_adapter_creation() {
         // This is a placeholder test
         // Real tests would require a test database
-        assert!(true);
+        // Test passes by compilation
     }
 }

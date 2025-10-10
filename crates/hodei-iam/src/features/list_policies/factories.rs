@@ -38,28 +38,6 @@ pub fn create_list_policies_use_case(
     Arc::new(ListPoliciesUseCase::new(policy_lister))
 }
 
-/// Alternative factory that accepts owned dependencies
-///
-/// This is useful when you have dependencies that are not yet wrapped in Arc
-/// and you want the factory to handle the Arc wrapping.
-///
-/// # Arguments
-///
-/// * `policy_lister` - Port for listing policies
-///
-/// # Returns
-///
-/// Arc<dyn ListPoliciesUseCasePort> - The use case as a trait object
-pub fn create_list_policies_use_case_from_owned<P>(
-    policy_lister: P,
-) -> Arc<dyn ListPoliciesUseCasePort>
-where
-    P: PolicyLister + 'static,
-{
-    info!("Creating ListPolicies use case from owned dependencies");
-    Arc::new(ListPoliciesUseCase::new(Arc::new(policy_lister)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,17 +49,6 @@ mod tests {
         let policy_lister: Arc<dyn PolicyLister> = Arc::new(MockPolicyLister::new());
 
         let use_case = create_list_policies_use_case(policy_lister);
-
-        let query = ListPoliciesQuery::default();
-        let result = use_case.execute(query).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_factory_from_owned_works() {
-        let policy_lister = MockPolicyLister::new();
-
-        let use_case = create_list_policies_use_case_from_owned(policy_lister);
 
         let query = ListPoliciesQuery::default();
         let result = use_case.execute(query).await;

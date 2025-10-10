@@ -7,15 +7,21 @@
 //! 4. La API pública está correctamente expuesta
 
 use hodei_iam::features::create_policy::CedarPolicyValidator;
+use hodei_iam::features::create_policy::ports::CreatePolicyUseCasePort;
 use hodei_iam::features::create_policy::{CreatePolicyCommand, CreatePolicyUseCase};
-use hodei_iam::features::list_policies::{ListPoliciesQuery, ListPoliciesUseCase, PolicySummary};
-use hodei_iam::infrastructure::hrn_generator::UuidHrnGenerator;
+use hodei_iam::features::list_policies::ports::ListPoliciesUseCasePort;
+use hodei_iam::features::list_policies::{ListPoliciesQuery, ListPoliciesUseCase};
 use hodei_iam::infrastructure::surreal::SurrealPolicyAdapter;
 use surrealdb::{Surreal, engine::local::Mem};
 
 use std::sync::Arc;
 
-async fn create_test_policies(count: usize) -> (Arc<SurrealPolicyAdapter>, Vec<String>) {
+async fn create_test_policies(
+    count: usize,
+) -> (
+    Arc<SurrealPolicyAdapter<surrealdb::engine::local::Db>>,
+    Vec<String>,
+) {
     let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
     db.use_ns("test").use_db("iam").await.unwrap();
     let adapter = Arc::new(SurrealPolicyAdapter::new(db));
@@ -61,9 +67,9 @@ async fn test_list_policies_integration_empty() {
     assert!(result.is_ok(), "Expected success, got error: {:?}", result);
     let response = result.unwrap();
     assert!(response.policies.is_empty());
-    assert_eq!(response.page_info.total_count, 0);
-    assert!(!response.page_info.has_next_page());
-    assert!(!response.page_info.has_previous_page());
+    assert_eq!(response.total_count, 0);
+    assert!(!response.has_next_page);
+    assert!(!response.has_previous_page);
 }
 
 #[tokio::test]
@@ -82,10 +88,9 @@ async fn test_list_policies_integration_single_page() {
     assert!(result.is_ok());
     let response = result.unwrap();
     assert_eq!(response.policies.len(), 5);
-    assert_eq!(response.page_info.total_count, 5);
-    assert_eq!(response.page_info.page_size, 5);
-    assert!(!response.page_info.has_next_page());
-    assert!(!response.page_info.has_previous_page());
+    assert_eq!(response.total_count, 5);
+    assert!(!response.has_next_page);
+    assert!(!response.has_previous_page);
 }
 
 #[tokio::test]
@@ -104,13 +109,9 @@ async fn test_list_policies_integration_first_page() {
     assert!(result.is_ok());
     let response = result.unwrap();
     assert_eq!(response.policies.len(), 20);
-    assert_eq!(response.page_info.total_count, 50);
-    assert_eq!(response.page_info.current_offset, 0);
-    assert!(response.page_info.has_next_page());
-    assert!(!response.page_info.has_previous_page());
-
-    // Verificar que next_offset es correcto
-    assert_eq!(response.page_info.next_offset(), Some(20));
+    assert_eq!(response.total_count, 50);
+    assert!(response.has_next_page);
+    assert!(!response.has_previous_page);
     assert_eq!(response.page_info.previous_offset(20), None);
 }
 

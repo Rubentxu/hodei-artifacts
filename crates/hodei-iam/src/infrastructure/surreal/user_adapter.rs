@@ -221,12 +221,10 @@ impl UserFinderPort for SurrealUserAdapter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_adapter_creation() {
         // This is a placeholder test
         // Real tests would require a test database
-        assert!(true);
+        // Test passes by compilation
     }
 }

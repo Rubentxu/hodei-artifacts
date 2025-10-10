@@ -23,11 +23,11 @@ pub struct UserLookupDto {
 
 impl UserLookupDto {
     /// Create a new UserLookupDto
-    pub fn new(hrn: String, name: String, email: String) -> Self {
+    pub fn new(hrn: impl Into<String>, name: impl Into<String>, email: impl Into<String>) -> Self {
         Self {
-            hrn,
-            name,
-            email,
+            hrn: hrn.into(),
+            name: name.into(),
+            email: email.into(),
             group_hrns: Vec::new(),
             tags: Vec::new(),
         }
@@ -47,10 +47,10 @@ pub struct GroupLookupDto {
 
 impl GroupLookupDto {
     /// Create a new GroupLookupDto
-    pub fn new(hrn: String, name: String) -> Self {
+    pub fn new(hrn: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
-            hrn,
-            name,
+            hrn: hrn.into(),
+            name: name.into(),
             tags: Vec::new(),
         }
     }
@@ -71,11 +71,11 @@ pub struct UserPersistenceDto {
 
 impl UserPersistenceDto {
     /// Create a new UserPersistenceDto
-    pub fn new(hrn: String, name: String, email: String) -> Self {
+    pub fn new(hrn: impl Into<String>, name: impl Into<String>, email: impl Into<String>) -> Self {
         Self {
-            hrn,
-            name,
-            email,
+            hrn: hrn.into(),
+            name: name.into(),
+            email: email.into(),
             group_hrns: Vec::new(),
             tags: Vec::new(),
         }

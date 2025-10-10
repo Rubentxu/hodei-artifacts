@@ -261,6 +261,6 @@ mod tests {
 
     #[test]
     fn test_default_constructor() {
-        let _converter = ContextConverterAdapter::default();
+        let _converter = ContextConverterAdapter;
     }
 }

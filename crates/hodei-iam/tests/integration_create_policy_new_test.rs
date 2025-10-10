@@ -22,9 +22,10 @@
 //! cargo test -p hodei-iam --test integration_create_policy_new_test
 //! ```
 
+use hodei_iam::features::create_policy::ports::CreatePolicyUseCasePort;
 use hodei_iam::features::create_policy::{
     CreatePolicyCommand, CreatePolicyError, CreatePolicyUseCase, PolicyValidationError,
-    PolicyValidator, PolicyView, ValidationResult, di,
+    PolicyValidator, PolicyView, ValidationResult,
 };
 use hodei_iam::infrastructure::surreal::SurrealPolicyAdapter;
 use std::sync::Arc;
@@ -68,35 +69,27 @@ impl IntegrationMockValidator {
 
 #[async_trait]
 impl PolicyValidator for IntegrationMockValidator {
-    async fn validate_policy(
+    async fn validate(
         &self,
-        _policy_content: &str,
+        _command: hodei_policies::features::validate_policy::dto::ValidatePolicyCommand,
     ) -> Result<ValidationResult, PolicyValidationError> {
         if self.should_fail {
-            return Err(PolicyValidationError::ServiceError(
+            return Err(PolicyValidationError::ValidationServiceUnavailable(
                 "Integration test: validation service error".to_string(),
             ));
         }
 
         let is_valid = self.errors.is_empty();
-        let errors = self
-            .errors
-            .iter()
-            .map(|msg| hodei_iam::features::create_policy::ports::ValidationError::new(msg.clone()))
-            .collect();
+        let errors = self.errors.clone();
 
-        Ok(ValidationResult {
-            is_valid,
-            errors,
-            warnings: vec![],
-        })
+        Ok(ValidationResult { is_valid, errors })
     }
 }
 
 async fn build_use_case(
-    account_id: &str,
+    _account_id: &str,
     validator: Arc<IntegrationMockValidator>,
-) -> CreatePolicyUseCase<SurrealPolicyAdapter, IntegrationMockValidator> {
+) -> CreatePolicyUseCase {
     let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
     db.use_ns("test").use_db("iam").await.unwrap();
     let adapter = Arc::new(SurrealPolicyAdapter::new(db));
@@ -135,31 +128,6 @@ async fn integration_create_policy_success() {
         Some("Integration test policy".to_string())
     );
     assert!(view.created_at <= view.updated_at);
-}
-
-#[tokio::test]
-async fn integration_create_policy_with_di_helper() {
-    // Arrange - using DI helper
-    let validator = Arc::new(IntegrationMockValidator::new());
-    let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
-    db.use_ns("test").use_db("iam").await.unwrap();
-    let adapter = Arc::new(SurrealPolicyAdapter::new(db));
-    let use_case = di::use_case_with_port(adapter, validator);
-    let command = CreatePolicyCommand {
-        policy_id: "policy-via-di".to_string(),
-        policy_content: "forbid(principal, action, resource);".to_string(),
-        description: None,
-    };
-
-    // Act
-    let result = use_case.execute(command).await;
-
-    // Assert
-    assert!(result.is_ok());
-    let view = result.unwrap();
-    assert!(view.id.to_string().contains("policy/policy-via-di"));
-    assert_eq!(view.content, "forbid(principal, action, resource);");
-    assert!(view.description.is_none());
 }
 
 #[tokio::test]

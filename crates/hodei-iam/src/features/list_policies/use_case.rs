@@ -15,10 +15,6 @@ use super::ports::{ListPoliciesUseCasePort, PolicyLister};
 /// 2. Delegates the query to the persistence port
 /// 3. Returns the response with pagination metadata
 ///
-/// # Type Parameters
-///
-/// - `L`: Implementation of`PolicyLister` for data retrieval
-///
 /// # Example
 ///
 /// ```rust,ignore
@@ -36,24 +32,18 @@ use super::ports::{ListPoliciesUseCasePort, PolicyLister};
 ///     println!("There are more pages available");
 /// }
 /// ```
-pub struct ListPoliciesUseCase<L>
-where
-    L: PolicyLister + ?Sized,
-{
+pub struct ListPoliciesUseCase {
     /// Port for listing policies
-    lister: Arc<L>,
+    lister: Arc<dyn PolicyLister>,
 }
 
-impl<L> ListPoliciesUseCase<L>
-where
-    L: PolicyLister + ?Sized,
-{
+impl ListPoliciesUseCase {
     /// Create a new instance of the use case
     ///
     /// # Arguments
     ///
     /// * `lister` - Implementation of `PolicyLister` for data retrieval
-    pub fn new(lister: Arc<L>) -> Self {
+    pub fn new(lister: Arc<dyn PolicyLister>) -> Self {
         Self { lister }
     }
 
@@ -122,10 +112,7 @@ where
 
 // Implement PolicyLister trait for the use case to enable trait object usage
 #[async_trait]
-impl<L> PolicyLister for ListPoliciesUseCase<L>
-where
-    L: PolicyLister + Send + Sync + ?Sized,
-{
+impl PolicyLister for ListPoliciesUseCase {
     async fn list(
         &self,
         query: ListPoliciesQuery,
@@ -135,10 +122,7 @@ where
 }
 
 #[async_trait]
-impl<L> ListPoliciesUseCasePort for ListPoliciesUseCase<L>
-where
-    L: PolicyLister + Send + Sync + ?Sized,
-{
+impl ListPoliciesUseCasePort for ListPoliciesUseCase {
     async fn execute(
         &self,
         query: ListPoliciesQuery,
@@ -150,7 +134,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::list_policies::dto::{PageInfo, PolicySummary};
+    use crate::features::list_policies::dto::PolicySummary;
     use crate::features::list_policies::mocks::MockPolicyLister;
     use kernel::Hrn;
 

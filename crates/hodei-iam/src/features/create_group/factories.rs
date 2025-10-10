@@ -8,8 +8,9 @@
 use std::sync::Arc;
 use tracing::info;
 
-use crate::features::create_group::ports::{CreateGroupPort, CreateGroupUseCasePort, HrnGenerator};
+use crate::features::create_group::ports::{CreateGroupPort, CreateGroupUseCasePort};
 use crate::features::create_group::use_case::CreateGroupUseCase;
+use kernel::HrnGenerator;
 
 /// Create the CreateGroup use case with injected dependencies
 ///
@@ -31,12 +32,12 @@ use crate::features::create_group::use_case::CreateGroupUseCase;
 /// let group_repo = Arc::new(SurrealGroupAdapter::new(db));
 /// let hrn_generator = Arc::new(DefaultHrnGenerator::new());
 ///
-/// let create_group = create_create_group_use_case(
+/// let create_group = create_group_use_case(
 ///     group_repo,
 ///     hrn_generator,
 /// );
 /// ```
-pub fn create_create_group_use_case(
+pub fn create_group_use_case(
     persister: Arc<dyn CreateGroupPort>,
     hrn_generator: Arc<dyn HrnGenerator>,
 ) -> Arc<dyn CreateGroupUseCasePort> {
@@ -57,20 +58,6 @@ pub fn create_create_group_use_case(
 /// # Returns
 ///
 /// Arc<dyn CreateGroupUseCasePort> - The use case as a trait object
-pub fn create_create_group_use_case_from_owned<P, G>(
-    persister: P,
-    hrn_generator: G,
-) -> Arc<dyn CreateGroupUseCasePort>
-where
-    P: CreateGroupPort + 'static,
-    G: HrnGenerator + 'static,
-{
-    info!("Creating CreateGroup use case from owned dependencies");
-    Arc::new(CreateGroupUseCase::new(
-        Arc::new(persister),
-        Arc::new(hrn_generator),
-    ))
-}
 
 #[cfg(test)]
 mod tests {
@@ -83,23 +70,7 @@ mod tests {
         let persister: Arc<dyn CreateGroupPort> = Arc::new(MockCreateGroupPort::new());
         let hrn_generator: Arc<dyn HrnGenerator> = Arc::new(MockHrnGenerator::new());
 
-        let use_case = create_create_group_use_case(persister, hrn_generator);
-
-        let command = CreateGroupCommand {
-            group_name: "test-group".to_string(),
-            tags: None,
-        };
-
-        let result = use_case.execute(command).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_factory_from_owned_works() {
-        let persister = MockCreateGroupPort::new();
-        let hrn_generator = MockHrnGenerator::new();
-
-        let use_case = create_create_group_use_case_from_owned(persister, hrn_generator);
+        let use_case = create_group_use_case(persister, hrn_generator);
 
         let command = CreateGroupCommand {
             group_name: "test-group".to_string(),

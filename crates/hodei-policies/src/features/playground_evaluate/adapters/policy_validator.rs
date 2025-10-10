@@ -148,7 +148,7 @@ mod tests {
         let result = validator.validate_policies(&policies, &schema).await;
         assert!(result.is_ok());
         let errors = result.unwrap();
-        assert!(errors.len() > 0);
+        assert!(!errors.is_empty());
         assert!(errors[0].contains("Policy 0"));
     }
 
@@ -183,6 +183,6 @@ mod tests {
 
     #[test]
     fn test_default_constructor() {
-        let _validator = PolicyValidatorAdapter::default();
+        let _validator = PolicyValidatorAdapter;
     }
 }

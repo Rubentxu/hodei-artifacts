@@ -30,29 +30,35 @@ use std::sync::Arc;
 /// - Fácil testing con mocks
 /// - Cumplimiento del Dependency Inversion Principle
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct AppState {
     /// Schema version currently active in the system
+    #[allow(dead_code)]
     pub schema_version: String,
 
     // ============================================================
     // Puertos de hodei-policies
     // ============================================================
     /// Port for registering entity types
+    #[allow(dead_code)]
     pub register_entity_type: Arc<dyn RegisterEntityTypePort>,
 
     /// Port for registering action types
+    #[allow(dead_code)]
     pub register_action_type: Arc<dyn RegisterActionTypePort>,
 
     /// Port for building and persisting schemas
     pub build_schema: Arc<dyn BuildSchemaPort>,
 
     /// Port for loading schemas from storage
+    #[allow(dead_code)]
     pub load_schema: Arc<dyn LoadSchemaPort>,
 
     /// Port for validating Cedar policies
     pub validate_policy: Arc<dyn ValidatePolicyPort>,
 
     /// Port for evaluating authorization policies
+    #[allow(dead_code)]
     pub evaluate_policies: Arc<dyn EvaluatePoliciesPort>,
 
     /// Port for playground policy evaluation
@@ -118,7 +124,7 @@ impl AppState {
     ///     root.iam_ports.register_iam_schema,
     /// );
     /// ```
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, dead_code)]
     pub fn new(
         schema_version: String,
         register_entity_type: Arc<dyn RegisterEntityTypePort>,

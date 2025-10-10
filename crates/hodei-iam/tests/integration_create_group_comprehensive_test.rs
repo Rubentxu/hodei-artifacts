@@ -1,12 +1,12 @@
 /// Comprehensive integration tests for create_group feature
 /// Uses only public API from hodei_iam crate
 use hodei_iam::{
-    features::create_group::{self, dto::CreateGroupCommand},
+    features::create_group::{dto::CreateGroupCommand, factories, ports::CreateGroupUseCasePort},
     infrastructure::hrn_generator::UuidHrnGenerator,
     infrastructure::surreal::SurrealGroupAdapter,
-    surrealdb::{Surreal, engine::local::Mem},
 };
 use std::sync::Arc;
+use surrealdb::{Surreal, engine::local::Mem};
 
 #[tokio::test]
 async fn test_create_group_with_valid_name() {
@@ -18,8 +18,7 @@ async fn test_create_group_with_valid_name() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Developers".to_string(),
@@ -45,8 +44,7 @@ async fn test_create_group_multiple_tags() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Admin Team".to_string(),
@@ -77,8 +75,7 @@ async fn test_create_group_no_tags() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Simple Group".to_string(),
@@ -102,8 +99,7 @@ async fn test_create_group_hrn_format() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Test Group".to_string(),
@@ -137,8 +133,7 @@ async fn test_create_group_unique_ids() {
         "iam".to_string(),
         "test-account".to_string(),
     ));
-    let use_case =
-        create_group::di::CreateGroupUseCaseFactory::build(adapter.clone(), hrn_generator.clone());
+    let use_case = factories::create_group_use_case(adapter.clone(), hrn_generator.clone());
 
     let command = CreateGroupCommand {
         group_name: "Same Name".to_string(),

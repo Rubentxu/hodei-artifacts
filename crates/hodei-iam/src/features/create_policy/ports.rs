@@ -173,7 +173,6 @@ pub trait CreatePolicyUseCasePort: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Tests removed - validation types are now re-exported from hodei-policies
 }

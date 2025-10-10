@@ -32,8 +32,8 @@ use surrealdb::{Surreal, engine::local::Mem};
 
 /// Helper to create a use case with SurrealDB adapter pre-populated with test data
 async fn setup_use_case_with_policy() -> (
-    UpdatePolicyUseCase<CedarPolicyValidator, SurrealPolicyAdapter>,
-    Arc<SurrealPolicyAdapter>,
+    UpdatePolicyUseCase<CedarPolicyValidator, SurrealPolicyAdapter<surrealdb::engine::local::Db>>,
+    Arc<SurrealPolicyAdapter<surrealdb::engine::local::Db>>,
 ) {
     let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
     db.use_ns("test").use_db("iam").await.unwrap();
@@ -86,6 +86,7 @@ async fn test_update_policy_content_through_public_api() {
     );
 
     // Verify persistence by listing policies
+    use hodei_iam::features::create_policy::ports::CreatePolicyUseCasePort;
     let list_use_case = hodei_iam::features::list_policies::ListPoliciesUseCase::new(adapter);
     let list_query = hodei_iam::features::list_policies::ListPoliciesQuery::default();
     let list_result = list_use_case.execute(list_query).await.unwrap();
@@ -189,7 +190,7 @@ async fn test_update_nonexistent_policy_returns_not_found() {
 #[tokio::test]
 async fn test_update_with_invalid_cedar_syntax_fails() {
     // Arrange
-    let (use_case, _adapter) = setup_use_case_with_policy().await;
+    let (use_case, adapter) = setup_use_case_with_policy().await;
 
     // Act - Try to update with invalid Cedar syntax
     let invalid_content = "this is not valid cedar syntax at all!!!";
@@ -206,7 +207,6 @@ async fn test_update_with_invalid_cedar_syntax_fails() {
     }
 
     // Verify original policy remains unchanged (atomicity)
-    let (new_use_case, _) = setup_use_case_with_policy().await;
     let list_use_case = hodei_iam::features::list_policies::ListPoliciesUseCase::new(adapter);
     let list_query = hodei_iam::features::list_policies::ListPoliciesQuery::default();
     let list_result = list_use_case.execute(list_query).await.unwrap();

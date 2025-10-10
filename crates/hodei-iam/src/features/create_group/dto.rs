@@ -28,10 +28,10 @@ pub struct GroupPersistenceDto {
 
 impl GroupPersistenceDto {
     /// Create a new GroupPersistenceDto
-    pub fn new(hrn: String, name: String) -> Self {
+    pub fn new(hrn: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
-            hrn,
-            name,
+            hrn: hrn.into(),
+            name: name.into(),
             tags: Vec::new(),
         }
     }

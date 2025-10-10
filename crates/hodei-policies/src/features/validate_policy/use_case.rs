@@ -240,7 +240,7 @@ mod tests {
         let command = ValidatePolicyCommand {
             content: "permit(principal, action, resource);".to_string(),
         };
-        let result = use_case.execute(command).await.unwrap();
+        let _ = use_case.execute(command).await.unwrap();
         // With an empty schema, validation may fail, but we test that schema loading is attempted
         // This is expected behavior until proper schema deserialization is implemented
         // We verify that we got a result without panicking

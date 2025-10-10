@@ -50,15 +50,6 @@ pub fn create_delete_policy_use_case(
 /// # Returns
 ///
 /// Arc<dyn DeletePolicyUseCasePort> - The use case as a trait object
-pub fn create_delete_policy_use_case_from_owned<P>(
-    policy_port: P,
-) -> Arc<dyn DeletePolicyUseCasePort>
-where
-    P: DeletePolicyPort + 'static,
-{
-    info!("Creating DeletePolicy use case from owned dependencies");
-    Arc::new(DeletePolicyUseCase::new(Arc::new(policy_port)))
-}
 
 #[cfg(test)]
 mod tests {
@@ -76,17 +67,6 @@ mod tests {
         let use_case = create_delete_policy_use_case(policy_port);
 
         let command = DeletePolicyCommand::new("test-policy");
-        let result = use_case.execute(command).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_factory_from_owned_works() {
-        let policy_port = MockDeletePolicyPort::with_existing_policies(vec!["owned".to_string()]);
-
-        let use_case = create_delete_policy_use_case_from_owned(policy_port);
-
-        let command = DeletePolicyCommand::new("owned");
         let result = use_case.execute(command).await;
         assert!(result.is_ok());
     }

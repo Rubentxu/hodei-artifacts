@@ -39,34 +39,24 @@ use tracing::{debug, info, warn};
 /// - Collect policies from all groups
 /// - Return all policies as a HodeiPolicySet
 ///
-/// # Type Parameters
-/// * `UF` - User finder implementation
-/// * `GF` - Group finder implementation
-/// * `PF` - Policy finder implementation
-pub struct GetEffectivePoliciesUseCase<UF, GF, PF>
-where
-    UF: UserFinderPort,
-    GF: GroupFinderPort,
-    PF: PolicyFinderPort,
-{
-    user_finder: Arc<UF>,
-    group_finder: Arc<GF>,
-    policy_finder: Arc<PF>,
+pub struct GetEffectivePoliciesUseCase {
+    user_finder: Arc<dyn UserFinderPort>,
+    group_finder: Arc<dyn GroupFinderPort>,
+    policy_finder: Arc<dyn PolicyFinderPort>,
 }
 
-impl<UF, GF, PF> GetEffectivePoliciesUseCase<UF, GF, PF>
-where
-    UF: UserFinderPort,
-    GF: GroupFinderPort,
-    PF: PolicyFinderPort,
-{
+impl GetEffectivePoliciesUseCase {
     /// Create a new instance of the use case
     ///
     /// # Arguments
     /// * `user_finder` - Port for finding users
     /// * `group_finder` - Port for finding groups
     /// * `policy_finder` - Port for finding policies
-    pub fn new(user_finder: Arc<UF>, group_finder: Arc<GF>, policy_finder: Arc<PF>) -> Self {
+    pub fn new(
+        user_finder: Arc<dyn UserFinderPort>,
+        group_finder: Arc<dyn GroupFinderPort>,
+        policy_finder: Arc<dyn PolicyFinderPort>,
+    ) -> Self {
         Self {
             user_finder,
             group_finder,

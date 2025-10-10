@@ -5,7 +5,7 @@
 #[test]
 fn test_crate_compiles() {
     // If this test runs, the crate compiled successfully
-    assert!(true, "hodei-iam crate compiled successfully");
+    // Test passes by compilation
 }
 
 #[test]
@@ -27,5 +27,5 @@ fn test_adapters_can_be_instantiated() {
     // Test that we can create adapter instances
     // Adapters are now implemented with SurrealDB for persistence
     // This test verifies that the crate compiles and basic functionality works
-    assert!(true, "Crate compiled successfully with SurrealDB adapters");
+    // Test passes by compilation
 }

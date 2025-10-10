@@ -1005,7 +1005,7 @@ mod tests {
 
         // Verificar que implementa HodeiEntity
         assert_eq!(principal.hrn().resource_id(), "test-principal");
-        assert_eq!(TestPrincipal::is_principal_type(), true);
+        assert!(TestPrincipal::is_principal_type());
     }
 
     #[test]
@@ -1020,7 +1020,7 @@ mod tests {
 
         // Verificar que implementa HodeiEntity
         assert_eq!(resource.hrn().resource_id(), "test-resource");
-        assert_eq!(TestResource::is_resource_type(), true);
+        assert!(TestResource::is_resource_type());
     }
 
     // ========================================================================
@@ -1030,7 +1030,7 @@ mod tests {
     #[test]
     fn entity_type_is_resource_by_default() {
         // TestUser no sobrescribe is_resource_type, debería ser true por defecto
-        assert_eq!(TestUser::is_resource_type(), true);
+        assert!(TestUser::is_resource_type());
     }
 
     #[test]
@@ -1048,9 +1048,9 @@ mod tests {
         }
 
         // is_principal_type() debería ser false por defecto
-        assert_eq!(DefaultEntity::is_principal_type(), false);
+        assert!(!DefaultEntity::is_principal_type());
         // is_resource_type() debería ser true por defecto
-        assert_eq!(DefaultEntity::is_resource_type(), true);
+        assert!(DefaultEntity::is_resource_type());
     }
 
     // ========================================================================
@@ -1081,7 +1081,7 @@ mod tests {
 
         async fn load_all_policies(&self) -> Result<Vec<(String, String)>, PolicyStorageError> {
             Err(PolicyStorageError::ProviderError(Box::new(
-                std::io::Error::new(std::io::ErrorKind::Other, "Provider error"),
+                std::io::Error::other("Provider error"),
             )))
         }
     }

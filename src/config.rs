@@ -3,7 +3,7 @@
 //! This module handles loading and managing application configuration
 //! from multiple sources with hierarchical precedence and validation.
 
-use ::config::{Config, ConfigError, File, Environment};
+use ::config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -16,7 +16,7 @@ use std::env;
 /// 3. config/{RUN_MODE}.toml
 /// 4. config/default.toml
 /// 5. Hardcoded defaults
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     /// Server configuration
     pub server: ServerConfig,
@@ -119,17 +119,7 @@ pub struct RocksDbConfig {
     pub write_buffer_size: usize,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            database: DatabaseConfig::default(),
-            schema: SchemaConfig::default(),
-            logging: LoggingConfig::default(),
-            rocksdb: RocksDbConfig::default(),
-        }
-    }
-}
+// Default derived for AppConfig
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -202,7 +192,7 @@ impl AppConfig {
     /// A validated AppConfig instance or a ConfigError with clear messages
     pub fn new() -> Result<Self, ConfigError> {
         let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
-        
+
         let s = Config::builder()
             // Default values (lowest precedence)
             .add_source(File::with_name("config/default").required(false))
@@ -213,12 +203,12 @@ impl AppConfig {
             // Environment variables with HODEI_ prefix (highest precedence)
             .add_source(Environment::with_prefix("HODEI").separator("__"))
             .build()?;
-        
+
         let app_config: AppConfig = s.try_deserialize()?;
-        
+
         // Validate the configuration
         app_config.validate()?;
-        
+
         Ok(app_config)
     }
 
@@ -251,25 +241,25 @@ impl ServerConfig {
                 "Server port cannot be 0. Please set HODEI_SERVER__PORT to a valid port number (1-65535)".to_string()
             ));
         }
-        
+
         if self.host.is_empty() {
             return Err(ConfigError::Message(
-                "Server host cannot be empty. Please set HODEI_SERVER__HOST".to_string()
+                "Server host cannot be empty. Please set HODEI_SERVER__HOST".to_string(),
             ));
         }
-        
+
         if self.request_timeout_secs == 0 {
             return Err(ConfigError::Message(
                 "Request timeout cannot be 0. Please set HODEI_SERVER__REQUEST_TIMEOUT_SECS to a positive value".to_string()
             ));
         }
-        
+
         if self.max_body_size == 0 {
             return Err(ConfigError::Message(
                 "Max body size cannot be 0. Please set HODEI_SERVER__MAX_BODY_SIZE to a positive value".to_string()
             ));
         }
-        
+
         Ok(())
     }
 }
@@ -283,25 +273,26 @@ impl DatabaseConfig {
                 self.db_type
             )));
         }
-        
+
         if self.namespace.is_none() || self.namespace.as_ref().unwrap().is_empty() {
             return Err(ConfigError::Message(
-                "Database namespace cannot be empty. Please set HODEI_DATABASE__NAMESPACE".to_string()
+                "Database namespace cannot be empty. Please set HODEI_DATABASE__NAMESPACE"
+                    .to_string(),
             ));
         }
-        
+
         if self.database.is_none() || self.database.as_ref().unwrap().is_empty() {
             return Err(ConfigError::Message(
-                "Database name cannot be empty. Please set HODEI_DATABASE__DATABASE".to_string()
+                "Database name cannot be empty. Please set HODEI_DATABASE__DATABASE".to_string(),
             ));
         }
-        
+
         if self.pool_size == 0 {
             return Err(ConfigError::Message(
                 "Database pool size cannot be 0. Please set HODEI_DATABASE__POOL_SIZE to a positive value".to_string()
             ));
         }
-        
+
         Ok(())
     }
 }
@@ -311,10 +302,11 @@ impl RocksDbConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.path.is_empty() {
             return Err(ConfigError::Message(
-                "RocksDB path cannot be empty. Please set HODEI_ROCKSDB__PATH to a valid file path".to_string()
+                "RocksDB path cannot be empty. Please set HODEI_ROCKSDB__PATH to a valid file path"
+                    .to_string(),
             ));
         }
-        
+
         // Validate that path is not an existing directory
         let path = std::path::Path::new(&self.path);
         if path.exists() && path.is_dir() {
@@ -323,7 +315,7 @@ impl RocksDbConfig {
                 self.path
             )));
         }
-        
+
         // Validate parent directory permissions
         if let Some(parent) = path.parent() {
             if !parent.exists() {
@@ -331,7 +323,8 @@ impl RocksDbConfig {
                 if let Err(e) = std::fs::create_dir_all(parent) {
                     return Err(ConfigError::Message(format!(
                         "Cannot create RocksDB directory '{}': {}. Please check permissions or set HODEI_ROCKSDB__PATH to a writable location",
-                        parent.display(), e
+                        parent.display(),
+                        e
                     )));
                 }
             } else {
@@ -340,25 +333,26 @@ impl RocksDbConfig {
                 if let Err(e) = std::fs::write(&test_file, "test") {
                     return Err(ConfigError::Message(format!(
                         "RocksDB directory '{}' is not writable: {}. Please check permissions",
-                        parent.display(), e
+                        parent.display(),
+                        e
                     )));
                 }
                 let _ = std::fs::remove_file(test_file); // Clean up test file
             }
         }
-        
+
         if self.max_open_files <= 0 {
             return Err(ConfigError::Message(
                 "RocksDB max_open_files must be positive. Please set HODEI_ROCKSDB__MAX_OPEN_FILES to a value > 0".to_string()
             ));
         }
-        
+
         if self.write_buffer_size == 0 {
             return Err(ConfigError::Message(
                 "RocksDB write_buffer_size cannot be 0. Please set HODEI_ROCKSDB__WRITE_BUFFER_SIZE to a positive value".to_string()
             ));
         }
-        
+
         Ok(())
     }
 }
@@ -370,18 +364,20 @@ impl LoggingConfig {
         if !valid_levels.contains(&self.level.as_str()) {
             return Err(ConfigError::Message(format!(
                 "Invalid log level '{}'. Valid values: {}. Please set HODEI_LOGGING__LEVEL to one of these",
-                self.level, valid_levels.join(", ")
+                self.level,
+                valid_levels.join(", ")
             )));
         }
-        
+
         let valid_formats = ["pretty", "json", "compact"];
         if !valid_formats.contains(&self.format.as_str()) {
             return Err(ConfigError::Message(format!(
                 "Invalid log format '{}'. Valid values: {}. Please set HODEI_LOGGING__FORMAT to one of these",
-                self.format, valid_formats.join(", ")
+                self.format,
+                valid_formats.join(", ")
             )));
         }
-        
+
         Ok(())
     }
 }

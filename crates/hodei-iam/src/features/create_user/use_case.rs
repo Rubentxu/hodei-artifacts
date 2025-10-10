@@ -13,18 +13,18 @@ use std::sync::Arc;
 /// 2. Creates a User entity
 /// 3. Persists the user through the port
 /// 4. Returns a UserView DTO
-pub struct CreateUserUseCase<P: CreateUserPort, G: HrnGenerator> {
-    persister: Arc<P>,
-    hrn_generator: Arc<G>,
+pub struct CreateUserUseCase {
+    persister: Arc<dyn CreateUserPort>,
+    hrn_generator: Arc<dyn HrnGenerator>,
 }
 
-impl<P: CreateUserPort, G: HrnGenerator> CreateUserUseCase<P, G> {
+impl CreateUserUseCase {
     /// Create a new instance of the use case
     ///
     /// # Arguments
     /// * `persister` - Implementation of CreateUserPort for persistence
     /// * `hrn_generator` - Implementation of HrnGenerator for HRN generation
-    pub fn new(persister: Arc<P>, hrn_generator: Arc<G>) -> Self {
+    pub fn new(persister: Arc<dyn CreateUserPort>, hrn_generator: Arc<dyn HrnGenerator>) -> Self {
         Self {
             persister,
             hrn_generator,
@@ -68,7 +68,7 @@ impl<P: CreateUserPort, G: HrnGenerator> CreateUserUseCase<P, G> {
 }
 
 #[async_trait]
-impl<P: CreateUserPort, G: HrnGenerator> CreateUserUseCasePort for CreateUserUseCase<P, G> {
+impl CreateUserUseCasePort for CreateUserUseCase {
     async fn execute(&self, command: CreateUserCommand) -> Result<UserView, CreateUserError> {
         self.execute(command).await
     }

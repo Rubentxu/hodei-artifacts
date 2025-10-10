@@ -12,20 +12,24 @@ use std::sync::Arc;
 /// 2. Finds the user and group
 /// 3. Adds the user to the group
 /// 4. Persists the updated user
-pub struct AddUserToGroupUseCase<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> {
-    user_finder: Arc<UF>,
-    group_finder: Arc<GF>,
-    user_persister: Arc<UP>,
+pub struct AddUserToGroupUseCase {
+    user_finder: Arc<dyn UserFinder>,
+    group_finder: Arc<dyn GroupFinder>,
+    user_persister: Arc<dyn UserGroupPersister>,
 }
 
-impl<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> AddUserToGroupUseCase<UF, GF, UP> {
+impl AddUserToGroupUseCase {
     /// Create a new instance of the use case
     ///
     /// # Arguments
     /// * `user_finder` - Implementation of UserFinder for user lookup
     /// * `group_finder` - Implementation of GroupFinder for group lookup
     /// * `user_persister` - Implementation of UserGroupPersister for user persistence
-    pub fn new(user_finder: Arc<UF>, group_finder: Arc<GF>, user_persister: Arc<UP>) -> Self {
+    pub fn new(
+        user_finder: Arc<dyn UserFinder>,
+        group_finder: Arc<dyn GroupFinder>,
+        user_persister: Arc<dyn UserGroupPersister>,
+    ) -> Self {
         Self {
             user_finder,
             group_finder,
@@ -86,9 +90,7 @@ impl<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> AddUserToGroupUseC
 }
 
 #[async_trait]
-impl<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> AddUserToGroupUseCasePort
-    for AddUserToGroupUseCase<UF, GF, UP>
-{
+impl AddUserToGroupUseCasePort for AddUserToGroupUseCase {
     async fn execute(&self, command: AddUserToGroupCommand) -> Result<(), AddUserToGroupError> {
         self.execute(command).await
     }
