@@ -7,7 +7,7 @@ set -e  # Exit on any error
 
 # Configuration
 API_BASE_URL="http://localhost:3000"
-SWAGGER_UI_URL="$API_BASE_URL/swagger-ui"
+SWAGGER_UI_URL="$API_BASE_URL/swagger-ui/"
 OPENAPI_SPEC_URL="$API_BASE_URL/api-docs/openapi.json"
 HEALTH_URL="$API_BASE_URL/health"
 SERVER_PID=""
@@ -70,8 +70,8 @@ start_server() {
         exit 1
     fi
 
-    # Start server in background
-    cargo run --release &
+    # Start server in background with release mode
+    RUN_MODE=release /home/Ruben/Proyectos/rust/hodei-artifacts/target/release/hodei-artifacts-api &
     SERVER_PID=$!
 
     log_info "Server started with PID: $SERVER_PID"

@@ -54,4 +54,5 @@ echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
 echo
 
 # Start the server
-cargo run --release
+# Use development mode for configuration compatibility
+RUN_MODE=development cargo run

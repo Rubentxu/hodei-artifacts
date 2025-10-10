@@ -2,7 +2,7 @@
 //!
 //! This is the main entry point for the Hodei Artifacts API server.
 //! It handles:
-//! - Application configuration loading
+//! - Application configuration loading with config-rs
 //! - Logging initialization
 //! - Bootstrap and dependency injection (composition root)
 //! - Axum server setup and routing
@@ -16,7 +16,7 @@ mod handlers;
 mod openapi;
 
 use crate::bootstrap::{BootstrapConfig, bootstrap};
-use crate::config::Config;
+use crate::config::AppConfig;
 use crate::handlers::health::health_check;
 use crate::openapi::create_api_doc;
 use axum::{
@@ -35,9 +35,25 @@ use utoipa_swagger_ui::SwaggerUi;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Load configuration
-    let config = Config::from_env();
-    config.validate()?;
+    // 1. Load configuration with config-rs
+    let config = match AppConfig::new() {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("❌ Configuration error: {}", e);
+            eprintln!();
+            eprintln!("💡 Configuration tips:");
+            eprintln!("   - Set environment variables with HODEI_ prefix");
+            eprintln!("   - Create config/default.toml for default values");
+            eprintln!("   - Use RUN_MODE=development for development settings");
+            eprintln!();
+            eprintln!("📖 Example environment variables:");
+            eprintln!("   HODEI_SERVER__PORT=3000");
+            eprintln!("   HODEI_ROCKSDB__PATH=./data/hodei.rocksdb");
+            eprintln!("   HODEI_DATABASE__NAMESPACE=hodei");
+            eprintln!("   HODEI_DATABASE__DATABASE=artifacts");
+            std::process::exit(1);
+        }
+    };
 
     // 2. Initialize logging
     initialize_logging(&config)?;
@@ -46,6 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("📋 Configuration loaded");
     info!("   Server: {}", config.server_address());
     info!("   Database: {}", config.database.db_type);
+    info!("   RocksDB path: {}", config.rocksdb.path);
     info!("   Schema storage: {}", config.schema.storage_type);
     info!(
         "   IAM schema registration: {}",
@@ -59,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         validate_schemas: config.schema.validate,
     };
 
-    let app_state = bootstrap(bootstrap_config).await.map_err(|e| {
+    let app_state = bootstrap(&config, bootstrap_config).await.map_err(|e| {
         eprintln!("Bootstrap failed: {}", e);
         std::process::exit(1);
     })?;
@@ -85,7 +102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Initialize logging based on configuration
-fn initialize_logging(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+fn initialize_logging(config: &AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(format!(
             "hodei_artifacts_api={},hodei_iam={},hodei_policies={},kernel={}",
@@ -119,7 +136,7 @@ fn initialize_logging(config: &Config) -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Build the Axum router with all routes and middleware
-fn build_router(app_state: crate::app_state::AppState, config: &Config) -> Router {
+fn build_router(app_state: crate::app_state::AppState, config: &AppConfig) -> Router {
     Router::new()
         // Health check endpoint
         .route("/health", get(health_check))
@@ -217,17 +234,32 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_config_validation() {
-        let config = Config::default();
+        let config = AppConfig::default();
         assert!(config.validate().is_ok());
     }
 
     #[tokio::test]
     async fn test_bootstrap() {
-        let bootstrap_config = BootstrapConfig::default();
-        let result = bootstrap(bootstrap_config).await;
-        assert!(result.is_ok(), "Bootstrap should succeed");
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test.rocksdb");
+        
+        let mut config = AppConfig::default();
+        config.rocksdb.path = db_path.to_string_lossy().to_string();
+        
+        let bootstrap_config = BootstrapConfig {
+            register_iam_schema: false, // Skip IAM registration for faster tests
+            schema_version: None,
+            validate_schemas: false,
+        };
+
+        let result = bootstrap(&config, bootstrap_config).await;
+        assert!(result.is_ok(), "Bootstrap should succeed with RocksDB");
+        
+        // Clean up
+        drop(temp_dir);
     }
 }

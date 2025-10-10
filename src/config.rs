@@ -1,18 +1,23 @@
 //! Configuration module for Hodei Artifacts API
 //!
 //! This module handles loading and managing application configuration
-//! from environment variables, configuration files, and defaults.
+//! from multiple sources with hierarchical precedence and validation.
 
+use ::config::{Config, ConfigError, File, Environment};
 use serde::{Deserialize, Serialize};
 use std::env;
 
-/// Application configuration
+/// Main application configuration
 ///
 /// This struct holds all configuration parameters for the Hodei Artifacts API.
-/// Configuration can be loaded from environment variables, configuration files,
-/// or use sensible defaults.
+/// Configuration is loaded from multiple sources with the following precedence:
+/// 1. Environment variables (HODEI_ prefix)
+/// 2. config/local.toml
+/// 3. config/{RUN_MODE}.toml
+/// 4. config/default.toml
+/// 5. Hardcoded defaults
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
+pub struct AppConfig {
     /// Server configuration
     pub server: ServerConfig,
 
@@ -24,6 +29,9 @@ pub struct Config {
 
     /// Logging configuration
     pub logging: LoggingConfig,
+
+    /// RocksDB specific configuration
+    pub rocksdb: RocksDbConfig,
 }
 
 /// Server configuration
@@ -45,11 +53,8 @@ pub struct ServerConfig {
 /// Database configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
-    /// Database type (e.g., "surrealdb", "in-memory")
+    /// Database type (only "rocksdb" supported)
     pub db_type: String,
-
-    /// Database connection URL
-    pub url: String,
 
     /// Database namespace
     pub namespace: Option<String>,
@@ -64,7 +69,7 @@ pub struct DatabaseConfig {
 /// Schema configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaConfig {
-    /// Whether to register IAM schema on startup (default: true)
+    /// Whether to register IAM schema on startup (default: false)
     pub register_iam_on_startup: bool,
 
     /// Specific schema version to use (optional)
@@ -73,7 +78,7 @@ pub struct SchemaConfig {
     /// Whether to validate schemas after building (default: true)
     pub validate: bool,
 
-    /// Schema storage type (e.g., "in-memory", "surrealdb")
+    /// Schema storage type (default: "rocksdb")
     pub storage_type: String,
 }
 
@@ -95,13 +100,33 @@ pub struct LoggingConfig {
     pub include_location: bool,
 }
 
-impl Default for Config {
+/// RocksDB specific configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RocksDbConfig {
+    /// Path to RocksDB database file (default: "./data/hodei.rocksdb")
+    pub path: String,
+
+    /// Create database if it doesn't exist (default: true)
+    pub create_if_missing: bool,
+
+    /// Enable compression (default: true)
+    pub compression: bool,
+
+    /// Maximum number of open files (default: 1000)
+    pub max_open_files: i32,
+
+    /// Write buffer size in bytes (default: 64MB)
+    pub write_buffer_size: usize,
+}
+
+impl Default for AppConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig::default(),
             database: DatabaseConfig::default(),
             schema: SchemaConfig::default(),
             logging: LoggingConfig::default(),
+            rocksdb: RocksDbConfig::default(),
         }
     }
 }
@@ -120,8 +145,7 @@ impl Default for ServerConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            db_type: "surrealdb".to_string(),
-            url: "memory://".to_string(),
+            db_type: "rocksdb".to_string(),
             namespace: Some("hodei".to_string()),
             database: Some("artifacts".to_string()),
             pool_size: 10,
@@ -135,7 +159,7 @@ impl Default for SchemaConfig {
             register_iam_on_startup: false,
             version: None,
             validate: true,
-            storage_type: "surrealdb".to_string(),
+            storage_type: "rocksdb".to_string(),
         }
     }
 }
@@ -151,152 +175,63 @@ impl Default for LoggingConfig {
     }
 }
 
-impl Config {
-    /// Load configuration from environment variables
+impl Default for RocksDbConfig {
+    fn default() -> Self {
+        Self {
+            path: "./target/debug/data/hodei.rocksdb".to_string(),
+            create_if_missing: true,
+            compression: true,
+            max_open_files: 1000,
+            write_buffer_size: 64 * 1024 * 1024, // 64MB
+        }
+    }
+}
+
+impl AppConfig {
+    /// Load configuration from multiple sources with hierarchical precedence
     ///
-    /// This method loads configuration from environment variables with sensible defaults.
-    /// Environment variables follow the pattern: HODEI_<SECTION>_<KEY>
-    ///
-    /// # Examples
-    ///
-    /// - `HODEI_SERVER_HOST=127.0.0.1`
-    /// - `HODEI_SERVER_PORT=8080`
-    /// - `HODEI_DATABASE_URL=ws://localhost:8000`
-    /// - `HODEI_SCHEMA_REGISTER_IAM_ON_STARTUP=false`
-    /// - `HODEI_LOGGING_LEVEL=debug`
+    /// Sources (in order of precedence, highest first):
+    /// 1. Environment variables (HODEI_ prefix)
+    /// 2. config/local.toml
+    /// 3. config/{RUN_MODE}.toml
+    /// 4. config/default.toml
+    /// 5. Hardcoded defaults
     ///
     /// # Returns
     ///
-    /// A Config instance with values loaded from environment or defaults
-    pub fn from_env() -> Self {
-        let mut config = Self::default();
-
-        // Server configuration
-        if let Ok(host) = env::var("HODEI_SERVER_HOST") {
-            config.server.host = host;
-        }
-        if let Ok(port) = env::var("HODEI_SERVER_PORT") {
-            if let Ok(port) = port.parse() {
-                config.server.port = port;
-            }
-        }
-        if let Ok(timeout) = env::var("HODEI_SERVER_REQUEST_TIMEOUT_SECS") {
-            if let Ok(timeout) = timeout.parse() {
-                config.server.request_timeout_secs = timeout;
-            }
-        }
-        if let Ok(max_size) = env::var("HODEI_SERVER_MAX_BODY_SIZE") {
-            if let Ok(max_size) = max_size.parse() {
-                config.server.max_body_size = max_size;
-            }
-        }
-
-        // Database configuration
-        if let Ok(db_type) = env::var("HODEI_DATABASE_TYPE") {
-            config.database.db_type = db_type;
-        }
-        if let Ok(url) = env::var("HODEI_DATABASE_URL") {
-            config.database.url = url;
-        }
-        if let Ok(ns) = env::var("HODEI_DATABASE_NAMESPACE") {
-            config.database.namespace = Some(ns);
-        }
-        if let Ok(db) = env::var("HODEI_DATABASE_NAME") {
-            config.database.database = Some(db);
-        }
-        if let Ok(pool_size) = env::var("HODEI_DATABASE_POOL_SIZE") {
-            if let Ok(pool_size) = pool_size.parse() {
-                config.database.pool_size = pool_size;
-            }
-        }
-
-        // Schema configuration
-        if let Ok(register) = env::var("HODEI_SCHEMA_REGISTER_IAM_ON_STARTUP") {
-            config.schema.register_iam_on_startup =
-                register.to_lowercase() == "true" || register == "1";
-        }
-        if let Ok(version) = env::var("HODEI_SCHEMA_VERSION") {
-            config.schema.version = Some(version);
-        }
-        if let Ok(validate) = env::var("HODEI_SCHEMA_VALIDATE") {
-            config.schema.validate = validate.to_lowercase() == "true" || validate == "1";
-        }
-        if let Ok(storage) = env::var("HODEI_SCHEMA_STORAGE_TYPE") {
-            config.schema.storage_type = storage;
-        }
-
-        // Logging configuration
-        if let Ok(level) = env::var("HODEI_LOGGING_LEVEL") {
-            config.logging.level = level;
-        }
-        if let Ok(format) = env::var("HODEI_LOGGING_FORMAT") {
-            config.logging.format = format;
-        }
-        if let Ok(timestamps) = env::var("HODEI_LOGGING_INCLUDE_TIMESTAMPS") {
-            config.logging.include_timestamps =
-                timestamps.to_lowercase() == "true" || timestamps == "1";
-        }
-        if let Ok(location) = env::var("HODEI_LOGGING_INCLUDE_LOCATION") {
-            config.logging.include_location = location.to_lowercase() == "true" || location == "1";
-        }
-
-        config
+    /// A validated AppConfig instance or a ConfigError with clear messages
+    pub fn new() -> Result<Self, ConfigError> {
+        let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
+        
+        let s = Config::builder()
+            // Default values (lowest precedence)
+            .add_source(File::with_name("config/default").required(false))
+            // Environment-specific configuration
+            .add_source(File::with_name(&format!("config/{}", run_mode)).required(false))
+            // Local overrides (higher precedence)
+            .add_source(File::with_name("config/local").required(false))
+            // Environment variables with HODEI_ prefix (highest precedence)
+            .add_source(Environment::with_prefix("HODEI").separator("__"))
+            .build()?;
+        
+        let app_config: AppConfig = s.try_deserialize()?;
+        
+        // Validate the configuration
+        app_config.validate()?;
+        
+        Ok(app_config)
     }
 
-    /// Validate the configuration
-    ///
-    /// This method checks if the configuration values are valid and consistent.
+    /// Validate the entire configuration
     ///
     /// # Returns
     ///
-    /// Ok(()) if configuration is valid, Err with a description if invalid
-    pub fn validate(&self) -> Result<(), String> {
-        // Validate server config
-        if self.server.port == 0 {
-            return Err("Server port cannot be 0".to_string());
-        }
-        if self.server.request_timeout_secs == 0 {
-            return Err("Request timeout cannot be 0".to_string());
-        }
-        if self.server.max_body_size == 0 {
-            return Err("Max body size cannot be 0".to_string());
-        }
-
-        // Validate database config
-        if self.database.db_type.is_empty() {
-            return Err("Database type cannot be empty".to_string());
-        }
-        if self.database.url.is_empty() {
-            return Err("Database URL cannot be empty".to_string());
-        }
-        if self.database.pool_size == 0 {
-            return Err("Database pool size cannot be 0".to_string());
-        }
-
-        // Validate schema config
-        if self.schema.storage_type.is_empty() {
-            return Err("Schema storage type cannot be empty".to_string());
-        }
-
-        // Validate logging config
-        let valid_levels = ["trace", "debug", "info", "warn", "error"];
-        if !valid_levels.contains(&self.logging.level.as_str()) {
-            return Err(format!(
-                "Invalid log level '{}'. Valid values: {}",
-                self.logging.level,
-                valid_levels.join(", ")
-            ));
-        }
-
-        let valid_formats = ["pretty", "json", "compact"];
-        if !valid_formats.contains(&self.logging.format.as_str()) {
-            return Err(format!(
-                "Invalid log format '{}'. Valid values: {}",
-                self.logging.format,
-                valid_formats.join(", ")
-            ));
-        }
-
+    /// Ok(()) if configuration is valid, ConfigError with clear message if invalid
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        self.server.validate()?;
+        self.database.validate()?;
+        self.rocksdb.validate()?;
+        self.logging.validate()?;
         Ok(())
     }
 
@@ -308,65 +243,204 @@ impl Config {
     }
 }
 
+impl ServerConfig {
+    /// Validate server configuration
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.port == 0 {
+            return Err(ConfigError::Message(
+                "Server port cannot be 0. Please set HODEI_SERVER__PORT to a valid port number (1-65535)".to_string()
+            ));
+        }
+        
+        if self.host.is_empty() {
+            return Err(ConfigError::Message(
+                "Server host cannot be empty. Please set HODEI_SERVER__HOST".to_string()
+            ));
+        }
+        
+        if self.request_timeout_secs == 0 {
+            return Err(ConfigError::Message(
+                "Request timeout cannot be 0. Please set HODEI_SERVER__REQUEST_TIMEOUT_SECS to a positive value".to_string()
+            ));
+        }
+        
+        if self.max_body_size == 0 {
+            return Err(ConfigError::Message(
+                "Max body size cannot be 0. Please set HODEI_SERVER__MAX_BODY_SIZE to a positive value".to_string()
+            ));
+        }
+        
+        Ok(())
+    }
+}
+
+impl DatabaseConfig {
+    /// Validate database configuration
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.db_type != "rocksdb" {
+            return Err(ConfigError::Message(format!(
+                "Unsupported database type '{}'. Only 'rocksdb' is supported. Please set HODEI_DATABASE__DB_TYPE to 'rocksdb'",
+                self.db_type
+            )));
+        }
+        
+        if self.namespace.is_none() || self.namespace.as_ref().unwrap().is_empty() {
+            return Err(ConfigError::Message(
+                "Database namespace cannot be empty. Please set HODEI_DATABASE__NAMESPACE".to_string()
+            ));
+        }
+        
+        if self.database.is_none() || self.database.as_ref().unwrap().is_empty() {
+            return Err(ConfigError::Message(
+                "Database name cannot be empty. Please set HODEI_DATABASE__DATABASE".to_string()
+            ));
+        }
+        
+        if self.pool_size == 0 {
+            return Err(ConfigError::Message(
+                "Database pool size cannot be 0. Please set HODEI_DATABASE__POOL_SIZE to a positive value".to_string()
+            ));
+        }
+        
+        Ok(())
+    }
+}
+
+impl RocksDbConfig {
+    /// Validate RocksDB configuration
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.path.is_empty() {
+            return Err(ConfigError::Message(
+                "RocksDB path cannot be empty. Please set HODEI_ROCKSDB__PATH to a valid file path".to_string()
+            ));
+        }
+        
+        // Validate that path is not an existing directory
+        let path = std::path::Path::new(&self.path);
+        if path.exists() && path.is_dir() {
+            return Err(ConfigError::Message(format!(
+                "RocksDB path '{}' is a directory, but should be a file path. Please provide a valid file path like './data/hodei.rocksdb'",
+                self.path
+            )));
+        }
+        
+        // Validate parent directory permissions
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                // Try to create directory to validate permissions
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    return Err(ConfigError::Message(format!(
+                        "Cannot create RocksDB directory '{}': {}. Please check permissions or set HODEI_ROCKSDB__PATH to a writable location",
+                        parent.display(), e
+                    )));
+                }
+            } else {
+                // Check if directory is writable
+                let test_file = parent.join(".hodei_test_write");
+                if let Err(e) = std::fs::write(&test_file, "test") {
+                    return Err(ConfigError::Message(format!(
+                        "RocksDB directory '{}' is not writable: {}. Please check permissions",
+                        parent.display(), e
+                    )));
+                }
+                let _ = std::fs::remove_file(test_file); // Clean up test file
+            }
+        }
+        
+        if self.max_open_files <= 0 {
+            return Err(ConfigError::Message(
+                "RocksDB max_open_files must be positive. Please set HODEI_ROCKSDB__MAX_OPEN_FILES to a value > 0".to_string()
+            ));
+        }
+        
+        if self.write_buffer_size == 0 {
+            return Err(ConfigError::Message(
+                "RocksDB write_buffer_size cannot be 0. Please set HODEI_ROCKSDB__WRITE_BUFFER_SIZE to a positive value".to_string()
+            ));
+        }
+        
+        Ok(())
+    }
+}
+
+impl LoggingConfig {
+    /// Validate logging configuration
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let valid_levels = ["trace", "debug", "info", "warn", "error"];
+        if !valid_levels.contains(&self.level.as_str()) {
+            return Err(ConfigError::Message(format!(
+                "Invalid log level '{}'. Valid values: {}. Please set HODEI_LOGGING__LEVEL to one of these",
+                self.level, valid_levels.join(", ")
+            )));
+        }
+        
+        let valid_formats = ["pretty", "json", "compact"];
+        if !valid_formats.contains(&self.format.as_str()) {
+            return Err(ConfigError::Message(format!(
+                "Invalid log format '{}'. Valid values: {}. Please set HODEI_LOGGING__FORMAT to one of these",
+                self.format, valid_formats.join(", ")
+            )));
+        }
+        
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_default_config() {
-        let config = Config::default();
+        let config = AppConfig::default();
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 3000);
-        assert_eq!(config.database.db_type, "surrealdb");
-        assert!(config.schema.register_iam_on_startup);
+        assert_eq!(config.database.db_type, "rocksdb");
+        assert!(!config.schema.register_iam_on_startup);
         assert_eq!(config.logging.level, "info");
+        assert_eq!(config.rocksdb.path, "./target/debug/data/hodei.rocksdb");
     }
 
     #[test]
     fn test_config_validation() {
-        let config = Config::default();
+        let config = AppConfig::default();
         assert!(config.validate().is_ok());
 
-        let mut invalid_config = Config::default();
+        let mut invalid_config = AppConfig::default();
         invalid_config.server.port = 0;
         assert!(invalid_config.validate().is_err());
 
-        let mut invalid_config = Config::default();
+        let mut invalid_config = AppConfig::default();
+        invalid_config.database.db_type = "postgres".to_string();
+        assert!(invalid_config.validate().is_err());
+
+        let mut invalid_config = AppConfig::default();
         invalid_config.logging.level = "invalid".to_string();
         assert!(invalid_config.validate().is_err());
     }
 
     #[test]
     fn test_server_address() {
-        let config = Config::default();
+        let config = AppConfig::default();
         assert_eq!(config.server_address(), "0.0.0.0:3000");
 
-        let mut config = Config::default();
+        let mut config = AppConfig::default();
         config.server.host = "127.0.0.1".to_string();
         config.server.port = 8080;
         assert_eq!(config.server_address(), "127.0.0.1:8080");
     }
 
     #[test]
-    fn test_from_env() {
-        // Set some environment variables
-        unsafe {
-            env::set_var("HODEI_SERVER_PORT", "8080");
-            env::set_var("HODEI_LOGGING_LEVEL", "debug");
-            env::set_var("HODEI_SCHEMA_REGISTER_IAM_ON_STARTUP", "false");
-        }
+    fn test_rocksdb_validation() {
+        let config = RocksDbConfig::default();
+        assert!(config.validate().is_ok());
 
-        let config = Config::from_env();
+        let mut invalid_config = RocksDbConfig::default();
+        invalid_config.path = "".to_string();
+        assert!(invalid_config.validate().is_err());
 
-        assert_eq!(config.server.port, 8080);
-        assert_eq!(config.logging.level, "debug");
-        assert!(!config.schema.register_iam_on_startup);
-
-        // Clean up
-        unsafe {
-            env::remove_var("HODEI_SERVER_PORT");
-            env::remove_var("HODEI_LOGGING_LEVEL");
-            env::remove_var("HODEI_SCHEMA_REGISTER_IAM_ON_STARTUP");
-        }
+        let mut invalid_config = RocksDbConfig::default();
+        invalid_config.max_open_files = 0;
+        assert!(invalid_config.validate().is_err());
     }
 }

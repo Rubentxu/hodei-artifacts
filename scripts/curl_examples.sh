@@ -73,16 +73,16 @@ echo -e "${GREEN}4. Policy Validation & Evaluation${NC}"
 
 # Validate Policy
 echo "Validating policy..."
-curl -X POST "$API_BASE_URL/api/v1/policies/validate" \
+curl -s -X POST "$API_BASE_URL/api/v1/policies/validate" \
   -H "Content-Type: application/json" \
   -d '{
     "policy": "permit(principal == User::\"alice\", action == Action::\"read\", resource == File::\"report.pdf\");"
-  }' | jq '.'
+  }' | jq '.' 2>/dev/null || echo "Response not valid JSON"
 echo
 
 # Evaluate Policies
 echo "Evaluating policies..."
-curl -X POST "$API_BASE_URL/api/v1/policies/evaluate" \
+curl -s -X POST "$API_BASE_URL/api/v1/policies/evaluate" \
   -H "Content-Type: application/json" \
   -d '{
     "principal": "User::\"alice\"",
@@ -92,7 +92,7 @@ curl -X POST "$API_BASE_URL/api/v1/policies/evaluate" \
       "ip_address": "192.168.1.100",
       "time_of_day": "09:00"
     }
-  }' | jq '.'
+  }' | jq '.' 2>/dev/null || echo "Response not valid JSON"
 echo
 
 # 5. IAM Policy Management
@@ -113,35 +113,35 @@ CREATE_RESPONSE=$(curl -s -X POST "$API_BASE_URL/api/v1/iam/policies" \
     "policy": "permit(principal in Group::\"admins\", action, resource);"
   }')
 
-echo "$CREATE_RESPONSE" | jq '.'
-POLICY_ID=$(echo "$CREATE_RESPONSE" | jq -r '.id // empty')
+echo "$CREATE_RESPONSE" | jq '.' 2>/dev/null || echo "Response not valid JSON"
+POLICY_ID=$(echo "$CREATE_RESPONSE" | jq -r '.id // empty' 2>/dev/null || echo "")
 echo
 
-if [ ! -z "$POLICY_ID" ]; then
+if [ ! -z "$POLICY_ID" ] && [ "$POLICY_ID" != "null" ]; then
   # Get Policy
   echo "Getting IAM policy..."
-  curl -X POST "$API_BASE_URL/api/v1/iam/policies/get" \
+  curl -s -X POST "$API_BASE_URL/api/v1/iam/policies/get" \
     -H "Content-Type: application/json" \
-    -d "{\"id\": \"$POLICY_ID\"}" | jq '.'
+    -d "{\"id\": \"$POLICY_ID\"}" | jq '.' 2>/dev/null || echo "Response not valid JSON"
   echo
 
   # Update Policy
   echo "Updating IAM policy..."
-  curl -X PUT "$API_BASE_URL/api/v1/iam/policies/update" \
+  curl -s -X PUT "$API_BASE_URL/api/v1/iam/policies/update" \
     -H "Content-Type: application/json" \
     -d "{
       \"id\": \"$POLICY_ID\",
       \"name\": \"admin-access-updated\",
       \"description\": \"Updated administrative access policy\",
       \"policy\": \"permit(principal in Group::\\\"admins\\\", action, resource) when { context.time_of_day == \\\"09:00\\\" };\"
-    }" | jq '.'
+    }" | jq '.' 2>/dev/null || echo "Response not valid JSON"
   echo
 
   # Delete Policy
   echo "Deleting IAM policy..."
-  curl -X DELETE "$API_BASE_URL/api/v1/iam/policies/delete" \
+  curl -s -X DELETE "$API_BASE_URL/api/v1/iam/policies/delete" \
     -H "Content-Type: application/json" \
-    -d "{\"id\": \"$POLICY_ID\"}" | jq '.'
+    -d "{\"id\": \"$POLICY_ID\"}" | jq '.' 2>/dev/null || echo "Response not valid JSON"
   echo
 fi
 
@@ -149,7 +149,7 @@ fi
 echo -e "${GREEN}6. Playground Evaluation${NC}"
 
 echo "Testing playground evaluation..."
-curl -X POST "$API_BASE_URL/api/v1/playground/evaluate" \
+curl -s -X POST "$API_BASE_URL/api/v1/playground/evaluate" \
   -H "Content-Type: application/json" \
   -d '{
     "principal": "User::\"bob\"",
@@ -163,7 +163,7 @@ curl -X POST "$API_BASE_URL/api/v1/playground/evaluate" \
       "permit(principal, action, resource) when { context.department == \"engineering\" };",
       "forbid(principal, action, resource) when { context.clearance_level != \"high\" };"
     ]
-  }' | jq '.'
+  }' | jq '.' 2>/dev/null || echo "Response not valid JSON"
 echo
 
 # 7. Advanced Examples
@@ -171,7 +171,7 @@ echo -e "${GREEN}7. Advanced Examples${NC}"
 
 # Complex Policy with Multiple Conditions
 echo "Complex policy evaluation..."
-curl -X POST "$API_BASE_URL/api/v1/playground/evaluate" \
+curl -s -X POST "$API_BASE_URL/api/v1/playground/evaluate" \
   -H "Content-Type: application/json" \
   -d '{
     "principal": "User::\"charlie\"",
@@ -188,16 +188,16 @@ curl -X POST "$API_BASE_URL/api/v1/playground/evaluate" \
       "forbid(principal, action, resource) when { context.location != \"office\" };",
       "permit(principal, action, resource) when { context.time >= \"09:00\" && context.time <= \"17:00\" };"
     ]
-  }' | jq '.'
+  }' | jq '.' 2>/dev/null || echo "Response not valid JSON"
 echo
 
 # Error Case - Invalid Policy
 echo "Testing error case (invalid policy)..."
-curl -X POST "$API_BASE_URL/api/v1/policies/validate" \
+curl -s -X POST "$API_BASE_URL/api/v1/policies/validate" \
   -H "Content-Type: application/json" \
   -d '{
     "policy": "permit(principal, action, resource) when { invalid_syntax };"
-  }' | jq '.'
+  }' | jq '.' 2>/dev/null || echo "Response not valid JSON"
 echo
 
 echo -e "${BLUE}=== All curl examples completed ===${NC}"

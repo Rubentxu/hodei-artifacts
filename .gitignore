@@ -37,6 +37,9 @@ LLM_SETTINGS.*
 specs/
 
 
+data/
+config/
+
 
 
 # WASM / Trunk outputs

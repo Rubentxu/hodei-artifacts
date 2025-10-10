@@ -72,7 +72,14 @@ utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 redis = { version = "0.32.5", features = ["tokio-comp"] }
 lapin = "3.6.0"
 mongodb = "3.1.0"
-surrealdb = { version = "2.3.9", features = ["kv-mem"] }
+surrealdb = { version = "2.3.9", features = ["kv-mem", "kv-rocksdb"] }
+
+# Configuration management
+config = "0.14"
+dotenvy = "0.15"
+
+# Testing utilities
+tempfile = "3.10"
 
 # AWS (object store / config)
 aws-config = "1.8.6"
@@ -160,3 +167,10 @@ thiserror = { workspace = true }
 # OpenAPI / Swagger
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
+
+# Configuration
+config = { workspace = true }
+dotenvy = { workspace = true }
+
+# Testing utilities
+tempfile = { workspace = true }
