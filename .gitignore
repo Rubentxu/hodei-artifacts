@@ -27,7 +27,7 @@ QWEN.md
 AGENTS.md
 AI_CONFIG.md
 LLM_SETTINGS.*
-*.clinerules*    
+*.clinerules*
 *.web-bundles*
 .lingma/
 .kiro/specs
@@ -39,7 +39,7 @@ specs/
 
 data/
 config/
-
+target/
 
 
 # WASM / Trunk outputs

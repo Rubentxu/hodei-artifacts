@@ -307,37 +307,71 @@ impl RocksDbConfig {
             ));
         }
 
-        // Validate that path is not an existing directory
+        // RocksDB path is actually a directory that contains the database files
         let path = std::path::Path::new(&self.path);
-        if path.exists() && path.is_dir() {
-            return Err(ConfigError::Message(format!(
-                "RocksDB path '{}' is a directory, but should be a file path. Please provide a valid file path like './data/hodei.rocksdb'",
-                self.path
-            )));
-        }
 
-        // Validate parent directory permissions
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                // Try to create directory to validate permissions
-                if let Err(e) = std::fs::create_dir_all(parent) {
+        if path.exists() {
+            // Case 1: Path already exists
+            // It must be a directory (RocksDB creates and uses directories)
+            if !path.is_dir() {
+                return Err(ConfigError::Message(format!(
+                    "RocksDB path '{}' exists but is not a directory. RocksDB requires a directory path. Please remove this file or choose a different path.",
+                    self.path
+                )));
+            }
+
+            // Verify the directory is writable
+            let test_file = path.join(".hodei_test_write");
+            match std::fs::write(&test_file, "test") {
+                Ok(_) => {
+                    // Clean up test file
+                    let _ = std::fs::remove_file(test_file);
+                }
+                Err(e) => {
                     return Err(ConfigError::Message(format!(
-                        "Cannot create RocksDB directory '{}': {}. Please check permissions or set HODEI_ROCKSDB__PATH to a writable location",
-                        parent.display(),
+                        "RocksDB directory '{}' exists but is not writable: {}. Please check permissions.",
+                        path.display(),
                         e
+                    )));
+                }
+            }
+        } else {
+            // Case 2: Path doesn't exist yet (will be created by RocksDB)
+            // Validate that we can create it by checking parent directory
+            let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+
+            if !parent.exists() {
+                // Parent doesn't exist, try to create it
+                if self.create_if_missing {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return Err(ConfigError::Message(format!(
+                            "Cannot create parent directory '{}' for RocksDB: {}. Please check permissions or set HODEI_ROCKSDB__PATH to a writable location.",
+                            parent.display(),
+                            e
+                        )));
+                    }
+                } else {
+                    return Err(ConfigError::Message(format!(
+                        "Parent directory '{}' does not exist and create_if_missing is false. Please create the directory manually or set create_if_missing=true.",
+                        parent.display()
                     )));
                 }
             } else {
-                // Check if directory is writable
+                // Parent exists, verify it's writable
                 let test_file = parent.join(".hodei_test_write");
-                if let Err(e) = std::fs::write(&test_file, "test") {
-                    return Err(ConfigError::Message(format!(
-                        "RocksDB directory '{}' is not writable: {}. Please check permissions",
-                        parent.display(),
-                        e
-                    )));
+                match std::fs::write(&test_file, "test") {
+                    Ok(_) => {
+                        // Clean up test file
+                        let _ = std::fs::remove_file(test_file);
+                    }
+                    Err(e) => {
+                        return Err(ConfigError::Message(format!(
+                            "Parent directory '{}' is not writable: {}. Please check permissions.",
+                            parent.display(),
+                            e
+                        )));
+                    }
                 }
-                let _ = std::fs::remove_file(test_file); // Clean up test file
             }
         }
 

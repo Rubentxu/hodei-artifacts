@@ -63,39 +63,55 @@ check_dependencies() {
 start_server() {
     log_info "Starting Hodei Artifacts API server..."
 
-    # Build the project first
-    log_info "Building the project..."
-    if ! cargo build --release; then
-        log_error "Failed to build the project"
-        exit 1
+    # Use relative path to project root
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    BINARY_PATH="$PROJECT_ROOT/target/release/hodei-artifacts-api"
+
+    # Check if binary exists, if not build it
+    if [ ! -f "$BINARY_PATH" ]; then
+        log_warning "Release binary not found, building project..."
+        cd "$PROJECT_ROOT"
+        if ! cargo build --release; then
+            log_error "Failed to build the project"
+            exit 1
+        fi
+    else
+        log_info "Using existing release binary"
     fi
 
     # Start server in background with release mode
-    RUN_MODE=release /home/Ruben/Proyectos/rust/hodei-artifacts/target/release/hodei-artifacts-api &
+    cd "$PROJECT_ROOT"
+    RUN_MODE=release ./target/release/hodei-artifacts-api &
     SERVER_PID=$!
 
     log_info "Server started with PID: $SERVER_PID"
 
     # Wait for server to be ready
     log_info "Waiting for server to be ready..."
+    echo -n "Waiting"
     local max_attempts=30
     local attempt=0
 
     while [ $attempt -lt $max_attempts ]; do
-        if curl -s "$HEALTH_URL" > /dev/null; then
+        if curl -s "$HEALTH_URL" > /dev/null 2>&1; then
             log_success "Server is ready!"
             return 0
         fi
 
         attempt=$((attempt + 1))
+        echo -n "."
         sleep 2
 
         if [ $attempt -eq $max_attempts ]; then
+            echo ""
             log_error "Server failed to start within timeout period"
+            log_error "Check if port 3000 is already in use or check server logs"
             stop_server
             exit 1
         fi
     done
+    echo ""
 }
 
 # Stop the API server
@@ -138,17 +154,29 @@ test_health_endpoint() {
 test_openapi_spec() {
     log_info "Testing OpenAPI specification..."
 
-    if curl -s "$OPENAPI_SPEC_URL" | jq -e '.openapi' > /dev/null 2>&1; then
-        log_success "OpenAPI specification is valid"
+    # Check if jq is available
+    if command -v jq &> /dev/null; then
+        if curl -s "$OPENAPI_SPEC_URL" | jq -e '.openapi' > /dev/null 2>&1; then
+            log_success "OpenAPI specification is valid"
 
-        # Count endpoints and schemas
-        local endpoints=$(curl -s "$OPENAPI_SPEC_URL" | jq '.paths | keys | length')
-        local schemas=$(curl -s "$OPENAPI_SPEC_URL" | jq '.components.schemas | keys | length')
+            # Count endpoints and schemas
+            local endpoints=$(curl -s "$OPENAPI_SPEC_URL" | jq '.paths | keys | length')
+            local schemas=$(curl -s "$OPENAPI_SPEC_URL" | jq '.components.schemas | keys | length')
 
-        log_info "Found $endpoints endpoints and $schemas schemas in OpenAPI spec"
+            log_info "Found $endpoints endpoints and $schemas schemas in OpenAPI spec"
+        else
+            log_error "OpenAPI specification is invalid or missing"
+            return 1
+        fi
     else
-        log_error "OpenAPI specification is invalid or missing"
-        return 1
+        # Fallback without jq
+        local response=$(curl -s "$OPENAPI_SPEC_URL")
+        if echo "$response" | grep -q '"openapi"'; then
+            log_success "OpenAPI specification is accessible (jq not available for validation)"
+        else
+            log_error "OpenAPI specification is invalid or missing"
+            return 1
+        fi
     fi
 }
 
