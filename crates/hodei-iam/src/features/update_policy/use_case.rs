@@ -20,6 +20,7 @@
 use crate::features::update_policy::dto::{PolicyView, UpdatePolicyCommand};
 use crate::features::update_policy::error::UpdatePolicyError;
 use crate::features::update_policy::ports::{PolicyValidator, UpdatePolicyPort};
+use async_trait::async_trait;
 use hodei_policies::features::validate_policy::dto::ValidatePolicyCommand;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
@@ -58,7 +59,7 @@ use tracing::{info, instrument, warn};
 ///     Err(e) => eprintln!("Update failed: {}", e),
 /// }
 /// ```
-pub struct UpdatePolicyUseCase<V, P>
+pub struct UpdatePolicyUseCase<V: ?Sized, P: ?Sized>
 where
     V: PolicyValidator,
     P: UpdatePolicyPort,
@@ -70,7 +71,7 @@ where
     policy_port: Arc<P>,
 }
 
-impl<V, P> UpdatePolicyUseCase<V, P>
+impl<V: ?Sized, P: ?Sized> UpdatePolicyUseCase<V, P>
 where
     V: PolicyValidator,
     P: UpdatePolicyPort,
@@ -187,6 +188,18 @@ where
         info!("Policy updated successfully: {}", updated_view.name);
 
         Ok(updated_view)
+    }
+}
+
+// Implement UpdatePolicyPort trait for the use case to enable trait object usage
+#[async_trait]
+impl<V: ?Sized, P: ?Sized> UpdatePolicyPort for UpdatePolicyUseCase<V, P>
+where
+    V: PolicyValidator + Send + Sync,
+    P: UpdatePolicyPort + Send + Sync,
+{
+    async fn update(&self, command: UpdatePolicyCommand) -> Result<PolicyView, UpdatePolicyError> {
+        self.execute(command).await
     }
 }
 

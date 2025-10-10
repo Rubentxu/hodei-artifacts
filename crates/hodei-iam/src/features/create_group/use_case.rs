@@ -1,8 +1,9 @@
 use super::dto::{CreateGroupCommand, GroupPersistenceDto, GroupView};
 use super::error::CreateGroupError;
-use super::ports::CreateGroupPort;
+use super::ports::{CreateGroupPort, CreateGroupUseCasePort};
 use crate::infrastructure::hrn_generator::HrnGenerator;
 use crate::internal::domain::Group;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Use case for creating a new group
@@ -59,5 +60,12 @@ impl<P: CreateGroupPort, G: HrnGenerator> CreateGroupUseCase<P, G> {
             name: group.name,
             tags: group.tags,
         })
+    }
+}
+
+#[async_trait]
+impl<P: CreateGroupPort, G: HrnGenerator> CreateGroupUseCasePort for CreateGroupUseCase<P, G> {
+    async fn execute(&self, command: CreateGroupCommand) -> Result<GroupView, CreateGroupError> {
+        self.execute(command).await
     }
 }

@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use hodei_policies::features::build_schema::ports::SchemaStoragePort;
+
 use hodei_policies::features::playground_evaluate::dto::{
     AttributeValue, PlaygroundAuthorizationRequest, PlaygroundEvaluateResult,
 };
@@ -193,8 +193,7 @@ pub struct EvaluationDiagnosticsDto {
 pub async fn playground_evaluate(
     State(state): State<AppState>,
     Json(request): Json<PlaygroundEvaluateRequest>,
-) -> Result<Json<PlaygroundEvaluateResponse>, ApiError>
-{
+) -> Result<Json<PlaygroundEvaluateResponse>, ApiError> {
     // Convert HTTP DTO to domain DTO
     let command = convert_to_command(request)
         .map_err(|e| ApiError::BadRequest(format!("Invalid request: {}", e)))?;
@@ -202,7 +201,7 @@ pub async fn playground_evaluate(
     // Execute the playground evaluation use case
     let result = state
         .playground_evaluate
-        .execute(command)
+        .evaluate(command)
         .await
         .map_err(|e| {
             ApiError::InternalServerError(format!("Playground evaluation failed: {}", e))

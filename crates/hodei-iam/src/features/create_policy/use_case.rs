@@ -18,9 +18,10 @@
 
 use crate::features::create_policy::dto::{CreatePolicyCommand, PolicyView};
 use crate::features::create_policy::error::CreatePolicyError;
-use crate::features::create_policy::ports::CreatePolicyPort;
-use hodei_policies::features::validate_policy::ValidatePolicyPort;
-// use hodei_policies::validate_policy::dto::{ValidatePolicyCommand, ValidationResult}; // Temporarily disabled - unused
+use crate::features::create_policy::ports::{
+    CreatePolicyPort, CreatePolicyUseCasePort, PolicyValidator,
+};
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
@@ -31,127 +32,65 @@ use tracing::{info, instrument, warn};
 /// 2. Persists the policy if validation succeeds
 /// 3. Returns a view of the created policy
 ///
-/// # Type Parameters
+/// # Architecture Note
 ///
-/// - `P`: Implementation of `CreatePolicyPort` for persistence
-/// - `V`: Implementation of `PolicyValidator` for validation
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use hodei_iam::{CreatePolicyUseCase, CreatePolicyCommand};
-/// use std::sync::Arc;
-///
-/// let validator = Arc::new(CedarValidator::new());
-/// let persister = Arc::new(SurrealPolicyAdapter::new(db));
-/// let use_case = CreatePolicyUseCase::new(persister, validator);
-///
-/// let command = CreatePolicyCommand {
-///     policy_id: "allow-read-docs".to_string(),
-///     policy_content: "permit(principal, action, resource);".to_string(),
-///     description: Some("Allow document reading".to_string()),
-/// };
-///
-/// match use_case.execute(command).await {
-///     Ok(view) => println!("Policy created: {}", view.id),
-///     Err(e) => eprintln!("Creation failed: {}", e),
-/// }
-/// ```
-pub struct CreatePolicyUseCase<P, V>
-where
-    P: CreatePolicyPort,
-    V: ValidatePolicyPort,
-{
+/// This struct uses trait objects (Arc<dyn Trait>) instead of generics for simplicity.
+/// This is the idiomatic Rust approach for dependency injection without frameworks.
+pub struct CreatePolicyUseCase {
     /// Port for persisting policies (only create operation)
-    policy_port: Arc<P>,
+    policy_port: Arc<dyn CreatePolicyPort>,
 
     /// Port for validating Cedar policy content
-    validator: Arc<V>,
+    validator: Arc<dyn PolicyValidator>,
 }
 
-impl<P, V> CreatePolicyUseCase<P, V>
-where
-    P: CreatePolicyPort,
-    V: ValidatePolicyPort,
-{
+impl CreatePolicyUseCase {
     /// Create a new instance of the use case
     ///
     /// # Arguments
     ///
     /// * `policy_port` - Implementation of `CreatePolicyPort` for persistence
     /// * `validator` - Implementation of `PolicyValidator` for validation
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let use_case = CreatePolicyUseCase::new(
-    ///     Arc::new(policy_port),
-    ///     Arc::new(validator),
-    /// );
-    /// ```
-    pub fn new(policy_port: Arc<P>, validator: Arc<V>) -> Self {
+    pub fn new(
+        policy_port: Arc<dyn CreatePolicyPort>,
+        validator: Arc<dyn PolicyValidator>,
+    ) -> Self {
         Self {
             policy_port,
             validator,
         }
     }
 
-    /// Execute the create policy use case
-    ///
-    /// This is the main entry point for creating a new IAM policy.
-    /// It performs validation and persistence in a single transaction.
+    /// Execute the create policy use case (internal implementation)
     ///
     /// # Arguments
     ///
-    /// * `command` - Command containing policy details (id, content, description)
+    /// * `command` - Command containing policy details
     ///
     /// # Returns
     ///
-    /// On success, returns a `PolicyView` DTO with the created policy details
-    /// including generated metadata (timestamps, HRN).
+    /// On success, returns `Ok(PolicyView)` with the created policy information.
     ///
     /// # Errors
     ///
     /// - `CreatePolicyError::EmptyPolicyContent` - Policy content is empty
-    /// - `CreatePolicyError::InvalidPolicyId` - Policy ID is invalid or empty
-    /// - `CreatePolicyError::ValidationFailed` - Validation service error
-    /// - `CreatePolicyError::InvalidPolicyContent` - Policy syntax/semantic errors
-    /// - `CreatePolicyError::StorageError` - Database or storage failure
+    /// - `CreatePolicyError::InvalidPolicyContent` - Policy fails Cedar validation
     /// - `CreatePolicyError::PolicyAlreadyExists` - Policy ID already in use
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// let command = CreatePolicyCommand {
-    ///     policy_id: "my-policy".to_string(),
-    ///     policy_content: "permit(principal, action, resource);".to_string(),
-    ///     description: Some("My policy".to_string()),
-    /// };
-    ///
-    /// let view = use_case.execute(command).await?;
-    /// assert_eq!(view.content, "permit(principal, action, resource);");
-    /// ```
+    /// - `CreatePolicyError::RepositoryError` - Database or storage failure
     #[instrument(skip(self, command), fields(policy_id = %command.policy_id))]
-    pub async fn execute(
+    async fn execute_impl(
         &self,
         command: CreatePolicyCommand,
     ) -> Result<PolicyView, CreatePolicyError> {
         info!("Creating policy with id: {}", command.policy_id);
 
         // Validate input
-        if command.policy_id.is_empty() {
-            warn!("Policy creation failed: empty policy ID");
-            return Err(CreatePolicyError::InvalidPolicyId(
-                "Policy ID cannot be empty".to_string(),
-            ));
-        }
-
         if command.policy_content.trim().is_empty() {
-            warn!("Policy creation failed: empty policy content");
+            warn!("Policy creation failed: empty content");
             return Err(CreatePolicyError::EmptyPolicyContent);
         }
 
-        // 1. Validate policy content through port
+        // Validate policy syntax using hodei-policies
         info!("Validating policy content");
         let validation_command =
             hodei_policies::features::validate_policy::dto::ValidatePolicyCommand {
@@ -162,66 +101,113 @@ where
             .validator
             .validate(validation_command)
             .await
-            .map_err(|e| {
-                warn!("Policy validation service error: {}", e);
-                CreatePolicyError::ValidationFailed(e.to_string())
-            })?;
+            .map_err(|e| CreatePolicyError::ValidationFailed(e.to_string()))?;
 
-        // Check if validation found errors
-        if !validation_result.is_valid {
-            let error_summary = validation_result.errors.join("; ");
-            warn!("Policy validation failed: {}", error_summary);
-            return Err(CreatePolicyError::InvalidPolicyContent(error_summary));
+        if !validation_result.is_valid || !validation_result.errors.is_empty() {
+            warn!(
+                "Policy validation failed with {} errors",
+                validation_result.errors.len()
+            );
+            let error_messages = validation_result.errors.join(", ");
+            return Err(CreatePolicyError::InvalidPolicyContent(error_messages));
         }
 
-        info!("Policy validation successful");
+        info!("Policy validation successful, persisting policy");
 
-        // 2. Create policy through port
-        info!("Persisting policy");
-        let policy = self.policy_port.create(command).await.map_err(|e| {
-            warn!("Policy persistence failed: {}", e);
-            e
-        })?;
+        // Create the policy through the port
+        let policy = self.policy_port.create(command).await?;
 
-        // Convert returned domain Policy (with private fields) into the public DTO.
-        // We rely on the Policy's accessor methods instead of private field access.
-        let hrn = match kernel::Hrn::from_string(policy.id().as_str()) {
-            Some(h) => h,
-            None => {
-                let msg = format!(
-                    "Invalid HRN format produced by adapter: {}",
-                    policy.id().as_str()
-                );
-                warn!("{}", msg);
-                return Err(CreatePolicyError::InvalidHrn(msg));
-            }
+        info!("Policy created successfully: {}", policy.id());
+
+        // Convert to view DTO
+        let now = chrono::Utc::now();
+
+        // Build HRN from policy ID
+        let policy_hrn = kernel::Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(), // TODO: Get from context
+            "Policy".to_string(),
+            policy.id().to_string(),
+        );
+
+        let view = PolicyView {
+            id: policy_hrn,
+            content: policy.content().to_string(),
+            description: None, // Policy doesn't have description in kernel
+            created_at: now,
+            updated_at: now,
         };
 
-        info!("Policy created successfully with HRN: {}", hrn);
-
-        // 3. Return DTO
-        Ok(PolicyView {
-            id: hrn,
-            content: policy.content().to_string(),
-            description: None, // HodeiPolicy doesn't include description field
-            created_at: chrono::Utc::now(), // Use current timestamp since HodeiPolicy doesn't track this
-            updated_at: chrono::Utc::now(), // Use current timestamp since HodeiPolicy doesn't track this
-        })
+        Ok(view)
     }
 }
 
-// Implement the use case port trait
-use crate::features::create_policy::ports::CreatePolicyUseCasePort;
-use async_trait::async_trait;
-
+// Implement CreatePolicyUseCasePort trait for the use case
 #[async_trait]
-impl<P, V> CreatePolicyUseCasePort for CreatePolicyUseCase<P, V>
-where
-    P: CreatePolicyPort + Send + Sync,
-    V: ValidatePolicyPort + Send + Sync,
-{
+impl CreatePolicyUseCasePort for CreatePolicyUseCase {
     async fn execute(&self, command: CreatePolicyCommand) -> Result<PolicyView, CreatePolicyError> {
-        // Delegate to the existing implementation
-        self.execute(command).await
+        self.execute_impl(command).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::create_policy::mocks::{MockCreatePolicyPort, MockPolicyValidator};
+
+    #[tokio::test]
+    async fn test_create_policy_success() {
+        let policy_port = Arc::new(MockCreatePolicyPort::new());
+        let validator = Arc::new(MockPolicyValidator::new());
+        let use_case = CreatePolicyUseCase::new(policy_port, validator);
+
+        let command = CreatePolicyCommand {
+            policy_id: "test-policy".to_string(),
+            policy_content: "permit(principal, action, resource);".to_string(),
+            description: Some("Test policy".to_string()),
+        };
+
+        let result = use_case.execute(command).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_empty_content() {
+        let policy_port = Arc::new(MockCreatePolicyPort::new());
+        let validator = Arc::new(MockPolicyValidator::new());
+        let use_case = CreatePolicyUseCase::new(policy_port, validator);
+
+        let command = CreatePolicyCommand {
+            policy_id: "test-policy".to_string(),
+            policy_content: "   ".to_string(),
+            description: None,
+        };
+
+        let result = use_case.execute(command).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(CreatePolicyError::EmptyPolicyContent)));
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_validation_failure() {
+        let policy_port = Arc::new(MockCreatePolicyPort::new());
+        let validator = Arc::new(MockPolicyValidator::with_errors(vec![
+            "Syntax error".to_string(),
+        ]));
+        let use_case = CreatePolicyUseCase::new(policy_port, validator);
+
+        let command = CreatePolicyCommand {
+            policy_id: "test-policy".to_string(),
+            policy_content: "invalid policy".to_string(),
+            description: None,
+        };
+
+        let result = use_case.execute(command).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(CreatePolicyError::InvalidPolicyContent(_))
+        ));
     }
 }

@@ -55,6 +55,7 @@ pub enum ArtifactVisibility {
     Public,
 }
 
+#[allow(dead_code)]
 impl Artifact {
     /// Create a new artifact
     pub(crate) fn new(
@@ -225,11 +226,8 @@ impl HodeiEntity for Artifact {
             AttributeValue::bool(self.is_private()),
         );
 
-        let tag_values: Vec<AttributeValue> = self
-            .tags
-            .iter()
-            .map(|t| AttributeValue::string(t))
-            .collect();
+        let tag_values: Vec<AttributeValue> =
+            self.tags.iter().map(AttributeValue::string).collect();
         attrs.insert(
             AttributeName::new("tags").expect("Valid attribute name"),
             AttributeValue::set(tag_values),

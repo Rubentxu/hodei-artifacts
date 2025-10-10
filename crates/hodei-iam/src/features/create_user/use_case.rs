@@ -1,8 +1,9 @@
 use super::dto::{CreateUserCommand, UserPersistenceDto, UserView};
 use super::error::CreateUserError;
-use super::ports::CreateUserPort;
+use super::ports::{CreateUserPort, CreateUserUseCasePort};
 use crate::infrastructure::hrn_generator::HrnGenerator;
 use crate::internal::domain::User;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Use case for creating a new user
@@ -63,5 +64,12 @@ impl<P: CreateUserPort, G: HrnGenerator> CreateUserUseCase<P, G> {
             groups: Vec::new(), // New user has no groups
             tags: user.tags,
         })
+    }
+}
+
+#[async_trait]
+impl<P: CreateUserPort, G: HrnGenerator> CreateUserUseCasePort for CreateUserUseCase<P, G> {
+    async fn execute(&self, command: CreateUserCommand) -> Result<UserView, CreateUserError> {
+        self.execute(command).await
     }
 }

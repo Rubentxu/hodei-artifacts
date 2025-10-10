@@ -10,6 +10,7 @@
 
 mod app_state;
 mod bootstrap;
+mod composition_root;
 mod config;
 mod handlers;
 mod openapi;
@@ -118,14 +119,7 @@ fn initialize_logging(config: &Config) -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Build the Axum router with all routes and middleware
-fn build_router<S>(app_state: crate::app_state::AppState<S>, config: &Config) -> Router
-where
-    S: hodei_policies::features::build_schema::ports::SchemaStoragePort
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-{
+fn build_router(app_state: crate::app_state::AppState, config: &Config) -> Router {
     Router::new()
         // Health check endpoint
         .route("/health", get(health_check))
@@ -148,14 +142,7 @@ where
 }
 
 /// API v1 routes
-fn api_v1_routes<S>(app_state: crate::app_state::AppState<S>) -> Router
-where
-    S: hodei_policies::features::build_schema::ports::SchemaStoragePort
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-{
+fn api_v1_routes(app_state: crate::app_state::AppState) -> Router {
     Router::new()
         // Schema management
         .route("/schemas/build", post(handlers::schemas::build_schema))

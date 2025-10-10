@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn test_response_creation() {
-        let policies = HodeiPolicySet::new();
+        let policies = HodeiPolicySet::new(vec![]);
         let response = EffectivePoliciesResponse::new(policies, "hrn:iam:user:alice".to_string());
 
         assert_eq!(response.policies.len(), 0);
@@ -110,8 +110,10 @@ mod tests {
 
     #[test]
     fn test_response_with_empty_policies() {
-        let response =
-            EffectivePoliciesResponse::new(HodeiPolicySet::new(), "hrn:iam:user:bob".to_string());
+        let response = EffectivePoliciesResponse::new(
+            HodeiPolicySet::new(vec![]),
+            "hrn:iam:user:bob".to_string(),
+        );
 
         assert_eq!(response.policies.len(), 0);
     }
@@ -128,8 +130,10 @@ mod tests {
 
     #[test]
     fn test_response_serialization() {
-        let response =
-            EffectivePoliciesResponse::new(HodeiPolicySet::new(), "hrn:iam:user:dave".to_string());
+        let response = EffectivePoliciesResponse::new(
+            HodeiPolicySet::new(vec![]),
+            "hrn:iam:user:dave".to_string(),
+        );
 
         let json = serde_json::to_string(&response).expect("serialize");
         assert!(json.contains("dave"));

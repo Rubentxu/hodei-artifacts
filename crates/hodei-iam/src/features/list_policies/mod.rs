@@ -7,13 +7,12 @@
 //! - error.rs            -> Feature-specific error types
 //! - ports.rs            -> Segregated interface (ISP)
 //! - use_case.rs         -> Core business logic (ListPoliciesUseCase)
-//! - di.rs               -> Dependency Injection helpers
+//! - factories.rs        -> Dependency Injection helpers
 //! - mocks.rs            -> Test-only mock implementations
 
-
-pub mod di;
 pub mod dto;
 pub mod error;
+pub mod factories;
 pub mod ports;
 pub mod use_case;
 

@@ -1,92 +1,64 @@
-//! Dependency Injection helpers for `get_policy` feature
+//! Factory for creating the GetPolicy use case
 //!
-//! This module centralizes the assembly of the vertical slice components
-//! (port + use case) so higher layers (HTTP, CLI, jobs) don't need to know
-//! about concrete implementations. It keeps construction logic cohesive and
-//! testable.
-//!
-//! Architectural Goals
-//! -------------------
-//! - Encapsulate wiring logic
-//! - Promote explicit dependency injection
-//! - Provide factories for both production (real adapters) and tests
-//! - Avoid leaking infrastructure types to callers when returning the
-//!   assembled use case
-//!
-//! Status
-//! ------
-//! Phase 2 refactor: only an in-memory adapter is available. When a real
-//! SurrealDB adapter is implemented it should be added here (without
-//! modifying callers).
-//!
-//! Typical Usage
-//! -------------
-//! ```rust,ignore
-//! use hodei_iam::features::get_policy::di;
-//!
-//! # async fn example() {
-//! let use_case = di::in_memory_use_case();
-//! let query = hodei_iam::features::get_policy::GetPolicyQuery {
-//!     policy_id: "p1".into(),
-//! };
-//! let _ = use_case.execute(query).await;
-//! # }
-//! ```
+//! This module follows a simple pattern for dependency injection:
+//! - Factories receive Arc<dyn Trait> dependencies
+//! - Factories return Arc<dyn Port> for the use case
+//! - No complex generics, just trait objects
 
 use std::sync::Arc;
-use tracing::instrument;
+use tracing::info;
 
-// Temporarily disabled - adapter out of sync with current ports
-// use crate::infrastructure::in_memory::get_policy_adapter::InMemoryPolicyReaderAdapter;
-use crate::features::get_policy::ports::PolicyReader;
+use crate::features::get_policy::dto::PolicyView;
+use crate::features::get_policy::ports::{GetPolicyUseCasePort, PolicyReader};
 use crate::features::get_policy::use_case::GetPolicyUseCase;
 
-/// High-level factory providing explicit build functions.
-pub struct GetPolicyUseCaseFactory;
-
-impl GetPolicyUseCaseFactory {
-    /// Build a use case from its already constructed dependency.
-    ///
-    /// This is the most generic constructor and is fully type-erased at the
-    /// call site thanks to generics + inference.
-    #[instrument(skip(policy_port), level = "debug")]
-    pub fn build<P>(policy_port: Arc<P>) -> GetPolicyUseCase<P>
-    where
-        P: PolicyReader,
-    {
-        GetPolicyUseCase::new(policy_port)
-    }
-
-    /// Convenience builder that owns (takes) the raw component rather than Arc
-    /// and wraps it.
-    #[instrument(skip(policy_port), level = "debug")]
-    pub fn build_from_owned<P>(policy_port: P) -> GetPolicyUseCase<P>
-    where
-        P: PolicyReader + 'static,
-    {
-        Self::build(Arc::new(policy_port))
-    }
+/// Create the GetPolicy use case with injected dependencies
+///
+/// This factory receives trait objects and returns a trait object,
+/// making it simple to use from the Composition Root and easy to test.
+///
+/// # Arguments
+///
+/// * `policy_reader` - Port for reading policies
+///
+/// # Returns
+///
+/// Arc<dyn GetPolicyUseCasePort> - The use case as a trait object
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let policy_reader = Arc::new(SurrealPolicyAdapter::new(db));
+///
+/// let get_policy = create_get_policy_use_case(policy_reader);
+/// ```
+pub fn create_get_policy_use_case(
+    policy_reader: Arc<dyn PolicyReader>,
+) -> Arc<dyn GetPolicyUseCasePort> {
+    info!("Creating GetPolicy use case");
+    Arc::new(GetPolicyUseCase::new(policy_reader))
 }
 
-/// Build a use case wired to the in-memory adapter (dev/testing).
+/// Alternative factory that accepts owned dependencies
 ///
-/// TEMPORARILY DISABLED: In-memory adapter is out of sync with current ports.
-/// Use SurrealDB adapter or mocks instead.
-/// Build a use case with an externally provided port implementation.
+/// This is useful when you have dependencies that are not yet wrapped in Arc
+/// and you want the factory to handle the Arc wrapping.
 ///
-/// This is useful when the adapter requires complex configuration
-/// (e.g. database pools) handled elsewhere in the application layer.
-#[instrument(skip(policy_port), level = "debug")]
-pub fn use_case_with_port<P>(policy_port: Arc<P>) -> GetPolicyUseCase<P>
+/// # Arguments
+///
+/// * `policy_reader` - Port for reading policies
+///
+/// # Returns
+///
+/// Arc<dyn GetPolicyUseCasePort> - The use case as a trait object
+pub fn create_get_policy_use_case_from_owned<P>(policy_reader: P) -> Arc<dyn GetPolicyUseCasePort>
 where
-    P: PolicyReader,
+    P: PolicyReader + 'static,
 {
-    GetPolicyUseCase::new(policy_port)
+    info!("Creating GetPolicy use case from owned dependencies");
+    Arc::new(GetPolicyUseCase::new(Arc::new(policy_reader)))
 }
 
-// -----------------------------------------------------------------------------
-// Test Utilities (only compiled for tests)
-// -----------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,52 +66,64 @@ mod tests {
     use crate::features::get_policy::mocks::MockPolicyReader;
 
     #[tokio::test]
-    async fn factory_builds_use_case_and_executes_successfully() {
-        let port = MockPolicyReader::new();
-        let uc = GetPolicyUseCaseFactory::build(Arc::new(port));
+    async fn test_factory_creates_use_case() {
+        let policy = PolicyView {
+            hrn: kernel::Hrn::new(
+                "hodei".to_string(),
+                "iam".to_string(),
+                "default".to_string(),
+                "Policy".to_string(),
+                "test-policy".to_string(),
+            ),
+            name: "test-policy".to_string(),
+            content: "permit(principal, action, resource);".to_string(),
+            description: None,
+        };
+        let policy_reader: Arc<dyn PolicyReader> = Arc::new(MockPolicyReader::with_policy(policy));
 
-        let query = GetPolicyQuery::new("test-policy");
-        let result = uc.execute(query).await;
-        assert!(result.is_ok());
-    }
+        let use_case = create_get_policy_use_case(policy_reader);
 
-    // Temporarily disabled - in-memory adapter out of sync
-    /*
-    #[tokio::test]
-    async fn in_memory_builder_gets_policy_successfully() {
-        let uc = in_memory_use_case();
-
-        // Add a test policy to the adapter
-        let adapter = Arc::new(InMemoryPolicyReaderAdapter::new());
-        adapter.add_policy(
-            "test-policy".to_string(),
-            "permit(principal, action, resource);".to_string(),
-        );
-
-        let uc_with_data = GetPolicyUseCase::new(adapter);
-        let query = GetPolicyQuery::new("test-policy");
-        let result = uc_with_data.execute(query).await;
-        assert!(result.is_ok());
-    }
-    */
-
-    #[tokio::test]
-    async fn use_case_with_external_port_works() {
-        let port = MockPolicyReader::new();
-        let uc = use_case_with_port(Arc::new(port));
-
-        let query = GetPolicyQuery::new("external");
-        let result = uc.execute(query).await;
+        let query = GetPolicyQuery {
+            policy_hrn: kernel::Hrn::new(
+                "hodei".to_string(),
+                "iam".to_string(),
+                "default".to_string(),
+                "Policy".to_string(),
+                "test-policy".to_string(),
+            ),
+        };
+        let result = use_case.execute(query).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn build_from_owned_works() {
-        let port = MockPolicyReader::new();
-        let uc = GetPolicyUseCaseFactory::build_from_owned(port);
+    async fn test_factory_from_owned_works() {
+        let policy = PolicyView {
+            hrn: kernel::Hrn::new(
+                "hodei".to_string(),
+                "iam".to_string(),
+                "default".to_string(),
+                "Policy".to_string(),
+                "owned".to_string(),
+            ),
+            name: "owned-policy".to_string(),
+            content: "permit(principal, action, resource);".to_string(),
+            description: None,
+        };
+        let policy_reader = MockPolicyReader::with_policy(policy);
 
-        let query = GetPolicyQuery::new("owned");
-        let result = uc.execute(query).await;
+        let use_case = create_get_policy_use_case_from_owned(policy_reader);
+
+        let query = GetPolicyQuery {
+            policy_hrn: kernel::Hrn::new(
+                "hodei".to_string(),
+                "iam".to_string(),
+                "default".to_string(),
+                "Policy".to_string(),
+                "owned".to_string(),
+            ),
+        };
+        let result = use_case.execute(query).await;
         assert!(result.is_ok());
     }
 }

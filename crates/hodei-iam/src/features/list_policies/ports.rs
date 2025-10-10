@@ -71,7 +71,31 @@ pub trait PolicyLister: Send + Sync {
     ///     println!("Next offset: {:?}", response.page_info.next_offset());
     /// }
     /// ```
-    async fn list(&self, query: ListPoliciesQuery) -> Result<ListPoliciesResponse, ListPoliciesError>;
+    async fn list(
+        &self,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, ListPoliciesError>;
+}
+
+/// Port for the ListPolicies use case
+///
+/// This port defines the contract for executing the list policies use case.
+/// Following the Interface Segregation Principle (ISP), this port
+/// contains only the execute method needed by external callers.
+#[async_trait]
+pub trait ListPoliciesUseCasePort: Send + Sync {
+    /// Execute the list policies use case
+    ///
+    /// # Arguments
+    /// * `query` - The list policies query containing pagination parameters
+    ///
+    /// # Returns
+    /// * `Ok(ListPoliciesResponse)` if the policies were listed successfully
+    /// * `Err(ListPoliciesError)` if there was an error listing the policies
+    async fn execute(
+        &self,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, ListPoliciesError>;
 }
 
 #[cfg(test)]
@@ -84,4 +108,3 @@ mod tests {
         fn _assert_object_safe(_: &dyn PolicyLister) {}
     }
 }
-

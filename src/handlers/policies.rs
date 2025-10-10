@@ -11,7 +11,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use hodei_policies::features::build_schema::ports::SchemaStoragePort;
+
 use serde::{Deserialize, Serialize};
 
 /// Request to validate a policy
@@ -132,14 +132,13 @@ pub struct DiagnosticInfo {
 pub async fn validate_policy(
     State(state): State<AppState>,
     Json(request): Json<ValidatePolicyRequest>,
-) -> Result<Json<ValidatePolicyResponse>, ApiError>
-{
+) -> Result<Json<ValidatePolicyResponse>, ApiError> {
     let command = hodei_policies::features::validate_policy::dto::ValidatePolicyCommand {
         content: request.content,
     };
 
     let result =
-        state.validate_policy.execute(command).await.map_err(|e| {
+        state.validate_policy.validate(command).await.map_err(|e| {
             ApiError::InternalServerError(format!("Failed to validate policy: {}", e))
         })?;
 
@@ -204,8 +203,7 @@ pub async fn validate_policy(
 pub async fn evaluate_policies(
     State(_state): State<AppState>,
     Json(_request): Json<EvaluatePoliciesRequest>,
-) -> Result<Json<EvaluatePoliciesResponse>, ApiError>
-{
+) -> Result<Json<EvaluatePoliciesResponse>, ApiError> {
     // TODO: Implement policy evaluation
     // This requires:
     // 1. Parsing principal_hrn and resource_hrn into entities

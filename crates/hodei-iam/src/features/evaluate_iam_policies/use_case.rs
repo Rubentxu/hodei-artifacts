@@ -314,7 +314,7 @@ mod tests {
 
             pub fn with_error() -> Self {
                 Self {
-                    policy_set: HodeiPolicySet::new(),
+                    policy_set: HodeiPolicySet::new(vec![]),
                     should_error: true,
                 }
             }
@@ -494,7 +494,7 @@ mod tests {
     #[tokio::test]
     async fn test_evaluate_denies_when_no_policies() {
         // Arrange
-        let mock_finder = Arc::new(MockPolicyFinder::new(HodeiPolicySet::new()));
+        let mock_finder = Arc::new(MockPolicyFinder::new(HodeiPolicySet::new(vec![])));
         let mock_principal_resolver = Arc::new(MockPrincipalResolver::new(Box::new(MockUser {
             hrn: Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap(),
             name: "Alice".to_string(),
@@ -508,6 +508,7 @@ mod tests {
             mock_finder,
             mock_principal_resolver,
             mock_resource_resolver,
+            Arc::new(MockSchemaStorage::new()),
         );
 
         let request = KernelEvaluationRequest {
@@ -530,8 +531,8 @@ mod tests {
     async fn test_evaluate_allows_when_permit_policy_exists() {
         // Arrange
         let policy_text = r#"permit(principal, action, resource);"#;
-        let policy = HodeiPolicy::new(PolicyId::new("test-policy"), policy_text);
-        let policy_set = HodeiPolicySet::from_policies([policy]);
+        let policy = HodeiPolicy::new(PolicyId::new("test-policy"), policy_text.to_string());
+        let policy_set = HodeiPolicySet::new(vec![policy]);
 
         let mock_finder = Arc::new(MockPolicyFinder::new(policy_set));
         let mock_principal_resolver = Arc::new(MockPrincipalResolver::new(Box::new(MockUser {
@@ -547,6 +548,7 @@ mod tests {
             mock_finder,
             mock_principal_resolver,
             mock_resource_resolver,
+            Arc::new(MockSchemaStorage::new()),
         );
 
         let request = KernelEvaluationRequest {
@@ -581,6 +583,7 @@ mod tests {
             mock_finder,
             mock_principal_resolver,
             mock_resource_resolver,
+            Arc::new(MockSchemaStorage::new()),
         );
 
         let request = KernelEvaluationRequest {
@@ -602,8 +605,8 @@ mod tests {
     async fn test_evaluate_handles_principal_resolution_error() {
         // Arrange
         let policy_text = r#"permit(principal, action, resource);"#;
-        let policy = HodeiPolicy::new(PolicyId::new("test-policy"), policy_text);
-        let policy_set = HodeiPolicySet::from_policies([policy]);
+        let policy = HodeiPolicy::new(PolicyId::new("test-policy"), policy_text.to_string());
+        let policy_set = HodeiPolicySet::new(vec![policy]);
 
         let mock_finder = Arc::new(MockPolicyFinder::new(policy_set));
         let mock_principal_resolver = Arc::new(MockPrincipalResolver::with_error());
@@ -616,6 +619,7 @@ mod tests {
             mock_finder,
             mock_principal_resolver,
             mock_resource_resolver,
+            Arc::new(MockSchemaStorage::new()),
         );
 
         let request = KernelEvaluationRequest {
@@ -637,8 +641,8 @@ mod tests {
     async fn test_evaluate_handles_resource_resolution_error() {
         // Arrange
         let policy_text = r#"permit(principal, action, resource);"#;
-        let policy = HodeiPolicy::new(PolicyId::new("test-policy"), policy_text);
-        let policy_set = HodeiPolicySet::from_policies([policy]);
+        let policy = HodeiPolicy::new(PolicyId::new("test-policy"), policy_text.to_string());
+        let policy_set = HodeiPolicySet::new(vec![policy]);
 
         let mock_finder = Arc::new(MockPolicyFinder::new(policy_set));
         let mock_principal_resolver = Arc::new(MockPrincipalResolver::new(Box::new(MockUser {
@@ -651,6 +655,7 @@ mod tests {
             mock_finder,
             mock_principal_resolver,
             mock_resource_resolver,
+            Arc::new(MockSchemaStorage::new()),
         );
 
         let request = KernelEvaluationRequest {
@@ -666,5 +671,51 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err();
         assert!(matches!(error, AuthorizationError::EvaluationFailed(_)));
+    }
+
+    // Mock SchemaStorage for testing
+    struct MockSchemaStorage;
+
+    impl MockSchemaStorage {
+        pub fn new() -> Self {
+            Self
+        }
+    }
+
+    #[async_trait]
+    impl hodei_policies::build_schema::ports::SchemaStoragePort for MockSchemaStorage {
+        async fn save_schema(
+            &self,
+            _schema_json: String,
+            _version: Option<String>,
+        ) -> Result<String, hodei_policies::build_schema::error::BuildSchemaError> {
+            Ok("test-schema-id".to_string())
+        }
+
+        async fn get_latest_schema(
+            &self,
+        ) -> Result<Option<String>, hodei_policies::build_schema::error::BuildSchemaError> {
+            Ok(Some(r#"{"test": "schema"}"#.to_string()))
+        }
+
+        async fn get_schema_by_version(
+            &self,
+            _version: &str,
+        ) -> Result<Option<String>, hodei_policies::build_schema::error::BuildSchemaError> {
+            Ok(Some(r#"{"test": "schema"}"#.to_string()))
+        }
+
+        async fn delete_schema(
+            &self,
+            _schema_id: &str,
+        ) -> Result<bool, hodei_policies::build_schema::error::BuildSchemaError> {
+            Ok(true)
+        }
+
+        async fn list_schema_versions(
+            &self,
+        ) -> Result<Vec<String>, hodei_policies::build_schema::error::BuildSchemaError> {
+            Ok(vec!["v1.0.0".to_string()])
+        }
     }
 }

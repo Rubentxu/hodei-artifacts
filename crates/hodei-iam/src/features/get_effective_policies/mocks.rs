@@ -14,11 +14,13 @@ use kernel::domain::{HodeiPolicy, Hrn};
 
 // Mock implementations for testing
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MockUserFinderPort {
     user: Option<UserLookupDto>,
     should_fail: bool,
 }
 
+#[allow(dead_code)]
 impl MockUserFinderPort {
     pub fn new() -> Self {
         Self {
@@ -52,15 +54,17 @@ impl UserFinderPort for MockUserFinderPort {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MockGroupFinderPort {
     groups: Vec<GroupLookupDto>,
     should_fail: bool,
 }
 
+#[allow(dead_code)]
 impl MockGroupFinderPort {
     pub fn new() -> Self {
         Self {
-            groups: vec![],
+            groups: Vec::new(),
             should_fail: false,
         }
     }
@@ -90,15 +94,17 @@ impl GroupFinderPort for MockGroupFinderPort {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MockPolicyFinderPort {
     policies: Vec<HodeiPolicy>,
     should_fail: bool,
 }
 
+#[allow(dead_code)]
 impl MockPolicyFinderPort {
     pub fn new() -> Self {
         Self {
-            policies: vec![],
+            policies: Vec::new(),
             should_fail: false,
         }
     }

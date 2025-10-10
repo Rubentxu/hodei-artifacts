@@ -5,8 +5,8 @@
 //! requiring real infrastructure.
 
 use async_trait::async_trait;
-use kernel::domain::policy::HodeiPolicySet;
 use kernel::Hrn;
+use kernel::domain::policy::HodeiPolicySet;
 
 use super::ports::{PolicyFinderError, PolicyFinderPort};
 
@@ -85,12 +85,14 @@ impl PolicyFinderPort for MockPolicyFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use kernel::domain::PolicyId;
+    use kernel::domain::policy::HodeiPolicy;
 
     #[tokio::test]
     async fn test_mock_returns_configured_policy_set() {
         let policy_text = "permit(principal, action, resource);";
-        let policy_set = PolicySet::from_str(policy_text).unwrap();
+        let policy = HodeiPolicy::new(PolicyId::new("test-policy"), policy_text.to_string());
+        let policy_set = HodeiPolicySet::new(vec![policy]);
         let mock = MockPolicyFinder::new(policy_set.clone());
 
         let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
@@ -98,10 +100,7 @@ mod tests {
 
         assert!(result.is_ok());
         let returned_set = result.unwrap();
-        assert_eq!(
-            returned_set.policies().count(),
-            policy_set.policies().count()
-        );
+        assert_eq!(returned_set.policies().len(), policy_set.policies().len());
     }
 
     #[tokio::test]
@@ -113,7 +112,7 @@ mod tests {
 
         assert!(result.is_ok());
         let returned_set = result.unwrap();
-        assert_eq!(returned_set.policies().count(), 0);
+        assert_eq!(returned_set.policies().len(), 0);
     }
 
     #[tokio::test]

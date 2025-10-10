@@ -27,12 +27,10 @@ pub mod use_case;
 // Mocks are kept internal (they are used by unit tests inside the crate)
 mod mocks;
 
-pub mod di;
-
 // ---------------------------------------------------------------------------
 // PUBLIC RE-EXPORTS (Feature API Surface)
 // ---------------------------------------------------------------------------
-pub use dto::{GetEffectivePoliciesQuery, EffectivePoliciesResponse};
+pub use dto::{EffectivePoliciesResponse, GetEffectivePoliciesQuery};
 pub use error::{GetEffectivePoliciesError, GetEffectivePoliciesResult};
 pub use ports::{GroupFinderPort, PolicyFinderPort, UserFinderPort};
 pub use use_case::GetEffectivePoliciesUseCase;

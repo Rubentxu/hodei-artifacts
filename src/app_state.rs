@@ -11,6 +11,7 @@
 //! - Es construido por el composition_root
 //! - Es clonado e inyectado en cada handler de Axum
 
+use crate::composition_root::CompositionRoot;
 use hodei_iam::features::register_iam_schema::ports::RegisterIamSchemaPort;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
 use hodei_policies::evaluate_policies::ports::EvaluatePoliciesPort;
@@ -62,21 +63,21 @@ pub struct AppState {
     // ============================================================
     /// Port for registering IAM schema
     pub register_iam_schema: Arc<dyn RegisterIamSchemaPort>,
-    // TODO: Añadir puertos cuando las features sean migradas
-    // /// Port for creating IAM policies
-    // pub create_policy: Arc<dyn CreatePolicyPort>,
-    //
-    // /// Port for getting IAM policies
-    // pub get_policy: Arc<dyn GetPolicyPort>,
-    //
-    // /// Port for listing IAM policies
-    // pub list_policies: Arc<dyn ListPoliciesPort>,
-    //
-    // /// Port for updating IAM policies
-    // pub update_policy: Arc<dyn UpdatePolicyPort>,
-    //
-    // /// Port for deleting IAM policies
-    // pub delete_policy: Arc<dyn DeletePolicyPort>,
+
+    /// Port for creating IAM policies
+    pub create_policy: Arc<dyn hodei_iam::features::create_policy::ports::CreatePolicyUseCasePort>,
+
+    /// Port for getting IAM policies
+    pub get_policy: Arc<dyn hodei_iam::features::get_policy::ports::PolicyReader>,
+
+    /// Port for listing IAM policies
+    pub list_policies: Arc<dyn hodei_iam::features::list_policies::ports::PolicyLister>,
+
+    /// Port for updating IAM policies
+    pub update_policy: Arc<dyn hodei_iam::features::update_policy::ports::UpdatePolicyPort>,
+
+    /// Port for deleting IAM policies
+    pub delete_policy: Arc<dyn hodei_iam::features::delete_policy::ports::DeletePolicyPort>,
 }
 
 impl AppState {
@@ -128,6 +129,11 @@ impl AppState {
         evaluate_policies: Arc<dyn EvaluatePoliciesPort>,
         playground_evaluate: Arc<dyn PlaygroundEvaluatePort>,
         register_iam_schema: Arc<dyn RegisterIamSchemaPort>,
+        create_policy: Arc<dyn hodei_iam::features::create_policy::ports::CreatePolicyUseCasePort>,
+        get_policy: Arc<dyn hodei_iam::features::get_policy::ports::PolicyReader>,
+        list_policies: Arc<dyn hodei_iam::features::list_policies::ports::PolicyLister>,
+        update_policy: Arc<dyn hodei_iam::features::update_policy::ports::UpdatePolicyPort>,
+        delete_policy: Arc<dyn hodei_iam::features::delete_policy::ports::DeletePolicyPort>,
     ) -> Self {
         Self {
             schema_version,
@@ -139,6 +145,11 @@ impl AppState {
             evaluate_policies,
             playground_evaluate,
             register_iam_schema,
+            create_policy,
+            get_policy,
+            list_policies,
+            update_policy,
+            delete_policy,
         }
     }
 
@@ -155,10 +166,7 @@ impl AppState {
     /// let root = CompositionRoot::production(schema_storage);
     /// let app_state = AppState::from_composition_root("v1.0.0".to_string(), root);
     /// ```
-    pub fn from_composition_root(
-        schema_version: String,
-        root: crate::composition_root::CompositionRoot,
-    ) -> Self {
+    pub fn from_composition_root(schema_version: String, root: CompositionRoot) -> Self {
         Self {
             schema_version,
             register_entity_type: root.policy_ports.register_entity_type,
@@ -169,6 +177,11 @@ impl AppState {
             evaluate_policies: root.policy_ports.evaluate_policies,
             playground_evaluate: root.policy_ports.playground_evaluate,
             register_iam_schema: root.iam_ports.register_iam_schema,
+            create_policy: root.iam_ports.create_policy,
+            get_policy: root.iam_ports.get_policy,
+            list_policies: root.iam_ports.list_policies,
+            update_policy: root.iam_ports.update_policy,
+            delete_policy: root.iam_ports.delete_policy,
         }
     }
 }
@@ -177,10 +190,25 @@ impl AppState {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use hodei_iam::features::create_policy::dto::{CreatePolicyCommand, PolicyView};
+    use hodei_iam::features::create_policy::error::CreatePolicyError;
+    use hodei_iam::features::create_policy::ports::CreatePolicyUseCasePort;
+    use hodei_iam::features::delete_policy::dto::DeletePolicyCommand;
+    use hodei_iam::features::delete_policy::error::DeletePolicyError;
+    use hodei_iam::features::delete_policy::ports::DeletePolicyPort;
+    use hodei_iam::features::get_policy::dto::GetPolicyResponse;
+    use hodei_iam::features::get_policy::error::GetPolicyError;
+    use hodei_iam::features::get_policy::ports::PolicyReader;
+    use hodei_iam::features::list_policies::dto::{ListPoliciesCommand, ListPoliciesResponse};
+    use hodei_iam::features::list_policies::error::ListPoliciesError;
+    use hodei_iam::features::list_policies::ports::PolicyLister;
     use hodei_iam::features::register_iam_schema::dto::{
         RegisterIamSchemaCommand, RegisterIamSchemaResult,
     };
     use hodei_iam::features::register_iam_schema::error::RegisterIamSchemaError;
+    use hodei_iam::features::update_policy::dto::{UpdatePolicyCommand, UpdatePolicyResponse};
+    use hodei_iam::features::update_policy::error::UpdatePolicyError;
+    use hodei_iam::features::update_policy::ports::UpdatePolicyPort;
     use hodei_policies::build_schema::dto::{BuildSchemaCommand, BuildSchemaResult};
     use hodei_policies::build_schema::error::BuildSchemaError;
     use hodei_policies::evaluate_policies::dto::{EvaluatePoliciesCommand, EvaluationDecision};
@@ -197,8 +225,96 @@ mod tests {
     use hodei_policies::register_entity_type::error::RegisterEntityTypeError;
     use hodei_policies::validate_policy::dto::{ValidatePolicyCommand, ValidationResult};
     use hodei_policies::validate_policy::error::ValidatePolicyError;
+    use kernel::domain::policy::HodeiPolicy;
 
     // Mock implementations for testing
+
+    struct MockCreatePolicyPort;
+    #[async_trait]
+    impl hodei_iam::features::create_policy::ports::CreatePolicyUseCasePort for MockCreatePolicyPort {
+        async fn execute(
+            &self,
+            _command: CreatePolicyCommand,
+        ) -> Result<PolicyView, CreatePolicyError> {
+            Ok(PolicyView {
+                id: kernel::Hrn::new(
+                    "hodei".to_string(),
+                    "iam".to_string(),
+                    "default".to_string(),
+                    "Policy".to_string(),
+                    "test-policy".to_string(),
+                ),
+                content: "permit(principal, action, resource);".to_string(),
+                description: Some("Test policy".to_string()),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            })
+        }
+    }
+
+    struct MockGetPolicyPort;
+    #[async_trait]
+    impl hodei_iam::features::get_policy::ports::PolicyReader for MockGetPolicyPort {
+        async fn get_by_hrn(&self, _hrn: kernel::Hrn) -> Result<GetPolicyResponse, GetPolicyError> {
+            Ok(GetPolicyResponse {
+                policy: HodeiPolicy::new(
+                    kernel::Hrn::new(
+                        "hodei".to_string(),
+                        "iam".to_string(),
+                        "default".to_string(),
+                        "Policy".to_string(),
+                        "test-policy".to_string(),
+                    ),
+                    "permit(principal, action, resource);".to_string(),
+                ),
+            })
+        }
+    }
+
+    struct MockListPoliciesPort;
+    #[async_trait]
+    impl hodei_iam::features::list_policies::ports::PolicyLister for MockListPoliciesPort {
+        async fn list(
+            &self,
+            _command: ListPoliciesCommand,
+        ) -> Result<ListPoliciesResponse, ListPoliciesError> {
+            Ok(ListPoliciesResponse {
+                total_count: 0,
+                has_next_page: false,
+                has_previous_page: false,
+            })
+        }
+    }
+
+    struct MockUpdatePolicyPort;
+    #[async_trait]
+    impl hodei_iam::features::update_policy::ports::UpdatePolicyPort for MockUpdatePolicyPort {
+        async fn update(
+            &self,
+            _command: UpdatePolicyCommand,
+        ) -> Result<UpdatePolicyResponse, UpdatePolicyError> {
+            Ok(UpdatePolicyResponse {
+                policy: HodeiPolicy::new(
+                    kernel::Hrn::new(
+                        "hodei".to_string(),
+                        "iam".to_string(),
+                        "default".to_string(),
+                        "Policy".to_string(),
+                        "test-policy".to_string(),
+                    ),
+                    "permit(principal, action, resource);".to_string(),
+                ),
+            })
+        }
+    }
+
+    struct MockDeletePolicyPort;
+    #[async_trait]
+    impl hodei_iam::features::delete_policy::ports::DeletePolicyPort for MockDeletePolicyPort {
+        async fn delete(&self, _command: DeletePolicyCommand) -> Result<(), DeletePolicyError> {
+            Ok(())
+        }
+    }
 
     struct MockRegisterEntityTypePort;
     #[async_trait]
@@ -305,9 +421,10 @@ mod tests {
                 determining_policies: vec![],
                 diagnostics:
                     hodei_policies::features::playground_evaluate::dto::EvaluationDiagnostics {
-                        errors: vec![],
-                        warnings: vec![],
-                        info: vec![],
+                        total_policies: 0,
+                        matched_policies: 0,
+                        schema_validated: false,
+                        validation_errors: vec![],
                     },
             })
         }
@@ -342,6 +459,11 @@ mod tests {
             Arc::new(MockEvaluatePoliciesPort),
             Arc::new(MockPlaygroundEvaluatePort),
             Arc::new(MockRegisterIamSchemaPort),
+            Arc::new(MockCreatePolicyPort),
+            Arc::new(MockGetPolicyPort),
+            Arc::new(MockListPoliciesPort),
+            Arc::new(MockUpdatePolicyPort),
+            Arc::new(MockDeletePolicyPort),
         );
 
         assert_eq!(app_state.schema_version, "v1.0.0");
@@ -367,6 +489,11 @@ mod tests {
             Arc::new(MockEvaluatePoliciesPort),
             Arc::new(MockPlaygroundEvaluatePort),
             Arc::new(MockRegisterIamSchemaPort),
+            Arc::new(MockCreatePolicyPort),
+            Arc::new(MockGetPolicyPort),
+            Arc::new(MockListPoliciesPort),
+            Arc::new(MockUpdatePolicyPort),
+            Arc::new(MockDeletePolicyPort),
         );
 
         let cloned_state = app_state.clone();

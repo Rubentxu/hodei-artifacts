@@ -10,8 +10,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use hodei_policies::features::build_schema::ports::SchemaStoragePort;
-use kernel::Hrn;
+
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -143,8 +142,7 @@ pub struct DeletePolicyResponse {
 pub async fn create_policy(
     State(state): State<AppState>,
     Json(request): Json<CreatePolicyRequest>,
-) -> Result<Json<CreatePolicyResponse>, IamApiError>
-{
+) -> Result<Json<CreatePolicyResponse>, IamApiError> {
     let command = hodei_iam::features::create_policy::dto::CreatePolicyCommand {
         policy_id: request.policy_id,
         policy_content: request.policy_content,
@@ -207,24 +205,25 @@ pub async fn create_policy(
 pub async fn get_policy(
     State(state): State<AppState>,
     Json(request): Json<GetPolicyRequest>,
-) -> Result<Json<GetPolicyResponse>, IamApiError>
-{
+) -> Result<Json<GetPolicyResponse>, IamApiError> {
     let policy_hrn = kernel::Hrn::from_string(&request.policy_hrn)
         .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
 
-    let query = hodei_iam::features::get_policy::dto::GetPolicyQuery { policy_hrn };
-
-    let policy_view = state.get_policy.execute(query).await.map_err(|e| match e {
-        hodei_iam::features::get_policy::error::GetPolicyError::PolicyNotFound(msg) => {
-            IamApiError::NotFound(format!("Policy not found: {}", msg))
-        }
-        hodei_iam::features::get_policy::error::GetPolicyError::InvalidHrn(msg) => {
-            IamApiError::BadRequest(format!("Invalid HRN: {}", msg))
-        }
-        hodei_iam::features::get_policy::error::GetPolicyError::RepositoryError(msg) => {
-            IamApiError::InternalServerError(format!("Repository error: {}", msg))
-        }
-    })?;
+    let policy_view = state
+        .get_policy
+        .get_by_hrn(&policy_hrn)
+        .await
+        .map_err(|e| match e {
+            hodei_iam::features::get_policy::error::GetPolicyError::PolicyNotFound(msg) => {
+                IamApiError::NotFound(format!("Policy not found: {}", msg))
+            }
+            hodei_iam::features::get_policy::error::GetPolicyError::InvalidHrn(msg) => {
+                IamApiError::BadRequest(format!("Invalid HRN: {}", msg))
+            }
+            hodei_iam::features::get_policy::error::GetPolicyError::RepositoryError(msg) => {
+                IamApiError::InternalServerError(format!("Repository error: {}", msg))
+            }
+        })?;
 
     Ok(Json(GetPolicyResponse {
         hrn: policy_view.hrn.to_string(),
@@ -253,8 +252,7 @@ pub async fn get_policy(
 pub async fn list_policies(
     State(state): State<AppState>,
     Query(query): Query<ListPoliciesQueryParams>,
-) -> Result<Json<ListPoliciesResponse>, IamApiError>
-{
+) -> Result<Json<ListPoliciesResponse>, IamApiError> {
     let list_query = hodei_iam::features::list_policies::dto::ListPoliciesQuery {
         limit: query.limit,
         offset: query.offset,
@@ -262,7 +260,7 @@ pub async fn list_policies(
 
     let list_result = state
         .list_policies
-        .execute(list_query)
+        .list(list_query)
         .await
         .map_err(|e| match e {
             hodei_iam::features::list_policies::error::ListPoliciesError::Database(msg) => {
@@ -321,8 +319,7 @@ pub async fn list_policies(
 pub async fn update_policy(
     State(state): State<AppState>,
     Json(request): Json<UpdatePolicyRequest>,
-) -> Result<Json<UpdatePolicyResponse>, IamApiError>
-{
+) -> Result<Json<UpdatePolicyResponse>, IamApiError> {
     let command = hodei_iam::features::update_policy::dto::UpdatePolicyCommand {
         policy_id: request.policy_hrn.to_string(),
         policy_content: Some(request.policy_content),
@@ -331,7 +328,7 @@ pub async fn update_policy(
 
     let policy_view = state
         .update_policy
-        .execute(command)
+        .update(command)
         .await
         .map_err(|e| match e {
             hodei_iam::features::update_policy::error::UpdatePolicyError::PolicyNotFound(msg) => {
@@ -396,15 +393,14 @@ pub async fn update_policy(
 pub async fn delete_policy(
     State(state): State<AppState>,
     Json(request): Json<DeletePolicyRequest>,
-) -> Result<Json<DeletePolicyResponse>, IamApiError>
-{
+) -> Result<Json<DeletePolicyResponse>, IamApiError> {
     let command = hodei_iam::features::delete_policy::dto::DeletePolicyCommand {
         policy_id: request.policy_hrn.to_string(),
     };
 
     state
         .delete_policy
-        .execute(command)
+        .delete(&command.policy_id)
         .await
         .map_err(|e| match e {
             hodei_iam::features::delete_policy::error::DeletePolicyError::PolicyNotFound(msg) => {

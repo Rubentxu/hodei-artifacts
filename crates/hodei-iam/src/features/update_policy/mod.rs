@@ -8,7 +8,7 @@
 //! - ports.rs            -> Segregated interface definition (UpdatePolicyPort)
 //! - use_case.rs         -> Core business logic (UpdatePolicyUseCase)
 //! - adapter.rs          -> Infrastructure adapter implementations (stub/in-memory)
-//! - di.rs               -> Dependency Injection helpers
+//! - factories.rs        -> Dependency Injection helpers
 //! - mocks.rs            -> Test-only mock implementations of ports
 //! - use_case_test.rs    -> Unit tests for the use case
 //!
@@ -22,9 +22,9 @@
 //! - Updated timestamp is automatically tracked
 //! - Optimistic locking via version/etag (future enhancement)
 
-pub mod di;
 pub mod dto;
 pub mod error;
+pub mod factories;
 pub mod mocks;
 pub mod ports;
 pub mod use_case;

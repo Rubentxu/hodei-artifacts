@@ -12,7 +12,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use hodei_policies::features::build_schema::ports::SchemaStoragePort;
+
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -96,8 +96,7 @@ pub struct RegisterIamSchemaResponse {
 pub async fn build_schema(
     State(state): State<AppState>,
     Json(request): Json<BuildSchemaRequest>,
-) -> Result<Json<BuildSchemaResponse>, ApiError>
-{
+) -> Result<Json<BuildSchemaResponse>, ApiError> {
     let command = hodei_policies::features::build_schema::dto::BuildSchemaCommand {
         version: request.version,
         validate: request.validate,
@@ -140,8 +139,7 @@ pub async fn build_schema(
 )]
 pub async fn load_schema(
     State(_state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError>
-{
+) -> Result<Json<serde_json::Value>, ApiError> {
     // TODO: Implement schema loading
     // For now, return a stub response
     Ok(Json(serde_json::json!({
@@ -176,8 +174,7 @@ pub async fn load_schema(
 pub async fn register_iam_schema(
     State(state): State<AppState>,
     Json(request): Json<RegisterIamSchemaRequest>,
-) -> Result<Json<RegisterIamSchemaResponse>, ApiError>
-{
+) -> Result<Json<RegisterIamSchemaResponse>, ApiError> {
     let command = hodei_iam::features::register_iam_schema::RegisterIamSchemaCommand::new()
         .with_validation(request.validate);
 
@@ -189,7 +186,7 @@ pub async fn register_iam_schema(
 
     let result = state
         .register_iam_schema
-        .execute(command)
+        .register(command)
         .await
         .map_err(|e| {
             ApiError::InternalServerError(format!("Failed to register IAM schema: {}", e))

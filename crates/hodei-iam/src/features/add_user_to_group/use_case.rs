@@ -1,6 +1,7 @@
 use super::dto::{AddUserToGroupCommand, UserPersistenceDto};
 use super::error::AddUserToGroupError;
-use super::ports::{GroupFinder, UserFinder, UserGroupPersister};
+use super::ports::{AddUserToGroupUseCasePort, GroupFinder, UserFinder, UserGroupPersister};
+use async_trait::async_trait;
 use kernel::Hrn;
 use std::sync::Arc;
 
@@ -81,5 +82,14 @@ impl<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> AddUserToGroupUseC
         self.user_persister.save_user(&updated_user_dto).await?;
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl<UF: UserFinder, GF: GroupFinder, UP: UserGroupPersister> AddUserToGroupUseCasePort
+    for AddUserToGroupUseCase<UF, GF, UP>
+{
+    async fn execute(&self, command: AddUserToGroupCommand) -> Result<(), AddUserToGroupError> {
+        self.execute(command).await
     }
 }

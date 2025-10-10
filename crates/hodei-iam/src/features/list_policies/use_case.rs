@@ -1,11 +1,12 @@
-//!Use Case: List Policies
+//! Use Case: List Policies
 
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{debug, info, instrument};
 
 use super::dto::{ListPoliciesQuery, ListPoliciesResponse};
 use super::error::ListPoliciesError;
-use super::ports::PolicyLister;
+use super::ports::{ListPoliciesUseCasePort, PolicyLister};
 
 /// Use case forlisting IAM policies with pagination
 ///
@@ -37,7 +38,7 @@ use super::ports::PolicyLister;
 /// ```
 pub struct ListPoliciesUseCase<L>
 where
-    L: PolicyLister,
+    L: PolicyLister + ?Sized,
 {
     /// Port for listing policies
     lister: Arc<L>,
@@ -45,7 +46,7 @@ where
 
 impl<L> ListPoliciesUseCase<L>
 where
-    L: PolicyLister,
+    L: PolicyLister + ?Sized,
 {
     /// Create a new instance of the use case
     ///
@@ -116,6 +117,33 @@ where
         }
 
         Ok(())
+    }
+}
+
+// Implement PolicyLister trait for the use case to enable trait object usage
+#[async_trait]
+impl<L> PolicyLister for ListPoliciesUseCase<L>
+where
+    L: PolicyLister + Send + Sync + ?Sized,
+{
+    async fn list(
+        &self,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, ListPoliciesError> {
+        self.execute(query).await
+    }
+}
+
+#[async_trait]
+impl<L> ListPoliciesUseCasePort for ListPoliciesUseCase<L>
+where
+    L: PolicyLister + Send + Sync + ?Sized,
+{
+    async fn execute(
+        &self,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, ListPoliciesError> {
+        self.execute(query).await
     }
 }
 

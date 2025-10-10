@@ -9,9 +9,11 @@
 use crate::app_state::AppState;
 use crate::composition_root::CompositionRoot;
 use async_trait::async_trait;
+
 use hodei_iam::features::register_iam_schema::dto::{
     RegisterIamSchemaCommand, RegisterIamSchemaResult,
 };
+use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
 use hodei_policies::features::build_schema::error::BuildSchemaError;
 use hodei_policies::features::build_schema::ports::SchemaStoragePort;
 use std::sync::Arc;
@@ -73,9 +75,14 @@ pub async fn bootstrap(
     info!("📦 Initializing infrastructure adapters");
     let schema_storage = initialize_schema_storage().await?;
 
+    // Initialize policy adapter with the same DB client
+    let policy_adapter = Arc::new(SurrealPolicyAdapter::new(
+        schema_storage.db().clone().into(),
+    ));
+
     // Step 2: Use Composition Root to create all use case ports
     info!("🏗️  Creating use cases via CompositionRoot");
-    let root = CompositionRoot::production(schema_storage.clone());
+    let root = CompositionRoot::production(schema_storage.clone(), policy_adapter);
 
     // Step 3: Determine schema version
     let schema_version = if config.register_iam_schema {

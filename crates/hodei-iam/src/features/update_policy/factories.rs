@@ -19,7 +19,7 @@ pub fn make_update_policy_uc() -> UpdatePolicyUseCase<CedarPolicyValidator, InMe
 */
 
 /// Create an UpdatePolicyUseCase with custom validator and adapter
-pub fn make_update_policy_uc_with<V, P>(
+pub fn make_update_policy_uc_with<V: ?Sized, P: ?Sized>(
     validator: Arc<V>,
     adapter: Arc<P>,
 ) -> UpdatePolicyUseCase<V, P>

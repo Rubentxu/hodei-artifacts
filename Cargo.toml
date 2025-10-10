@@ -119,10 +119,6 @@ description = "Hodei API stub - Temporarily disabled during policies crate migra
 # Configuración recomendada para tests rápidos:
 # cargo nextest run --lib -p kernel -p hodei-organizations -p hodei-iam -p hodei-authorizer
 
-[[bin]]
-name = "hodei-artifacts-api"
-path = "src/main.rs"
-
 
 
 [dependencies]
@@ -153,6 +149,9 @@ chrono = { workspace = true }
 
 # Database
 surrealdb = { workspace = true }
+
+# Policy engine
+cedar-policy = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }

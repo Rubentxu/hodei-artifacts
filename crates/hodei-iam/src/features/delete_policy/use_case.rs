@@ -1,23 +1,26 @@
 //! Use case for deleting IAM policies
 //!
-//! This module implements the business logic for deleting existing IAM policies.
+//! This module implements the business logic for deleting IAM policies.
 //! Following Clean Architecture and Vertical Slice Architecture (VSA) principles,
 //! this use case is self-contained and depends only on abstract ports.
 //!
 //! # Flow
 //!
 //! 1. Receive `DeletePolicyCommand` from the caller
-//! 2. Validate policy ID format
-//! 3. Delete through `DeletePolicyPort`
-//! 4. Return success or appropriate error
+//! 2. Validate policy ID (not empty)
+//! 3. Optionally check if policy is in use (future enhancement)
+//! 4. Delete the policy through `DeletePolicyPort`
+//! 5. Return success or appropriate error
 //!
 //! # Dependencies
 //!
 //! - `DeletePolicyPort`: Abstract port for policy deletion (ISP - only delete)
+//! - `DeletePolicyUseCasePort`: Port for executing the use case
 
 use crate::features::delete_policy::dto::DeletePolicyCommand;
 use crate::features::delete_policy::error::DeletePolicyError;
-use crate::features::delete_policy::ports::DeletePolicyPort;
+use crate::features::delete_policy::ports::{DeletePolicyPort, DeletePolicyUseCasePort};
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 
@@ -52,7 +55,7 @@ use tracing::{info, instrument, warn};
 /// ```
 pub struct DeletePolicyUseCase<P>
 where
-    P: DeletePolicyPort,
+    P: DeletePolicyPort + ?Sized,
 {
     /// Port for deleting policies (only delete operation)
     policy_port: Arc<P>,
@@ -60,7 +63,7 @@ where
 
 impl<P> DeletePolicyUseCase<P>
 where
-    P: DeletePolicyPort,
+    P: DeletePolicyPort + ?Sized,
 {
     /// Create a new instance of the use case
     ///
@@ -143,6 +146,31 @@ where
 
         info!("Policy deleted successfully: {}", command.policy_id);
         Ok(())
+    }
+}
+
+// Implement DeletePolicyPort trait for the use case to enable trait object usage
+#[async_trait]
+impl<P> DeletePolicyPort for DeletePolicyUseCase<P>
+where
+    P: DeletePolicyPort + Send + Sync + ?Sized,
+{
+    async fn delete(&self, policy_id: &str) -> Result<(), DeletePolicyError> {
+        let command = DeletePolicyCommand {
+            policy_id: policy_id.to_string(),
+        };
+        self.execute(command).await
+    }
+}
+
+// Implement DeletePolicyUseCasePort trait for the use case
+#[async_trait]
+impl<P> DeletePolicyUseCasePort for DeletePolicyUseCase<P>
+where
+    P: DeletePolicyPort + Send + Sync + ?Sized,
+{
+    async fn execute(&self, command: DeletePolicyCommand) -> Result<(), DeletePolicyError> {
+        self.execute(command).await
     }
 }
 

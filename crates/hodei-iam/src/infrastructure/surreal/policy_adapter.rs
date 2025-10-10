@@ -11,7 +11,6 @@ use async_trait::async_trait;
 use kernel::Hrn;
 use std::sync::Arc;
 use surrealdb::Surreal;
-use surrealdb::engine::local::Db;
 use tracing::{debug, error, info, warn};
 
 // Import the ports from features
@@ -25,38 +24,34 @@ use crate::features::update_policy::ports::UpdatePolicyPort;
 // Import DTOs and errors from features
 use crate::features::create_policy::dto::CreatePolicyCommand;
 use crate::features::create_policy::error::CreatePolicyError;
-use crate::features::delete_policy::dto::DeletePolicyCommand;
+
 use crate::features::delete_policy::error::DeletePolicyError;
-use crate::features::get_policy::dto::{GetPolicyQuery, PolicyView as GetPolicyView};
+use crate::features::get_policy::dto::PolicyView as GetPolicyView;
 use crate::features::get_policy::error::GetPolicyError;
-use crate::features::list_policies::dto::{
-    ListPoliciesQuery, ListPoliciesResponse, PageInfo, PolicySummary,
-};
+use crate::features::list_policies::dto::{ListPoliciesQuery, ListPoliciesResponse, PolicySummary};
 use crate::features::list_policies::error::ListPoliciesError;
 use crate::features::update_policy::dto::{PolicyView as UpdatePolicyView, UpdatePolicyCommand};
 use crate::features::update_policy::error::UpdatePolicyError;
 
 // Import internal domain entities
-use crate::internal::domain::Group;
-use crate::internal::domain::User;
 
 // Import kernel policy types
 use kernel::domain::policy::{HodeiPolicy, PolicyId};
 
 /// SurrealDB adapter for Policy persistence operations
-pub struct SurrealPolicyAdapter {
-    db: Arc<Surreal<Db>>,
+pub struct SurrealPolicyAdapter<C: surrealdb::Connection> {
+    db: Arc<Surreal<C>>,
 }
 
-impl SurrealPolicyAdapter {
+impl<C: surrealdb::Connection> SurrealPolicyAdapter<C> {
     /// Create a new SurrealPolicyAdapter
-    pub fn new(db: Arc<Surreal<Db>>) -> Self {
+    pub fn new(db: Arc<Surreal<C>>) -> Self {
         Self { db }
     }
 }
 
 #[async_trait]
-impl CreatePolicyPort for SurrealPolicyAdapter {
+impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
     async fn create(&self, command: CreatePolicyCommand) -> Result<HodeiPolicy, CreatePolicyError> {
         info!("Creating policy with ID: {}", command.policy_id);
 
@@ -102,7 +97,7 @@ impl CreatePolicyPort for SurrealPolicyAdapter {
 }
 
 #[async_trait]
-impl PolicyReader for SurrealPolicyAdapter {
+impl<C: surrealdb::Connection> PolicyReader for SurrealPolicyAdapter<C> {
     async fn get_by_hrn(&self, hrn: &Hrn) -> Result<GetPolicyView, GetPolicyError> {
         info!("Getting policy by HRN: {}", hrn);
 
@@ -110,7 +105,7 @@ impl PolicyReader for SurrealPolicyAdapter {
         let policy_id = hrn.resource_id();
 
         let result: Result<Option<HodeiPolicy>, surrealdb::Error> =
-            self.db.select((policy_table, policy_id.clone())).await;
+            self.db.select((policy_table, policy_id)).await;
 
         match result {
             Ok(Some(policy)) => {
@@ -135,7 +130,7 @@ impl PolicyReader for SurrealPolicyAdapter {
 }
 
 #[async_trait]
-impl PolicyLister for SurrealPolicyAdapter {
+impl<C: surrealdb::Connection> PolicyLister for SurrealPolicyAdapter<C> {
     async fn list(
         &self,
         query: ListPoliciesQuery,
@@ -145,8 +140,8 @@ impl PolicyLister for SurrealPolicyAdapter {
             query.limit, query.offset
         );
 
-        let limit = query.limit as usize;
-        let offset = query.offset as usize;
+        let limit = query.limit;
+        let offset = query.offset;
 
         // Get total count
         let count_query = "SELECT count() FROM policy GROUP ALL";
@@ -215,7 +210,7 @@ impl PolicyLister for SurrealPolicyAdapter {
 }
 
 #[async_trait]
-impl UpdatePolicyPort for SurrealPolicyAdapter {
+impl<C: surrealdb::Connection> UpdatePolicyPort for SurrealPolicyAdapter<C> {
     async fn update(
         &self,
         command: UpdatePolicyCommand,
@@ -282,12 +277,12 @@ impl UpdatePolicyPort for SurrealPolicyAdapter {
 }
 
 #[async_trait]
-impl DeletePolicyPort for SurrealPolicyAdapter {
+impl<C: surrealdb::Connection> DeletePolicyPort for SurrealPolicyAdapter<C> {
     async fn delete(&self, policy_id: &str) -> Result<(), DeletePolicyError> {
         info!("Deleting policy: {}", policy_id);
 
         let policy_table = "policy";
-        let policy_table = "policy";
+        let _policy_table = "policy";
 
         let deleted: Result<Option<HodeiPolicy>, surrealdb::Error> =
             self.db.delete((policy_table, policy_id)).await;
@@ -310,7 +305,7 @@ impl DeletePolicyPort for SurrealPolicyAdapter {
 }
 
 #[async_trait]
-impl PolicyFinderPort for SurrealPolicyAdapter {
+impl<C: surrealdb::Connection> PolicyFinderPort for SurrealPolicyAdapter<C> {
     async fn find_policies_by_principal(
         &self,
         principal_hrn: &Hrn,

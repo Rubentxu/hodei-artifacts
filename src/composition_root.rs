@@ -45,12 +45,11 @@ pub struct PolicyPorts {
 pub struct IamPorts {
     pub register_iam_schema:
         Arc<dyn hodei_iam::features::register_iam_schema::ports::RegisterIamSchemaPort>,
-    // TODO: Añadir más puertos cuando se migren las demás features
-    // pub create_policy: Arc<dyn CreatePolicyPort>,
-    // pub get_policy: Arc<dyn GetPolicyPort>,
-    // pub list_policies: Arc<dyn ListPoliciesPort>,
-    // pub update_policy: Arc<dyn UpdatePolicyPort>,
-    // pub delete_policy: Arc<dyn DeletePolicyPort>,
+    pub create_policy: Arc<dyn hodei_iam::features::create_policy::ports::CreatePolicyUseCasePort>,
+    pub get_policy: Arc<dyn hodei_iam::features::get_policy::ports::PolicyReader>,
+    pub list_policies: Arc<dyn hodei_iam::features::list_policies::ports::PolicyLister>,
+    pub update_policy: Arc<dyn hodei_iam::features::update_policy::ports::UpdatePolicyPort>,
+    pub delete_policy: Arc<dyn hodei_iam::features::delete_policy::ports::DeletePolicyPort>,
 }
 
 /// Composition Root - Punto de ensamblaje de toda la aplicación
@@ -71,30 +70,20 @@ impl CompositionRoot {
     /// # Argumentos
     ///
     /// * `schema_storage` - Adaptador concreto para almacenamiento de esquemas
+    /// * `policy_adapter` - Adaptador concreto para gestión de políticas IAM
     ///
     /// # Retorna
     ///
     /// Una instancia de CompositionRoot con todos los puertos listos para inyección
-    ///
-    /// # Ejemplo
-    ///
-    /// ```rust,ignore
-    /// use hodei_artifacts::composition_root::CompositionRoot;
-    /// use hodei_artifacts::bootstrap::SurrealSchemaAdapter;
-    ///
-    /// let schema_storage = Arc::new(SurrealSchemaAdapter::new(db_client));
-    /// let root = CompositionRoot::production(schema_storage);
-    ///
-    /// // Los puertos se pueden inyectar en el AppState de Axum
-    /// let app_state = AppState {
-    ///     register_iam_schema: root.iam_ports.register_iam_schema,
-    ///     validate_policy: root.policy_ports.validate_policy,
-    ///     // ...
-    /// };
-    /// ```
-    pub fn production<S>(schema_storage: Arc<S>) -> Self
+    pub fn production<S, P>(schema_storage: Arc<S>, policy_adapter: Arc<P>) -> Self
     where
         S: SchemaStoragePort + Clone + 'static,
+        P: hodei_iam::features::create_policy::ports::CreatePolicyPort
+            + hodei_iam::features::get_policy::ports::PolicyReader
+            + hodei_iam::features::list_policies::ports::PolicyLister
+            + hodei_iam::features::update_policy::ports::UpdatePolicyPort
+            + hodei_iam::features::delete_policy::ports::DeletePolicyPort
+            + 'static,
     {
         info!("🏗️  Initializing Composition Root (Production)");
 
@@ -148,15 +137,48 @@ impl CompositionRoot {
         info!("📦 Creating hodei-iam ports...");
 
         // 2.1. Register IAM schema (orquesta los puertos de policies)
-        info!("  └─ RegisterIamSchemaPort");
+        info!("  ├─ RegisterIamSchemaPort");
         let register_iam_schema = iam_factories::create_register_iam_schema_use_case(
             policy_ports.register_entity_type.clone(),
             policy_ports.register_action_type.clone(),
             policy_ports.build_schema.clone(),
         );
 
+        // 2.2. Create policy use case
+        info!("  ├─ CreatePolicyPort");
+        let create_policy =
+            hodei_iam::features::create_policy::factories::create_create_policy_use_case(
+                policy_adapter.clone(),
+                policy_ports.validate_policy.clone(),
+            );
+
+        // 2.3. Get policy port
+        info!("  ├─ GetPolicyPort");
+        let get_policy: Arc<dyn hodei_iam::features::get_policy::ports::PolicyReader> =
+            policy_adapter.clone();
+
+        // 2.4. List policies port
+        info!("  ├─ ListPoliciesPort");
+        let list_policies: Arc<dyn hodei_iam::features::list_policies::ports::PolicyLister> =
+            policy_adapter.clone();
+
+        // 2.5. Update policy port
+        info!("  ├─ UpdatePolicyPort");
+        let update_policy: Arc<dyn hodei_iam::features::update_policy::ports::UpdatePolicyPort> =
+            policy_adapter.clone();
+
+        // 2.6. Delete policy port
+        info!("  └─ DeletePolicyPort");
+        let delete_policy: Arc<dyn hodei_iam::features::delete_policy::ports::DeletePolicyPort> =
+            policy_adapter;
+
         let iam_ports = IamPorts {
             register_iam_schema,
+            create_policy,
+            get_policy,
+            list_policies,
+            update_policy,
+            delete_policy,
         };
 
         info!("✅ Composition Root initialized successfully");
@@ -200,12 +222,18 @@ impl CompositionRoot {
     /// Este método permite crear un composition root con mocks o
     /// implementaciones de prueba para tests de integración.
     #[cfg(test)]
-    pub fn test<S>(schema_storage: Arc<S>) -> Self
+    pub fn test<S, P>(schema_storage: Arc<S>, policy_adapter: Arc<P>) -> Self
     where
         S: SchemaStoragePort + Clone + 'static,
+        P: hodei_iam::features::create_policy::ports::CreatePolicyPort
+            + hodei_iam::features::get_policy::ports::PolicyReader
+            + hodei_iam::features::list_policies::ports::PolicyLister
+            + hodei_iam::features::update_policy::ports::UpdatePolicyPort
+            + hodei_iam::features::delete_policy::ports::DeletePolicyPort
+            + 'static,
     {
         // En tests, podemos usar implementaciones mock
-        Self::production(schema_storage)
+        Self::production(schema_storage, policy_adapter)
     }
 }
 
@@ -250,10 +278,102 @@ mod tests {
         }
     }
 
+    /// Mock simple de todos los puertos de políticas IAM
+    struct MockPolicyAdapter;
+
+    #[async_trait]
+    impl hodei_iam::features::create_policy::ports::CreatePolicyPort for MockPolicyAdapter {
+        async fn create(
+            &self,
+            _command: hodei_iam::features::create_policy::dto::CreatePolicyCommand,
+        ) -> Result<
+            kernel::domain::policy::HodeiPolicy,
+            hodei_iam::features::create_policy::error::CreatePolicyError,
+        > {
+            use kernel::domain::policy::{HodeiPolicy, PolicyId};
+            Ok(HodeiPolicy::new(
+                PolicyId::new("test-id"),
+                "permit(principal, action, resource);".to_string(),
+            ))
+        }
+    }
+
+    #[async_trait]
+    impl hodei_iam::features::get_policy::ports::PolicyReader for MockPolicyAdapter {
+        async fn get_by_hrn(
+            &self,
+            _hrn: &kernel::Hrn,
+        ) -> Result<
+            hodei_iam::features::get_policy::dto::PolicyView,
+            hodei_iam::features::get_policy::error::GetPolicyError,
+        > {
+            Ok(hodei_iam::features::get_policy::dto::PolicyView {
+                hrn: kernel::Hrn::new(
+                    "hodei".to_string(),
+                    "iam".to_string(),
+                    "default".to_string(),
+                    "Policy".to_string(),
+                    "test-policy".to_string(),
+                ),
+                name: "test-policy".to_string(),
+                content: "permit(principal, action, resource);".to_string(),
+                description: Some("Test policy".to_string()),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl hodei_iam::features::list_policies::ports::PolicyLister for MockPolicyAdapter {
+        async fn list(
+            &self,
+            _query: hodei_iam::features::list_policies::dto::ListPoliciesQuery,
+        ) -> Result<
+            hodei_iam::features::list_policies::dto::ListPoliciesResponse,
+            hodei_iam::features::list_policies::error::ListPoliciesError,
+        > {
+            Ok(
+                hodei_iam::features::list_policies::dto::ListPoliciesResponse {
+                    policies: vec![],
+                    total_count: 0,
+                    has_next_page: false,
+                    has_previous_page: false,
+                },
+            )
+        }
+    }
+
+    #[async_trait]
+    impl hodei_iam::features::update_policy::ports::UpdatePolicyPort for MockPolicyAdapter {
+        async fn update(
+            &self,
+            _command: hodei_iam::features::update_policy::dto::UpdatePolicyCommand,
+        ) -> Result<
+            hodei_iam::features::update_policy::dto::PolicyView,
+            hodei_iam::features::update_policy::error::UpdatePolicyError,
+        > {
+            Err(
+                hodei_iam::features::update_policy::error::UpdatePolicyError::PolicyNotFound(
+                    "mock".to_string(),
+                ),
+            )
+        }
+    }
+
+    #[async_trait]
+    impl hodei_iam::features::delete_policy::ports::DeletePolicyPort for MockPolicyAdapter {
+        async fn delete(
+            &self,
+            _policy_id: &str,
+        ) -> Result<(), hodei_iam::features::delete_policy::error::DeletePolicyError> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn test_composition_root_creates_all_ports() {
         let storage = Arc::new(MockSchemaStorage);
-        let root = CompositionRoot::production(storage);
+        let policy_adapter = Arc::new(MockPolicyAdapter);
+        let root = CompositionRoot::production(storage, policy_adapter);
 
         // Verificar que todos los puertos fueron creados
         assert!(Arc::strong_count(&root.policy_ports.register_entity_type) >= 1);
@@ -264,12 +384,18 @@ mod tests {
         assert!(Arc::strong_count(&root.policy_ports.evaluate_policies) >= 1);
         assert!(Arc::strong_count(&root.policy_ports.playground_evaluate) >= 1);
         assert!(Arc::strong_count(&root.iam_ports.register_iam_schema) >= 1);
+        assert!(Arc::strong_count(&root.iam_ports.create_policy) >= 1);
+        assert!(Arc::strong_count(&root.iam_ports.get_policy) >= 1);
+        assert!(Arc::strong_count(&root.iam_ports.list_policies) >= 1);
+        assert!(Arc::strong_count(&root.iam_ports.update_policy) >= 1);
+        assert!(Arc::strong_count(&root.iam_ports.delete_policy) >= 1);
     }
 
     #[tokio::test]
     async fn test_ports_are_usable() {
         let storage = Arc::new(MockSchemaStorage);
-        let root = CompositionRoot::production(storage);
+        let policy_adapter = Arc::new(MockPolicyAdapter);
+        let root = CompositionRoot::production(storage, policy_adapter);
 
         // Verificar que el puerto de build_schema es usable
         let command = BuildSchemaCommand {
@@ -288,7 +414,8 @@ mod tests {
     #[test]
     fn test_composition_root_for_testing() {
         let storage = Arc::new(MockSchemaStorage);
-        let _root = CompositionRoot::test(storage);
+        let policy_adapter = Arc::new(MockPolicyAdapter);
+        let _root = CompositionRoot::test(storage, policy_adapter);
         // Si compila y se crea, el test pasa
     }
 }

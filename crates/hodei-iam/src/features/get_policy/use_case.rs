@@ -1,23 +1,25 @@
 //! Use Case: Get Policy
 
+use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{debug, info};
 
 use super::dto::{GetPolicyQuery, PolicyView};
 use super::error::GetPolicyError;
-use super::ports::PolicyReader;
+use super::ports::{GetPolicyUseCasePort, PolicyReader};
+use kernel::Hrn;
 
 /// Caso de uso: Obtener una política IAM por su HRN
 pub struct GetPolicyUseCase<R>
 where
-    R: PolicyReader,
+    R: PolicyReader + ?Sized,
 {
     reader: Arc<R>,
 }
 
 impl<R> GetPolicyUseCase<R>
 where
-    R: PolicyReader,
+    R: PolicyReader + ?Sized,
 {
     /// Crea una nueva instancia del caso de uso
     pub fn new(reader: Arc<R>) -> Self {
@@ -42,6 +44,30 @@ where
         debug!("Policy retrieved successfully: {}", policy.hrn);
 
         Ok(policy)
+    }
+}
+
+// Implement PolicyReader trait for the use case to enable trait object usage
+#[async_trait]
+impl<R> PolicyReader for GetPolicyUseCase<R>
+where
+    R: PolicyReader + Send + Sync + ?Sized,
+{
+    async fn get_by_hrn(&self, hrn: &Hrn) -> Result<PolicyView, GetPolicyError> {
+        let query = GetPolicyQuery {
+            policy_hrn: hrn.clone(),
+        };
+        self.execute(query).await
+    }
+}
+
+#[async_trait]
+impl<R> GetPolicyUseCasePort for GetPolicyUseCase<R>
+where
+    R: PolicyReader + Send + Sync + ?Sized,
+{
+    async fn execute(&self, query: GetPolicyQuery) -> Result<PolicyView, GetPolicyError> {
+        self.execute(query).await
     }
 }
 
@@ -99,9 +125,7 @@ mod tests {
         let reader = MockPolicyReader::empty();
         let use_case = GetPolicyUseCase::new(Arc::new(reader));
 
-        let query = GetPolicyQuery {
-            policy_hrn: hrn,
-        };
+        let query = GetPolicyQuery { policy_hrn: hrn };
 
         let result = use_case.execute(query).await;
 
@@ -127,9 +151,7 @@ mod tests {
         let reader = MockPolicyReader::empty();
         let use_case = GetPolicyUseCase::new(Arc::new(reader));
 
-        let query = GetPolicyQuery {
-            policy_hrn: hrn,
-        };
+        let query = GetPolicyQuery { policy_hrn: hrn };
 
         let result = use_case.execute(query).await;
 
@@ -140,4 +162,3 @@ mod tests {
         }
     }
 }
-

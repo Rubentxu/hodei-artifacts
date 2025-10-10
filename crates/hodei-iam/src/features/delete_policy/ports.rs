@@ -7,6 +7,7 @@
 //! # Architecture
 //!
 //! - `DeletePolicyPort`: Port for deleting policies (ONLY delete operation)
+//! - `DeletePolicyUseCasePort`: Port for executing the delete policy use case
 //!
 //! # ISP Compliance
 //!
@@ -107,6 +108,27 @@ pub trait DeletePolicyPort: Send + Sync {
     /// - Use transactions to ensure atomicity
     /// - Log deletion events for audit trails
     async fn delete(&self, policy_id: &str) -> Result<(), DeletePolicyError>;
+}
+
+/// Port for the DeletePolicy use case
+///
+/// This port defines the contract for executing the delete policy use case.
+/// Following the Interface Segregation Principle (ISP), this port
+/// contains only the execute method needed by external callers.
+#[async_trait]
+pub trait DeletePolicyUseCasePort: Send + Sync {
+    /// Execute the delete policy use case
+    ///
+    /// # Arguments
+    /// * `command` - The delete policy command containing policy ID
+    ///
+    /// # Returns
+    /// * `Ok(())` if the policy was deleted successfully
+    /// * `Err(DeletePolicyError)` if there was an error deleting the policy
+    async fn execute(
+        &self,
+        command: crate::features::delete_policy::dto::DeletePolicyCommand,
+    ) -> Result<(), DeletePolicyError>;
 }
 
 #[cfg(test)]

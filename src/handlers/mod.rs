@@ -14,7 +14,3 @@ pub mod policies;
 pub mod schemas;
 
 // Re-export commonly used types for handlers
-pub use axum::{
-    extract::{Json, State},
-    response::IntoResponse,
-};

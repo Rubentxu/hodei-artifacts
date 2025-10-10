@@ -1,11 +1,9 @@
 //! Group entity - implements kernel traits for integration with hodei-policies
 
-use kernel::domain::entity::{
-    HodeiEntity, HodeiEntityType, Resource,
-};
+use kernel::Hrn;
+use kernel::domain::entity::{HodeiEntity, HodeiEntityType, Resource};
 use kernel::domain::value_objects::{ResourceTypeName, ServiceName};
 use kernel::{AttributeName, AttributeType, AttributeValue};
-use kernel::Hrn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -93,11 +91,8 @@ impl HodeiEntity for Group {
             );
         }
 
-        let tag_values: Vec<AttributeValue> = self
-            .tags
-            .iter()
-            .map(|t| AttributeValue::string(t))
-            .collect();
+        let tag_values: Vec<AttributeValue> =
+            self.tags.iter().map(AttributeValue::string).collect();
         attrs.insert(
             AttributeName::new("tags").expect("Valid attribute name"),
             AttributeValue::set(tag_values),
@@ -118,8 +113,8 @@ impl Resource for Group {}
 
 #[cfg(test)]
 mod tests {
-    use kernel::AttributeName;
     use super::*;
+    use kernel::AttributeName;
 
     #[test]
     fn test_group_creation() {

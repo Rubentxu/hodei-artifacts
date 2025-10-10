@@ -7,15 +7,15 @@
 //! - error.rs            -> Feature-specific error types
 //! - ports.rs            -> Segregated interface definition (DeletePolicyPort)
 //! - use_case.rs         -> Core business logic (DeletePolicyUseCase)
-//! - di.rs               -> Dependency Injection helpers
+//! - factories.rs        -> Dependency Injection helpers
 //! - mocks.rs            -> Test-only mock implementations of the port
 //! - use_case_test.rs    -> Unit tests for the use case
 //!
 //! Re-exports below expose only what the application layer needs.
 
-pub mod di;
 pub mod dto;
 pub mod error;
+pub mod factories;
 pub mod mocks;
 pub mod ports;
 pub mod use_case;
@@ -24,6 +24,7 @@ pub mod use_case;
 // ---------------------------------------------------------------------------
 // PUBLIC RE-EXPORTS (Feature API Surface)
 // ---------------------------------------------------------------------------
+/// Public API for the delete_policy feature
 pub use dto::DeletePolicyCommand;
 pub use error::DeletePolicyError;
 pub use ports::DeletePolicyPort;

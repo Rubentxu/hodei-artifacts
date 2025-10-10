@@ -1,4 +1,4 @@
-use super::dto::{GroupLookupDto, UserLookupDto, UserPersistenceDto};
+use super::dto::{AddUserToGroupCommand, GroupLookupDto, UserLookupDto, UserPersistenceDto};
 use super::error::AddUserToGroupError;
 use async_trait::async_trait;
 use kernel::Hrn;
@@ -63,4 +63,22 @@ pub trait UserGroupPersister: Send + Sync {
     /// * `Ok(())` if the user was saved successfully
     /// * `Err(AddUserToGroupError)` if there was an error saving the user
     async fn save_user(&self, user_dto: &UserPersistenceDto) -> Result<(), AddUserToGroupError>;
+}
+
+/// Port for the AddUserToGroup use case
+///
+/// This port defines the contract for executing the add user to group use case.
+/// Following the Interface Segregation Principle (ISP), this port
+/// contains only the execute method needed by external callers.
+#[async_trait]
+pub trait AddUserToGroupUseCasePort: Send + Sync {
+    /// Execute the add user to group use case
+    ///
+    /// # Arguments
+    /// * `command` - The add user to group command containing user and group details
+    ///
+    /// # Returns
+    /// * `Ok(())` if the user was added to the group successfully
+    /// * `Err(AddUserToGroupError)` if there was an error adding the user to the group
+    async fn execute(&self, command: AddUserToGroupCommand) -> Result<(), AddUserToGroupError>;
 }

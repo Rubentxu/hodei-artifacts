@@ -1,11 +1,9 @@
 //! User entity - implements kernel traits for integration with hodei-policies
 
-use kernel::domain::entity::{
-    HodeiEntity, HodeiEntityType, Principal, Resource,
-};
+use kernel::Hrn;
+use kernel::domain::entity::{HodeiEntity, HodeiEntityType, Principal, Resource};
 use kernel::domain::value_objects::{ResourceTypeName, ServiceName};
 use kernel::{AttributeName, AttributeType, AttributeValue};
-use kernel::Hrn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -24,6 +22,7 @@ pub(crate) struct User {
     pub tags: Vec<String>,
 }
 
+#[allow(dead_code)]
 impl User {
     /// Create a new user
     pub(crate) fn new(hrn: Hrn, name: String, email: String) -> Self {
@@ -112,11 +111,8 @@ impl HodeiEntity for User {
             AttributeValue::string(&self.email),
         );
 
-        let tag_values: Vec<AttributeValue> = self
-            .tags
-            .iter()
-            .map(|t| AttributeValue::string(t))
-            .collect();
+        let tag_values: Vec<AttributeValue> =
+            self.tags.iter().map(AttributeValue::string).collect();
         attrs.insert(
             AttributeName::new("tags").expect("Valid attribute name"),
             AttributeValue::set(tag_values),
@@ -136,8 +132,8 @@ impl Resource for User {}
 
 #[cfg(test)]
 mod tests {
-    use kernel::AttributeName;
     use super::*;
+    use kernel::AttributeName;
 
     #[test]
     fn test_user_creation() {
@@ -149,7 +145,11 @@ mod tests {
             "alice".to_string(),
         );
 
-        let user = User::new(hrn.clone(), "Alice".to_string(), "alice@example.com".to_string());
+        let user = User::new(
+            hrn.clone(),
+            "Alice".to_string(),
+            "alice@example.com".to_string(),
+        );
 
         assert_eq!(user.hrn, hrn);
         assert_eq!(user.name, "Alice");
@@ -175,7 +175,11 @@ mod tests {
             "admins".to_string(),
         );
 
-        let mut user = User::new(user_hrn, "Alice".to_string(), "alice@example.com".to_string());
+        let mut user = User::new(
+            user_hrn,
+            "Alice".to_string(),
+            "alice@example.com".to_string(),
+        );
         user.add_to_group(group_hrn.clone());
 
         assert_eq!(user.group_hrns.len(), 1);
@@ -199,7 +203,11 @@ mod tests {
             "admins".to_string(),
         );
 
-        let mut user = User::new(user_hrn, "Alice".to_string(), "alice@example.com".to_string());
+        let mut user = User::new(
+            user_hrn,
+            "Alice".to_string(),
+            "alice@example.com".to_string(),
+        );
         user.add_to_group(group_hrn.clone());
         user.add_to_group(group_hrn.clone()); // Add again
 
@@ -224,7 +232,11 @@ mod tests {
             "admins".to_string(),
         );
 
-        let mut user = User::new(user_hrn, "Alice".to_string(), "alice@example.com".to_string());
+        let mut user = User::new(
+            user_hrn,
+            "Alice".to_string(),
+            "alice@example.com".to_string(),
+        );
         user.add_to_group(group_hrn.clone());
         assert_eq!(user.group_hrns.len(), 1);
 
@@ -242,7 +254,11 @@ mod tests {
             "alice".to_string(),
         );
 
-        let user = User::new(hrn.clone(), "Alice".to_string(), "alice@example.com".to_string());
+        let user = User::new(
+            hrn.clone(),
+            "Alice".to_string(),
+            "alice@example.com".to_string(),
+        );
 
         // Test HodeiEntity trait methods
         assert_eq!(user.hrn(), &hrn);

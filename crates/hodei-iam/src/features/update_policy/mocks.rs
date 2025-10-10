@@ -13,6 +13,7 @@ use hodei_policies::features::validate_policy::dto::ValidatePolicyCommand;
 /// Mock PolicyValidator for testing
 pub struct MockPolicyValidator {
     errors: Vec<String>,
+    #[allow(dead_code)]
     warnings: Vec<String>,
     should_fail: bool,
 }
