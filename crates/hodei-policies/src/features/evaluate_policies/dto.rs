@@ -2,9 +2,10 @@ use kernel::domain::policy::HodeiPolicySet;
 use std::collections::HashMap;
 use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
 
 /// Mode for policy evaluation regarding schema usage
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvaluationMode {
     /// Strict mode: requires schema to be loaded, fails if not found
     Strict,
@@ -21,6 +22,10 @@ impl Default for EvaluationMode {
 }
 
 /// Command for evaluating authorization policies
+///
+/// **Note**: This command uses lifetimes and references for zero-copy performance.
+/// It is NOT serializable by design. If you need to serialize evaluation requests,
+/// create a separate serializable DTO and convert it to this command.
 pub struct EvaluatePoliciesCommand<'a> {
     /// The authorization request to evaluate
     pub request: AuthorizationRequest<'a>,
