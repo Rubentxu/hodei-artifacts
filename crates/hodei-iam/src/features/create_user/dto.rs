@@ -1,12 +1,32 @@
 //! Data Transfer Objects for create_user feature
 
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserCommand {
     pub name: String,
     pub email: String,
     pub tags: Vec<String>,
+}
+
+impl ActionTrait for CreateUserCommand {
+    fn name() -> &'static str {
+        "CreateUser"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Iam::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Iam::User".to_string()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

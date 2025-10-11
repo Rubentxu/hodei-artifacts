@@ -6,6 +6,8 @@
 
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command to update an existing IAM policy
 ///
@@ -66,6 +68,24 @@ pub struct UpdatePolicyCommand {
     /// If None, the existing description is preserved.
     /// To clear the description, pass Some("".to_string()).
     pub description: Option<String>,
+}
+
+impl ActionTrait for UpdatePolicyCommand {
+    fn name() -> &'static str {
+        "UpdatePolicy"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Iam::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Iam::Policy".to_string()
+    }
 }
 
 impl UpdatePolicyCommand {

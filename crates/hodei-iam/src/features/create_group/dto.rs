@@ -1,11 +1,31 @@
 //! Data Transfer Objects for create_group feature
 
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateGroupCommand {
     pub group_name: String,
     pub tags: Vec<String>,
+}
+
+impl ActionTrait for CreateGroupCommand {
+    fn name() -> &'static str {
+        "CreateGroup"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Iam::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Iam::Group".to_string()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

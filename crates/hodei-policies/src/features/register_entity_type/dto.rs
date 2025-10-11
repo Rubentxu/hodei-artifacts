@@ -1,6 +1,8 @@
 //! Data Transfer Objects for the register_entity_type feature
 
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command for registering an entity type
 ///
@@ -21,6 +23,24 @@ pub struct RegisterEntityTypeCommand {
 
     /// Optional list of attributes for this entity type
     pub attributes: Option<Vec<EntityAttribute>>,
+}
+
+impl ActionTrait for RegisterEntityTypeCommand {
+    fn name() -> &'static str {
+        "RegisterEntityType"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("policies").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Policies::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Policies::EntityType".to_string()
+    }
 }
 
 /// Represents an attribute definition for an entity type

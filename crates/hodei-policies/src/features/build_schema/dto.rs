@@ -2,17 +2,39 @@
 //!
 //! This module defines the input and output DTOs for the schema building process.
 
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
+
 /// Command to build the Cedar schema
 ///
 /// This command triggers the schema building process, consuming all
 /// registered entity and action types and generating the final Cedar schema.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BuildSchemaCommand {
     /// Schema version identifier (optional)
     pub version: Option<String>,
 
     /// Whether to validate the schema after building
     pub validate: bool,
+}
+
+impl ActionTrait for BuildSchemaCommand {
+    fn name() -> &'static str {
+        "BuildSchema"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("policies").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Policies::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Policies::Schema".to_string()
+    }
 }
 
 impl Default for BuildSchemaCommand {

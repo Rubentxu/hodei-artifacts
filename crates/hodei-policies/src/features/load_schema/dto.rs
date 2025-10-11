@@ -3,15 +3,36 @@
 //! This module defines the input and output DTOs for the schema loading process.
 
 use cedar_policy::Schema;
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
 
 /// Command to load a Cedar schema from storage
 ///
 /// This command specifies which schema version to load, or defaults
 /// to the latest if no version is specified.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct LoadSchemaCommand {
     /// Optional specific version to load. If None, loads the latest.
     pub version: Option<String>,
+}
+
+impl ActionTrait for LoadSchemaCommand {
+    fn name() -> &'static str {
+        "LoadSchema"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("policies").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Policies::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Policies::Schema".to_string()
+    }
 }
 
 impl LoadSchemaCommand {

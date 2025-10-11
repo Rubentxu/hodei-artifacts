@@ -7,6 +7,8 @@
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command to evaluate policies in the playground
 ///
@@ -30,50 +32,21 @@ pub struct PlaygroundEvaluateCommand {
     pub request: PlaygroundAuthorizationRequest,
 }
 
-impl PlaygroundEvaluateCommand {
-    /// Create a new playground evaluation command with inline schema and policies
-    pub fn new_with_inline_schema(
-        schema: String,
-        policies: Vec<String>,
-        request: PlaygroundAuthorizationRequest,
-    ) -> Self {
-        Self {
-            inline_schema: Some(schema),
-            schema_version: None,
-            inline_policies: policies,
-            request,
-        }
+impl ActionTrait for PlaygroundEvaluateCommand {
+    fn name() -> &'static str {
+        "PlaygroundEvaluate"
     }
 
-    /// Create a new playground evaluation command with a stored schema version
-    pub fn new_with_schema_version(
-        version: String,
-        policies: Vec<String>,
-        request: PlaygroundAuthorizationRequest,
-    ) -> Self {
-        Self {
-            inline_schema: None,
-            schema_version: Some(version),
-            inline_policies: policies,
-            request,
-        }
+    fn service_name() -> ServiceName {
+        ServiceName::new("policies").expect("Valid service name")
     }
 
-    /// Validate that the command has either inline schema or schema version
-    pub fn validate(&self) -> Result<(), String> {
-        if self.inline_schema.is_none() && self.schema_version.is_none() {
-            return Err("Must provide either inline_schema or schema_version".to_string());
-        }
+    fn applies_to_principal() -> String {
+        "Policies::User".to_string()
+    }
 
-        if self.inline_schema.is_some() && self.schema_version.is_some() {
-            return Err("Cannot provide both inline_schema and schema_version".to_string());
-        }
-
-        if self.inline_policies.is_empty() {
-            return Err("Must provide at least one policy to evaluate".to_string());
-        }
-
-        Ok(())
+    fn applies_to_resource() -> String {
+        "Policies::Policy".to_string()
     }
 }
 

@@ -5,6 +5,8 @@
 
 use kernel::domain::policy::HodeiPolicySet;
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Data Transfer Object for user lookup operations
 ///
@@ -59,6 +61,24 @@ impl GroupLookupDto {
 pub struct GetEffectivePoliciesQuery {
     /// HRN of the principal (user, serviceaccount, etc.)
     pub principal_hrn: String,
+}
+
+impl ActionTrait for GetEffectivePoliciesQuery {
+    fn name() -> &'static str {
+        "GetEffectivePolicies"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Iam::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Iam::Policy".to_string()
+    }
 }
 
 /// Response containing effective IAM policies as a HodeiPolicySet

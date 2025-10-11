@@ -1,6 +1,8 @@
 //! DTOs y estructuras de datos para la detección de Content-Type
 
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Resultado de la detección de Content-Type para uso en APIs
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,4 +61,22 @@ pub struct DetectContentTypeCommand {
     /// Content-Type proporcionado por el cliente (opcional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_content_type: Option<String>,
+}
+
+impl ActionTrait for DetectContentTypeCommand {
+    fn name() -> &'static str {
+        "DetectContentType"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("artifact").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Artifact::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Artifact::Package".to_string()
+    }
 }

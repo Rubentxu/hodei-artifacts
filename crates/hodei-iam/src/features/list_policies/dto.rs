@@ -5,6 +5,8 @@
 
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Query for listing policies with pagination
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +16,24 @@ pub struct ListPoliciesQuery {
 
     /// Offset for pagination
     pub offset: usize,
+}
+
+impl ActionTrait for ListPoliciesQuery {
+    fn name() -> &'static str {
+        "ListPolicies"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Iam::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Iam::Policy".to_string()
+    }
 }
 
 impl Default for ListPoliciesQuery {

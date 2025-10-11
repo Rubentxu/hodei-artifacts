@@ -2,6 +2,8 @@ use crate::domain::package_version::PackageCoordinates;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use shared::hrn::Hrn;
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command to initiate a chunked upload
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +36,24 @@ pub struct InitiateChunkedUploadCommand {
     pub metadata: std::collections::HashMap<String, String>,
 }
 
+impl ActionTrait for InitiateChunkedUploadCommand {
+    fn name() -> &'static str {
+        "InitiateChunkedUpload"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("artifact").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Artifact::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Artifact::Package".to_string()
+    }
+}
+
 /// Command to upload a chunk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadChunkCommand {
@@ -50,6 +70,24 @@ pub struct UploadChunkCommand {
     pub chunk_checksum: String,
 }
 
+impl ActionTrait for UploadChunkCommand {
+    fn name() -> &'static str {
+        "UploadChunk"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("artifact").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Artifact::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Artifact::Package".to_string()
+    }
+}
+
 /// Command to complete a chunked upload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompleteChunkedUploadCommand {
@@ -60,6 +98,24 @@ pub struct CompleteChunkedUploadCommand {
     pub final_checksum: String,
 }
 
+impl ActionTrait for CompleteChunkedUploadCommand {
+    fn name() -> &'static str {
+        "CompleteChunkedUpload"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("artifact").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Artifact::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Artifact::Package".to_string()
+    }
+}
+
 /// Command to abort a chunked upload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AbortChunkedUploadCommand {
@@ -68,6 +124,24 @@ pub struct AbortChunkedUploadCommand {
 
     /// Reason for aborting
     pub reason: Option<String>,
+}
+
+impl ActionTrait for AbortChunkedUploadCommand {
+    fn name() -> &'static str {
+        "AbortChunkedUpload"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("artifact").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Artifact::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Artifact::Package".to_string()
+    }
 }
 
 /// Result of initiating a chunked upload

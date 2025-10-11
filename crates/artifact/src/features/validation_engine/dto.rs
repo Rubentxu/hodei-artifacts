@@ -2,6 +2,8 @@ use crate::domain::package_version::PackageCoordinates;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use shared::hrn::Hrn;
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command to trigger artifact validation
 pub struct ValidateArtifactCommand {
@@ -10,6 +12,24 @@ pub struct ValidateArtifactCommand {
     pub artifact_type: String, // "maven", "npm", etc.
     pub coordinates: PackageCoordinates,
     pub content_length: u64,
+}
+
+impl ActionTrait for ValidateArtifactCommand {
+    fn name() -> &'static str {
+        "ValidateArtifact"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("artifact").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Artifact::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Artifact::Package".to_string()
+    }
 }
 
 /// Result of artifact validation

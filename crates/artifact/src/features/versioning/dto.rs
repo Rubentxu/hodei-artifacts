@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use shared::hrn::Hrn;
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command to validate a version
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +16,24 @@ pub struct ValidateVersionCommand {
 
     /// Repository HRN (for configuration lookup)
     pub repository_hrn: Hrn,
+}
+
+impl ActionTrait for ValidateVersionCommand {
+    fn name() -> &'static str {
+        "ValidateVersion"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("artifact").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Artifact::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Artifact::Package".to_string()
+    }
 }
 
 /// Result of version validation

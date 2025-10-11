@@ -2,11 +2,15 @@
 //!
 //! This module defines the input and output DTOs for the IAM schema registration process.
 
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
+
 /// Command to register the IAM schema
 ///
 /// This command triggers the registration of all IAM entity types and action types
 /// with the policies engine, followed by schema building and persistence.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct RegisterIamSchemaCommand {
     /// Optional specific version identifier for the schema
     /// If None, a timestamp-based version will be generated
@@ -14,6 +18,24 @@ pub struct RegisterIamSchemaCommand {
 
     /// Whether to validate the schema after building
     pub validate: bool,
+}
+
+impl ActionTrait for RegisterIamSchemaCommand {
+    fn name() -> &'static str {
+        "RegisterIamSchema"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Iam::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Iam::Schema".to_string()
+    }
 }
 
 impl RegisterIamSchemaCommand {

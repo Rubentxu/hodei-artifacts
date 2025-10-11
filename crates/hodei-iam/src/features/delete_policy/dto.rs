@@ -5,6 +5,8 @@
 //! the use case and external consumers.
 
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command to delete an existing IAM policy
 ///
@@ -27,6 +29,24 @@ pub struct DeletePolicyCommand {
     /// This is the policy ID (not the full HRN).
     /// The use case will construct the HRN internally if needed.
     pub policy_id: String,
+}
+
+impl ActionTrait for DeletePolicyCommand {
+    fn name() -> &'static str {
+        "DeletePolicy"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Iam::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Iam::Policy".to_string()
+    }
 }
 
 impl DeletePolicyCommand {

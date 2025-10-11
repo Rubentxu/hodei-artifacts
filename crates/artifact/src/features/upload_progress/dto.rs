@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Estado del progreso de una subida
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +55,24 @@ pub struct UpdateProgressCommand {
     pub bytes_transferred: u64,
     pub total_bytes: u64,
     pub status: UploadStatus,
+}
+
+impl ActionTrait for UpdateProgressCommand {
+    fn name() -> &'static str {
+        "UpdateProgress"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("artifact").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Artifact::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Artifact::Package".to_string()
+    }
 }
 
 impl UploadProgress {

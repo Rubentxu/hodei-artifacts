@@ -6,6 +6,8 @@
 
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command to create a new IAM policy
 ///
@@ -49,6 +51,24 @@ pub struct CreatePolicyCommand {
     /// A brief description of what this policy does and when it should be used.
     /// This helps with policy management and audit trails.
     pub description: Option<String>,
+}
+
+impl ActionTrait for CreatePolicyCommand {
+    fn name() -> &'static str {
+        "CreatePolicy"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("iam").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Iam::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Iam::Policy".to_string()
+    }
 }
 
 /// View of a created policy (DTO for responses)

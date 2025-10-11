@@ -1,6 +1,8 @@
 //! Data Transfer Objects for the register_action_type feature
 
 use serde::{Deserialize, Serialize};
+use kernel::domain::entity::ActionTrait;
+use kernel::domain::value_objects::ServiceName;
 
 /// Command for registering an action type
 ///
@@ -18,6 +20,24 @@ pub struct RegisterActionTypeCommand {
 
     /// Optional description of what this action represents
     pub description: Option<String>,
+}
+
+impl ActionTrait for RegisterActionTypeCommand {
+    fn name() -> &'static str {
+        "RegisterActionType"
+    }
+
+    fn service_name() -> ServiceName {
+        ServiceName::new("policies").expect("Valid service name")
+    }
+
+    fn applies_to_principal() -> String {
+        "Policies::User".to_string()
+    }
+
+    fn applies_to_resource() -> String {
+        "Policies::ActionType".to_string()
+    }
 }
 
 impl RegisterActionTypeCommand {
