@@ -32,6 +32,49 @@ pub struct PlaygroundEvaluateCommand {
     pub request: PlaygroundAuthorizationRequest,
 }
 
+impl PlaygroundEvaluateCommand {
+    /// Crea un comando usando un esquema en línea (JSON)
+    pub fn new_with_inline_schema(
+        inline_schema: String,
+        inline_policies: Vec<String>,
+        request: PlaygroundAuthorizationRequest,
+    ) -> Self {
+        Self {
+            inline_schema: Some(inline_schema),
+            schema_version: None,
+            inline_policies,
+            request,
+        }
+    }
+
+    /// Crea un comando usando una versión de esquema almacenada
+    pub fn new_with_schema_version(
+        schema_version: String,
+        inline_policies: Vec<String>,
+        request: PlaygroundAuthorizationRequest,
+    ) -> Self {
+        Self {
+            inline_schema: None,
+            schema_version: Some(schema_version),
+            inline_policies,
+            request,
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.inline_schema.is_none() && self.schema_version.is_none() {
+            return Err("Debe proporcionar inline_schema o schema_version (no ambos None)".to_string());
+        }
+        if self.inline_schema.is_some() && self.schema_version.is_some() {
+            return Err("No puede proporcionar inline_schema y schema_version al mismo tiempo".to_string());
+        }
+        if self.inline_policies.is_empty() {
+            return Err("Debe proporcionar al menos una política en inline_policies".to_string());
+        }
+        Ok(())
+    }
+}
+
 impl ActionTrait for PlaygroundEvaluateCommand {
     fn name() -> &'static str {
         "PlaygroundEvaluate"

@@ -2,7 +2,6 @@ use kernel::domain::policy::HodeiPolicySet;
 use std::collections::HashMap;
 use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
-use serde::{Deserialize, Serialize};
 
 /// Mode for policy evaluation regarding schema usage
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +21,6 @@ impl Default for EvaluationMode {
 }
 
 /// Command for evaluating authorization policies
-#[derive(Deserialize, Serialize)]
 pub struct EvaluatePoliciesCommand<'a> {
     /// The authorization request to evaluate
     pub request: AuthorizationRequest<'a>,

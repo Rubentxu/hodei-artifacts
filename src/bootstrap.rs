@@ -11,12 +11,12 @@ use crate::composition_root::CompositionRoot;
 use crate::config::AppConfig;
 use async_trait::async_trait;
 
-use hodei_iam::features::register_iam_schema::dto::{
+use hodei_iam::register_iam_schema::dto::{
     RegisterIamSchemaCommand, RegisterIamSchemaResult,
 };
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
-use hodei_policies::features::build_schema::error::BuildSchemaError;
-use hodei_policies::features::build_schema::ports::SchemaStoragePort;
+use hodei_policies::build_schema::error::BuildSchemaError;
+use hodei_policies::build_schema::ports::SchemaStoragePort;
 use std::sync::Arc;
 use surrealdb::Surreal;
 use surrealdb::engine::local::RocksDb;

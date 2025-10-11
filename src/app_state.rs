@@ -12,10 +12,10 @@
 //! - Es clonado e inyectado en cada handler de Axum
 
 use crate::composition_root::CompositionRoot;
-use hodei_iam::features::register_iam_schema::ports::RegisterIamSchemaPort;
+use hodei_iam::register_iam_schema::ports::RegisterIamSchemaPort;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
 use hodei_policies::evaluate_policies::ports::EvaluatePoliciesPort;
-use hodei_policies::features::playground_evaluate::ports::PlaygroundEvaluatePort;
+use hodei_policies::playground_evaluate::ports::PlaygroundEvaluatePort;
 use hodei_policies::load_schema::ports::LoadSchemaPort;
 use hodei_policies::register_action_type::ports::RegisterActionTypePort;
 use hodei_policies::register_entity_type::ports::RegisterEntityTypePort;

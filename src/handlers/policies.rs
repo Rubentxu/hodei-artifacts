@@ -133,7 +133,7 @@ pub async fn validate_policy(
     State(state): State<AppState>,
     Json(request): Json<ValidatePolicyRequest>,
 ) -> Result<Json<ValidatePolicyResponse>, ApiError> {
-    let command = hodei_policies::features::validate_policy::dto::ValidatePolicyCommand {
+    let command = hodei_policies::validate_policy::dto::ValidatePolicyCommand {
         content: request.content,
     };
 

@@ -34,7 +34,7 @@ pub mod dto;
 pub mod error;
 pub mod ports;
 pub mod use_case;
-mod validator;
+pub mod validator;
 // Mocks are kept internal (they are used by unit tests inside the crate)
 mod mocks;
 

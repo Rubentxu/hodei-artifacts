@@ -11,12 +11,12 @@
 //! 3. **Resolución en compilación**: Uso de generics para zero-cost abstractions
 //! 4. **Desacoplamiento**: Los handlers solo conocen los puertos, no las implementaciones
 
-use hodei_iam::features::register_iam_schema::factories as iam_factories;
+use hodei_iam::register_iam_schema::factories as iam_factories;
 use hodei_policies::build_schema::factories as policy_factories;
 use hodei_policies::build_schema::ports::{BuildSchemaPort, SchemaStoragePort};
 use hodei_policies::evaluate_policies::ports::EvaluatePoliciesPort;
-use hodei_policies::features::playground_evaluate::factories as playground_factories;
-use hodei_policies::features::playground_evaluate::ports::PlaygroundEvaluatePort;
+use hodei_policies::playground_evaluate::factories as playground_factories;
+use hodei_policies::playground_evaluate::ports::PlaygroundEvaluatePort;
 use hodei_policies::load_schema::ports::LoadSchemaPort;
 use hodei_policies::register_action_type::ports::RegisterActionTypePort;
 use hodei_policies::register_entity_type::ports::RegisterEntityTypePort;
@@ -196,7 +196,7 @@ impl CompositionRoot {
     where
         S: SchemaStoragePort + 'static,
     {
-        use hodei_policies::features::playground_evaluate::adapters::{
+        use hodei_policies::playground_evaluate::adapters::{
             ContextConverterAdapter, PolicyEvaluatorAdapter, PolicyValidatorAdapter,
             SchemaLoaderAdapter,
         };

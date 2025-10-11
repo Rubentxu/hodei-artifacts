@@ -97,7 +97,7 @@ pub async fn build_schema(
     State(state): State<AppState>,
     Json(request): Json<BuildSchemaRequest>,
 ) -> Result<Json<BuildSchemaResponse>, ApiError> {
-    let command = hodei_policies::features::build_schema::dto::BuildSchemaCommand {
+    let command = hodei_policies::build_schema::dto::BuildSchemaCommand {
         version: request.version,
         validate: request.validate,
     };

@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use hodei_policies::features::playground_evaluate::dto::{
+use hodei_policies::playground_evaluate::dto::{
     AttributeValue, PlaygroundAuthorizationRequest, PlaygroundEvaluateResult,
 };
 use kernel::Hrn;
@@ -216,7 +216,7 @@ pub async fn playground_evaluate(
 /// Convert HTTP request to domain command
 fn convert_to_command(
     request: PlaygroundEvaluateRequest,
-) -> Result<hodei_policies::features::playground_evaluate::dto::PlaygroundEvaluateCommand, String> {
+) -> Result<hodei_policies::playground_evaluate::dto::PlaygroundEvaluateCommand, String> {
     // Convert principal, action, and resource to HRNs
     let principal = Hrn::from_string(&request.request.principal)
         .ok_or_else(|| format!("Invalid principal HRN: {}", &request.request.principal))?;
@@ -243,7 +243,7 @@ fn convert_to_command(
     };
 
     // Create command
-    let command = hodei_policies::features::playground_evaluate::dto::PlaygroundEvaluateCommand {
+    let command = hodei_policies::playground_evaluate::dto::PlaygroundEvaluateCommand {
         inline_schema: request.inline_schema,
         schema_version: request.schema_version,
         inline_policies: request.inline_policies,
@@ -427,15 +427,15 @@ mod tests {
     #[test]
     fn test_convert_to_response() {
         let domain_result = PlaygroundEvaluateResult::new(
-            hodei_policies::features::playground_evaluate::dto::Decision::Allow,
+            hodei_policies::playground_evaluate::dto::Decision::Allow,
             vec![
-                hodei_policies::features::playground_evaluate::dto::DeterminingPolicy::new(
+                hodei_policies::playground_evaluate::dto::DeterminingPolicy::new(
                     "policy_0".to_string(),
-                    hodei_policies::features::playground_evaluate::dto::PolicyEffect::Permit,
+                    hodei_policies::playground_evaluate::dto::PolicyEffect::Permit,
                 )
                 .with_text("permit(principal, action, resource);".to_string()),
             ],
-            hodei_policies::features::playground_evaluate::dto::EvaluationDiagnostics::new(1, 1)
+            hodei_policies::playground_evaluate::dto::EvaluationDiagnostics::new(1, 1)
                 .with_schema_validation(),
         );
 

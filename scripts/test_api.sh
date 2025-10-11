@@ -72,7 +72,7 @@ start_server() {
     if [ ! -f "$BINARY_PATH" ]; then
         log_warning "Release binary not found, building project..."
         cd "$PROJECT_ROOT"
-        if ! cargo build --release; then
+        if ! cargo build; then
             log_error "Failed to build the project"
             exit 1
         fi
