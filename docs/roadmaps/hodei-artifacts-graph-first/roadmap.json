@@ -26,7 +26,7 @@
           "cargo_check": "exit 0; 0 warnings",
           "cargo_fmt_check": "exit 0",
           "cargo_clippy_deny_warnings": "exit 0; No issues found",
-          "cargo_test_workspace": "exit 0; 741 passed, 0 failed, 64 ignored (doctests)",
+          "cargo_test_workspace": "exit 0; 746 passed, 0 failed, 64 ignored (doctests)",
           "not_run": [
             "cargo-nextest ausente en el host",
             "docker ausente en el host",
@@ -39,7 +39,9 @@
           "D3 schema Cedar persistido con Debug y reconstruido vacio -> codec cedar-schema-fragments-v1",
           "D4 resolucion del 'ultimo schema'",
           "D5 test_register_iam_schema_integration.rs de 1 byte -> tests/bootstrap_integration.rs (B1-B7)",
-          "D6 override HODEI_<SECCION>__<CLAVE> inerte -> prefix_separator explicito"
+          "D6 override HODEI_<SECCION>__<CLAVE> inerte -> prefix_separator explicito",
+          "D7 esquema persistido invisible para el lector (version: null) -> invariante UNVERSIONED_SCHEMA_ID",
+          "D8 la distribucion no arrancaba: empaquetaba config/example.toml, que el binario no lee -> config/default.toml + scripts/package-release.sh"
         ],
         "open_defects": [
           "O1",
@@ -57,7 +59,10 @@
           "validator -> schema vacio: B7 FAILED",
           "load_schema::parse_schema -> schema vacio: test_a_stored_content_that_is_not_a_schema_is_rejected + test_load_latest_schema FAILED",
           "sin prefix_separator: environment_variables_override_the_configuration + an_invalid_environment_override_is_rejected + p1 + p3 FAILED",
-          "main.rs exit(0) en error de config: p3 FAILED"
+          "main.rs exit(0) en error de config: p3 FAILED",
+          "save_schema vuelve a escribir version: null: s1 + s3 FAILED (s2 control sobrevive)",
+          "se retira config/default.toml (la configuracion distribuida no es la que el binario lee): p4 FAILED",
+          "configuracion opcional (serde(default) en toda la jerarquia): p5 FAILED (p4 sobrevive)"
         ],
         "ephemeral_acceptance": {
           "positive": [

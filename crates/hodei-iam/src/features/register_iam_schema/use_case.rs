@@ -25,7 +25,7 @@ use tracing::{info, warn};
 
 /// Use case for registering the IAM schema
 ///
-/// This use case registers all IAM entity types (User, Group, Artifact) and action types
+/// This use case registers all IAM entity types (User, Group) and action types
 /// (CreateUser, DeleteUser, UploadArtifact, etc.) with the policies engine, then triggers
 /// schema building and persistence.
 ///

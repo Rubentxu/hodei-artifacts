@@ -79,7 +79,7 @@ cargo test --workspace --no-fail-fast                     → exit 0
 `kernel`, `hodei-iam`, `hodei-policies`, `hodei-artifacts-api`. Los cuatro
 declaran `edition = "2024"` (heredado de `[workspace.package]`).
 
-**Total: 741 passed / 0 failed / 64 ignored (doctests).**
+**Total: 746 passed / 0 failed / 64 ignored (doctests).**
 
 | Diana de test | passed | failed | ignored |
 |---|---|---|---|
@@ -89,6 +89,8 @@ declaran `edition = "2024"` (heredado de `[workspace.package]`).
 | `tests/bootstrap_integration.rs` | 7 | 0 | 0 |
 | `tests/http_contract.rs` | 8 | 0 | 0 |
 | `tests/legacy_quarantine.rs` | 5 | 0 | 0 |
+| `tests/schema_persistence.rs` | 3 | 0 | 0 |
+| `tests/distribution_contract.rs` | 2 | 0 | 0 |
 | `hodei-iam` lib | 212 | 0 | 0 |
 | `hodei-iam` `integration_create_group_comprehensive_test` | 12 | 0 | 0 |
 | `hodei-iam` `integration_create_policy_new_test` | 13 | 0 | 0 |
@@ -273,6 +275,8 @@ resolverá crate a crate según su reclasificación en §6.2.
 | D4 | El "último schema" no se encontraba (`latest` mal resuelto) | la validación leía un schema arbitrario o ninguno | selección ordenada por `created_at` y `select(("schema", version))` | `b2_the_registered_schema_is_persisted_and_readable_by_version` + `b3_reading_back_an_unregistered_schema_version_fails` (negativo) |
 | D5 | `tests/test_register_iam_schema_integration.rs` era un fichero de **1 byte** con un salto de línea | Cargo compilaba un binario de test con **cero** tests: la suite contaba como verde sin afirmar nada | sustituido por `tests/bootstrap_integration.rs` (B1–B7, con dos negativos) | `legacy_quarantine.rs` Q5 + las 7 dianas de `bootstrap_integration` |
 | D6 | El override documentado `HODEI_<SECCIÓN>__<CLAVE>` era **inerte**: config-rs 0.14.1 busca el prefijo como `HODEI__` cuando se da un separador de clave sin separador de prefijo explícito, y descarta toda variable en silencio | el servicio arrancaba siempre con los valores del TOML; nada en la suite lo observaba porque todos los tests configuraban en memoria | `.prefix_separator("_").separator("__").try_parsing(true)` | `environment_variables_override_the_configuration` + `an_invalid_environment_override_is_rejected` (negativo) + `p1_the_binary_serves_health_with_the_configuration_from_the_environment` (proceso real) + `p3_the_binary_exits_with_a_failure_code_on_an_invalid_configuration` (negativo) |
+| D7 | El esquema persistido era **invisible para el lector** cuando el registro no nombraba versión: `save_schema` escribía `version: null` y `get_latest_schema` selecciona el registro **por su versión**, así que un esquema sin versión nunca era seleccionado | el esquema quedaba en la base y, aun así, todo consumidor concluía que no había esquema → la validación de políticas **degradaba a una simple comprobación de sintaxis** y el servicio aceptaba políticas sobre acciones y tipos de entidad no declarados. Es el mismo falso verde que D3, por la otra mitad del camino: D3 rompía la reconstrucción, D7 rompía el *encontrar* | invariante `UNVERSIONED_SCHEMA_ID` (`src/bootstrap.rs:129`): el id del registro es su versión, y el registro declara siempre la versión bajo la que puede volver a encontrarse; el lector cae en ese id cuando la versión es nula (`src/bootstrap.rs:198`, `src/bootstrap.rs:244`) | `tests/schema_persistence.rs` S1 (se encuentra sin versión) + S2 (control: se encuentra con versión) + S3 (**discriminante**: el esquema registrado es el que valida) — S3 incluye los dos negativos: acción no declarada y tipo de entidad no declarado |
+| D8 | La distribución publicada **no arrancaba**: el paquete incluía `config/example.toml`, un fichero que el binario **nunca lee** (lee `config/default.toml`), y el binario deserializa la configuración de forma estricta | la aceptación efímera anterior se había ejecutado desde la raíz del repositorio —donde sí existe `config/development.toml`— y por eso dio verde sobre un artefacto que no arrancaba solo. Un consumidor que desempaquetaba la distribución obtenía «missing field `db_type`» | `config/default.toml` en el repositorio (la configuración base que el binario sí lee) + `scripts/package-release.sh`, que **se niega a construir** un paquete sin ese fichero y lo incluye en el tarball | `tests/distribution_contract.rs` P4 (el desempaquetado arranca solo y sirve `/health`) + P5 (**negativo**: sin configuración legible el binario se niega a arrancar, en vez de arrancar con supuestos) |
 
 **Verificación por mutación focalizada** (cada mutante debe morir; todos murieron y
 se revirtieron):
@@ -283,6 +287,9 @@ se revirtieron):
 | `load_schema::parse_schema` vuelve al schema vacío | `test_a_stored_content_that_is_not_a_schema_is_rejected` + `test_load_latest_schema` FAILED |
 | se elimina `.prefix_separator("_")` | `environment_variables_override_the_configuration` FAILED (3000 vs 41535), `an_invalid_environment_override_is_rejected` FAILED, `p1` FAILED, `p3` FAILED |
 | `main.rs` sale con `exit(0)` en error de configuración | `p3` FAILED (`p1` sobrevivió, como se esperaba) |
+| `save_schema` vuelve a escribir `version: null` (se elimina la invariante `UNVERSIONED_SCHEMA_ID`) | `s1_a_schema_stored_without_a_version_is_found_again` FAILED (`left: None`) + `s3_the_registered_schema_is_the_schema_that_validates` FAILED (exactamente en «a policy over an undeclared action must be rejected»); `s2` (control) siguió pasando |
+| la configuración distribuida no es la que el binario lee (se retira `config/default.toml`) | `p4_the_unpacked_distribution_boots_on_its_own` FAILED |
+| la configuración pasa a ser opcional (`#[serde(default)]` en toda la jerarquía) | `p5_the_binary_refuses_to_start_without_a_readable_configuration` FAILED (`p4` sobrevivió, como se esperaba) |
 
 ### 7.2 Abiertos (con consumidor y criterio de cierre)
 
