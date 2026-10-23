@@ -313,22 +313,44 @@ evalúa de verdad (carga schema, valida políticas, evalúa). El stub es
 
 ## 8. Aceptación efímera de H0 (ejecutada y limpiada)
 
-Ciclo `PREPARE → EXECUTE → ASSERT → EVIDENCE → CLEANUP` sobre el binario real
-(`sha256=b78a3e382c24286f907137eb7f0fc54debf78a07bc93ca3ac84b337b110a5062`),
-con directorio de sesión efímero y puerto efímero.
+Ciclo `PREPARE → EXECUTE → ASSERT → EVIDENCE → CLEANUP` sobre la
+**distribución desempaquetada**, ejecutada desde el directorio del paquete (que
+es como la usa un consumidor), con directorio de sesión efímero y puerto
+efímero.
+
+- Paquete: `hodei-artifacts-api-0.1.0-x86_64-unknown-linux-gnu.tar.gz`
+- Binario bajo prueba:
+  `sha256=bd70d31c87d93a570830993f5da7090616fe735cb688e70319a2978c2dac8d5f`
+
+**Corrección de una evidencia anterior.** La primera aceptación de este
+documento (`sha256=b78a3e38…`) se ejecutó **desde la raíz del repositorio** y
+dio verde, pero esa ejecución no era válida: el artefacto publicado no
+arrancaba por sí solo (D8). La aceptación que sigue se ejecutó sobre el
+paquete desempaquetado y desde su propio directorio, que es la condición que
+un consumidor impone. El resultado del binario es el mismo
+(`sha256=bd70d31c…`): los cambios de D8 fueron de empaquetado y de
+configuración, no de código compilado.
 
 | Caso | Resultado |
 |---|---|
-| `GET /health` | 200, cuerpo `{"status":"healthy","version":"0.1.0","service":"hodei-artifacts-api",...}` |
-| `GET /health/ready` | 200 |
-| `GET /health/live` | 200 |
-| Ruta inexistente | 404 |
-| `SIGTERM` | el proceso termina |
-| Procesos huérfanos al cerrar | 0 |
-| Directorio de sesión efímero | eliminado |
+| A1 el desempaquetado arranca desde su propio directorio | PASS — `GET /health` → 200, cuerpo `{"status":"healthy","version":"0.1.0","service":"hodei-artifacts-api",...}` |
+| A1 `GET /health/ready` | PASS — 200 |
+| A1 `GET /health/live` | PASS — 200 |
+| A2 registro del esquema IAM | PASS — `entity_types_registered: 2`, `action_types_registered: 6`, `schema_version: "latest"`, `schema_id: "schema:latest"` |
+| A2 política sobre una acción registrada (`Action::"CreateUser"`) | PASS — `is_valid: true` |
+| A2 política sobre un tipo de entidad registrado (`Iam::User::"alice"`) | PASS — `is_valid: true` |
+| A3 (**negativo**) política sobre una acción no declarada | PASS — `is_valid: false`, «unrecognized action `Action::\"NoSuchAction\"`» |
+| A3 (**negativo**) política sobre un tipo de entidad no declarado | PASS — `is_valid: false`, «unrecognized entity type `Nope::Ghost`» |
+| A4 (**negativo**) configuración inválida (`HODEI_SERVER__PORT=0`) | PASS — exit 1, «Configuration error: Server port cannot be 0» |
+| Limpieza: `SIGTERM` | PASS — el proceso termina |
+| Limpieza: directorio de sesión efímero | PASS — eliminado |
 
-**Negativos discriminantes** (cada uno debe fallar **por su razón**, no por un
-conflicto de puerto ni por una variable duplicada):
+Los dos negativos de A3 fallan **por la razón de Cedar** —el mensaje nombra
+la acción o el tipo de entidad no declarados—, no por un conflicto de puerto
+ni por una configuración ausente.
+
+**Negativos discriminantes de configuración** (cada uno debe fallar **por su
+razón**, no por un conflicto de puerto ni por una variable duplicada):
 
 | Override inválido | Resultado observado |
 |---|---|
@@ -338,6 +360,7 @@ conflicto de puerto ni por una variable duplicada):
 | `HODEI_DATABASE__NAMESPACE=` | exit 1 — "Database namespace cannot be empty" |
 | `HODEI_ROCKSDB__PATH=` | exit 1 — "RocksDB path cannot be empty" |
 | `HODEI_ROCKSDB__PATH=/proc/1/x` | exit 1 — "Parent directory '/proc/1' is not writable" |
+| sin fichero de configuración legible | exit 1 — "missing field …" (P5) |
 
 ---
 

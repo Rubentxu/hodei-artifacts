@@ -65,23 +65,29 @@
           "configuracion opcional (serde(default) en toda la jerarquia): p5 FAILED (p4 sobrevive)"
         ],
         "ephemeral_acceptance": {
+          "artifact": "hodei-artifacts-api-0.1.0-x86_64-unknown-linux-gnu.tar.gz desempaquetado; el binario se ejecuta desde el directorio del paquete",
           "positive": [
-            "GET /health -> 200 healthy",
-            "GET /health/ready -> 200",
-            "GET /health/live -> 200",
-            "ruta inexistente -> 404",
-            "SIGTERM termina el proceso"
+            "A1 el desempaquetado arranca desde su propio directorio y GET /health -> 200 healthy",
+            "A1 GET /health/ready -> 200",
+            "A1 GET /health/live -> 200",
+            "A2 registro del esquema IAM: 2 tipos de entidad, 6 tipos de accion, schema_version 'latest'",
+            "A2 politica sobre una accion registrada -> is_valid true",
+            "A2 politica sobre un tipo de entidad registrado -> is_valid true"
           ],
           "negative": [
-            "HODEI_SERVER__PORT=0",
+            "A3 politica sobre una accion no declarada -> is_valid false (unrecognized action)",
+            "A3 politica sobre un tipo de entidad no declarado -> is_valid false (unrecognized entity type)",
+            "A4 HODEI_SERVER__PORT=0 -> exit 1 con 'Configuration error'",
+            "sin fichero de configuracion legible -> exit 1 (P5)",
             "HODEI_SERVER__PORT=abc",
             "HODEI_DATABASE__DB_TYPE=mysql",
             "HODEI_DATABASE__NAMESPACE vacio",
             "HODEI_ROCKSDB__PATH vacio",
             "HODEI_ROCKSDB__PATH=/proc/1/x"
           ],
-          "aat": "0 procesos huerfanos; directorio de sesion efimero eliminado",
-          "binary_sha256": "b78a3e382c24286f907137eb7f0fc54debf78a07bc93ca3ac84b337b110a5062"
+          "aat": "0 procesos huerfanos; el proceso termina en SIGTERM; directorio de sesion efimero eliminado",
+          "binary_sha256": "bd70d31c87d93a570830993f5da7090616fe735cb688e70319a2978c2dac8d5f",
+          "invalidated_earlier_run": "sha256 b78a3e382c24286f907137eb7f0fc54debf78a07bc93ca3ac84b337b110a5062: ejecutada desde la raiz del repositorio, no desde el paquete; el artefacto no arrancaba solo (D8)"
         },
         "data_inventory": "data/hodei.development.rocksdb verificada VACIA (INFO FOR ROOT: namespaces {}); no hay datos que exportar; base original intacta",
         "not_a_ga_release": true,
