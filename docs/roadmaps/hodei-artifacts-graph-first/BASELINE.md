@@ -28,6 +28,13 @@ aproxima.
 etiqueta SemVer de este repositorio no colisiona con nada. La versión del
 paquete raíz es `0.1.0`; la siguiente versión la fija el hito, no una suposición.
 
+**Estado posterior a la ejecución de H0.** La tabla de arriba es el **censo**,
+medido en la revisión `2626e35…`. Desde entonces H0 se ejecutó y se publicó
+`v0.1.0`: el árbol de trabajo está limpio, existe el tag anotado `v0.1.0`
+apuntando a `c3d79a6…` (idéntico a `origin/main`) y hay una release publicada
+con 5 assets (sin `sources.zip`). La verificación de esa publicación —CI
+remota verde, tag, assets y bytes publicados— está en §10.
+
 **Posición de licencia de Nexus CE:** Nexus Repository OSS es EPL-1.0. Este
 repositorio es MIT. Nexus CE se usa como **referencia de comportamiento**
 (protocolo, semántica de repositorios) y **no** se distribuye ni se vincula
@@ -349,6 +356,14 @@ Los dos negativos de A3 fallan **por la razón de Cedar** —el mensaje nombra
 la acción o el tipo de entidad no declarados—, no por un conflicto de puerto
 ni por una configuración ausente.
 
+**Reejecución sobre los bytes publicados.** Una vez publicado el release, los
+assets se descargaron de nuevo desde GitHub y se repitió el ciclo completo
+A1–A4 sobre ese tarball descargado: todos los casos siguen en PASS y el
+binario extraído conserva
+`sha256=bd70d31c87d93a570830993f5da7090616fe735cb688e70319a2978c2dac8d5f`.
+La aceptación queda, por tanto, ligada a los bytes que un consumidor descarga,
+no solo a una copia local del mismo commit.
+
 **Negativos discriminantes de configuración** (cada uno debe fallar **por su
 razón**, no por un conflicto de puerto ni por una variable duplicada):
 
@@ -372,6 +387,47 @@ razón**, no por un conflicto de puerto ni por una variable duplicada):
 4. Migración de Surreal/RocksDB a TypeDB: inventario y exportación previa; rollback y verificación. **Bloqueado por entorno**: `typedb` y `typedb-server` ausentes → `NOT_RUN`.
 5. Descarga a memoria completa: cambiar a streaming con backpressure y checksums. **Abierto** (H2).
 6. TypeDB CE single-node: resiliencia, límites de disponibilidad y restore demostrados. **Bloqueado por entorno** (H2).
+
+---
+
+## 10. Publicación de v0.1.0 (autoridad CI + artefacto publicado)
+
+**Autoridad CI.** La workflow `Rust CI` (`.github/workflows/rust-ci.yml`) sobre
+`main` en el commit de origen `c3d79a6…` está **verde** en todos sus pasos
+(`run 40040582255`, conclusión `success`):
+
+| Paso | Resultado |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
+| `cargo check --workspace --all-targets` | PASS |
+| `cargo build --workspace` | PASS |
+| `cargo test --workspace --no-fail-fast` | PASS — 746 superadas, 0 fallidas, 64 ignoradas |
+| `cargo nextest run --workspace --no-fail-fast` | PASS — 740 ejecutadas, 0 saltadas, 0 fallidas |
+
+La segunda señal (nextest, un proceso por prueba) coincide con la primera: el
+workspace no comparte estado mutable entre pruebas.
+
+**Publicación observada** (no declarada: comprobada contra la API y contra el
+remote):
+
+| Hecho | Valor observado |
+|---|---|
+| Tag | `v0.1.0` (anotado) → `c3d79a694c7b9e9f7f9c1c359f5f309933b41899` |
+| `refs/heads/main` remoto | `c3d79a694c7b9e9f7f9c1c359f5f309933b41899` (el tag apunta a main) |
+| Release | `https://github.com/Rubentxu/hodei-artifacts/releases/tag/v0.1.0` |
+| Fecha de publicación | 2026-10-23T23:57:14Z |
+| Assets publicados | `hodei-artifacts-api-0.1.0-x86_64-unknown-linux-gnu.tar.gz`, `SBOM.cdx.json`, `SHA256SUMS`, `release-manifest.json`, `CHANGELOG.md` |
+| `sources.zip` | **no** es asset: los enlaces "Source code" que genera GitHub no son assets publicados |
+
+**Verificación posterior a la publicación.** Los assets descargados del release
+verifican contra `SHA256SUMS` (`sha256sum -c`: 3/3 coinciden) y el binario
+dentro del tarball publicado conserva
+`sha256=bd70d31c87d93a570830993f5da7090616fe735cb688e70319a2978c2dac8d5f`,
+el mismo valor registrado en el manifiesto y en la aceptación.
+
+**No es GA y no declara paridad con Nexus CE**, tanto en el texto del release
+como en `release-manifest.json` (`not_a_ga_release`, `no_nexus_parity_claim`).
 
 ---
 

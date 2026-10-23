@@ -2,13 +2,13 @@
   "schema_version": 1,
   "repo": "Rubentxu/hodei-artifacts",
   "baseline_sha": "2626e35b7c12375af0a1f23342eee4b4619bfc3c",
-  "status": "h0_executed",
+  "status": "h0_released",
   "milestones": [
     {
       "id": "H0",
       "title": "Reconciliar código y puerta de calidad",
       "depends_on": [],
-      "state": "EXECUTED",
+      "state": "RELEASED",
       "release_required": true,
       "integration_remote_required": true,
       "ephemeral_uat_e2e_aat_delete_after_block": true,
@@ -28,9 +28,8 @@
           "cargo_clippy_deny_warnings": "exit 0; No issues found",
           "cargo_test_workspace": "exit 0; 746 passed, 0 failed, 64 ignored (doctests)",
           "not_run": [
-            "cargo-nextest ausente en el host",
-            "docker ausente en el host",
-            "typedb / typedb-server ausentes en el host"
+            "docker ausente en el host de publicacion",
+            "typedb / typedb-server ausentes en el host de publicacion"
           ]
         },
         "fixed_defects": [
@@ -92,7 +91,63 @@
         "data_inventory": "data/hodei.development.rocksdb verificada VACIA (INFO FOR ROOT: namespaces {}); no hay datos que exportar; base original intacta",
         "not_a_ga_release": true,
         "no_nexus_parity_claim": true,
-        "no_sources_zip_asset": true
+        "no_sources_zip_asset": true,
+        "ci_authority": {
+          "workflow": "Rust CI (.github/workflows/rust-ci.yml)",
+          "run_id": "40040582255",
+          "url": "https://github.com/Rubentxu/hodei-artifacts/actions/runs/40040582255",
+          "commit": "c3d79a694c7b9e9f7f9c1c359f5f309933b41899",
+          "conclusion": "success",
+          "steps": [
+            "cargo fmt --all -- --check",
+            "cargo clippy --workspace --all-targets -- -D warnings",
+            "cargo check --workspace --all-targets",
+            "cargo build --workspace",
+            "cargo test --workspace --no-fail-fast",
+            "cargo nextest run --workspace --no-fail-fast"
+          ],
+          "cargo_test": "746 passed, 0 failed, 64 ignored",
+          "nextest": "740 tests run: 740 passed, 0 skipped, 0 failed"
+        },
+        "release_published": {
+          "version": "0.1.0",
+          "tag": "v0.1.0",
+          "published_at": "2026-10-23T23:57:14Z",
+          "release_url": "https://github.com/Rubentxu/hodei-artifacts/releases/tag/v0.1.0",
+          "tag_points_to": "c3d79a694c7b9e9f7f9c1c359f5f309933b41899",
+          "remote_main": "c3d79a694c7b9e9f7f9c1c359f5f309933b41899",
+          "tag_points_to_main": true,
+          "assets": [
+            {
+              "filename": "hodei-artifacts-api-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
+              "sha256": "64752333b0861ca0ade58cdc2000c091adc5397d91cb73a80e87fb1d03b599f8",
+              "kind": "binary"
+            },
+            {
+              "filename": "SBOM.cdx.json",
+              "sha256": "c13db3ad6cf4bfb2d23c98c55495f611d7b812b9d5025b49dbd82b8715f5325c",
+              "kind": "sbom"
+            },
+            {
+              "filename": "SHA256SUMS",
+              "sha256": "d86d80d5c17b82d0385c539678693727b2f5c413198cd8df8c30be32f1f05f75",
+              "kind": "checksum"
+            },
+            {
+              "filename": "release-manifest.json",
+              "sha256": "b20d0fadb6313a01d5e83f30a5668d7c978846bb0cb59818ea3162bd7b550859",
+              "kind": "manifest"
+            },
+            {
+              "filename": "CHANGELOG.md",
+              "sha256": "2a26c87ffdb712b670782511d3c0210c8e360dfc73013071c47eeb4ff4c4e6f8",
+              "kind": "changelog"
+            }
+          ],
+          "sources_zip_asset": false,
+          "published_bytes_reverified": "los assets descargados del release verifican contra SHA256SUMS; el binario dentro del tarball publicado conserva sha256=bd70d31c87d93a570830993f5da7090616fe735cb688e70319a2978c2dac8d5f",
+          "acceptance_on_published_bytes": "A1-A4 ejecutados de nuevo sobre el tarball descargado del release: todos PASS"
+        }
       }
     },
     {
