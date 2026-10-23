@@ -122,6 +122,12 @@ pub async fn bootstrap(
     Ok(app_state)
 }
 
+/// Id under which a schema stored without an explicit version is kept.
+///
+/// It is both the record id and the version the record declares, so the
+/// reader can always find it again.
+pub const UNVERSIONED_SCHEMA_ID: &str = "latest";
+
 /// SurrealDB adapter for schema storage
 ///
 /// This adapter implements the SchemaStoragePort trait for SurrealDB with RocksDB.
@@ -176,7 +182,20 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
         version: Option<String>,
     ) -> Result<String, BuildSchemaError> {
         // The record is stored under its version, so the version *is* the id.
-        let schema_id = version.clone().unwrap_or_else(|| "latest".to_string());
+        let schema_id = version
+            .clone()
+            .unwrap_or_else(|| UNVERSIONED_SCHEMA_ID.to_string());
+
+        // The stored record has to declare the version under which it can be
+        // found again, and that version is its own id. A schema stored
+        // without an explicit version used to be written with a `null`
+        // version, which made it invisible to the reader: it looks the newest
+        // record up by its version, so a record without one was never
+        // selected. The schema was persisted and never applied, and every
+        // consumer concluded that no schema existed — which degraded policy
+        // validation to a syntax check and let policies over undeclared
+        // actions and entity types pass.
+        let stored_version = version.unwrap_or_else(|| schema_id.clone());
 
         // `upsert`, not `create`: `create` fails with "Found existing record"
         // when the version was already stored, which is exactly what happens
@@ -188,7 +207,7 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
             .upsert(("schema", schema_id.as_str()))
             .content(serde_json::json!({
                 "content": schema_json,
-                "version": version,
+                "version": stored_version,
                 "created_at": chrono::Utc::now().to_rfc3339(),
             }))
             .await
@@ -212,12 +231,19 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
 
         let latest = rows
             .into_iter()
-            .max_by(|a, b| a.created_at.cmp(&b.created_at))
-            .and_then(|row| row.version);
+            .max_by(|a, b| a.created_at.cmp(&b.created_at));
 
-        let Some(version) = latest else {
+        // A record written before the version became mandatory says `null`,
+        // but it is still stored under the id "latest", so it is still
+        // addressable. Falling back to that id keeps those records readable
+        // instead of leaving them invisible.
+        let Some(latest) = latest else {
             return Ok(None);
         };
+
+        let version = latest
+            .version
+            .unwrap_or_else(|| UNVERSIONED_SCHEMA_ID.to_string());
 
         let result: Option<SchemaRecordRow> = self
             .db
