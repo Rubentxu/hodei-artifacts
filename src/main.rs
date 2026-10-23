@@ -8,30 +8,11 @@
 //! - Axum server setup and routing
 //! - Graceful shutdown handling
 
-mod app_state;
-mod bootstrap;
-mod composition_root;
-mod config;
-mod handlers;
-mod openapi;
-
-use crate::bootstrap::{BootstrapConfig, bootstrap};
-use crate::config::AppConfig;
-use crate::handlers::health::health_check;
-use crate::openapi::create_api_doc;
-use axum::{
-    Router,
-    routing::{delete, get, post, put},
+use hodei_artifacts_api::{
+    bootstrap::BootstrapConfig, bootstrap::bootstrap, config::AppConfig, router::build_router,
 };
-use std::time::Duration;
-use tower_http::{
-    cors::CorsLayer,
-    timeout::TimeoutLayer,
-    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
-};
-use tracing::{Level, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use utoipa_swagger_ui::SwaggerUi;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -135,66 +116,6 @@ fn initialize_logging(config: &AppConfig) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// Build the Axum router with all routes and middleware
-fn build_router(app_state: crate::app_state::AppState, config: &AppConfig) -> Router {
-    Router::new()
-        // Health check endpoint
-        .route("/health", get(health_check))
-        .route("/health/ready", get(health_check))
-        .route("/health/live", get(health_check))
-        // API v1 routes
-        .nest("/api/v1", api_v1_routes(app_state))
-        // Swagger UI - serve at /swagger-ui
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", create_api_doc()))
-        // Middleware layers (applied in reverse order)
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
-        )
-        .layer(TimeoutLayer::new(Duration::from_secs(
-            config.server.request_timeout_secs,
-        )))
-        .layer(CorsLayer::permissive()) // TODO: Configure CORS properly for production
-}
-
-/// API v1 routes
-fn api_v1_routes(app_state: crate::app_state::AppState) -> Router {
-    Router::new()
-        // Schema management
-        .route("/schemas/build", post(handlers::schemas::build_schema))
-        .route("/schemas/load", get(handlers::schemas::load_schema))
-        .route(
-            "/schemas/register-iam",
-            post(handlers::schemas::register_iam_schema),
-        )
-        // Policy validation and evaluation
-        .route(
-            "/policies/validate",
-            post(handlers::policies::validate_policy),
-        )
-        .route(
-            "/policies/evaluate",
-            post(handlers::policies::evaluate_policies),
-        )
-        // IAM Policy Management
-        .route("/iam/policies", post(handlers::iam::create_policy))
-        .route("/iam/policies", get(handlers::iam::list_policies))
-        .route("/iam/policies/get", post(handlers::iam::get_policy))
-        .route("/iam/policies/update", put(handlers::iam::update_policy))
-        .route("/iam/policies/delete", delete(handlers::iam::delete_policy))
-        // Playground routes
-        .route(
-            "/playground/evaluate",
-            post(handlers::playground::playground_evaluate),
-        )
-        // TODO: Add more routes as needed
-        // .route("/users", post(handlers::users::create_user))
-        // .route("/users/:id", get(handlers::users::get_user))
-        // .route("/groups", post(handlers::groups::create_group))
-        .with_state(app_state)
-}
-
 /// Graceful shutdown signal handler
 ///
 /// This function listens for shutdown signals (SIGTERM, SIGINT/Ctrl+C)
@@ -246,10 +167,10 @@ mod tests {
     async fn test_bootstrap() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test.rocksdb");
-        
+
         let mut config = AppConfig::default();
         config.rocksdb.path = db_path.to_string_lossy().to_string();
-        
+
         let bootstrap_config = BootstrapConfig {
             register_iam_schema: false, // Skip IAM registration for faster tests
             schema_version: None,
@@ -258,7 +179,7 @@ mod tests {
 
         let result = bootstrap(&config, bootstrap_config).await;
         assert!(result.is_ok(), "Bootstrap should succeed with RocksDB");
-        
+
         // Clean up
         drop(temp_dir);
     }

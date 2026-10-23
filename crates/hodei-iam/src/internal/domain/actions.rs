@@ -161,7 +161,6 @@ impl ActionTrait for RemoveUserFromGroupAction {
     }
 }
 
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -206,5 +205,4 @@ mod tests {
         assert_eq!(AddUserToGroupAction::name(), "AddUserToGroup");
         assert_eq!(AddUserToGroupAction::applies_to_resource(), "Iam::Group");
     }
-
 }

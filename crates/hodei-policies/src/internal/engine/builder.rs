@@ -18,10 +18,10 @@ use std::collections::HashMap;
 #[derive(Default)]
 #[allow(dead_code)]
 pub struct EngineBuilder {
-    /// Entity schema fragments
+    /// Entity schema fragments, keyed by fully qualified type name
     entity_fragments: HashMap<String, SchemaFragment>,
-    /// Action schema fragments
-    action_fragments: Vec<SchemaFragment>,
+    /// Action schema fragments, keyed by action name
+    action_fragments: HashMap<String, SchemaFragment>,
     /// Cache for generated fragments
     #[allow(dead_code)]
     fragment_cache: HashMap<String, SchemaFragment>,
@@ -63,8 +63,41 @@ impl EngineBuilder {
         &mut self,
     ) -> Result<&mut Self, Box<CedarSchemaError>> {
         let fragment = generate_action_fragment::<A>()?;
-        self.action_fragments.push(fragment);
+        self.action_fragments
+            .entry(A::name().to_string())
+            .or_insert(fragment);
         Ok(self)
+    }
+
+    /// Register an already-built entity schema fragment
+    ///
+    /// This is the entry point used by the command-based registration path:
+    /// the caller owns the type information and hands over the parsed Cedar
+    /// fragment, so the builder never has to re-derive it from a Rust type.
+    ///
+    /// Registration is idempotent per entity type: registering the same type
+    /// twice keeps a single fragment, exactly like [`EngineBuilder::register_entity`].
+    pub fn register_entity_fragment(
+        &mut self,
+        entity_type: String,
+        fragment: SchemaFragment,
+    ) -> &mut Self {
+        self.entity_fragments.entry(entity_type).or_insert(fragment);
+        self
+    }
+
+    /// Register an already-built action schema fragment
+    ///
+    /// Duplicate action names are collapsed: the action namespace is flat
+    /// (`Action::"CreateUser"`), so two fragments declaring the same action
+    /// would otherwise make the schema unbuildable.
+    pub fn register_action_fragment(
+        &mut self,
+        action_name: String,
+        fragment: SchemaFragment,
+    ) -> &mut Self {
+        self.action_fragments.entry(action_name).or_insert(fragment);
+        self
     }
 
     /// Register an entity instance for schema generation
@@ -97,10 +130,24 @@ impl EngineBuilder {
         let all_fragments: Vec<SchemaFragment> = self
             .entity_fragments
             .into_values()
-            .chain(self.action_fragments)
+            .chain(self.action_fragments.into_values())
             .collect();
 
         Schema::from_schema_fragments(all_fragments).map_err(Box::new)
+    }
+
+    /// The schema fragments accumulated so far
+    ///
+    /// These are the fragments the schema is built from, so persisting them
+    /// and rebuilding the schema from them reproduces the same schema. The
+    /// built schema itself cannot be serialized, so the fragments are the
+    /// only faithful representation of it.
+    pub fn fragments(&self) -> Vec<SchemaFragment> {
+        self.entity_fragments
+            .values()
+            .cloned()
+            .chain(self.action_fragments.values().cloned())
+            .collect()
     }
 
     /// Get the number of registered entity types
@@ -125,6 +172,107 @@ impl EngineBuilder {
 }
 
 // ============================================================================
+// Cedar DSL Builders
+// ============================================================================
+
+/// Split a fully qualified entity type into `(namespace, entity)`.
+///
+/// The qualified form is `Namespace::Entity`; anything else is rejected
+/// because a Cedar entity without a namespace cannot be referenced by the
+/// `appliesTo` clauses of the actions.
+pub(crate) fn split_entity_type(entity_type: &str) -> Result<(String, String), String> {
+    let mut parts = entity_type.split("::");
+    let namespace = parts.next().unwrap_or_default();
+    let entity = parts.next().unwrap_or_default();
+
+    if namespace.is_empty() {
+        return Err(format!(
+            "entity type '{entity_type}' has no namespace; the qualified form is 'Namespace::Entity'"
+        ));
+    }
+    if entity.is_empty() {
+        return Err(format!(
+            "entity type '{entity_type}' has no entity name; the qualified form is 'Namespace::Entity'"
+        ));
+    }
+    if parts.next().is_some() {
+        return Err(format!(
+            "entity type '{entity_type}' has more than two segments; the qualified form is 'Namespace::Entity'"
+        ));
+    }
+
+    Ok((namespace.to_string(), entity.to_string()))
+}
+
+/// Build the Cedar schema DSL for one entity type.
+///
+/// `entity_type` is the fully qualified `Namespace::Entity` name. The emitted
+/// shape is the one Cedar accepts:
+///
+/// ```text
+/// namespace Iam {
+///     // optional description
+///     entity User {
+///         name: String
+///     };
+/// }
+/// ```
+///
+/// `attributes` carries `(name, cedar type)` pairs, already translated to the
+/// Cedar vocabulary by [`to_cedar_type`].
+pub(crate) fn entity_type_dsl(
+    entity_type: &str,
+    description: Option<&str>,
+    attributes: &[(String, String)],
+) -> Result<String, String> {
+    let (namespace, entity_name) = split_entity_type(entity_type)?;
+    let namespace_pascal = kernel::Hrn::to_pascal_case(&namespace);
+
+    if namespace_pascal.is_empty() {
+        return Err(format!(
+            "namespace '{namespace}' of entity type '{entity_type}' does not yield a valid Cedar namespace"
+        ));
+    }
+
+    let mut dsl = String::new();
+    dsl.push_str(&format!("namespace {namespace_pascal} {{\n"));
+
+    if let Some(description) = description.filter(|d| !d.trim().is_empty()) {
+        dsl.push_str(&format!("    // {}\n", description.trim()));
+    }
+
+    dsl.push_str(&format!("    entity {entity_name} {{\n"));
+
+    for (index, (name, cedar_type)) in attributes.iter().enumerate() {
+        let separator = if index + 1 == attributes.len() {
+            ""
+        } else {
+            ","
+        };
+        dsl.push_str(&format!("        {}: {}{separator}\n", name, cedar_type));
+    }
+
+    dsl.push_str("    };\n");
+    dsl.push_str("}\n");
+
+    Ok(dsl)
+}
+
+/// Build the Cedar schema DSL for one action.
+///
+/// The action namespace is flat (`Action::"CreateUser"`), matching the UID
+/// the evaluation engine builds at request time.
+pub(crate) fn action_type_dsl(
+    action_name: &str,
+    principal_type: &str,
+    resource_type: &str,
+) -> String {
+    format!(
+        "action \"{action_name}\" appliesTo {{\n    principal: [{principal_type}],\n    resource: [{resource_type}]\n}};\n"
+    )
+}
+
+// ============================================================================
 // Schema Generation Functions
 // ============================================================================
 
@@ -137,52 +285,16 @@ fn generate_fragment_for_type<T: HodeiEntityType>() -> Result<SchemaFragment, Bo
 {
     let type_name = T::entity_type_name();
 
-    // Parse namespace and entity name (e.g., "Iam::User" -> namespace: "Iam", entity: "User")
-    let parts: Vec<&str> = type_name.split("::").collect();
-    if parts.len() != 2 {
-        // Create a schema error by attempting to parse invalid schema
-        return Err(Box::new(CedarSchemaError::from(
+    let attributes: Vec<(String, String)> = T::attributes_schema()
+        .iter()
+        .map(|(name, atype)| (name.as_str().to_string(), to_cedar_type(atype)))
+        .collect();
+
+    let dsl = entity_type_dsl(&type_name, None, &attributes).map_err(|_| {
+        Box::new(CedarSchemaError::from(
             Schema::from_schema_fragments(vec![]).expect_err("Expected schema error"),
-        )));
-    }
-
-    let namespace = parts[0];
-    let entity_name = parts[1];
-
-    // Convert namespace to Pascal case (e.g., "iam" -> "Iam")
-    let namespace_pascal =
-        namespace.chars().next().unwrap().to_uppercase().to_string() + &namespace[1..];
-
-    // Generate Cedar DSL for this entity type
-    let mut dsl = String::new();
-
-    // Write namespace block
-    dsl.push_str(&format!("namespace {} {{\n", namespace_pascal));
-
-    // Write entity definition with attributes
-    dsl.push_str(&format!("    entity {} {{\n", entity_name));
-
-    // Add attributes based on the entity's schema
-    let attrs = T::attributes_schema();
-    for (i, (name, atype)) in attrs.iter().enumerate() {
-        if i < attrs.len() - 1 {
-            dsl.push_str(&format!(
-                "        {}: {},\n",
-                name.as_str(),
-                to_cedar_type(atype)
-            ));
-        } else {
-            dsl.push_str(&format!(
-                "        {}: {}\n",
-                name.as_str(),
-                to_cedar_type(atype)
-            ));
-        }
-    }
-
-    // Close entity and namespace
-    dsl.push_str("    };\n");
-    dsl.push_str("}\n");
+        ))
+    })?;
 
     // Parse the DSL into a SchemaFragment
     SchemaFragment::from_cedarschema_str(&dsl)
@@ -200,45 +312,21 @@ fn generate_fragment_for_entity(
 ) -> Result<SchemaFragment, Box<CedarSchemaError>> {
     let type_name = entity.hrn().entity_type_name();
 
-    // Parse namespace and entity name
-    let parts: Vec<&str> = type_name.split("::").collect();
-    if parts.len() != 2 {
-        // Create a schema error by attempting to parse invalid schema
-        return Err(Box::new(CedarSchemaError::from(
+    let attributes: Vec<(String, String)> = entity
+        .cedar_attributes()
+        .map(|attrs| {
+            attrs
+                .iter()
+                .map(|(name, atype)| (name.clone(), to_cedar_type(atype)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let dsl = entity_type_dsl(&type_name, None, &attributes).map_err(|_| {
+        Box::new(CedarSchemaError::from(
             Schema::from_schema_fragments(vec![]).expect_err("Expected schema error"),
-        )));
-    }
-
-    let namespace = parts[0];
-    let entity_name = parts[1];
-
-    // Convert namespace to Pascal case
-    let namespace_pascal =
-        namespace.chars().next().unwrap().to_uppercase().to_string() + &namespace[1..];
-
-    // Generate Cedar DSL for this entity type
-    let mut dsl = String::new();
-
-    // Write namespace block
-    dsl.push_str(&format!("namespace {} {{\n", namespace_pascal));
-
-    // Write entity definition with attributes
-    dsl.push_str(&format!("    entity {} {{\n", entity_name));
-
-    // Add attributes based on the entity's schema
-    if let Some(attrs) = entity.cedar_attributes() {
-        for (i, (name, atype)) in attrs.iter().enumerate() {
-            if i < attrs.len() - 1 {
-                dsl.push_str(&format!("        {}: {},\n", name, atype.to_cedar_decl()));
-            } else {
-                dsl.push_str(&format!("        {}: {}\n", name, atype.to_cedar_decl()));
-            }
-        }
-    }
-
-    // Close entity and namespace
-    dsl.push_str("    };\n");
-    dsl.push_str("}\n");
+        ))
+    })?;
 
     // Parse the DSL into a SchemaFragment
     SchemaFragment::from_cedarschema_str(&dsl)
@@ -252,16 +340,10 @@ fn generate_fragment_for_entity(
 #[allow(dead_code)]
 pub fn generate_action_fragment<A: kernel::ActionTrait>()
 -> Result<SchemaFragment, Box<CedarSchemaError>> {
-    let action_name = A::name();
-    let principal_type = A::applies_to_principal();
-    let resource_type = A::applies_to_resource();
-
-    let actions_dsl = format!(
-        r#"action "{}" appliesTo {{
-            principal: [{}],
-            resource: [{}]
-        }};"#,
-        action_name, principal_type, resource_type
+    let actions_dsl = action_type_dsl(
+        A::name(),
+        &A::applies_to_principal(),
+        &A::applies_to_resource(),
     );
 
     SchemaFragment::from_cedarschema_str(&actions_dsl)
@@ -270,17 +352,20 @@ pub fn generate_action_fragment<A: kernel::ActionTrait>()
 }
 
 /// Convert kernel AttributeType to Cedar type string
-#[allow(dead_code)]
-fn to_cedar_type(attr_type: &kernel::domain::AttributeType) -> &'static str {
+///
+/// The mapping is the single source of truth for the Cedar vocabulary of the
+/// kernel attribute types: the registration commands translate their typed
+/// attributes through it, so a type can never be spelled two different ways.
+pub(crate) fn to_cedar_type(attr_type: &kernel::domain::AttributeType) -> String {
     use kernel::domain::AttributeType;
 
     match attr_type {
-        AttributeType::Bool => "Bool",
-        AttributeType::Long => "Long",
-        AttributeType::String => "String",
-        AttributeType::Set(_) => "Set<String>", // Simplified for now
-        AttributeType::Record(_) => "Record",   // Simplified for now
-        AttributeType::EntityRef(_) => "__cedar::Entity", // Simplified for now
+        AttributeType::Bool => "Bool".to_string(),
+        AttributeType::Long => "Long".to_string(),
+        AttributeType::String => "String".to_string(),
+        AttributeType::Set(inner) => format!("Set<{}>", to_cedar_type(inner)),
+        AttributeType::Record(_) => "Record".to_string(),
+        AttributeType::EntityRef(_) => "__cedar::Entity".to_string(),
     }
 }
 

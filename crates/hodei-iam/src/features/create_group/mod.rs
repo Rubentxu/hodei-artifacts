@@ -6,9 +6,9 @@
 pub mod dto;
 pub mod error;
 pub mod factories;
+mod mocks;
 pub mod ports;
 pub mod use_case;
-mod mocks;
 #[cfg(test)]
 mod use_case_test;
 

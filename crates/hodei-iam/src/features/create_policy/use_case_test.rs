@@ -34,7 +34,10 @@ async fn test_create_policy_success() {
     assert!(result.is_ok());
     let view = result.unwrap();
     assert_eq!(view.content, r#"permit(principal, action, resource);"#);
-    assert_eq!(view.description, Some("Test policy description".to_string()));
+    assert_eq!(
+        view.description,
+        Some("Test policy description".to_string())
+    );
     assert!(view.id.to_string().contains("TestPolicy"));
 }
 
@@ -43,7 +46,9 @@ async fn test_create_policy_success() {
 async fn test_create_policy_validation_error() {
     // Setup
     let mock_port = Arc::new(MockCreatePolicyPort::new());
-    let mock_validator = Arc::new(MockPolicyValidator::with_errors(vec!["Syntax error".to_string()]));
+    let mock_validator = Arc::new(MockPolicyValidator::with_errors(vec![
+        "Syntax error".to_string(),
+    ]));
 
     let use_case = CreatePolicyUseCase::new(mock_port, mock_validator);
 

@@ -191,25 +191,7 @@ impl AppConfig {
     ///
     /// A validated AppConfig instance or a ConfigError with clear messages
     pub fn new() -> Result<Self, ConfigError> {
-        let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
-
-        let s = Config::builder()
-            // Default values (lowest precedence)
-            .add_source(File::with_name("config/default").required(false))
-            // Environment-specific configuration
-            .add_source(File::with_name(&format!("config/{}", run_mode)).required(false))
-            // Local overrides (higher precedence)
-            .add_source(File::with_name("config/local").required(false))
-            // Environment variables with HODEI_ prefix (highest precedence)
-            .add_source(Environment::with_prefix("HODEI").separator("__"))
-            .build()?;
-
-        let app_config: AppConfig = s.try_deserialize()?;
-
-        // Validate the configuration
-        app_config.validate()?;
-
-        Ok(app_config)
+        build_config(environment_source())
     }
 
     /// Validate the entire configuration
@@ -231,6 +213,51 @@ impl AppConfig {
     pub fn server_address(&self) -> String {
         format!("{}:{}", self.server.host, self.server.port)
     }
+}
+
+/// The environment source that overrides the configuration.
+///
+/// The prefix separator has to be stated explicitly. Without it, config-rs
+/// falls back to the *key* separator when one is given, so the prefix would
+/// be looked for as `HODEI__` instead of `HODEI_`, and every
+/// `HODEI_<SECTION>__<KEY>` variable would be **silently discarded**: the
+/// documented override would be inert and the service would always boot with
+/// the values from the TOML file.
+///
+/// `try_parsing` makes the collected values be parsed as numbers and booleans
+/// instead of staying strings, which is what the typed configuration needs.
+fn environment_source() -> Environment {
+    Environment::with_prefix("HODEI")
+        .prefix_separator("_")
+        .separator("__")
+        .try_parsing(true)
+}
+
+/// Builds the configuration from the file sources and the environment source.
+///
+/// The environment source is a parameter so that the precedence rules can be
+/// exercised without mutating the process environment, which is shared by
+/// every test running in the same binary.
+fn build_config(environment: Environment) -> Result<AppConfig, ConfigError> {
+    let run_mode = env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
+
+    let s = Config::builder()
+        // Default values (lowest precedence)
+        .add_source(File::with_name("config/default").required(false))
+        // Environment-specific configuration
+        .add_source(File::with_name(&format!("config/{}", run_mode)).required(false))
+        // Local overrides (higher precedence)
+        .add_source(File::with_name("config/local").required(false))
+        // Environment variables with HODEI_ prefix (highest precedence)
+        .add_source(environment)
+        .build()?;
+
+    let app_config: AppConfig = s.try_deserialize()?;
+
+    // Validate the configuration
+    app_config.validate()?;
+
+    Ok(app_config)
 }
 
 impl ServerConfig {
@@ -419,6 +446,83 @@ impl LoggingConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The environment variables that must override the file configuration.
+    ///
+    /// The values are injected into the environment source instead of the
+    /// process environment, so the test does not depend on the order in
+    /// which the tests of this binary run.
+    fn overrides() -> std::collections::HashMap<String, String> {
+        [
+            ("HODEI_SERVER__PORT", "41535"),
+            ("HODEI_SERVER__HOST", "127.0.0.1"),
+            ("HODEI_DATABASE__NAMESPACE", "hodei"),
+            ("HODEI_DATABASE__DATABASE", "artifacts"),
+            ("HODEI_ROCKSDB__PATH", "/tmp/hodei-config-override.rocksdb"),
+            ("HODEI_SCHEMA__REGISTER_IAM_ON_STARTUP", "true"),
+            ("HODEI_LOGGING__LEVEL", "warn"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+    }
+
+    /// The documented environment override has to reach the configuration
+    ///
+    /// `HODEI_<SECTION>__<KEY>` is the documented way to configure the
+    /// service per environment, and it is advertised by the startup error
+    /// message. It used to be inert: config-rs looked for the prefix as
+    /// `HODEI__` and discarded every variable, so the service always booted
+    /// with the values from the TOML file.
+    #[test]
+    fn environment_variables_override_the_configuration() {
+        let config = build_config(environment_source().source(Some(overrides())))
+            .expect("the configuration must be loadable");
+
+        assert_eq!(
+            config.server.port, 41535,
+            "HODEI_SERVER__PORT must override the configured port"
+        );
+        assert_eq!(
+            config.server.host, "127.0.0.1",
+            "HODEI_SERVER__HOST must override the configured host"
+        );
+        assert_eq!(
+            config.rocksdb.path, "/tmp/hodei-config-override.rocksdb",
+            "HODEI_ROCKSDB__PATH must override the configured database path"
+        );
+        assert_eq!(
+            config.database.namespace.as_deref(),
+            Some("hodei"),
+            "HODEI_DATABASE__NAMESPACE must override the configured namespace"
+        );
+        assert!(
+            config.schema.register_iam_on_startup,
+            "HODEI_SCHEMA__REGISTER_IAM_ON_STARTUP must override the configured flag"
+        );
+        assert_eq!(
+            config.logging.level, "warn",
+            "HODEI_LOGGING__LEVEL must override the configured log level"
+        );
+    }
+
+    /// An invalid environment override has to be rejected, not ignored
+    ///
+    /// An override that cannot be parsed must not be silently dropped: a
+    /// service that boots with a configuration nobody asked for is worse
+    /// than one that refuses to boot.
+    #[test]
+    fn an_invalid_environment_override_is_rejected() {
+        let mut invalid = overrides();
+        invalid.insert("HODEI_SERVER__PORT".to_string(), "not-a-port".to_string());
+
+        let result = build_config(environment_source().source(Some(invalid)));
+
+        assert!(
+            result.is_err(),
+            "an environment override that cannot be parsed must be rejected"
+        );
+    }
 
     #[test]
     fn test_default_config() {

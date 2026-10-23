@@ -4,7 +4,7 @@ use crate::features::load_schema::ports::{LoadSchemaPort, SchemaStoragePort};
 use async_trait::async_trait;
 use cedar_policy::Schema;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Use case for loading Cedar schemas from storage
 ///
@@ -136,17 +136,14 @@ impl<S: SchemaStoragePort> LoadSchemaUseCase<S> {
 
     /// Parse a schema string into a Cedar Schema object
     ///
-    /// This method attempts to parse the stored schema representation
-    /// back into a Cedar Schema. Currently this is a placeholder since
-    /// we're using debug format for storage.
-    fn parse_schema(&self, _schema_string: &str) -> Result<Schema, LoadSchemaError> {
-        warn!("Schema parsing from debug format is not yet implemented");
-        warn!("Returning empty schema as placeholder");
-
-        // TODO: Implement proper schema deserialization
-        // For now, we return an empty schema to allow the system to work
-        // In production, this should properly deserialize the stored schema
-        Schema::from_schema_fragments(vec![])
+    /// The stored representation is the fragment envelope written by the
+    /// build-schema use case, so the schema that comes back is exactly the
+    /// one that was built. A stored representation that is not an envelope
+    /// is an error: returning an empty schema here would make every policy
+    /// that references a declared entity type look invalid, and would make
+    /// every policy that references nothing look valid.
+    fn parse_schema(&self, schema_string: &str) -> Result<Schema, LoadSchemaError> {
+        crate::internal::engine::schema_codec::decode(schema_string)
             .map_err(|e| LoadSchemaError::SchemaParsingError(e.to_string()))
     }
 

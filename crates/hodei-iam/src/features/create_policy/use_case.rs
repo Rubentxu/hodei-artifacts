@@ -133,12 +133,17 @@ impl CreatePolicyUseCase {
         // Convert to view DTO
         let now = chrono::Utc::now();
 
-        // Build HRN from policy ID
+        // Build HRN from policy ID.
+        //
+        // The resource type must be spelled `Policy` (PascalCase): that is the
+        // spelling the domain uses everywhere else (`User`, `Group`) and the one
+        // `GetPolicyUseCase` validates against. Emitting `policy` here produced
+        // an HRN that the domain rejected as "not a Policy HRN".
         let policy_hrn = kernel::Hrn::new(
             "hodei".to_string(),
             "iam".to_string(),
             "default".to_string(), // TODO: Get from context
-            "policy".to_string(),
+            "Policy".to_string(),
             policy.id().to_string(),
         );
 

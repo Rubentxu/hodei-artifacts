@@ -1,24 +1,19 @@
-use kernel::domain::policy::HodeiPolicySet;
-use std::collections::HashMap;
 use kernel::domain::entity::ActionTrait;
+use kernel::domain::policy::HodeiPolicySet;
 use kernel::domain::value_objects::ServiceName;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Mode for policy evaluation regarding schema usage
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum EvaluationMode {
     /// Strict mode: requires schema to be loaded, fails if not found
     Strict,
     /// Best effort: tries to load schema but falls back to no-schema evaluation if not found
+    #[default]
     BestEffortNoSchema,
     /// Explicit no schema: evaluates without loading any schema
     NoSchema,
-}
-
-impl Default for EvaluationMode {
-    fn default() -> Self {
-        Self::BestEffortNoSchema
-    }
 }
 
 /// Command for evaluating authorization policies
@@ -141,18 +136,13 @@ impl<'a> AuthorizationRequest<'a> {
 }
 
 /// Decision result from policy evaluation
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Decision {
     /// Access is allowed
     Allow,
     /// Access is denied
+    #[default]
     Deny,
-}
-
-impl Default for Decision {
-    fn default() -> Self {
-        Self::Deny
-    }
 }
 
 /// Diagnostic information about the evaluation

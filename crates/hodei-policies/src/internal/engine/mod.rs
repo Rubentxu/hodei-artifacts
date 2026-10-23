@@ -6,6 +6,7 @@
 
 pub mod builder;
 pub mod core;
+pub mod schema_codec;
 pub mod translator;
 pub mod types;
 

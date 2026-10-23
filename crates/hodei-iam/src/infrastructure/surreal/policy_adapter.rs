@@ -8,8 +8,8 @@
 //! - DeletePolicyPort: Delete policies
 
 use async_trait::async_trait;
-use serde::Deserialize;
 use kernel::Hrn;
+use serde::Deserialize;
 use std::sync::Arc;
 use surrealdb::Surreal;
 use tracing::{debug, error, info, warn};
@@ -49,10 +49,34 @@ struct HodeiPolicyDbRow {
     content: String,
 }
 
+/// Intermediate structure for reading back the content of a policy record.
+///
+/// The record `id` is deliberately absent: SurrealDB returns it as a Thing
+/// value on writes, which does not deserialize into a record id.
+#[derive(Debug, Clone, Deserialize)]
+struct HodeiPolicyContentRow {
+    /// The policy content
+    content: String,
+}
+
 impl From<HodeiPolicyDbRow> for HodeiPolicy {
     fn from(row: HodeiPolicyDbRow) -> Self {
-        let policy_id = PolicyId::new(row.id.id.to_string());
+        let policy_id = PolicyId::new(short_id(&row.id));
         HodeiPolicy::new(policy_id, row.content)
+    }
+}
+
+/// Extracts the short identifier of a SurrealDB record id.
+///
+/// `surrealdb::sql::Id` renders a string id in SurrealQL literal form
+/// (`` `alice` ``), so `Id::to_string()` produced identifiers such as
+/// `` `my-policy` `` that no longer matched the id the caller supplied — and
+/// therefore HRNs that could not be resolved back to the stored record.
+fn short_id(thing: &surrealdb::sql::Thing) -> String {
+    match &thing.id {
+        surrealdb::sql::Id::String(value) => value.clone(),
+        surrealdb::sql::Id::Number(value) => value.to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -73,12 +97,17 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
     async fn create(&self, command: CreatePolicyCommand) -> Result<HodeiPolicy, CreatePolicyError> {
         info!("Creating policy with ID: {}", command.policy_id);
 
-        // Create HRN for the policy
+        // Create HRN for the policy.
+        //
+        // The resource type is spelled `Policy` (PascalCase) to match the domain
+        // convention (`User`, `Group`) and `GetPolicyUseCase`, which rejects any
+        // HRN whose resource type is not exactly `Policy`. The SurrealDB table
+        // name stays `policy` — it is a different concern.
         let policy_hrn = Hrn::new(
             "hodei".to_string(),
             "iam".to_string(),
             "default".to_string(), // This should come from context
-            "policy".to_string(),
+            "Policy".to_string(),
             command.policy_id.clone(),
         );
 
@@ -92,7 +121,7 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
         let content_value = serde_json::json!({
             "content": policy.content()
         });
-        
+
         let created: Result<Option<HodeiPolicyDbRow>, surrealdb::Error> = self
             .db
             .create((policy_table, policy_id))
@@ -192,7 +221,13 @@ impl<C: surrealdb::Connection> PolicyLister for SurrealPolicyAdapter<C> {
 
         // Get paginated policies
         let policies_query = "SELECT * FROM policy LIMIT $limit START $offset";
-        let policies_result: Result<Vec<HodeiPolicy>, surrealdb::Error> = self
+        // Deserialize into the DB row shape, not into `HodeiPolicy`: the record
+        // `id` is a SurrealDB Thing (`policy:<short_id>`), so deserializing it
+        // straight into a `PolicyId` string produced ids like `policy:my-policy`
+        // and therefore HRNs whose `resource_id()` no longer matched the stored
+        // record — the HRN returned by list could not be used to get, update or
+        // delete the policy it referred to.
+        let policies_result: Result<Vec<HodeiPolicyDbRow>, surrealdb::Error> = self
             .db
             .query(policies_query)
             .bind(("limit", limit))
@@ -202,20 +237,21 @@ impl<C: surrealdb::Connection> PolicyLister for SurrealPolicyAdapter<C> {
             .take(0);
 
         let policies = match policies_result {
-            Ok(policies) => policies
+            Ok(rows) => rows
                 .into_iter()
-                .map(|policy| {
+                .map(|row| {
+                    let policy_short_id = short_id(&row.id);
                     let hrn = Hrn::new(
                         "hodei".to_string(),
                         "iam".to_string(),
                         "default".to_string(),
                         "Policy".to_string(),
-                        policy.id().to_string(),
+                        policy_short_id.clone(),
                     );
 
                     PolicySummary {
                         hrn: hrn.clone(),
-                        name: policy.id().to_string(),
+                        name: policy_short_id,
                         description: None, // HodeiPolicy doesn't have description field
                     }
                 })
@@ -249,47 +285,76 @@ impl<C: surrealdb::Connection> UpdatePolicyPort for SurrealPolicyAdapter<C> {
         let policy_table = "policy";
         let policy_id = command.policy_id.clone();
 
-        // First check if policy exists
-        let existing: Result<Option<HodeiPolicy>, surrealdb::Error> =
+        // First check if policy exists.
+        //
+        // The row shape is used deliberately: on a single-record `select`
+        // SurrealDB returns the `id` as a Thing value, so deserializing the
+        // record into `HodeiPolicy` (whose id is a plain string) failed with
+        // "expected a string, found Thing" and turned every update into a 500.
+        let existing: Result<Option<HodeiPolicyDbRow>, surrealdb::Error> =
             self.db.select((policy_table, policy_id.clone())).await;
 
         match existing {
             Ok(Some(_)) => {
-                // Update the policy
-                let updated: Result<Option<HodeiPolicy>, surrealdb::Error> = self
-                    .db
-                    .update((policy_table, policy_id))
-                    .merge(serde_json::json!({
-                        "content": command.policy_content,
-                    }))
-                    .await;
+                // Update the policy and read the new content back.
+                //
+                // The write is issued as an explicit query with `RETURN content`
+                // instead of `db.update(..).merge(..)`: the update response
+                // carries the record `id` as a SurrealDB Thing value, and a
+                // Thing cannot be deserialized into a Rust record id — the
+                // whole response failed to deserialize, turning every update
+                // into a 500. Returning only the content sidesteps the record
+                // id entirely.
+                //
+                // `policy_content: None` means "keep the current content", so
+                // the SET clause is only emitted when new content is given.
+                let query = match command.policy_content {
+                    Some(_) => "UPDATE $policy SET content = $content RETURN content",
+                    None => "UPDATE $policy RETURN content",
+                };
 
-                match updated {
-                    Ok(Some(updated_policy)) => {
+                let mut response = self
+                    .db
+                    .query(query)
+                    .bind((
+                        "policy",
+                        surrealdb::sql::Thing::from((policy_table, policy_id.as_str())),
+                    ))
+                    .bind(("content", command.policy_content))
+                    .await
+                    .map_err(|e| {
+                        error!("Database error while updating policy: {}", e);
+                        UpdatePolicyError::StorageError(e.to_string())
+                    })?;
+
+                let updated: Vec<HodeiPolicyContentRow> = response.take(0).map_err(|e| {
+                    error!("Database error while reading the updated policy: {}", e);
+                    UpdatePolicyError::StorageError(e.to_string())
+                })?;
+
+                match updated.into_iter().next() {
+                    Some(row) => {
+                        let policy_short_id = policy_id;
                         let hrn = Hrn::new(
                             "hodei".to_string(),
                             "iam".to_string(),
                             "default".to_string(),
                             "Policy".to_string(),
-                            command.policy_id,
+                            policy_short_id.clone(),
                         );
                         info!("Policy updated successfully: {}", hrn);
                         Ok(UpdatePolicyView {
                             hrn,
-                            name: updated_policy.id().to_string(),
-                            content: updated_policy.content().to_string(),
+                            name: policy_short_id,
+                            content: row.content,
                             description: None, // HodeiPolicy doesn't have description field
                         })
                     }
-                    Ok(None) => {
+                    None => {
                         error!("Failed to update policy - no policy returned");
                         Err(UpdatePolicyError::StorageError(
                             "Failed to update policy".to_string(),
                         ))
-                    }
-                    Err(e) => {
-                        error!("Database error while updating policy: {}", e);
-                        Err(UpdatePolicyError::StorageError(e.to_string()))
                     }
                 }
             }
@@ -313,7 +378,10 @@ impl<C: surrealdb::Connection> DeletePolicyPort for SurrealPolicyAdapter<C> {
         let policy_table = "policy";
         let _policy_table = "policy";
 
-        let deleted: Result<Option<HodeiPolicy>, surrealdb::Error> =
+        // The row shape is used deliberately: the delete response carries the
+        // record `id` as a Thing value, which does not deserialize into the
+        // plain string id of `HodeiPolicy`.
+        let deleted: Result<Option<HodeiPolicyDbRow>, surrealdb::Error> =
             self.db.delete((policy_table, policy_id)).await;
 
         match deleted {

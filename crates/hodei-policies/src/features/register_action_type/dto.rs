@@ -1,43 +1,42 @@
 //! Data Transfer Objects for the register_action_type feature
 
+use kernel::ActionTrait;
 use serde::{Deserialize, Serialize};
-use kernel::domain::entity::ActionTrait;
-use kernel::domain::value_objects::ServiceName;
 
 /// Command for registering an action type
 ///
-/// This command encapsulates the data needed to register an action type
-/// in the Cedar schema builder. It serves as the input contract for the
-/// use case when using the command-based interface.
+/// This command carries everything the Cedar schema builder needs to declare
+/// an action: its name, an optional description and the entity types the
+/// action applies to.
 ///
-/// Note: In practice, direct generic registration via `use_case.register::<A>()`
-/// is preferred for type safety, but this command exists to satisfy the
-/// port trait interface for architectural consistency.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The action name is the leaf name of the action (`CreateUser`); the action
+/// namespace is flat, which is the UID shape the evaluation engine builds at
+/// request time (`Action::"CreateUser"`).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use hodei_policies::features::register_action_type::dto::RegisterActionTypeCommand;
+///
+/// let command = RegisterActionTypeCommand::new(
+///     "CreateUser".to_string(),
+///     "Iam::User".to_string(),
+///     "Iam::User".to_string(),
+/// );
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegisterActionTypeCommand {
-    /// The name of the action type being registered
+    /// The name of the action being registered
     pub action_name: String,
 
     /// Optional description of what this action represents
     pub description: Option<String>,
-}
 
-impl ActionTrait for RegisterActionTypeCommand {
-    fn name() -> &'static str {
-        "RegisterActionType"
-    }
+    /// The entity type the action applies to as principal
+    pub applies_to_principal: String,
 
-    fn service_name() -> ServiceName {
-        ServiceName::new("policies").expect("Valid service name")
-    }
-
-    fn applies_to_principal() -> String {
-        "Policies::User".to_string()
-    }
-
-    fn applies_to_resource() -> String {
-        "Policies::ActionType".to_string()
-    }
+    /// The entity type the action applies to as resource
+    pub applies_to_resource: String,
 }
 
 impl RegisterActionTypeCommand {
@@ -46,18 +45,18 @@ impl RegisterActionTypeCommand {
     /// # Arguments
     ///
     /// * `action_name` - The name of the action to register
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use hodei_policies::features::register_action_type::dto::RegisterActionTypeCommand;
-    ///
-    /// let command = RegisterActionTypeCommand::new("CreateUser".to_string());
-    /// ```
-    pub fn new(action_name: String) -> Self {
+    /// * `applies_to_principal` - The entity type the action applies to as principal
+    /// * `applies_to_resource` - The entity type the action applies to as resource
+    pub fn new(
+        action_name: String,
+        applies_to_principal: String,
+        applies_to_resource: String,
+    ) -> Self {
         Self {
             action_name,
             description: None,
+            applies_to_principal,
+            applies_to_resource,
         }
     }
 
@@ -66,11 +65,39 @@ impl RegisterActionTypeCommand {
     /// # Arguments
     ///
     /// * `action_name` - The name of the action to register
+    /// * `applies_to_principal` - The entity type the action applies to as principal
+    /// * `applies_to_resource` - The entity type the action applies to as resource
     /// * `description` - A description of what this action represents
-    pub fn with_description(action_name: String, description: String) -> Self {
+    pub fn with_description(
+        action_name: String,
+        applies_to_principal: String,
+        applies_to_resource: String,
+        description: String,
+    ) -> Self {
         Self {
             action_name,
             description: Some(description),
+            applies_to_principal,
+            applies_to_resource,
+        }
+    }
+
+    /// Build the command from a Rust type that describes the action
+    ///
+    /// This is the bridge between the typed domain and the command interface:
+    /// the action name and the types it applies to are read from the type
+    /// itself, so the caller cannot register an action whose `appliesTo`
+    /// clause disagrees with the domain.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `A` - The action type to describe, must implement `ActionTrait`
+    pub fn from_type<A: ActionTrait>() -> Self {
+        Self {
+            action_name: A::name().to_string(),
+            description: None,
+            applies_to_principal: A::applies_to_principal(),
+            applies_to_resource: A::applies_to_resource(),
         }
     }
 }
@@ -78,11 +105,38 @@ impl RegisterActionTypeCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::domain::ServiceName;
+
+    struct CreateUserAction;
+
+    impl ActionTrait for CreateUserAction {
+        fn name() -> &'static str {
+            "CreateUser"
+        }
+
+        fn service_name() -> ServiceName {
+            ServiceName::new("iam").expect("valid service name")
+        }
+
+        fn applies_to_principal() -> String {
+            "Iam::User".to_string()
+        }
+
+        fn applies_to_resource() -> String {
+            "Iam::User".to_string()
+        }
+    }
 
     #[test]
     fn test_new_command() {
-        let command = RegisterActionTypeCommand::new("CreateUser".to_string());
+        let command = RegisterActionTypeCommand::new(
+            "CreateUser".to_string(),
+            "Iam::User".to_string(),
+            "Iam::User".to_string(),
+        );
         assert_eq!(command.action_name, "CreateUser");
+        assert_eq!(command.applies_to_principal, "Iam::User");
+        assert_eq!(command.applies_to_resource, "Iam::User");
         assert!(command.description.is_none());
     }
 
@@ -90,6 +144,8 @@ mod tests {
     fn test_command_with_description() {
         let command = RegisterActionTypeCommand::with_description(
             "CreateUser".to_string(),
+            "Iam::User".to_string(),
+            "Iam::User".to_string(),
             "Creates a new user in the system".to_string(),
         );
         assert_eq!(command.action_name, "CreateUser");
@@ -97,5 +153,14 @@ mod tests {
             command.description,
             Some("Creates a new user in the system".to_string())
         );
+    }
+
+    #[test]
+    fn from_type_reads_the_name_and_the_applies_to_clause_from_the_type() {
+        let command = RegisterActionTypeCommand::from_type::<CreateUserAction>();
+
+        assert_eq!(command.action_name, "CreateUser");
+        assert_eq!(command.applies_to_principal, "Iam::User");
+        assert_eq!(command.applies_to_resource, "Iam::User");
     }
 }

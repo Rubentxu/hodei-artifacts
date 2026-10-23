@@ -6,7 +6,7 @@
 use crate::features::create_user::{
     dto::CreateUserCommand,
     error::CreateUserError,
-    mocks::{MockCreateUserPort, MockHrnGenerator},   
+    mocks::{MockCreateUserPort, MockHrnGenerator},
     use_case::CreateUserUseCase,
 };
 use kernel::domain::Hrn;

@@ -117,9 +117,17 @@ impl<S: SchemaStoragePort> BuildSchemaUseCase<S> {
             std::mem::replace(&mut *locked_builder, EngineBuilder::new())
         };
 
+        // The fragments are captured before the builder is consumed: they are
+        // what gets persisted, because a built schema cannot be serialized
+        // back and its `Debug` rendering is not a schema.
+        let fragments = builder.fragments();
+
         // 4. Build the schema (consumes the builder)
+        // Building it is what proves the registered fragments compose a valid
+        // Cedar schema; the built schema itself is not persisted, its
+        // fragments are.
         info!("Building Cedar schema from registered types");
-        let schema = builder
+        builder
             .build_schema()
             .map_err(|e| BuildSchemaError::SchemaBuildError(e.to_string()))?;
 
@@ -133,13 +141,17 @@ impl<S: SchemaStoragePort> BuildSchemaUseCase<S> {
             info!("Schema validation passed");
         }
 
-        // 6. Serialize schema to string
-        // Cedar Schema doesn't have a direct serialization method, so we use Debug format
-        // In production, this should be replaced with proper schema persistence
-        let schema_string = format!("{:?}", schema);
+        // 6. Serialize the schema fragments
+        // A built Cedar schema cannot be serialized back, so the fragments it
+        // was built from are persisted instead. They rebuild exactly the same
+        // schema, and a stored schema can therefore be restored faithfully
+        // instead of coming back empty.
+        let schema_string = crate::internal::engine::schema_codec::encode(&fragments)
+            .map_err(|e| BuildSchemaError::SchemaBuildError(e.to_string()))?;
 
         info!(
-            "Schema serialized as debug string ({} bytes)",
+            "Schema serialized as {} fragment(s) ({} bytes)",
+            fragments.len(),
             schema_string.len()
         );
 

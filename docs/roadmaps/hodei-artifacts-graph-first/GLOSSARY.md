@@ -1,0 +1,22 @@
+# Glosario / lenguaje ubicuo
+
+- **Organization / Account / Tenant:** jerarquía gobernada; `tenant` es frontera de aislamiento, cuenta y org no son equivalentes sin ADR.
+- **HRN:** Hodei Resource Name, identificador tipado, inmutable y completo (partition, service, region, account, type, opaque id).
+- **PURL:** identificador externo del paquete/versión del ecosistema; no reemplaza HRN.
+- **Digest:** identidad verificable de contenido (sha256), no concede autorización ni revela ubicación.
+- **Repository:** punto lógico de publicación/resolución, `Hosted`, `Proxy` o `Group`.
+- **PackageVersion / Component:** versión lógica del paquete; no equivale a un binario.
+- **Asset:** recurso lógico servido bajo una ruta/repo; `Blob` es secuencia inmutable de bytes.
+- **CAS:** Content Addressable Storage; datos por digest, con namespace lógico de acceso.
+- **Assertion:** afirmación con evidencia/procedencia, no necesariamente verdad aceptada.
+- **Observation:** medición o hallazgo emitido por herramienta/actor externo con fecha, versión y procedencia.
+- **Assessment:** conclusión calculada sobre afirmaciones y política versionada; no altera evidencia original.
+- **Knowledge Graph:** representación tipada de recursos y relaciones que gobierna TypeDB.
+- **Graph Projection:** entidad/relación calculada para una consulta recurrente, mantenida explícitamente por Hodei.
+- **Cedar Snapshot:** conjunto autoconsistente de políticas, entidades y contexto confiable para una evaluación.
+- **SCP Boundary:** restricción organizativa que limita permisos, no crea concesiones por sí sola.
+- **Hosted / Proxy / Group:** publicación local, cache remota y resolución ordenada agregada.
+- **Compatibility Contract:** observable de un cliente real (HTTP, headers, bytes, error, semántica), independiente del código de Nexus.
+- **UAT:** aceptación de usuario; **E2E:** contrato cliente → sistema completo; **AAT:** aceptación de atributos arquitectónicos (resiliencia, seguridad, latencia, capacidad).
+- **Harness Base:** utilidades/fixtures/limpieza versionadas que sobreviven al bloque; escenarios de un ciclo son efímeros.
+- **Release gate:** comprobaciones sobre el artefacto empacado final, no solo `cargo test` del árbol.

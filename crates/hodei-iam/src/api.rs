@@ -65,7 +65,7 @@ pub mod create_policy {
     };
     pub use crate::features::create_policy::use_case::CreatePolicyUseCase;
     pub use crate::features::create_policy::validator::CedarPolicyValidator;
-    
+
     // Re-export factories for DI
     pub mod factories {
         pub use crate::features::create_policy::factories::*;
@@ -123,7 +123,7 @@ pub mod register_iam_schema {
     // Direct exports for convenience
     pub use crate::features::register_iam_schema::error::RegisterIamSchemaError;
     pub use crate::features::register_iam_schema::use_case::RegisterIamSchemaUseCase;
-    
+
     // Re-export as submodules for path compatibility
     pub mod dto {
         pub use crate::features::register_iam_schema::dto::*;

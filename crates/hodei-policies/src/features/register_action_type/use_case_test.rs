@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use super::super::dto::RegisterActionTypeCommand;
+    use super::super::error::RegisterActionTypeError;
     use super::super::use_case::RegisterActionTypeUseCase;
     use crate::internal::engine::builder::EngineBuilder;
     use kernel::{ActionTrait, ServiceName};
@@ -236,6 +238,163 @@ mod tests {
         assert_eq!(use_case.count().unwrap(), 4);
 
         use_case.clear().unwrap();
+        assert_eq!(use_case.count().unwrap(), 0);
+    }
+
+    // -----------------------------------------------------------------
+    // The command-based path
+    //
+    // `execute` is the entry point the ports expose, so it is the one that
+    // has to produce a real Cedar fragment. A command that registers nothing
+    // but reports success would leave the schema empty while every caller
+    // believes the action was declared.
+    // -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_execute_registers_the_action_type_of_the_command() {
+        let use_case = create_use_case();
+
+        use_case
+            .execute(RegisterActionTypeCommand::new(
+                "CreateUser".to_string(),
+                "Iam::User".to_string(),
+                "Iam::User".to_string(),
+            ))
+            .await
+            .expect("a well-formed action must be registrable");
+
+        assert_eq!(use_case.count().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_registers_a_schema_that_cedar_accepts() {
+        let builder = Arc::new(Mutex::new(EngineBuilder::new()));
+        let use_case = RegisterActionTypeUseCase::new(builder.clone());
+
+        // The `appliesTo` clause of an action references entity types, so
+        // those have to be declared in the same schema: Cedar rejects a
+        // schema whose action refers to an undeclared entity type.
+        let entity_registrar =
+            crate::features::register_entity_type::use_case::RegisterEntityTypeUseCase::new(
+                builder.clone(),
+            );
+        entity_registrar
+            .execute(
+                crate::features::register_entity_type::dto::RegisterEntityTypeCommand::new(
+                    "Iam::User".to_string(),
+                ),
+            )
+            .await
+            .expect("the referenced entity type must be registrable");
+
+        use_case
+            .execute(RegisterActionTypeCommand::new(
+                "CreateUser".to_string(),
+                "Iam::User".to_string(),
+                "Iam::User".to_string(),
+            ))
+            .await
+            .expect("the action type must be registrable");
+
+        // The fragment has to survive Cedar's own schema construction.
+        // `build_schema` consumes the builder, so it is taken out of the
+        // lock and replaced by an empty one, exactly as the build-schema use
+        // case does.
+        let schema = {
+            let mut locked = builder.lock().expect("builder lock");
+            std::mem::replace(&mut *locked, EngineBuilder::new())
+        }
+        .build_schema()
+        .expect("the registered fragment must produce a valid Cedar schema");
+
+        assert_eq!(
+            schema.actions().count(),
+            1,
+            "the built schema must declare exactly the registered action"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_is_idempotent_for_the_same_action_type() {
+        let use_case = create_use_case();
+
+        let command = RegisterActionTypeCommand::new(
+            "CreateUser".to_string(),
+            "Iam::User".to_string(),
+            "Iam::User".to_string(),
+        );
+
+        use_case.execute(command.clone()).await.unwrap();
+        use_case.execute(command.clone()).await.unwrap();
+
+        assert_eq!(
+            use_case.count().unwrap(),
+            1,
+            "registering the same action type twice must keep one fragment"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_an_action_without_a_name() {
+        let use_case = create_use_case();
+
+        let result = use_case
+            .execute(RegisterActionTypeCommand::new(
+                "   ".to_string(),
+                "Iam::User".to_string(),
+                "Iam::User".to_string(),
+            ))
+            .await;
+
+        match result {
+            Err(RegisterActionTypeError::InvalidActionType(_)) => {}
+            other => panic!("expected InvalidActionType, got: {other:?}"),
+        }
+
+        assert_eq!(
+            use_case.count().unwrap(),
+            0,
+            "a rejected action type must not be registered"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_an_action_without_a_principal_type() {
+        let use_case = create_use_case();
+
+        let result = use_case
+            .execute(RegisterActionTypeCommand::new(
+                "CreateUser".to_string(),
+                String::new(),
+                "Iam::User".to_string(),
+            ))
+            .await;
+
+        match result {
+            Err(RegisterActionTypeError::InvalidActionType(_)) => {}
+            other => panic!("expected InvalidActionType, got: {other:?}"),
+        }
+
+        assert_eq!(use_case.count().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_rejects_an_action_without_a_resource_type() {
+        let use_case = create_use_case();
+
+        let result = use_case
+            .execute(RegisterActionTypeCommand::new(
+                "CreateUser".to_string(),
+                "Iam::User".to_string(),
+                String::new(),
+            ))
+            .await;
+
+        match result {
+            Err(RegisterActionTypeError::InvalidActionType(_)) => {}
+            other => panic!("expected InvalidActionType, got: {other:?}"),
+        }
+
         assert_eq!(use_case.count().unwrap(), 0);
     }
 }

@@ -4,9 +4,9 @@
 //! Following Clean Architecture, these DTOs serve as the contract between
 //! the use case and external consumers.
 
-use serde::{Deserialize, Serialize};
 use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
 
 /// Command to delete an existing IAM policy
 ///

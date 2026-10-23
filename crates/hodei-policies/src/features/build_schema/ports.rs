@@ -12,7 +12,11 @@ use crate::features::build_schema::error::BuildSchemaError;
 /// Stored schema data retrieved from storage
 #[derive(Debug, Clone)]
 pub struct StoredSchema {
-    /// The schema serialized as a string (debug format for now)
+    /// The schema serialized as a string
+    ///
+    /// The representation is the fragment envelope written by the
+    /// build-schema use case; see
+    /// [`crate::internal::engine::schema_codec`].
     pub schema_string: String,
 
     /// Optional version identifier
@@ -34,12 +38,12 @@ impl StoredSchema {
 
     /// Parse the schema string into a Cedar Schema object
     ///
-    /// Note: Currently returns an empty schema as a placeholder
-    /// since we're using debug format for storage.
+    /// A stored representation that cannot be rebuilt into a schema is an
+    /// error, never an empty schema: an empty schema would report every
+    /// policy that mentions a declared type as invalid, and would report
+    /// every policy that mentions nothing as valid.
     pub fn parse(&self) -> Result<Schema, BuildSchemaError> {
-        // TODO: Implement proper schema deserialization
-        // For now, return an empty schema to allow the system to work
-        Schema::from_schema_fragments(vec![])
+        crate::internal::engine::schema_codec::decode(&self.schema_string)
             .map_err(|e| BuildSchemaError::SchemaBuildError(e.to_string()))
     }
 }

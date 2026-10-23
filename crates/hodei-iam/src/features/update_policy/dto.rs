@@ -5,9 +5,9 @@
 //! the use case and external consumers.
 
 use kernel::Hrn;
-use serde::{Deserialize, Serialize};
 use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
 
 /// Command to update an existing IAM policy
 ///

@@ -3,10 +3,10 @@
 //! This module defines the data transfer objects for retrieving effective
 //! IAM policies for a principal, using kernel types for strong typing.
 
-use kernel::domain::policy::HodeiPolicySet;
-use serde::{Deserialize, Serialize};
 use kernel::domain::entity::ActionTrait;
+use kernel::domain::policy::HodeiPolicySet;
 use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
 
 /// Data Transfer Object for user lookup operations
 ///

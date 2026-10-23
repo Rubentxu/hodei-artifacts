@@ -1,8 +1,9 @@
 use crate::features::register_entity_type::dto::RegisterEntityTypeCommand;
 use crate::features::register_entity_type::error::RegisterEntityTypeError;
 use crate::features::register_entity_type::ports::RegisterEntityTypePort;
-use crate::internal::engine::builder::EngineBuilder;
+use crate::internal::engine::builder::{EngineBuilder, entity_type_dsl};
 use async_trait::async_trait;
+use cedar_policy::SchemaFragment;
 use kernel::HodeiEntityType;
 use std::sync::{Arc, Mutex};
 use tracing::info;
@@ -69,27 +70,51 @@ impl RegisterEntityTypeUseCase {
         is_principal = T::is_principal_type()
     ))]
     pub fn register<T: HodeiEntityType>(&self) -> Result<(), RegisterEntityTypeError> {
-        let entity_type_name = T::entity_type_name();
-
         info!(
             "Registering entity type: {} (service: {}, resource: {}, principal: {})",
-            entity_type_name,
+            T::entity_type_name(),
             T::service_name().as_str(),
             T::resource_type_name().as_str(),
             T::is_principal_type()
         );
 
+        self.register_command(&RegisterEntityTypeCommand::from_type::<T>())
+    }
+
+    /// Register the entity type described by a command
+    ///
+    /// The command is turned into the Cedar schema DSL, parsed into a schema
+    /// fragment and handed over to the builder. The registration is idempotent
+    /// per entity type: registering the same type twice keeps one fragment.
+    fn register_command(
+        &self,
+        command: &RegisterEntityTypeCommand,
+    ) -> Result<(), RegisterEntityTypeError> {
+        let attributes: Vec<(String, String)> = command
+            .attributes
+            .iter()
+            .map(|attribute| (attribute.name.clone(), attribute.attribute_type.clone()))
+            .collect();
+
+        let dsl = entity_type_dsl(
+            &command.entity_type,
+            command.description.as_deref(),
+            &attributes,
+        )
+        .map_err(RegisterEntityTypeError::InvalidEntityType)?;
+
+        let (fragment, _warnings) = SchemaFragment::from_cedarschema_str(&dsl)
+            .map_err(|e| RegisterEntityTypeError::SchemaGenerationError(e.to_string()))?;
+
         let mut builder = self.builder.lock().map_err(|e| {
             RegisterEntityTypeError::InternalError(format!("Failed to lock builder: {}", e))
         })?;
 
-        builder
-            .register_entity::<T>()
-            .map_err(|e| RegisterEntityTypeError::SchemaGenerationError(e.to_string()))?;
+        builder.register_entity_fragment(command.entity_type.clone(), fragment);
 
         info!(
             "Successfully registered entity type: {} (total entities: {})",
-            entity_type_name,
+            command.entity_type,
             builder.entity_count()
         );
 
@@ -129,16 +154,13 @@ impl RegisterEntityTypeUseCase {
 
     /// Execute entity type registration from a command
     ///
-    /// This is the command-based interface that satisfies the port trait.
+    /// This is the command-based interface that satisfies the port trait. It
+    /// registers the entity type the command describes; it is not a stub.
     pub async fn execute(
         &self,
-        _command: RegisterEntityTypeCommand,
+        command: RegisterEntityTypeCommand,
     ) -> Result<(), RegisterEntityTypeError> {
-        // The actual registration is done via the generic register<E>() method
-        // This method exists to satisfy the port trait interface
-        // In practice, callers should use register<E>() directly for type safety
-        info!("RegisterEntityTypeUseCase::execute called");
-        Ok(())
+        self.register_command(&command)
     }
 }
 

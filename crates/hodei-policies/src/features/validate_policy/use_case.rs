@@ -48,26 +48,38 @@ impl<S: SchemaStoragePort> ValidatePolicyUseCase<S> {
     }
 
     /// Load the latest schema from storage if available
-    async fn load_schema(&self) -> Option<Schema> {
+    ///
+    /// The three outcomes are kept apart on purpose:
+    ///
+    /// - `Ok(Some(schema))`: a schema was stored and could be applied.
+    /// - `Ok(None)`: no schema has been stored at all, so only the syntax of
+    ///   a policy can be checked.
+    /// - `Err(..)`: a schema *is* stored but could not be applied. This is
+    ///   never downgraded to "no schema": a policy that cannot be checked
+    ///   against the schema must not be reported as valid.
+    async fn load_schema(&self) -> Result<Option<Schema>, ValidatePolicyError> {
         if let Some(ref storage) = self.schema_storage {
             match storage.get_latest_schema().await {
-                Ok(Some(_schema_string)) => {
+                Ok(Some(schema_string)) => {
                     info!("Retrieved schema from storage for validation");
-                    // For now, we return an empty schema since we're using debug format
-                    // TODO: Implement proper schema deserialization
-                    Schema::from_schema_fragments(vec![]).ok()
+                    let schema = crate::internal::engine::schema_codec::decode(&schema_string)
+                        .map_err(|e| {
+                            ValidatePolicyError::ValidationError(format!(
+                                "the stored schema could not be applied: {e}"
+                            ))
+                        })?;
+                    Ok(Some(schema))
                 }
                 Ok(None) => {
                     warn!("No schema found in storage");
-                    None
+                    Ok(None)
                 }
-                Err(e) => {
-                    warn!("Failed to load schema from storage: {}", e);
-                    None
-                }
+                Err(e) => Err(ValidatePolicyError::ValidationError(format!(
+                    "the stored schema could not be read: {e}"
+                ))),
             }
         } else {
-            None
+            Ok(None)
         }
     }
 }
@@ -109,32 +121,38 @@ impl<S: SchemaStoragePort> ValidatePolicyPort for ValidatePolicyUseCase<S> {
         // If schema storage is available, validate against schema
         if self.schema_storage.is_some() {
             info!("Attempting schema-based validation");
-            if let Some(schema) = self.load_schema().await {
-                // Perform schema-based validation
-                // Create a PolicySet with a single policy
-                let policy_set = cedar_policy::PolicySet::from_policies(vec![policy])
-                    .map_err(|e| ValidatePolicyError::ValidationError(e.to_string()))?;
+            match self.load_schema().await? {
+                Some(schema) => {
+                    // Perform schema-based validation
+                    // Create a PolicySet with a single policy
+                    let policy_set = cedar_policy::PolicySet::from_policies(vec![policy])
+                        .map_err(|e| ValidatePolicyError::ValidationError(e.to_string()))?;
 
-                let validation_result = cedar_policy::Validator::new(schema)
-                    .validate(&policy_set, cedar_policy::ValidationMode::default());
+                    let validation_result = cedar_policy::Validator::new(schema)
+                        .validate(&policy_set, cedar_policy::ValidationMode::default());
 
-                // Check if there are validation errors
-                let validation_errors: Vec<String> = validation_result
-                    .validation_errors()
-                    .map(|e| e.to_string())
-                    .collect();
+                    // Check if there are validation errors
+                    let validation_errors: Vec<String> = validation_result
+                        .validation_errors()
+                        .map(|e| e.to_string())
+                        .collect();
 
-                if !validation_errors.is_empty() {
-                    warn!("Policy failed schema validation");
-                    return Ok(ValidationResult {
-                        is_valid: false,
-                        errors: validation_errors,
-                    });
+                    if !validation_errors.is_empty() {
+                        warn!("Policy failed schema validation");
+                        return Ok(ValidationResult {
+                            is_valid: false,
+                            errors: validation_errors,
+                        });
+                    }
+
+                    info!("Policy passed schema validation");
                 }
-
-                info!("Policy passed schema validation");
-            } else {
-                info!("Schema not available, skipping schema validation");
+                None => {
+                    // No schema has been stored, so only the syntax of the
+                    // policy could be checked. This is a real mode, not a
+                    // degraded one: there is nothing to validate against.
+                    info!("No schema stored, validating syntax only");
+                }
             }
         }
 
@@ -155,7 +173,36 @@ fn format_cedar_errors(error: cedar_policy::ParseErrors) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::features::build_schema::error::BuildSchemaError;
+    use crate::internal::engine::schema_codec;
     use async_trait::async_trait;
+    use cedar_policy::SchemaFragment;
+
+    /// Builds a *real* stored schema for the given entity type.
+    ///
+    /// The mock used to hand out the placeholder `"Schema(...)"`. The
+    /// validator ignored the stored content and rebuilt an empty schema, so
+    /// the test could not tell a working schema path from a broken one.
+    fn stored_schema(entity_name: &str) -> String {
+        let dsl = format!(
+            r#"
+namespace Iam {{
+    entity {entity_name} {{
+        name: String
+    }};
+}}
+action "CreateUser" appliesTo {{
+    principal: [Iam::{entity_name}],
+    resource: [Iam::{entity_name}]
+}};
+"#
+        );
+
+        let fragment = SchemaFragment::from_cedarschema_str(&dsl)
+            .expect("the fixture schema must parse")
+            .0;
+
+        schema_codec::encode(&[fragment]).expect("the fixture schema must be encodable")
+    }
 
     // Mock storage for testing
     #[derive(Clone)]
@@ -175,7 +222,7 @@ mod tests {
 
         async fn get_latest_schema(&self) -> Result<Option<String>, BuildSchemaError> {
             if self.should_return_schema {
-                Ok(Some("Schema(...)".to_string()))
+                Ok(Some(stored_schema("User")))
             } else {
                 Ok(None)
             }
@@ -240,12 +287,42 @@ mod tests {
         let command = ValidatePolicyCommand {
             content: "permit(principal, action, resource);".to_string(),
         };
-        let _ = use_case.execute(command).await.unwrap();
-        // With an empty schema, validation may fail, but we test that schema loading is attempted
-        // This is expected behavior until proper schema deserialization is implemented
-        // We verify that we got a result without panicking
-        // Since we only care that the operation completed without panic, we just verify the result exists
-        // The actual validity depends on the schema validation which may fail with empty schema
+
+        let result = use_case.execute(command).await.unwrap();
+
+        // The stored schema is applied, so a policy that references the
+        // declared entity type passes and a policy that references an
+        // undeclared one does not. The previous version of this test only
+        // checked that a result came back at all.
+        assert!(
+            result.is_valid,
+            "a policy over the declared entity type must be accepted: {:?}",
+            result.errors
+        );
+    }
+
+    /// A policy over an undeclared type must be rejected when a schema exists
+    ///
+    /// This is the discriminating counterpart: with the schema applied, the
+    /// rejection is about the undeclared type and not about the validator
+    /// rejecting everything.
+    #[tokio::test]
+    async fn test_validation_over_an_undeclared_type_is_rejected() {
+        let storage = Arc::new(MockSchemaStorage {
+            should_return_schema: true,
+        });
+        let use_case = ValidatePolicyUseCase::with_schema_storage(storage);
+        let command = ValidatePolicyCommand {
+            content: "permit(principal == Nope::Ghost::\"alice\", action, resource);".to_string(),
+        };
+
+        let result = use_case.execute(command).await.unwrap();
+
+        assert!(
+            !result.is_valid,
+            "a policy over an undeclared entity type must be rejected: {:?}",
+            result.errors
+        );
     }
 
     #[tokio::test]

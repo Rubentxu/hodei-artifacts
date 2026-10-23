@@ -11,16 +11,15 @@ use crate::composition_root::CompositionRoot;
 use crate::config::AppConfig;
 use async_trait::async_trait;
 
-use hodei_iam::register_iam_schema::dto::{
-    RegisterIamSchemaCommand, RegisterIamSchemaResult,
-};
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
+use hodei_iam::register_iam_schema::dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};
 use hodei_policies::build_schema::error::BuildSchemaError;
 use hodei_policies::build_schema::ports::SchemaStoragePort;
+use serde::Deserialize;
 use std::sync::Arc;
 use surrealdb::Surreal;
 use surrealdb::engine::local::RocksDb;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Configuration for the bootstrap process
 #[derive(Debug, Clone)]
@@ -145,6 +144,30 @@ impl SurrealSchemaAdapter {
     }
 }
 
+/// Row shape of a stored schema record.
+///
+/// A single-record SurrealDB response is an object that also carries the
+/// record `id`, and that `id` reaches the deserializer as a SurrealDB `Thing`.
+/// Asking for `serde_json::Value` in that case fails with
+/// "invalid type: enum, expected any valid JSON value": the JSON visitor is
+/// handed the `id` as an enum and rejects it, so the whole response fails to
+/// deserialize. Declaring the fields that are actually needed lets serde
+/// ignore the rest — the same shape the policy adapter already uses.
+#[derive(Debug, Clone, Deserialize)]
+struct SchemaRecordRow {
+    /// The persisted schema
+    content: String,
+}
+
+/// Row shape used when only the version of a stored schema is needed.
+#[derive(Debug, Clone, Deserialize)]
+struct SchemaVersionRow {
+    /// The schema version, absent when the record was stored without one
+    version: Option<String>,
+    /// When the record was stored, used to order the versions
+    created_at: Option<String>,
+}
+
 #[async_trait]
 impl SchemaStoragePort for SurrealSchemaAdapter {
     async fn save_schema(
@@ -152,13 +175,17 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
         schema_json: String,
         version: Option<String>,
     ) -> Result<String, BuildSchemaError> {
-        // Generate a unique schema ID
+        // The record is stored under its version, so the version *is* the id.
         let schema_id = version.clone().unwrap_or_else(|| "latest".to_string());
 
-        // Save the schema to SurrealDB
-        let _: Option<serde_json::Value> = self
+        // `upsert`, not `create`: `create` fails with "Found existing record"
+        // when the version was already stored, which is exactly what happens
+        // the second time the service boots against the same database.
+        // Persisting a schema has to be idempotent, otherwise the service can
+        // only ever boot once per database.
+        let _: Option<SchemaRecordRow> = self
             .db
-            .create(("schema", schema_id.as_str()))
+            .upsert(("schema", schema_id.as_str()))
             .content(serde_json::json!({
                 "content": schema_json,
                 "version": version,
@@ -171,32 +198,59 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
     }
 
     async fn get_latest_schema(&self) -> Result<Option<String>, BuildSchemaError> {
-        let result: Option<serde_json::Value> = self
+        // A schema is stored under its own version, so there is no record
+        // named "latest" to select: the latest is the most recently stored
+        // one. Selecting a record called "latest" always came back empty,
+        // which made every consumer believe that no schema existed.
+        let rows: Vec<SchemaVersionRow> = self
             .db
-            .select(("schema", "latest"))
+            .query("SELECT version, created_at FROM schema")
+            .await
+            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?
+            .take(0)
+            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
+
+        let latest = rows
+            .into_iter()
+            .max_by(|a, b| a.created_at.cmp(&b.created_at))
+            .and_then(|row| row.version);
+
+        let Some(version) = latest else {
+            return Ok(None);
+        };
+
+        let result: Option<SchemaRecordRow> = self
+            .db
+            .select(("schema", version.as_str()))
             .await
             .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
 
-        Ok(result.and_then(|v| v.get("content").and_then(|c| c.as_str().map(String::from))))
+        Ok(result.map(|row| row.content))
     }
 
     async fn get_schema_by_version(
         &self,
         version: &str,
     ) -> Result<Option<String>, BuildSchemaError> {
-        let result: Option<serde_json::Value> = self
+        let result: Option<SchemaRecordRow> = self
             .db
             .select(("schema", version))
             .await
             .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
 
-        Ok(result.and_then(|v| v.get("content").and_then(|c| c.as_str().map(String::from))))
+        Ok(result.map(|row| row.content))
     }
 
     async fn delete_schema(&self, schema_id: &str) -> Result<bool, BuildSchemaError> {
-        let result: Option<serde_json::Value> = self
+        // The id returned by `save_schema` is prefixed with the table name
+        // ("schema:<version>") while the record itself is stored under the
+        // bare version. Both spellings are accepted so that a caller that
+        // round-trips the id deletes the record it just wrote.
+        let record_id = schema_id.strip_prefix("schema:").unwrap_or(schema_id);
+
+        let result: Option<SchemaRecordRow> = self
             .db
-            .delete(("schema", schema_id))
+            .delete(("schema", record_id))
             .await
             .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
 
@@ -205,7 +259,7 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
 
     async fn list_schema_versions(&self) -> Result<Vec<String>, BuildSchemaError> {
         // Query all schemas
-        let results: Vec<serde_json::Value> = self
+        let results: Vec<SchemaVersionRow> = self
             .db
             .query("SELECT version FROM schema")
             .await
@@ -213,13 +267,7 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
             .take(0)
             .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
 
-        let versions = results
-            .into_iter()
-            .filter_map(|v| {
-                v.get("version")
-                    .and_then(|ver| ver.as_str().map(String::from))
-            })
-            .collect();
+        let versions = results.into_iter().filter_map(|row| row.version).collect();
 
         Ok(versions)
     }
@@ -230,25 +278,33 @@ async fn initialize_schema_storage(
     config: &AppConfig,
 ) -> Result<Arc<SurrealSchemaAdapter>, Box<dyn std::error::Error + Send + Sync>> {
     let rocksdb_config = &config.rocksdb;
-    
-    info!("💎 Initializing SurrealDB with RocksDB: {}", rocksdb_config.path);
+
+    info!(
+        "💎 Initializing SurrealDB with RocksDB: {}",
+        rocksdb_config.path
+    );
 
     // Create directory if it doesn't exist
     if let Some(parent) = std::path::Path::new(&rocksdb_config.path).parent() {
-        tokio::fs::create_dir_all(parent).await
+        tokio::fs::create_dir_all(parent)
+            .await
             .map_err(|e| BootstrapError::Initialization(e.to_string()))?;
     }
 
     // Connect to RocksDB embedded database
-    let db = Surreal::new::<RocksDb>(&rocksdb_config.path).await
+    let db = Surreal::new::<RocksDb>(&rocksdb_config.path)
+        .await
         .map_err(|e| BootstrapError::DatabaseConnection(e.to_string()))?;
 
     // Configure namespace and database
     let namespace = config.database.namespace.as_ref().unwrap();
     let database = config.database.database.as_ref().unwrap();
-    
-    info!("📂 Using namespace '{}' and database '{}'", namespace, database);
-    
+
+    info!(
+        "📂 Using namespace '{}' and database '{}'",
+        namespace, database
+    );
+
     db.use_ns(namespace)
         .use_db(database)
         .await
@@ -261,24 +317,27 @@ async fn initialize_schema_storage(
 ///
 /// This function performs additional validation beyond what's in AppConfig::validate()
 /// to ensure the application fails fast on configuration problems.
-fn validate_bootstrap_configuration(config: &AppConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn validate_bootstrap_configuration(
+    config: &AppConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Validate database configuration
-    if config.database.namespace.is_none() || config.database.namespace.as_ref().unwrap().is_empty() {
+    if config.database.namespace.is_none() || config.database.namespace.as_ref().unwrap().is_empty()
+    {
         return Err(Box::new(BootstrapError::Initialization(
-            "Database namespace is required but not configured".to_string()
+            "Database namespace is required but not configured".to_string(),
         )));
     }
 
     if config.database.database.is_none() || config.database.database.as_ref().unwrap().is_empty() {
         return Err(Box::new(BootstrapError::Initialization(
-            "Database name is required but not configured".to_string()
+            "Database name is required but not configured".to_string(),
         )));
     }
 
     // Validate RocksDB path
     if config.rocksdb.path.is_empty() {
         return Err(Box::new(BootstrapError::Initialization(
-            "RocksDB path is required but not configured".to_string()
+            "RocksDB path is required but not configured".to_string(),
         )));
     }
 
@@ -287,16 +346,21 @@ fn validate_bootstrap_configuration(config: &AppConfig) -> Result<(), Box<dyn st
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             // Try to create directory to validate permissions
-            std::fs::create_dir_all(parent)
-                .map_err(|e| BootstrapError::Initialization(format!(
-                    "Cannot create RocksDB directory '{}': {}", parent.display(), e
-                )))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                BootstrapError::Initialization(format!(
+                    "Cannot create RocksDB directory '{}': {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
         } else {
             // Check if directory is writable
             let test_file = parent.join(".hodei_test_write");
             if let Err(e) = std::fs::write(&test_file, "test") {
                 return Err(Box::new(BootstrapError::Initialization(format!(
-                    "RocksDB directory '{}' is not writable: {}", parent.display(), e
+                    "RocksDB directory '{}' is not writable: {}",
+                    parent.display(),
+                    e
                 ))));
             }
             let _ = std::fs::remove_file(test_file); // Clean up test file
@@ -336,10 +400,10 @@ mod tests {
     async fn test_bootstrap_with_rocksdb() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test.rocksdb");
-        
+
         let mut config = AppConfig::default();
         config.rocksdb.path = db_path.to_string_lossy().to_string();
-        
+
         let bootstrap_config = BootstrapConfig {
             register_iam_schema: false, // Skip IAM registration for faster tests
             schema_version: None,
@@ -354,7 +418,7 @@ mod tests {
         } else {
             println!("Bootstrap failed: {:?}", result.err());
         }
-        
+
         // Clean up
         drop(temp_dir);
     }
@@ -363,7 +427,7 @@ mod tests {
     async fn test_bootstrap_without_iam_schema_registration() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test_no_iam.rocksdb");
-        
+
         let mut config = AppConfig::default();
         config.rocksdb.path = db_path.to_string_lossy().to_string();
 
@@ -380,7 +444,7 @@ mod tests {
         } else {
             println!("Bootstrap failed: {:?}", result.err());
         }
-        
+
         // Clean up
         drop(temp_dir);
     }
@@ -389,7 +453,7 @@ mod tests {
     async fn test_bootstrap_with_custom_schema_version() {
         let temp_dir = tempdir().unwrap();
         let db_path = temp_dir.path().join("test_custom.rocksdb");
-        
+
         let mut config = AppConfig::default();
         config.rocksdb.path = db_path.to_string_lossy().to_string();
 
@@ -405,7 +469,7 @@ mod tests {
             // The schema version should be set correctly
             assert!(!app_state.schema_version.is_empty());
         }
-        
+
         // Clean up
         drop(temp_dir);
     }

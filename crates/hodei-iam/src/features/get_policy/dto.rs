@@ -1,9 +1,9 @@
 //! DTOs for Get Policy feature
 
 use kernel::Hrn;
-use serde::{Deserialize, Serialize};
 use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
 
 /// Query para obtener una política IAM por su HRN
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,4 +45,3 @@ pub struct PolicyView {
     /// Descripción opcional de la política
     pub description: Option<String>,
 }
-

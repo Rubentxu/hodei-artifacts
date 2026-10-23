@@ -87,4 +87,3 @@ mod tests {
         assert_eq!(result.unwrap().name, "Test");
     }
 }
-

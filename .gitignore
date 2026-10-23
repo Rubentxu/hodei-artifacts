@@ -37,8 +37,17 @@ specs/
 
 
 data/
-config/
 target/
+
+# Local-only config overrides and secrets (tracked profiles under config/ stay tracked)
+/config/*.local.toml
+/config/secrets/
+
+# Archive packages must never be committed (roadmap bundles, build drops)
+/*.zip
+
+# Local agent tooling state
+.atl/
 
 
 # WASM / Trunk outputs

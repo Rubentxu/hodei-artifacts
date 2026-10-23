@@ -4,9 +4,9 @@
 //! with pagination support.
 
 use kernel::Hrn;
-use serde::{Deserialize, Serialize};
 use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
 
 /// Query for listing policies with pagination
 #[derive(Debug, Clone, Serialize, Deserialize)]

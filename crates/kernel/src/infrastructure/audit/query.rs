@@ -143,7 +143,7 @@ impl AuditLogStore {
             .collect();
 
         // Sort by occurred_at descending (newest first)
-        results.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
+        results.sort_by_key(|log| std::cmp::Reverse(log.occurred_at));
 
         // Apply pagination
         let offset = query.offset.unwrap_or(0);

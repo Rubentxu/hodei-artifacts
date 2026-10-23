@@ -1,7 +1,7 @@
 /// Comprehensive integration tests for create_user feature
 /// Uses only public API from hodei_iam crate
 use hodei_iam::{
-    features::create_user::{dto::CreateUserCommand, factories, ports::CreateUserUseCasePort},
+    features::create_user::{dto::CreateUserCommand, factories},
     infrastructure::hrn_generator::UuidHrnGenerator,
     infrastructure::surreal::SurrealUserAdapter,
 };
@@ -232,7 +232,7 @@ async fn test_create_user_email_validation_format() {
 async fn test_create_user_persistence() {
     let db = Arc::new(Surreal::new::<Mem>(()).await.unwrap());
     db.use_ns("test").use_db("iam").await.unwrap();
-    let adapter = Arc::new(SurrealUserAdapter::new(db));
+    let adapter = Arc::new(SurrealUserAdapter::new(db.clone()));
     let hrn_generator = Arc::new(UuidHrnGenerator::new(
         "hodei".to_string(),
         "iam".to_string(),
@@ -248,8 +248,18 @@ async fn test_create_user_persistence() {
 
     let created = use_case.execute(command).await.unwrap();
 
-    // Verify user was actually persisted
-    // This would require additional methods in the adapter for testing purposes
+    // The returned view must carry the persisted data
+    assert_eq!(created.name, "Persistent User");
+    assert_eq!(created.email, "persistent@example.com");
+    assert_eq!(created.tags, vec!["test".to_string()]);
+    assert!(!created.hrn.is_empty(), "Expected a generated HRN");
+
+    // Verify the user was actually persisted in the database
+    let mut response = db.query("SELECT name, email FROM user").await.unwrap();
+    let records: Vec<serde_json::Value> = response.take(0).unwrap_or_default();
+    assert_eq!(records.len(), 1, "Expected exactly one persisted user");
+    assert_eq!(records[0]["name"].as_str(), Some("Persistent User"));
+    assert_eq!(records[0]["email"].as_str(), Some("persistent@example.com"));
 }
 
 #[tokio::test]

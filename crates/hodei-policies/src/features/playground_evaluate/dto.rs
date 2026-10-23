@@ -5,10 +5,10 @@
 //! without persistence.
 
 use kernel::Hrn;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Command to evaluate policies in the playground
 ///
@@ -63,10 +63,14 @@ impl PlaygroundEvaluateCommand {
 
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.inline_schema.is_none() && self.schema_version.is_none() {
-            return Err("Debe proporcionar inline_schema o schema_version (no ambos None)".to_string());
+            return Err(
+                "Debe proporcionar inline_schema o schema_version (no ambos None)".to_string(),
+            );
         }
         if self.inline_schema.is_some() && self.schema_version.is_some() {
-            return Err("No puede proporcionar inline_schema y schema_version al mismo tiempo".to_string());
+            return Err(
+                "No puede proporcionar inline_schema y schema_version al mismo tiempo".to_string(),
+            );
         }
         if self.inline_policies.is_empty() {
             return Err("Debe proporcionar al menos una política en inline_policies".to_string());

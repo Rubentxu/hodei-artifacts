@@ -5,10 +5,10 @@ use thiserror::Error;
 pub enum CreateUserError {
     #[error("Failed to save user: {0}")]
     PersistenceError(String),
-    
+
     #[error("Invalid command data: {0}")]
     InvalidCommand(String),
-    
+
     #[error("Storage error: {0}")]
     StorageError(String),
 }

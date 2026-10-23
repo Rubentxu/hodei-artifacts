@@ -4,4 +4,3 @@
 //! These are implementation details and should NOT be accessed directly from outside this crate.
 
 pub(crate) mod domain;
-

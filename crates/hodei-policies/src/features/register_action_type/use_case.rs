@@ -1,8 +1,9 @@
 use crate::features::register_action_type::dto::RegisterActionTypeCommand;
 use crate::features::register_action_type::error::RegisterActionTypeError;
 use crate::features::register_action_type::ports::RegisterActionTypePort;
-use crate::internal::engine::builder::EngineBuilder;
+use crate::internal::engine::builder::{EngineBuilder, action_type_dsl};
 use async_trait::async_trait;
+use cedar_policy::SchemaFragment;
 use kernel::ActionTrait;
 use std::sync::{Arc, Mutex};
 use tracing::info;
@@ -69,27 +70,62 @@ impl RegisterActionTypeUseCase {
         applies_to_resource = A::applies_to_resource()
     ))]
     pub fn register<A: ActionTrait>(&self) -> Result<(), RegisterActionTypeError> {
-        let action_name = A::action_name();
-
         info!(
             "Registering action type: {} (service: {}, principal: {}, resource: {})",
-            action_name,
+            A::name(),
             A::service_name().as_str(),
             A::applies_to_principal(),
             A::applies_to_resource()
         );
 
+        self.register_command(&RegisterActionTypeCommand::from_type::<A>())
+    }
+
+    /// Register the action type described by a command
+    ///
+    /// The command is turned into the Cedar schema DSL, parsed into a schema
+    /// fragment and handed over to the builder. The registration is idempotent
+    /// per action name: registering the same action twice keeps one fragment.
+    fn register_command(
+        &self,
+        command: &RegisterActionTypeCommand,
+    ) -> Result<(), RegisterActionTypeError> {
+        if command.action_name.trim().is_empty() {
+            return Err(RegisterActionTypeError::InvalidActionType(
+                "the action name must not be empty".to_string(),
+            ));
+        }
+        if command.applies_to_principal.trim().is_empty() {
+            return Err(RegisterActionTypeError::InvalidActionType(format!(
+                "action '{}' declares no principal type",
+                command.action_name
+            )));
+        }
+        if command.applies_to_resource.trim().is_empty() {
+            return Err(RegisterActionTypeError::InvalidActionType(format!(
+                "action '{}' declares no resource type",
+                command.action_name
+            )));
+        }
+
+        let dsl = action_type_dsl(
+            &command.action_name,
+            &command.applies_to_principal,
+            &command.applies_to_resource,
+        );
+
+        let (fragment, _warnings) = SchemaFragment::from_cedarschema_str(&dsl)
+            .map_err(|e| RegisterActionTypeError::SchemaGenerationError(e.to_string()))?;
+
         let mut builder = self.builder.lock().map_err(|e| {
             RegisterActionTypeError::InternalError(format!("Failed to lock builder: {}", e))
         })?;
 
-        builder
-            .register_action_type::<A>()
-            .map_err(|e| RegisterActionTypeError::SchemaGenerationError(e.to_string()))?;
+        builder.register_action_fragment(command.action_name.clone(), fragment);
 
         info!(
             "Successfully registered action type: {} (total actions: {})",
-            action_name,
+            command.action_name,
             builder.action_count()
         );
 
@@ -129,16 +165,13 @@ impl RegisterActionTypeUseCase {
 
     /// Execute action type registration from a command
     ///
-    /// This is the command-based interface that satisfies the port trait.
+    /// This is the command-based interface that satisfies the port trait. It
+    /// registers the action type the command describes; it is not a stub.
     pub async fn execute(
         &self,
-        _command: RegisterActionTypeCommand,
+        command: RegisterActionTypeCommand,
     ) -> Result<(), RegisterActionTypeError> {
-        // The actual registration is done via the generic register<A>() method
-        // This method exists to satisfy the port trait interface
-        // In practice, callers should use register<A>() directly for type safety
-        info!("RegisterActionTypeUseCase::execute called");
-        Ok(())
+        self.register_command(&command)
     }
 }
 

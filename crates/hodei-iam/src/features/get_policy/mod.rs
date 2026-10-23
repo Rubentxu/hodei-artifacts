@@ -20,8 +20,6 @@ pub mod use_case;
 mod mocks;
 mod use_case_test;
 
-
-
 // Public API
 pub use dto::{GetPolicyQuery, PolicyView};
 pub use error::GetPolicyError;

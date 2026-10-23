@@ -67,7 +67,10 @@ mod tests {
         assert_eq!(retrieved.hrn, create_test_policy_hrn());
         assert_eq!(retrieved.name, "Test Policy");
         assert_eq!(retrieved.content, "permit(principal, action, resource);");
-        assert_eq!(retrieved.description, Some("A test policy for unit testing".to_string()));
+        assert_eq!(
+            retrieved.description,
+            Some("A test policy for unit testing".to_string())
+        );
     }
 
     #[tokio::test]
@@ -166,8 +169,14 @@ mod tests {
         let result2 = use_case.execute(query2).await;
 
         // Assert
-        assert!(result1.is_ok(), "Expected successful retrieval of first policy");
-        assert!(result2.is_ok(), "Expected successful retrieval of second policy");
+        assert!(
+            result1.is_ok(),
+            "Expected successful retrieval of first policy"
+        );
+        assert!(
+            result2.is_ok(),
+            "Expected successful retrieval of second policy"
+        );
 
         let retrieved1 = result1.unwrap();
         let retrieved2 = result2.unwrap();
@@ -196,7 +205,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_ok(), "Expected successful policy retrieval without description");
+        assert!(
+            result.is_ok(),
+            "Expected successful policy retrieval without description"
+        );
         let retrieved = result.unwrap();
         assert_eq!(retrieved.hrn, create_test_policy_hrn());
         assert_eq!(retrieved.name, "Policy Without Description");
@@ -232,7 +244,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_ok(), "Expected successful retrieval via use case port");
+        assert!(
+            result.is_ok(),
+            "Expected successful retrieval via use case port"
+        );
         let retrieved = result.unwrap();
         assert_eq!(retrieved.hrn, create_test_policy_hrn());
         assert_eq!(retrieved.name, "Test Policy");
@@ -250,7 +265,8 @@ mod tests {
                 resource
             ) when {
                 resource.owner == principal
-            };"#.to_string(),
+            };"#
+            .to_string(),
             description: Some("A complex policy with conditions".to_string()),
         };
 
@@ -262,7 +278,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_ok(), "Expected successful retrieval of complex policy");
+        assert!(
+            result.is_ok(),
+            "Expected successful retrieval of complex policy"
+        );
         let retrieved = result.unwrap();
         assert_eq!(retrieved.hrn, create_test_policy_hrn());
         assert_eq!(retrieved.name, "Complex Policy");

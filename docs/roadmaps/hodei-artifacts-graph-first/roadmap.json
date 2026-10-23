@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "repo": "Rubentxu/hodei-artifacts",
+  "baseline_sha": "2626e35b7c12375af0a1f23342eee4b4619bfc3c",
+  "status": "h0_executed",
+  "milestones": [
+    {
+      "id": "H0",
+      "title": "Reconciliar código y puerta de calidad",
+      "depends_on": [],
+      "state": "EXECUTED",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md",
+      "closure": {
+        "closed_on": "2026-10-24",
+        "baseline_revision": "2626e35b7c12375af0a1f23342eee4b4619bfc3c",
+        "release_version": "v0.1.0",
+        "release_tag": "v0.1.0",
+        "release_note": "Primer release del baseline reconciliado. NO es GA y NO declara paridad con Nexus CE.",
+        "measured_gate": {
+          "cargo_metadata": "exit 0; 4 paquetes: kernel, hodei-iam, hodei-policies, hodei-artifacts-api",
+          "cargo_check": "exit 0; 0 warnings",
+          "cargo_fmt_check": "exit 0",
+          "cargo_clippy_deny_warnings": "exit 0; No issues found",
+          "cargo_test_workspace": "exit 0; 741 passed, 0 failed, 64 ignored (doctests)",
+          "not_run": [
+            "cargo-nextest ausente en el host",
+            "docker ausente en el host",
+            "typedb / typedb-server ausentes en el host"
+          ]
+        },
+        "fixed_defects": [
+          "D1 respuesta de registro SurrealDB deserializada en serde_json::Value",
+          "D2 create sobre id existente (no idempotente) -> upsert",
+          "D3 schema Cedar persistido con Debug y reconstruido vacio -> codec cedar-schema-fragments-v1",
+          "D4 resolucion del 'ultimo schema'",
+          "D5 test_register_iam_schema_integration.rs de 1 byte -> tests/bootstrap_integration.rs (B1-B7)",
+          "D6 override HODEI_<SECCION>__<CLAVE> inerte -> prefix_separator explicito"
+        ],
+        "open_defects": [
+          "O1",
+          "O2",
+          "O3",
+          "O4",
+          "O5",
+          "O6",
+          "O7",
+          "O8",
+          "O9"
+        ],
+        "open_defects_detail": "docs/roadmaps/hodei-artifacts-graph-first/BASELINE.md#72-abiertos-con-consumidor-y-criterio-de-cierre",
+        "mutations_checked": [
+          "validator -> schema vacio: B7 FAILED",
+          "load_schema::parse_schema -> schema vacio: test_a_stored_content_that_is_not_a_schema_is_rejected + test_load_latest_schema FAILED",
+          "sin prefix_separator: environment_variables_override_the_configuration + an_invalid_environment_override_is_rejected + p1 + p3 FAILED",
+          "main.rs exit(0) en error de config: p3 FAILED"
+        ],
+        "ephemeral_acceptance": {
+          "positive": [
+            "GET /health -> 200 healthy",
+            "GET /health/ready -> 200",
+            "GET /health/live -> 200",
+            "ruta inexistente -> 404",
+            "SIGTERM termina el proceso"
+          ],
+          "negative": [
+            "HODEI_SERVER__PORT=0",
+            "HODEI_SERVER__PORT=abc",
+            "HODEI_DATABASE__DB_TYPE=mysql",
+            "HODEI_DATABASE__NAMESPACE vacio",
+            "HODEI_ROCKSDB__PATH vacio",
+            "HODEI_ROCKSDB__PATH=/proc/1/x"
+          ],
+          "aat": "0 procesos huerfanos; directorio de sesion efimero eliminado",
+          "binary_sha256": "b78a3e382c24286f907137eb7f0fc54debf78a07bc93ca3ac84b337b110a5062"
+        },
+        "data_inventory": "data/hodei.development.rocksdb verificada VACIA (INFO FOR ROOT: namespaces {}); no hay datos que exportar; base original intacta",
+        "not_a_ga_release": true,
+        "no_nexus_parity_claim": true,
+        "no_sources_zip_asset": true
+      }
+    },
+    {
+      "id": "H1",
+      "title": "HRN v2 Cedar multitenant",
+      "depends_on": [
+        "H0"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    },
+    {
+      "id": "H2",
+      "title": "TypeDB ontología CAS Raw",
+      "depends_on": [
+        "H1"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    },
+    {
+      "id": "H3",
+      "title": "Maven Hosted Proxy Group",
+      "depends_on": [
+        "H2"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    },
+    {
+      "id": "H4",
+      "title": "OCI y recuperación",
+      "depends_on": [
+        "H3"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    },
+    {
+      "id": "H5",
+      "title": "Grafo SBOM evidencia",
+      "depends_on": [
+        "H2"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    },
+    {
+      "id": "H6",
+      "title": "Vulnerabilidades VEX Cedar",
+      "depends_on": [
+        "H5"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    },
+    {
+      "id": "H7",
+      "title": "Dependency Accelerator",
+      "depends_on": [
+        "H3",
+        "H5"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    },
+    {
+      "id": "H8",
+      "title": "npm PyPI APT extensiones",
+      "depends_on": [
+        "H3",
+        "H4"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    },
+    {
+      "id": "H9",
+      "title": "Cloud backup restore migración Nexus",
+      "depends_on": [
+        "H4",
+        "H6",
+        "H7",
+        "H8"
+      ],
+      "state": "PENDING",
+      "release_required": true,
+      "integration_remote_required": true,
+      "ephemeral_uat_e2e_aat_delete_after_block": true,
+      "spec_ref": "ROADMAP.md",
+      "acceptance_ref": "ACCEPTANCE.md",
+      "gate_ref": "RELEASE.md"
+    }
+  ]
+}

@@ -124,6 +124,41 @@ pub struct DeletePolicyResponse {
 }
 
 // ============================================================================
+// HRN RESOLUTION
+// ============================================================================
+
+/// Canonical resource type for IAM policies.
+///
+/// The domain uses PascalCase for resource types (`User`, `Group`, `Policy`),
+/// and `GetPolicyUseCase` rejects any HRN whose resource type is not
+/// `Policy`. Keeping one spelling is what makes the HRN returned by one
+/// endpoint usable as the identifier of another.
+const POLICY_RESOURCE_TYPE: &str = "Policy";
+
+/// Resolve an incoming policy HRN into the short policy id and the canonical
+/// HRN of that policy.
+///
+/// The HTTP contract addresses policies by HRN, but the domain use cases and
+/// the persistence adapter address them by the short policy id. Forwarding the
+/// raw HRN as an id made the lookup miss the stored record, so `PUT
+/// /api/v1/iam/policies/update` and `DELETE /api/v1/iam/policies/delete`
+/// answered `404` for policies that had just been created.
+fn resolve_policy_hrn(raw: &str) -> Result<(String, kernel::Hrn), IamApiError> {
+    let requested = kernel::Hrn::from_string(raw)
+        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
+
+    let canonical = kernel::Hrn::new(
+        requested.partition().to_string(),
+        requested.service().to_string(),
+        requested.account_id().to_string(),
+        POLICY_RESOURCE_TYPE.to_string(),
+        requested.resource_id().to_string(),
+    );
+
+    Ok((requested.resource_id().to_string(), canonical))
+}
+
+// ============================================================================
 // HANDLER IMPLEMENTATIONS
 // ============================================================================
 
@@ -206,12 +241,11 @@ pub async fn get_policy(
     State(state): State<AppState>,
     Json(request): Json<GetPolicyRequest>,
 ) -> Result<Json<GetPolicyResponse>, IamApiError> {
-    let policy_hrn = kernel::Hrn::from_string(&request.policy_hrn)
-        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
+    let (_policy_id, canonical_hrn) = resolve_policy_hrn(&request.policy_hrn)?;
 
     let policy_view = state
         .get_policy
-        .get_by_hrn(&policy_hrn)
+        .get_by_hrn(&canonical_hrn)
         .await
         .map_err(|e| match e {
             hodei_iam::features::get_policy::error::GetPolicyError::PolicyNotFound(msg) => {
@@ -226,7 +260,7 @@ pub async fn get_policy(
         })?;
 
     Ok(Json(GetPolicyResponse {
-        hrn: policy_view.hrn.to_string(),
+        hrn: canonical_hrn.to_string(),
         name: policy_view.name,
         content: policy_view.content,
         description: policy_view.description,
@@ -320,8 +354,10 @@ pub async fn update_policy(
     State(state): State<AppState>,
     Json(request): Json<UpdatePolicyRequest>,
 ) -> Result<Json<UpdatePolicyResponse>, IamApiError> {
+    let (policy_id, canonical_hrn) = resolve_policy_hrn(&request.policy_hrn)?;
+
     let command = hodei_iam::features::update_policy::dto::UpdatePolicyCommand {
-        policy_id: request.policy_hrn.to_string(),
+        policy_id,
         policy_content: Some(request.policy_content),
         description: request.description,
     };
@@ -370,7 +406,7 @@ pub async fn update_policy(
         })?;
 
     Ok(Json(UpdatePolicyResponse {
-        hrn: policy_view.hrn.to_string(),
+        hrn: canonical_hrn.to_string(),
         content: policy_view.content,
         description: policy_view.description,
         created_at: chrono::Utc::now(), // TODO: Add timestamps to domain PolicyView
@@ -394,9 +430,9 @@ pub async fn delete_policy(
     State(state): State<AppState>,
     Json(request): Json<DeletePolicyRequest>,
 ) -> Result<Json<DeletePolicyResponse>, IamApiError> {
-    let command = hodei_iam::features::delete_policy::dto::DeletePolicyCommand {
-        policy_id: request.policy_hrn.to_string(),
-    };
+    let (policy_id, canonical_hrn) = resolve_policy_hrn(&request.policy_hrn)?;
+
+    let command = hodei_iam::features::delete_policy::dto::DeletePolicyCommand { policy_id };
 
     state
         .delete_policy
@@ -427,7 +463,7 @@ pub async fn delete_policy(
         })?;
 
     Ok(Json(DeletePolicyResponse {
-        deleted_hrn: request.policy_hrn,
+        deleted_hrn: canonical_hrn.to_string(),
         message: "Policy deleted successfully".to_string(),
     }))
 }

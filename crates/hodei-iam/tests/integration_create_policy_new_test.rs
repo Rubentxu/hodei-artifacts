@@ -124,7 +124,7 @@ async fn integration_create_policy_success() {
     }
     assert!(result.is_ok(), "Policy creation should succeed");
     let view = result.unwrap();
-    println!("Generated HRN: {}", view.id.to_string());
+    println!("Generated HRN: {}", view.id);
     assert!(view.id.to_string().contains("allow-read-documents"));
     assert_eq!(view.content, "permit(principal, action, resource);");
     assert_eq!(
@@ -279,8 +279,7 @@ async fn integration_create_policy_with_large_content() {
 
     // Generate large policy content (realistic size ~50KB)
     let base_clause = "permit(principal, action, resource);";
-    let large_content = std::iter::repeat(base_clause)
-        .take(1500)
+    let large_content = std::iter::repeat_n(base_clause, 1500)
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -296,7 +295,7 @@ async fn integration_create_policy_with_large_content() {
     // Assert
     assert!(result.is_ok(), "Large policy should be created");
     let view = result.unwrap();
-    println!("Large policy HRN: {}", view.id.to_string());
+    println!("Large policy HRN: {}", view.id);
     assert!(view.id.to_string().contains("large-policy"));
     assert_eq!(view.content.len(), large_content.len());
 }
@@ -373,12 +372,8 @@ async fn integration_create_policy_with_special_characters_in_id() {
     // Assert
     assert!(result.is_ok());
     let view = result.unwrap();
-    println!("Special chars HRN: {}", view.id.to_string());
-    assert!(
-        view.id
-            .to_string()
-            .contains("policy-with-dashes-and-123")
-    );
+    println!("Special chars HRN: {}", view.id);
+    assert!(view.id.to_string().contains("policy-with-dashes-and-123"));
 }
 
 #[tokio::test]

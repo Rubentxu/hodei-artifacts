@@ -110,7 +110,39 @@ async fn test_delete_policy_different_policy_id_formats() {
     ];
 
     for policy_id in test_cases {
+        mock_port.add_policy(policy_id.to_string());
+
+        let cmd = DeletePolicyCommand {
+            policy_id: policy_id.to_string(),
+        };
+
+        let result = use_case.execute(cmd).await;
+
+        // Assert: the deletion succeeds and the policy is really gone
+        assert!(
+            result.is_ok(),
+            "Expected deletion of '{}' to succeed, got {:?}",
+            policy_id,
+            result
+        );
+        assert!(mock_port.was_deleted(policy_id));
+        assert!(!mock_port.exists(policy_id));
+
+        // Discriminating negative: deleting it again must fail as not found
+        let cmd_again = DeletePolicyCommand {
+            policy_id: policy_id.to_string(),
+        };
+        assert!(
+            matches!(
+                use_case.execute(cmd_again).await,
+                Err(DeletePolicyError::PolicyNotFound(_))
+            ),
+            "Expected second deletion of '{}' to fail with PolicyNotFound",
+            policy_id
+        );
     }
+
+    assert_eq!(mock_port.get_deleted_count(), 4);
 }
 
 /// Test that policy deletion handles non-existent policy gracefully

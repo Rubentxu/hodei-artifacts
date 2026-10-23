@@ -6,7 +6,7 @@
 use crate::features::create_group::{
     dto::CreateGroupCommand,
     error::CreateGroupError,
-    mocks::{MockCreateGroupPort, MockHrnGenerator},   
+    mocks::{MockCreateGroupPort, MockHrnGenerator},
     use_case::CreateGroupUseCase,
 };
 use kernel::domain::Hrn;

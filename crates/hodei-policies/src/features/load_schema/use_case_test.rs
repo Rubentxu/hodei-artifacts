@@ -5,9 +5,37 @@ mod tests {
     use super::super::ports::SchemaStoragePort;
     use super::super::use_case::LoadSchemaUseCase;
     use crate::features::build_schema::error::BuildSchemaError;
+    use crate::internal::engine::schema_codec;
     use async_trait::async_trait;
+    use cedar_policy::SchemaFragment;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+
+    /// Builds a *real* stored schema for the given entity type.
+    ///
+    /// The fixtures used to store placeholders like `"Schema(v1)"`. They
+    /// passed only because the loader ignored the stored content and rebuilt
+    /// an empty schema: a false green that hid the fact that nothing was
+    /// ever persisted in a recoverable form. The stored content is now an
+    /// actual schema envelope, so a passing test means the schema really
+    /// survived the round trip.
+    fn stored_schema(entity_name: &str) -> String {
+        let dsl = format!(
+            r#"
+namespace Iam {{
+    entity {entity_name} {{
+        name: String
+    }};
+}}
+"#
+        );
+
+        let fragment = SchemaFragment::from_cedarschema_str(&dsl)
+            .expect("the fixture schema must parse")
+            .0;
+
+        schema_codec::encode(&[fragment]).expect("the fixture schema must be encodable")
+    }
 
     // Mock storage implementation for testing
     #[derive(Default)]
@@ -105,7 +133,7 @@ mod tests {
     async fn test_load_latest_schema() {
         let storage = MockSchemaStorage::with_schemas(vec![(
             "schema_1".to_string(),
-            "Schema(...)".to_string(),
+            stored_schema("User"),
             Some("v1.0.0".to_string()),
         )]);
         let use_case = create_use_case_with_storage(storage);
@@ -117,6 +145,43 @@ mod tests {
         let result = result.unwrap();
         assert_eq!(result.schema_id, "schema_latest");
         assert!(result.version.is_none());
+
+        // The schema must come back *with its content*. An empty schema would
+        // satisfy every assertion above, so the content is checked explicitly.
+        assert_eq!(
+            result.schema.entity_types().count(),
+            1,
+            "the loaded schema must carry the entity type that was stored"
+        );
+    }
+
+    /// A stored content that is not a schema must be rejected, not downgraded
+    ///
+    /// The loader used to ignore the stored content and rebuild an empty
+    /// schema. That made every policy that mentions a declared entity type
+    /// look invalid and every policy that mentions nothing look valid. A
+    /// content that cannot be read as a schema has to produce an error, so
+    /// the caller can tell "there is no schema" from "the schema is broken".
+    #[tokio::test]
+    async fn test_a_stored_content_that_is_not_a_schema_is_rejected() {
+        let storage = MockSchemaStorage::with_schemas(vec![(
+            "schema_1".to_string(),
+            "Schema(v1)".to_string(),
+            Some("v1.0.0".to_string()),
+        )]);
+        let use_case = create_use_case_with_storage(storage);
+
+        let command = LoadSchemaCommand::with_version("v1.0.0");
+        let result = use_case.execute(command).await;
+
+        assert!(
+            result.is_err(),
+            "a content that is not a schema must not be loaded as an empty schema"
+        );
+        match result {
+            Err(LoadSchemaError::SchemaParsingError(_)) => {}
+            other => panic!("Expected SchemaParsingError, got: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -124,12 +189,12 @@ mod tests {
         let storage = MockSchemaStorage::with_schemas(vec![
             (
                 "schema_1".to_string(),
-                "Schema(v1)".to_string(),
+                stored_schema("User"),
                 Some("v1.0.0".to_string()),
             ),
             (
                 "schema_2".to_string(),
-                "Schema(v2)".to_string(),
+                stored_schema("Group"),
                 Some("v2.0.0".to_string()),
             ),
         ]);
@@ -161,7 +226,7 @@ mod tests {
     async fn test_load_invalid_version() {
         let storage = MockSchemaStorage::with_schemas(vec![(
             "schema_1".to_string(),
-            "Schema(v1)".to_string(),
+            stored_schema("User"),
             Some("v1.0.0".to_string()),
         )]);
         let use_case = create_use_case_with_storage(storage);
@@ -181,17 +246,17 @@ mod tests {
         let storage = MockSchemaStorage::with_schemas(vec![
             (
                 "schema_1".to_string(),
-                "Schema(v1)".to_string(),
+                stored_schema("User"),
                 Some("v1.0.0".to_string()),
             ),
             (
                 "schema_2".to_string(),
-                "Schema(v2)".to_string(),
+                stored_schema("Group"),
                 Some("v2.0.0".to_string()),
             ),
             (
                 "schema_3".to_string(),
-                "Schema(v3)".to_string(),
+                stored_schema("Policy"),
                 Some("v3.0.0".to_string()),
             ),
         ]);
@@ -240,12 +305,12 @@ mod tests {
         let storage = MockSchemaStorage::with_schemas(vec![
             (
                 "schema_1".to_string(),
-                "Schema(v1)".to_string(),
+                stored_schema("User"),
                 Some("v1.0.0".to_string()),
             ),
             (
                 "schema_2".to_string(),
-                "Schema(v2)".to_string(),
+                stored_schema("Group"),
                 Some("v2.0.0".to_string()),
             ),
         ]);
@@ -271,7 +336,7 @@ mod tests {
     async fn test_schema_without_version() {
         let storage = MockSchemaStorage::with_schemas(vec![(
             "schema_1".to_string(),
-            "Schema(no version)".to_string(),
+            stored_schema("User"),
             None,
         )]);
         let use_case = create_use_case_with_storage(storage);
@@ -288,7 +353,7 @@ mod tests {
     async fn test_load_schema_result_construction() {
         let storage = MockSchemaStorage::with_schemas(vec![(
             "schema_1".to_string(),
-            "Schema(test)".to_string(),
+            stored_schema("User"),
             Some("test_version".to_string()),
         )]);
         let use_case = create_use_case_with_storage(storage);

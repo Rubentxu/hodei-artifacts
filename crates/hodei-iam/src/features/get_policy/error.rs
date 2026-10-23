@@ -16,4 +16,3 @@ pub enum GetPolicyError {
     #[error("Invalid HRN: {0}")]
     InvalidHrn(String),
 }
-

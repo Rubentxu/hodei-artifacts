@@ -3,13 +3,13 @@
 //! This module provides concrete implementations of the PolicyFinderPort trait
 //! for different storage backends.
 
-use std::sync::Arc;
-use kernel::domain::policy::{HodeiPolicy, HodeiPolicySet};
 use kernel::Hrn;
+use kernel::domain::policy::{HodeiPolicy, HodeiPolicySet};
+use std::sync::Arc;
 use tracing::{debug, info};
 
+use super::ports::{PolicyFinderError, PolicyFinderPort};
 use async_trait::async_trait;
-use super::ports::{PolicyFinderPort, PolicyFinderError};
 
 /// In-memory implementation of PolicyFinderPort for testing
 #[derive(Debug, Clone)]
@@ -41,14 +41,21 @@ impl Default for InMemoryPolicyFinderAdapter {
 
 #[async_trait]
 impl PolicyFinderPort for InMemoryPolicyFinderAdapter {
-    async fn get_effective_policies(&self, principal_hrn: &Hrn) -> Result<HodeiPolicySet, PolicyFinderError> {
+    async fn get_effective_policies(
+        &self,
+        principal_hrn: &Hrn,
+    ) -> Result<HodeiPolicySet, PolicyFinderError> {
         debug!("Finding policies for principal: {}", principal_hrn);
 
         // For this in-memory implementation, we'll return all policies
         // In a real implementation, this would filter by principal
         let policy_set = HodeiPolicySet::new(self.policies.to_vec());
-        
-        info!("Found {} policies for principal: {}", policy_set.len(), principal_hrn);
+
+        info!(
+            "Found {} policies for principal: {}",
+            policy_set.len(),
+            principal_hrn
+        );
         Ok(policy_set)
     }
 }
@@ -74,14 +81,24 @@ impl Default for SurrealPolicyFinderAdapter {
 
 #[async_trait]
 impl PolicyFinderPort for SurrealPolicyFinderAdapter {
-    async fn get_effective_policies(&self, principal_hrn: &Hrn) -> Result<HodeiPolicySet, PolicyFinderError> {
-        debug!("Finding policies for principal: {} using SurrealDB", principal_hrn);
-        
+    async fn get_effective_policies(
+        &self,
+        principal_hrn: &Hrn,
+    ) -> Result<HodeiPolicySet, PolicyFinderError> {
+        debug!(
+            "Finding policies for principal: {} using SurrealDB",
+            principal_hrn
+        );
+
         // TODO: Implement actual SurrealDB query
         // For now, return empty policy set
         let policy_set = HodeiPolicySet::new(Vec::new());
-        
-        info!("Found {} policies for principal {} using SurrealDB", policy_set.policies().len(), principal_hrn);
+
+        info!(
+            "Found {} policies for principal {} using SurrealDB",
+            policy_set.policies().len(),
+            principal_hrn
+        );
         Ok(policy_set)
     }
 }
@@ -95,10 +112,10 @@ mod tests {
     async fn test_in_memory_policy_finder_empty() {
         let finder = InMemoryPolicyFinderAdapter::new();
         let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
-        
+
         let result = finder.get_effective_policies(&principal_hrn).await;
         assert!(result.is_ok());
-        
+
         let policy_set = result.unwrap();
         assert_eq!(policy_set.policies().len(), 0);
     }
@@ -109,13 +126,13 @@ mod tests {
             PolicyId::new("test-policy".to_string()),
             "permit(principal, action, resource);".to_string(),
         );
-        
+
         let finder = InMemoryPolicyFinderAdapter::with_policies(vec![policy]);
         let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
-        
+
         let result = finder.get_effective_policies(&principal_hrn).await;
         assert!(result.is_ok());
-        
+
         let policy_set = result.unwrap();
         assert_eq!(policy_set.policies().len(), 1);
     }
@@ -124,10 +141,10 @@ mod tests {
     async fn test_surreal_policy_finder() {
         let finder = SurrealPolicyFinderAdapter::new();
         let principal_hrn = Hrn::from_string("hrn:hodei:iam::account123:user/alice").unwrap();
-        
+
         let result = finder.get_effective_policies(&principal_hrn).await;
         assert!(result.is_ok());
-        
+
         let policy_set = result.unwrap();
         assert_eq!(policy_set.policies().len(), 0); // Empty for now
     }

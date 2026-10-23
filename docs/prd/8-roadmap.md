@@ -20,3 +20,9 @@
 - [ ] SIEM integration
 - [ ] Risk engine
 - [ ] ML for threat detection
+
+<!-- hodei-artifacts-graph-first:begin -->
+## Plan de evolución Graph-first / TypeDB (2026)
+Roadmap activo y ADR: [Graph-first TypeDB H0–H9](../roadmaps/hodei-artifacts-graph-first/ROADMAP.md).
+Se conserva el roadmap histórico de 2024–2025 como contexto pendiente de reconciliar.
+<!-- hodei-artifacts-graph-first:end -->

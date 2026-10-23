@@ -219,13 +219,13 @@ fn convert_to_command(
 ) -> Result<hodei_policies::playground_evaluate::dto::PlaygroundEvaluateCommand, String> {
     // Convert principal, action, and resource to HRNs
     let principal = Hrn::from_string(&request.request.principal)
-        .ok_or_else(|| format!("Invalid principal HRN: {}", &request.request.principal))?;
+        .ok_or_else(|| format!("Invalid principal HRN: {}", request.request.principal))?;
 
     let action = Hrn::from_string(&request.request.action)
-        .ok_or_else(|| format!("Invalid action HRN: {}", &request.request.action))?;
+        .ok_or_else(|| format!("Invalid action HRN: {}", request.request.action))?;
 
     let resource = Hrn::from_string(&request.request.resource)
-        .ok_or_else(|| format!("Invalid resource HRN: {}", &request.request.resource))?;
+        .ok_or_else(|| format!("Invalid resource HRN: {}", request.request.resource))?;
 
     // Convert context attributes
     let mut context = HashMap::new();
@@ -261,7 +261,7 @@ fn convert_attribute_value(dto: AttributeValueDto) -> Result<AttributeValue, Str
         AttributeValueDto::Bool(b) => Ok(AttributeValue::Bool(b)),
         AttributeValueDto::EntityRef(hrn_str) => {
             let hrn = Hrn::from_string(&hrn_str)
-                .ok_or_else(|| format!("Invalid entity reference HRN: {}", &hrn_str))?;
+                .ok_or_else(|| format!("Invalid entity reference HRN: {}", hrn_str))?;
             Ok(AttributeValue::EntityRef(hrn))
         }
         AttributeValueDto::Set(values) => {

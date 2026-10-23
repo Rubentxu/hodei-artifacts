@@ -8,6 +8,11 @@ use crate::features::register_iam_schema::dto::{
 };
 use crate::features::register_iam_schema::error::RegisterIamSchemaError;
 use crate::features::register_iam_schema::ports::RegisterIamSchemaPort;
+use crate::internal::domain::actions::{
+    AddUserToGroupAction, CreateGroupAction, CreateUserAction, DeleteGroupAction, DeleteUserAction,
+    RemoveUserFromGroupAction,
+};
+use crate::internal::domain::{Group, User};
 use async_trait::async_trait;
 use hodei_policies::build_schema::dto::BuildSchemaCommand;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
@@ -104,18 +109,12 @@ impl RegisterIamSchemaUseCase {
         info!("Starting IAM schema registration");
 
         // Step 1: Register all IAM entity types
-        let entity_count = self.register_entity_types().await?;
-        info!(
-            entity_count = entity_count,
-            "Successfully registered IAM entity types"
-        );
+        self.register_entity_types().await?;
+        info!("Successfully registered IAM entity types");
 
         // Step 2: Register all IAM action types
-        let action_count = self.register_action_types().await?;
-        info!(
-            action_count = action_count,
-            "Successfully registered IAM action types"
-        );
+        self.register_action_types().await?;
+        info!("Successfully registered IAM action types");
 
         // Step 3: Build and persist the schema
         let build_command = BuildSchemaCommand {
@@ -139,7 +138,15 @@ impl RegisterIamSchemaUseCase {
         let schema_id = build_result.schema_id;
         let validated = build_result.validated;
 
+        // The counts come from the schema that was actually built, not from a
+        // local tally of the commands that were issued: a registration that
+        // silently did nothing must not be reported as a registered type.
+        let entity_count = build_result.entity_count;
+        let action_count = build_result.action_count;
+
         info!(
+            entity_count = entity_count,
+            action_count = action_count,
             schema_version = %schema_version,
             schema_id = %schema_id,
             validated = validated,
@@ -171,28 +178,20 @@ impl RegisterIamSchemaUseCase {
     /// - User
     /// - Group
     ///
-    /// Note: We need to downcast to the concrete use case to call the generic register method.
-    /// This is a limitation of the current design where the port trait doesn't support
-    /// generic registration.
-    ///
-    /// # Returns
-    ///
-    /// The number of entity types successfully registered
+    /// The commands are built from the domain types themselves, so the
+    /// registered schema always matches the domain.
     ///
     /// # Errors
     ///
     /// Returns an error if any entity type registration fails
-    async fn register_entity_types(&self) -> Result<usize, RegisterIamSchemaError> {
-        let mut count = 0;
-
+    async fn register_entity_types(&self) -> Result<(), RegisterIamSchemaError> {
         let commands = vec![
-            RegisterEntityTypeCommand::new("User".to_string()),
-            RegisterEntityTypeCommand::new("Group".to_string()),
+            RegisterEntityTypeCommand::from_type::<User>(),
+            RegisterEntityTypeCommand::from_type::<Group>(),
         ];
 
         for command in commands {
-            self
-                .entity_type_registrar
+            self.entity_type_registrar
                 .execute(command)
                 .await
                 .map_err(|e| {
@@ -201,10 +200,9 @@ impl RegisterIamSchemaUseCase {
                         e
                     ))
                 })?;
-            count += 1;
         }
 
-        Ok(count)
+        Ok(())
     }
 
     /// Register all IAM action types
@@ -217,30 +215,24 @@ impl RegisterIamSchemaUseCase {
     /// - AddUserToGroup
     /// - RemoveUserFromGroup
     ///
-    /// Note: We need to downcast to the concrete use case to call the generic register method.
-    ///
-    /// # Returns
-    ///
-    /// The number of action types successfully registered
+    /// The commands are built from the domain action types themselves, so the
+    /// `appliesTo` clause of every action matches the domain.
     ///
     /// # Errors
     ///
     /// Returns an error if any action type registration fails
-    async fn register_action_types(&self) -> Result<usize, RegisterIamSchemaError> {
-        let mut count = 0;
-
+    async fn register_action_types(&self) -> Result<(), RegisterIamSchemaError> {
         let commands = vec![
-            RegisterActionTypeCommand::new("CreateUser".to_string()),
-            RegisterActionTypeCommand::new("DeleteUser".to_string()),
-            RegisterActionTypeCommand::new("CreateGroup".to_string()),
-            RegisterActionTypeCommand::new("DeleteGroup".to_string()),
-            RegisterActionTypeCommand::new("AddUserToGroup".to_string()),
-            RegisterActionTypeCommand::new("RemoveUserFromGroup".to_string()),
+            RegisterActionTypeCommand::from_type::<CreateUserAction>(),
+            RegisterActionTypeCommand::from_type::<DeleteUserAction>(),
+            RegisterActionTypeCommand::from_type::<CreateGroupAction>(),
+            RegisterActionTypeCommand::from_type::<DeleteGroupAction>(),
+            RegisterActionTypeCommand::from_type::<AddUserToGroupAction>(),
+            RegisterActionTypeCommand::from_type::<RemoveUserFromGroupAction>(),
         ];
 
         for command in commands {
-            self
-                .action_type_registrar
+            self.action_type_registrar
                 .execute(command)
                 .await
                 .map_err(|e| {
@@ -249,10 +241,9 @@ impl RegisterIamSchemaUseCase {
                         e
                     ))
                 })?;
-            count += 1;
         }
 
-        Ok(count)
+        Ok(())
     }
 }
 

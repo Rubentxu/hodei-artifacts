@@ -80,14 +80,12 @@ mod tests {
         let policy = create_test_policy();
 
         let user_finder = Arc::new(MockUserFinderPort::new().with_user(user_dto.clone()));
-        let group_finder = Arc::new(MockGroupFinderPort::new().with_groups(vec![group_dto.clone()]));
-        let policy_finder = Arc::new(MockPolicyFinderPort::new().with_policies(vec![policy.clone()]));
+        let group_finder =
+            Arc::new(MockGroupFinderPort::new().with_groups(vec![group_dto.clone()]));
+        let policy_finder =
+            Arc::new(MockPolicyFinderPort::new().with_policies(vec![policy.clone()]));
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = create_test_query();
 
@@ -109,11 +107,7 @@ mod tests {
         let group_finder = Arc::new(MockGroupFinderPort::new());
         let policy_finder = Arc::new(MockPolicyFinderPort::new());
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = create_test_query();
 
@@ -137,11 +131,7 @@ mod tests {
         let group_finder = Arc::new(MockGroupFinderPort::new());
         let policy_finder = Arc::new(MockPolicyFinderPort::new());
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = GetEffectivePoliciesQuery {
             principal_hrn: "invalid-hrn".to_string(),
@@ -167,11 +157,7 @@ mod tests {
         let group_finder = Arc::new(MockGroupFinderPort::new());
         let policy_finder = Arc::new(MockPolicyFinderPort::new());
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let invalid_hrn = Hrn::new(
             "hodei".to_string(),
@@ -189,7 +175,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_err(), "Expected error due to invalid principal type");
+        assert!(
+            result.is_err(),
+            "Expected error due to invalid principal type"
+        );
         match result.unwrap_err() {
             GetEffectivePoliciesError::InvalidPrincipalType(resource_type) => {
                 assert_eq!(resource_type, "InvalidType");
@@ -205,11 +194,7 @@ mod tests {
         let group_finder = Arc::new(MockGroupFinderPort::new());
         let policy_finder = Arc::new(MockPolicyFinderPort::new());
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = create_test_query();
 
@@ -234,11 +219,7 @@ mod tests {
         let group_finder = Arc::new(MockGroupFinderPort::new().with_failure());
         let policy_finder = Arc::new(MockPolicyFinderPort::new());
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = create_test_query();
 
@@ -246,7 +227,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_err(), "Expected error due to group finder failure");
+        assert!(
+            result.is_err(),
+            "Expected error due to group finder failure"
+        );
         match result.unwrap_err() {
             GetEffectivePoliciesError::RepositoryError(msg) => {
                 assert!(msg.contains("Mock group finder failure"));
@@ -263,11 +247,7 @@ mod tests {
         let group_finder = Arc::new(MockGroupFinderPort::new());
         let policy_finder = Arc::new(MockPolicyFinderPort::new().with_failure());
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = create_test_query();
 
@@ -275,7 +255,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_err(), "Expected error due to policy finder failure");
+        assert!(
+            result.is_err(),
+            "Expected error due to policy finder failure"
+        );
         match result.unwrap_err() {
             GetEffectivePoliciesError::RepositoryError(msg) => {
                 assert!(msg.contains("Mock policy finder failure"));
@@ -295,7 +278,8 @@ mod tests {
                 "account123".to_string(),
                 "Group".to_string(),
                 "developers".to_string(),
-            ).to_string(),
+            )
+            .to_string(),
             "Developers".to_string(),
         );
         let group2 = GroupLookupDto::new(
@@ -305,7 +289,8 @@ mod tests {
                 "account123".to_string(),
                 "Group".to_string(),
                 "admins".to_string(),
-            ).to_string(),
+            )
+            .to_string(),
             "Admins".to_string(),
         );
 
@@ -323,8 +308,9 @@ mod tests {
         );
 
         let user_finder = Arc::new(MockUserFinderPort::new().with_user(user_dto.clone()));
-        let group_finder = Arc::new(MockGroupFinderPort::new().with_groups(vec![group1.clone(), group2.clone()]));
-        
+        let group_finder =
+            Arc::new(MockGroupFinderPort::new().with_groups(vec![group1.clone(), group2.clone()]));
+
         // Mock policy finder that returns different policies based on principal
         let policy_finder = Arc::new(MockPolicyFinderPort::new().with_policies(vec![
             user_policy.clone(),
@@ -332,11 +318,7 @@ mod tests {
             group2_policy.clone(),
         ]));
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = create_test_query();
 
@@ -344,7 +326,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_ok(), "Expected successful policy retrieval with groups");
+        assert!(
+            result.is_ok(),
+            "Expected successful policy retrieval with groups"
+        );
         let response = result.unwrap();
         assert_eq!(response.policies.len(), 3);
         assert!(response.policies.contains(&user_policy));
@@ -360,13 +345,10 @@ mod tests {
 
         let user_finder = Arc::new(MockUserFinderPort::new().with_user(user_dto.clone()));
         let group_finder = Arc::new(MockGroupFinderPort::new()); // No groups
-        let policy_finder = Arc::new(MockPolicyFinderPort::new().with_policies(vec![user_policy.clone()]));
+        let policy_finder =
+            Arc::new(MockPolicyFinderPort::new().with_policies(vec![user_policy.clone()]));
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = create_test_query();
 
@@ -374,7 +356,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_ok(), "Expected successful policy retrieval without groups");
+        assert!(
+            result.is_ok(),
+            "Expected successful policy retrieval without groups"
+        );
         let response = result.unwrap();
         assert_eq!(response.policies.len(), 1);
         assert!(response.policies.contains(&user_policy));
@@ -387,14 +372,11 @@ mod tests {
         let group_dto = create_test_group_dto();
 
         let user_finder = Arc::new(MockUserFinderPort::new().with_user(user_dto.clone()));
-        let group_finder = Arc::new(MockGroupFinderPort::new().with_groups(vec![group_dto.clone()]));
+        let group_finder =
+            Arc::new(MockGroupFinderPort::new().with_groups(vec![group_dto.clone()]));
         let policy_finder = Arc::new(MockPolicyFinderPort::new()); // No policies
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = create_test_query();
 
@@ -402,7 +384,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_ok(), "Expected successful retrieval with no policies");
+        assert!(
+            result.is_ok(),
+            "Expected successful retrieval with no policies"
+        );
         let response = result.unwrap();
         assert_eq!(response.policies.len(), 0);
     }
@@ -426,15 +411,13 @@ mod tests {
 
         let policy = create_test_policy();
 
-        let user_finder = Arc::new(MockUserFinderPort::new().with_user(service_account_dto.clone()));
+        let user_finder =
+            Arc::new(MockUserFinderPort::new().with_user(service_account_dto.clone()));
         let group_finder = Arc::new(MockGroupFinderPort::new());
-        let policy_finder = Arc::new(MockPolicyFinderPort::new().with_policies(vec![policy.clone()]));
+        let policy_finder =
+            Arc::new(MockPolicyFinderPort::new().with_policies(vec![policy.clone()]));
 
-        let use_case = GetEffectivePoliciesUseCase::new(
-            user_finder,
-            group_finder,
-            policy_finder,
-        );
+        let use_case = GetEffectivePoliciesUseCase::new(user_finder, group_finder, policy_finder);
 
         let query = GetEffectivePoliciesQuery {
             principal_hrn: service_account_hrn.to_string(),
@@ -444,7 +427,10 @@ mod tests {
         let result = use_case.execute(query).await;
 
         // Assert
-        assert!(result.is_ok(), "Expected successful retrieval for service account");
+        assert!(
+            result.is_ok(),
+            "Expected successful retrieval for service account"
+        );
         let response = result.unwrap();
         assert_eq!(response.principal_hrn, service_account_hrn.to_string());
         assert_eq!(response.policies.len(), 1);

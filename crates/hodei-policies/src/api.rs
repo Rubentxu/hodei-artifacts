@@ -26,7 +26,7 @@ pub mod build_schema {
     // Direct exports for convenience
     pub use crate::features::build_schema::error::BuildSchemaError;
     pub use crate::features::build_schema::use_case::BuildSchemaUseCase;
-    
+
     // Re-export as submodules for path compatibility (hodei_policies::build_schema::dto::*)
     pub mod dto {
         pub use crate::features::build_schema::dto::*;
@@ -48,7 +48,7 @@ pub mod build_schema {
 pub mod evaluate_policies {
     pub use crate::features::evaluate_policies::error::EvaluatePoliciesError;
     pub use crate::features::evaluate_policies::use_case::EvaluatePoliciesUseCase;
-    
+
     // Re-export dto, ports and factories as submodules
     pub mod dto {
         pub use crate::features::evaluate_policies::dto::*;
@@ -67,7 +67,7 @@ pub mod evaluate_policies {
 pub mod load_schema {
     pub use crate::features::load_schema::error::LoadSchemaError;
     pub use crate::features::load_schema::use_case::LoadSchemaUseCase;
-    
+
     // Re-export dto, ports and factories as submodules
     pub mod dto {
         pub use crate::features::load_schema::dto::*;
@@ -86,7 +86,7 @@ pub mod load_schema {
 pub mod playground_evaluate {
     pub use crate::features::playground_evaluate::error::PlaygroundEvaluateError;
     pub use crate::features::playground_evaluate::use_case::PlaygroundEvaluateUseCase;
-    
+
     // Re-export dto, ports, adapters and factories as submodules
     pub mod dto {
         pub use crate::features::playground_evaluate::dto::*;
@@ -108,13 +108,16 @@ pub mod playground_evaluate {
 pub mod register_action_type {
     pub use crate::features::register_action_type::error::RegisterActionTypeError;
     pub use crate::features::register_action_type::use_case::RegisterActionTypeUseCase;
-    
+
     // Re-export dto and ports as submodules for compatibility
     pub mod dto {
         pub use crate::features::register_action_type::dto::*;
     }
     pub mod ports {
         pub use crate::features::register_action_type::ports::*;
+    }
+    pub mod error {
+        pub use crate::features::register_action_type::error::*;
     }
 }
 
@@ -124,13 +127,16 @@ pub mod register_action_type {
 pub mod register_entity_type {
     pub use crate::features::register_entity_type::error::RegisterEntityTypeError;
     pub use crate::features::register_entity_type::use_case::RegisterEntityTypeUseCase;
-    
+
     // Re-export dto and ports as submodules for compatibility
     pub mod dto {
         pub use crate::features::register_entity_type::dto::*;
     }
     pub mod ports {
         pub use crate::features::register_entity_type::ports::*;
+    }
+    pub mod error {
+        pub use crate::features::register_entity_type::error::*;
     }
 }
 
@@ -139,7 +145,7 @@ pub mod register_entity_type {
 // ============================================================================
 pub mod validate_policy {
     pub use crate::features::validate_policy::error::ValidatePolicyError;
-    
+
     // Re-export dto, port and factories as submodules
     pub mod dto {
         pub use crate::features::validate_policy::dto::*;

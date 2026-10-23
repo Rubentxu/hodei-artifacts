@@ -36,18 +36,24 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (deny warnings)
-        run: cargo clippy --workspace --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Check (all targets)
+        run: cargo check --workspace --all-targets
 
       - name: Build
-        run: cargo build --workspace --all-features
+        run: cargo build --workspace
 
       - name: Test (cargo)
-        run: cargo test --workspace --all-features --no-fail-fast
+        run: cargo test --workspace --no-fail-fast
 
       - name: Install nextest
         uses: taiki-e/install-action@v2
         with:
           tool: nextest
 
-      - name: Test (nextest, policies crate)
-        run: cargo nextest run -p policies --all-features --no-fail-fast
+      # Second signal over the same workspace: nextest isolates each test in its
+      # own process, which exposes shared-state leaks that a single-process
+      # `cargo test` run can hide.
+      - name: Test (nextest, workspace)
+        run: cargo nextest run --workspace --no-fail-fast
