@@ -414,7 +414,7 @@ remote):
 | Hecho | Valor observado |
 |---|---|
 | Tag | `v0.1.0` (anotado) → `c3d79a694c7b9e9f7f9c1c359f5f309933b41899` |
-| `refs/heads/main` remoto | `c3d79a694c7b9e9f7f9c1c359f5f309933b41899` (el tag apunta a main) |
+| `refs/heads/main` remoto en el momento de etiquetar | `c3d79a694c7b9e9f7f9c1c359f5f309933b41899` (el tag apunta a main) |
 | Release | `https://github.com/Rubentxu/hodei-artifacts/releases/tag/v0.1.0` |
 | Fecha de publicación | 2026-10-23T23:57:14Z |
 | Assets publicados | `hodei-artifacts-api-0.1.0-x86_64-unknown-linux-gnu.tar.gz`, `SBOM.cdx.json`, `SHA256SUMS`, `release-manifest.json`, `CHANGELOG.md` |

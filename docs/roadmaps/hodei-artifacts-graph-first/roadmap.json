@@ -115,8 +115,9 @@
           "published_at": "2026-10-23T23:57:14Z",
           "release_url": "https://github.com/Rubentxu/hodei-artifacts/releases/tag/v0.1.0",
           "tag_points_to": "c3d79a694c7b9e9f7f9c1c359f5f309933b41899",
-          "remote_main": "c3d79a694c7b9e9f7f9c1c359f5f309933b41899",
-          "tag_points_to_main": true,
+          "origin_main_at_tagging": "c3d79a694c7b9e9f7f9c1c359f5f309933b41899",
+          "main_after_documentation_commit": "91d752f55f180e2244ae4fff8aa3351c7d56cdde (solo documentacion; el release se corta en c3d79a6)",
+          "tag_points_to_main_at_tagging": true,
           "assets": [
             {
               "filename": "hodei-artifacts-api-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
