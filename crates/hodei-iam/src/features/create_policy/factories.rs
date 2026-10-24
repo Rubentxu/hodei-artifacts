@@ -63,6 +63,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "permit(principal, action, resource);".to_string(),
             description: Some("Test".to_string()),
+            attached_principals: Vec::new(),
         };
 
         let result = use_case.execute(command).await;

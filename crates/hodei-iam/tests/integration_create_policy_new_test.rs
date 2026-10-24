@@ -101,6 +101,7 @@ fn valid_command(policy_id: &str) -> CreatePolicyCommand {
         policy_id: policy_id.to_string(),
         policy_content: "permit(principal, action, resource);".to_string(),
         description: Some("Integration test policy".to_string()),
+        attached_principals: Vec::new(),
     }
 }
 
@@ -236,6 +237,7 @@ async fn integration_create_policy_fails_on_empty_id() {
         policy_id: "".to_string(),
         policy_content: "permit(principal, action, resource);".to_string(),
         description: None,
+        attached_principals: Vec::new(),
     };
 
     // Act
@@ -258,6 +260,7 @@ async fn integration_create_policy_fails_on_empty_content() {
         policy_id: "empty-content".to_string(),
         policy_content: "   ".to_string(),
         description: None,
+        attached_principals: Vec::new(),
     };
 
     // Act
@@ -287,6 +290,7 @@ async fn integration_create_policy_with_large_content() {
         policy_id: "large-policy".to_string(),
         policy_content: large_content.clone(),
         description: Some("Large integration test policy".to_string()),
+        attached_principals: Vec::new(),
     };
 
     // Act
@@ -338,6 +342,7 @@ async fn integration_command_serialization() {
         policy_id: "cmd-test".to_string(),
         policy_content: "permit(principal, action, resource);".to_string(),
         description: Some("Command test".to_string()),
+        attached_principals: Vec::new(),
     };
 
     // Act - serialize
@@ -364,6 +369,7 @@ async fn integration_create_policy_with_special_characters_in_id() {
         policy_id: "policy-with-dashes-and-123".to_string(),
         policy_content: "permit(principal, action, resource);".to_string(),
         description: None,
+        attached_principals: Vec::new(),
     };
 
     // Act

@@ -284,6 +284,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "permit(...)".to_string(),
             description: Some("Test".to_string()),
+            attached_principals: Vec::new(),
         };
 
         let result = port.create(command).await;
@@ -299,6 +300,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "permit(...)".to_string(),
             description: None,
+            attached_principals: Vec::new(),
         };
 
         let result = port.create(command).await;
@@ -314,6 +316,7 @@ mod tests {
             policy_id: "existing-policy".to_string(),
             policy_content: "permit(...)".to_string(),
             description: None,
+            attached_principals: Vec::new(),
         };
 
         let result = port.create(command).await;
@@ -331,6 +334,7 @@ mod tests {
             policy_id: "my-policy".to_string(),
             policy_content: "permit(...)".to_string(),
             description: None,
+            attached_principals: Vec::new(),
         };
 
         port.create(command).await.unwrap();

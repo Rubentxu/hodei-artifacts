@@ -55,6 +55,7 @@ use utoipa::OpenApi;
         crate::handlers::iam::list_policies,
         crate::handlers::iam::update_policy,
         crate::handlers::iam::delete_policy,
+        crate::handlers::iam::evaluate_iam_policies,
 
         // Playground endpoints
         crate::handlers::playground::playground_evaluate,
@@ -89,6 +90,8 @@ use utoipa::OpenApi;
             crate::handlers::iam::UpdatePolicyResponse,
             crate::handlers::iam::DeletePolicyRequest,
             crate::handlers::iam::DeletePolicyResponse,
+            crate::handlers::iam::EvaluateIamPoliciesRequest,
+            crate::handlers::iam::EvaluateIamPoliciesResponse,
 
             // Playground schemas
             crate::handlers::playground::PlaygroundEvaluateRequest,

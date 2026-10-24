@@ -58,6 +58,12 @@
 //!   of G21 that keeps the schema from rejecting what it does not know).
 //! - G23 An action the schema declares twice is denied, not resolved by
 //!   guessing one of the candidates.
+//! - G24 `POST /api/v1/iam/evaluate` decides from the **persisted** policies:
+//!   a policy created through the API and attached to a principal is the one
+//!   the evaluation consults, and the one it names as determining.
+//! - G25 (negative of G24) The attachment is a boundary: a stored policy
+//!   attached to another principal is not even consulted, so it cannot grant
+//!   anything to a principal it was never attached to.
 //!
 //! Each test bootstraps its own application on a throwaway RocksDB directory,
 //! so tests never share mutable state.
@@ -127,6 +133,19 @@ const POLICY_OVER_NAMESPACED_ACTION: &str =
 /// A policy conditioned on the context attribute `ip`.
 const POLICY_OVER_CONTEXT_IP: &str =
     r#"permit(principal, action, resource) when { context.ip == "10.0.0.1" };"#;
+
+/// A policy that permits one principal of account A and nothing else.
+const IAM_POLICY_OVER_ONE_PRINCIPAL: &str =
+    r#"permit(principal == Iam::User::"hrn:aws:iam::account-a:User/alice", action, resource);"#;
+
+/// The principal the IAM policy is attached to.
+const IAM_ATTACHED_PRINCIPAL: &str = "hrn:aws:iam::account-a:User/alice";
+
+/// A principal of another account the IAM policy is not attached to.
+const IAM_UNATTACHED_PRINCIPAL: &str = "hrn:aws:iam::account-b:User/bob";
+
+/// The resource the IAM verb is requested on.
+const IAM_EVALUATED_RESOURCE: &str = "hrn:aws:iam::account-a:User/bob";
 
 /// Bootstraps the application on a throwaway RocksDB directory.
 ///
@@ -1135,5 +1154,142 @@ async fn g23_an_action_the_schema_declares_twice_is_denied() {
     assert!(
         errors.iter().any(|e| e.contains("Hodei")) && errors.iter().any(|e| e.contains("Other")),
         "the reason must name both candidates: {errors:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// G24 / G25 — the IAM evaluation consults the persisted policies
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn g24_the_iam_evaluation_decides_from_the_persisted_policies() {
+    let (app, _tmp) = test_app().await;
+
+    let policy_id = "contract-iam-evaluate-policy";
+
+    // The policy is created through the API, attached to one principal: the
+    // attachment is what makes it effective for that principal.
+    let (status, created) = request(
+        &app,
+        Method::POST,
+        "/api/v1/iam/policies",
+        Some(json!({
+            "policy_id": policy_id,
+            "policy_content": IAM_POLICY_OVER_ONE_PRINCIPAL,
+            "description": "contract iam policy",
+            "attached_principals": [IAM_ATTACHED_PRINCIPAL],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create body: {created}");
+    assert_eq!(
+        created["attached_principals"],
+        json!([IAM_ATTACHED_PRINCIPAL]),
+        "the attachment must be reported back: {created}"
+    );
+
+    // The attachment is persisted, not merely echoed: reading the policy back
+    // returns it.
+    let hrn = created["hrn"].as_str().expect("create must return an HRN");
+    let (status, fetched) = request(
+        &app,
+        Method::POST,
+        "/api/v1/iam/policies/get",
+        Some(json!({ "policy_hrn": hrn })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "get body: {fetched}");
+    assert_eq!(
+        fetched["attached_principals"],
+        json!([IAM_ATTACHED_PRINCIPAL]),
+        "the attachment must survive the round trip through the store: {fetched}"
+    );
+
+    // The evaluation consults the stored policy and allows the principal the
+    // policy is attached to.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/iam/evaluate",
+        Some(json!({
+            "principal_hrn": IAM_ATTACHED_PRINCIPAL,
+            "action": "CreateUser",
+            "resource_hrn": IAM_EVALUATED_RESOURCE,
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "evaluate body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!(true),
+        "the persisted policy must be the one that decides: {body}"
+    );
+    assert_eq!(
+        body["policy_ids_evaluated"],
+        json!([policy_id]),
+        "the consulted policy must be the stored one: {body}"
+    );
+    assert_eq!(
+        body["determining_policies"],
+        json!([policy_id]),
+        "the determining policy must be named: {body}"
+    );
+}
+
+#[tokio::test]
+async fn g25_the_iam_evaluation_does_not_consult_a_policy_attached_to_another_principal() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, created) = request(
+        &app,
+        Method::POST,
+        "/api/v1/iam/policies",
+        Some(json!({
+            "policy_id": "contract-iam-attached-elsewhere",
+            "policy_content": IAM_POLICY_OVER_ONE_PRINCIPAL,
+            "description": "contract iam policy",
+            "attached_principals": [IAM_ATTACHED_PRINCIPAL],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create body: {created}");
+
+    // The same stored policy, evaluated for a principal it is not attached to,
+    // is not consulted at all: the denial comes from the absence of any
+    // effective policy, not from the policy's own conditions.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/iam/evaluate",
+        Some(json!({
+            "principal_hrn": IAM_UNATTACHED_PRINCIPAL,
+            "action": "CreateUser",
+            "resource_hrn": IAM_EVALUATED_RESOURCE,
+        })),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "evaluate body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!(false),
+        "a policy attached to another principal must not grant: {body}"
+    );
+    assert_eq!(
+        body["policy_ids_evaluated"],
+        json!([]),
+        "the policy must not even be consulted: {body}"
+    );
+    assert_eq!(
+        body["determining_policies"],
+        json!([]),
+        "no policy determined the denial: {body}"
+    );
+    assert!(
+        body["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("implicit deny")),
+        "the reason must name the implicit deny: {body}"
     );
 }

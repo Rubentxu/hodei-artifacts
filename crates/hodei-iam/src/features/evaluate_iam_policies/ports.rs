@@ -5,8 +5,11 @@
 //! to IAM policy evaluation needs.
 
 use async_trait::async_trait;
+use kernel::application::ports::authorization::AuthorizationError;
 use kernel::domain::HodeiPolicySet;
 use kernel::{HodeiEntity, Hrn};
+
+use super::dto::{EvaluateIamPoliciesCommand, EvaluateIamPoliciesResult};
 
 /// Port for finding and retrieving IAM policies
 ///
@@ -195,4 +198,37 @@ pub enum EntityResolverError {
     /// Internal error
     #[error("Internal error: {0}")]
     InternalError(String),
+}
+
+/// Port for evaluating the IAM policies of a principal
+///
+/// This is the port the application layer consumes to ask the IAM domain for
+/// a decision. It is separate from the kernel's cross-context
+/// `IamPolicyEvaluator` trait: the kernel trait carries the decision and its
+/// reason, while this one also carries **which policies were consulted** and
+/// **which ones determined the decision**, because a consumer that cannot see
+/// the consulted set cannot tell a decision made from the policies from a
+/// decision made from their absence.
+#[async_trait]
+pub trait EvaluateIamPoliciesPort: Send + Sync {
+    /// Evaluate the IAM policies that apply to the principal of the command.
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - The principal, the verb and the resource of the request
+    ///
+    /// # Returns
+    ///
+    /// The decision, its reason, the determining policies and the consulted
+    /// policy ids.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AuthorizationError` if the policies cannot be retrieved, the
+    /// entities cannot be resolved, or the evaluation fails. The evaluation
+    /// **fails closed**: an error is never reported as an allow.
+    async fn evaluate(
+        &self,
+        command: EvaluateIamPoliciesCommand,
+    ) -> Result<EvaluateIamPoliciesResult, AuthorizationError>;
 }

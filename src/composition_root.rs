@@ -50,6 +50,8 @@ pub struct IamPorts {
     pub list_policies: Arc<dyn hodei_iam::features::list_policies::ports::PolicyLister>,
     pub update_policy: Arc<dyn hodei_iam::features::update_policy::ports::UpdatePolicyPort>,
     pub delete_policy: Arc<dyn hodei_iam::features::delete_policy::ports::DeletePolicyPort>,
+    pub evaluate_iam_policies:
+        Arc<dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort>,
 }
 
 /// Composition Root - Punto de ensamblaje de toda la aplicación
@@ -83,6 +85,7 @@ impl CompositionRoot {
             + hodei_iam::features::list_policies::ports::PolicyLister
             + hodei_iam::features::update_policy::ports::UpdatePolicyPort
             + hodei_iam::features::delete_policy::ports::DeletePolicyPort
+            + hodei_iam::features::evaluate_iam_policies::ports::PolicyFinderPort
             + 'static,
     {
         info!("🏗️  Initializing Composition Root (Production)");
@@ -167,9 +170,33 @@ impl CompositionRoot {
             policy_adapter.clone();
 
         // 2.6. Delete policy port
-        info!("  └─ DeletePolicyPort");
+        info!("  ├─ DeletePolicyPort");
         let delete_policy: Arc<dyn hodei_iam::features::delete_policy::ports::DeletePolicyPort> =
-            policy_adapter;
+            policy_adapter.clone();
+
+        // 2.7. IAM policy evaluation
+        //
+        // The evaluation consults the **persisted** policies: the policy finder
+        // is the same adapter that writes them, so the policies the decision
+        // is made from are the ones that were stored. The entities are
+        // materialized from their HRNs — the platform has no identity profile
+        // yet, and the degradation is declared in the resolver itself.
+        info!("  └─ EvaluateIamPoliciesPort");
+        let iam_policy_finder: Arc<
+            dyn hodei_iam::features::evaluate_iam_policies::ports::PolicyFinderPort,
+        > = policy_adapter.clone();
+        let entity_resolver =
+            Arc::new(hodei_iam::features::evaluate_iam_policies::adapter::HrnEntityResolver::new());
+        let evaluate_iam_policies: Arc<
+            dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort,
+        > = Arc::new(
+            hodei_iam::features::evaluate_iam_policies::use_case::EvaluateIamPoliciesUseCase::new(
+                iam_policy_finder,
+                entity_resolver.clone(),
+                entity_resolver,
+                schema_storage.clone(),
+            ),
+        );
 
         let iam_ports = IamPorts {
             register_iam_schema,
@@ -178,6 +205,7 @@ impl CompositionRoot {
             list_policies,
             update_policy,
             delete_policy,
+            evaluate_iam_policies,
         };
 
         info!("✅ Composition Root initialized successfully");
@@ -229,6 +257,7 @@ impl CompositionRoot {
             + hodei_iam::features::list_policies::ports::PolicyLister
             + hodei_iam::features::update_policy::ports::UpdatePolicyPort
             + hodei_iam::features::delete_policy::ports::DeletePolicyPort
+            + hodei_iam::features::evaluate_iam_policies::ports::PolicyFinderPort
             + 'static,
     {
         // En tests, podemos usar implementaciones mock
@@ -317,6 +346,7 @@ mod tests {
                 name: "test-policy".to_string(),
                 content: "permit(principal, action, resource);".to_string(),
                 description: Some("Test policy".to_string()),
+                attached_principals: Vec::new(),
             })
         }
     }
@@ -365,6 +395,19 @@ mod tests {
             _policy_id: &str,
         ) -> Result<(), hodei_iam::features::delete_policy::error::DeletePolicyError> {
             Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl hodei_iam::features::evaluate_iam_policies::ports::PolicyFinderPort for MockPolicyAdapter {
+        async fn get_effective_policies(
+            &self,
+            _principal_hrn: &kernel::Hrn,
+        ) -> Result<
+            kernel::domain::policy::HodeiPolicySet,
+            hodei_iam::features::evaluate_iam_policies::ports::PolicyFinderError,
+        > {
+            Ok(kernel::domain::policy::HodeiPolicySet::new(Vec::new()))
         }
     }
 

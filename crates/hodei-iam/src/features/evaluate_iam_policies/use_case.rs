@@ -29,9 +29,10 @@ use kernel::application::ports::authorization::{
     EvaluationRequest as KernelEvaluationRequest, IamPolicyEvaluator,
 };
 
+use super::dto::{EvaluateIamPoliciesCommand, EvaluateIamPoliciesResult};
 use super::ports::{
-    EntityResolverError, PolicyFinderError, PolicyFinderPort, PrincipalResolverPort,
-    ResourceResolverPort,
+    EntityResolverError, EvaluateIamPoliciesPort, PolicyFinderError, PolicyFinderPort,
+    PrincipalResolverPort, ResourceResolverPort,
 };
 
 // Import types from hodei-policies for delegation
@@ -95,26 +96,26 @@ impl EvaluateIamPoliciesUseCase {
 }
 
 #[async_trait]
-impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
+impl EvaluateIamPoliciesPort for EvaluateIamPoliciesUseCase {
     #[instrument(
-        skip(self, request),
+        skip(self, command),
         fields(
-            principal_hrn = %request.principal_hrn,
-            action = %request.action_name,
-            resource_hrn = %request.resource_hrn
+            principal_hrn = %command.principal_hrn,
+            action = %command.action_name,
+            resource_hrn = %command.resource_hrn
         )
     )]
-    async fn evaluate_iam_policies(
+    async fn evaluate(
         &self,
-        request: KernelEvaluationRequest,
-    ) -> Result<KernelEvaluationDecision, AuthorizationError> {
+        command: EvaluateIamPoliciesCommand,
+    ) -> Result<EvaluateIamPoliciesResult, AuthorizationError> {
         info!("Starting IAM policy evaluation");
 
         // Step 1: Retrieve effective IAM policies for the principal
         debug!("Retrieving effective policies for principal");
         let policy_set = self
             .policy_finder
-            .get_effective_policies(&request.principal_hrn)
+            .get_effective_policies(&command.principal_hrn)
             .await
             .map_err(|e| {
                 warn!(error = %e, "Failed to retrieve policies");
@@ -129,12 +130,11 @@ impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
         // Check if there are any policies (implicit deny if none)
         if policy_set.policies().is_empty() {
             warn!("No policies found for principal, denying by default (implicit deny)");
-            return Ok(KernelEvaluationDecision {
-                principal_hrn: request.principal_hrn.clone(),
-                action_name: request.action_name.clone(),
-                resource_hrn: request.resource_hrn.clone(),
+            return Ok(EvaluateIamPoliciesResult {
                 decision: false,
                 reason: "No IAM policies found for principal (implicit deny)".to_string(),
+                determining_policies: Vec::new(),
+                policy_ids_evaluated: Vec::new(),
             });
         }
 
@@ -142,7 +142,7 @@ impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
         debug!("Resolving principal entity");
         let principal_entity = self
             .principal_resolver
-            .resolve_principal(&request.principal_hrn)
+            .resolve_principal(&command.principal_hrn)
             .await
             .map_err(|e| {
                 warn!(error = %e, "Failed to resolve principal");
@@ -155,7 +155,7 @@ impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
         debug!("Resolving resource entity");
         let resource_entity = self
             .resource_resolver
-            .resolve_resource(&request.resource_hrn)
+            .resolve_resource(&command.resource_hrn)
             .await
             .map_err(|e| {
                 warn!(error = %e, "Failed to resolve resource");
@@ -171,7 +171,7 @@ impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
 
         let auth_request = AuthorizationRequest {
             principal: principal_ref,
-            action: &request.action_name,
+            action: &command.action_name,
             resource: resource_ref,
             context: None, // TODO: Support context if needed
         };
@@ -189,7 +189,7 @@ impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
                 AuthorizationError::EvaluationFailed(format!("Cedar evaluation failed: {}", e))
             })?;
 
-        // Step 6: Map result to kernel types
+        // Step 6: Map the result
         let decision = matches!(evaluation_result.decision, Decision::Allow);
         let reason = if evaluation_result.reasons.is_empty() {
             if decision {
@@ -204,15 +204,47 @@ impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
         info!(
             decision = decision,
             determining_policies = ?evaluation_result.determining_policies,
+            policy_ids_evaluated = ?evaluation_result.policy_ids_evaluated,
             "IAM policy evaluation completed"
         );
 
-        Ok(KernelEvaluationDecision {
-            principal_hrn: request.principal_hrn.clone(),
-            action_name: request.action_name.to_string(),
-            resource_hrn: request.resource_hrn.clone(),
+        Ok(EvaluateIamPoliciesResult {
             decision,
             reason,
+            determining_policies: evaluation_result.determining_policies,
+            policy_ids_evaluated: evaluation_result.policy_ids_evaluated,
+        })
+    }
+}
+
+#[async_trait]
+impl IamPolicyEvaluator for EvaluateIamPoliciesUseCase {
+    #[instrument(
+        skip(self, request),
+        fields(
+            principal_hrn = %request.principal_hrn,
+            action = %request.action_name,
+            resource_hrn = %request.resource_hrn
+        )
+    )]
+    async fn evaluate_iam_policies(
+        &self,
+        request: KernelEvaluationRequest,
+    ) -> Result<KernelEvaluationDecision, AuthorizationError> {
+        let command = EvaluateIamPoliciesCommand {
+            principal_hrn: request.principal_hrn.clone(),
+            action_name: request.action_name.clone(),
+            resource_hrn: request.resource_hrn.clone(),
+        };
+
+        let result = self.evaluate(command).await?;
+
+        Ok(KernelEvaluationDecision {
+            principal_hrn: request.principal_hrn,
+            action_name: request.action_name,
+            resource_hrn: request.resource_hrn,
+            decision: result.decision,
+            reason: result.reason,
         })
     }
 }

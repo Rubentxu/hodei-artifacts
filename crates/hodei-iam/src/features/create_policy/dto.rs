@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 ///         );
 ///     "#.to_string(),
 ///     description: Some("Allows reading documents".to_string()),
+///     attached_principals: vec!["hrn:aws:iam::account-a:User/alice".to_string()],
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +52,19 @@ pub struct CreatePolicyCommand {
     /// A brief description of what this policy does and when it should be used.
     /// This helps with policy management and audit trails.
     pub description: Option<String>,
+
+    /// The principals this policy is attached to
+    ///
+    /// The attachment is what makes the policy *effective* for a principal:
+    /// the IAM evaluation only consults the policies attached to the
+    /// principal it is deciding about. A policy without attachment grants
+    /// nothing — it is never selected by any evaluation.
+    ///
+    /// Each entry is the canonical HRN of a principal. The use case
+    /// validates and canonicalizes them before they are persisted, so the
+    /// stored value is the very string the query binds.
+    #[serde(default)]
+    pub attached_principals: Vec<String>,
 }
 
 impl ActionTrait for CreatePolicyCommand {
@@ -98,6 +112,12 @@ pub struct PolicyView {
     /// Optional description of the policy
     pub description: Option<String>,
 
+    /// The principals this policy is attached to
+    ///
+    /// Reported as the canonical HRNs that were persisted, so the caller can
+    /// see exactly who the policy is effective for.
+    pub attached_principals: Vec<String>,
+
     /// Timestamp when the policy was created
     pub created_at: chrono::DateTime<chrono::Utc>,
 
@@ -115,6 +135,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "permit(principal, action, resource);".to_string(),
             description: Some("Test policy".to_string()),
+            attached_principals: vec!["hrn:aws:iam::account-a:User/alice".to_string()],
         };
 
         let json = serde_json::to_string(&command).unwrap();
@@ -133,6 +154,25 @@ mod tests {
         let command: CreatePolicyCommand = serde_json::from_str(json).unwrap();
         assert_eq!(command.policy_id, "test-policy");
         assert_eq!(command.description, Some("Test policy".to_string()));
+        assert!(
+            command.attached_principals.is_empty(),
+            "a payload without the attachment must deserialize as no attachment"
+        );
+    }
+
+    #[test]
+    fn test_create_policy_command_deserialization_with_attachment() {
+        let json = r#"{
+            "policy_id": "test-policy",
+            "policy_content": "permit(principal, action, resource);",
+            "attached_principals": ["hrn:aws:iam::account-a:User/alice"]
+        }"#;
+
+        let command: CreatePolicyCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            command.attached_principals,
+            vec!["hrn:aws:iam::account-a:User/alice".to_string()]
+        );
     }
 
     #[test]
@@ -141,6 +181,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "permit(principal, action, resource);".to_string(),
             description: None,
+            attached_principals: Vec::new(),
         };
 
         assert!(command.description.is_none());
@@ -152,6 +193,7 @@ mod tests {
             id: Hrn::from_string("hrn:hodei:iam::test:policy/test-policy").unwrap(),
             content: "permit(principal, action, resource);".to_string(),
             description: Some("Test".to_string()),
+            attached_principals: vec!["hrn:aws:iam::account-a:User/alice".to_string()],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

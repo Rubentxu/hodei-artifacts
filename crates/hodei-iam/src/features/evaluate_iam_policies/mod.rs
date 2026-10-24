@@ -4,6 +4,7 @@
 /// to perform a specific action on a resource.
 pub mod adapter;
 
+pub mod dto;
 pub mod error;
 pub mod mocks;
 pub mod ports;

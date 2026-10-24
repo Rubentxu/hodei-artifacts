@@ -83,6 +83,10 @@ pub struct AppState {
 
     /// Port for deleting IAM policies
     pub delete_policy: Arc<dyn hodei_iam::features::delete_policy::ports::DeletePolicyPort>,
+
+    /// Port for evaluating the IAM policies of a principal
+    pub evaluate_iam_policies:
+        Arc<dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort>,
 }
 
 impl AppState {
@@ -139,6 +143,9 @@ impl AppState {
         list_policies: Arc<dyn hodei_iam::features::list_policies::ports::PolicyLister>,
         update_policy: Arc<dyn hodei_iam::features::update_policy::ports::UpdatePolicyPort>,
         delete_policy: Arc<dyn hodei_iam::features::delete_policy::ports::DeletePolicyPort>,
+        evaluate_iam_policies: Arc<
+            dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort,
+        >,
     ) -> Self {
         Self {
             schema_version,
@@ -155,6 +162,7 @@ impl AppState {
             list_policies,
             update_policy,
             delete_policy,
+            evaluate_iam_policies,
         }
     }
 
@@ -187,6 +195,7 @@ impl AppState {
             list_policies: root.iam_ports.list_policies,
             update_policy: root.iam_ports.update_policy,
             delete_policy: root.iam_ports.delete_policy,
+            evaluate_iam_policies: root.iam_ports.evaluate_iam_policies,
         }
     }
 }

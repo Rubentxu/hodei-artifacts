@@ -44,4 +44,11 @@ pub struct PolicyView {
 
     /// Descripción opcional de la política
     pub description: Option<String>,
+
+    /// Los principales a los que está adjunta la política
+    ///
+    /// El adjunto es lo que hace que la política sea *efectiva* para un
+    /// principal, así que se reporta para que el consumidor pueda confirmar
+    /// lo que quedó persistido.
+    pub attached_principals: Vec<String>,
 }

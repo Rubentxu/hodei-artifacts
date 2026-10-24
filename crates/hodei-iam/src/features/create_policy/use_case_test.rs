@@ -26,6 +26,7 @@ async fn test_create_policy_success() {
         policy_id: "TestPolicy".to_string(),
         policy_content: r#"permit(principal, action, resource);"#.to_string(),
         description: Some("Test policy description".to_string()),
+        attached_principals: Vec::new(),
     };
 
     let result = use_case.execute(cmd).await;
@@ -57,6 +58,7 @@ async fn test_create_policy_validation_error() {
         policy_id: "TestPolicy".to_string(),
         policy_content: r#"invalid cedar syntax"#.to_string(),
         description: Some("Test policy description".to_string()),
+        attached_principals: Vec::new(),
     };
 
     let result = use_case.execute(cmd).await;
@@ -83,6 +85,7 @@ async fn test_create_policy_repository_error() {
         policy_id: "TestPolicy".to_string(),
         policy_content: r#"permit(principal, action, resource);"#.to_string(),
         description: Some("Test policy description".to_string()),
+        attached_principals: Vec::new(),
     };
 
     let result = use_case.execute(cmd).await;
@@ -109,6 +112,7 @@ async fn test_create_policy_empty_policy_id() {
         policy_id: "".to_string(),
         policy_content: r#"permit(principal, action, resource);"#.to_string(),
         description: Some("Test policy description".to_string()),
+        attached_principals: Vec::new(),
     };
 
     let result = use_case.execute(cmd).await;
@@ -135,6 +139,7 @@ async fn test_create_policy_empty_content() {
         policy_id: "TestPolicy".to_string(),
         policy_content: "".to_string(),
         description: Some("Test policy description".to_string()),
+        attached_principals: Vec::new(),
     };
 
     let result = use_case.execute(cmd).await;
@@ -161,6 +166,7 @@ async fn test_create_policy_minimal_fields() {
         policy_id: "MinimalPolicy".to_string(),
         policy_content: r#"permit(principal, action, resource);"#.to_string(),
         description: None,
+        attached_principals: Vec::new(),
     };
 
     let result = use_case.execute(cmd).await;
@@ -187,6 +193,7 @@ async fn test_policy_validation_called() {
         policy_id: "TestPolicy".to_string(),
         policy_content: r#"permit(principal, action, resource);"#.to_string(),
         description: Some("Test policy description".to_string()),
+        attached_principals: Vec::new(),
     };
 
     let result = use_case.execute(cmd).await;
@@ -214,6 +221,7 @@ async fn test_policy_id_validation() {
             policy_id: invalid_policy_id.to_string(),
             policy_content: r#"permit(principal, action, resource);"#.to_string(),
             description: Some("Test policy description".to_string()),
+            attached_principals: Vec::new(),
         };
 
         let result = use_case.execute(cmd).await;

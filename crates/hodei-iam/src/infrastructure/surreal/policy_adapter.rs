@@ -17,6 +17,9 @@ use tracing::{debug, error, info, warn};
 // Import the ports from features
 use crate::features::create_policy::ports::CreatePolicyPort;
 use crate::features::delete_policy::ports::DeletePolicyPort;
+use crate::features::evaluate_iam_policies::ports::{
+    PolicyFinderError, PolicyFinderPort as IamPolicyFinderPort,
+};
 use crate::features::get_effective_policies::ports::PolicyFinderPort;
 use crate::features::get_policy::ports::PolicyReader;
 use crate::features::list_policies::ports::PolicyLister;
@@ -38,7 +41,7 @@ use crate::features::update_policy::error::UpdatePolicyError;
 // Import internal domain entities
 
 // Import kernel policy types
-use kernel::domain::policy::{HodeiPolicy, PolicyId};
+use kernel::domain::policy::{HodeiPolicy, HodeiPolicySet, PolicyId};
 
 /// Intermediate structure for deserializing HodeiPolicy from SurrealDB
 #[derive(Debug, Clone, Deserialize)]
@@ -47,6 +50,13 @@ struct HodeiPolicyDbRow {
     id: surrealdb::sql::Thing,
     /// The policy content
     content: String,
+    /// The canonical HRNs of the principals the policy is attached to.
+    ///
+    /// The field is optional so that a record written before the attachment
+    /// existed — or one written without an attachment — still reads back
+    /// instead of failing the whole query.
+    #[serde(default)]
+    attached_principals: Vec<String>,
 }
 
 /// Intermediate structure for reading back the content of a policy record.
@@ -119,7 +129,8 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
         let policy_id = policy_hrn.resource_id();
 
         let content_value = serde_json::json!({
-            "content": policy.content()
+            "content": policy.content(),
+            "attached_principals": command.attached_principals,
         });
 
         let created: Result<Option<HodeiPolicyDbRow>, surrealdb::Error> = self
@@ -166,6 +177,9 @@ impl<C: surrealdb::Connection> PolicyReader for SurrealPolicyAdapter<C> {
 
         match result {
             Ok(Some(db_row)) => {
+                // The attachment is read before the row is consumed by the
+                // conversion into the domain policy.
+                let attached_principals = db_row.attached_principals.clone();
                 let policy = HodeiPolicy::from(db_row);
                 debug!("Policy found: {}", hrn);
                 Ok(GetPolicyView {
@@ -173,6 +187,7 @@ impl<C: surrealdb::Connection> PolicyReader for SurrealPolicyAdapter<C> {
                     name: policy.id().to_string(),
                     content: policy.content().to_string(),
                     description: None, // HodeiPolicy doesn't have description field
+                    attached_principals,
                 })
             }
             Ok(None) => {
@@ -453,5 +468,54 @@ impl<C: surrealdb::Connection> PolicyFinderPort for SurrealPolicyAdapter<C> {
 
         info!("Found {} policies for principal", hodei_policies.len());
         Ok(hodei_policies)
+    }
+}
+
+/// The IAM evaluation's policy finder, backed by the same store.
+///
+/// The policies that apply to a principal are the ones **attached** to it.
+/// The query binds the canonical HRN of the principal and matches it against
+/// the `attached_principals` field of every stored policy, which is the field
+/// the create path writes.
+///
+/// The policies that come back are exactly the ones the evaluation consults:
+/// a policy that is not attached to the principal is not evaluated for it, so
+/// it cannot grant anything either.
+#[async_trait]
+impl<C: surrealdb::Connection> IamPolicyFinderPort for SurrealPolicyAdapter<C> {
+    async fn get_effective_policies(
+        &self,
+        principal_hrn: &Hrn,
+    ) -> Result<HodeiPolicySet, PolicyFinderError> {
+        debug!("Finding effective IAM policies for: {}", principal_hrn);
+
+        let query = "SELECT * FROM policy WHERE $principal_hrn IN attached_principals";
+
+        let mut response = self
+            .db
+            .query(query)
+            .bind(("principal_hrn", principal_hrn.to_string()))
+            .await
+            .map_err(|e| PolicyFinderError::RepositoryError(e.to_string()))?;
+
+        let rows: Vec<HodeiPolicyDbRow> = response
+            .take(0)
+            .map_err(|e| PolicyFinderError::RepositoryError(e.to_string()))?;
+
+        let policies: Vec<HodeiPolicy> = rows
+            .into_iter()
+            .map(|row| {
+                let policy_id = PolicyId::new(short_id(&row.id));
+                HodeiPolicy::new(policy_id, row.content)
+            })
+            .collect();
+
+        let policy_set = HodeiPolicySet::new(policies);
+        info!(
+            "Found {} effective IAM policies for: {}",
+            policy_set.len(),
+            principal_hrn
+        );
+        Ok(policy_set)
     }
 }

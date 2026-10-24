@@ -86,6 +86,10 @@ fn api_v1_routes(app_state: AppState) -> Router {
             "/iam/policies/delete",
             delete(crate::handlers::iam::delete_policy),
         )
+        .route(
+            "/iam/evaluate",
+            post(crate::handlers::iam::evaluate_iam_policies),
+        )
         // Playground routes
         .route(
             "/playground/evaluate",

@@ -22,8 +22,19 @@ use crate::features::create_policy::ports::{
     CreatePolicyPort, CreatePolicyUseCasePort, PolicyValidator,
 };
 use async_trait::async_trait;
+use kernel::Hrn;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
+
+/// The IAM service the attached principals must belong to.
+const IAM_SERVICE: &str = "iam";
+
+/// The IAM resource type that denotes a principal.
+///
+/// `User` is the only IAM type whose entity type declares itself a principal
+/// (`HodeiEntityType::is_principal_type()`); a `Group` is not one, and the
+/// group-derived policies are a separate, deferred capability.
+const IAM_PRINCIPAL_TYPE: &str = "User";
 
 /// Use case for creating IAM policies
 ///
@@ -102,6 +113,16 @@ impl CreatePolicyUseCase {
             return Err(CreatePolicyError::EmptyPolicyContent);
         }
 
+        // Validate and canonicalize the attachment.
+        //
+        // The attachment decides *for whom* the policy is effective: the IAM
+        // evaluation only consults the policies attached to the principal it
+        // is deciding about. It is therefore stored as the canonical HRN — the
+        // very string the query binds — so that the persisted value and the
+        // evaluated principal are compared by identity and not by spelling.
+        command.attached_principals =
+            canonicalize_attached_principals(std::mem::take(&mut command.attached_principals))?;
+
         // Validate policy syntax using hodei-policies
         let validation_command =
             hodei_policies::features::validate_policy::dto::ValidatePolicyCommand {
@@ -151,12 +172,54 @@ impl CreatePolicyUseCase {
             id: policy_hrn,
             content: policy.content().to_string(),
             description: command.description.clone(),
+            attached_principals: command.attached_principals.clone(),
             created_at: now,
             updated_at: now,
         };
 
         Ok(view)
     }
+}
+
+/// Validate the attached principals and return them canonicalized.
+///
+/// Every entry must be a well-formed HRN of an IAM principal. The canonical
+/// form is returned so that what is persisted is exactly what the evaluation
+/// compares against: two spellings of the same identity cannot end up as two
+/// different attachments, and a principal that cannot be named cannot be
+/// silently attached to nothing.
+fn canonicalize_attached_principals(
+    attached: Vec<String>,
+) -> Result<Vec<String>, CreatePolicyError> {
+    let mut canonical: Vec<String> = Vec::with_capacity(attached.len());
+
+    for raw in attached {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(CreatePolicyError::InvalidHrn(
+                "Attached principal cannot be empty".to_string(),
+            ));
+        }
+
+        let hrn = Hrn::from_string(trimmed).ok_or_else(|| {
+            CreatePolicyError::InvalidHrn(format!(
+                "Attached principal is not a valid HRN: {trimmed}"
+            ))
+        })?;
+
+        if hrn.service() != IAM_SERVICE || hrn.resource_type() != IAM_PRINCIPAL_TYPE {
+            return Err(CreatePolicyError::InvalidHrn(format!(
+                "Attached principal must be an {IAM_SERVICE}::{IAM_PRINCIPAL_TYPE} HRN: {trimmed}"
+            )));
+        }
+
+        let canonical_hrn = hrn.to_string();
+        if !canonical.contains(&canonical_hrn) {
+            canonical.push(canonical_hrn);
+        }
+    }
+
+    Ok(canonical)
 }
 
 // Implement CreatePolicyUseCasePort trait for the use case
@@ -182,6 +245,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "permit(principal, action, resource);".to_string(),
             description: Some("Test policy".to_string()),
+            attached_principals: Vec::new(),
         };
 
         let result = use_case.execute(command).await;
@@ -198,6 +262,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "   ".to_string(),
             description: None,
+            attached_principals: Vec::new(),
         };
 
         let result = use_case.execute(command).await;
@@ -217,6 +282,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "invalid policy".to_string(),
             description: None,
+            attached_principals: Vec::new(),
         };
 
         let result = use_case.execute(command).await;
@@ -225,5 +291,69 @@ mod tests {
             result,
             Err(CreatePolicyError::InvalidPolicyContent(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_canonicalizes_the_attachment() {
+        let policy_port = Arc::new(MockCreatePolicyPort::new());
+        let validator = Arc::new(MockPolicyValidator::new());
+        let use_case = CreatePolicyUseCase::new(policy_port, validator);
+
+        let command = CreatePolicyCommand {
+            policy_id: "test-policy".to_string(),
+            policy_content: "permit(principal, action, resource);".to_string(),
+            description: None,
+            attached_principals: vec!["  hrn:aws:iam::account-a:User/alice  ".to_string()],
+        };
+
+        let view = use_case
+            .execute(command)
+            .await
+            .expect("the policy is valid");
+        assert_eq!(
+            view.attached_principals,
+            vec!["hrn:aws:iam::account-a:User/alice".to_string()],
+            "the attachment must be persisted as the canonical HRN"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_rejects_a_malformed_attachment() {
+        let policy_port = Arc::new(MockCreatePolicyPort::new());
+        let validator = Arc::new(MockPolicyValidator::new());
+        let use_case = CreatePolicyUseCase::new(policy_port, validator);
+
+        let command = CreatePolicyCommand {
+            policy_id: "test-policy".to_string(),
+            policy_content: "permit(principal, action, resource);".to_string(),
+            description: None,
+            attached_principals: vec!["not-an-hrn".to_string()],
+        };
+
+        let result = use_case.execute(command).await;
+        assert!(
+            matches!(result, Err(CreatePolicyError::InvalidHrn(_))),
+            "a principal that cannot be named must not be attached to nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_policy_rejects_a_non_principal_attachment() {
+        let policy_port = Arc::new(MockCreatePolicyPort::new());
+        let validator = Arc::new(MockPolicyValidator::new());
+        let use_case = CreatePolicyUseCase::new(policy_port, validator);
+
+        let command = CreatePolicyCommand {
+            policy_id: "test-policy".to_string(),
+            policy_content: "permit(principal, action, resource);".to_string(),
+            description: None,
+            attached_principals: vec!["hrn:aws:iam::account-a:Group/admins".to_string()],
+        };
+
+        let result = use_case.execute(command).await;
+        assert!(
+            matches!(result, Err(CreatePolicyError::InvalidHrn(_))),
+            "a group is not a principal: attaching to it would never be evaluated"
+        );
     }
 }

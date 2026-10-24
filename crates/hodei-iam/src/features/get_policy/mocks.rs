@@ -80,6 +80,7 @@ mod tests {
             name: "Test".to_string(),
             content: "permit(principal, action, resource);".to_string(),
             description: None,
+            attached_principals: Vec::new(),
         };
         let reader = MockPolicyReader::with_policy(policy.clone());
         let result = reader.get_by_hrn(&hrn).await;

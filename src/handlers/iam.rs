@@ -24,6 +24,14 @@ pub struct CreatePolicyRequest {
     pub policy_content: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// The principals the policy is attached to
+    ///
+    /// The attachment is what makes the policy effective for a principal: the
+    /// IAM evaluation only consults the policies attached to the principal it
+    /// is deciding about. A policy created without attachment is never
+    /// consulted, and therefore never grants anything.
+    #[serde(default)]
+    pub attached_principals: Vec<String>,
 }
 
 /// Response from policy creation
@@ -32,6 +40,8 @@ pub struct CreatePolicyResponse {
     pub hrn: String,
     pub content: String,
     pub description: Option<String>,
+    /// The canonical HRNs the policy is attached to
+    pub attached_principals: Vec<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -49,6 +59,8 @@ pub struct GetPolicyResponse {
     pub name: String,
     pub content: String,
     pub description: Option<String>,
+    /// The canonical HRNs the policy is attached to
+    pub attached_principals: Vec<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -116,6 +128,29 @@ pub struct DeletePolicyRequest {
     pub policy_hrn: String,
 }
 
+/// Request to evaluate the IAM policies of a principal
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct EvaluateIamPoliciesRequest {
+    /// The principal the decision is about
+    pub principal_hrn: String,
+    /// The verb being requested
+    pub action: String,
+    /// The resource the verb is requested on
+    pub resource_hrn: String,
+}
+
+/// Response of an IAM policy evaluation
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct EvaluateIamPoliciesResponse {
+    /// Whether the request is allowed
+    pub decision: bool,
+    /// Why the decision was reached
+    pub reason: String,
+    /// The ids of the policies that determined the decision
+    pub determining_policies: Vec<String>,
+    /// The ids of the policies that were consulted
+    pub policy_ids_evaluated: Vec<String>,
+}
 /// Response from policy deletion
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DeletePolicyResponse {
@@ -182,6 +217,7 @@ pub async fn create_policy(
         policy_id: request.policy_id,
         policy_content: request.policy_content,
         description: request.description,
+        attached_principals: request.attached_principals,
     };
 
     let policy_view = state
@@ -208,7 +244,7 @@ pub async fn create_policy(
                 IamApiError::InternalServerError(format!("Storage error: {}", msg))
             }
             hodei_iam::features::create_policy::error::CreatePolicyError::InvalidHrn(msg) => {
-                IamApiError::InternalServerError(format!("Invalid HRN: {}", msg))
+                IamApiError::BadRequest(format!("Invalid HRN: {}", msg))
             }
             hodei_iam::features::create_policy::error::CreatePolicyError::Unauthorized => {
                 IamApiError::Unauthorized("Insufficient permissions".to_string())
@@ -219,6 +255,7 @@ pub async fn create_policy(
         hrn: policy_view.id.to_string(),
         content: policy_view.content,
         description: policy_view.description,
+        attached_principals: policy_view.attached_principals,
         created_at: policy_view.created_at,
         updated_at: policy_view.updated_at,
     }))
@@ -264,6 +301,7 @@ pub async fn get_policy(
         name: policy_view.name,
         content: policy_view.content,
         description: policy_view.description,
+        attached_principals: policy_view.attached_principals,
         created_at: chrono::Utc::now(), // TODO: Add timestamps to domain PolicyView
         updated_at: chrono::Utc::now(),
     }))
@@ -468,6 +506,61 @@ pub async fn delete_policy(
     }))
 }
 
+/// Handler to evaluate the IAM policies of a principal
+///
+/// The decision is made from the policies **persisted** in the store: the
+/// evaluation consults the policies attached to the principal it is deciding
+/// about, and no other.
+#[utoipa::path(
+    post,
+    path = "/api/v1/iam/evaluate",
+    tag = "iam",
+    request_body = EvaluateIamPoliciesRequest,
+    responses(
+        (status = 200, description = "Evaluation completed", body = EvaluateIamPoliciesResponse),
+        (status = 400, description = "Invalid HRN format"),
+        (status = 500, description = "Evaluation failed")
+    )
+)]
+pub async fn evaluate_iam_policies(
+    State(state): State<AppState>,
+    Json(request): Json<EvaluateIamPoliciesRequest>,
+) -> Result<Json<EvaluateIamPoliciesResponse>, IamApiError> {
+    let principal_hrn = kernel::Hrn::from_string(&request.principal_hrn)
+        .ok_or_else(|| IamApiError::BadRequest("Invalid principal HRN format".to_string()))?;
+    let resource_hrn = kernel::Hrn::from_string(&request.resource_hrn)
+        .ok_or_else(|| IamApiError::BadRequest("Invalid resource HRN format".to_string()))?;
+
+    let command = hodei_iam::features::evaluate_iam_policies::dto::EvaluateIamPoliciesCommand {
+        principal_hrn,
+        action_name: request.action,
+        resource_hrn,
+    };
+
+    let result = state
+        .evaluate_iam_policies
+        .evaluate(command)
+        .await
+        .map_err(|e| match e {
+            kernel::application::ports::authorization::AuthorizationError::EvaluationFailed(
+                msg,
+            ) => IamApiError::InternalServerError(format!("Evaluation failed: {}", msg)),
+            kernel::application::ports::authorization::AuthorizationError::PolicyNotFound => {
+                IamApiError::NotFound("Policy not found".to_string())
+            }
+            kernel::application::ports::authorization::AuthorizationError::InvalidPolicyFormat => {
+                IamApiError::BadRequest("Invalid policy format".to_string())
+            }
+        })?;
+
+    Ok(Json(EvaluateIamPoliciesResponse {
+        decision: result.decision,
+        reason: result.reason,
+        determining_policies: result.determining_policies,
+        policy_ids_evaluated: result.policy_ids_evaluated,
+    }))
+}
+
 // ============================================================================
 // ERROR HANDLING
 // ============================================================================
@@ -515,6 +608,7 @@ mod tests {
             policy_id: "test-policy".to_string(),
             policy_content: "permit(principal, action, resource);".to_string(),
             description: Some("Test policy".to_string()),
+            attached_principals: vec!["hrn:aws:iam::account-a:User/alice".to_string()],
         };
 
         let json = serde_json::to_string(&request).unwrap();
