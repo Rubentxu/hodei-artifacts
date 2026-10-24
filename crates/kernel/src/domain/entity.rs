@@ -397,13 +397,15 @@ pub trait ActionTrait {
     /// Nombre del servicio al que pertenece esta acción
     fn service_name() -> ServiceName;
 
-    /// Nombre completo de la acción (Servicio::Action::"Nombre")
+    /// Nombre completo de la acción (`Action::"Nombre"`)
     ///
-    /// Implementación por defecto que combina service_name y name.
+    /// El namespace de acción es **plano**: es la forma que el schema Cedar
+    /// registrado declara sus tipos de acción y la que el motor de evaluación
+    /// construye al resolver una petición. Las tres rutas que producían antes
+    /// formas divergentes (`Iam::Action::"X"` aquí, `Action::"X"` en el motor)
+    /// producen ahora la misma.
     fn action_name() -> String {
-        let service = Self::service_name();
-        let namespace = crate::domain::hrn::Hrn::to_pascal_case(service.as_str());
-        format!("{}::Action::\"{}\"", namespace, Self::name())
+        format!("Action::\"{}\"", Self::name())
     }
 
     /// Tipo de Principal que puede realizar esta acción
@@ -667,7 +669,7 @@ mod tests {
     #[test]
     fn action_trait_full_name() {
         let action_name = CreateUserAction::action_name();
-        assert_eq!(action_name, "Iam::Action::\"CreateUser\"");
+        assert_eq!(action_name, "Action::\"CreateUser\"");
     }
 
     #[test]

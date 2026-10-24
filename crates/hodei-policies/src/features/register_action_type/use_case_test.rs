@@ -185,14 +185,12 @@ mod tests {
 
     #[test]
     fn test_action_name_format() {
-        // Verify that the action names are correctly formatted
-        assert_eq!(ReadAction::action_name(), "Storage::Action::\"Read\"");
-        assert_eq!(WriteAction::action_name(), "Storage::Action::\"Write\"");
-        assert_eq!(DeleteAction::action_name(), "Storage::Action::\"Delete\"");
-        assert_eq!(
-            CreateUserAction::action_name(),
-            "Iam::Action::\"CreateUser\""
-        );
+        // The action namespace is flat: it is the form the registered Cedar
+        // schema declares and the form the evaluation engine resolves.
+        assert_eq!(ReadAction::action_name(), "Action::\"Read\"");
+        assert_eq!(WriteAction::action_name(), "Action::\"Write\"");
+        assert_eq!(DeleteAction::action_name(), "Action::\"Delete\"");
+        assert_eq!(CreateUserAction::action_name(), "Action::\"CreateUser\"");
     }
 
     #[test]

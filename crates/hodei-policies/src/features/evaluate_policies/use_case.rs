@@ -44,10 +44,10 @@ impl EvaluatePoliciesUseCase {
     ///
     /// The evaluation process follows these steps:
     /// 1. Optionally load a Cedar schema based on the evaluation mode
-    /// 2. Load policies into the engine
-    /// 3. Register entities in the engine
-    /// 4. Build the authorization request
-    /// 5. Evaluate and return the decision
+    /// 2. Build the immutable snapshot (policies + entities) of this request
+    /// 3. Build the authorization request
+    /// 4. Evaluate the request against that snapshot
+    /// 5. Return the decision
     ///
     /// # Arguments
     ///
@@ -104,36 +104,35 @@ impl EvaluatePoliciesUseCase {
             }
         };
 
-        // Step 2: Load policies into the engine
-        let policy_texts: Vec<String> = command
+        // Step 2: Build the immutable snapshot for this request
+        //
+        // The snapshot holds the policies and the entities of this request
+        // only. Nothing is stored in the engine between requests, so a
+        // concurrent evaluation cannot observe or contaminate this one.
+        let policy_documents: Vec<crate::internal::engine::types::PolicyDocument> = command
             .policies
             .policies()
             .iter()
-            .map(|policy| policy.content().to_string())
+            .map(|policy| {
+                crate::internal::engine::types::PolicyDocument::new(
+                    policy.id().to_string(),
+                    policy.content().to_string(),
+                )
+            })
             .collect();
 
-        self.engine
-            .load_policies(policy_texts)
-            .await
+        let snapshot = self
+            .engine
+            .build_snapshot(&policy_documents, command.entities)
             .map_err(|e| EvaluatePoliciesError::PolicyLoadError(e.to_string()))?;
 
         info!(
-            "Successfully loaded {} policies",
-            command.policies.policies().len()
+            policies = snapshot.policy_count(),
+            entities = snapshot.entity_count(),
+            "Built the evaluation snapshot"
         );
 
-        // Step 3: Register entities in the engine
-        self.engine
-            .register_entities(command.entities.to_vec())
-            .await
-            .map_err(|e| EvaluatePoliciesError::EntityRegistrationError(e.to_string()))?;
-
-        info!(
-            "Successfully registered {} entities",
-            command.entities.len()
-        );
-
-        // Step 4: Build engine request
+        // Step 3: Build engine request
         let engine_request = crate::internal::engine::types::EngineRequest::new(
             command.request.principal,
             command.request.action,
@@ -141,11 +140,10 @@ impl EvaluatePoliciesUseCase {
         )
         .with_context(command.request.context.clone().unwrap_or_default());
 
-        // Step 5: Evaluate authorization
+        // Step 4: Evaluate authorization against this request's snapshot
         let decision = self
             .engine
-            .is_authorized(&engine_request)
-            .await
+            .evaluate(&snapshot, &engine_request)
             .map_err(|e| EvaluatePoliciesError::EvaluationError(e.to_string()))?;
 
         debug!(
@@ -153,7 +151,7 @@ impl EvaluatePoliciesUseCase {
             "Policy evaluation completed"
         );
 
-        // Step 6: Map engine decision to use case decision
+        // Step 5: Map engine decision to use case decision
         let mapped_decision = if decision.is_allowed() {
             Decision::Allow
         } else {
@@ -174,11 +172,11 @@ impl EvaluatePoliciesUseCase {
             "Policy evaluation completed successfully"
         );
 
-        // Step 7: Build and return evaluation decision
+        // Step 6: Build and return evaluation decision
         let mut evaluation_decision = EvaluationDecision {
             decision: mapped_decision,
-            determining_policies: vec![],
-            reasons: vec![],
+            determining_policies: decision.determining_policies().to_vec(),
+            reasons: vec![decision.reason().to_string()],
             used_schema_version,
             policy_ids_evaluated,
             diagnostics,
@@ -264,9 +262,12 @@ impl EvaluatePoliciesUseCase {
                             },
                         );
 
-                        // TODO: In the future, we should actually use the loaded schema
-                        // in the authorization engine. For now, we just track that it was loaded.
-                        // The engine would need to be updated to accept a Schema parameter.
+                        // The loaded schema is not applied to the request yet: the
+                        // engine evaluates in schema-less mode. Applying it (and
+                        // making the schema the authority of the action namespace)
+                        // is scheduled for H1b; see
+                        // `ADR/011-h1a-identity-and-decision-core.md` and BASELINE
+                        // defect O8.
 
                         Ok((version, diagnostics))
                     }
@@ -300,20 +301,11 @@ impl EvaluatePoliciesUseCase {
 
     /// Clear all cached data in the engine
     ///
-    /// This method clears all loaded policies and registered entities,
-    /// useful for testing or when you need to start fresh.
+    /// The engine keeps no cache: policies and entities live in the
+    /// per-request snapshot and are dropped with it. This method therefore
+    /// does nothing; it is kept so the port contract stays stable.
     pub async fn clear_cache(&self) -> Result<(), EvaluatePoliciesError> {
-        self.engine
-            .clear_policies()
-            .await
-            .map_err(|e| EvaluatePoliciesError::CacheClearError(e.to_string()))?;
-
-        self.engine
-            .clear_entities()
-            .await
-            .map_err(|e| EvaluatePoliciesError::CacheClearError(e.to_string()))?;
-
-        debug!("Cleared policy evaluation cache");
+        debug!("The evaluation engine holds no cache; nothing to clear");
 
         Ok(())
     }

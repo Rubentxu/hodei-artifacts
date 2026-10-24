@@ -173,10 +173,7 @@ mod tests {
     fn test_create_user_action() {
         assert_eq!(CreateUserAction::name(), "CreateUser");
         assert_eq!(CreateUserAction::service_name().as_str(), "iam");
-        assert_eq!(
-            CreateUserAction::action_name(),
-            "Iam::Action::\"CreateUser\""
-        );
+        assert_eq!(CreateUserAction::action_name(), "Action::\"CreateUser\"");
         assert_eq!(CreateUserAction::applies_to_principal(), "Iam::User");
         assert_eq!(CreateUserAction::applies_to_resource(), "Iam::User");
     }
@@ -185,10 +182,7 @@ mod tests {
     fn test_create_group_action() {
         assert_eq!(CreateGroupAction::name(), "CreateGroup");
         assert_eq!(CreateGroupAction::service_name().as_str(), "iam");
-        assert_eq!(
-            CreateGroupAction::action_name(),
-            "Iam::Action::\"CreateGroup\""
-        );
+        assert_eq!(CreateGroupAction::action_name(), "Action::\"CreateGroup\"");
         assert_eq!(CreateGroupAction::applies_to_principal(), "Iam::User");
         assert_eq!(CreateGroupAction::applies_to_resource(), "Iam::Group");
     }

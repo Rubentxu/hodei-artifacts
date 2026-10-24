@@ -19,6 +19,15 @@ use std::str::FromStr;
 /// This function converts a kernel HRN to a Cedar EntityUid that can be used
 /// in Cedar policy evaluation.
 ///
+/// The identifier of the entity is the **HRN canónico completo**: la
+/// partición, el servicio, la región, la cuenta, el tipo y el id del
+/// recurso. Dos recursos homónimos en cuentas distintas producen UIDs
+/// distintos, así que no pueden confundirse en la evaluación.
+///
+/// El UID se construye solo con APIs Cedar tipadas (`EntityTypeName`,
+/// `EntityId`, `EntityUid::from_type_name_and_id`): el texto del HRN no se
+/// interpola en una cadena de UID.
+///
 /// # Arguments
 ///
 /// * `hrn` - The HRN to translate
@@ -54,14 +63,51 @@ pub fn translate_to_cedar_euid(hrn: &Hrn) -> Result<EntityUid, TranslationError>
             |e| TranslationError::InvalidEntityTypeName(format!("{}: {}", type_name, e)),
         )?;
 
-    // Create Cedar EntityId
-    let entity_id = EntityId::new(hrn.resource_id());
+    // Create Cedar EntityId with the fully scoped identifier
+    let entity_id = EntityId::new(hrn.scoped_entity_id());
 
     // Combine into EntityUid
     Ok(EntityUid::from_type_name_and_id(
         entity_type_name,
         entity_id,
     ))
+}
+
+/// Translate an action name to a Cedar EntityUid
+///
+/// The action namespace is **flat**: `Action::"Read"`. It is the same form
+/// the registered Cedar schema declares its action types with, and the same
+/// form `ActionTrait::action_name()` produces.
+///
+/// # Arguments
+///
+/// * `name` - The action name (e.g. "Read", "CreateUser")
+///
+/// # Errors
+///
+/// Returns an error if the action name cannot be represented as a Cedar
+/// entity identifier.
+pub fn translate_action_to_cedar_euid(name: &str) -> Result<EntityUid, TranslationError> {
+    let action_type_name = EntityTypeName::from_str("Action")
+        .map_err(|e| TranslationError::InvalidEntityTypeName(format!("Action: {}", e)))?;
+
+    Ok(EntityUid::from_type_name_and_id(
+        action_type_name,
+        EntityId::new(name),
+    ))
+}
+
+/// Translate any HRN to a Cedar EntityUid, applying the action special case
+///
+/// An HRN whose resource type is `Action` denotes a verb, not a resource:
+/// it maps to the flat action UID. Any other HRN maps to the scoped
+/// resource UID.
+pub fn translate_hrn_to_cedar_euid(hrn: &Hrn) -> Result<EntityUid, TranslationError> {
+    if hrn.is_action() {
+        translate_action_to_cedar_euid(hrn.resource_id())
+    } else {
+        translate_to_cedar_euid(hrn)
+    }
 }
 
 /// Translate a HodeiEntity to a Cedar Entity
@@ -157,10 +203,7 @@ fn translate_to_cedar_euid_from_str(hrn_str: &str) -> Result<EntityUid, Translat
         TranslationError::InvalidEntityTypeName(format!("Failed to parse HRN: {}", hrn_str))
     })?;
 
-    let entity_uid_str = hrn.entity_uid_string();
-    EntityUid::from_str(&entity_uid_str).map_err(|e| {
-        TranslationError::InvalidEntityTypeName(format!("Failed to create EntityUid: {}", e))
-    })
+    translate_hrn_to_cedar_euid(&hrn)
 }
 
 // ============================================================================
@@ -312,7 +355,71 @@ mod tests {
         let euid = euid.unwrap();
         // Cedar EntityUid doesn't expose namespace directly, just verify the full type name
         assert_eq!(euid.type_name().to_string(), "Iam::User");
-        assert_eq!(euid.id().escaped(), "alice");
+        // The identifier carries the whole scope, not only the resource name
+        assert_eq!(euid.id().escaped(), "hrn:aws:iam::123:User/alice");
+    }
+
+    /// Dos recursos homónimos en cuentas distintas no pueden compartir UID:
+    /// es la garantía de aislamiento inter-tenant.
+    #[test]
+    fn homonyms_of_different_accounts_get_distinct_uids() {
+        let in_a = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "account-a".to_string(),
+            "User".to_string(),
+            "alice".to_string(),
+        );
+        let in_b = Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "account-b".to_string(),
+            "User".to_string(),
+            "alice".to_string(),
+        );
+
+        let uid_a = translate_to_cedar_euid(&in_a).expect("uid a");
+        let uid_b = translate_to_cedar_euid(&in_b).expect("uid b");
+
+        assert_ne!(uid_a, uid_b);
+        assert_eq!(uid_a.type_name().to_string(), uid_b.type_name().to_string());
+    }
+
+    /// La acción usa el namespace plano, el mismo que declara el schema
+    /// registrado y que produce `ActionTrait::action_name()`.
+    #[test]
+    fn an_action_maps_to_the_flat_action_uid() {
+        let action = Hrn::action("iam", "CreateUser");
+
+        let uid = translate_hrn_to_cedar_euid(&action).expect("action uid");
+
+        assert_eq!(uid.type_name().to_string(), "Action");
+        assert_eq!(uid.id().escaped(), "CreateUser");
+    }
+
+    /// Un recurso no acción conserva su tipo con namespace.
+    ///
+    /// El namespace es el servicio declarado (`artifacts` → `Artifacts`) y el
+    /// nombre del tipo es el tipo de recurso (`repository` → `Repository`),
+    /// que es la misma regla que usa `HodeiEntityType::entity_type_name()`
+    /// al registrar el schema.
+    #[test]
+    fn a_resource_is_not_an_action() {
+        let resource = Hrn::new(
+            "hodei".to_string(),
+            "artifacts".to_string(),
+            "acme".to_string(),
+            "repository".to_string(),
+            "releases".to_string(),
+        );
+
+        let uid = translate_hrn_to_cedar_euid(&resource).expect("resource uid");
+
+        assert_eq!(uid.type_name().to_string(), "Artifacts::Repository");
+        assert_eq!(
+            uid.id().escaped(),
+            "hrn:hodei:artifacts::acme:repository/releases"
+        );
     }
 
     #[test]
@@ -333,7 +440,10 @@ mod tests {
         assert!(cedar_entity.is_ok());
 
         let cedar_entity = cedar_entity.unwrap();
-        assert_eq!(cedar_entity.uid().id().escaped(), "alice");
+        assert_eq!(
+            cedar_entity.uid().id().escaped(),
+            "hrn:aws:iam::123:User/alice"
+        );
 
         // Check attributes - Entity doesn't have attrs() method directly
         // We'll just verify the entity was created successfully

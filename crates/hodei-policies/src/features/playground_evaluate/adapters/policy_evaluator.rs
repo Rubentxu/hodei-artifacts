@@ -79,6 +79,11 @@ impl PolicyEvaluatorAdapter {
 
     /// Convert an HRN to a Cedar EntityUid
     ///
+    /// The UID is built with the typed Cedar APIs, never by interpolating
+    /// the HRN text: the identifier carries the whole scope (partition,
+    /// service, region, account, type and id), so two homonyms of different
+    /// accounts are different entities.
+    ///
     /// # Arguments
     ///
     /// * `hrn` - The HRN to convert
@@ -91,10 +96,24 @@ impl PolicyEvaluatorAdapter {
     ///
     /// Returns an error if the HRN cannot be converted
     fn hrn_to_entity_uid(&self, hrn: &kernel::Hrn) -> Result<EntityUid, PlaygroundEvaluateError> {
-        let entity_uid_string = hrn.entity_uid_string();
-        EntityUid::from_str(&entity_uid_string).map_err(|e| {
+        crate::internal::engine::translator::translate_to_cedar_euid(hrn).map_err(|e| {
             warn!(hrn = %hrn, error = %e, "Failed to convert HRN to EntityUid");
             PlaygroundEvaluateError::InvalidRequest(format!("Invalid HRN '{}': {}", hrn, e))
+        })
+    }
+
+    /// Convert an action HRN to a Cedar EntityUid
+    ///
+    /// An action HRN denotes a verb, not a resource: it maps to the flat
+    /// `Action::"name"` form, the same form the evaluation engine and the
+    /// registered schema use.
+    fn action_to_entity_uid(
+        &self,
+        hrn: &kernel::Hrn,
+    ) -> Result<EntityUid, PlaygroundEvaluateError> {
+        crate::internal::engine::translator::translate_hrn_to_cedar_euid(hrn).map_err(|e| {
+            warn!(hrn = %hrn, error = %e, "Failed to convert action HRN to EntityUid");
+            PlaygroundEvaluateError::InvalidRequest(format!("Invalid action '{}': {}", hrn, e))
         })
     }
 
@@ -118,7 +137,7 @@ impl PolicyEvaluatorAdapter {
         debug!("Building Cedar authorization request");
 
         let principal = self.hrn_to_entity_uid(&request.principal)?;
-        let action = self.hrn_to_entity_uid(&request.action)?;
+        let action = self.action_to_entity_uid(&request.action)?;
         let resource = self.hrn_to_entity_uid(&request.resource)?;
 
         // For now, create an empty context

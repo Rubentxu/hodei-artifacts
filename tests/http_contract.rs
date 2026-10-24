@@ -26,6 +26,14 @@
 //!   endpoint is the identifier accepted by the others.
 //! - G7 Creating the same policy twice is a conflict.
 //! - G8 Creating a policy with empty content is a bad request.
+//! - G9 `POST /api/v1/policies/evaluate` decides for real: a `permit` allows
+//!   and names the policy that determined the decision.
+//! - G10 An explicit `forbid` prevails over the `permit` (the discriminating
+//!   negative of G9) and the default without policies is deny.
+//! - G11 A malformed HRN is a bad request, not a silent decision (the
+//!   discriminating negative of G9's input handling).
+//! - G12 A policy scoped to one account does not reach a homonym of another
+//!   account: the tenant boundary is structural.
 //!
 //! Each test bootstraps its own application on a throwaway RocksDB directory,
 //! so tests never share mutable state.
@@ -361,5 +369,183 @@ async fn g8_creating_a_policy_without_content_is_a_bad_request() {
         status,
         StatusCode::BAD_REQUEST,
         "an empty policy must be rejected: {body}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// G9 / G10 / G11 / G12 — real policy evaluation
+// ---------------------------------------------------------------------------
+
+/// Builds the body of an evaluation request.
+///
+/// The mode is explicit (`NoSchema`) so the contract does not depend on
+/// whether a schema happens to be stored: H1a evaluates schema-less.
+fn evaluate_body(principal_hrn: &str, resource_hrn: &str, policies: &[&str]) -> Value {
+    json!({
+        "principal_hrn": principal_hrn,
+        "action": "Read",
+        "resource_hrn": resource_hrn,
+        "policies": policies,
+        "context": {},
+        "evaluation_mode": "NoSchema",
+    })
+}
+
+#[tokio::test]
+async fn g9_a_permit_allows_and_names_the_determining_policy() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/policies/evaluate",
+        Some(evaluate_body(
+            "hrn:aws:iam::account-a:User/alice",
+            "hrn:aws:iam::account-a:User/bob",
+            &[VALID_POLICY],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "evaluate body: {body}");
+    assert_eq!(body["decision"], json!("Allow"));
+    assert_eq!(body["determining_policies"], json!(["policy_0"]));
+    assert_eq!(body["policy_ids_evaluated"], json!(["policy_0"]));
+}
+
+#[tokio::test]
+async fn g10_an_explicit_forbid_prevails_over_the_permit() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/policies/evaluate",
+        Some(evaluate_body(
+            "hrn:aws:iam::account-a:User/alice",
+            "hrn:aws:iam::account-a:User/bob",
+            &[VALID_POLICY, "forbid(principal, action, resource);"],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "evaluate body: {body}");
+    assert_eq!(body["decision"], json!("Deny"));
+    assert_eq!(
+        body["determining_policies"],
+        json!(["policy_1"]),
+        "the forbid must be the policy that determined the decision"
+    );
+
+    // Without any policy the default is deny as well.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/policies/evaluate",
+        Some(evaluate_body(
+            "hrn:aws:iam::account-a:User/alice",
+            "hrn:aws:iam::account-a:User/bob",
+            &[],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "evaluate body: {body}");
+    assert_eq!(body["decision"], json!("Deny"));
+}
+
+#[tokio::test]
+async fn g11_a_malformed_hrn_is_a_bad_request() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/policies/evaluate",
+        Some(evaluate_body(
+            "not-an-hrn",
+            "hrn:aws:iam::account-a:User/bob",
+            &[VALID_POLICY],
+        )),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a malformed HRN must be rejected: {body}"
+    );
+
+    // The same holds for the resource side of the request.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/policies/evaluate",
+        Some(evaluate_body(
+            "hrn:aws:iam::account-a:User/alice",
+            "hrn:aws:iam::account-a:User/",
+            &[VALID_POLICY],
+        )),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a malformed resource HRN must be rejected: {body}"
+    );
+}
+
+/// El límite de tenant es estructural: una política que nombra al principal de
+/// una cuenta no alcanza al homónimo de otra cuenta.
+#[tokio::test]
+async fn g12_a_policy_scoped_to_one_account_does_not_reach_another_account() {
+    let (app, _tmp) = test_app().await;
+
+    let policy = "permit(principal, action, resource) when { principal == Iam::User::\"hrn:aws:iam::account-a:User/alice\" };";
+
+    // The principal of account A is the one the policy names: allowed.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/policies/evaluate",
+        Some(evaluate_body(
+            "hrn:aws:iam::account-a:User/alice",
+            "hrn:aws:iam::account-a:User/bob",
+            &[policy],
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "evaluate body: {body}");
+    assert_eq!(body["decision"], json!("Allow"));
+
+    // The homonym of account B is a different entity, so the same policy
+    // does not grant it. The resource is the principal of account A, so the
+    // entity the policy mentions exists in the request and the denial comes
+    // from the policy, not from an evaluation error.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/policies/evaluate",
+        Some(evaluate_body(
+            "hrn:aws:iam::account-b:User/alice",
+            "hrn:aws:iam::account-a:User/alice",
+            &[policy],
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "evaluate body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("Deny"),
+        "a policy scoped to account-a must not grant account-b"
+    );
+    assert!(
+        !body["diagnostics"]
+            .as_array()
+            .expect("diagnostics must be an array")
+            .iter()
+            .any(|d| d["level"] == json!("error")),
+        "the denial must come from the policy, not from an evaluation error: {body}"
     );
 }

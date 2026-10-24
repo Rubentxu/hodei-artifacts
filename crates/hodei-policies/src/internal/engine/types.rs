@@ -35,7 +35,6 @@ impl AuthorizationDecision {
     }
 
     /// Create an allow decision with a custom reason
-    #[allow(dead_code)]
     pub fn allow_with_reason(reason: String) -> Self {
         Self {
             decision: Decision::Allow,
@@ -54,7 +53,6 @@ impl AuthorizationDecision {
     }
 
     /// Create a deny decision with a custom reason
-    #[allow(dead_code)]
     pub fn deny_with_reason(reason: String) -> Self {
         Self {
             decision: Decision::Deny,
@@ -64,7 +62,6 @@ impl AuthorizationDecision {
     }
 
     /// Add determining policies to the decision
-    #[allow(dead_code)]
     pub fn with_policies(mut self, policies: Vec<String>) -> Self {
         self.determining_policies = policies;
         self
@@ -82,13 +79,11 @@ impl AuthorizationDecision {
     }
 
     /// Get the reason for the decision
-    #[allow(dead_code)]
     pub fn reason(&self) -> &str {
         &self.reason
     }
 
     /// Get the determining policies
-    #[allow(dead_code)]
     pub fn determining_policies(&self) -> &[String] {
         &self.determining_policies
     }

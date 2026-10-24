@@ -2,46 +2,69 @@
 //!
 //! This module implements a basic Cedar-based authorization engine that works
 //! with the current Cedar API and compiles successfully.
+//!
+//! # Statelessness
+//!
+//! The engine keeps **no mutable state between requests**. Policies and
+//! entities are compiled into an immutable [`EvaluationSnapshot`] that is
+//! built **per request** and handed to [`AuthorizationEngine::evaluate`].
+//! Two concurrent evaluations can never observe each other's policies or
+//! entities: there is simply no shared registry to read from or write to.
+//!
+//! ## Schema-less Operation
+//!
+//! By default, this engine operates without a Cedar schema, which means:
+//! - Policies are evaluated based on runtime entity data
+//! - Actions are referenced with the flat `Action::"Name"` form
+//! - No compile-time validation of principal/resource types
+//! - Maximum flexibility - any entity type can use any action
+//!
+//! ## When to Use Schema
+//!
+//! If you need Cedar's schema validation (type checking, action constraints),
+//! you should:
+//! 1. Register actions using types that implement `kernel::ActionTrait`
+//! 2. Build a schema using `EngineBuilder`
+//! 3. Pass the schema explicitly during evaluation
+//!
+//! Applying the schema to the request is scheduled for H1b (see
+//! `ADR/011-h1a-identity-and-decision-core.md`).
 
 use super::translator;
-use super::types::{AuthorizationDecision, EngineError, EngineRequest};
+use super::types::{AuthorizationDecision, EngineError, EngineRequest, PolicyDocument};
 use cedar_policy::{Authorizer, Context, Entities, Policy, PolicySet, Request};
 use kernel::HodeiEntity;
-use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock as TokioRwLock;
 use tracing::{debug, info};
 
 /// Simple Authorization Engine
 ///
-/// This engine evaluates Cedar policies without requiring a schema.
-/// Cedar can function perfectly in "schema-less mode" where policies are evaluated
-/// based on their content without compile-time type checking.
-///
-/// ## Schema-less Operation
-///
-/// By default, this engine operates without a Cedar schema, which means:
-/// - Policies are evaluated based on runtime entity data
-/// - Actions are referenced as strings (e.g., Action::"Read")
-/// - No compile-time validation of principal/resource types
-/// - Maximum flexibility - any entity type can use any action
-///
-/// ## When to Use Schema
-///
-/// If you need Cedar's schema validation (type checking, action constraints),
-/// you should:
-/// 1. Register actions using types that implement `kernel::ActionTrait`
-/// 2. Build a schema using `EngineBuilder`
-/// 3. Pass the schema explicitly during evaluation
-///
-/// For most use cases, schema-less operation is sufficient and more flexible.
+/// The engine is a thin wrapper around Cedar's [`Authorizer`]: it holds no
+/// policies and no entities. Everything it needs comes from the
+/// [`EvaluationSnapshot`] the caller passes to [`AuthorizationEngine::evaluate`].
 pub struct AuthorizationEngine {
     /// Cedar authorizer
     authorizer: Authorizer,
-    /// Loaded policies
-    policies: Arc<TokioRwLock<PolicySet>>,
-    /// Entity store
-    entities: Arc<TokioRwLock<Entities>>,
+}
+
+/// Immutable snapshot of the policies and entities of one evaluation
+///
+/// The snapshot is built once per request and never mutated afterwards, so
+/// it cannot be contaminated by another request.
+pub struct EvaluationSnapshot {
+    policies: PolicySet,
+    entities: Entities,
+}
+
+impl EvaluationSnapshot {
+    /// Number of policies in the snapshot
+    pub fn policy_count(&self) -> usize {
+        self.policies.policies().count()
+    }
+
+    /// Number of entities in the snapshot
+    pub fn entity_count(&self) -> usize {
+        self.entities.iter().count()
+    }
 }
 
 impl AuthorizationEngine {
@@ -49,12 +72,65 @@ impl AuthorizationEngine {
     pub fn new() -> Self {
         Self {
             authorizer: Authorizer::new(),
-            policies: Arc::new(TokioRwLock::new(PolicySet::new())),
-            entities: Arc::new(TokioRwLock::new(Entities::empty())),
         }
     }
 
-    /// Evaluate an authorization request in schema-less mode
+    /// Build the immutable snapshot for a single evaluation
+    ///
+    /// The snapshot compiles the policies and translates the entities once,
+    /// so the evaluation itself does not pay for it and cannot observe a
+    /// different snapshot than the one it was given.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a policy cannot be parsed or added to the policy
+    /// set, or if an entity cannot be translated to Cedar.
+    pub fn build_snapshot(
+        &self,
+        policies: &[PolicyDocument],
+        entities: &[&dyn HodeiEntity],
+    ) -> Result<EvaluationSnapshot, EngineError> {
+        let mut policy_set = PolicySet::new();
+
+        for policy in policies {
+            let cedar_policy = Policy::parse(
+                Some(cedar_policy::PolicyId::new(policy.id())),
+                policy.content(),
+            )
+            .map_err(|e| {
+                EngineError::InvalidPolicy(format!("Policy {} parse error: {}", policy.id(), e))
+            })?;
+
+            policy_set.add(cedar_policy).map_err(|e| {
+                EngineError::InvalidPolicy(format!("Failed to add policy {}: {}", policy.id(), e))
+            })?;
+        }
+
+        let cedar_entities: Result<Vec<_>, _> = entities
+            .iter()
+            .map(|entity| translator::translate_to_cedar_entity(*entity))
+            .collect();
+
+        let cedar_entities =
+            cedar_entities.map_err(|e| EngineError::TranslationError(e.to_string()))?;
+
+        let entity_store = Entities::from_entities(cedar_entities, None).map_err(|e| {
+            EngineError::TranslationError(format!("Failed to create entities: {}", e))
+        })?;
+
+        debug!(
+            policies = policy_set.policies().count(),
+            entities = entity_store.iter().count(),
+            "Built evaluation snapshot"
+        );
+
+        Ok(EvaluationSnapshot {
+            policies: policy_set,
+            entities: entity_store,
+        })
+    }
+
+    /// Evaluate an authorization request against an immutable snapshot
     ///
     /// This method evaluates policies without Cedar schema validation.
     /// Actions are treated as strings and entities are validated only
@@ -62,9 +138,15 @@ impl AuthorizationEngine {
     ///
     /// This approach provides maximum flexibility while maintaining
     /// Cedar's powerful policy evaluation capabilities.
-    pub async fn is_authorized<'a>(
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the entities or the action cannot be translated,
+    /// or if the Cedar request cannot be built.
+    pub fn evaluate(
         &self,
-        request: &EngineRequest<'a>,
+        snapshot: &EvaluationSnapshot,
+        request: &EngineRequest<'_>,
     ) -> Result<AuthorizationDecision, EngineError> {
         debug!("Starting authorization evaluation");
 
@@ -77,9 +159,9 @@ impl AuthorizationEngine {
         debug!("Translated entities successfully");
 
         // 2. Build Cedar action EntityUid
-        // Use a generic "Action" namespace instead of service-specific
-        let action_uid_str = format!("Action::\"{}\"", request.action);
-        let action_uid = cedar_policy::EntityUid::from_str(&action_uid_str)
+        // The action namespace is flat, the same form the registered schema
+        // declares and the same form `ActionTrait::action_name()` produces.
+        let action_uid = translator::translate_action_to_cedar_euid(request.action)
             .map_err(|e| EngineError::EvaluationFailed(format!("Invalid action: {}", e)))?;
 
         // 3. Build Cedar Context from request context
@@ -115,166 +197,45 @@ impl AuthorizationEngine {
         )
         .map_err(|e| EngineError::EvaluationFailed(format!("Failed to build request: {}", e)))?;
 
-        // 5. Get policies and entities for evaluation
-        let policies = self.policies.read().await;
-        let entities = self.entities.read().await;
-
-        // 6. Evaluate with Cedar
-        let response = self
-            .authorizer
-            .is_authorized(&cedar_request, &policies, &entities);
+        // 5. Evaluate with Cedar against the request's own snapshot
+        let response =
+            self.authorizer
+                .is_authorized(&cedar_request, &snapshot.policies, &snapshot.entities);
         debug!("Cedar evaluation complete: {:?}", response.decision());
 
-        // 7. Map response to decision
+        // 6. Map response to decision
+        let determining_policies: Vec<String> = response
+            .diagnostics()
+            .reason()
+            .map(|policy_id| policy_id.to_string())
+            .collect();
+
+        let errors: Vec<String> = response
+            .diagnostics()
+            .errors()
+            .map(|error| error.to_string())
+            .collect();
+
         let decision = match response.decision() {
             cedar_policy::Decision::Allow => {
                 info!("Authorization ALLOWED");
-                AuthorizationDecision::allow()
+                if errors.is_empty() {
+                    AuthorizationDecision::allow()
+                } else {
+                    AuthorizationDecision::allow_with_reason(errors.join("; "))
+                }
             }
             cedar_policy::Decision::Deny => {
                 info!("Authorization DENIED");
-                AuthorizationDecision::deny()
+                if errors.is_empty() {
+                    AuthorizationDecision::deny()
+                } else {
+                    AuthorizationDecision::deny_with_reason(errors.join("; "))
+                }
             }
         };
 
-        Ok(decision)
-    }
-
-    /// Load policies from Cedar DSL strings with IDs
-    pub async fn load_policies(&self, policy_texts: Vec<String>) -> Result<usize, EngineError> {
-        info!("Loading {} policies", policy_texts.len());
-
-        let mut new_policy_set = PolicySet::new();
-
-        for (idx, policy_text) in policy_texts.iter().enumerate() {
-            // Parse policy with unique ID based on index to avoid duplicates
-            let policy_id = cedar_policy::PolicyId::new(format!("auto_policy_{}", idx));
-            let policy = Policy::parse(Some(policy_id), policy_text).map_err(|e| {
-                EngineError::InvalidPolicy(format!("Policy {} parse error: {}", idx, e))
-            })?;
-
-            new_policy_set
-                .add(policy)
-                .map_err(|e| EngineError::InvalidPolicy(format!("Failed to add policy: {}", e)))?;
-
-            debug!("Loaded policy {}: {} bytes", idx, policy_text.len());
-        }
-
-        // Update policies
-        let mut policies = self.policies.write().await;
-
-        *policies = new_policy_set;
-
-        info!("Successfully loaded {} policies", policy_texts.len());
-        Ok(policy_texts.len())
-    }
-
-    /// Register an entity in the entity store
-    #[allow(dead_code)]
-    pub async fn register_entity(&self, entity: &dyn HodeiEntity) -> Result<(), EngineError> {
-        debug!("Registering entity: {}", entity.hrn());
-
-        // Translate to Cedar entity
-        let cedar_entity = translator::translate_to_cedar_entity(entity)
-            .map_err(|e| EngineError::TranslationError(e.to_string()))?;
-
-        // Create new entity store with the new entity
-        let new_entities = Entities::from_entities(vec![cedar_entity], None).map_err(|e| {
-            EngineError::TranslationError(format!("Failed to create entities: {}", e))
-        })?;
-
-        // Update entities
-        let mut entities = self.entities.write().await;
-
-        *entities = new_entities;
-
-        debug!("Entity registered successfully");
-        Ok(())
-    }
-
-    /// Register multiple entities at once (schema-less mode)
-    ///
-    /// Entities are registered without schema validation, allowing maximum flexibility.
-    /// Cedar will evaluate policies based on the actual entity attributes at runtime.
-    ///
-    /// ## How it works
-    ///
-    /// 1. Entities are translated to Cedar's internal format
-    /// 2. Entity attributes are preserved for policy evaluation
-    /// 3. No schema validation is performed
-    /// 4. Actions don't need to be pre-registered
-    ///
-    /// This means policies can reference any action (as a string) and Cedar will
-    /// evaluate them based on the policy conditions and entity data.
-    pub async fn register_entities(
-        &self,
-        entities: Vec<&dyn HodeiEntity>,
-    ) -> Result<usize, EngineError> {
-        info!(
-            "Registering {} entities in schema-less mode",
-            entities.len()
-        );
-
-        // 1. Translate all entities to Cedar entities
-        let cedar_entities: Result<Vec<_>, _> = entities
-            .iter()
-            .map(|entity| translator::translate_to_cedar_entity(*entity))
-            .collect();
-
-        let cedar_entities =
-            cedar_entities.map_err(|e| EngineError::TranslationError(e.to_string()))?;
-
-        // 2. Create new Entities without schema validation
-        // Schema-less mode: entities are created without type checking
-        // Cedar will validate entity structure at policy evaluation time
-        let new_entities = Entities::from_entities(cedar_entities, None).map_err(|e| {
-            EngineError::TranslationError(format!("Failed to create entities: {}", e))
-        })?;
-
-        // 3. Update entity store
-        let mut entity_store = self.entities.write().await;
-
-        *entity_store = new_entities;
-
-        info!(
-            "Successfully registered {} entities (schema-less)",
-            entities.len()
-        );
-        Ok(entities.len())
-    }
-
-    /// Clear all loaded policies
-    pub async fn clear_policies(&self) -> Result<(), EngineError> {
-        info!("Clearing all policies");
-
-        let mut policies = self.policies.write().await;
-
-        *policies = PolicySet::new();
-
-        Ok(())
-    }
-
-    /// Clear all registered entities
-    pub async fn clear_entities(&self) -> Result<(), EngineError> {
-        info!("Clearing all entities");
-
-        let mut entities = self.entities.write().await;
-
-        *entities = Entities::empty();
-
-        Ok(())
-    }
-
-    /// Get the number of loaded policies
-    #[allow(dead_code)]
-    pub async fn policy_count(&self) -> usize {
-        self.policies.read().await.policies().count()
-    }
-
-    /// Get the number of registered entities
-    #[allow(dead_code)]
-    pub async fn entity_count(&self) -> usize {
-        self.entities.read().await.iter().count()
+        Ok(decision.with_policies(determining_policies))
     }
 }
 
@@ -370,75 +331,194 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn engine_creation() {
-        let engine = AuthorizationEngine::new();
-        assert_eq!(engine.policy_count().await, 0);
-        assert_eq!(engine.entity_count().await, 0);
-    }
-
-    #[tokio::test]
-    async fn load_simple_policy() {
-        let engine = AuthorizationEngine::new();
-        let policy = "permit(principal, action, resource);".to_string();
-
-        let result = engine.load_policies(vec![policy]).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 1);
-        assert_eq!(engine.policy_count().await, 1);
-    }
-
-    #[tokio::test]
-    async fn register_entity() {
-        let engine = AuthorizationEngine::new();
-        let user = TestUser {
+    fn user(account: &str, name: &str) -> TestUser {
+        TestUser {
             hrn: Hrn::new(
                 "aws".to_string(),
                 "iam".to_string(),
-                "123".to_string(),
+                account.to_string(),
                 "User".to_string(),
-                "alice".to_string(),
+                name.to_string(),
             ),
-            name: "Alice".to_string(),
-        };
-
-        let result = engine.register_entity(&user).await;
-        assert!(result.is_ok());
-        assert_eq!(engine.entity_count().await, 1);
+            name: name.to_string(),
+        }
     }
 
-    #[tokio::test]
-    async fn clear_policies() {
-        let engine = AuthorizationEngine::new();
-        engine
-            .load_policies(vec!["permit(principal, action, resource);".to_string()])
-            .await
-            .unwrap();
-
-        assert_eq!(engine.policy_count().await, 1);
-
-        engine.clear_policies().await.unwrap();
-        assert_eq!(engine.policy_count().await, 0);
+    fn policy(id: &str, content: &str) -> PolicyDocument {
+        PolicyDocument::new(id.to_string(), content.to_string())
     }
 
-    #[tokio::test]
-    async fn clear_entities() {
+    #[test]
+    fn engine_creation() {
         let engine = AuthorizationEngine::new();
-        let user = TestUser {
-            hrn: Hrn::new(
-                "aws".to_string(),
-                "iam".to_string(),
-                "123".to_string(),
-                "User".to_string(),
-                "alice".to_string(),
-            ),
-            name: "Alice".to_string(),
-        };
+        let snapshot = engine
+            .build_snapshot(&[], &[])
+            .expect("an empty snapshot must build");
+        assert_eq!(snapshot.policy_count(), 0);
+        assert_eq!(snapshot.entity_count(), 0);
+    }
 
-        engine.register_entity(&user).await.unwrap();
-        assert_eq!(engine.entity_count().await, 1);
+    #[test]
+    fn a_snapshot_carries_the_policies_and_entities_it_was_built_with() {
+        let engine = AuthorizationEngine::new();
+        let alice = user("123", "alice");
 
-        engine.clear_entities().await.unwrap();
-        assert_eq!(engine.entity_count().await, 0);
+        let snapshot = engine
+            .build_snapshot(
+                &[policy("p1", "permit(principal, action, resource);")],
+                &[&alice],
+            )
+            .expect("snapshot");
+
+        assert_eq!(snapshot.policy_count(), 1);
+        assert_eq!(snapshot.entity_count(), 1);
+    }
+
+    #[test]
+    fn an_invalid_policy_fails_the_snapshot() {
+        let engine = AuthorizationEngine::new();
+
+        let result = engine.build_snapshot(&[policy("bad", "this is not cedar")], &[]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_permit_allows() {
+        let engine = AuthorizationEngine::new();
+        let alice = user("123", "alice");
+        let snapshot = engine
+            .build_snapshot(
+                &[policy("p1", "permit(principal, action, resource);")],
+                &[&alice],
+            )
+            .expect("snapshot");
+
+        let request = EngineRequest::new(&alice, "Read", &alice);
+        let decision = engine.evaluate(&snapshot, &request).expect("decision");
+
+        assert!(decision.is_allowed());
+        assert_eq!(decision.determining_policies(), ["p1"]);
+    }
+
+    #[test]
+    fn an_empty_policy_set_denies() {
+        let engine = AuthorizationEngine::new();
+        let alice = user("123", "alice");
+        let snapshot = engine.build_snapshot(&[], &[&alice]).expect("snapshot");
+
+        let request = EngineRequest::new(&alice, "Read", &alice);
+        let decision = engine.evaluate(&snapshot, &request).expect("decision");
+
+        assert!(!decision.is_allowed());
+    }
+
+    /// El `forbid` explícito prevalece sobre el `permit`.
+    #[test]
+    fn an_explicit_forbid_wins_over_a_permit() {
+        let engine = AuthorizationEngine::new();
+        let alice = user("123", "alice");
+        let snapshot = engine
+            .build_snapshot(
+                &[
+                    policy("permit_all", "permit(principal, action, resource);"),
+                    policy(
+                        "forbid_alice",
+                        "forbid(principal, action, resource) when { principal.name == \"alice\" };",
+                    ),
+                ],
+                &[&alice],
+            )
+            .expect("snapshot");
+
+        let request = EngineRequest::new(&alice, "Read", &alice);
+        let decision = engine.evaluate(&snapshot, &request).expect("decision");
+
+        assert!(!decision.is_allowed());
+        assert_eq!(decision.determining_policies(), ["forbid_alice"]);
+    }
+
+    /// Dos recursos homónimos en cuentas distintas son entidades distintas:
+    /// una política que nombra a una cuenta no alcanza a la otra.
+    #[test]
+    fn a_policy_scoped_to_one_account_does_not_reach_another_account() {
+        let engine = AuthorizationEngine::new();
+        let alice_in_a = user("account-a", "alice");
+        let alice_in_b = user("account-b", "alice");
+
+        let snapshot = engine
+            .build_snapshot(
+                &[policy(
+                    "only_account_a",
+                    "permit(principal, action, resource) when { principal == Iam::User::\"hrn:aws:iam::account-a:User/alice\" };",
+                )],
+                &[&alice_in_a, &alice_in_b],
+            )
+            .expect("snapshot");
+
+        let request_a = EngineRequest::new(&alice_in_a, "Read", &alice_in_a);
+        let decision_a = engine.evaluate(&snapshot, &request_a).expect("decision a");
+        assert!(decision_a.is_allowed());
+
+        let request_b = EngineRequest::new(&alice_in_b, "Read", &alice_in_b);
+        let decision_b = engine.evaluate(&snapshot, &request_b).expect("decision b");
+        assert!(
+            !decision_b.is_allowed(),
+            "a policy scoped to account-a must not grant account-b"
+        );
+    }
+
+    /// Dos evaluaciones concurrentes con políticas opuestas no se contaminan.
+    #[test]
+    fn concurrent_evaluations_do_not_contaminate_each_other() {
+        use std::sync::Arc;
+
+        let engine = Arc::new(AuthorizationEngine::new());
+        let alice = Arc::new(user("123", "alice"));
+
+        let allow_snapshot = engine
+            .build_snapshot(
+                &[policy("permit_all", "permit(principal, action, resource);")],
+                &[alice.as_ref() as &dyn HodeiEntity],
+            )
+            .expect("allow snapshot");
+
+        let deny_snapshot = engine
+            .build_snapshot(
+                &[policy("forbid_all", "forbid(principal, action, resource);")],
+                &[alice.as_ref() as &dyn HodeiEntity],
+            )
+            .expect("deny snapshot");
+
+        let handles: Vec<_> = (0..8)
+            .map(|index| {
+                let engine = Arc::clone(&engine);
+                let alice = Arc::clone(&alice);
+                let allow_snapshot = EvaluationSnapshot {
+                    policies: allow_snapshot.policies.clone(),
+                    entities: allow_snapshot.entities.clone(),
+                };
+                let deny_snapshot = EvaluationSnapshot {
+                    policies: deny_snapshot.policies.clone(),
+                    entities: deny_snapshot.entities.clone(),
+                };
+                std::thread::spawn(move || {
+                    let request = EngineRequest::new(alice.as_ref(), "Read", alice.as_ref());
+                    let decision = if index % 2 == 0 {
+                        engine
+                            .evaluate(&allow_snapshot, &request)
+                            .expect("decision")
+                    } else {
+                        engine.evaluate(&deny_snapshot, &request).expect("decision")
+                    };
+                    decision.is_allowed()
+                })
+            })
+            .collect();
+
+        for (index, handle) in handles.into_iter().enumerate() {
+            let allowed = handle.join().expect("thread");
+            assert_eq!(allowed, index % 2 == 0, "decision {index} was contaminated");
+        }
     }
 }
