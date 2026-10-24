@@ -111,3 +111,82 @@ de «hay un esquema y este es».
   que resuelva el namespace—, y eso es el bloque de gobernanza de H1b (O8).
 - La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny), las
   revocaciones activas y auditadas, y el CORS por origen (O9) siguen abiertos.
+
+## Perfil de conformidad H1b-2 (parcial, explícito)
+
+H1b-2 es el sub-bloque de H1b que hace que el schema **gobierne la decisión**
+del playground (la mitad del playground de O8). Este perfil delimita qué se
+cumple y qué sigue diferido; lo que difiere **no** se declara cumplido.
+
+### El schema es la autoridad sobre el verbo
+
+El verbo de la petición se resuelve **por id** contra las acciones que el schema
+declara (`schema.actions()`), no contra el texto de la petición. La resolución
+es **exacta**: una acción cuyo id difiere es otra acción, no una coincidencia
+aproximada.
+
+Tres desenlaces, y solo tres:
+
+| Situación | Decisión | Motivo |
+|---|---|---|
+| el schema declara **una** acción con ese id | se evalúa contra ella | el schema ha resuelto el verbo |
+| el schema **no declara** ninguna acción con ese id | **deniega** | el verbo no existe en el mundo del schema |
+| el schema declara **más de una** acción con ese id | **deniega** | Cedar permite que dos acciones *namespaced* compartan id; elegir una sería evaluar contra una acción que el consumidor no pidió, así que se nombran **ambos** candidatos |
+
+El tercer caso no es teórico: se comprobó que Cedar acepta un schema con dos
+acciones namespaced de id `read` y que `schema.actions()` devuelve **las dos**.
+
+### El schema decide el namespace de la acción
+
+El namespace de la acción no es una elección de formato: es **lo que el schema
+declara**. Una política escrita contra `Hodei::Action::"read"` concede cuando
+el schema declara ese namespace, y **no concede** cuando el schema declara la
+acción plana — porque entonces el verbo denota `Action::"read"`, que es otra
+acción. La forma plana `Action::"<Nombre>"` se conserva **solo** para el caso
+en que no hay schema que resuelva el verbo, y es la que ya usan el motor y el
+esquema IAM registrado (H1a).
+
+### La petición se aplica al schema
+
+La petición Cedar se construye **con** el schema, de modo que Cedar compruebe
+que encaja. Una petición cuyo tipo de principal o de recurso el schema no
+declara **no conforms**: se **deniega con el motivo**, en vez de evaluarse
+contra un schema que la ignora.
+
+El orden en que Cedar hace las comprobaciones importa y es **medido**: Cedar
+valida **los tipos de recurso y principal antes que la acción**, así que una
+petición cuyo recurso no está declarado se rechaza por el **tipo**, no por la
+acción. El motivo que se devuelve nombra lo que falló de verdad.
+
+### El contexto es parte de la petición
+
+El contexto de la petición se convierte y **llega** a la evaluación. Dos
+consecuencias, ambas obligatorias:
+
+- una política condicionada sobre un atributo de contexto concede o deniega
+  según su valor;
+- un schema que declara un tipo de contexto con atributos **puede** comprobarse
+  contra la petición.
+
+### El schema que no declara nada no constriñe nada
+
+Un schema sin tipos de entidad ni acciones **no se aplica**. Aplicarlo tal cual
+haría que *toda* petición pareciese no conformar — un **falso rechazo**, no
+una validación. Es la misma regla que H1b-1 fijó para la validación, y ahora
+también para la evaluación: el schema se aplica **cuando declara algo**.
+
+### Lo que H1b-2 **no** cumple (la mitad del motor de O8)
+
+- El motor de evaluación (`evaluate_policies`) sigue **cargando** el schema
+  registrado sin **aplicarlo** a la petición. Su causa está **medida**: el
+  esquema registrado es de alcance **IAM** y `POST /api/v1/policies/evaluate`
+  es **genérico**, así que aplicarlo en crudo **denegaría toda petición fuera
+  del mundo IAM** (los casos `G9`–`G12` sobreviven porque pasan
+  `evaluation_mode: "NoSchema"`). Cerrar esa mitad exige una decisión de
+  **alcance de plataforma** —qué esquema gobierna una petición genérica— que
+  no es un cambio de código.
+- Por tanto S-001 **sigue sin cumplirse por completo**: el namespace de
+  entidad `Hodei::*` y el namespace de acción `Hodei::Action::"ReadAsset"`
+  requieren que el schema sea la **autoridad** en el motor también.
+- La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny), las
+  revocaciones activas y auditadas, y el CORS por origen (O9) siguen abiertos.

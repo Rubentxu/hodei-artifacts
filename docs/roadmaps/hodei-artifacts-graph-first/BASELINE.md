@@ -312,15 +312,26 @@ abiertos.
 | O3 | `src/infrastructure/` es un módulo **no compilado**: no está declarado en `src/lib.rs`, así que `GetEffectiveScpsAdapter` no existe en el binario | `src/lib.rs` (sin `pub mod infrastructure`), `src/infrastructure/adapters/` | código que aparenta ser infraestructura sin estarlo | **H1b**: declararlo y usarlo, o eliminarlo |
 | O4 | `Cargo.lock` está en `.gitignore` | `.gitignore:5` | el build no es reproducible; el lock resuelto (Cedar 4.14.0, config-rs 0.14.1, SurrealDB 2.7.0) no se versiona. **Consecuencia observada en la CI**: `rust-ci.yml` usa `hashFiles('**/Cargo.lock')` como clave de caché, y como ese fichero no está en el repositorio la clave es constante → la caché nunca se invalida al cambiar una dependencia | **H1b**: versionar el lock del workspace (el borrado fue deliberado, commit `eb42752 "borrado cargo.lock file"`, así que **no** se revierte en H0 sin decisión del maintainer) |
 | O6 | El adaptador SurrealDB de `evaluate_iam_policies` no ejecuta consulta alguna (`TODO: Implement actual SurrealDB query`) y el use case pasa `context: None` | `crates/hodei-iam/src/features/evaluate_iam_policies/adapter.rs:93`, `.../use_case.rs:176` | la evaluación de IAM no consulta las políticas persistidas | **H1b** |
-| O8 | El motor de evaluación **carga** el schema pero no lo **aplica** (`TODO: we should actually use the loaded schema`) | `crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270` | la decisión no se valida contra el esquema activo | **H1b** (no H1a): aplicar el schema a la petición es inseparable de que el schema pase a ser la autoridad del namespace de acción (`Hodei::Action::"…"`). Ver `ADR/011` |
+| O8 | El motor de evaluación **carga** el schema pero no lo **aplica** (`TODO: we should actually use the loaded schema`) | `crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270` | la decisión no se valida contra el esquema activo | **Mitad del playground CERRADA en H1b-2** (§7.5). La **mitad del motor sigue abierta**, y su causa está medida: el esquema registrado es de alcance IAM y `POST /api/v1/policies/evaluate` es genérico, así que aplicarlo en crudo **denegaría toda petición fuera del mundo IAM** (los casos `G9`–`G12` solo sobreviven porque pasan `evaluation_mode: "NoSchema"`). Cerrarla exige decidir **qué esquema es el activo para una petición genérica**: una decisión de alcance de plataforma, no de código. Ver `ADR/011` |
 | O9 | CORS permisivo en el router | `src/router.rs:52` (`CorsLayer::permissive()`) | postura de producción insegura en el borde HTTP | **H1b**: CORS por origen configurado |
 
 **Lo que H1b-1 no abre ni cierra aquí.** H1b-1 leyó el schema en las dos rutas de
 lectura (el playground y el endpoint de carga) y lo aplicó a la **validación**
-del playground. **O8 sigue abierto**: el motor de evaluación sigue cargando el
-schema sin aplicarlo a la petición, y el evaluador del playground sigue
-decidiendo sin schema (`Authorizer::new()`). Lo que H1b-1 arregla es la
+del playground. **O8 seguía abierto** tras H1b-1: el motor de evaluación seguía
+cargando el schema sin aplicarlo a la petición, y el evaluador del playground
+seguía decidiendo sin schema (`Authorizer::new()`). Lo que H1b-1 arregla es la
 *lectura*; lo que O8 pide es la *decisión*. Ver §7.4 y §12.
+
+**Lo que H1b-2 sí cierra y lo que deja bloqueado.** H1b-2 cierra la **mitad del
+playground** de O8: el playground decide **según** el schema que el consumidor
+envía (§7.5). La **mitad del motor** sigue abierta y su causa está medida, no
+supuesta: el esquema que el motor carga es el **esquema registrado**, que es de
+alcance IAM, mientras que `POST /api/v1/policies/evaluate` acepta peticiones
+genéricas. Aplicar ese esquema en crudo **denegaría toda petición fuera del
+mundo IAM** — y eso no es un defecto que se pueda cerrar tocando el código: es
+una pregunta de alcance de plataforma («¿qué esquema gobierna una petición
+genérica?») que este ciclo no tiene autoridad para responder. El hueco queda
+**registrado con su causa**, no difuminado. Ver §7.5 y §13.
 
 **Distinción que conviene no perder:** `POST /api/v1/playground/evaluate` **sí**
 evalúa de verdad (carga schema, valida políticas, evalúa). El stub era
@@ -367,6 +378,33 @@ se revirtieron):
 
 Los tres mutantes se revirtieron tras observar la muerte de su prueba; la suite
 volvió a verde (`http_contract` 17/17).
+
+---
+
+### 7.5 Cerrados en H1b-2 (verificados por mutación)
+
+O8 tenía **dos mitades**: el motor de evaluación (`evaluate_policies`) y el
+playground. H1b-2 cierra la del playground y deja la del motor **bloqueada con
+causa medida** (§7.2).
+
+| Id | Defecto | Por qué era un falso verde | Cómo se corrigió | Prueba discriminante |
+|---|---|---|---|---|
+| O8 (mitad del playground) | El evaluador del playground decidía **sin schema**: construía la petición con `Request::new(..., None)` y el `Authorizer` no recibía ninguna autoridad. La acción la fabricaba el propio evaluador en la forma plana `Action::"X"`, y el **contexto de la petición se descartaba** en el use case | la respuesta era `200` con una decisión plausible, así que nada delataría el defecto: el playground **aceptaba** verbos que el schema no declaraba, **ignoraba** el namespace que el schema declaraba, **evaluaba** peticiones cuyo tipo el schema no conocía y **ninguna** política condicionada sobre el contexto podía coincidir nunca. El schema se leía (H1b-1) y se validaba contra, pero la **decisión** no dependía de él | el schema pasa a ser la **autoridad**: el verbo se resuelve **por id** contra `schema.actions()` (el namespace lo decide el schema), la petición **se construye con el schema** para que Cedar compruebe que encaja, y el **contexto** se propaga del comando al evaluador. Tres desenlaces que no admiten atajo: verbo no declarado → **deniega** nombrándolo; acción declarada dos veces → **deniega** nombrando **ambos** candidatos (elegir uno sería evaluar contra una acción que nadie pidió); petición que no encaja → **deniega** con el motivo. Un schema que **no declara nada** no se aplica: aplicarlo en crudo sería un falso rechazo | `G18` (**negativo**: verbo no declarado → `DENY` nombrándolo; y un schema que declara el tipo pero ningún verbo → `DENY` también) + `G19` (**negativo**: el namespace viene del schema — la misma política concede con el schema namespaced y **no** concede con el plano) + `G20` (**negativo**: el contexto llega — con la IP coincidente concede, con otra deniega) + `G21` (**negativo**: recurso cuyo tipo el schema no declara → `DENY` nombrando `Storage::Document`) + `G22` (**negativo**: schema vacío → `ALLOW`, no una falsa denegación) + `G23` (**negativo**: acción declarada dos veces → `DENY` nombrando `Hodei` **y** `Other`) + 7 tests unitarios de `internal/engine/authority.rs` y 4 del evaluador |
+
+**Mutación focalizada de H1b-2** (cada mutante debe morir; los seis murieron y
+se revirtieron):
+
+| Mutante | Test que murió |
+|---|---|
+| **M1** el schema **no se aplica** a la petición (`Request::new` sin schema) | `G21` FAILED: el recurso de un tipo no declarado deja de ser una denegación y la política concede |
+| **M2** el namespace de la acción se toma de la **petición** en vez del schema | `G19` FAILED: la política sobre `Hodei::Action::"read"` deja de conceder con el schema que declara ese namespace |
+| **M3** el schema se aplica **aunque no declare nada** (se retira la guarda) | `G22` FAILED: el schema vacío pasa de no constreñir nada a denegar una petición que encaja — un **falso rechazo** |
+| **M4** el **contexto** de la petición se descarta (`Context::empty()`) | `G20` FAILED: la política condicionada sobre `context.ip` deja de conceder con la IP coincidente |
+| **M5** un verbo que el schema **no declara** cae a la forma plana y se evalúa **sin** schema | `G18` FAILED: un verbo inexistente en el mundo del schema pasa a estar autorizado — un **fail open** |
+| **M6** una acción que el schema declara **dos veces** se resuelve al **primer** candidato | `G23` FAILED: la ambigüedad deja de denegar y la petición se evalúa contra una acción que nadie pidió |
+
+Los seis mutantes se revirtieron tras observar la muerte de su prueba; la suite
+volvió a verde (`http_contract` 23/23, `cargo test --workspace` 797 superadas).
 
 ---
 
@@ -707,6 +745,136 @@ arranca el servicio sin registrarlo.
   por lo mismo.
 - **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
 - O3, O4, O6 y O9 siguen abiertos, con su criterio de cierre en §7.2.
+
+---
+
+## 13. H1b-2 — el schema gobierna la decisión del playground (ejecutado)
+
+Sub-bloque de H1b que cierra la **mitad del playground** de **O8**: el schema
+que el consumidor envía deja de ser un dato validado y pasa a ser la
+**autoridad** sobre la decisión. La mitad del motor sigue abierta, con su causa
+medida (§7.2).
+
+### 13.1 Qué cambió
+
+| Superficie | Antes | Ahora |
+|---|---|---|
+| verbo de la petición | el evaluador fabricaba la acción en la forma plana `Action::"X"`, sin mirar el schema | el verbo se resuelve **por id** contra las acciones que el schema declara. Un verbo que el schema no declara **deniega** nombrándolo; uno que el schema declara **dos veces** deniega nombrando **ambos** candidatos |
+| namespace de la acción | lo decidía el evaluador | lo decide el **schema**: la misma política escrita contra `Hodei::Action::"read"` concede con un schema que declara ese namespace y **no concede** con uno que declara la acción plana |
+| petición frente al schema | se evaluaba **sin** schema (`Request::new(..., None)`) | la petición **se construye con el schema**, para que Cedar compruebe que encaja. Una petición cuyo tipo el schema no declara **no conforms** y se **deniega con el motivo** |
+| contexto de la petición | el use case lo convertía y el evaluador **lo descartaba** (`Context::empty()`) | el contexto **llega** a la evaluación: una política condicionada sobre un atributo concede o deniega según su valor |
+| schema que no declara nada | se aplicaba en crudo al leer el schema | no se aplica: **no constriñe nada**. Aplicarlo en crudo sería un falso rechazo, no una validación |
+
+**Por qué el «fail closed» es la única salida.** Un verbo que el mundo del
+schema no declara **no existe**: concederlo sería inventar una autorización
+sobre una acción que nadie ha declarado. Y una acción ambigua **no** se
+resuelve eligiendo un candidato: Cedar permite que dos acciones *namespaced*
+compartan id, así que elegir una sería evaluar la petición contra una acción
+que el consumidor no pidió. En los dos casos la decisión es **denegar** y el
+**motivo** viaja en el array `errors` que el endpoint ya expone — el handler no
+necesitó cambios.
+
+**El contexto es parte de la petición, no un adorno.** Sin propagarlo, un
+schema que declare un tipo de contexto rechazaría la petición (falso rechazo) y
+ninguna política condicionada podría coincidir nunca. Por eso el use case
+conserva el contexto convertido y lo pasa al evaluador.
+
+### 13.2 Puerta de calidad local (medida)
+
+| Comprobación | Resultado |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS — `No issues found` |
+| `cargo test --workspace --no-fail-fast` | PASS — **797 superadas, 0 fallidas, 64 ignoradas** (doctests), 20 suites |
+| `cargo build --release --workspace` | PASS — binario `sha256=30b5d1cf73c33a2bb1f45696dfd4fa85594450c3e480fd25d0b7e041bd8dc163` |
+
+**CI remota: `PENDING`.** La autoridad de integración sigue siendo el workflow
+`Rust CI` remoto y H1a, H1b-1 y H1b-2 **no se han publicado** (no hay push sin
+autorización), así que no existe ningún run que pueda citarse para este
+sub-bloque. La tabla anterior es evidencia **local**, y se declara como tal.
+
+### 13.3 Regresiones permanentes promovidas
+
+| Id | Ubicación | Garantía |
+|---|---|---|
+| G18 | `tests/http_contract.rs` | la decisión **sigue al schema**: el verbo declarado concede, el verbo **no** declarado deniega nombrándolo, y un schema que declara el tipo pero **ningún** verbo tampoco lo concede |
+| G19 | `tests/http_contract.rs` | el **namespace lo decide el schema**: la misma política concede con el schema namespaced y deniega con el plano — porque entonces denota otra acción |
+| G20 | `tests/http_contract.rs` | el **contexto llega a la evaluación**: con la IP coincidente concede y con otra deniega |
+| G21 | `tests/http_contract.rs` | una petición cuyo **tipo de recurso no declara** el schema se **deniega** nombrando el tipo |
+| G22 | `tests/http_contract.rs` | un schema que **no declara nada** no constriñe nada: la petición concede y no hay errores |
+| G23 | `tests/http_contract.rs` | una acción que el schema declara **dos veces** se **deniega** nombrando **ambos** candidatos |
+
+Además, en el crate: 7 tests unitarios de `internal/engine/authority.rs` (el
+schema declara algo o no; la resolución plana, namespaced, no declarada y
+ambigua) y 4 del evaluador (verbo no declarado, namespace del schema, petición
+que no encaja, schema vacío). El total de la suite sube de 780 a **797**:
+6 contratos + 7 unitarios de `authority.rs` + 4 del evaluador.
+
+### 13.4 Mutación focalizada (ejecutada, con muerte observada)
+
+Los seis mutantes y las muertes están en §7.5. Se revirtieron después de
+observarlas y la suite volvió a verde (`http_contract` 23/23).
+
+### 13.5 Aceptación efímera (ejecutada y limpiada)
+
+Ciclo `PREPARE → EXECUTE → ASSERT → EVIDENCE → CLEANUP` sobre el **binario
+release construido desde el árbol de H1b-2**, ejecutado desde un directorio de
+paquete que contiene `config/default.toml` (que es como lo lee el binario).
+
+- Binario bajo prueba:
+  `sha256=30b5d1cf73c33a2bb1f45696dfd4fa85594450c3e480fd25d0b7e041bd8dc163`
+- Directorio de sesión efímero y puerto efímero: `/tmp/hb2-uat/run`, puerto
+  `48917`
+- Script de aceptación: efímero, **fuera del repositorio**
+  (`/tmp/hb2-uat/`), retirado al cerrar el ciclo
+
+| Id | Comprobación | Resultado observado |
+|---|---|---|
+| U1 | schema plano, verbo `read` declarado | `ALLOW`, `errors: []` |
+| U2 | schema plano, verbo `write` **no** declarado | `DENY`, `errors: ["the action \`write\` is not declared in the schema"]` |
+| U3 | schema namespaced + política sobre `Hodei::Action::"read"` | `ALLOW`, `errors: []` |
+| U4 | schema plano + la **misma** política namespaced | `DENY`, `errors: ["Policy 0: for policy \`policy0\`, unrecognized action \`Hodei::Action::\"read\"\`"]` |
+| U5 | contexto coincidente (`ip = 10.0.0.1`) | `ALLOW`, `errors: []` |
+| U6 | contexto **no** coincidente (`ip = 10.0.0.2`) | `DENY`, `errors: []` |
+| U7 | recurso de un tipo que el schema no declara (`Storage::Document`) | `DENY`, `errors: ["the request does not conform to the schema: resource type \`Storage::Document\` is not declared in the schema"]` |
+| U8 | schema **vacío** (`{}`) | `ALLOW`, `errors: []` — no constriñe nada |
+
+**Limpieza verificada.** El `SIGTERM` inicial no alcanzó al binario —el `kill`
+apuntó al subshell que lo había lanzado— y la **comprobación de huérfanos lo
+detectó**: el proceso seguía escuchando en el puerto `48917` después de la
+limpieza. Se terminó de forma explícita y se volvio a comprobar: **0 procesos
+huérfanos**, puerto libre y **sin residuos** en `/tmp` (`/tmp/hb2-uat`,
+`/tmp/hb2-probe` y `/tmp/hb2-mut` eliminados). Es exactamente para lo que
+existe esa comprobación: un UAT que «termina en verde» y aun así deja un
+proceso vivo.
+
+**Lo que esta aceptación no cubre.** El arranque usa `register_iam_on_startup =
+false` y un schema inline en cada petición: el caso «el motor aplica el
+esquema **registrado**» (§13.6) no aparece aquí, y no aparece porque esa mitad
+de O8 sigue bloqueada por falta de alcance de plataforma.
+
+### 13.6 Lo que H1b-2 **no** cierra
+
+- **La mitad del motor de O8 sigue abierta**: `evaluate_policies` sigue
+  **cargando** el esquema registrado sin **aplicarlo** a la petición
+  (`crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270`).
+  Su causa está medida: el esquema registrado es de alcance IAM y
+  `POST /api/v1/policies/evaluate` es genérico, así que aplicarlo en crudo
+  **denegaría toda petición fuera del mundo IAM** — los casos `G9`–`G12` solo
+  sobreviven porque pasan `evaluation_mode: "NoSchema"`. Cerrarla exige una
+  decisión de alcance de plataforma, no un cambio de código.
+- S-001 **sigue sin cumplirse por completo**: el namespace de entidad
+  `Hodei::*` y el namespace de acción `Hodei::Action::"ReadAsset"` siguen
+  pendientes por lo mismo.
+- **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
+- O3, O4, O6 y O9 siguen abiertos, con su criterio de cierre en §7.2.
+- **Observación colateral, no defecto corregido**: el cargador de configuración
+  exige **todos** los campos cuando no existe `config/default.toml`, porque el
+  `Default` derivado de `AppConfig` no lo aplica `serde` al deserializar. La
+  UAT lo rodeó con un `config/default.toml` en su propio directorio de sesión.
+  No se ha tocado: es un defecto preexistente fuera del alcance de este
+  sub-bloque, y queda anotado aquí para que no se confunda con un cambio de
+  H1b-2.
 
 ---
 

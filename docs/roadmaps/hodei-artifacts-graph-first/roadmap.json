@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "Rubentxu/hodei-artifacts",
   "baseline_sha": "2626e35b7c12375af0a1f23342eee4b4619bfc3c",
-  "status": "h1b1_done_h1b_pending",
+  "status": "h1b2_done_h1b_pending",
   "milestones": [
     {
       "id": "H0",
@@ -373,6 +373,106 @@
           }
         },
         {
+          "id": "H1b-2",
+          "title": "El schema gobierna la decision del playground",
+          "state": "DONE",
+          "release_required": true,
+          "integration_remote_required": true,
+          "ephemeral_uat_e2e_aat_delete_after_block": true,
+          "scope": [
+            "El verbo de la peticion se resuelve por id contra las acciones que el schema declara: un verbo no declarado deniega nombrandolo, y una acción declarada dos veces (dos namespaces con el mismo id) deniega nombrando ambos candidatos",
+            "El namespace de la accion lo decide el schema, no la peticion: la misma politica sobre Hodei::Action::\"read\" concede con un schema que declara ese namespace y no concede con uno que declara la accion plana",
+            "La peticion se construye con el schema para que Cedar compruebe que encaja: un tipo de recurso o principal no declarado no conforms y se deniega con el motivo",
+            "El contexto de la peticion llega a la evaluacion: una politica condicionada concede o deniega segun su valor",
+            "Un schema que no declara nada no se aplica: no constrine nada (aplicarlo en crudo seria un falso rechazo, no una validacion)"
+          ],
+          "closes": [
+            "O8-playground"
+          ],
+          "defers_to_h1b": [
+            "O3",
+            "O4",
+            "O6",
+            "O8-engine",
+            "O9",
+            "P0#2"
+          ],
+          "acceptance": {
+            "ephemeral": [
+              "U1 el binario arranca y el playground con un schema plano y un verbo declarado concede",
+              "U2 el mismo schema con un verbo NO declarado deniega nombrandolo",
+              "U3 schema namespaced + politica sobre Hodei::Action::\"read\" concede",
+              "U4 schema plano + la misma politica namespaced deniega (el namespace viene del schema)",
+              "U5 el contexto coincide (ip = 10.0.0.1) concede; U6 con otra ip deniega",
+              "U7 un recurso de un tipo que el schema no declara (Storage::Document) deniega nombrando el tipo",
+              "U8 un schema vacio ({}) no constrine nada: concede y sin errores"
+            ],
+            "permanent": [
+              "G18 la decision sigue al schema: el verbo declarado concede, el no declarado deniega nombrandolo, y un schema que declara el tipo pero ningun verbo tampoco concede",
+              "G19 el namespace lo decide el schema: la misma politica concede con el schema namespaced y deniega con el plano",
+              "G20 el contexto llega a la evaluacion: con la IP coincidente concede y con otra deniega",
+              "G21 una peticion cuyo tipo de recurso no declara el schema se deniega nombrando el tipo",
+              "G22 un schema que no declara nada no constrine nada: concede y sin errores",
+              "G23 una accion que el schema declara dos veces se deniega nombrando ambos candidatos",
+              "7 tests unitarios de internal/engine/authority.rs (declara algo o no; resolucion plana, namespaced, no declarada y ambigua)",
+              "4 tests unitarios del evaluador (verbo no declarado, namespace del schema, peticion que no encaja, schema vacio)"
+            ],
+            "aat": "0 procesos huerfanos (el primer SIGTERM no alcanzo al binario y la comprobacion de huerfanos lo detecto: se termino de forma explicita); puerto 48917 libre; sin residuos /tmp/hb2-uat, /tmp/hb2-probe ni /tmp/hb2-mut"
+          },
+          "evidence": {
+            "state": "LOCAL_PASSED",
+            "ci": null,
+            "ci_note": "PENDING: la CI remota sigue siendo la autoridad de integracion, pero H1a, H1b-1 y H1b-2 no se han publicado (no hay push sin autorizacion), asi que no existe un run que citar.",
+            "binary_sha256": "30b5d1cf73c33a2bb1f45696dfd4fa85594450c3e480fd25d0b7e041bd8dc163",
+            "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (797 passed, 0 failed, 64 ignored, 20 suites)",
+            "ephemeral_uat": "U1-U8 PASS sobre el binario release (ALLOW con el verbo declarado; DENY + 'the action `write` is not declared in the schema'; ALLOW con el schema namespaced; DENY con la misma politica sobre el schema plano; ALLOW con la IP coincidente y DENY con otra; DENY + 'the request does not conform to the schema: resource type `Storage::Document` is not declared in the schema'; ALLOW con el schema vacio). Limpieza verificada: 0 procesos huerfanos, puerto libre y sin residuos en /tmp.",
+            "mutations_checked": [
+              "M1 el schema no se aplica a la peticion (Request::new sin schema) -> G21 FAILED",
+              "M2 el namespace de la accion se toma de la peticion en vez del schema -> G19 FAILED",
+              "M3 el schema se aplica aunque no declare nada (se retira la guarda) -> G22 FAILED (falso rechazo)",
+              "M4 el contexto de la peticion se descarta (Context::empty()) -> G20 FAILED",
+              "M5 un verbo que el schema no declara cae a la forma plana y se evalua sin schema -> G18 FAILED (fail open)",
+              "M6 una accion declarada dos veces se resuelve al primer candidato -> G23 FAILED"
+            ],
+            "not_run": [
+              "typedb / typedb-server ausentes en el host: todo lo dependiente de TypeDB sigue NOT_RUN"
+            ],
+            "notes": "H1b-2 cierra la mitad del playground de O8: el playground decide segun el schema que el consumidor envia. La mitad del motor sigue ABIERTA y con causa medida: el esquema registrado es de alcance IAM y POST /api/v1/policies/evaluate es generico, asi que aplicarlo en crudo denegaria toda peticion fuera del mundo IAM (G9-G12 sobreviven porque pasan evaluation_mode NoSchema); cerrarla exige una decision de alcance de plataforma, no un cambio de codigo. S-001 sigue sin cumplirse por completo. Observacion colateral, no corregida: el cargador de configuracion exige todos los campos cuando no existe config/default.toml, porque el Default derivado de AppConfig no lo aplica serde al deserializar; la UAT lo rodeo con un config/default.toml en su directorio de sesion. El perfil de conformidad esta en SPECS/authorization-hrn.md; la evidencia medida esta en BASELINE.md#75-cerrados-en-h1b-2-verificados-por-mutacion y #13-h1b-2--el-schema-gobierna-la-decision-del-playground-ejecutado."
+          },
+          "replan": {
+            "date": "2026-10-24",
+            "reason": "O8 tenia dos mitades con alcances distintos: el motor de evaluacion (evaluate_policies) y el playground. El motor carga el esquema REGISTRADO, que es de alcance IAM, mientras que POST /api/v1/policies/evaluate es generico.",
+            "options": [
+              {
+                "id": "A",
+                "option": "Cerrar O8 entero (motor y playground)",
+                "verdict": "RECHAZADA",
+                "rationale": "cerrar O8 entero seria un cierre falso: aplicar el esquema IAM registrado a una peticion generica denegaria toda peticion fuera del mundo IAM; los casos G9-G12 solo sobreviven porque pasan evaluation_mode NoSchema"
+              },
+              {
+                "id": "B",
+                "option": "Cerrar solo el motor",
+                "verdict": "RECHAZADA",
+                "rationale": "insuficiente y con la misma causa: el consumidor que envia el schema seguiria viendo decisiones que el schema no gobierna, y la mitad verificable de O8 quedaria sin cerrar"
+              },
+              {
+                "id": "C",
+                "option": "Cerrar la mitad del playground y registrar la del motor como bloqueada por falta de alcance de plataforma",
+                "verdict": "ELEGIDA",
+                "rationale": "el playground recibe el schema en la peticion, asi que su alcance lo acota el propio consumidor y el schema puede gobernar la decision sin-exemptar a nadie; la mitad del motor necesita una decision de plataforma que este ciclo no puede tomar"
+              }
+            ],
+            "accepted_consequence": "O8 sigue abierto, pero con su mitad del playground CERRADA y su mitad del motor BLOQUEADA con causa medida, no difusa.",
+            "refs": [
+              "ROADMAP.md#h1b-2--el-schema-gobierna-la-decision-del-playground-unidad-entregable-e-independiente",
+              "SPECS/authorization-hrn.md",
+              "BASELINE.md#72-abiertos-con-consumidor-y-criterio-de-cierre",
+              "BASELINE.md#75-cerrados-en-h1b-2-verificados-por-mutacion",
+              "BASELINE.md#13-h1b-2--el-schema-gobierna-la-decision-del-playground-ejecutado"
+            ]
+          }
+        },
+        {
           "id": "H1b",
           "title": "Gobernanza, esquema como autoridad y superficies pendientes",
           "state": "PENDING",
@@ -380,15 +480,15 @@
           "integration_remote_required": true,
           "ephemeral_uat_e2e_aat_delete_after_block": true,
           "scope": [
-            "Schema aplicado a la peticion Cedar y schema como autoridad del namespace de accion -> Hodei::Action::\"ReadAsset\" (cierra O8 y completa S-001)",
+            "Schema aplicado a la peticion Cedar en el MOTOR de evaluacion y schema como autoridad del namespace de accion -> Hodei::Action::\"ReadAsset\" (cierra la mitad del motor de O8 y completa S-001). La mitad del playground ya se cerro en el sub-bloque H1b-2",
             "IAM permit + resource permit + tenant boundary + SCP como interseccion de limites; revocaciones activas y auditadas",
-            "Superficies HTTP pendientes: O3, O4, O6, O9 (O2 y O7 se cerraron en el sub-bloque H1b-1)"
+            "Superficies HTTP pendientes: O3, O4, O6, O9 (O2 y O7 se cerraron en el sub-bloque H1b-1; la mitad del playground de O8, en H1b-2)"
           ],
           "closes": [
             "O3",
             "O4",
             "O6",
-            "O8",
+            "O8-engine",
             "O9",
             "P0#2"
           ],
@@ -408,11 +508,14 @@
             "state": "PENDING",
             "ci": null,
             "binary_sha256": null,
-            "notes": "O2 y O7 se cerraron en el sub-bloque H1b-1 (ver sus bloque evidence). El resto de H1b (O3, O4, O6, O8, O9, P0#2) no esta iniciado."
+            "notes": "O2 y O7 se cerraron en el sub-bloque H1b-1, y la mitad del playground de O8 en H1b-2 (ver sus bloques evidence). La mitad del motor de O8 sigue pendiente y con causa medida: el esquema registrado es de alcance IAM y POST /api/v1/policies/evaluate es generico, asi que aplicarlo en crudo denegaria toda peticion fuera del mundo IAM; cerrarla exige una decision de alcance de plataforma, no un cambio de codigo. El resto de H1b (O3, O4, O6, O9, P0#2) no esta iniciado."
           },
           "already_closed_in_h1b1": [
             "O2",
             "O7"
+          ],
+          "already_closed_in_h1b2": [
+            "O8-playground"
           ]
         }
       ],
