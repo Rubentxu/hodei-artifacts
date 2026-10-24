@@ -46,6 +46,18 @@
 //!   schema when nothing is stored.
 //! - G17 `GET /api/v1/schemas/load` returns the active schema — its version
 //!   and its content — once one has been registered.
+//! - G18 The decision follows the schema that was given: a verb the schema
+//!   does not declare is denied, and the reason names it.
+//! - G19 The schema decides the namespace of the action: the same policy
+//!   allows against a namespaced schema and does not against a flat one.
+//! - G20 The context of the request reaches the evaluation: a policy
+//!   conditioned on it holds or does not, accordingly.
+//! - G21 A request that does not conform to the schema is denied, and the
+//!   reason names what does not conform.
+//! - G22 A schema that declares nothing constrains nothing (the counterpart
+//!   of G21 that keeps the schema from rejecting what it does not know).
+//! - G23 An action the schema declares twice is denied, not resolved by
+//!   guessing one of the candidates.
 //!
 //! Each test bootstraps its own application on a throwaway RocksDB directory,
 //! so tests never share mutable state.
@@ -73,6 +85,33 @@ const INVALID_POLICY: &str = "permit(principal, action, resource";
 /// the same language.
 const INLINE_SCHEMA_DECLARING_USER: &str = r#"{"format":"cedar-schema-fragments-v1","fragments":[{"":{"entityTypes":{},"actions":{}},"Iam":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}}},"actions":{}}}]}"#;
 
+/// A schema envelope that declares the entity type `Iam::User` **and** the
+/// action `read`, for `Iam::User` principals and resources.
+///
+/// It is the world the request of the playground lives in: a schema that
+/// declares a type but no action says that the verb asked for does not
+/// exist.
+const INLINE_SCHEMA_DECLARING_READ: &str = r#"{"format":"cedar-schema-fragments-v1","fragments":[{"":{"entityTypes":{},"actions":{"read":{"appliesTo":{"resourceTypes":["Iam::User"],"principalTypes":["Iam::User"]}}}},"Iam":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{"name":{"type":"EntityOrCommon","name":"String"}}}}},"actions":{}}}]}"#;
+
+/// A schema envelope that declares the action `read` in the namespace
+/// `Hodei`.
+///
+/// The namespace is what the schema declares; the request only names the
+/// verb.
+const INLINE_SCHEMA_DECLARING_NAMESPACED_READ: &str = r#"{"format":"cedar-schema-fragments-v1","fragments":[{"Hodei":{"entityTypes":{},"actions":{"read":{"appliesTo":{"resourceTypes":["Iam::User"],"principalTypes":["Iam::User"]}}}},"Iam":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{"name":{"type":"EntityOrCommon","name":"String"}}}}},"actions":{}}}]}"#;
+
+/// A schema envelope that declares the action `read` with a context type
+/// `Ctx` that holds the attribute `ip`.
+const INLINE_SCHEMA_DECLARING_READ_WITH_CONTEXT: &str = r#"{"format":"cedar-schema-fragments-v1","fragments":[{"":{"commonTypes":{"Ctx":{"type":"Record","attributes":{"ip":{"type":"EntityOrCommon","name":"String"}}}},"entityTypes":{},"actions":{"read":{"appliesTo":{"resourceTypes":["Iam::User"],"principalTypes":["Iam::User"],"context":{"type":"Ctx"}}}}},"Iam":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{"name":{"type":"EntityOrCommon","name":"String"}}}}},"actions":{}}}]}"#;
+
+/// A schema envelope that declares the action `read` twice, in the
+/// namespaces `Hodei` and `Other`.
+///
+/// Cedar allows it: two namespaced actions may share an id. The request
+/// names the verb, not the namespace, so the schema cannot say which one is
+/// meant.
+const INLINE_SCHEMA_DECLARING_AMBIGUOUS_READ: &str = r#"{"format":"cedar-schema-fragments-v1","fragments":[{"Hodei":{"entityTypes":{},"actions":{"read":{"appliesTo":{"resourceTypes":["Iam::User"],"principalTypes":["Iam::User"]}}}},"Iam":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{"name":{"type":"EntityOrCommon","name":"String"}}}}},"actions":{}},"Other":{"entityTypes":{},"actions":{"read":{"appliesTo":{"resourceTypes":["Iam::User"],"principalTypes":["Iam::User"]}}}}}]}"#;
+
 /// A policy over the entity type the inline schema declares.
 const POLICY_OVER_DECLARED_TYPE: &str =
     r#"permit(principal == Iam::User::"hrn:aws:iam::account-a:User/alice", action, resource);"#;
@@ -80,6 +119,14 @@ const POLICY_OVER_DECLARED_TYPE: &str =
 /// A policy over an entity type no schema declares.
 const POLICY_OVER_UNDECLARED_TYPE: &str =
     r#"permit(principal == Nope::Ghost::"alice", action, resource);"#;
+
+/// A policy that names the action of the `Hodei` namespace.
+const POLICY_OVER_NAMESPACED_ACTION: &str =
+    r#"permit(principal, action == Hodei::Action::"read", resource);"#;
+
+/// A policy conditioned on the context attribute `ip`.
+const POLICY_OVER_CONTEXT_IP: &str =
+    r#"permit(principal, action, resource) when { context.ip == "10.0.0.1" };"#;
 
 /// Bootstraps the application on a throwaway RocksDB directory.
 ///
@@ -582,17 +629,39 @@ async fn g12_a_policy_scoped_to_one_account_does_not_reach_another_account() {
 // ---------------------------------------------------------------------------
 
 /// Builds the body of a playground evaluation request.
-fn playground_body(inline_schema: &str, policies: &[&str]) -> Value {
+///
+/// The verb, the resource and the context of the request are parameters, so
+/// the same request can be presented to different schemas.
+fn playground_request_body(
+    inline_schema: &str,
+    policies: &[&str],
+    action: &str,
+    resource: &str,
+    context: Value,
+) -> Value {
     json!({
         "inline_schema": inline_schema,
         "inline_policies": policies,
         "request": {
             "principal": "hrn:aws:iam::account-a:User/alice",
-            "action": "hrn:aws:iam::account-a:Action/read",
-            "resource": "hrn:aws:iam::account-a:User/bob",
-            "context": {},
+            "action": action,
+            "resource": resource,
+            "context": context,
         }
     })
+}
+
+/// Builds the body of a playground evaluation request with the default
+/// request: the verb `read`, a resource of the type `Iam::User` and no
+/// context.
+fn playground_body(inline_schema: &str, policies: &[&str]) -> Value {
+    playground_request_body(
+        inline_schema,
+        policies,
+        "hrn:aws:iam::account-a:Action/read",
+        "hrn:aws:iam::account-a:User/bob",
+        json!({}),
+    )
 }
 
 /// The validation errors the playground reported, if any.
@@ -600,6 +669,16 @@ fn validation_errors(body: &Value) -> Vec<String> {
     body["diagnostics"]["validation_errors"]
         .as_array()
         .expect("validation_errors must be an array")
+        .iter()
+        .filter_map(|e| e.as_str().map(str::to_string))
+        .collect()
+}
+
+/// The errors the playground reported for the evaluation itself.
+fn evaluation_errors(body: &Value) -> Vec<String> {
+    body["errors"]
+        .as_array()
+        .expect("errors must be an array")
         .iter()
         .filter_map(|e| e.as_str().map(str::to_string))
         .collect()
@@ -614,7 +693,7 @@ async fn g13_the_playground_validates_against_the_inline_schema() {
         Method::POST,
         "/api/v1/playground/evaluate",
         Some(playground_body(
-            INLINE_SCHEMA_DECLARING_USER,
+            INLINE_SCHEMA_DECLARING_READ,
             &[POLICY_OVER_DECLARED_TYPE],
         )),
     )
@@ -639,7 +718,7 @@ async fn g14_the_playground_rejects_a_policy_over_an_undeclared_type() {
         Method::POST,
         "/api/v1/playground/evaluate",
         Some(playground_body(
-            INLINE_SCHEMA_DECLARING_USER,
+            INLINE_SCHEMA_DECLARING_READ,
             &[POLICY_OVER_UNDECLARED_TYPE],
         )),
     )
@@ -763,5 +842,298 @@ async fn g17_loading_the_schema_returns_the_active_schema() {
     assert!(
         body["entity_type_count"].as_u64().is_some_and(|c| c > 0),
         "the active schema must declare its entity types: {body}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// G18 / G19 / G20 / G21 / G22 / G23 — the schema governs the decision
+// ---------------------------------------------------------------------------
+
+/// The decision follows the schema that was given
+///
+/// The request is the same in the three cases; only the schema changes.
+/// The schema that declares the verb allows it, the schema that declares
+/// another verb does not, and the schema that declares no verb at all does
+/// not either: a verb that the world does not declare does not exist.
+#[tokio::test]
+async fn g18_the_decision_follows_the_schema_that_was_given() {
+    let (app, _tmp) = test_app().await;
+
+    // The schema declares the verb the request asks for: allowed.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body(
+            INLINE_SCHEMA_DECLARING_READ,
+            &[VALID_POLICY],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(body["decision"], json!("ALLOW"), "body: {body}");
+
+    // The same schema, but the request asks for a verb it does not declare.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_request_body(
+            INLINE_SCHEMA_DECLARING_READ,
+            &[VALID_POLICY],
+            "hrn:aws:iam::account-a:Action/write",
+            "hrn:aws:iam::account-a:User/bob",
+            json!({}),
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("DENY"),
+        "a verb the schema does not declare must not be authorized: {body}"
+    );
+    let errors = evaluation_errors(&body);
+    assert!(
+        errors.iter().any(|e| e.contains("write")),
+        "the reason must name the verb that was refused: {errors:?}"
+    );
+
+    // A schema that declares the type but no verb at all: the verb the
+    // request asks for does not exist in that world either.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body(
+            INLINE_SCHEMA_DECLARING_USER,
+            &[VALID_POLICY],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("DENY"),
+        "a schema that declares no verb must not authorize one: {body}"
+    );
+    assert!(
+        evaluation_errors(&body).iter().any(|e| e.contains("read")),
+        "the reason must name the verb that was refused: {body}"
+    );
+}
+
+/// The schema decides the namespace of the action
+///
+/// The policy names `Hodei::Action::"read"`. The request names the verb
+/// `read` and nothing else: the namespace is what the schema declares. The
+/// same policy against a schema that declares the flat action is a policy
+/// about another action, and it does not grant.
+#[tokio::test]
+async fn g19_the_schema_decides_the_namespace_of_the_action() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body(
+            INLINE_SCHEMA_DECLARING_NAMESPACED_READ,
+            &[POLICY_OVER_NAMESPACED_ACTION],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("ALLOW"),
+        "the schema resolves the verb to the namespaced action: {body}"
+    );
+
+    // The same policy, against a schema that declares the flat action: the
+    // verb denotes `Action::"read"`, which the policy does not mention.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body(
+            INLINE_SCHEMA_DECLARING_READ,
+            &[POLICY_OVER_NAMESPACED_ACTION],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("DENY"),
+        "the namespace of the action comes from the schema, not from the policy: {body}"
+    );
+}
+
+/// The context of the request reaches the evaluation
+///
+/// The policy is conditioned on the context attribute `ip`. The context is
+/// part of the request, so the schema that declares it and the policy that
+/// reads it must both see it.
+#[tokio::test]
+async fn g20_the_context_of_the_request_reaches_the_evaluation() {
+    let (app, _tmp) = test_app().await;
+
+    let body_with_ip = playground_request_body(
+        INLINE_SCHEMA_DECLARING_READ_WITH_CONTEXT,
+        &[POLICY_OVER_CONTEXT_IP],
+        "hrn:aws:iam::account-a:Action/read",
+        "hrn:aws:iam::account-a:User/bob",
+        json!({"ip": {"type": "String", "value": "10.0.0.1"}}),
+    );
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(body_with_ip),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("ALLOW"),
+        "a policy conditioned on the context must see it: {body}"
+    );
+
+    // The same request with another address: the policy does not hold.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_request_body(
+            INLINE_SCHEMA_DECLARING_READ_WITH_CONTEXT,
+            &[POLICY_OVER_CONTEXT_IP],
+            "hrn:aws:iam::account-a:Action/read",
+            "hrn:aws:iam::account-a:User/bob",
+            json!({"ip": {"type": "String", "value": "10.0.0.2"}}),
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("DENY"),
+        "a policy conditioned on the context must not hold for another value: {body}"
+    );
+}
+
+/// A request that does not conform to the schema is denied
+///
+/// The schema declares the type `Iam::User`; the request names a resource of
+/// the type `Storage::Document`, which the schema does not declare. The
+/// request is refused, and the reason is reported: the schema is the world
+/// the request has to live in.
+#[tokio::test]
+async fn g21_a_request_that_does_not_conform_to_the_schema_is_denied() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_request_body(
+            INLINE_SCHEMA_DECLARING_READ,
+            &[VALID_POLICY],
+            "hrn:aws:iam::account-a:Action/read",
+            "hrn:aws:storage::account-a:Document/doc1",
+            json!({}),
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("DENY"),
+        "a request outside the world of the schema must not be authorized: {body}"
+    );
+    let errors = evaluation_errors(&body);
+    assert!(
+        !errors.is_empty(),
+        "the reason of the denial must be reported: {body}"
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("Storage::Document")),
+        "the reason must name what does not conform: {errors:?}"
+    );
+}
+
+/// A schema that declares nothing constrains nothing
+///
+/// This is the counterpart of G21: the guard that keeps the schema from
+/// rejecting requests it knows nothing about. An empty schema must not turn
+/// a valid request into a denial.
+#[tokio::test]
+async fn g22_a_schema_that_declares_nothing_constrains_nothing() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body("{}", &[VALID_POLICY])),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("ALLOW"),
+        "an empty schema must not reject a request it knows nothing about: {body}"
+    );
+    assert!(
+        evaluation_errors(&body).is_empty(),
+        "an empty schema must not report a reason: {body}"
+    );
+}
+
+/// An action that the schema declares twice is not resolved by guessing
+///
+/// Cedar allows two namespaced actions to share an id. The request names the
+/// verb and nothing else, so the schema cannot say which of them is meant.
+/// Picking one of them would evaluate the request against an action the
+/// caller did not ask for.
+#[tokio::test]
+async fn g23_an_action_the_schema_declares_twice_is_denied() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body(
+            INLINE_SCHEMA_DECLARING_AMBIGUOUS_READ,
+            &[VALID_POLICY],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert_eq!(
+        body["decision"],
+        json!("DENY"),
+        "an ambiguous action must not be resolved by guessing: {body}"
+    );
+    let errors = evaluation_errors(&body);
+    assert!(
+        errors.iter().any(|e| e.contains("read")),
+        "the reason must name the verb that was refused: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("Hodei")) && errors.iter().any(|e| e.contains("Other")),
+        "the reason must name both candidates: {errors:?}"
     );
 }

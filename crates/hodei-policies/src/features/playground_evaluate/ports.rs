@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 use cedar_policy::Schema;
 
-use super::dto::{AttributeValue, Decision, DeterminingPolicy, PlaygroundAuthorizationRequest};
+use super::dto::{AttributeValue, PlaygroundAuthorizationRequest, PlaygroundEvaluationOutcome};
 use super::error::PlaygroundEvaluateError;
 
 /// Port for loading Cedar schemas (inline or from storage)
@@ -81,17 +81,22 @@ pub trait PolicyValidatorPort: Send + Sync {
 pub trait PolicyEvaluatorPort: Send + Sync {
     /// Evaluate an authorization request against inline policies
     ///
+    /// The schema is the **authority** over the request: it decides which
+    /// action the requested verb denotes, and the request is evaluated only
+    /// if it conforms to it. A request that does not conform is denied, and
+    /// the reason is reported in the outcome.
+    ///
     /// # Arguments
     ///
     /// * `request` - The authorization request (principal, action, resource, context)
     /// * `policy_texts` - List of Cedar policy strings to evaluate
-    /// * `schema` - The Cedar schema for entity validation
+    /// * `schema` - The Cedar schema the request is evaluated against
+    /// * `context` - The request context, already converted to Cedar expressions
     ///
     /// # Returns
     ///
-    /// A tuple containing:
-    /// - The authorization decision (Allow or Deny)
-    /// - List of policies that determined the decision
+    /// The outcome of the evaluation: the decision, the policies that
+    /// determined it, and the errors the evaluation reported
     ///
     /// # Errors
     ///
@@ -104,7 +109,8 @@ pub trait PolicyEvaluatorPort: Send + Sync {
         request: &PlaygroundAuthorizationRequest,
         policy_texts: &[String],
         schema: &Schema,
-    ) -> Result<(Decision, Vec<DeterminingPolicy>), PlaygroundEvaluateError>;
+        context: &std::collections::HashMap<String, cedar_policy::RestrictedExpression>,
+    ) -> Result<PlaygroundEvaluationOutcome, PlaygroundEvaluateError>;
 }
 
 /// Port for converting context attributes to Cedar format

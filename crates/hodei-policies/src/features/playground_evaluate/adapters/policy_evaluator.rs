@@ -4,14 +4,21 @@
 //! authorization engine to evaluate policies against requests.
 
 use super::super::dto::{
-    Decision, DeterminingPolicy, PlaygroundAuthorizationRequest, PolicyEffect,
+    Decision, DeterminingPolicy, PlaygroundAuthorizationRequest, PlaygroundEvaluationOutcome,
+    PolicyEffect,
 };
 use super::super::error::PlaygroundEvaluateError;
 use super::super::ports::PolicyEvaluatorPort;
 use async_trait::async_trait;
-use cedar_policy::{Authorizer, Context, Entities, EntityUid, Policy, PolicySet, Request, Schema};
+use cedar_policy::{
+    Authorizer, Context, Entities, EntityUid, Policy, PolicySet, Request, RestrictedExpression,
+    Schema,
+};
+use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::{debug, info, warn};
+
+use crate::internal::engine::authority::{self, ActionResolution};
 
 /// Adapter that implements PolicyEvaluatorPort using Cedar's Authorizer
 ///
@@ -119,34 +126,51 @@ impl PolicyEvaluatorAdapter {
 
     /// Build a Cedar authorization request
     ///
+    /// The action is the one the **schema** resolved, and the schema travels
+    /// with the request so that Cedar itself checks that the request
+    /// conforms to it. A request that does not conform is not built: it is
+    /// denied, with the reason reported.
+    ///
     /// # Arguments
     ///
     /// * `request` - The playground authorization request
+    /// * `action` - The action UID the schema resolved
+    /// * `context` - The request context, already converted
+    /// * `schema` - The schema to check the request against, if it constrains
     ///
     /// # Returns
     ///
-    /// A Cedar Request
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request cannot be constructed
+    /// A Cedar Request, or the reason why the request does not conform
     fn build_cedar_request(
         &self,
         request: &PlaygroundAuthorizationRequest,
-    ) -> Result<Request, PlaygroundEvaluateError> {
+        action: EntityUid,
+        context: &HashMap<String, RestrictedExpression>,
+        schema: Option<&Schema>,
+    ) -> Result<Request, RequestBuildError> {
         debug!("Building Cedar authorization request");
 
-        let principal = self.hrn_to_entity_uid(&request.principal)?;
-        let action = self.action_to_entity_uid(&request.action)?;
-        let resource = self.hrn_to_entity_uid(&request.resource)?;
+        let principal = self
+            .hrn_to_entity_uid(&request.principal)
+            .map_err(RequestBuildError::Invalid)?;
+        let resource = self
+            .hrn_to_entity_uid(&request.resource)
+            .map_err(RequestBuildError::Invalid)?;
 
-        // For now, create an empty context
-        // Full context conversion would require the ContextConverterPort
-        let context = Context::empty();
+        let cedar_context = Context::from_pairs(context.clone()).map_err(|e| {
+            warn!(error = %e, "Failed to build the Cedar context");
+            RequestBuildError::Invalid(PlaygroundEvaluateError::InvalidRequest(format!(
+                "the context could not be built: {}",
+                e
+            )))
+        })?;
 
-        Request::new(principal, action, resource, context, None).map_err(|e| {
-            warn!(error = %e, "Failed to build Cedar request");
-            PlaygroundEvaluateError::InvalidRequest(format!("Request construction error: {}", e))
+        Request::new(principal, action, resource, cedar_context, schema).map_err(|e| {
+            warn!(error = %e, "The request does not conform to the schema");
+            RequestBuildError::NonConformant(format!(
+                "the request does not conform to the schema: {}",
+                e
+            ))
         })
     }
 
@@ -155,16 +179,15 @@ impl PolicyEvaluatorAdapter {
     /// # Arguments
     ///
     /// * `response` - Cedar authorization response
-    /// * `policy_texts` - Original policy texts for reference
     ///
     /// # Returns
     ///
-    /// A tuple of (Decision, Vec<DeterminingPolicy>)
+    /// A tuple of (Decision, Vec<DeterminingPolicy>, Vec<String>) where the
+    /// last one holds the errors the authorization itself reported
     fn translate_response(
         &self,
         response: &cedar_policy::Response,
-        _policy_texts: &[String],
-    ) -> (Decision, Vec<DeterminingPolicy>) {
+    ) -> (Decision, Vec<DeterminingPolicy>, Vec<String>) {
         let decision = match response.decision() {
             cedar_policy::Decision::Allow => Decision::Allow,
             cedar_policy::Decision::Deny => Decision::Deny,
@@ -186,13 +209,23 @@ impl PolicyEvaluatorAdapter {
             determining_policies.push(determining_policy);
         }
 
+        // The errors the authorization reported belong to the consumer: a
+        // denial caused by an evaluation error is not a denial caused by the
+        // policies.
+        let errors: Vec<String> = response
+            .diagnostics()
+            .errors()
+            .map(|e| e.to_string())
+            .collect();
+
         debug!(
             decision = ?decision,
             determining_count = determining_policies.len(),
+            error_count = errors.len(),
             "Translated Cedar response"
         );
 
-        (decision, determining_policies)
+        (decision, determining_policies, errors)
     }
 }
 
@@ -208,8 +241,9 @@ impl PolicyEvaluatorPort for PolicyEvaluatorAdapter {
         &self,
         request: &PlaygroundAuthorizationRequest,
         policy_texts: &[String],
-        _schema: &Schema,
-    ) -> Result<(Decision, Vec<DeterminingPolicy>), PlaygroundEvaluateError> {
+        schema: &Schema,
+        context: &HashMap<String, RestrictedExpression>,
+    ) -> Result<PlaygroundEvaluationOutcome, PlaygroundEvaluateError> {
         info!(
             principal = %request.principal,
             action = %request.action,
@@ -221,8 +255,50 @@ impl PolicyEvaluatorPort for PolicyEvaluatorAdapter {
         // Parse policies
         let policy_set = self.parse_policies(policy_texts)?;
 
+        // The schema is the authority over the request. A schema that
+        // declares nothing constrains nothing, so it is not applied; a schema
+        // that declares something decides which action the requested verb
+        // denotes.
+        let action_id = request.action.resource_id();
+        let (action, schema_for_request) = if authority::declares_anything(schema) {
+            match authority::resolve_action(schema, action_id) {
+                ActionResolution::Resolved(uid) => (uid, Some(schema)),
+                ActionResolution::NotDeclared => {
+                    warn!(action = %action_id, "The action is not declared in the schema");
+                    return Ok(PlaygroundEvaluationOutcome::denied(vec![format!(
+                        "the action `{}` is not declared in the schema",
+                        action_id
+                    )]));
+                }
+                ActionResolution::Ambiguous(candidates) => {
+                    let names: Vec<String> = candidates.iter().map(|uid| uid.to_string()).collect();
+                    warn!(action = %action_id, "The action is ambiguous in the schema");
+                    return Ok(PlaygroundEvaluationOutcome::denied(vec![format!(
+                        "the action `{}` is declared more than once in the schema: {}",
+                        action_id,
+                        names.join(", ")
+                    )]));
+                }
+            }
+        } else {
+            // The schema says nothing about the world, so it cannot reject
+            // anything: the request is evaluated without it, exactly as the
+            // validation path checks the syntax alone.
+            (self.action_to_entity_uid(&request.action)?, None)
+        };
+
         // Build Cedar request
-        let cedar_request = self.build_cedar_request(request)?;
+        let cedar_request =
+            match self.build_cedar_request(request, action, context, schema_for_request) {
+                Ok(cedar_request) => cedar_request,
+                Err(RequestBuildError::NonConformant(reason)) => {
+                    // The request does not conform to the schema it was given:
+                    // fail closed, and say why.
+                    warn!(reason = %reason, "The request does not conform to the schema");
+                    return Ok(PlaygroundEvaluationOutcome::denied(vec![reason]));
+                }
+                Err(RequestBuildError::Invalid(error)) => return Err(error),
+            };
 
         // Create empty entities (no entity data for now)
         let entities = Entities::empty();
@@ -234,16 +310,31 @@ impl PolicyEvaluatorPort for PolicyEvaluatorAdapter {
         let response = authorizer.is_authorized(&cedar_request, &policy_set, &entities);
 
         // Translate response
-        let (decision, determining_policies) = self.translate_response(&response, policy_texts);
+        let (decision, determining_policies, errors) = self.translate_response(&response);
 
         info!(
             decision = ?decision,
             determining_policies = determining_policies.len(),
+            errors = errors.len(),
             "Authorization evaluation complete"
         );
 
-        Ok((decision, determining_policies))
+        Ok(PlaygroundEvaluationOutcome::new(
+            decision,
+            determining_policies,
+            errors,
+        ))
     }
+}
+
+/// Why the Cedar request could not be built.
+#[derive(Debug)]
+enum RequestBuildError {
+    /// The request is malformed: an HRN that is not one, a context that
+    /// cannot be expressed.
+    Invalid(PlaygroundEvaluateError),
+    /// The request does not conform to the schema it was given.
+    NonConformant(String),
 }
 
 #[cfg(test)]
@@ -251,6 +342,10 @@ mod tests {
     use super::*;
 
     fn create_test_request() -> PlaygroundAuthorizationRequest {
+        create_test_request_with_action("read")
+    }
+
+    fn create_test_request_with_action(action: &str) -> PlaygroundAuthorizationRequest {
         PlaygroundAuthorizationRequest::new(
             kernel::Hrn::new(
                 "hodei".to_string(),
@@ -259,7 +354,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            kernel::Hrn::action("api", "read"),
+            kernel::Hrn::action("api", action),
             kernel::Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),
@@ -277,10 +372,12 @@ mod tests {
         let schema = Schema::from_schema_fragments(vec![]).unwrap();
         let policies = vec!["permit(principal, action, resource);".to_string()];
 
-        let result = evaluator.evaluate(&request, &policies, &schema).await;
+        let result = evaluator
+            .evaluate(&request, &policies, &schema, &HashMap::new())
+            .await;
         assert!(result.is_ok());
-        let (decision, _) = result.unwrap();
-        assert_eq!(decision, Decision::Allow);
+        let outcome = result.unwrap();
+        assert_eq!(outcome.decision, Decision::Allow);
     }
 
     #[tokio::test]
@@ -290,10 +387,12 @@ mod tests {
         let schema = Schema::from_schema_fragments(vec![]).unwrap();
         let policies = vec!["forbid(principal, action, resource);".to_string()];
 
-        let result = evaluator.evaluate(&request, &policies, &schema).await;
+        let result = evaluator
+            .evaluate(&request, &policies, &schema, &HashMap::new())
+            .await;
         assert!(result.is_ok());
-        let (decision, _) = result.unwrap();
-        assert_eq!(decision, Decision::Deny);
+        let outcome = result.unwrap();
+        assert_eq!(outcome.decision, Decision::Deny);
     }
 
     #[tokio::test]
@@ -303,26 +402,175 @@ mod tests {
         let schema = Schema::from_schema_fragments(vec![]).unwrap();
         let policies = vec!["invalid policy syntax".to_string()];
 
-        let result = evaluator.evaluate(&request, &policies, &schema).await;
+        let result = evaluator
+            .evaluate(&request, &policies, &schema, &HashMap::new())
+            .await;
         assert!(result.is_err());
     }
 
-    // TODO: Fix this test - Cedar PolicySet.add() has issues with duplicate IDs
-    // #[tokio::test]
-    // async fn test_evaluate_multiple_policies() {
-    //     let evaluator = PolicyEvaluatorAdapter::new();
-    //     let request = create_test_request();
-    //     let schema = Schema::from_schema_fragments(vec![]).unwrap();
-    //     let policies = vec![
-    //         "permit(principal, action, resource);".to_string(),
-    //         "forbid(principal, action, resource) when { false };".to_string(),
-    //     ];
-    //
-    //     let result = evaluator.evaluate(&request, &policies, &schema).await;
-    //     assert!(result.is_ok());
-    //     let (decision, _determining) = result.unwrap();
-    //     assert_eq!(decision, Decision::Allow);
-    // }
+    /// A schema that declares the action `read` for `Iam::User` principals
+    /// and `Storage::Document` resources.
+    ///
+    /// It declares exactly the types the request uses: a schema that leaves a
+    /// type out does not accept a request that names it.
+    fn schema_declaring_read() -> Schema {
+        let fragment = cedar_policy::SchemaFragment::from_cedarschema_str(
+            r#"
+namespace Iam {
+    entity User {
+        name: String
+    };
+}
+namespace Storage {
+    entity Document {
+        name: String
+    };
+}
+action "read" appliesTo { principal: [Iam::User], resource: [Storage::Document] };
+"#,
+        )
+        .expect("the fixture schema must parse")
+        .0;
+
+        Schema::from_schema_fragments(vec![fragment]).expect("the fixture schema must compose")
+    }
+
+    /// A schema that declares the action `read` in the namespace `Hodei`.
+    fn schema_declaring_namespaced_read() -> Schema {
+        let fragment = cedar_policy::SchemaFragment::from_cedarschema_str(
+            r#"
+namespace Iam {
+    entity User {
+        name: String
+    };
+}
+namespace Storage {
+    entity Document {
+        name: String
+    };
+}
+namespace Hodei {
+    action "read" appliesTo { principal: [Iam::User], resource: [Storage::Document] };
+}
+"#,
+        )
+        .expect("the fixture schema must parse")
+        .0;
+
+        Schema::from_schema_fragments(vec![fragment]).expect("the fixture schema must compose")
+    }
+
+    /// A schema that declares the action `read` for `Iam::User` principals
+    /// and resources only: it does not know the `Storage::Document` type.
+    fn schema_declaring_user_only() -> Schema {
+        let fragment = cedar_policy::SchemaFragment::from_cedarschema_str(
+            r#"
+namespace Iam {
+    entity User {
+        name: String
+    };
+}
+action "read" appliesTo { principal: [Iam::User], resource: [Iam::User] };
+"#,
+        )
+        .expect("the fixture schema must parse")
+        .0;
+
+        Schema::from_schema_fragments(vec![fragment]).expect("the fixture schema must compose")
+    }
+
+    #[tokio::test]
+    async fn test_an_undeclared_action_is_denied() {
+        let evaluator = PolicyEvaluatorAdapter::new();
+        let request = create_test_request_with_action("write");
+        let schema = schema_declaring_read();
+        let policies = vec!["permit(principal, action, resource);".to_string()];
+
+        let outcome = evaluator
+            .evaluate(&request, &policies, &schema, &HashMap::new())
+            .await
+            .expect("the evaluation must not fail");
+
+        assert_eq!(
+            outcome.decision,
+            Decision::Deny,
+            "an action the schema does not declare must not be authorized"
+        );
+        assert!(
+            outcome.errors.iter().any(|e| e.contains("write")),
+            "the reason must name the action: {:?}",
+            outcome.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn test_the_schema_is_the_authority_of_the_action_namespace() {
+        let evaluator = PolicyEvaluatorAdapter::new();
+        let request = create_test_request();
+        let policies =
+            vec!["permit(principal, action == Hodei::Action::\"read\", resource);".to_string()];
+
+        let outcome = evaluator
+            .evaluate(
+                &request,
+                &policies,
+                &schema_declaring_namespaced_read(),
+                &HashMap::new(),
+            )
+            .await
+            .expect("the evaluation must not fail");
+
+        assert_eq!(
+            outcome.decision,
+            Decision::Allow,
+            "the schema resolves the action to the namespaced form: {:?}",
+            outcome.errors
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_request_that_does_not_conform_is_denied() {
+        let evaluator = PolicyEvaluatorAdapter::new();
+        let request = create_test_request();
+        // The schema does not declare the `Storage::Document` type, so the
+        // request does not conform to it.
+        let schema = schema_declaring_user_only();
+        let policies = vec!["permit(principal, action, resource);".to_string()];
+
+        let outcome = evaluator
+            .evaluate(&request, &policies, &schema, &HashMap::new())
+            .await
+            .expect("the evaluation must not fail");
+
+        assert_eq!(
+            outcome.decision,
+            Decision::Deny,
+            "a request that does not conform to the schema must be denied"
+        );
+        assert!(
+            !outcome.errors.is_empty(),
+            "the reason of the denial must be reported"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_a_schema_that_declares_nothing_constrains_nothing() {
+        let evaluator = PolicyEvaluatorAdapter::new();
+        let request = create_test_request();
+        let schema = Schema::from_schema_fragments(vec![]).unwrap();
+        let policies = vec!["permit(principal, action, resource);".to_string()];
+
+        let outcome = evaluator
+            .evaluate(&request, &policies, &schema, &HashMap::new())
+            .await
+            .expect("the evaluation must not fail");
+
+        assert_eq!(
+            outcome.decision,
+            Decision::Allow,
+            "an empty schema must not reject a request it knows nothing about"
+        );
+    }
 
     #[tokio::test]
     async fn test_parse_policies_empty() {

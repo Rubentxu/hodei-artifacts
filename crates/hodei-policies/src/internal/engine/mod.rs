@@ -4,6 +4,7 @@
 //! This module contains the internal implementation of the authorization engine.
 //! It includes the Cedar policy engine integration and related utilities.
 
+pub mod authority;
 pub mod builder;
 pub mod core;
 pub mod schema_codec;

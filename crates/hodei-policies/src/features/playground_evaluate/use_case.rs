@@ -169,7 +169,11 @@ impl PlaygroundEvaluateUseCase {
         }
 
         // Step 4: Convert context attributes
-        let _context = self
+        //
+        // The context is part of the request: it is handed to the evaluator so
+        // that a policy conditioned on it can be matched, and so that a
+        // schema that declares a context type can be checked.
+        let context = self
             .context_converter
             .convert_context(&command.request.context)
             .map_err(|e| {
@@ -180,9 +184,14 @@ impl PlaygroundEvaluateUseCase {
         debug!("Context attributes converted");
 
         // Step 5: Evaluate policies
-        let (decision, determining_policies) = self
+        let outcome = self
             .policy_evaluator
-            .evaluate(&command.request, &command.inline_policies, &schema)
+            .evaluate(
+                &command.request,
+                &command.inline_policies,
+                &schema,
+                &context,
+            )
             .await
             .map_err(|e| {
                 warn!("Policy evaluation failed: {}", e);
@@ -190,20 +199,29 @@ impl PlaygroundEvaluateUseCase {
             })?;
 
         // Update diagnostics with matched policies count
-        diagnostics.matched_policies = determining_policies.len();
+        diagnostics.matched_policies = outcome.determining_policies.len();
 
         info!(
-            decision = %decision,
-            determining_policies = determining_policies.len(),
+            decision = %outcome.decision,
+            determining_policies = outcome.determining_policies.len(),
             "Playground evaluation completed successfully"
         );
 
         // Step 6: Build and return result
-        let result = PlaygroundEvaluateResult::new(decision, determining_policies, diagnostics);
+        let result = PlaygroundEvaluateResult::new(
+            outcome.decision,
+            outcome.determining_policies,
+            diagnostics,
+        );
 
-        // Add validation errors as result errors if any
-        if !validation_errors.is_empty() {
-            Ok(result.with_errors(validation_errors))
+        // The validation errors and the errors the evaluation reported belong
+        // to the same consumer: they say why the policies were not valid, and
+        // why the request was not authorized.
+        let mut errors = validation_errors;
+        errors.extend(outcome.errors);
+
+        if !errors.is_empty() {
+            Ok(result.with_errors(errors))
         } else {
             Ok(result)
         }

@@ -201,6 +201,51 @@ impl PlaygroundEvaluateResult {
     }
 }
 
+/// The outcome of a single policy evaluation
+///
+/// It carries the decision, the policies that determined it and the errors
+/// the evaluation itself reported. The errors are not a failure of the
+/// evaluation: a request that does not conform to the schema is *denied*,
+/// and the reason why is reported here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaygroundEvaluationOutcome {
+    /// The authorization decision (Allow/Deny)
+    pub decision: Decision,
+
+    /// Policies that contributed to the decision
+    pub determining_policies: Vec<DeterminingPolicy>,
+
+    /// Errors reported by the evaluation (non-conformance, ambiguity, ...)
+    pub errors: Vec<String>,
+}
+
+impl PlaygroundEvaluationOutcome {
+    /// Create a new outcome
+    pub fn new(
+        decision: Decision,
+        determining_policies: Vec<DeterminingPolicy>,
+        errors: Vec<String>,
+    ) -> Self {
+        Self {
+            decision,
+            determining_policies,
+            errors,
+        }
+    }
+
+    /// A denial that carries the reason why
+    ///
+    /// A request the schema does not admit is denied, not answered with an
+    /// error: the consumer gets a decision, and the reason that produced it.
+    pub fn denied(reasons: Vec<String>) -> Self {
+        Self {
+            decision: Decision::Deny,
+            determining_policies: Vec::new(),
+            errors: reasons,
+        }
+    }
+}
+
 /// Authorization decision
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]

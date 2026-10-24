@@ -10,6 +10,8 @@ use cedar_policy::Schema;
 use std::str::FromStr;
 use tracing::{debug, info, warn};
 
+use crate::internal::engine::authority::declares_anything;
+
 /// Adapter that implements PolicyValidatorPort using Cedar's validation
 ///
 /// This adapter validates Cedar policy text against a provided schema,
@@ -96,14 +98,6 @@ impl Default for PolicyValidatorAdapter {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Whether the schema declares something a policy can be checked against.
-///
-/// A schema with no entity type and no action says nothing about the world,
-/// so it cannot tell a valid policy from an invalid one.
-fn declares_anything(schema: &Schema) -> bool {
-    schema.entity_types().count() > 0 || schema.actions().count() > 0
 }
 
 #[async_trait]

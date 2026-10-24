@@ -3,7 +3,10 @@
 //! These mocks are used for unit testing the PlaygroundEvaluateUseCase
 //! without requiring actual Cedar engine integration.
 
-use super::dto::{AttributeValue, Decision, DeterminingPolicy, PlaygroundAuthorizationRequest};
+use super::dto::{
+    AttributeValue, Decision, DeterminingPolicy, PlaygroundAuthorizationRequest,
+    PlaygroundEvaluationOutcome,
+};
 use super::error::PlaygroundEvaluateError;
 use super::ports::{
     ContextConverterPort, PolicyEvaluatorPort, PolicyValidatorPort, SchemaLoaderPort,
@@ -123,6 +126,8 @@ pub struct MockPolicyEvaluator {
     pub decision: Arc<Mutex<Decision>>,
     /// The determining policies to return
     pub determining_policies: Arc<Mutex<Vec<DeterminingPolicy>>>,
+    /// The errors the evaluation reports
+    pub errors: Arc<Mutex<Vec<String>>>,
     /// Track calls to evaluate
     pub evaluate_calls: Arc<Mutex<usize>>,
 }
@@ -133,6 +138,7 @@ impl MockPolicyEvaluator {
         Self {
             decision: Arc::new(Mutex::new(Decision::Allow)),
             determining_policies: Arc::new(Mutex::new(Vec::new())),
+            errors: Arc::new(Mutex::new(Vec::new())),
             evaluate_calls: Arc::new(Mutex::new(0)),
         }
     }
@@ -142,6 +148,7 @@ impl MockPolicyEvaluator {
         Self {
             decision: Arc::new(Mutex::new(Decision::Deny)),
             determining_policies: Arc::new(Mutex::new(Vec::new())),
+            errors: Arc::new(Mutex::new(Vec::new())),
             evaluate_calls: Arc::new(Mutex::new(0)),
         }
     }
@@ -151,6 +158,7 @@ impl MockPolicyEvaluator {
         Self {
             decision: Arc::new(Mutex::new(decision)),
             determining_policies: Arc::new(Mutex::new(policies)),
+            errors: Arc::new(Mutex::new(Vec::new())),
             evaluate_calls: Arc::new(Mutex::new(0)),
         }
     }
@@ -168,14 +176,17 @@ impl PolicyEvaluatorPort for MockPolicyEvaluator {
         _request: &PlaygroundAuthorizationRequest,
         _policy_texts: &[String],
         _schema: &Schema,
-    ) -> Result<(Decision, Vec<DeterminingPolicy>), PlaygroundEvaluateError> {
+        _context: &HashMap<String, cedar_policy::RestrictedExpression>,
+    ) -> Result<PlaygroundEvaluationOutcome, PlaygroundEvaluateError> {
         // Track the call
         *self.evaluate_calls.lock().unwrap() += 1;
 
         // Return the configured result
         let decision = *self.decision.lock().unwrap();
         let policies = self.determining_policies.lock().unwrap().clone();
-        Ok((decision, policies))
+        let errors = self.errors.lock().unwrap().clone();
+
+        Ok(PlaygroundEvaluationOutcome::new(decision, policies, errors))
     }
 }
 
@@ -289,12 +300,12 @@ mod tests {
         );
         let schema = Schema::from_schema_fragments(vec![]).unwrap();
         let result = evaluator
-            .evaluate(&request, &[String::from("test")], &schema)
+            .evaluate(&request, &[String::from("test")], &schema, &HashMap::new())
             .await;
         assert!(result.is_ok());
-        let (decision, policies) = result.unwrap();
-        assert_eq!(decision, Decision::Allow);
-        assert_eq!(policies.len(), 0);
+        let outcome = result.unwrap();
+        assert_eq!(outcome.decision, Decision::Allow);
+        assert_eq!(outcome.determining_policies.len(), 0);
         assert_eq!(evaluator.evaluate_call_count(), 1);
     }
 
@@ -320,11 +331,11 @@ mod tests {
         );
         let schema = Schema::from_schema_fragments(vec![]).unwrap();
         let result = evaluator
-            .evaluate(&request, &[String::from("test")], &schema)
+            .evaluate(&request, &[String::from("test")], &schema, &HashMap::new())
             .await;
         assert!(result.is_ok());
-        let (decision, _) = result.unwrap();
-        assert_eq!(decision, Decision::Deny);
+        let outcome = result.unwrap();
+        assert_eq!(outcome.decision, Decision::Deny);
     }
 
     #[test]
