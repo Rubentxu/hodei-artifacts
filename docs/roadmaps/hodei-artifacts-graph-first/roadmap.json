@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "Rubentxu/hodei-artifacts",
   "baseline_sha": "2626e35b7c12375af0a1f23342eee4b4619bfc3c",
-  "status": "h0_released",
+  "status": "h1a_done_h1b_pending",
   "milestones": [
     {
       "id": "H0",
@@ -137,9 +137,21 @@
             "nextest": "740 tests run: 740 passed, 0 skipped, 0 failed",
             "note": "la CI del release es 40040582255 sobre c3d79a6; esta es la de la cabeza actual de main, ya con la regresion D9 corregida y sin cambios de codigo desde afa1388",
             "previous_main_ci": [
-              { "run_id": "40043317881", "commit": "afa1388", "conclusion": "success" },
-              { "run_id": "40042980376", "commit": "0c1c4df", "conclusion": "success" },
-              { "run_id": "40042608482", "commit": "a02e692", "conclusion": "success" }
+              {
+                "run_id": "40043317881",
+                "commit": "afa1388",
+                "conclusion": "success"
+              },
+              {
+                "run_id": "40042980376",
+                "commit": "0c1c4df",
+                "conclusion": "success"
+              },
+              {
+                "run_id": "40042608482",
+                "commit": "a02e692",
+                "conclusion": "success"
+              }
             ]
           }
         },
@@ -184,8 +196,18 @@
           "acceptance_on_published_bytes": "A1-A4 ejecutados de nuevo sobre el tarball descargado del release: todos PASS",
           "manifest_updated_after_publication": true,
           "manifest_update_reason": "el manifiesto publicado registra la correccion de la evidencia de limpieza (falso verde en la comprobacion de SIGTERM) y la reejecucion A1-A4 con 0 huerfanos"
-        }
-      }
+        },
+        "open_defects_note": "O1 y O5 se cerraron en H1a (ver el sub-hito H1a)."
+      },
+      "open_defects": [
+        "O2",
+        "O3",
+        "O4",
+        "O6",
+        "O7",
+        "O8",
+        "O9"
+      ]
     },
     {
       "id": "H1",
@@ -193,13 +215,151 @@
       "depends_on": [
         "H0"
       ],
-      "state": "PENDING",
+      "state": "IN_PROGRESS",
       "release_required": true,
       "integration_remote_required": true,
       "ephemeral_uat_e2e_aat_delete_after_block": true,
       "spec_ref": "ROADMAP.md",
       "acceptance_ref": "ACCEPTANCE.md",
-      "gate_ref": "RELEASE.md"
+      "gate_ref": "RELEASE.md",
+      "sub_milestones": [
+        {
+          "id": "H1a",
+          "title": "Nucleo de identidad y decision",
+          "state": "DONE",
+          "release_required": true,
+          "integration_remote_required": true,
+          "ephemeral_uat_e2e_aat_delete_after_block": true,
+          "scope": [
+            "HRN v2 tipado con alias v1 de region vacia (el formato en el cable no cambia para los HRN existentes)",
+            "EntityUid Cedar con el scope completo (particion/servicio/region/cuenta/tipo/id) construido solo con APIs Cedar tipadas",
+            "Snapshot inmutable por peticion: el motor no conserva policies/entities mutables compartidas entre peticiones",
+            "POST /api/v1/policies/evaluate real (cierra O1) con forbid > permit y default deny",
+            "Forma unica del UID de accion Action::\"X\" en motor, playground y ActionTrait (cierra O5)"
+          ],
+          "closes": [
+            "O1",
+            "O5",
+            "P0#1",
+            "P0#3"
+          ],
+          "defers_to_h1b": [
+            "O2",
+            "O3",
+            "O4",
+            "O6",
+            "O7",
+            "O8",
+            "O9",
+            "P0#2"
+          ],
+          "acceptance": {
+            "ephemeral": [
+              "A5 el mismo nombre en dos cuentas no se cruza: la decision depende de la cuenta",
+              "A6 forbid gana a permit",
+              "A7 HRN malformado -> 400 con motivo",
+              "A8 dos peticiones concurrentes con politicas opuestas no se contaminan"
+            ],
+            "permanent": [
+              "propiedades de HRN v2 y alias v1 (round-trip, region vacia, HRN malformado)",
+              "UID Cedar con scope: mismo nombre en cuentas distintas produce UIDs distintos",
+              "contrato HTTP de POST /api/v1/policies/evaluate: Allow, Deny y 400",
+              "snapshot inmutable: dos peticiones concurrentes con politicas opuestas deciden distinto"
+            ],
+            "aat": "0 procesos huerfanos; el proceso termina en SIGTERM; directorio de sesion efimero eliminado"
+          },
+          "evidence": {
+            "state": "LOCAL_PASSED",
+            "ci": null,
+            "ci_note": "PENDING: la CI remota sigue siendo la autoridad de integracion, pero H1a no se ha publicado (no hay push sin autorizacion), asi que no existe un run que citar.",
+            "binary_sha256": "06d9cb97101b2afce8ef8d9bff00ad2f6e0f90284b14d6b7fd3daed7e17b6245",
+            "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (768 passed, 0 failed, 64 ignored)",
+            "ephemeral_uat": "A5-A8 PASS sobre el binario release (Allow con policy_0; forbid prevalece con policy_1; default deny; HRN malformado HTTP 400; homónimo de otra cuenta Deny sin diagnostico de error; 16 peticiones concurrentes sin contaminacion). Limpieza verificada: SIGTERM y 0 procesos huerfanos.",
+            "mutations_checked": [
+              "EntityId Cedar sin scope (hrn.resource_id()) -> G12 FAILED + A2 FAILED (colision inter-tenant reintroducida)",
+              "motor con el ultimo snapshot en estado compartido -> A1 FAILED (\"request 0 was contaminated\") (state bleed reintroducido)"
+            ],
+            "not_run": [
+              "typedb / typedb-server ausentes en el host: todo lo dependiente de TypeDB sigue NOT_RUN"
+            ],
+            "notes": "H1a cierra O1, O5, P0#1 y P0#3. S-001 no se cumple por completo: el namespace de entidad con namespace de plataforma Hodei::* y el namespace de accion Hodei::Action::\"...\" requieren que el schema sea la autoridad (O8) y son H1b. El perfil de conformidad esta en SPECS/authorization-hrn.md; la evidencia medida esta en BASELINE.md#11-h1a--nucleo-de-identidad-y-decision-ejecutado."
+          }
+        },
+        {
+          "id": "H1b",
+          "title": "Gobernanza, esquema como autoridad y superficies pendientes",
+          "state": "PENDING",
+          "release_required": true,
+          "integration_remote_required": true,
+          "ephemeral_uat_e2e_aat_delete_after_block": true,
+          "scope": [
+            "Schema aplicado a la peticion Cedar y schema como autoridad del namespace de accion -> Hodei::Action::\"ReadAsset\" (cierra O8 y completa S-001)",
+            "IAM permit + resource permit + tenant boundary + SCP como interseccion de limites; revocaciones activas y auditadas",
+            "Superficies HTTP pendientes: O2, O3, O4, O6, O7, O9"
+          ],
+          "closes": [
+            "O2",
+            "O3",
+            "O4",
+            "O6",
+            "O7",
+            "O8",
+            "O9",
+            "P0#2"
+          ],
+          "acceptance": {
+            "ephemeral": [
+              "SCP solo-deny",
+              "error de motor -> deny",
+              "revocacion activa"
+            ],
+            "permanent": [
+              "contrato de schema aplicado",
+              "interseccion de limites"
+            ],
+            "aat": "pendiente"
+          },
+          "evidence": {
+            "state": "PENDING",
+            "ci": null,
+            "binary_sha256": null,
+            "notes": "No iniciado."
+          }
+        }
+      ],
+      "replan": {
+        "date": "2026-10-24",
+        "reason": "El ciclo anterior no produjo decision de controlador utilizable. H1 amalgamaba identidad, motor de decision, gobernanza y superficies HTTP pendientes, con dependencias distintas (credenciales reales y TypeDB, que esta bloqueado por entorno).",
+        "options": [
+          {
+            "id": "A",
+            "option": "Cerrar H1 entero en un ciclo",
+            "verdict": "RECHAZADA",
+            "rationale": "parte de la gobernanza no puede verificarse sin credenciales ni sin TypeDB; entregarla a medias deja un estado indistinguible de 'hecho'"
+          },
+          {
+            "id": "B",
+            "option": "Solo identidad (HRN v2 + UID Cedar con scope)",
+            "verdict": "RECHAZADA",
+            "rationale": "insuficiente: el nucleo de decision por HTTP sigue siendo el stub O1 y el state mutable compartido (P0#3) seguiria invalidando cualquier afirmacion de concurrencia"
+          },
+          {
+            "id": "C",
+            "option": "Identidad y nucleo de decision juntos (H1a)",
+            "verdict": "ELEGIDA",
+            "rationale": "unico corte que deja una garantia P0 verificable de extremo a extremo por la via que el consumidor usa, y elimina el state bleed que falsearia la prueba de concurrencia"
+          }
+        ],
+        "accepted_consequence": "S-001 no se cumple por completo en H1a: el namespace de accion Hodei::Action::\"...\" exige que el schema sea la autoridad y que se aplique a la peticion (O8); ambas cosas caen juntas en H1b. El perfil de conformidad de H1a esta en SPECS/authorization-hrn.md.",
+        "refs": [
+          "ROADMAP.md#h1",
+          "SPECS/authorization-hrn.md",
+          "ADR/003-cedar-hrn.md",
+          "ADR/011-h1a-identity-and-decision-core.md",
+          "BASELINE.md#72-abiertos-con-consumidor-y-criterio-de-cierre",
+          "BASELINE.md#9-primeros-riesgos-p0"
+        ]
+      }
     },
     {
       "id": "H2",

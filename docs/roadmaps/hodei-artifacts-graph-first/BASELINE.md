@@ -303,21 +303,43 @@ se revirtieron):
 
 ### 7.2 Abiertos (con consumidor y criterio de cierre)
 
+**O1 y O5 se cerraron en H1a**: están en §7.3 con su mutante y su prueba
+discriminante. Los que siguen aquí siguen abiertos.
+
 | Id | Defecto | Evidencia | Impacto | Cierre previsto |
 |---|---|---|---|---|
-| O1 | `POST /api/v1/policies/evaluate` devuelve un **stub fijo** (`decision: "Deny"`, `reasons: ["Evaluation not yet implemented"]`). El `EvaluatePoliciesPort` **sí** está cableado en `AppState`, pero el handler lo ignora (`State(_state)`) | `src/handlers/policies.rs:203-229` | el consumidor no puede decidir acceso por esta vía HTTP | H1: el handler debe invocar el puerto ya cableado |
-| O2 | `GET /api/v1/schemas/load` devuelve `{"status":"stub"}` | `src/handlers/schemas.rs:142-149` | el esquema activo no es observable por HTTP | H1: delegar en `LoadSchemaPort` |
-| O3 | `src/infrastructure/` es un módulo **no compilado**: no está declarado en `src/lib.rs`, así que `GetEffectiveScpsAdapter` no existe en el binario | `src/lib.rs` (sin `pub mod infrastructure`), `src/infrastructure/adapters/` | código que aparenta ser infraestructura sin estarlo | H1: declararlo y usarlo, o eliminarlo |
-| O4 | `Cargo.lock` está en `.gitignore` | `.gitignore:5` | el build no es reproducible; el lock resuelto (Cedar 4.14.0, config-rs 0.14.1, SurrealDB 2.7.0) no se versiona. **Consecuencia observada en la CI**: `rust-ci.yml` usa `hashFiles('**/Cargo.lock')` como clave de caché, y como ese fichero no está en el repositorio la clave es constante → la caché nunca se invalida al cambiar una dependencia | H1: versionar el lock del workspace (el borrado fue deliberado, commit `eb42752 "borrado cargo.lock file"`, así que **no** se revierte en H0 sin decisión del maintainer) |
-| O5 | `ActionTrait::action_name()` produce `Iam::Action::"X"`; el evaluador construye `Action::"X"` (namespace vacío) | `crates/kernel/src/domain/entity.rs:403-407` vs `crates/hodei-policies/src/internal/engine/core.rs:81` | divergencia latente: cuando un comando pase por la ruta de evaluación, el UID de acción no coincide con el del schema | H1: unificar la forma del UID de acción con el esquema IAM |
-| O6 | El adaptador SurrealDB de `evaluate_iam_policies` no ejecuta consulta alguna (`TODO: Implement actual SurrealDB query`) y el use case pasa `context: None` | `crates/hodei-iam/src/features/evaluate_iam_policies/adapter.rs:93`, `.../use_case.rs:176` | la evaluación de IAM no consulta las políticas persistidas | H1 |
-| O7 | El cargador de schema del playground **acepta y descarta** un schema JSON no vacío: registra un warning y construye un schema **vacío** | `crates/hodei-policies/src/features/playground_evaluate/adapters/schema_loader.rs:86-94` | una evaluación contra un schema inline no valida contra ese schema: el mismo falso verde que D3 corrigió en la ruta de persistencia | H1: decodificar el JSON con el codec de §7.1 D3 |
-| O8 | El motor de evaluación **carga** el schema pero no lo **aplica** (`TODO: we should actually use the loaded schema`) | `crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270` | la decisión no se valida contra el esquema activo | H1: pasar el schema al motor |
-| O9 | CORS permisivo en el router | `src/router.rs:52` (`CorsLayer::permissive()`) | postura de producción insegura en el borde HTTP | H1: CORS por origen configurado |
+| O2 | `GET /api/v1/schemas/load` devuelve `{"status":"stub"}` | `src/handlers/schemas.rs:142-149` | el esquema activo no es observable por HTTP | **H1b**: delegar en `LoadSchemaPort` |
+| O3 | `src/infrastructure/` es un módulo **no compilado**: no está declarado en `src/lib.rs`, así que `GetEffectiveScpsAdapter` no existe en el binario | `src/lib.rs` (sin `pub mod infrastructure`), `src/infrastructure/adapters/` | código que aparenta ser infraestructura sin estarlo | **H1b**: declararlo y usarlo, o eliminarlo |
+| O4 | `Cargo.lock` está en `.gitignore` | `.gitignore:5` | el build no es reproducible; el lock resuelto (Cedar 4.14.0, config-rs 0.14.1, SurrealDB 2.7.0) no se versiona. **Consecuencia observada en la CI**: `rust-ci.yml` usa `hashFiles('**/Cargo.lock')` como clave de caché, y como ese fichero no está en el repositorio la clave es constante → la caché nunca se invalida al cambiar una dependencia | **H1b**: versionar el lock del workspace (el borrado fue deliberado, commit `eb42752 "borrado cargo.lock file"`, así que **no** se revierte en H0 sin decisión del maintainer) |
+| O6 | El adaptador SurrealDB de `evaluate_iam_policies` no ejecuta consulta alguna (`TODO: Implement actual SurrealDB query`) y el use case pasa `context: None` | `crates/hodei-iam/src/features/evaluate_iam_policies/adapter.rs:93`, `.../use_case.rs:176` | la evaluación de IAM no consulta las políticas persistidas | **H1b** |
+| O7 | El cargador de schema del playground **acepta y descarta** un schema JSON no vacío: registra un warning y construye un schema **vacío** | `crates/hodei-policies/src/features/playground_evaluate/adapters/schema_loader.rs:86-94` | una evaluación contra un schema inline no valida contra ese schema: el mismo falso verde que D3 corrigió en la ruta de persistencia | **H1b**: decodificar el JSON con el codec de §7.1 D3 |
+| O8 | El motor de evaluación **carga** el schema pero no lo **aplica** (`TODO: we should actually use the loaded schema`) | `crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270` | la decisión no se valida contra el esquema activo | **H1b** (no H1a): aplicar el schema a la petición es inseparable de que el schema pase a ser la autoridad del namespace de acción (`Hodei::Action::"…"`). Ver `ADR/011` |
+| O9 | CORS permisivo en el router | `src/router.rs:52` (`CorsLayer::permissive()`) | postura de producción insegura en el borde HTTP | **H1b**: CORS por origen configurado |
 
 **Distinción que conviene no perder:** `POST /api/v1/playground/evaluate` **sí**
-evalúa de verdad (carga schema, valida políticas, evalúa). El stub es
-`POST /api/v1/policies/evaluate`. No son la misma ruta.
+evalúa de verdad (carga schema, valida políticas, evalúa). El stub era
+`POST /api/v1/policies/evaluate`. No son la misma ruta. Desde H1a la segunda
+también evalúa de verdad (§7.3, O1).
+
+---
+
+### 7.3 Cerrados en H1a (verificados por mutación)
+
+| Id | Defecto | Por qué era un falso verde | Cómo se corrigió | Prueba discriminante |
+|---|---|---|---|---|
+| O1 | `POST /api/v1/policies/evaluate` devolvía un **stub fijo** (`decision: "Deny"`, `reasons: ["Evaluation not yet implemented"]`). El `EvaluatePoliciesPort` ya estaba cableado en `AppState`, pero el handler lo ignoraba (`State(_state)`) | el endpoint respondía `200` con un `Deny` **correcto en la forma**: un consumidor que solo mirase el código de respuesta o la decisión vería un deny plausible. Ninguna prueba afirmaba una **decisión**: el contrato HTTP cubría salud, enrutado y ciclo de vida IAM, y nada comparaba la razón devuelta con la política enviada | el handler invoca el puerto cableado y devuelve la decisión real (`Allow`/`Deny`), las **políticas determinantes**, los motivos y los diagnósticos. Un HRN malformado, una acción vacía, un modo desconocido o un contexto que no sea un objeto son `400`, no una decisión silenciosa | `G9` (permit → `Allow` nombrando `policy_0`) + `G10` (**negativo**: forbid → `Deny` nombrando `policy_1`; sin políticas → `Deny`) + `G11` (**negativo**: HRN malformado → `400`) + `G12` (otra cuenta → `Deny` **sin** diagnóstico de error) + A6/A7/A8 de la aceptación efímera |
+| O5 | `ActionTrait::action_name()` producía `Iam::Action::"X"`; el motor construía `Action::"X"` (namespace vacío) | las dos formas son sintaxis Cedar válida, así que ninguna prueba rompía: el divergente solo se manifiesta cuando una política escrita contra el **schema registrado** (`Action::"X"`) se evalúa con el UID de otra ruta (`Iam::Action::"X"`) — y esa ruta nunca se ejercitó | una **única** forma plana `Action::"<Nombre>"` en las tres rutas (motor, playground y `ActionTrait::action_name()`), construida con las APIs Cedar tipadas. El playground dejó de fabricar el UID con `EntityUid::from_str` sobre texto del HRN y pasó a usar el mismo traductor que el motor | `an_action_maps_to_the_flat_action_uid` (traductor) + `action_trait_full_name` y `test_create_user_action` (kernel/IAM) |
+
+**Mutación focalizada de H1a** (cada mutante debe morir; ambos murieron y se
+revirtieron):
+
+| Mutante | Test que murió |
+|---|---|
+| el `EntityId` Cedar vuelve a ser el **id sin scope** (`hrn.resource_id()` en lugar del HRN canónico completo) | `G12` FAILED (`Deny` donde se esperaba `Allow`) y `A2` FAILED: el homónimo de otra cuenta vuelve a ser **la misma entidad** y la política de una cuenta alcanza a la otra — es la colisión inter-tenant (P0 #1) reintroducida |
+| el motor vuelve a guardar **el último snapshot en estado compartido** y evalúa contra él | `A1` FAILED («request 0 was contaminated»): dos peticiones concurrentes con políticas opuestas se contaminan — es el state bleed (P0 #3) reintroducido |
+
+Los dos mutantes se revirtieron tras observar la muerte de su prueba; la suite
+volvió a verde (`http_contract` 12/12, `authorization_isolation` 3/3).
 
 ---
 
@@ -398,9 +420,9 @@ razón**, no por un conflicto de puerto ni por una variable duplicada):
 
 ## 9. Primeros riesgos (P0)
 
-1. Colisión inter-tenant de Cedar UID: HRN serializado en EntityUid completo y estable. **Abierto** (H1).
-2. Política SCP entendida como `permit` unido a IAM: límites aplicados por intersección, nunca como grant. **Abierto** (H1); `crates/hodei-authorizer` no se reactiva.
-3. Estado mutable compartido entre decisiones Cedar concurrentes: evaluación por snapshot inmutable. **Abierto** (H1).
+1. Colisión inter-tenant de Cedar UID: HRN serializado en EntityUid completo y estable. **CERRADO en H1a** — el identificador Cedar es el HRN canónico completo, construido solo con APIs Cedar tipadas; dos homónimos de cuentas distintas son entidades distintas (evidencia y mutante en §7.3).
+2. Política SCP entendida como `permit` unido a IAM: límites aplicados por intersección, nunca como grant. **Abierto (H1b)**; `crates/hodei-authorizer` no se reactiva.
+3. Estado mutable compartido entre decisiones Cedar concurrentes: evaluación por snapshot inmutable. **CERRADO en H1a** — el motor no conserva policies/entities mutables compartidas; cada petición evalúa contra su propio snapshot inmutable (evidencia y mutante en §7.3).
 4. Migración de Surreal/RocksDB a TypeDB: inventario y exportación previa; rollback y verificación. **Bloqueado por entorno**: `typedb` y `typedb-server` ausentes → `NOT_RUN`.
 5. Descarga a memoria completa: cambiar a streaming con backpressure y checksums. **Abierto** (H2).
 6. TypeDB CE single-node: resiliencia, límites de disponibilidad y restore demostrados. **Bloqueado por entorno** (H2).
@@ -474,6 +496,85 @@ contenga su propia suma es imposible de cerrar), y por eso el manifiesto es el
 
 **No es GA y no declara paridad con Nexus CE**, tanto en el texto del release
 como en `release-manifest.json` (`not_a_ga_release`, `no_nexus_parity_claim`).
+
+---
+
+## 11. H1a — núcleo de identidad y decisión (ejecutado)
+
+H1 se partió en H1a y H1b (`ADR/011-h1a-identity-and-decision-core.md`).
+Esta sección recoge lo **medido** de H1a.
+
+### 11.1 Puerta de calidad local (medida)
+
+| Comprobación | Resultado |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS — `No issues found` |
+| `cargo test --workspace --no-fail-fast` | PASS — **768 superadas, 0 fallidas, 64 ignoradas** (doctests) |
+| `cargo build --release --bin hodei-artifacts-api` | PASS — binario `sha256=06d9cb97101b2afce8ef8d9bff00ad2f6e0f90284b14d6b7fd3daed7e17b6245` |
+
+**CI remota: `PENDING`.** La autoridad de integración sigue siendo el workflow
+`Rust CI` remoto, y H1a **aún no se ha publicado**: no hay push sin
+autorización, así que no existe un run que pueda citarse. La tabla anterior es
+evidencia **local**, y se declara como tal.
+
+### 11.2 Regresiones permanentes promovidas
+
+| Id | Ubicación | Garantía |
+|---|---|---|
+| G9–G12 | `tests/http_contract.rs` | contrato HTTP de `POST /api/v1/policies/evaluate`: `Allow` nombrando la política determinante, forbid que prevalece, default deny, HRN malformado → `400`, y el límite de cuenta |
+| A1–A3 | `tests/authorization_isolation.rs` | a nivel de **puerto**: dos evaluaciones concurrentes con políticas opuestas no se contaminan; una política de una cuenta no alcanza al homónimo de otra; sin políticas, deny |
+
+El motor conserva además, en sus tests unitarios, las propiedades del HRN v2
+(alias v1 con región vacía, rechazo de tipo o id vacíos) y la unicidad del
+UID con scope.
+
+### 11.3 Aceptación efímera (ejecutada y limpiada)
+
+Ciclo `PREPARE → EXECUTE → ASSERT → EVIDENCE → CLEANUP` sobre el **binario
+release construido desde el árbol de H1a**, ejecutado desde un directorio de
+paquete que contiene `config/default.toml` (que es como lo lee el binario: si
+faltara, el arranque falla con `missing field 'db_type'`).
+
+- Binario bajo prueba:
+  `sha256=06d9cb97101b2afce8ef8d9bff00ad2f6e0f90284b14d6b7fd3daed7e17b6245`
+- Directorio de sesión efímero y puerto efímero: `/tmp/hodei-h1a-uat/session`
+- Script de aceptación: efímero, **fuera del repositorio** (`/tmp/hodei-h1a-uat/`), retirado al cerrar el ciclo
+
+| Id | Comprobación | Resultado observado |
+|---|---|---|
+| A5 | el binario arranca y sirve `/health` | PASS — `status: healthy` |
+| A6 | un `permit` permite y nombra la política determinante | PASS — `Allow`, `determining_policies: ["policy_0"]` |
+| A7 | el `forbid` prevalece; sin políticas, deny; HRN malformado | PASS — `Deny` con `determining_policies: ["policy_1"]`; `Deny` sin políticas; **HTTP 400** |
+| A8 | el homónimo de otra cuenta no alcanza; sin diagnóstico de error | PASS — `Allow` en la cuenta nombrada, `Deny` en la otra, **0** diagnósticos de nivel `error` |
+| A8 | 16 peticiones concurrentes con políticas opuestas | PASS — `total: 16, contaminated: 0` |
+
+**Limpieza verificada:** el proceso termina con `SIGTERM` y **no sobrevive
+ningún proceso huérfano** del binario (`pgrep -f` → 0). El directorio de
+sesión efímero es el único estado que dejó la ejecución y queda fuera del
+repositorio.
+
+**Una corrección de instrumentación que no debe confundirse con un defecto del
+producto.** Las dos primeras ejecuciones de esta aceptación fallaron en A5 con
+`Configuration error: missing field 'db_type'`. La causa era el **directorio
+de trabajo** de la aceptación: el binario se lanzaba desde `pkg/bin`, donde no
+existe `config/default.toml`, en lugar de la raíz del paquete. El producto
+comporta lo que debe (se niega a arrancar sin configuración legible, P5 de
+§7.1); lo que estaba mal era el arnés.
+
+### 11.4 Lo que H1a **no** cierra
+
+- **S-001 no se cumple por completo**: el namespace de entidad derivado de un
+  tipo conocido con namespace de plataforma `Hodei::*` y el namespace de
+  acción `Hodei::Action::"…"` requieren que el schema sea la autoridad y que
+  se aplique a la petición (O8). Es H1b. El perfil de conformidad de H1a está
+  en `SPECS/authorization-hrn.md` y delimita lo diferido.
+- La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny), las
+  revocaciones activas y auditadas, y las superficies HTTP O2, O3, O4, O6, O7 y
+  O9 son H1b.
+- **TypeDB sigue `NOT_RUN`** en este entorno: `typedb` y `typedb-server` están
+  ausentes. Ninguna comprobación que dependa de ellos se ha ejecutado ni se
+  declara aprobada.
 
 ---
 
