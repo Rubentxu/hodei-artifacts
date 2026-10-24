@@ -145,6 +145,20 @@ unsafe fn libc_kill(pid: i32, signal: i32) {
     }
 }
 
+/// A child process that is killed when the test ends, panic included.
+///
+/// Both tests start a real server. If an assertion fails —or the binary boots
+/// when it is expected to refuse— the child must still die, or the session
+/// leaves an orphan holding a port and a database lock.
+struct KillOnDrop(Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// P4: the unpacked distribution boots on its own
 #[test]
 fn p4_the_unpacked_distribution_boots_on_its_own() {
@@ -156,7 +170,7 @@ fn p4_the_unpacked_distribution_boots_on_its_own() {
 
     for _ in 0..3 {
         let port = free_port();
-        let mut child = start_binary(
+        let mut child = KillOnDrop(start_binary(
             &dir,
             &[
                 // Only the port and the database location are overridden: the
@@ -165,7 +179,7 @@ fn p4_the_unpacked_distribution_boots_on_its_own() {
                 ("HODEI_ROCKSDB__PATH", &db_path.to_string_lossy()),
                 ("RUST_LOG", "warn"),
             ],
-        );
+        ));
 
         let deadline = Instant::now() + STARTUP_TIMEOUT;
         let mut served = false;
@@ -184,7 +198,7 @@ fn p4_the_unpacked_distribution_boots_on_its_own() {
                 last_error = format!("unexpected status line: {status_line}");
             }
 
-            if let Ok(Some(status)) = child.try_wait() {
+            if let Ok(Some(status)) = child.0.try_wait() {
                 assert!(
                     served,
                     "the unpacked distribution must serve /health, but the binary exited with {status}: {last_error}"
@@ -194,7 +208,7 @@ fn p4_the_unpacked_distribution_boots_on_its_own() {
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        stop_binary(&mut child);
+        stop_binary(&mut child.0);
 
         if served {
             return;
@@ -228,13 +242,13 @@ fn p5_the_binary_refuses_to_start_without_a_readable_configuration() {
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    let mut child = command.spawn().expect("the binary must start");
+    let mut child = KillOnDrop(command.spawn().expect("the binary must start"));
 
     // The binary is expected to refuse to start. The wait is bounded so a
     // binary that boots anyway cannot hang the suite.
     let deadline = Instant::now() + REFUSAL_TIMEOUT;
     let status = loop {
-        match child.try_wait() {
+        match child.0.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) => {
                 if Instant::now() >= deadline {
@@ -253,7 +267,7 @@ fn p5_the_binary_refuses_to_start_without_a_readable_configuration() {
     );
 
     let mut stderr = String::new();
-    if let Some(mut pipe) = child.stderr.take() {
+    if let Some(mut pipe) = child.0.stderr.take() {
         let _ = pipe.read_to_string(&mut stderr);
     }
     assert!(

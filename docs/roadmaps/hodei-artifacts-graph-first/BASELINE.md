@@ -297,6 +297,7 @@ se revirtieron):
 | `save_schema` vuelve a escribir `version: null` (se elimina la invariante `UNVERSIONED_SCHEMA_ID`) | `s1_a_schema_stored_without_a_version_is_found_again` FAILED (`left: None`) + `s3_the_registered_schema_is_the_schema_that_validates` FAILED (exactamente en «a policy over an undeclared action must be rejected»); `s2` (control) siguió pasando |
 | la configuración distribuida no es la que el binario lee (se retira `config/default.toml`) | `p4_the_unpacked_distribution_boots_on_its_own` FAILED |
 | la configuración pasa a ser opcional (`#[serde(default)]` en toda la jerarquía) | `p5_the_binary_refuses_to_start_without_a_readable_configuration` FAILED (`p4` sobrevivió, como se esperaba) |
+| la configuración sí es legible en P5 (mutante del propio test) | `p5_the_binary_refuses_to_start_without_a_readable_configuration` FAILED **por la razón correcta** («the binary must refuse to start on its own») y **no dejó ningún proceso huérfano**: es lo que motivó el guardián `KillOnDrop` en ese test |
 
 ### 7.2 Abiertos (con consumidor y criterio de cierre)
 
@@ -364,6 +365,20 @@ binario extraído conserva
 La aceptación queda, por tanto, ligada a los bytes que un consumidor descarga,
 no solo a una copia local del mismo commit.
 
+**Corrección de la evidencia de limpieza.** La comprobación «el proceso
+termina en `SIGTERM`» de las primeras ejecuciones era un **falso verde**: el
+guion enviaba la señal al PID del *subshell*, no al del binario, de modo que el
+servidor sobrevivía mientras el guion reportaba una parada limpia. Se
+detectaron **cuatro procesos `hodei-artifacts-api` huérfanos** (uno de ellos
+procedente de una ejecución del mutante de configuración opcional). El defecto
+estaba en el guion de aceptación, no en el producto: el binario **sí** responde
+a `SIGTERM` (termina con código limpio al recibirlo, comprobado). El guion se
+corrige ejecutando el binario con `exec` —así `$!` es el PID real— y
+comprobando además que no sobrevive ninguna instancia. Con el guion corregido,
+A1–A4 se repitieron sobre los bytes publicados: todos PASS y **0 procesos
+huérfanos**. El manifiesto y las notas del release publicó registran esta
+corrección.
+
 **Negativos discriminantes de configuración** (cada uno debe fallar **por su
 razón**, no por un conflicto de puerto ni por una variable duplicada):
 
@@ -425,6 +440,13 @@ verifican contra `SHA256SUMS` (`sha256sum -c`: 3/3 coinciden) y el binario
 dentro del tarball publicado conserva
 `sha256=bd70d31c87d93a570830993f5da7090616fe735cb688e70319a2978c2dac8d5f`,
 el mismo valor registrado en el manifiesto y en la aceptación.
+
+El `release-manifest.json` publicado
+(`sha256=e64377d7938468520a7047fdd51a336cdbaaedacea6afa0c0844c054588358be`)
+incluye la corrección de la evidencia de limpieza descrita en §8; las notas del
+release la resumen. `SHA256SUMS` no cubre el manifiesto (un manifiesto que
+contenga su propia suma es imposible de cerrar), y por eso el manifiesto es el
+único asset cuyo digest no figura dentro de otro asset.
 
 **No es GA y no declara paridad con Nexus CE**, tanto en el texto del release
 como en `release-manifest.json` (`not_a_ga_release`, `no_nexus_parity_claim`).

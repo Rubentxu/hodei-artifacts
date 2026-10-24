@@ -61,7 +61,8 @@
           "main.rs exit(0) en error de config: p3 FAILED",
           "save_schema vuelve a escribir version: null: s1 + s3 FAILED (s2 control sobrevive)",
           "se retira config/default.toml (la configuracion distribuida no es la que el binario lee): p4 FAILED",
-          "configuracion opcional (serde(default) en toda la jerarquia): p5 FAILED (p4 sobrevive)"
+          "configuracion opcional (serde(default) en toda la jerarquia): p5 FAILED (p4 sobrevive)",
+          "mutante de P5 (configuracion legible) -> p5 FAILED por la razon correcta y sin dejar procesos huerfanos (guardian KillOnDrop)"
         ],
         "ephemeral_acceptance": {
           "artifact": "hodei-artifacts-api-0.1.0-x86_64-unknown-linux-gnu.tar.gz desempaquetado; el binario se ejecuta desde el directorio del paquete",
@@ -86,7 +87,16 @@
           ],
           "aat": "0 procesos huerfanos; el proceso termina en SIGTERM; directorio de sesion efimero eliminado",
           "binary_sha256": "bd70d31c87d93a570830993f5da7090616fe735cb688e70319a2978c2dac8d5f",
-          "invalidated_earlier_run": "sha256 b78a3e382c24286f907137eb7f0fc54debf78a07bc93ca3ac84b337b110a5062: ejecutada desde la raiz del repositorio, no desde el paquete; el artefacto no arrancaba solo (D8)"
+          "invalidated_earlier_run": "sha256 b78a3e382c24286f907137eb7f0fc54debf78a07bc93ca3ac84b337b110a5062: ejecutada desde la raiz del repositorio, no desde el paquete; el artefacto no arrancaba solo (D8)",
+          "cleanup_correction": {
+            "issue": "el guion de aceptacion enviaba SIGTERM al PID del subshell, no al del binario: el servidor sobrevivia y la comprobacion de limpieza era un falso verde",
+            "observed": "cuatro procesos hodei-artifacts-api huerfanos tras las sesiones (uno de una ejecucion del mutante de configuracion opcional)",
+            "product_is_not_at_fault": "el binario responde a SIGTERM y termina con codigo limpio; se comprobo matando los huerfanos",
+            "fix": "el guion ejecuta el binario con exec, de modo que $! es el PID real, y comprueba con pgrep que no sobrevive ninguna instancia",
+            "rerun": "A1-A4 sobre los bytes publicados: todos PASS, 0 huerfanos",
+            "scope": "solo afecta a la evidencia de limpieza; los resultados funcionales de A1-A4 no cambian",
+            "published": "el release-manifest.json y las notas del release v0.1.0 registran la correccion"
+          }
         },
         "data_inventory": "data/hodei.development.rocksdb verificada VACIA (INFO FOR ROOT: namespaces {}); no hay datos que exportar; base original intacta",
         "not_a_ga_release": true,
@@ -136,7 +146,7 @@
             },
             {
               "filename": "release-manifest.json",
-              "sha256": "b20d0fadb6313a01d5e83f30a5668d7c978846bb0cb59818ea3162bd7b550859",
+              "sha256": "e64377d7938468520a7047fdd51a336cdbaaedacea6afa0c0844c054588358be",
               "kind": "manifest"
             },
             {
@@ -147,7 +157,9 @@
           ],
           "sources_zip_asset": false,
           "published_bytes_reverified": "los assets descargados del release verifican contra SHA256SUMS; el binario dentro del tarball publicado conserva sha256=bd70d31c87d93a570830993f5da7090616fe735cb688e70319a2978c2dac8d5f",
-          "acceptance_on_published_bytes": "A1-A4 ejecutados de nuevo sobre el tarball descargado del release: todos PASS"
+          "acceptance_on_published_bytes": "A1-A4 ejecutados de nuevo sobre el tarball descargado del release: todos PASS",
+          "manifest_updated_after_publication": true,
+          "manifest_update_reason": "el manifiesto publicado registra la correccion de la evidencia de limpieza (falso verde en la comprobacion de SIGTERM) y la reejecucion A1-A4 con 0 huerfanos"
         }
       }
     },
