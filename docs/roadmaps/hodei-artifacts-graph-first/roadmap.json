@@ -40,7 +40,8 @@
           "D5 test_register_iam_schema_integration.rs de 1 byte -> tests/bootstrap_integration.rs (B1-B7)",
           "D6 override HODEI_<SECCION>__<CLAVE> inerte -> prefix_separator explicito",
           "D7 esquema persistido invisible para el lector (version: null) -> invariante UNVERSIONED_SCHEMA_ID",
-          "D8 la distribucion no arrancaba: empaquetaba config/example.toml, que el binario no lee -> config/default.toml + scripts/package-release.sh"
+          "D8 la distribucion no arrancaba: empaquetaba config/example.toml, que el binario no lee -> config/default.toml + scripts/package-release.sh",
+          "D9 regresion permanente intermitente: b5 fallaba por el bloqueo de RocksDB (liberacion asincrona del LOCK) -> reintento acotado y dirigido solo ante ese error; cualquier otro fallo falla de inmediato"
         ],
         "open_defects": [
           "O1",
@@ -62,7 +63,8 @@
           "save_schema vuelve a escribir version: null: s1 + s3 FAILED (s2 control sobrevive)",
           "se retira config/default.toml (la configuracion distribuida no es la que el binario lee): p4 FAILED",
           "configuracion opcional (serde(default) en toda la jerarquia): p5 FAILED (p4 sobrevive)",
-          "mutante de P5 (configuracion legible) -> p5 FAILED por la razon correcta y sin dejar procesos huerfanos (guardian KillOnDrop)"
+          "mutante de P5 (configuracion legible) -> p5 FAILED por la razon correcta y sin dejar procesos huerfanos (guardian KillOnDrop)",
+          "save_schema vuelve a create (no idempotente) con el reintento por bloqueo presente: b5 FAILED de inmediato con 'already exists' (el reintento no tapa la falta de idempotencia)"
         ],
         "ephemeral_acceptance": {
           "artifact": "hodei-artifacts-api-0.1.0-x86_64-unknown-linux-gnu.tar.gz desempaquetado; el binario se ejecuta desde el directorio del paquete",
@@ -117,7 +119,16 @@
             "cargo nextest run --workspace --no-fail-fast"
           ],
           "cargo_test": "746 passed, 0 failed, 64 ignored",
-          "nextest": "740 tests run: 740 passed, 0 skipped, 0 failed"
+          "nextest": "740 tests run: 740 passed, 0 skipped, 0 failed",
+          "posterior_red_on_documentation_only_commit": {
+            "run_id": "40042587344",
+            "commit": "91d752f55f180e2244ae4fff8aa3351c7d56cdde",
+            "failed_test": "b5_bootstrapping_twice_against_the_same_database_succeeds",
+            "reason": "IO error: lock hold by current process ... LOCK: No locks available",
+            "classification": "regresion permanente intermitente (D9); no defecto de producto ni de la release, que se corta en c3d79a6 con la CI 40040582255 verde",
+            "fix": "reintento acotado (10 s) y dirigido solo al error de bloqueo del almacen embebido",
+            "stress": "25 repeticiones de b5 y 15 del suite completo: 0 fallos"
+          }
         },
         "release_published": {
           "version": "0.1.0",

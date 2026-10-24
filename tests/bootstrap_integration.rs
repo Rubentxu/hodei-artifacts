@@ -204,9 +204,26 @@ async fn b5_bootstrapping_twice_against_the_same_database_succeeds() {
     // open the same database.
     drop(first);
 
-    let second = bootstrap(&config, bootstrap_config)
-        .await
-        .expect("bootstrapping again against the same database must succeed");
+    // Releasing that lock is asynchronous, so a second open that arrives too
+    // early fails with a lock error that says nothing about idempotency.
+    // That error — and only that error — is retried inside a bounded window;
+    // every other failure (a non-idempotent write, for instance) fails the
+    // test at once, so the guarantee is not weakened by the retry.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let second = loop {
+        match bootstrap(&config, bootstrap_config.clone()).await {
+            Ok(state) => break state,
+            Err(error) => {
+                let message = error.to_string();
+                let lock_contention = message.contains("lock hold by current process")
+                    || message.contains("No locks available");
+                if !lock_contention || std::time::Instant::now() >= deadline {
+                    panic!("bootstrapping again against the same database must succeed: {error}");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    };
 
     assert_eq!(
         second.schema_version, first_version,

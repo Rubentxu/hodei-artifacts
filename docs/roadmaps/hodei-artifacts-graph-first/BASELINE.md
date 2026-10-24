@@ -284,6 +284,7 @@ resolverá crate a crate según su reclasificación en §6.2.
 | D6 | El override documentado `HODEI_<SECCIÓN>__<CLAVE>` era **inerte**: config-rs 0.14.1 busca el prefijo como `HODEI__` cuando se da un separador de clave sin separador de prefijo explícito, y descarta toda variable en silencio | el servicio arrancaba siempre con los valores del TOML; nada en la suite lo observaba porque todos los tests configuraban en memoria | `.prefix_separator("_").separator("__").try_parsing(true)` | `environment_variables_override_the_configuration` + `an_invalid_environment_override_is_rejected` (negativo) + `p1_the_binary_serves_health_with_the_configuration_from_the_environment` (proceso real) + `p3_the_binary_exits_with_a_failure_code_on_an_invalid_configuration` (negativo) |
 | D7 | El esquema persistido era **invisible para el lector** cuando el registro no nombraba versión: `save_schema` escribía `version: null` y `get_latest_schema` selecciona el registro **por su versión**, así que un esquema sin versión nunca era seleccionado | el esquema quedaba en la base y, aun así, todo consumidor concluía que no había esquema → la validación de políticas **degradaba a una simple comprobación de sintaxis** y el servicio aceptaba políticas sobre acciones y tipos de entidad no declarados. Es el mismo falso verde que D3, por la otra mitad del camino: D3 rompía la reconstrucción, D7 rompía el *encontrar* | invariante `UNVERSIONED_SCHEMA_ID` (`src/bootstrap.rs:129`): el id del registro es su versión, y el registro declara siempre la versión bajo la que puede volver a encontrarse; el lector cae en ese id cuando la versión es nula (`src/bootstrap.rs:198`, `src/bootstrap.rs:244`) | `tests/schema_persistence.rs` S1 (se encuentra sin versión) + S2 (control: se encuentra con versión) + S3 (**discriminante**: el esquema registrado es el que valida) — S3 incluye los dos negativos: acción no declarada y tipo de entidad no declarado |
 | D8 | La distribución publicada **no arrancaba**: el paquete incluía `config/example.toml`, un fichero que el binario **nunca lee** (lee `config/default.toml`), y el binario deserializa la configuración de forma estricta | la aceptación efímera anterior se había ejecutado desde la raíz del repositorio —donde sí existe `config/development.toml`— y por eso dio verde sobre un artefacto que no arrancaba solo. Un consumidor que desempaquetaba la distribución obtenía «missing field `db_type`» | `config/default.toml` en el repositorio (la configuración base que el binario sí lee) + `scripts/package-release.sh`, que **se niega a construir** un paquete sin ese fichero y lo incluye en el tarball | `tests/distribution_contract.rs` P4 (el desempaquetado arranca solo y sirve `/health`) + P5 (**negativo**: sin configuración legible el binario se niega a arrancar, en vez de arrancar con supuestos) |
+| D9 | La regresión permanente `b5_bootstrapping_twice_against_the_same_database_succeeds` era **intermitente**: al soltar el primer estado, el bloqueo exclusivo de RocksDB sobre el directorio **no se libera de forma determinista**, y el segundo arranque podía fallar con «lock hold by current process … No locks available» | el fallo depende del momento en que el motor embebido suelta el `LOCK`, no de la garantía que la prueba afirma: la idempotencia de persistir el esquema. Se observó **en la CI** (run `40042587344`, commit `91d752f`, un commit de solo documentación): la CI quedó en rojo sin que hubiera cambiado una línea de código de producción | reintento **acotado** (10 s) y **dirigido**: solo se reintenta el error de bloqueo del almacén embebido; cualquier otro fallo —«already exists», una aserción— falla de inmediato, así que la garantía de idempotencia no queda debilitada | `b5` sigue siendo la diana de D2: el mutante `create` en lugar de `upsert` hace que b5 **falle de inmediato** con «Database record `schema:`v1.0.0`` already exists», sin que el reintento lo tape |
 
 **Verificación por mutación focalizada** (cada mutante debe morir; todos murieron y
 se revirtieron):
@@ -298,6 +299,7 @@ se revirtieron):
 | la configuración distribuida no es la que el binario lee (se retira `config/default.toml`) | `p4_the_unpacked_distribution_boots_on_its_own` FAILED |
 | la configuración pasa a ser opcional (`#[serde(default)]` en toda la jerarquía) | `p5_the_binary_refuses_to_start_without_a_readable_configuration` FAILED (`p4` sobrevivió, como se esperaba) |
 | la configuración sí es legible en P5 (mutante del propio test) | `p5_the_binary_refuses_to_start_without_a_readable_configuration` FAILED **por la razón correcta** («the binary must refuse to start on its own») y **no dejó ningún proceso huérfano**: es lo que motivó el guardián `KillOnDrop` en ese test |
+| `save_schema` vuelve a `create` (escritura no idempotente) con el reintento por bloqueo ya presente | `b5_bootstrapping_twice_against_the_same_database_succeeds` FAILED **de inmediato** con «Database record `schema:`v1.0.0`` already exists»: el reintento solo tolera el error de bloqueo, no el defecto de idempotencia |
 
 ### 7.2 Abiertos (con consumidor y criterio de cierre)
 
@@ -422,6 +424,17 @@ razón**, no por un conflicto de puerto ni por una variable duplicada):
 
 La segunda señal (nextest, un proceso por prueba) coincide con la primera: el
 workspace no comparte estado mutable entre pruebas.
+
+**Un rojo posterior, en un commit de solo documentación.** La CI del commit
+`91d752f` (que solo toca `BASELINE.md` y `roadmap.json`) quedó en **rojo** con
+`b5_bootstrapping_twice_against_the_same_database_succeeds` fallando por el
+bloqueo de RocksDB descrito en D9. El release se corta en `c3d79a6`, cuya CI
+(`40040582255`) estaba verde, así que **el artefacto publicado no arrastra
+este defecto**; pero la intermitencia era real y está corregida en `main`
+(reintento acotado y dirigido, verificado con 25 repeticiones del test y 15
+del suite completo, más el mutante que demuestra que el reintento no tapa la
+falta de idempotencia). Una CI verde no es solo un resultado: es una
+propiedad que hay que poder repetir.
 
 **Publicación observada** (no declarada: comprobada contra la API y contra el
 remote):
