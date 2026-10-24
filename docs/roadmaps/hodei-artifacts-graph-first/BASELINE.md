@@ -436,6 +436,14 @@ del suite completo, más el mutante que demuestra que el reintento no tapa la
 falta de idempotencia). Una CI verde no es solo un resultado: es una
 propiedad que hay que poder repetir.
 
+**Estado actual de `main`.** Tras la publicación, `main` siguió avanzando con
+correcciones de higiene (el guardián `KillOnDrop` de los procesos de prueba y
+la regresión D9). La CI de `afa1388` (run `40043317881`) está **verde** en
+todos sus pasos, con `746 passed, 0 failed, 64 ignored` y nextest
+`740 passed, 0 skipped`. El release sigue siendo el de `c3d79a6`: las
+correcciones posteriores no cambian el artefacto publicado (los tests no se
+distribuyen).
+
 **Publicación observada** (no declarada: comprobada contra la API y contra el
 remote):
 

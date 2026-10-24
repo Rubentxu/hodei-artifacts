@@ -128,6 +128,14 @@
             "classification": "regresion permanente intermitente (D9); no defecto de producto ni de la release, que se corta en c3d79a6 con la CI 40040582255 verde",
             "fix": "reintento acotado (10 s) y dirigido solo al error de bloqueo del almacen embebido",
             "stress": "25 repeticiones de b5 y 15 del suite completo: 0 fallos"
+          },
+          "current_main_ci": {
+            "run_id": "40043317881",
+            "commit": "afa1388",
+            "conclusion": "success",
+            "cargo_test": "746 passed, 0 failed, 64 ignored",
+            "nextest": "740 tests run: 740 passed, 0 skipped, 0 failed",
+            "note": "la CI del release es 40040582255 sobre c3d79a6; esta es la de main tras las correcciones de higiene posteriores, que no cambian el artefacto publicado"
           }
         },
         "release_published": {
