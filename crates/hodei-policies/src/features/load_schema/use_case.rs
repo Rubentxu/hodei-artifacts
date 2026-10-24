@@ -109,28 +109,34 @@ impl<S: SchemaStoragePort> LoadSchemaUseCase<S> {
             schema,
             Some(version.to_string()),
             format!("schema_{}", version),
+            schema_string,
         ))
     }
 
     /// Load the latest schema version
     async fn load_latest(&self) -> Result<LoadSchemaResult, LoadSchemaError> {
-        let schema_string = self
+        // The entry is read instead of the bare content: a schema is stored
+        // under its own version, so the version is part of the record and the
+        // reader has to report it. Reading only the content would hand the
+        // consumer a schema without an identity.
+        let stored = self
             .storage
-            .get_latest_schema()
+            .get_latest_schema_entry()
             .await?
             .ok_or(LoadSchemaError::SchemaNotFound)?;
 
         info!("Retrieved latest schema from storage");
 
         // Parse the schema string back into a Schema object
-        let schema = self.parse_schema(&schema_string)?;
+        let schema = self.parse_schema(&stored.schema_string)?;
 
         info!("Successfully loaded latest schema");
 
         Ok(LoadSchemaResult::new(
             schema,
-            None,
-            "schema_latest".to_string(),
+            stored.version,
+            stored.schema_id,
+            stored.schema_string,
         ))
     }
 

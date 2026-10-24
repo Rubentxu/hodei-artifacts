@@ -16,7 +16,14 @@ use std::collections::HashMap;
 /// optionally with an inline schema or a reference to a stored schema version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaygroundEvaluateCommand {
-    /// Optional inline Cedar schema (JSON format)
+    /// Optional inline Cedar schema
+    ///
+    /// It is the `cedar-schema-fragments-v1` envelope, exactly the content
+    /// that the persistence path stores: `{"format": "...",
+    /// "fragments": [...]}`. An empty JSON object (`{}`) is read as an
+    /// explicitly empty schema; any other content that is not an envelope is
+    /// rejected instead of being read as an empty schema.
+    ///
     /// If None, must provide schema_version
     pub inline_schema: Option<String>,
 

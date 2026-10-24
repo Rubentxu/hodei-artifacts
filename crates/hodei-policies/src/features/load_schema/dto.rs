@@ -65,15 +65,29 @@ pub struct LoadSchemaResult {
 
     /// Schema ID or identifier in storage
     pub schema_id: String,
+
+    /// The persisted content the schema was recovered from
+    ///
+    /// Cedar offers serialization for the *fragments*, not for the composed
+    /// schema, so the composed schema cannot be written back. The persisted
+    /// envelope is therefore the faithful rendering of what is stored, and it
+    /// is what a reader that wants the content has to be given.
+    pub content: String,
 }
 
 impl LoadSchemaResult {
     /// Create a new load schema result
-    pub fn new(schema: Schema, version: Option<String>, schema_id: String) -> Self {
+    pub fn new(
+        schema: Schema,
+        version: Option<String>,
+        schema_id: String,
+        content: String,
+    ) -> Self {
         Self {
             schema,
             version,
             schema_id,
+            content,
         }
     }
 }

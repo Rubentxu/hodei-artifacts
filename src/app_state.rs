@@ -51,7 +51,6 @@ pub struct AppState {
     pub build_schema: Arc<dyn BuildSchemaPort>,
 
     /// Port for loading schemas from storage
-    #[allow(dead_code)]
     pub load_schema: Arc<dyn LoadSchemaPort>,
 
     /// Port for validating Cedar policies

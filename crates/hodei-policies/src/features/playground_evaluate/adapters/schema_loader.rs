@@ -50,9 +50,20 @@ impl SchemaLoaderAdapter {
 
     /// Parse an inline Cedar schema from JSON string
     ///
+    /// The inline schema is read with the same codec the persistence path
+    /// uses (`cedar-schema-fragments-v1`), so a schema that arrives inline is
+    /// read exactly like one that was stored. A content that is not in that
+    /// format is rejected explicitly: discarding it and returning an empty
+    /// schema would evaluate the policies against *no* schema, which reports
+    /// every policy that mentions a declared type as invalid and every
+    /// policy that mentions nothing as valid.
+    ///
+    /// An empty JSON object and `null` are the one exception: they are an
+    /// explicit request for an empty schema.
+    ///
     /// # Arguments
     ///
-    /// * `schema_json` - Cedar schema in JSON format
+    /// * `schema_json` - Cedar schema envelope in JSON format
     ///
     /// # Returns
     ///
@@ -62,35 +73,41 @@ impl SchemaLoaderAdapter {
     ///
     /// Returns an error if:
     /// - Schema JSON is invalid
-    /// - Schema parsing fails
+    /// - The content is not a readable schema envelope
     fn parse_inline_schema(&self, schema_json: &str) -> Result<Schema, PlaygroundEvaluateError> {
         debug!("Parsing inline schema");
 
         // Parse JSON to validate it first
-        let json_value: serde_json::Value = serde_json::from_str(schema_json)
-            .map_err(|e| PlaygroundEvaluateError::SchemaError(format!("Invalid JSON: {}", e)))?;
+        let json_value: serde_json::Value = serde_json::from_str(schema_json).map_err(|e| {
+            PlaygroundEvaluateError::InvalidInlineSchema(format!("Invalid JSON: {}", e))
+        })?;
 
-        // Convert to Cedar schema format
-        // For now, we'll create an empty schema if the JSON is empty
+        // An explicitly empty request is an empty schema, not a failure.
         if json_value.is_null()
             || (json_value.is_object() && json_value.as_object().unwrap().is_empty())
         {
             info!("Creating empty schema from inline JSON");
-            Schema::from_schema_fragments(vec![]).map_err(|e| {
+            return Schema::from_schema_fragments(vec![]).map_err(|e| {
                 PlaygroundEvaluateError::SchemaError(format!(
                     "Failed to create empty schema: {}",
                     e
                 ))
-            })
-        } else {
-            // Try to parse as Cedar schema
-            // Note: Cedar schemas in JSON format need to be converted to schema fragments
-            // For now, we'll return an empty schema and log a warning
-            warn!("Non-empty schema JSON provided, but full schema parsing not yet implemented");
-            Schema::from_schema_fragments(vec![]).map_err(|e| {
-                PlaygroundEvaluateError::SchemaError(format!("Schema parsing error: {}", e))
-            })
+            });
         }
+
+        // The inline schema is read with the codec the persistence path uses,
+        // so both read paths agree on what a schema is.
+        let schema = crate::internal::engine::schema_codec::decode(schema_json).map_err(|e| {
+            warn!(error = %e, "The inline schema is not a readable schema envelope");
+            PlaygroundEvaluateError::InvalidInlineSchema(format!(
+                "the inline schema is not a '{}' envelope: {}",
+                crate::internal::engine::schema_codec::SCHEMA_ENVELOPE_FORMAT,
+                e
+            ))
+        })?;
+
+        info!("Decoded the inline schema");
+        Ok(schema)
     }
 
     /// Load a schema from storage using the provided version
@@ -173,6 +190,27 @@ mod tests {
     use super::*;
     use crate::features::build_schema::ports::StoredSchema;
     use crate::features::load_schema::ports::SchemaStoragePort as LoadSchemaStoragePort;
+
+    /// A schema envelope that declares one entity type, as the IAM schema does.
+    ///
+    /// It is written with the codec the persistence path uses, so it is
+    /// exactly what a stored schema looks like.
+    fn envelope_declaring_user() -> String {
+        let fragment = cedar_policy::SchemaFragment::from_cedarschema_str(
+            r#"
+namespace Iam {
+    entity User {
+        name: String
+    };
+}
+"#,
+        )
+        .expect("the fixture schema must parse")
+        .0;
+
+        crate::internal::engine::schema_codec::encode(&[fragment])
+            .expect("the fixture schema must be encodable")
+    }
 
     struct MockStorage {
         schema: Option<StoredSchema>,
@@ -291,7 +329,106 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            PlaygroundEvaluateError::SchemaError(_)
+            PlaygroundEvaluateError::InvalidInlineSchema(_)
         ));
+    }
+
+    /// An inline envelope is read as the schema it declares
+    ///
+    /// The defect this protects against is silent: the loader used to accept
+    /// any non-empty JSON, warn about it and continue with an *empty* schema.
+    /// An empty schema declares nothing, so the policies were checked against
+    /// no schema at all and every one of them looked valid.
+    #[tokio::test]
+    async fn test_inline_envelope_is_read_as_the_schema_it_declares() {
+        let adapter = SchemaLoaderAdapter::new_inline_only();
+
+        let schema = adapter
+            .load_schema(Some(envelope_declaring_user()), None)
+            .await
+            .expect("an envelope must be readable");
+
+        let declared: Vec<String> = schema.entity_types().map(|e| e.to_string()).collect();
+
+        assert_eq!(
+            declared,
+            vec!["Iam::User".to_string()],
+            "the inline schema must declare its entity types, not come back empty"
+        );
+    }
+
+    /// A content that is not an envelope is rejected, not silently emptied
+    ///
+    /// This is the discriminating counterpart of the previous test: the
+    /// content below is a Cedar schema in the human-readable format, so it
+    /// looks like a schema. It is not the envelope the read paths share, so
+    /// it is rejected instead of being read as an empty schema.
+    #[tokio::test]
+    async fn test_inline_content_that_is_not_an_envelope_is_rejected() {
+        let adapter = SchemaLoaderAdapter::new_inline_only();
+
+        let result = adapter
+            .load_schema(
+                Some(
+                    r#"{"entityTypes": {"User": {"shape": {"type": "Record", "attributes": {}}}}}"#
+                        .to_string(),
+                ),
+                None,
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a content that is not an envelope must be rejected, not read as an empty schema"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PlaygroundEvaluateError::InvalidInlineSchema(_)
+        ));
+    }
+
+    /// An envelope with an unknown format is rejected
+    #[tokio::test]
+    async fn test_inline_envelope_with_an_unknown_format_is_rejected() {
+        let adapter = SchemaLoaderAdapter::new_inline_only();
+
+        let result = adapter
+            .load_schema(
+                Some(
+                    serde_json::json!({
+                        "format": "some-other-format",
+                        "fragments": [],
+                    })
+                    .to_string(),
+                ),
+                None,
+            )
+            .await;
+
+        assert!(result.is_err(), "an unknown format must be rejected");
+        assert!(matches!(
+            result.unwrap_err(),
+            PlaygroundEvaluateError::InvalidInlineSchema(_)
+        ));
+    }
+
+    /// An envelope with no fragments is an explicitly empty schema
+    ///
+    /// It is the difference between "there is a schema and it declares
+    /// nothing" and "this is not a schema": both are accepted, but they are
+    /// not the same thing.
+    #[tokio::test]
+    async fn test_inline_envelope_without_fragments_is_an_empty_schema() {
+        let adapter = SchemaLoaderAdapter::new_inline_only();
+
+        let envelope = crate::internal::engine::schema_codec::encode(&[])
+            .expect("an empty schema must be encodable");
+
+        let schema = adapter
+            .load_schema(Some(envelope), None)
+            .await
+            .expect("an empty envelope must be readable");
+
+        assert_eq!(schema.entity_types().count(), 0);
     }
 }

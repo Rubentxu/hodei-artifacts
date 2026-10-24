@@ -34,6 +34,18 @@
 //!   discriminating negative of G9's input handling).
 //! - G12 A policy scoped to one account does not reach a homonym of another
 //!   account: the tenant boundary is structural.
+//! - G13 The playground validates the inline policies against the inline
+//!   schema it was given: a policy over a declared type is accepted.
+//! - G14 (negative of G13) A policy over an undeclared type is rejected by
+//!   that schema — and the same policy is not rejected when no schema is
+//!   declared, so the rejection comes from the schema and not from the
+//!   validator rejecting everything.
+//! - G15 An inline schema that is not a readable schema envelope is a bad
+//!   request, not an empty schema.
+//! - G16 `GET /api/v1/schemas/load` says explicitly that there is no active
+//!   schema when nothing is stored.
+//! - G17 `GET /api/v1/schemas/load` returns the active schema — its version
+//!   and its content — once one has been registered.
 //!
 //! Each test bootstraps its own application on a throwaway RocksDB directory,
 //! so tests never share mutable state.
@@ -53,6 +65,21 @@ const VALID_POLICY: &str = "permit(principal, action, resource);";
 
 /// A syntactically broken Cedar policy (unterminated `permit`).
 const INVALID_POLICY: &str = "permit(principal, action, resource";
+
+/// A schema envelope that declares the entity type `Iam::User`.
+///
+/// It is the `cedar-schema-fragments-v1` format, the very content the
+/// persistence path stores, so the inline and the stored read paths speak
+/// the same language.
+const INLINE_SCHEMA_DECLARING_USER: &str = r#"{"format":"cedar-schema-fragments-v1","fragments":[{"":{"entityTypes":{},"actions":{}},"Iam":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}}},"actions":{}}}]}"#;
+
+/// A policy over the entity type the inline schema declares.
+const POLICY_OVER_DECLARED_TYPE: &str =
+    r#"permit(principal == Iam::User::"hrn:aws:iam::account-a:User/alice", action, resource);"#;
+
+/// A policy over an entity type no schema declares.
+const POLICY_OVER_UNDECLARED_TYPE: &str =
+    r#"permit(principal == Nope::Ghost::"alice", action, resource);"#;
 
 /// Bootstraps the application on a throwaway RocksDB directory.
 ///
@@ -547,5 +574,194 @@ async fn g12_a_policy_scoped_to_one_account_does_not_reach_another_account() {
             .iter()
             .any(|d| d["level"] == json!("error")),
         "the denial must come from the policy, not from an evaluation error: {body}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// G13 / G14 / G15 — the playground validates against the schema it was given
+// ---------------------------------------------------------------------------
+
+/// Builds the body of a playground evaluation request.
+fn playground_body(inline_schema: &str, policies: &[&str]) -> Value {
+    json!({
+        "inline_schema": inline_schema,
+        "inline_policies": policies,
+        "request": {
+            "principal": "hrn:aws:iam::account-a:User/alice",
+            "action": "hrn:aws:iam::account-a:Action/read",
+            "resource": "hrn:aws:iam::account-a:User/bob",
+            "context": {},
+        }
+    })
+}
+
+/// The validation errors the playground reported, if any.
+fn validation_errors(body: &Value) -> Vec<String> {
+    body["diagnostics"]["validation_errors"]
+        .as_array()
+        .expect("validation_errors must be an array")
+        .iter()
+        .filter_map(|e| e.as_str().map(str::to_string))
+        .collect()
+}
+
+#[tokio::test]
+async fn g13_the_playground_validates_against_the_inline_schema() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body(
+            INLINE_SCHEMA_DECLARING_USER,
+            &[POLICY_OVER_DECLARED_TYPE],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert!(
+        validation_errors(&body).is_empty(),
+        "a policy over the declared entity type must not be reported as invalid: {body}"
+    );
+    assert_eq!(body["decision"], json!("ALLOW"), "body: {body}");
+}
+
+#[tokio::test]
+async fn g14_the_playground_rejects_a_policy_over_an_undeclared_type() {
+    let (app, _tmp) = test_app().await;
+
+    // With the schema that declares `Iam::User`, a policy over `Nope::Ghost`
+    // is invalid against it.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body(
+            INLINE_SCHEMA_DECLARING_USER,
+            &[POLICY_OVER_UNDECLARED_TYPE],
+        )),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    let errors = validation_errors(&body);
+    assert!(
+        !errors.is_empty(),
+        "a policy over an undeclared entity type must be reported: {body}"
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("Nope::Ghost")),
+        "the report must name the undeclared type: {errors:?}"
+    );
+
+    // The same policy, with no schema declared, is not reported: the
+    // rejection above comes from the schema that was supplied, not from the
+    // validator rejecting everything.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body("{}", &[POLICY_OVER_UNDECLARED_TYPE])),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "playground body: {body}");
+    assert!(
+        validation_errors(&body).is_empty(),
+        "with no schema declared only the syntax can be checked: {body}"
+    );
+}
+
+#[tokio::test]
+async fn g15_an_inline_schema_that_is_not_an_envelope_is_a_bad_request() {
+    let (app, _tmp) = test_app().await;
+
+    // A Cedar schema in the human-readable format: it looks like a schema,
+    // but it is not the envelope the read paths share.
+    let (status, body) = request(
+        &app,
+        Method::POST,
+        "/api/v1/playground/evaluate",
+        Some(playground_body(
+            r#"{"entityTypes": {"User": {"shape": {"type": "Record", "attributes": {}}}}}"#,
+            &[VALID_POLICY],
+        )),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "an inline schema that cannot be read must be rejected: {body}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// G16 / G17 — the schema load endpoint reports the active schema
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn g16_loading_the_schema_says_when_there_is_none() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, body) = request(&app, Method::GET, "/api/v1/schemas/load", None).await;
+
+    assert_eq!(status, StatusCode::OK, "load body: {body}");
+    assert!(
+        matches!(
+            body["status"].as_str(),
+            Some("active") | Some("no_active_schema")
+        ),
+        "the endpoint must answer with a declared status, not with a placeholder: {body}"
+    );
+    assert_eq!(
+        body["status"],
+        json!("no_active_schema"),
+        "the endpoint must say that there is no schema, not answer with a placeholder: {body}"
+    );
+    assert_eq!(body["version"], json!(null), "body: {body}");
+    assert_eq!(body["content"], json!(null), "body: {body}");
+}
+
+#[tokio::test]
+async fn g17_loading_the_schema_returns_the_active_schema() {
+    let (app, _tmp) = test_app().await;
+
+    let (status, registered) = request(
+        &app,
+        Method::POST,
+        "/api/v1/schemas/register-iam",
+        Some(json!({ "version": "v1.0.0", "validate": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "register body: {registered}");
+
+    let (status, body) = request(&app, Method::GET, "/api/v1/schemas/load", None).await;
+
+    assert_eq!(status, StatusCode::OK, "load body: {body}");
+    assert_eq!(body["status"], json!("active"), "body: {body}");
+    assert_eq!(body["version"], json!("v1.0.0"), "body: {body}");
+
+    let content = body["content"]
+        .as_str()
+        .expect("the active schema must come with its content");
+
+    let envelope: Value = serde_json::from_str(content).expect("the content must be a schema");
+    assert_eq!(
+        envelope["format"],
+        json!("cedar-schema-fragments-v1"),
+        "the content must be the envelope the read paths share: {content}"
+    );
+    assert!(
+        envelope["fragments"]
+            .as_array()
+            .is_some_and(|f| !f.is_empty()),
+        "the active schema must declare something: {content}"
+    );
+    assert!(
+        body["entity_type_count"].as_u64().is_some_and(|c| c > 0),
+        "the active schema must declare its entity types: {body}"
     );
 }

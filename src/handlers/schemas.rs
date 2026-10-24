@@ -117,9 +117,45 @@ pub async fn build_schema(
     }))
 }
 
-/// Handler to load a schema
+/// Status of the schema load response
 ///
-/// This endpoint loads a previously built schema from storage.
+/// The endpoint answers with an explicit status instead of a placeholder, so
+/// a consumer can tell "there is no schema" from "there is a schema and this
+/// is it" without inspecting the payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LoadSchemaStatus {
+    /// A schema is active; its version and content are returned
+    Active,
+    /// No schema is stored, so there is nothing to load
+    NoActiveSchema,
+}
+
+/// Response from loading the active schema
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LoadSchemaResponse {
+    /// Whether an active schema was found
+    pub status: LoadSchemaStatus,
+    /// The version the active schema is stored under
+    pub version: Option<String>,
+    /// The identifier of the active schema in storage
+    pub schema_id: Option<String>,
+    /// The persisted content of the active schema
+    ///
+    /// It is the `cedar-schema-fragments-v1` envelope exactly as it is
+    /// stored: Cedar cannot serialize a composed schema back, so the envelope
+    /// is the faithful rendering of the stored schema.
+    pub content: Option<String>,
+    /// Number of entity types declared by the active schema
+    pub entity_type_count: usize,
+    /// Number of action types declared by the active schema
+    pub action_type_count: usize,
+}
+
+/// Handler to load the active schema
+///
+/// This endpoint reads the schema that is currently stored and reports it:
+/// the version it is stored under and its content.
 ///
 /// # Arguments
 ///
@@ -127,25 +163,62 @@ pub async fn build_schema(
 ///
 /// # Returns
 ///
-/// A JSON response with the loaded schema information or an error
+/// A JSON response with the active schema, or an explicit
+/// `no_active_schema` status when nothing is stored
+///
+/// # Errors
+///
+/// Returns an error if the storage is unavailable or the stored content
+/// cannot be read as a schema.
 #[utoipa::path(
     get,
     path = "/api/v1/schemas/load",
     tag = "schemas",
     responses(
-        (status = 200, description = "Schema loaded successfully", body = serde_json::Value),
+        (status = 200, description = "Schema loaded successfully", body = LoadSchemaResponse),
         (status = 500, description = "Internal server error")
     )
 )]
 pub async fn load_schema(
-    State(_state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    // TODO: Implement schema loading
-    // For now, return a stub response
-    Ok(Json(serde_json::json!({
-        "message": "Load schema endpoint - to be implemented",
-        "status": "stub"
-    })))
+    State(state): State<AppState>,
+) -> Result<Json<LoadSchemaResponse>, ApiError> {
+    use hodei_policies::load_schema::LoadSchemaError;
+    use hodei_policies::load_schema::dto::LoadSchemaCommand;
+
+    let result = match state.load_schema.execute(LoadSchemaCommand::latest()).await {
+        Ok(result) => result,
+        // Reading succeeded and the answer is "there is no schema": that is
+        // not a failure, and the consumer has to be able to distinguish it
+        // from an error.
+        Err(LoadSchemaError::SchemaNotFound) => {
+            return Ok(Json(LoadSchemaResponse {
+                status: LoadSchemaStatus::NoActiveSchema,
+                version: None,
+                schema_id: None,
+                content: None,
+                entity_type_count: 0,
+                action_type_count: 0,
+            }));
+        }
+        Err(e) => {
+            return Err(ApiError::InternalServerError(format!(
+                "Failed to load schema: {}",
+                e
+            )));
+        }
+    };
+
+    let entity_type_count = result.schema.entity_types().count();
+    let action_type_count = result.schema.actions().count();
+
+    Ok(Json(LoadSchemaResponse {
+        status: LoadSchemaStatus::Active,
+        version: result.version,
+        schema_id: Some(result.schema_id),
+        content: Some(result.content),
+        entity_type_count,
+        action_type_count,
+    }))
 }
 
 /// Handler to register IAM schema

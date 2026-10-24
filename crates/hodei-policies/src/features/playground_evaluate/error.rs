@@ -16,6 +16,14 @@ pub enum PlaygroundEvaluateError {
     #[error("Schema error: {0}")]
     SchemaError(String),
 
+    /// The inline schema is not a readable schema
+    ///
+    /// It is kept apart from [`PlaygroundEvaluateError::SchemaError`] because
+    /// it is a fault of the *request*, not of the server: the caller sent a
+    /// schema that cannot be read, and the answer has to say so.
+    #[error("Invalid inline schema: {0}")]
+    InvalidInlineSchema(String),
+
     /// Policy parsing or validation error
     #[error("Policy error: {0}")]
     PolicyError(String),

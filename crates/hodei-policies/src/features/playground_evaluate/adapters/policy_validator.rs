@@ -19,7 +19,8 @@ use tracing::{debug, info, warn};
 ///
 /// This adapter uses Cedar's native validation capabilities to check
 /// policies against schemas without requiring the validate_policy feature's
-/// full persistence logic.
+/// full persistence logic. The schema it receives is the one the read paths
+/// produced, so a policy is checked against what the schema really declares.
 pub struct PolicyValidatorAdapter;
 
 impl PolicyValidatorAdapter {
@@ -29,6 +30,9 @@ impl PolicyValidatorAdapter {
     }
 
     /// Validate a single policy text against a schema
+    ///
+    /// The schema is applied with Cedar's own validator, so a policy is
+    /// checked against what the schema really declares.
     ///
     /// # Arguments
     ///
@@ -41,23 +45,50 @@ impl PolicyValidatorAdapter {
     fn validate_single_policy(
         &self,
         policy_text: &str,
-        _schema: &Schema,
+        schema: &Schema,
     ) -> Result<Vec<String>, PlaygroundEvaluateError> {
         debug!("Validating policy");
 
         // Parse the policy first
-        let _policy = cedar_policy::Policy::from_str(policy_text).map_err(|e| {
+        let policy = cedar_policy::Policy::from_str(policy_text).map_err(|e| {
             warn!("Policy parsing failed: {}", e);
             PlaygroundEvaluateError::PolicyError(format!("Policy parse error: {}", e))
         })?;
 
-        // For now, we'll do basic parsing validation
-        // Full schema-based validation would require Cedar's Validator
-        // which needs more complex setup
-        debug!("Policy parsed successfully");
+        // A schema that declares no entity type and no action cannot approve
+        // anything: applied as it is, it would report every policy that names
+        // a type as invalid. That is a false rejection, not a validation. So
+        // the schema is applied when it declares something, and only the
+        // syntax is checked when it declares nothing — the same rule the
+        // validate-policy use case applies when no schema is stored.
+        if !declares_anything(schema) {
+            debug!("The schema declares nothing, validating syntax only");
+            return Ok(vec![]);
+        }
 
-        // Return empty errors (policy is valid)
-        Ok(vec![])
+        let policy_set = cedar_policy::PolicySet::from_policies(vec![policy]).map_err(|e| {
+            warn!("Policy set could not be built: {}", e);
+            PlaygroundEvaluateError::PolicyError(format!("Policy set error: {}", e))
+        })?;
+
+        let validation = cedar_policy::Validator::new(schema.clone())
+            .validate(&policy_set, cedar_policy::ValidationMode::default());
+
+        let errors: Vec<String> = validation
+            .validation_errors()
+            .map(|e| e.to_string())
+            .collect();
+
+        if errors.is_empty() {
+            debug!("Policy validated against the schema");
+        } else {
+            warn!(
+                error_count = errors.len(),
+                "Policy failed schema validation"
+            );
+        }
+
+        Ok(errors)
     }
 }
 
@@ -65,6 +96,14 @@ impl Default for PolicyValidatorAdapter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Whether the schema declares something a policy can be checked against.
+///
+/// A schema with no entity type and no action says nothing about the world,
+/// so it cannot tell a valid policy from an invalid one.
+fn declares_anything(schema: &Schema) -> bool {
+    schema.entity_types().count() > 0 || schema.actions().count() > 0
 }
 
 #[async_trait]
@@ -120,6 +159,23 @@ impl PolicyValidatorPort for PolicyValidatorAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A schema that declares `Iam::User`, as the IAM schema does.
+    fn schema_declaring_user() -> Schema {
+        let fragment = cedar_policy::SchemaFragment::from_cedarschema_str(
+            r#"
+namespace Iam {
+    entity User {
+        name: String
+    };
+}
+"#,
+        )
+        .expect("the fixture schema must parse")
+        .0;
+
+        Schema::from_schema_fragments(vec![fragment]).expect("the fixture schema must compose")
+    }
 
     #[tokio::test]
     async fn test_validate_empty_policy_list() {
@@ -184,5 +240,79 @@ mod tests {
     #[test]
     fn test_default_constructor() {
         let _validator = PolicyValidatorAdapter;
+    }
+
+    /// A policy over a declared type is accepted
+    ///
+    /// The validator used to ignore the schema, so this is the same result
+    /// it gave before. What changed is the counterpart below: the schema is
+    /// no longer ignored, so the acceptance means something.
+    #[tokio::test]
+    async fn test_policy_over_a_declared_type_is_accepted() {
+        let validator = PolicyValidatorAdapter::new();
+        let schema = schema_declaring_user();
+        let policies =
+            vec!["permit(principal == Iam::User::\"alice\", action, resource);".to_string()];
+
+        let errors = validator
+            .validate_policies(&policies, &schema)
+            .await
+            .expect("the validation must not fail");
+
+        assert!(
+            errors.is_empty(),
+            "a policy over a declared entity type must be accepted: {errors:?}"
+        );
+    }
+
+    /// A policy over an undeclared type is rejected
+    ///
+    /// This is the discriminating counterpart of the test above: with the
+    /// schema applied, the rejection is about the undeclared type. Without
+    /// it — with the schema ignored, or replaced by an empty one — the same
+    /// policy was reported as valid.
+    #[tokio::test]
+    async fn test_policy_over_an_undeclared_type_is_rejected() {
+        let validator = PolicyValidatorAdapter::new();
+        let schema = schema_declaring_user();
+        let policies =
+            vec!["permit(principal == Nope::Ghost::\"alice\", action, resource);".to_string()];
+
+        let errors = validator
+            .validate_policies(&policies, &schema)
+            .await
+            .expect("the validation must not fail");
+
+        assert!(
+            !errors.is_empty(),
+            "a policy over an undeclared entity type must be rejected"
+        );
+        assert!(
+            errors[0].contains("Nope::Ghost"),
+            "the rejection must name the undeclared type: {errors:?}"
+        );
+    }
+
+    /// A schema that declares nothing leaves the syntax as the only check
+    ///
+    /// An empty schema applied as it is would report every policy that names
+    /// a type as invalid, which is a false rejection: the schema says
+    /// nothing about that type.
+    #[tokio::test]
+    async fn test_empty_schema_validates_syntax_only() {
+        let validator = PolicyValidatorAdapter::new();
+        let schema = Schema::from_schema_fragments(vec![]).unwrap();
+        let policies =
+            vec!["permit(principal == Iam::User::\"alice\", action, resource);".to_string()];
+
+        let errors = validator
+            .validate_policies(&policies, &schema)
+            .await
+            .expect("the validation must not fail");
+
+        assert!(
+            errors.is_empty(),
+            "a schema that declares nothing must not reject a policy: {errors:?}"
+        );
     }
 }

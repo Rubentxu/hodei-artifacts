@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
 use hodei_iam::register_iam_schema::dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};
 use hodei_policies::build_schema::error::BuildSchemaError;
-use hodei_policies::build_schema::ports::SchemaStoragePort;
+use hodei_policies::build_schema::ports::{SchemaStoragePort, StoredSchema};
 use serde::Deserialize;
 use std::sync::Arc;
 use surrealdb::Surreal;
@@ -217,6 +217,20 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
     }
 
     async fn get_latest_schema(&self) -> Result<Option<String>, BuildSchemaError> {
+        Ok(self
+            .get_latest_schema_entry()
+            .await?
+            .map(|entry| entry.schema_string))
+    }
+
+    /// Retrieve the latest schema together with the version it is stored under
+    ///
+    /// The version is not a decoration: it is the id the record is stored
+    /// under, and it is the only way a reader can tell *which* schema it got.
+    /// The default implementation of the port would report the content
+    /// without it, so the adapter overrides it with the version the record
+    /// actually declares.
+    async fn get_latest_schema_entry(&self) -> Result<Option<StoredSchema>, BuildSchemaError> {
         // A schema is stored under its own version, so there is no record
         // named "latest" to select: the latest is the most recently stored
         // one. Selecting a record called "latest" always came back empty,
@@ -251,7 +265,13 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
             .await
             .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
 
-        Ok(result.map(|row| row.content))
+        Ok(result.map(|row| {
+            StoredSchema::new(
+                row.content,
+                Some(version.clone()),
+                format!("schema:{}", version),
+            )
+        }))
     }
 
     async fn get_schema_by_version(

@@ -181,6 +181,30 @@ pub trait SchemaStoragePort: Send + Sync {
     /// Returns an error if the storage backend is unavailable
     async fn list_schema_versions(&self) -> Result<Vec<String>, BuildSchemaError>;
 
+    /// Retrieve the latest schema together with the version it is stored under
+    ///
+    /// A schema is stored under its own version, so the version is part of
+    /// the record and not a decoration of it: a reader that cannot report it
+    /// hands the consumer a schema without an identity.
+    ///
+    /// The default implementation reads the content and reports it without a
+    /// version, so a storage that cannot report the version keeps working.
+    ///
+    /// # Returns
+    ///
+    /// The stored schema with its version and identifier, or None when no
+    /// schema is stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage backend is unavailable.
+    async fn get_latest_schema_entry(&self) -> Result<Option<StoredSchema>, BuildSchemaError> {
+        Ok(self
+            .get_latest_schema()
+            .await?
+            .map(|content| StoredSchema::new(content, None, "schema_latest".to_string())))
+    }
+
     /// Load a schema from storage (either latest or specific version)
     ///
     /// This is a convenience method that combines get_latest_schema
@@ -212,15 +236,9 @@ pub trait SchemaStoragePort: Send + Sync {
                 format!("schema_{}", ver),
             ))
         } else {
-            let schema_string = self.get_latest_schema().await?.ok_or_else(|| {
+            self.get_latest_schema_entry().await?.ok_or_else(|| {
                 BuildSchemaError::SchemaStorageError("No schemas found in storage".to_string())
-            })?;
-
-            Ok(StoredSchema::new(
-                schema_string,
-                None,
-                "schema_latest".to_string(),
-            ))
+            })
         }
     }
 }

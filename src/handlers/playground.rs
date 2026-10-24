@@ -21,7 +21,13 @@ use std::collections::HashMap;
 /// Request for playground policy evaluation
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PlaygroundEvaluateRequest {
-    /// Optional inline Cedar schema (JSON format)
+    /// Optional inline Cedar schema
+    ///
+    /// It is the `cedar-schema-fragments-v1` envelope, exactly the content
+    /// that the persistence path stores. An empty JSON object (`{}`) is read
+    /// as an explicitly empty schema; any other content that is not an
+    /// envelope is rejected instead of being read as an empty schema.
+    ///
     /// If None, must provide schema_version
     pub inline_schema: Option<String>,
 
@@ -137,9 +143,13 @@ pub struct EvaluationDiagnosticsDto {
 ///
 /// # Example Request
 ///
+/// The inline schema is the `cedar-schema-fragments-v1` envelope, the very
+/// content the persistence path stores. The example below declares the
+/// entity type `Iam::User`.
+///
 /// ```json
 /// {
-///   "inline_schema": "{\"entityTypes\": {\"User\": {\"shape\": {\"type\": \"Record\", \"attributes\": {}}}}}",
+///   "inline_schema": "{\"format\":\"cedar-schema-fragments-v1\",\"fragments\":[{\"\":{\"entityTypes\":{},\"actions\":{}},\"Iam\":{\"entityTypes\":{\"User\":{\"shape\":{\"type\":\"Record\",\"attributes\":{}}}},\"actions\":{}}}]}",
 ///   "inline_policies": [
 ///     "permit(principal, action, resource);"
 ///   ],
@@ -203,8 +213,18 @@ pub async fn playground_evaluate(
         .playground_evaluate
         .evaluate(command)
         .await
-        .map_err(|e| {
-            ApiError::InternalServerError(format!("Playground evaluation failed: {}", e))
+        .map_err(|e| match e {
+            // The request itself is wrong: it does not say which schema to
+            // use, or it sends a schema that cannot be read. The endpoint
+            // already declares `400` for invalid request parameters, and a
+            // server error would tell the caller nothing about what to fix.
+            hodei_policies::playground_evaluate::PlaygroundEvaluateError::InvalidCommand(msg)
+            | hodei_policies::playground_evaluate::PlaygroundEvaluateError::InvalidInlineSchema(
+                msg,
+            ) => ApiError::BadRequest(format!("Invalid request: {}", msg)),
+            other => {
+                ApiError::InternalServerError(format!("Playground evaluation failed: {}", other))
+            }
         })?;
 
     // Convert domain result to HTTP response
