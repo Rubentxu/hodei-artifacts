@@ -634,8 +634,16 @@
           },
           "evidence": {
             "state": "LOCAL_PASSED",
-            "ci": null,
-            "ci_note": "PENDING: el run 40066417952 (success, commit a645a46) cubre H1a, H1b-1, H1b-2 y H1b-3, pero H1b-4 todavia no esta publicado. Esta tabla es evidencia local y se declara como tal.",
+            "ci": {
+              "run_id": "40067967678",
+              "url": "https://github.com/Rubentxu/hodei-artifacts/actions/runs/40067967678",
+              "workflow": "Rust CI",
+              "job": "build-and-test",
+              "status": "completed",
+              "conclusion": "success",
+              "head_sha": "d231b2435957b6c271d2cd15d442259fc4090317"
+            },
+            "ci_note": "SUCCESS: run 40067967678 (https://github.com/Rubentxu/hodei-artifacts/actions/runs/40067967678) del workflow Rust CI, conclusion=success sobre el commit d231b2435957b6c271d2cd15d442259fc4090317, que es el commit que contiene el guard tests/module_tree.rs y la eliminacion de src/infrastructure/. Con este run y el previo 40066417952 (success, commit a645a46), los cinco sub-bloques de H1b tienen veredicto de integracion y no solo evidencia local.",
             "binary_sha256": "b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65",
             "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (809 passed, 0 failed, 64 ignored, 21 suites); cargo build --release PASS",
             "ephemeral_uat": "B1-B4 PASS sobre el binario release, con limpieza verificada. Dos correcciones del propio UAT antes de darlo por bueno: pgrep -f casaba con el shell padre (falso positivo del chequeo) y pgrep -x es estructuralmente vacio con nombres de mas de 15 caracteres; se sustituyo por ps -eo pid=,comm y se probo su no-vacuidad dentro del ciclo (1 proceso con el servicio vivo, 0 tras SIGTERM).",

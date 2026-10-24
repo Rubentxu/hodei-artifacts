@@ -1238,11 +1238,14 @@ bajo `src/infrastructure/`.
 El delta es **+3** sobre las 806 superadas de H1b-3 (§14.2): exactamente las
 tres pruebas nuevas, y ninguna suite existente cambió de recuento.
 
-**CI remota: `PENDING` para H1b-4.** El run
-[`40066417952`](https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952)
-(`success`, commit `a645a46`) cubre H1a, H1b-1, H1b-2 y H1b-3, **no** este
-sub-bloque: H1b-4 todavía no está publicado. La tabla anterior es evidencia
-**local**, y se declara como tal.
+**CI remota: `SUCCESS` para H1b-4.** El run
+[`40067967678`](https://github.com/Rubentxu/hodei-artifacts/actions/runs/40067967678)
+(`success`, commit `d231b24`) cubre este sub-bloque: es el commit que contiene
+el guard `tests/module_tree.rs` y la eliminación de `src/infrastructure/`. El
+run previo [`40066417952`](https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952)
+(`success`, commit `a645a46`) cubría H1a, H1b-1, H1b-2 y H1b-3. Con ambos, los
+cinco sub-bloques de H1b tienen veredicto de integración y no solo evidencia
+local.
 
 ### 15.3 Regresiones permanentes promovidas
 
