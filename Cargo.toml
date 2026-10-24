@@ -115,7 +115,7 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT"
 publish = false
-description = "Hodei API stub - Temporarily disabled during policies crate migration"
+description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation over HRN identities"
 
 # Configuración recomendada para tests rápidos:
 # cargo nextest run --lib -p kernel -p hodei-organizations -p hodei-iam -p hodei-authorizer
