@@ -82,6 +82,11 @@ paridad con Nexus CE**.
   cada caso deniega con su motivo.
 - El **estado mutable compartido** entre decisiones concurrentes (riesgo P0
   #3) queda cerrado por el snapshot inmutable por petición.
+- La **descripción del paquete** decía «Hodei API stub - Temporarily disabled
+  during policies crate migration», una frase heredada de cuando la API no
+  tenía rutas reales. El SBOM publicado describiría el producto como un stub
+  deshabilitado. Sustituida por una descripción que dice lo que la API es.
+  Es metadato: el binario no la embebe, así que su digest no cambia.
 
 ### Verificación
 
