@@ -438,11 +438,14 @@ propiedad que hay que poder repetir.
 
 **Estado actual de `main`.** Tras la publicación, `main` siguió avanzando con
 correcciones de higiene (el guardián `KillOnDrop` de los procesos de prueba y
-la regresión D9). La CI de `afa1388` (run `40043317881`) está **verde** en
-todos sus pasos, con `746 passed, 0 failed, 64 ignored` y nextest
-`740 passed, 0 skipped`. El release sigue siendo el de `c3d79a6`: las
-correcciones posteriores no cambian el artefacto publicado (los tests no se
-distribuyen).
+la regresión D9) y con commits de solo documentación. La CI de la cabeza actual
+`82df00e` (run `40043755981`) está **verde** en todos sus pasos, con
+`746 passed, 0 failed, 64 ignored` y nextest `740 passed, 0 skipped`. Las CIs
+intermedias (`40042608482` sobre `a02e692`, `40042980376` sobre `0c1c4df` y
+`40043317881` sobre `afa1388`) también están verdes, de modo que desde la
+corrección de D9 no ha vuelto a aparecer un rojo. El release sigue siendo el de
+`c3d79a6`: las correcciones posteriores no cambian el artefacto publicado (los
+tests no se distribuyen).
 
 **Publicación observada** (no declarada: comprobada contra la API y contra el
 remote):
