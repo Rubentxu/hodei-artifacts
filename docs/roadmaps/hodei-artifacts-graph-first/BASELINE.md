@@ -173,7 +173,7 @@ credencial**: la base original sigue intacta con sus 15 ficheros.
 | `crates/repository/src/domain/unified.rs` | `Private` / `Internal` con implementación ejemplo que permite acceso | nunca recuperar esa autorización como producción |
 | `Makefile` | **reconciliado en H0**: `LIB_CRATES` se deriva de `cargo metadata --no-deps`; ya no invoca crates no miembro | KEEP: la tarea ya no puede dar falso verde |
 | `.github/workflows/rust-ci.yml` | **reconciliado en H0**: `cargo nextest run --workspace --no-fail-fast` en vez de `-p policies` legado | KEEP: la autoridad CI existente cubre el workspace real |
-| `src/infrastructure/` | **módulo muerto**: no está declarado en `src/lib.rs`, así que nunca se compila; contiene `GetEffectiveScpsAdapter` | DELETE (candidato H1): código no compilado no es evidencia de nada |
+| `src/infrastructure/` | **eliminado en H1b-4**: era un módulo muerto (no está declarado en `src/lib.rs`, así que nunca se compila) y contenía `GetEffectiveScpsAdapter` | DELETE ejecutado: el código no compilado no es evidencia de nada (ver §7.7) |
 | `data/hodei.development.rocksdb` | base SurrealDB/RocksDB presente (48 KB) y **verificada vacía** de datos de usuario (§4) | no hay datos que exportar; no destruir ni migrar en H0 |
 | `tests/legacy/` | cuarentena declarada en `tests/legacy/README.md`, protegida por `tests/legacy_quarantine.rs` | QUARANTINE: ver §6.3 |
 | `crates/*/tests/*.rs.disabled` | 5 ficheros; el sufijo impide que Cargo los compile | QUARANTINE: ver §6.3 |
@@ -303,16 +303,16 @@ se revirtieron):
 
 ### 7.2 Abiertos (con consumidor y criterio de cierre)
 
-**O1 y O5 se cerraron en H1a** (§7.3), **O2 y O7 se cerraron en H1b-1** (§7.4) y
-**O6 se cerró en H1b-3** (§7.6), cada uno con su mutante y su prueba
-discriminante. Los que siguen aquí siguen abiertos.
+**O1 y O5 se cerraron en H1a** (§7.3), **O2 y O7 se cerraron en H1b-1** (§7.4),
+**O6 se cerró en H1b-3** (§7.6) y **O3 se cerró en H1b-4** (§7.7), cada uno con
+su mutante y su prueba discriminante. Los que siguen aquí siguen abiertos.
 
 | Id | Defecto | Evidencia | Impacto | Cierre previsto |
 |---|---|---|---|---|
-| O3 | `src/infrastructure/` es un módulo **no compilado**: no está declarado en `src/lib.rs`, así que `GetEffectiveScpsAdapter` no existe en el binario | `src/lib.rs` (sin `pub mod infrastructure`), `src/infrastructure/adapters/` | código que aparenta ser infraestructura sin estarlo | **H1b**: declararlo y usarlo, o eliminarlo |
 | O4 | `Cargo.lock` está en `.gitignore` | `.gitignore:5` | el build no es reproducible; el lock resuelto (Cedar 4.14.0, config-rs 0.14.1, SurrealDB 2.7.0) no se versiona. **Consecuencia observada en la CI**: `rust-ci.yml` usa `hashFiles('**/Cargo.lock')` como clave de caché, y como ese fichero no está en el repositorio la clave es constante → la caché nunca se invalida al cambiar una dependencia | **H1b**: versionar el lock del workspace (el borrado fue deliberado, commit `eb42752 "borrado cargo.lock file"`, así que **no** se revierte en H0 sin decisión del maintainer) |
 | O8 | El motor de evaluación **carga** el schema pero no lo **aplica** (`TODO: we should actually use the loaded schema`) | `crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270` | la decisión no se valida contra el esquema activo | **Mitad del playground CERRADA en H1b-2** (§7.5). La **mitad del motor sigue abierta**, y su causa está medida: el esquema registrado es de alcance IAM y `POST /api/v1/policies/evaluate` es genérico, así que aplicarlo en crudo **denegaría toda petición fuera del mundo IAM** (los casos `G9`–`G12` solo sobreviven porque pasan `evaluation_mode: "NoSchema"`). Cerrarla exige decidir **qué esquema es el activo para una petición genérica**: una decisión de alcance de plataforma, no de código. Ver `ADR/011` |
 | O9 | CORS permisivo en el router | `src/router.rs:52` (`CorsLayer::permissive()`) | postura de producción insegura en el borde HTTP | **H1b**: CORS por origen configurado |
+| O10 | Cuatro ficheros `.rs` de `crates/hodei-iam` quedan **fuera de la unidad de compilación**: ninguna declaración `mod` los alcanza y rustc no los compila. Medido sobre el árbol real con un resolutor de módulos (§15.1): `features/add_user_to_group/factories.rs`, `features/add_user_to_group/mocks.rs`, `features/create_policy/validation_port.rs` e `internal/domain/events.rs` | `crates/hodei-iam/src/features/add_user_to_group/mod.rs` (declara `dto`, `error`, `ports`, `use_case`, `use_case_test`; **no** `factories` ni `mocks`), `crates/hodei-iam/src/features/create_policy/mod.rs` (**no** `validation_port`), `crates/hodei-iam/src/internal/domain/mod.rs` (declara `actions`, `group`, `user`; **no** `events`) | a diferencia de O3, el crate es **vivo** y el código es trabajo sin cablear, no una rama en cuarentena: `AddUserToGroupUseCase` **no se construye fuera de su test unitario** (la factoría DI que lo construiría es justamente uno de los huérfanos), `validation_port.rs` es un **duplicado obsoleto** del `PolicyValidator` que `features/create_policy/ports.rs` ya reexporta, y los eventos de dominio (`UserCreated`, `GroupCreated`) **no los publica nadie** | **H1b**, con criterio **por fichero**: `validation_port.rs` se **elimina** (duplicado obsoleto); `factories.rs` y `mocks.rs` se **declaran y cablean** o se eliminan, según si la slice se compone; `events.rs` se **declara y publica** en el bus de eventos o se elimina. Medido además: `kernel` y `hodei-policies` **no tienen** huérfanos |
 
 **Lo que H1b-1 no abre ni cierra aquí.** H1b-1 leyó el schema en las dos rutas de
 lectura (el playground y el endpoint de carga) y lo aplicó a la **validación**
@@ -369,6 +369,32 @@ esquema aplicable es el IAM. Por eso O6 **se cierra sin** la decisión de
 alcance de plataforma: no depende de ella. Lo que H1b-3 mantiene explícito es
 que la ruta IAM **sigue sin aplicar el schema** (§14.6), y esa es una decisión
 deliberada y registrada, no un descuido.
+
+**Lo que H1b-4 cierra, y por qué la rama «declararlo» era imposible.** La fila
+de O3 ofrecía dos cierres: «declararlo y usarlo» o «eliminarlo». Medido en el
+código, **solo uno era alcanzable**:
+
+| Hecho medido en el código | Consecuencia |
+|---|---|
+| `src/infrastructure/adapters/get_effective_scps_adapter.rs` importa `hodei_organizations` | el crate no es una dependencia del paquete raíz, así que **declarar** el módulo rompe la compilación |
+| `crates/hodei-organizations` está **comentado** en `[workspace] members` y depende del crate legado `policies`, que también está comentado | reactivar la rama «declararlo» exige reactivar dos crates en cuarentena |
+| el único consumidor de `kernel::GetEffectiveScpsPort` es `crates/hodei-authorizer`, también en cuarentena | nadie en el workspace vivo necesita ese adaptador |
+| `SPECS/authorization-hrn.md` § «Migración legado» prohíbe reactivar `hodei-authorizer` tal cual | la rama «declararlo» choca con la especificación vigente |
+
+Declarar el módulo, por tanto, no era «más trabajo»: era **imposible** sin
+reactivar una rama que la especificación veta. La única lectura honesta es la
+que la propia §5 recommending: **eliminar**. Y el binario **confirma** la
+medición: el `sha256` del artefacto release es **idéntico** antes y después de
+eliminar el módulo (§15.5), porque esos ficheros nunca fueron entrada de la
+compilación.
+
+**Lo que H1b-4 además deja registrado: O10.** Al medir el invariante que
+protege el cierre (ningún `.rs` del crate de aplicación puede quedar fuera de
+la unidad de compilación), el mismo resolutor encontró **cuatro** huérfanos en
+`crates/hodei-iam` (§7.2, O10). No se han cerrado aquí: son código de un crate
+**vivo**, y cerrarlos exige decidir por fichero si se cablea o se elimina —
+una decisión de producto, no un borrado. El guard de H1b-4 es **deliberadamente
+estrecho**: cubre el crate de aplicación, que es donde vivía O3.
 
 ---
 
@@ -461,6 +487,31 @@ adaptador quedó **byte a byte** como estaba
 (`sha256=fa0c48914c37eac3f3c23061845fea8d787f19e10671b9ce96682754c754fac3`)
 y la suite volvió a verde (`http_contract` 25/25, `cargo test --workspace` 806
 superadas).
+
+### 7.7 Cerrados en H1b-4 (verificados por mutación)
+
+| Id | Defecto | Por qué era un falso verde | Cómo se corrigió | Prueba discriminante |
+|---|---|---|---|---|
+| O3 | `src/infrastructure/` era un módulo **no compilado**: no estaba declarado en `src/lib.rs`, así que rustc **nunca lo veía** y el `GetEffectiveScpsAdapter` que contenía **no existía en el binario** | el build estaba **verde** y el endpoint **respondía**: nada en la cadena de herramientas puede avisar de un `.rs` que no es entrada de la compilación. El defecto era invisible porque la **ausencia** del código no rompe ninguna aserción: solo el árbol mismo era la prueba, y nadie lo miraba | el módulo **se eliminó** (3 ficheros, 155 líneas) y se añadió un **guard permanente** (`tests/module_tree.rs`) que resuelve las declaraciones `mod` desde las raíces del crate y **falla** si algún `.rs` de `src/` queda fuera de la unidad de compilación. La rama «declararlo y usarlo» se descartó por **medida**: el módulo importa `hodei_organizations`, que no es dependencia del paquete raíz (§7.2) | `T1` (invariante: todo `.rs` de `src/` es alcanzable desde `lib.rs`/`main.rs`) + `T2` (**negativo**: el resolutor **sí** detecta un módulo no declarado, para que `T1` no pueda pasar en vacío) + `T3` (**negativo**: un módulo declarado dentro de un módulo inline **no** se reporta, para que el layout legítimo de Rust 2018 no rompa el guard) |
+
+**Mutación focalizada de H1b-4** (cada mutante debe morir; los dos murieron y
+se revirtieron):
+
+| Mutante | Test que murió |
+|---|---|
+| **M1** el módulo `src/infrastructure/` se **recrea** (3 ficheros) sin declararlo | `T1` FAILED: el guard nombró los tres ficheros (`infrastructure/mod.rs`, `infrastructure/adapters/mod.rs`, `infrastructure/adapters/get_effective_scps_adapter.rs`) como no alcanzados — el **mismo** defecto que O3, reintroducido |
+| **M2** `pub mod infrastructure;` se **declara** en `src/lib.rs` | `cargo check` FAILED con **10 errores `E0433`**: `use of unresolved module or unlinked crate hodei_organizations`. Esto no es un mutante de prueba, es la **medición** de que la rama «declararlo» de O3 es imposible: el crate no es dependencia del paquete raíz |
+
+Ambos mutantes se revirtieron tras observar la muerte. El árbol volvió a su
+estado y la suite completa volvió a verde (§15.2).
+
+**Lo que este cierre deja fuera, a propósito.** La guardia protege **el crate
+de aplicación** (`src/`), que es donde vivía O3. Al medir el invariante sobre
+los demás crates del workspace se encontró **O10**: cuatro huérfanos en
+`crates/hodei-iam` (§7.2). Ampliar el guard al workspace entero **fallaría
+hoy** por esos cuatro ficheros, así que hacerlo sin cerrarlos sería un rojo
+permanente; y cerrarlos exige una decisión de producto por fichero. Queda
+**registrado con su medida**, no difuminado.
 
 ---
 
@@ -634,10 +685,17 @@ Esta sección recoge lo **medido** de H1a.
 | `cargo test --workspace --no-fail-fast` | PASS — **768 superadas, 0 fallidas, 64 ignoradas** (doctests) |
 | `cargo build --release --bin hodei-artifacts-api` | PASS — binario `sha256=06d9cb97101b2afce8ef8d9bff00ad2f6e0f90284b14d6b7fd3daed7e17b6245` |
 
-**CI remota: `PENDING`.** La autoridad de integración sigue siendo el workflow
-`Rust CI` remoto, y H1a **aún no se ha publicado**: no hay push sin
-autorización, así que no existe un run que pueda citarse. La tabla anterior es
-evidencia **local**, y se declara como tal.
+**CI remota: `SUCCESS`.** El workflow `Rust CI` remoto es la autoridad de
+integración, y el run
+[`40066417952`](https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952)
+terminó en **success** (`build-and-test`, único job) sobre el commit
+`a645a46`, que contiene H1a. Ese run ejecuta `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo check --workspace --all-targets`, `cargo build --workspace`,
+`cargo test --workspace --no-fail-fast` y `cargo nextest run --workspace
+--no-fail-fast`: la misma puerta local de la tabla anterior, más la segunda
+señal de `nextest`, que aísla cada test en su proceso. La evidencia local de
+H1a queda **confirmada** por la autoridad de integración.
 
 ### 11.2 Regresiones permanentes promovidas
 
@@ -733,10 +791,12 @@ ella, `G14` muere.
 | `cargo test --workspace --no-fail-fast` | PASS — **780 superadas, 0 fallidas, 64 ignoradas** (doctests) |
 | `cargo build --release --workspace` | PASS — binario `sha256=52a69d5364882567e03691b60ae066f2da530f052d11b92f5745b2de5bb3529f` |
 
-**CI remota: `PENDING`.** La autoridad de integración sigue siendo el workflow
-`Rust CI` remoto y H1a **aún no se ha publicado** (no hay push sin
-autorización), así que no existe ningún run que pueda citarse para este
-sub-bloque. La tabla anterior es evidencia **local**, y se declara como tal.
+**CI remota: `SUCCESS`.** El workflow `Rust CI` remoto es la autoridad de
+integración, y el run
+[`40066417952`](https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952)
+terminó en **success** sobre el commit `a645a46`, que contiene H1a y H1b-1.
+La evidencia local de la tabla anterior queda **confirmada** por la autoridad
+de integración.
 
 ### 12.3 Regresiones permanentes promovidas
 
@@ -801,8 +861,9 @@ arranca el servicio sin registrarlo.
   `Hodei::*` y el namespace de acción `Hodei::Action::"…"` siguen pendientes
   por lo mismo.
 - **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
-- O3, O4 y O9 siguen abiertos, con su criterio de cierre en §7.2. **O6** se
-  cerró después, en **H1b-3** (§7.6 y §14).
+- O4 y O9 siguen abiertos, con su criterio de cierre en §7.2. **O6** se
+  cerró después, en **H1b-3** (§7.6 y §14), y **O3** se cerró después, en
+  **H1b-4** (§7.7 y §15).
 
 ---
 
@@ -846,10 +907,12 @@ conserva el contexto convertido y lo pasa al evaluador.
 | `cargo test --workspace --no-fail-fast` | PASS — **797 superadas, 0 fallidas, 64 ignoradas** (doctests), 20 suites |
 | `cargo build --release --workspace` | PASS — binario `sha256=30b5d1cf73c33a2bb1f45696dfd4fa85594450c3e480fd25d0b7e041bd8dc163` |
 
-**CI remota: `PENDING`.** La autoridad de integración sigue siendo el workflow
-`Rust CI` remoto y H1a, H1b-1 y H1b-2 **no se han publicado** (no hay push sin
-autorización), así que no existe ningún run que pueda citarse para este
-sub-bloque. La tabla anterior es evidencia **local**, y se declara como tal.
+**CI remota: `SUCCESS`.** El workflow `Rust CI` remoto es la autoridad de
+integración, y el run
+[`40066417952`](https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952)
+terminó en **success** sobre el commit `a645a46`, que contiene H1a, H1b-1 y
+H1b-2. La evidencia local de la tabla anterior queda **confirmada** por la
+autoridad de integración.
 
 ### 13.3 Regresiones permanentes promovidas
 
@@ -925,8 +988,9 @@ de O8 sigue bloqueada por falta de alcance de plataforma.
   `Hodei::*` y el namespace de acción `Hodei::Action::"ReadAsset"` siguen
   pendientes por lo mismo.
 - **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
-- O3, O4 y O9 siguen abiertos, con su criterio de cierre en §7.2. **O6** se
-  cerró después, en **H1b-3** (§7.6 y §14).
+- O4 y O9 siguen abiertos, con su criterio de cierre en §7.2. **O6** se
+  cerró después, en **H1b-3** (§7.6 y §14), y **O3** se cerró después, en
+  **H1b-4** (§7.7 y §15).
 - **Observación colateral, no defecto corregido**: el cargador de configuración
   exige **todos** los campos cuando no existe `config/default.toml`, porque el
   `Default` derivado de `AppConfig` no lo aplica `serde` al deserializar. La
@@ -984,10 +1048,13 @@ lo dice en su propia documentación y hay un test que lo afirma.
 | `cargo test --workspace --no-fail-fast` | PASS — **806 superadas, 0 fallidas, 64 ignoradas** (doctests), 20 suites, exit 0 |
 | `cargo build --release --workspace` | PASS — binario `sha256=b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65` |
 
-**CI remota: `PENDING`.** La autoridad de integración sigue siendo el workflow
-`Rust CI` remoto y H1a, H1b-1, H1b-2 y H1b-3 **no se han publicados** (no hay
-push sin autorización), así que no existe ningún run que pueda citarse para este
-sub-bloque. La tabla anterior es evidencia **local**, y se declara como tal.
+**CI remota: `SUCCESS`.** El workflow `Rust CI` remoto es la autoridad de
+integración, y el run
+[`40066417952`](https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952)
+terminó en **success** sobre el commit `a645a46`, que contiene H1a, H1b-1,
+H1b-2 y H1b-3. La evidencia local de la tabla anterior queda **confirmada** por
+la autoridad de integración: por primera vez los cuatro sub-bloques tienen
+evidencia de integración, no solo local.
 
 **Una nota de método, no un defecto corregido.** Durante este ciclo se
 midió el árbol de H1b-3 (HEAD) contra el árbol de trabajo con un `git
@@ -1118,11 +1185,154 @@ sale de ellas.
   `Hodei::*` y el namespace de acción `Hodei::Action::"ReadAsset"` siguen
   pendientes por lo mismo.
 - **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
-- O3, O4 y O9 siguen abiertos, con su criterio de cierre en §7.2.
+- O4 y O9 siguen abiertos, con su criterio de cierre en §7.2. **O3** se cerró
+  después, en **H1b-4** (§7.7 y §15).
 - **Observación colateral, no defecto corregido**: el cargador de configuración
   exige **todos** los campos cuando no existe `config/default.toml` (§13.6).
   La UAT lo rodeó con un `config/default.toml` en su propio directorio de
   sesión. No se ha tocado.
+
+## 15. H1b-4 — el código que no se compila deja de existir (ejecutado)
+
+Sub-bloque de H1b que cierra **O3**: `src/infrastructure/` **no era
+infraestructura**, era un directorio de ficheros que rustc nunca veía. El
+binario no contenía el `GetEffectiveScpsAdapter`; el repositorio sí contenía
+su código, y esa diferencia es la que hace que un repositorio pueda parecer
+más grande de lo que el producto es.
+
+### 15.1 Qué cambió
+
+| Superficie | Antes | Ahora |
+|---|---|---|
+| `src/infrastructure/` (3 ficheros, 155 líneas) | directorio de fuentes **fuera de la unidad de compilación**: `GetEffectiveScpsAdapter` y sus mocks **no existían en el binario** | **eliminado**. El árbol del crate de aplicación no contiene ningún `.rs` que no compile |
+| invariante «todo `.rs` compila» | **inexistente**: rustc no puede avisar de un fichero que no es entrada de la compilación, así que el defecto era invisible para todo el tooling | **guard permanente** (`tests/module_tree.rs`): un resolutor de declaraciones `mod` desde las raíces del crate **falla** si algún fichero de `src/` queda fuera de la unidad de compilación |
+| rama «declararlo y usarlo» de O3 | abierta en el enunciado de la fila | **descartada por medida**: el módulo importa `hodei_organizations`, que no es dependencia del paquete raíz (§7.2) |
+
+**La decisión, con su comparación.** La fila de O3 ofrecía dos cierres, y la
+elección no fue de gusto sino de medición:
+
+| Opción | Veredicto | Razón |
+|---|---|---|
+| **Declarar** `pub mod infrastructure;` y usar el adaptador | **IMPOSIBLE** | el módulo importa `hodei_organizations`; el crate está comentado en `[workspace] members`, depende del crate legado `policies` (también comentado), y su único consumidor (`crates/hodei-authorizer`) está en cuarentena y vetado por `SPECS/authorization-hrn.md` § «Migración legado». Declararlo rompe la compilación con **10 errores `E0433`** (mutante **M2**, §7.7) |
+| **Eliminar** el directorio | **ELEGIDA** | es la única lectura que no inventa evidencia, y es la que la propia §5 recommending desde el principio (`DELETE`). El código era de una rama en cuarentena y su función ya la cubre el slice vivo de IAM |
+| Declarar y usar, **reactivando** los crates en cuarentena | **RECHAZADA** | contradice la especificación vigente y arrastra a H1b una decisión que le pertenece a otro ciclo |
+
+**La prueba de que no era código: el binario.** El `sha256` del artefacto
+release es **idéntico** antes y después de eliminar el módulo
+(`b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65` en ambos
+casos). Si aquellos ficheros hubieran aportado algo, el resumen lo habría
+delatado. Su ausencia **es** la prueba de que el módulo no contribuyó ni con un
+byte. El `dep-info` del build release lo confirma por el otro lado: el conjunto
+compilado de la raíz del crate es **exactamente 14 ficheros**, y ninguno está
+bajo `src/infrastructure/`.
+
+### 15.2 Puerta de calidad local (medida)
+
+| Comprobación | Resultado |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS — `No issues found` |
+| `cargo test --workspace --no-fail-fast` | PASS — **809 superadas, 0 fallidas, 64 ignoradas** (doctests), 21 suites, exit 0 |
+| `cargo build --release --workspace` | PASS — binario `sha256=b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65`, **idéntico** al anterior al cambio |
+
+El delta es **+3** sobre las 806 superadas de H1b-3 (§14.2): exactamente las
+tres pruebas nuevas, y ninguna suite existente cambió de recuento.
+
+**CI remota: `PENDING` para H1b-4.** El run
+[`40066417952`](https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952)
+(`success`, commit `a645a46`) cubre H1a, H1b-1, H1b-2 y H1b-3, **no** este
+sub-bloque: H1b-4 todavía no está publicado. La tabla anterior es evidencia
+**local**, y se declara como tal.
+
+### 15.3 Regresiones permanentes promovidas
+
+| Id | Ubicación | Garantía |
+|---|---|---|
+| T1 | `tests/module_tree.rs` | **todo** `.rs` de `src/` pertenece a la unidad de compilación: se alcanza desde `lib.rs`/`main.rs` siguiendo declaraciones `mod`. Un fichero no alcanzado es código que no existe como producto |
+| T2 | `tests/module_tree.rs` | **negativo**: el resolutor **sí** detecta un módulo no declarado (fichero suelto y directorio con `mod.rs`), así que `T1` no puede pasar en vacío |
+| T3 | `tests/module_tree.rs` | **negativo**: un fichero declarado dentro de un módulo inline (`mod inline { mod helper; }`) **no** se reporta, así que el layout legítimo de Rust 2018 no rompe el guard |
+
+El guard es **estructural**, no una aserción sobre una ruta: no depende de
+`src/infrastructure/` ni de ningún nombre concreto, así que protege el defecto
+**de clase** —«código que no se compila»— y no el síntoma concreto que lo
+acompañaba. Eso importa porque el mismo resolutor, aplicado al workspace
+entero, encontró **O10** (§7.2): cuatro huérfanos en `crates/hodei-iam`.
+importa porque el mismo resolutor, aplicado al workspace entero, encontró
+**O10** (§7.2): cuatro huérfanos en `crates/hodei-iam`.
+
+**Por qué el guard es estrecho a propósito.** `T1` cubre el **crate de
+aplicación** (`src/`), que es donde vivía O3. Ampliarlo a los crates del
+workspace **fallaría hoy** por los cuatro ficheros de O10, y cerrarlos exige
+una decisión de producto por fichero (§7.2). Un guard que nace rojo no es un
+guard: es una tarea pendiente disfrazada de garantía.
+
+### 15.4 Mutación focalizada (ejecutada, con muerte observada)
+
+Los mutantes y las muertes están en §7.7. Los dos murieron y se revirtieron:
+
+| Mutante | Muerte observada |
+|---|---|
+| **M1** — el módulo `src/infrastructure/` se recrea (3 ficheros) sin declararlo | `T1` FAILED, nombrando los tres ficheros: el defecto original, reintroducido |
+| **M2** — `pub mod infrastructure;` se declara en `src/lib.rs` | `cargo check` FAILED con **10 errores `E0433`** (`unresolved module or unlinked crate hodei_organizations`): la rama «declararlo» de O3 es **imposible**, no difícil |
+
+**M2 no es un mutante de prueba, es una medición.** Su muerte no vale por lo
+que la regresión detecta, sino por lo que **demuestra**: la fila de O3 ofrecía
+dos cierres y solo uno era alcanzable.
+
+### 15.5 Aceptación efímera (ejecutada y limpiada)
+
+Ciclo `PREPARE → EXECUTE → ASSERT → EVIDENCE → CLEANUP` sobre el **binario
+release construido desde el árbol de H1b-4**, ejecutado desde un directorio de
+sesión efímero **fuera del repositorio** (`/tmp/hodei-h1b4-uat/`), retirado al
+cerrar el ciclo.
+
+- Binario bajo prueba:
+  `sha256=b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65`
+- Puerto efímero y base de datos efímera (directorio RocksDB desechable)
+
+| Id | Comprobación | Resultado observado |
+|---|---|---|
+| B1 | el binario release arranca y sirve `/health` | PASS — `HTTP 200`, `{"status":"healthy","version":"0.1.0","service":"hodei-artifacts-api",...}` |
+| B2 | el binario **arranca desde la raíz del paquete** | PASS — el cargador exige `config/default.toml` y el binario lo resuelve **relativo a su directorio de trabajo**; es el contrato del paquete distribuido |
+| B3 | el `dep-info` del build release no contiene `src/infrastructure` | PASS — conjunto compilado de la raíz = **14 ficheros**, ninguno bajo `src/infrastructure/` |
+| B4 | el `sha256` del binario no cambia al eliminar el módulo | PASS — **idéntico** antes y después (`b8689bbb…`): el módulo no aportaba ni un byte |
+
+**Dos correcciones del propio UAT, antes de darlo por bueno.** La primera
+versión del chequeo de huérfanos usaba `pgrep -f`, que casaba con el **shell
+padre** (su línea de comandos contenía la cadena): un falso positivo del
+chequeo, no un proceso huérfano. La segunda usaba `pgrep -x`, que **avisa** de
+que un nombre de más de 15 caracteres no casa nunca — es decir, un chequeo
+**estructuralmente vacío**: habría dado verde siempre. Se sustituyó por
+`ps -eo pid=,comm` con el nombre truncado de Linux, y **su no-vacuidad se
+probó dentro del propio ciclo**: con el servicio vivo el filtro encuentra
+**1** proceso, y tras el `SIGTERM` encuentra **0**.
+
+**Limpieza verificada:** el proceso termina con `SIGTERM`, el puerto queda
+libre, el filtro de huérfanos no encuentra ningún proceso
+`hodei-artifacts-api` vivo, y el directorio de sesión (`/tmp/hodei-h1b4-uat/`)
+se retiró al cerrar el ciclo.
+
+### 15.6 Lo que H1b-4 **no** cierra
+
+- **O4 sigue abierto**: `Cargo.lock` continúa en `.gitignore` (§7.2). Su cierre
+  exige una decisión del maintainer, porque el borrado del lock fue
+  deliberado (commit `eb42752`).
+- **O9 sigue abierto**: el CORS sigue permisivo en `src/router.rs:52`. La
+  rebanada de O9 —CORS por origen— sí es separable y verificable localmente
+  (el router se construye en proceso), pero es **mayor** que O3 y exige decidir
+  el origen de la lista de orígenes permitidos: por eso no se quiso competir
+  con O3 en el mismo ciclo.
+- **O8 (mitad del motor) sigue abierto**, con su causa medida (§13.6, §14.6).
+- **O10 queda abierto** (§7.2): cuatro ficheros de `crates/hodei-iam` fuera de
+  la unidad de compilación. Se **registraron** con su medida y su criterio de
+  cierre por fichero; no se cerraron, porque son trabajo sin cablear de un
+  crate **vivo** y borrarlos destruiría trabajo que un slice futuro necesita.
+- **La guarda no cubre el workspace entero**: solo el crate de aplicación.
+  Cubrirlo exige cerrar O10 antes (§15.3).
+- **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
+- S-001 **sigue sin cumplirse por completo**: O3 no formaba parte de S-001, y
+  el namespace de entidad `Hodei::*` y el de acción `Hodei::Action::"ReadAsset"`
+  siguen pendientes por lo mismo.
 
 ---
 

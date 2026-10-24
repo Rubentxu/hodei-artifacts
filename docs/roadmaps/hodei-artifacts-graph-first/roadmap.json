@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "Rubentxu/hodei-artifacts",
   "baseline_sha": "2626e35b7c12375af0a1f23342eee4b4619bfc3c",
-  "status": "h1b3_done_h1b_pending",
+  "status": "h1b4_done_h1b_pending",
   "milestones": [
     {
       "id": "H0",
@@ -266,8 +266,16 @@
           },
           "evidence": {
             "state": "LOCAL_PASSED",
-            "ci": null,
-            "ci_note": "PENDING: la CI remota sigue siendo la autoridad de integracion, pero H1a no se ha publicado (no hay push sin autorizacion), asi que no existe un run que citar.",
+            "ci": {
+              "run_id": "40066417952",
+              "url": "https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952",
+              "workflow": "Rust CI",
+              "job": "build-and-test",
+              "status": "completed",
+              "conclusion": "success",
+              "head_sha": "a645a46acbc7c2a9abe10150741d306f7faaf9ee"
+            },
+            "ci_note": "SUCCESS: run 40066417952 (https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952) del workflow Rust CI, conclusion=success sobre el commit a645a46acbc7c2a9abe10150741d306f7faaf9ee, que contiene H1a. La CI remota es la autoridad de integracion: su veredicto confirma la evidencia local de este sub-bloque, que hasta entonces era solo local.",
             "binary_sha256": "06d9cb97101b2afce8ef8d9bff00ad2f6e0f90284b14d6b7fd3daed7e17b6245",
             "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (768 passed, 0 failed, 64 ignored)",
             "ephemeral_uat": "A5-A8 PASS sobre el binario release (Allow con policy_0; forbid prevalece con policy_1; default deny; HRN malformado HTTP 400; homónimo de otra cuenta Deny sin diagnostico de error; 16 peticiones concurrentes sin contaminacion). Limpieza verificada: SIGTERM y 0 procesos huerfanos.",
@@ -325,8 +333,16 @@
           },
           "evidence": {
             "state": "LOCAL_PASSED",
-            "ci": null,
-            "ci_note": "PENDING: la CI remota sigue siendo la autoridad de integracion, pero H1a y H1b-1 no se han publicado (no hay push sin autorizacion), asi que no existe un run que citar.",
+            "ci": {
+              "run_id": "40066417952",
+              "url": "https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952",
+              "workflow": "Rust CI",
+              "job": "build-and-test",
+              "status": "completed",
+              "conclusion": "success",
+              "head_sha": "a645a46acbc7c2a9abe10150741d306f7faaf9ee"
+            },
+            "ci_note": "SUCCESS: run 40066417952 (https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952) del workflow Rust CI, conclusion=success sobre el commit a645a46acbc7c2a9abe10150741d306f7faaf9ee, que contiene H1a y H1b-1. La CI remota es la autoridad de integracion: su veredicto confirma la evidencia local de este sub-bloque, que hasta entonces era solo local.",
             "binary_sha256": "52a69d5364882567e03691b60ae066f2da530f052d11b92f5745b2de5bb3529f",
             "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (780 passed, 0 failed, 64 ignored)",
             "ephemeral_uat": "B1-B5 PASS sobre el binario release (/health 200; GET /api/v1/schemas/load con status active, version latest, schema_id schema:latest, 2 tipos de entidad, 6 tipos de accion y un sobre cedar-schema-fragments-v1 con 8 fragmentos; el playground reporta 'unrecognized entity type `Nope::Ghost`' contra el esquema inline y acepta la politica sobre el tipo declarado; un inline_schema que no es un sobre devuelve HTTP 400). Limpieza verificada: SIGTERM, cierre limpio y 0 procesos huerfanos.",
@@ -421,8 +437,16 @@
           },
           "evidence": {
             "state": "LOCAL_PASSED",
-            "ci": null,
-            "ci_note": "PENDING: la CI remota sigue siendo la autoridad de integracion, pero H1a, H1b-1 y H1b-2 no se han publicado (no hay push sin autorizacion), asi que no existe un run que citar.",
+            "ci": {
+              "run_id": "40066417952",
+              "url": "https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952",
+              "workflow": "Rust CI",
+              "job": "build-and-test",
+              "status": "completed",
+              "conclusion": "success",
+              "head_sha": "a645a46acbc7c2a9abe10150741d306f7faaf9ee"
+            },
+            "ci_note": "SUCCESS: run 40066417952 (https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952) del workflow Rust CI, conclusion=success sobre el commit a645a46acbc7c2a9abe10150741d306f7faaf9ee, que contiene H1a, H1b-1 y H1b-2. La CI remota es la autoridad de integracion: su veredicto confirma la evidencia local de este sub-bloque, que hasta entonces era solo local.",
             "binary_sha256": "30b5d1cf73c33a2bb1f45696dfd4fa85594450c3e480fd25d0b7e041bd8dc163",
             "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (797 passed, 0 failed, 64 ignored, 20 suites)",
             "ephemeral_uat": "U1-U8 PASS sobre el binario release (ALLOW con el verbo declarado; DENY + 'the action `write` is not declared in the schema'; ALLOW con el schema namespaced; DENY con la misma politica sobre el schema plano; ALLOW con la IP coincidente y DENY con otra; DENY + 'the request does not conform to the schema: resource type `Storage::Document` is not declared in the schema'; ALLOW con el schema vacio). Limpieza verificada: 0 procesos huerfanos, puerto libre y sin residuos en /tmp.",
@@ -514,8 +538,16 @@
           },
           "evidence": {
             "state": "LOCAL_PASSED",
-            "ci": null,
-            "ci_note": "PENDING: la CI remota sigue siendo la autoridad de integracion, pero H1a, H1b-1, H1b-2 y H1b-3 no se han publicado (no hay push sin autorizacion), asi que no existe un run que citar.",
+            "ci": {
+              "run_id": "40066417952",
+              "url": "https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952",
+              "workflow": "Rust CI",
+              "job": "build-and-test",
+              "status": "completed",
+              "conclusion": "success",
+              "head_sha": "a645a46acbc7c2a9abe10150741d306f7faaf9ee"
+            },
+            "ci_note": "SUCCESS: run 40066417952 (https://github.com/Rubentxu/hodei-artifacts/actions/runs/40066417952) del workflow Rust CI, conclusion=success sobre el commit a645a46acbc7c2a9abe10150741d306f7faaf9ee, que contiene H1a, H1b-1, H1b-2 y H1b-3. La CI remota es la autoridad de integracion: su veredicto confirma la evidencia local de este sub-bloque, que hasta entonces era solo local.",
             "binary_sha256": "b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65",
             "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (806 passed, 0 failed, 64 ignored, 20 suites); cargo build --release PASS",
             "ephemeral_uat": "B1-B5 PASS sobre el binario release, 15 comprobaciones y 15 en verde (create responde la atribucion; get la devuelve; evaluate de alice -> decision true, reason 'Access granted', determining_policies y policy_ids_evaluated con el id; evaluate de bob -> decision false, reason 'No IAM policies found for principal (implicit deny)' y ambas listas vacias; HRN malformado -> HTTP 400). Limpieza verificada: SIGTERM, 0 procesos huerfanos, puerto libre y sin residuos en /tmp.",
@@ -564,6 +596,91 @@
           }
         },
         {
+          "id": "H1b-4",
+          "title": "El codigo que no se compila deja de existir",
+          "state": "DONE",
+          "release_required": true,
+          "integration_remote_required": true,
+          "ephemeral_uat_e2e_aat_delete_after_block": true,
+          "scope": [
+            "src/infrastructure/ (3 ficheros, 155 lineas) se elimina: era un directorio de fuentes fuera de la unidad de compilacion y su GetEffectiveScpsAdapter no existia en el binario (cierra O3)",
+            "La rama 'declararlo y usarlo' de O3 se descarta por medida: el modulo importa hodei_organizations, que no es dependencia del paquete raiz (mutante M2: 10 errores E0433), y tanto ese crate como su unico consumidor (crates/hodei-authorizer) estan en cuarentena y vetados por SPECS/authorization-hrn.md",
+            "Guard permanente del invariante: ningun .rs del crate de aplicacion puede quedar fuera de la unidad de compilacion (tests/module_tree.rs)",
+            "El guard demuestra su poder discriminante: T2 (negativo) prueba que el resolutor detecta un modulo no declarado y T3 (negativo) que un modulo declarado dentro de un modulo inline no se reporta"
+          ],
+          "closes": [
+            "O3"
+          ],
+          "defers_to_h1b": [
+            "O4",
+            "O8-engine",
+            "O9",
+            "P0#2",
+            "O10"
+          ],
+          "acceptance": {
+            "ephemeral": [
+              "B1 el binario release arranca y sirve /health con 200 y status healthy",
+              "B2 el binario arranca desde la raiz del paquete: el cargador resuelve config/default.toml relativo a su directorio de trabajo",
+              "B3 el dep-info del build release no contiene src/infrastructure: el conjunto compilado de la raiz son 14 ficheros",
+              "B4 el sha256 del binario no cambia al eliminar el modulo: es identico antes y despues (b8689bbb...), la prueba de que no aportaba ni un byte"
+            ],
+            "permanent": [
+              "T1 todo .rs de src/ pertenece a la unidad de compilacion: se alcanza desde lib.rs/main.rs siguiendo declaraciones mod",
+              "T2 (negativo) el resolutor si detecta un modulo no declarado, para que T1 no pueda pasar en vacio",
+              "T3 (negativo) un fichero declarado dentro de un modulo inline no se reporta, para que el layout legitimo de Rust 2018 no rompa el guard"
+            ],
+            "aat": "0 procesos huerfanos (filtro con no-vacuidad probada dentro del ciclo: 1 con el servicio vivo, 0 tras SIGTERM); el proceso termina en SIGTERM; puerto efimero liberado; directorio de sesion efimero /tmp/hodei-h1b4-uat eliminado"
+          },
+          "evidence": {
+            "state": "LOCAL_PASSED",
+            "ci": null,
+            "ci_note": "PENDING: el run 40066417952 (success, commit a645a46) cubre H1a, H1b-1, H1b-2 y H1b-3, pero H1b-4 todavia no esta publicado. Esta tabla es evidencia local y se declara como tal.",
+            "binary_sha256": "b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65",
+            "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (809 passed, 0 failed, 64 ignored, 21 suites); cargo build --release PASS",
+            "ephemeral_uat": "B1-B4 PASS sobre el binario release, con limpieza verificada. Dos correcciones del propio UAT antes de darlo por bueno: pgrep -f casaba con el shell padre (falso positivo del chequeo) y pgrep -x es estructuralmente vacio con nombres de mas de 15 caracteres; se sustituyo por ps -eo pid=,comm y se probo su no-vacuidad dentro del ciclo (1 proceso con el servicio vivo, 0 tras SIGTERM).",
+            "mutations_checked": [
+              "M1 el modulo src/infrastructure/ se recrea (3 ficheros) sin declararlo -> T1 FAILED, nombrando los tres ficheros: el defecto original reintroducido",
+              "M2 pub mod infrastructure; se declara en src/lib.rs -> cargo check FAILED con 10 errores E0433 (unresolved module or unlinked crate hodei_organizations): la rama 'declararlo' de O3 es imposible, no dificil"
+            ],
+            "not_run": [
+              "typedb / typedb-server ausentes en el host: todo lo dependiente de TypeDB sigue NOT_RUN"
+            ],
+            "notes": "H1b-4 cierra O3 por eliminacion, no por declaracion: la fila ofrecia dos cierres y solo uno era alcanzable. La prueba de que no era codigo es el binario: el sha256 del artefacto release es identico antes y despues, y el dep-info confirma que el conjunto compilado de la raiz son 14 ficheros sin src/infrastructure. El guard es estructural (invariante), no una asercion sobre una ruta, asi que protege el defecto de clase y no el sintoma. Aplicado al workspace entero, el mismo resolutor encontro cuatro huerfanos en crates/hodei-iam: quedan registrados como O10, con criterio de cierre por fichero, porque son trabajo sin cablear de un crate vivo y borrarlos destruiria trabajo que un slice futuro necesita. Por eso el guard es deliberadamente estrecho al crate de aplicacion: ampliarlo al workspace fallaria hoy por O10. S-001 no incluia O3 y sigue sin cumplirse por completo, asi que el perfil de conformidad no cambia. La evidencia medida esta en BASELINE.md#77-cerrados-en-h1b-4-verificados-por-mutacion y #15-h1b-4--el-codigo-que-no-se-compila-deja-de-existir-ejecutado."
+          },
+          "replan": {
+            "date": "2026-10-24",
+            "reason": "La fila de O3 ofrecia dos cierres ('declararlo y usarlo' o 'eliminarlo') y habia que medir cual era alcanzable antes de tocar nada, porque una de las dos ramas rompia la compilacion. Ademas habia que comprobar que O3 era separable de O4 y de la rebanada de CORS (O9) sin credenciales ni TypeDB.",
+            "options": [
+              {
+                "id": "A",
+                "option": "Declarar pub mod infrastructure; y cablear el adaptador",
+                "verdict": "IMPOSIBLE",
+                "rationale": "el modulo importa hodei_organizations, que no es dependencia del paquete raiz (mutante M2: 10 errores E0433), y tanto ese crate como su unico consumidor (crates/hodei-authorizer) estan en cuarentena y vetados por SPECS/authorization-hrn.md; no es mas trabajo, es un crash de compilacion"
+              },
+              {
+                "id": "B",
+                "option": "Eliminar el directorio y proteger el invariante con un guard permanente (estructural, con dos negativos que demuestren su poder discriminante)",
+                "verdict": "ELEGIDA",
+                "rationale": "es la unica lectura que no inventa evidencia, es la que la linea base recommending desde el principio (DELETE), y el sha256 identico del artefacto release demuestra que el modulo no aportaba nada; el guard es de clase, no de ruta, asi que protege el defecto y no el sintoma"
+              },
+              {
+                "id": "C",
+                "option": "Reactivar crates/hodei-organizations y crates/hodei-authorizer para que el modulo tenga consumidores",
+                "verdict": "RECHAZADA",
+                "rationale": "contradice SPECS/authorization-hrn.md (Migracion legado) y arrastra a este ciclo una decision de alcance que pertenece a otro"
+              }
+            ],
+            "accepted_consequence": "O3 queda cerrado por eliminacion. El guard cubre solo el crate de aplicacion, y O10 (cuatro huerfanos en crates/hodei-iam) queda abierto con su medida y su criterio de cierre por fichero. O4 y O9 siguen abiertos: O4 exige una decision del maintainer (el borrado de Cargo.lock fue deliberado) y O9 es mayor y exige decidir el origen de la lista de origenes permitidos.",
+            "refs": [
+              "ROADMAP.md#h1b-4--el-codigo-que-no-se-compila-deja-de-existir-unidad-entregable-e-independiente",
+              "BASELINE.md#72-abiertos-con-consumidor-y-criterio-de-cierre",
+              "BASELINE.md#77-cerrados-en-h1b-4-verificados-por-mutacion",
+              "BASELINE.md#15-h1b-4--el-codigo-que-no-se-compila-deja-de-existir-ejecutado"
+            ]
+          }
+        },
+        {
           "id": "H1b",
           "title": "Gobernanza, esquema como autoridad y superficies pendientes",
           "state": "PENDING",
@@ -573,14 +690,14 @@
           "scope": [
             "Schema aplicado a la peticion Cedar en el MOTOR de evaluacion y schema como autoridad del namespace de accion -> Hodei::Action::\"ReadAsset\" (cierra la mitad del motor de O8 y completa S-001). La mitad del playground ya se cerro en el sub-bloque H1b-2",
             "IAM permit + resource permit + tenant boundary + SCP como interseccion de limites; revocaciones activas y auditadas",
-            "Superficies HTTP pendientes: O3, O4, O9 (O2 y O7 se cerraron en el sub-bloque H1b-1; la mitad del playground de O8, en H1b-2; O6, en H1b-3)"
+            "Superficies HTTP pendientes: O4, O9 (O2 y O7 se cerraron en el sub-bloque H1b-1; la mitad del playground de O8, en H1b-2; O6, en H1b-3; O3, en H1b-4)"
           ],
           "closes": [
-            "O3",
             "O4",
             "O8-engine",
             "O9",
-            "P0#2"
+            "P0#2",
+            "O10"
           ],
           "acceptance": {
             "ephemeral": [
@@ -598,7 +715,7 @@
             "state": "PENDING",
             "ci": null,
             "binary_sha256": null,
-            "notes": "O2 y O7 se cerraron en el sub-bloque H1b-1, la mitad del playground de O8 en H1b-2 y O6 en H1b-3 (ver sus bloques evidence). La mitad del motor de O8 sigue pendiente y con causa medida: el esquema registrado es de alcance IAM y POST /api/v1/policies/evaluate es generico, asi que aplicarlo en crudo denegaria toda peticion fuera del mundo IAM; cerrarla exige una decision de alcance de plataforma, no un cambio de codigo. El resto de H1b (O3, O4, O9, P0#2) no esta iniciado."
+            "notes": "O2 y O7 se cerraron en el sub-bloque H1b-1, la mitad del playground de O8 en H1b-2, O6 en H1b-3 y O3 en H1b-4 (ver sus bloques evidence). La mitad del motor de O8 sigue pendiente y con causa medida: el esquema registrado es de alcance IAM y POST /api/v1/policies/evaluate es generico, asi que aplicarlo en crudo denegaria toda peticion fuera del mundo IAM; cerrarla exige una decision de alcance de plataforma, no un cambio de codigo. El resto de H1b (O4, O9, P0#2) no esta iniciado, y O10 queda abierto con su propia medida y criterio de cierre por fichero."
           },
           "already_closed_in_h1b1": [
             "O2",
@@ -609,6 +726,9 @@
           ],
           "already_closed_in_h1b3": [
             "O6"
+          ],
+          "already_closed_in_h1b4": [
+            "O3"
           ]
         }
       ],
