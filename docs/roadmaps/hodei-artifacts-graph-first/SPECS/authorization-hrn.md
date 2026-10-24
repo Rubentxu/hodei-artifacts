@@ -190,3 +190,80 @@ también para la evaluación: el schema se aplica **cuando declara algo**.
   requieren que el schema sea la **autoridad** en el motor también.
 - La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny), las
   revocaciones activas y auditadas, y el CORS por origen (O9) siguen abiertos.
+
+## Perfil de conformidad H1b-3 (parcial, explícito)
+
+H1b-3 es el sub-bloque de H1b que hace que la evaluación **IAM** consulte las
+**políticas persistidas** (O6). Este perfil delimita qué se cumple y qué sigue
+diferido; lo que difiere **no** se declara cumplido.
+
+### La política persistida declara sus principales
+
+Una política guardada declara **a quién** sirve. `attached_principals` es la
+lista de HRNs canónicos de los principales a los que la política está
+adjunta, y el caso de uso los **valida** antes de persistirlos:
+
+| Entrada | Resultado |
+|---|---|
+| un HRN **canónico** de un `Iam::User` | se guarda su forma canónica |
+| un texto que **no** es un HRN | se **rechaza** (`400`) |
+| un HRN canónico de **otro** tipo (no `Iam::User`) | se **rechaza** (`400`): no es un principal de IAM |
+| HRNs repetidos | se **deduplican** |
+
+El HRN se guarda en su forma **canónica**, que es exactamente la que la
+consulta enlaza: la atribución no se «reconstruye» al leerla.
+
+### La consulta se limita a las políticas del principal
+
+La evaluación IAM consulta las políticas **adjuntas** al principal que se
+decide, y **solo** esas. Tres consecuencias, todas obligatorias:
+
+- la decisión se toma sobre las políticas **guardadas**, no sobre un conjunto
+  en memoria;
+- una política adjunta a **otro** principal **ni se consulta**: no puede
+  conceder nada a un principal al que nunca se adjuntó;
+- cuando **no hay ninguna** política efectiva, la denegación es **implícita**
+  y el motivo lo dice («no IAM policies found for principal»), no el efecto de
+  las condiciones de una política ajena.
+
+### El alcance es un límite, y su rotura es detectable
+
+La garantía se afirma por partida doble: una regresión positiva (la política
+guardada **es** la que decide y la que nombra) y una **negativa** (la política
+de otro principal **no aparece** en las políticas consultadas ni en las
+determinantes). La negativa es la que tiene poder discriminante: con el filtro
+de atribución roto, la **decisión** seguiría siendo «denegar» —porque la
+política de alice no le concede a bob—, así que el booleano no delata nada.
+Lo que delata la rotura es que la política ajena **aparezca** entre las
+consultadas.
+
+### La entidad se materializa desde su HRN
+
+El UID Cedar de una entidad se deriva de su HRN, así que una entidad que
+transporta **solo** su HRN sigue identificando al principal o al recurso
+correcto. La ausencia de atributos es una **degradación declarada**, no un
+detalle: una política **condicionada sobre un atributo** del principal o del
+recurso **no puede coincidir** hasta que exista un perfil de identidad. Una
+política que restringe principal o recurso **por identidad** —que es la forma
+que la atribución hace significativa— se evalúa correctamente.
+
+### Lo que H1b-3 **no** cumple
+
+- La ruta IAM **no aplica el schema** a la petición, y es una decisión
+  declarada: el esquema registrado declara `Iam::User` e `Iam::Group`, pero la
+  ruta acepta un recurso de cualquier mundo, así que aplicarlo en crudo sería
+  un **falso rechazo**. Es el mismo criterio que H1b-2 fijó para el
+  playground: un schema que no declara lo aplicable no se aplica en crudo.
+- La **mitad del motor de O8** sigue abierta, por la causa de alcance de
+  plataforma ya medida en H1b-2 (§ «Perfil de conformidad H1b-2»): el motor
+  carga el esquema registrado y no lo aplica.
+- El `EvaluationRequest` del kernel **no tiene campo `context`**: el contexto
+  no viaja por el kernel. La ruta IAM de H1b-3 no lo necesita, pero la
+  limitación sigue ahí.
+- La atribución **no tiene ciclo de vida**: se escribe al crear la política y
+  no hay cambio, retirada, expiración ni auditoría de quién la cambió.
+- Por tanto S-001 **sigue sin cumplirse por completo**: el namespace de
+  entidad `Hodei::*` y el namespace de acción `Hodei::Action::"ReadAsset"`
+  requieren que el schema sea la **autoridad** en el motor también.
+- La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny), las
+  revocaciones activas y auditadas, y el CORS por origen (O9) siguen abiertos.

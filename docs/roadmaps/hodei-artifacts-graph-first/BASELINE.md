@@ -303,15 +303,14 @@ se revirtieron):
 
 ### 7.2 Abiertos (con consumidor y criterio de cierre)
 
-**O1 y O5 se cerraron en H1a** (§7.3) y **O2 y O7 se cerraron en H1b-1** (§7.4),
-cada uno con su mutante y su prueba discriminante. Los que siguen aquí siguen
-abiertos.
+**O1 y O5 se cerraron en H1a** (§7.3), **O2 y O7 se cerraron en H1b-1** (§7.4) y
+**O6 se cerró en H1b-3** (§7.6), cada uno con su mutante y su prueba
+discriminante. Los que siguen aquí siguen abiertos.
 
 | Id | Defecto | Evidencia | Impacto | Cierre previsto |
 |---|---|---|---|---|
 | O3 | `src/infrastructure/` es un módulo **no compilado**: no está declarado en `src/lib.rs`, así que `GetEffectiveScpsAdapter` no existe en el binario | `src/lib.rs` (sin `pub mod infrastructure`), `src/infrastructure/adapters/` | código que aparenta ser infraestructura sin estarlo | **H1b**: declararlo y usarlo, o eliminarlo |
 | O4 | `Cargo.lock` está en `.gitignore` | `.gitignore:5` | el build no es reproducible; el lock resuelto (Cedar 4.14.0, config-rs 0.14.1, SurrealDB 2.7.0) no se versiona. **Consecuencia observada en la CI**: `rust-ci.yml` usa `hashFiles('**/Cargo.lock')` como clave de caché, y como ese fichero no está en el repositorio la clave es constante → la caché nunca se invalida al cambiar una dependencia | **H1b**: versionar el lock del workspace (el borrado fue deliberado, commit `eb42752 "borrado cargo.lock file"`, así que **no** se revierte en H0 sin decisión del maintainer) |
-| O6 | El adaptador SurrealDB de `evaluate_iam_policies` no ejecuta consulta alguna (`TODO: Implement actual SurrealDB query`) y el use case pasa `context: None` | `crates/hodei-iam/src/features/evaluate_iam_policies/adapter.rs:93`, `.../use_case.rs:176` | la evaluación de IAM no consulta las políticas persistidas | **H1b** |
 | O8 | El motor de evaluación **carga** el schema pero no lo **aplica** (`TODO: we should actually use the loaded schema`) | `crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270` | la decisión no se valida contra el esquema activo | **Mitad del playground CERRADA en H1b-2** (§7.5). La **mitad del motor sigue abierta**, y su causa está medida: el esquema registrado es de alcance IAM y `POST /api/v1/policies/evaluate` es genérico, así que aplicarlo en crudo **denegaría toda petición fuera del mundo IAM** (los casos `G9`–`G12` solo sobreviven porque pasan `evaluation_mode: "NoSchema"`). Cerrarla exige decidir **qué esquema es el activo para una petición genérica**: una decisión de alcance de plataforma, no de código. Ver `ADR/011` |
 | O9 | CORS permisivo en el router | `src/router.rs:52` (`CorsLayer::permissive()`) | postura de producción insegura en el borde HTTP | **H1b**: CORS por origen configurado |
 
@@ -337,6 +336,39 @@ genérica?») que este ciclo no tiene autoridad para responder. El hueco queda
 evalúa de verdad (carga schema, valida políticas, evalúa). El stub era
 `POST /api/v1/policies/evaluate`. No son la misma ruta. Desde H1a la segunda
 también evalúa de verdad (§7.3, O1).
+
+**Lo que H1b-3 cierra, y cómo se Midió la afirmación heredada.** La fila de
+O6 decía «la evaluación IAM no consulta las políticas persistidas». Al
+investigar, esa frase resultó **cierta pero mal acotada**, y la diferencia es
+lo que decide el alcance del hito. El `TODO` que citaba estaba **en la
+superficie equivocada**: el adaptador SurrealDB de `evaluate_iam_policies`
+**no ejecutaba consulta alguna** (devolvía un conjunto vacío), pero el hueco
+real era **más grande** que ese `TODO`. Medido:
+
+| Hecho medido en el código | Consecuencia |
+|---|---|
+| el `PolicyFinderPort` de `evaluate_iam_policies` lo implementaba un **stub en memoria** que no tocaba la base de datos | la evaluación IAM no consultaba **nada** persistido: ni la base, ni siquiera un store |
+| el use case `EvaluateIamPoliciesUseCase` **nunca se construía** fuera de los tests unitarios | no había caso de uso vivo que décision |
+| el Composition Root **no declaraba** el puerto `EvaluateIamPoliciesPort` | no había cableado de DI: la ruta no existía |
+| **no había ruta HTTP** para la evaluación IAM | el consumidor no tenía superficie que usar |
+| los resolvers de principal y de recurso (`PrincipalResolverPort`, `ResourceResolverPort`) **no tenían implementación** | aunque hubiera datos, no había entidades que materializar |
+| el registro persistido **no guardaba ninguna atribución**: `create` escribía solo `{content, ...}`, y `attached_principals` **nunca se persistía** | una política almacenada no decía **a quién** sirve: no había nada por lo que «consultar las políticas del principal» significara algo |
+| el `EvaluationRequest` del kernel **no tiene campo `context`** | el `context: None` que citaba la fila de O6 señalaba un **hueco distinto** (el contexto no viaja por el kernel), no la ausencia de consulta |
+
+Cerrar el `TODO` literal —poner una consulta real en el stub y seguir
+—habría producido un **verde falso**: el sistema seguiría sin política
+atribuida a nadie, sin caso de uso vivo, sin ruta y sin resolvers. H1b-3
+cierra el hueco **real**, que es el de la fila, y por eso se reshapea el hito
+antes de ejecutarlo (§7.6, §14).
+
+**O6 y O8 no se tocan entre sí.** La mitad bloqueada de O8 (§7.2) es la del
+motor genérico `POST /api/v1/policies/evaluate`, cuya causa es que el esquema
+**registrado** es de alcance IAM mientras la ruta es genérica. O6 es la ruta
+**IAM-específica** (`POST /api/v1/iam/evaluate`), donde el mundo es IAM y el
+esquema aplicable es el IAM. Por eso O6 **se cierra sin** la decisión de
+alcance de plataforma: no depende de ella. Lo que H1b-3 mantiene explícito es
+que la ruta IAM **sigue sin aplicar el schema** (§14.6), y esa es una decisión
+deliberada y registrada, no un descuido.
 
 ---
 
@@ -405,6 +437,30 @@ se revirtieron):
 
 Los seis mutantes se revirtieron tras observar la muerte de su prueba; la suite
 volvió a verde (`http_contract` 23/23, `cargo test --workspace` 797 superadas).
+
+---
+
+### 7.6 Cerrados en H1b-3 (verificados por mutación)
+
+| Id | Defecto | Por qué era un falso verde | Cómo se corrigió | Prueba discriminante |
+|---|---|---|---|---|
+| O6 | La evaluación IAM **no consultaba las políticas persistidas**. El hueco medido era de **cinco capas**, no una: (a) el `PolicyFinderPort` lo implementaba un **stub en memoria** que no tocaba la base de datos; (b) el use case **nunca se construía** fuera de los tests; (c) el Composition Root **no cableaba** el puerto; (d) **no había ruta HTTP**; (e) los resolvers de principal y de recurso **no tenían implementación**; y, además, (f) el registro persistido **no guardaba atribución** (`attached_principals` nunca se escribía), así que una política almacenada no decía a quién servía | el `TODO: Implement actual SurrealDB query` que citaba la fila señalaba **un** hueco visible y tapaba los otros cinco. La fila además mezclaba el `context: None` (que habla del **contexto**, no de la consulta) y daba por hecho que existía una política persistida **atribuida**, que no existía | la **política persistida declara sus principales**: `create` guarda `attached_principals` (HRNs canónicos validados: servicio `iam`, tipo `User`) y `get` los devuelve, así que la atribución **sobrevive al viaje de ida y vuelta**. El `IamPolicyFinderPort` **consulta SurrealDB de verdad** (`SELECT * FROM policy WHERE $principal_hrn IN attached_principals`) sobre el mismo adaptador que escribe, de modo que las políticas que deciden son **las que están guardadas**. Los resolvers **materializan las entidades** desde los HRNs de la petición, y el caso de uso **decide** con Cedar y nombra las políticas determinantes. La ruta se expone en `POST /api/v1/iam/evaluate` | `G24` (la política creada por la API y atribuida a un principal es **la que consulta y nombra** la evaluación: `policy_ids_evaluated` y `determining_policies`) + `G25` (**negativo**: una política atribuida a **otro** principal **ni se consulta** — `policy_ids_evaluated` vacío y motivo de denegación implícita) + el round-trip de la atribución en `G24` + 4 tests unitarios del adaptador y 2 del resolver |
+
+**Mutación focalizada de H1b-3** (cada mutante debe morir; tres murieron y se
+revirtieron, y uno resultó **equivalente**):
+
+| Mutante | Test que murió |
+|---|---|
+| **M1** el finder devuelve **toda** política, ignorando la atribución | `G25` FAILED: la política de alice pasa a concederse a bob — el `decision` seguía siendo `false` por una razón distinta (la política no concede a bob), pero `policy_ids_evaluated` dejó de estar vacío: la **atribución** es lo que se rompió, y las aserciones de `policy_ids_evaluated` y del motivo de denegación implícita son las que lo detectan |
+| **M2** la consulta del finder **no filtra** por `attached_principals` (mutación aplicada a la **primera** ocurrencia del literal, la del `get_effective_policies` legacy, línea 428) | **mutante equivalente**: `G24` sobrevivió. El camino IAM **no** usa esa implementación (la línea 428 pertenece a otra feature, `get_effective_policies`, que la evaluación IAM no invoca), así que la mutación no cambió el comportamiento observado. Se rehízo como **M2b** con un ancla única (el bloque completo `let mut response = self.db.query(query)`) |
+| **M2b** el finder IAM **no devuelve ninguna** política (consulta que no encuentra nada) | `G24` FAILED: la evaluación deja de consultar la política persistida y el `decision` pasa a `false` con `policy_ids_evaluated` vacío — el hueco original de O6, reintroducido |
+| **M3** `create` **no persiste** la atribución | `G24` FAILED en su mitad de ida y vuelta: la atribución se pierde al guardar, así que la evaluación no encuentra la política — el mismo hueco por el otro extremo |
+
+Los tres mutantes se revirtieron tras observar la muerte de su prueba; el
+adaptador quedó **byte a byte** como estaba
+(`sha256=fa0c48914c37eac3f3c23061845fea8d787f19e10671b9ce96682754c754fac3`)
+y la suite volvió a verde (`http_contract` 25/25, `cargo test --workspace` 806
+superadas).
 
 ---
 
@@ -637,7 +693,8 @@ comporta lo que debe (se niega a arrancar sin configuración legible, P5 de
 - La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny), las
   revocaciones activas y auditadas, y las superficies HTTP O2, O3, O4, O6, O7 y
   O9 son H1b. (O2 y O7 se cerraron después, dentro de H1b, en el sub-bloque
-  **H1b-1**: §7.4 y §12.)
+  **H1b-1**: §7.4 y §12. **O6** se cerró después, dentro de H1b, en el
+  sub-bloque **H1b-3**: §7.6 y §14.)
 - **TypeDB sigue `NOT_RUN`** en este entorno: `typedb` y `typedb-server` están
   ausentes. Ninguna comprobación que dependa de ellos se ha ejecutado ni se
   declara aprobada.
@@ -744,7 +801,8 @@ arranca el servicio sin registrarlo.
   `Hodei::*` y el namespace de acción `Hodei::Action::"…"` siguen pendientes
   por lo mismo.
 - **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
-- O3, O4, O6 y O9 siguen abiertos, con su criterio de cierre en §7.2.
+- O3, O4 y O9 siguen abiertos, con su criterio de cierre en §7.2. **O6** se
+  cerró después, en **H1b-3** (§7.6 y §14).
 
 ---
 
@@ -867,7 +925,8 @@ de O8 sigue bloqueada por falta de alcance de plataforma.
   `Hodei::*` y el namespace de acción `Hodei::Action::"ReadAsset"` siguen
   pendientes por lo mismo.
 - **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
-- O3, O4, O6 y O9 siguen abiertos, con su criterio de cierre en §7.2.
+- O3, O4 y O9 siguen abiertos, con su criterio de cierre en §7.2. **O6** se
+  cerró después, en **H1b-3** (§7.6 y §14).
 - **Observación colateral, no defecto corregido**: el cargador de configuración
   exige **todos** los campos cuando no existe `config/default.toml`, porque el
   `Default` derivado de `AppConfig` no lo aplica `serde` al deserializar. La
@@ -875,6 +934,195 @@ de O8 sigue bloqueada por falta de alcance de plataforma.
   No se ha tocado: es un defecto preexistente fuera del alcance de este
   sub-bloque, y queda anotado aquí para que no se confunda con un cambio de
   H1b-2.
+
+---
+
+## 14. H1b-3 — la evaluación IAM consulta las políticas persistidas (ejecutado)
+
+Sub-bloque de H1b que cierra **O6**: la evaluación de IAM deja de ser una
+superficie decorativa y **decide sobre las políticas que están guardadas**. El
+hueco real era más grande que el `TODO` que citaba la fila (§7.2), y por eso
+el hito se **reshapea** antes de ejecutarse: la política persistida declara sus
+principales, el finder **consulta de verdad** el mismo adaptador que escribe,
+los resolvers **materializan** las entidades desde los HRNs, y la decisión se
+expone por HTTP.
+
+### 14.1 Qué cambió
+
+| Superficie | Antes | Ahora |
+|---|---|---|
+| política persistida | se guardaba `{content, description}`: **nunca se guardaba a quién servía** | `create` guarda `attached_principals` (HRNs canónicos validados: servicio `iam`, tipo `User`, sin duplicados) y `get` los devuelve — la atribución **sobrevive al viaje de ida y vuelta** por la base de datos |
+| consulta de políticas | el `PolicyFinderPort` lo implementaba un **stub en memoria** que no tocaba la base de datos | el `IamPolicyFinderPort` **consulta SurrealDB** (`SELECT * FROM policy WHERE $principal_hrn IN attached_principals`) sobre el **mismo adaptador que escribe**: las políticas que deciden son las que están guardadas |
+| alcance de la consulta | ninguna: un conjunto vacío o un conjunto global | **atribución**: solo se consultan las políticas **adjuntas** al principal que se decide. Una política de otro principal **ni se consulta**, así que no puede conceder nada |
+| entidades de la petición | los resolvers **no tenían implementación** | `HrnEntityResolver` **materializa** principal y recurso desde sus HRNs. El UID Cedar se deriva del HRN, así que la entidad identifica al principal aunque no lleve atributos |
+| caso de uso | **nunca se construía** fuera de los tests | `EvaluateIamPoliciesUseCase` está **cableado** en el Composition Root y **decide** con Cedar, nombrando las **políticas determinantes** y las **políticas evaluadas** |
+| superficie HTTP | **no existía** ruta de evaluación IAM | `POST /api/v1/iam/evaluate` (documentada en OpenAPI): principal, acción y recurso; un HRN malformado es `400`, no una decisión silenciosa |
+
+**Por qué la atribución es el dato que faltaba.** Una política guardada sin
+atribución no dice **a quién** sirve: consultarla para «el principal» no
+tenía contenido, y devolver *toda* política convertiría cada política en un
+permiso global — una política escrita para alice concedería a bob. Por eso
+**la atribución se persiste, se valida y se filtra en la consulta**, y por eso
+la regresión negativa (`G25`) es tan importante como la positiva: sin ella,
+un fallo en el filtro se escondería detrás de una decisión correcta por
+casualidad.
+
+**La degradación, declarada y no escondida.** La plataforma no tiene todavía
+perfil de identidad (no hay API que cree un principal), así que la entidad
+**no lleva atributos**. La consecuencia es precisa: una política **condicionada
+sobre un atributo** del principal o del recurso no puede coincidir. Una
+política que restringe principal o recurso **por identidad** —que es la forma
+que la atribución hace significativa— se evalúa correctamente. El resolver
+lo dice en su propia documentación y hay un test que lo afirma.
+
+### 14.2 Puerta de calidad local (medida)
+
+| Comprobación | Resultado |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS — `No issues found` |
+| `cargo test --workspace --no-fail-fast` | PASS — **806 superadas, 0 fallidas, 64 ignoradas** (doctests), 20 suites, exit 0 |
+| `cargo build --release --workspace` | PASS — binario `sha256=b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65` |
+
+**CI remota: `PENDING`.** La autoridad de integración sigue siendo el workflow
+`Rust CI` remoto y H1a, H1b-1, H1b-2 y H1b-3 **no se han publicados** (no hay
+push sin autorización), así que no existe ningún run que pueda citarse para este
+sub-bloque. La tabla anterior es evidencia **local**, y se declara como tal.
+
+**Una nota de método, no un defecto corregido.** Durante este ciclo se
+midió el árbol de H1b-3 (HEAD) contra el árbol de trabajo con un `git
+worktree` que **compartía el mismo `CARGO_TARGET_DIR`**. Eso no es seguro: los
+miembros del workspace se referencian por ruta **relativa**, así que dos
+checkouts del mismo repositorio producen el **mismo hash de unidad** y cargo
+reutiliza artefactos compilados contra el otro árbol. Se observó en rojo: la
+suite completa falló en `legacy_quarantine` («the drift report must exist») y
+en `distribution_contract`, y `http_contract` corrió 23 pruebas en vez de 25
+— binarios **obsoletos**, no fallos del código. La lección queda registrada
+porque es reproducible: **un worktree necesita su propio `CARGO_TARGET_DIR`**.
+Tras `cargo clean -p` de los paquetes del workspace, la suite completa volvió a
+verde con 806 superadas.
+
+El recuento de HEAD (797 superadas) es el de §13.2, medido en el ciclo de
+H1b-2 sobre **el mismo árbol**: desde entonces HEAD solo añade el commit de
+documentación `140480e`. El delta de **+9** se reconcilió contra el diff de
+código, no contra una suposición: los atributos de prueba nuevos son 2 en el
+adapter del finder y el resolver, 2 en `http_contract` (G24 y G25), 1 en el
+`dto` de `create_policy`, 3 en su caso de uso y 1 en el `dto` nuevo de
+`evaluate_iam_policies`. 797 + 9 = 806. Una **reejecución** de HEAD en un
+target aislado se Lanzó, pero quedó bloqueada por una compilación concurrente de
+otro proyecto en la misma máquina y **no se completó**: no se cuenta como
+evidencia.
+
+### 14.3 Regresiones permanentes promovidas
+
+| Id | Ubicación | Garantía |
+|---|---|---|
+| G24 | `tests/http_contract.rs` | la evaluación IAM **decide sobre las políticas persistidas**: la política creada por la API y atribuida a un principal es **la que consulta** (`policy_ids_evaluated`) y **la que nombra** (`determining_policies`), y la atribución **sobrevive al viaje de ida y vuelta** por el store |
+| G25 | `tests/http_contract.rs` | la atribución es un **límite**: una política guardada y atribuida a **otro** principal **ni se consulta** (`policy_ids_evaluated` vacío) y la denegación es **implícita**, no el efecto de las condiciones de una política ajena |
+
+Además, en el crate IAM: 4 tests unitarios del finder y del resolver (finder
+que solo devuelve lo adjunto, finder que **no** filtra a otro principal, y el
+resolver que materializa el HRN del principal y del recurso y **declara la
+degradación** de atributos), 3 tests del caso de uso de `create_policy`
+(canonicalización de la atribución y los dos rechazos: HRN malformado y
+principal que no es un `Iam::User`), 1 test de deserialización del comando de
+`create_policy` y 1 test de deserialización del comando de evaluación (en el
+`dto` nuevo). Dos de los tests del adapter anteriores
+(`test_in_memory_policy_finder_with_policies` y `test_surreal_policy_finder`)
+se **sustituyeron**: el segundo era el que **afirmaba** el stub — una prueba
+que fijaba el defecto — y el primero cubría un caso que los nuevos cubren con
+más precisión. 11 tests nuevos y 2 retirados: el delta neto es **+9**, que es
+exactamente la diferencia entre las 797 superadas de HEAD y las 806 de este
+árbol.
+
+### 14.4 Mutación focalizada (ejecutada, con muerte observada)
+
+Los mutantes y las muertes están en §7.6. Se revirtieron después de
+observarlas; el adaptador quedó **byte a byte** como estaba
+(`sha256=fa0c48914c37eac3f3c23061845fea8d787f19e10671b9ce96682754c754fac3`)
+y la suite volvió a verde (`http_contract` 25/25, `cargo test --workspace` 806
+superadas).
+
+Lo que la campaña dejó claro, y que no era evidente antes: **`decision ==
+false` no discrimina**. Con el filtro de atribución roto (M1) la decisión de
+bob seguía siendo `false` — porque la política de alice no le concede —, así
+que la garantía que realmente se rompió la detectan
+`policy_ids_evaluated == []` y el motivo de denegación implícita, no el booleano.
+Por eso `G25` afirma **las dos** cosas y no solo el `decision`.
+
+### 14.5 Aceptación efímera (ejecutada y limpiada)
+
+Ciclo `PREPARE → EXECUTE → ASSERT → EVIDENCE → CLEANUP` sobre el **binario
+release construido desde el árbol de H1b-3**, ejecutado desde un directorio de
+sesión que contiene `config/default.toml` (que es como lo lee el binario).
+
+- Binario bajo prueba:
+  `sha256=b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65`
+- Directorio de sesión efímero y puerto efímero: `/tmp/hodei-h1b3-uat/session`,
+  puerto `42841`
+- Script de aceptación: efímero, **fuera del repositorio**
+  (`/tmp/hodei-h1b3-uat/`), retirado al cerrar el ciclo
+
+| Id | Comprobación | Resultado observado |
+|---|---|---|
+| B1 | el binario arranca y sirve `/health` | PASS — `HTTP 200`, `status: healthy` |
+| U1 | `POST /api/v1/iam/policies` con `attached_principals` | PASS — `HTTP 200`, `attached_principals: ["hrn:aws:iam::account-a:User/alice"]`, `hrn: hrn:hodei:iam::default:Policy/uat-iam-policy` |
+| U2 | `POST /api/v1/iam/policies/get` con ese HRN | PASS — `HTTP 200`, `attached_principals: ["hrn:aws:iam::account-a:User/alice"]`: la atribución **está en el store**, no solo en la respuesta de creación |
+| U3 | `POST /api/v1/iam/evaluate` para el principal **adjunto** | PASS — `HTTP 200`, `{"decision":true,"reason":"Access granted","determining_policies":["uat-iam-policy"],"policy_ids_evaluated":["uat-iam-policy"]}` |
+| U4 | `POST /api/v1/iam/evaluate` para un principal **distinto** | PASS — `HTTP 200`, `{"decision":false,"reason":"No IAM policies found for principal (implicit deny)","determining_policies":[],"policy_ids_evaluated":[]}`: la política de alice **ni se consultó** |
+| U5 | `POST /api/v1/iam/evaluate` con HRN malformado | PASS — `HTTP 400`, `{"error":"Invalid principal HRN format","status":400}`: un HRN inválido es un error, no una decisión silenciosa |
+
+**15 comprobaciones, 15 en verde** (incluidas las de forma de cada respuesta).
+
+**Limpieza verificada:** el proceso termina con `SIGTERM` («shut down
+gracefully»), la **comprobación de huérfanos no encuentra ningún proceso**
+`hodei-artifacts-api` vivo y el puerto queda libre. El directorio de sesión
+(`/tmp/hodei-h1b3-uat/`) se retiró al cerrar el ciclo.
+
+**Lo que esta aceptación no cubre.** El arranque registra el esquema IAM
+(`register_iam_on_startup = true`), así que la política validada contra él.
+La ruta IAM **no aplica** ese schema a la petición (§14.6), y por eso esta
+aceptación **no** demuestra nada sobre la aplicación del schema en la ruta
+IAM: solo sobre la consulta de las políticas persistidas y la decisión que
+sale de ellas.
+
+### 14.6 Lo que H1b-3 **no** cierra
+
+- **La mitad del motor de O8 sigue abierta**: `evaluate_policies` sigue
+  **cargando** el esquema registrado sin **aplicarlo** a la petición
+  (`crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270`).
+  Su causa está medida: el esquema registrado es de alcance IAM y
+  `POST /api/v1/policies/evaluate` es genérico, así que aplicarlo en crudo
+  **denegaría toda petición fuera del mundo IAM**. Cerrarla exige una
+  decisión de alcance de plataforma, no un cambio de código (§13.6).
+- **La ruta IAM sigue sin aplicar el schema, y eso es una decisión
+  declarada.** `POST /api/v1/iam/evaluate` evalúa **sin** schema
+  (`Request::new(..., None)`): el esquema registrado declara `Iam::User` e
+  `Iam::Group`, pero la ruta acepta un recurso de cualquier mundo, así que
+  aplicarlo en crudo sería un **falso rechazo** — denegaría peticiones
+  legítimas de otros dominios. Es el mismo criterio que H1b-2 fijó para el
+  playground (un schema que no declara lo aplicable no se aplica en crudo), y
+  por eso se declara aquí en vez de dejarse implícito.
+- **El `EvaluationRequest` del kernel no tiene campo `context`**
+  (`crates/kernel/src/application/ports/authorization.rs:47`): el contexto de
+  la petición **no viaja por el kernel**. La ruta IAM de H1b-3 no lo necesita
+  (no hay contexto en su comando), pero la limitación sigue ahí y la hereda
+  cualquier evaluación que se apoye en ese tipo del kernel.
+- **Los resolvers no resuelven atributos**: `HrnEntityResolver` materializa
+  solo el HRN (§14.1). Una política condicionada sobre un atributo **no puede
+  coincidir** hasta que exista un perfil de identidad.
+- **No hay revocación ni auditoría**: la atribución es una lista que se
+  escribe al crear la política; no hay ciclo de vida de la atribución
+  (cambiarla, retirarla, expirarla) ni rastro de quién la cambió.
+- S-001 **sigue sin cumplirse por completo**: el namespace de entidad
+  `Hodei::*` y el namespace de acción `Hodei::Action::"ReadAsset"` siguen
+  pendientes por lo mismo.
+- **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
+- O3, O4 y O9 siguen abiertos, con su criterio de cierre en §7.2.
+- **Observación colateral, no defecto corregido**: el cargador de configuración
+  exige **todos** los campos cuando no existe `config/default.toml` (§13.6).
+  La UAT lo rodeó con un `config/default.toml` en su propio directorio de
+  sesión. No se ha tocado.
 
 ---
 

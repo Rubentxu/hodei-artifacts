@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "Rubentxu/hodei-artifacts",
   "baseline_sha": "2626e35b7c12375af0a1f23342eee4b4619bfc3c",
-  "status": "h1b2_done_h1b_pending",
+  "status": "h1b3_done_h1b_pending",
   "milestones": [
     {
       "id": "H0",
@@ -193,7 +193,7 @@
           "manifest_updated_after_publication": true,
           "manifest_update_reason": "el manifiesto publicado registra la correccion de la evidencia de limpieza (falso verde en la comprobacion de SIGTERM) y la reejecucion A1-A4 con 0 huerfanos"
         },
-        "open_defects_note": "O1 y O5 se cerraron en H1a y O2 y O7 en H1b-1 (ver los sub-hitos H1a y H1b-1)."
+        "open_defects_note": "O1 y O5 se cerraron en H1a, O2 y O7 en H1b-1 y O6 en H1b-3 (ver los sub-hitos H1a, H1b-1 y H1b-3)."
       },
       "open_defects": [
         "O2",
@@ -473,6 +473,97 @@
           }
         },
         {
+          "id": "H1b-3",
+          "title": "La evaluacion IAM consulta las politicas persistidas",
+          "state": "DONE",
+          "release_required": true,
+          "integration_remote_required": true,
+          "ephemeral_uat_e2e_aat_delete_after_block": true,
+          "scope": [
+            "La politica persistida declara sus principales: attached_principals se valida antes de guardarse (HRN canonico, servicio iam, tipo User) y se guarda en forma canonica, de modo que la atribucion sobrevive al viaje de ida y vuelta",
+            "La consulta IAM al store es real: SELECT * FROM policy WHERE $principal_hrn IN attached_principals, sobre el mismo adaptador que escribe, y solo devuelve las politicas atribuidas al principal que se decide",
+            "La evaluacion decide sobre esas politicas: nombra las determinantes y las consultadas; sin ninguna, la denegacion es implicita y el motivo lo dice",
+            "Las entidades se materializan desde su HRN (principal y recurso), con la degradacion de atributos declarada en el resolver",
+            "POST /api/v1/iam/evaluate existe y decide sobre las politicas guardadas (cierra O6)"
+          ],
+          "closes": [
+            "O6"
+          ],
+          "defers_to_h1b": [
+            "O3",
+            "O4",
+            "O8-engine",
+            "O9",
+            "P0#2"
+          ],
+          "acceptance": {
+            "ephemeral": [
+              "B1 el binario arranca y POST /api/v1/iam/create responde con la atribucion que se pidio",
+              "B2 GET /api/v1/iam/policies/{id} devuelve la atribucion persistida (ida y vuelta)",
+              "B3 la evaluacion de alice concede y nombra la politica persistida: decision true, determining_policies y policy_ids_evaluated con el id",
+              "B4 la evaluacion de bob (sin atribucion) deniega con motivo implicito y no consulta ninguna politica",
+              "B5 un HRN de principal malformado responde HTTP 400 con el motivo"
+            ],
+            "permanent": [
+              "G24 la evaluacion IAM decide sobre las politicas persistidas: la politica creada por la API y atribuida a un principal es la que consulta (policy_ids_evaluated) y la que nombra (determining_policies), y la atribucion sobrevive al viaje de ida y vuelta por el store",
+              "G25 la atribucion es un limite: una politica guardada y atribuida a otro principal ni se consulta (policy_ids_evaluated vacio) y la denegacion es implicita",
+              "4 tests unitarios del finder y del resolver (el finder solo devuelve lo adjunto; el finder no filtra a otro principal; el resolver materializa el HRN del principal y del recurso)",
+              "3 tests del caso de uso de create_policy (canonicalizacion de la atribucion; rechazo del HRN malformado; rechazo del principal que no es un Iam::User), 1 test de deserializacion del comando de create_policy y 1 test de deserializacion del comando de evaluacion (en el dto nuevo)"
+            ],
+            "aat": "0 procesos huerfanos; el proceso termina en SIGTERM; puerto 42841 libre; directorio de sesion efimero /tmp/hodei-h1b3-uat eliminado"
+          },
+          "evidence": {
+            "state": "LOCAL_PASSED",
+            "ci": null,
+            "ci_note": "PENDING: la CI remota sigue siendo la autoridad de integracion, pero H1a, H1b-1, H1b-2 y H1b-3 no se han publicado (no hay push sin autorizacion), asi que no existe un run que citar.",
+            "binary_sha256": "b8689bbb040ce23fc5b9b3fd299b1aed7814da7ba3df0bab0b47d28821c91c65",
+            "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (806 passed, 0 failed, 64 ignored, 20 suites); cargo build --release PASS",
+            "ephemeral_uat": "B1-B5 PASS sobre el binario release, 15 comprobaciones y 15 en verde (create responde la atribucion; get la devuelve; evaluate de alice -> decision true, reason 'Access granted', determining_policies y policy_ids_evaluated con el id; evaluate de bob -> decision false, reason 'No IAM policies found for principal (implicit deny)' y ambas listas vacias; HRN malformado -> HTTP 400). Limpieza verificada: SIGTERM, 0 procesos huerfanos, puerto libre y sin residuos en /tmp.",
+            "mutations_checked": [
+              "M1 el finder devuelve toda politica ignorando la atribucion -> G25 FAILED (policy_ids_evaluated deja de estar vacio; el decision seguia siendo false, asi que el booleano no discriminaba)",
+              "M2 la consulta no filtra por attached_principals, mutada en la primera ocurrencia del literal (la del get_effective_policies legacy, linea 428) -> mutante EQUIVALENTE: G24 sobrevivio, porque el camino IAM no usa esa implementacion; se rehizo como M2b con un ancla unica",
+              "M2b el finder IAM no devuelve ninguna politica -> G24 FAILED (el hueco original de O6, reintroducido)",
+              "M3 create no persiste la atribucion -> G24 FAILED en su mitad de ida y vuelta (el mismo hueco por el otro extremo)"
+            ],
+            "not_run": [
+              "typedb / typedb-server ausentes en el host: todo lo dependiente de TypeDB sigue NOT_RUN"
+            ],
+            "notes": "H1b-3 cierra O6. La afirmacion heredada era cierta pero mal acotada: el hueco medido era de cinco capas (finder stub en memoria, use case nunca construido, puerto no cableado, sin ruta HTTP, resolvers sin implementacion) mas una sexta: el registro persistido no guardaba atribucion, asi que una politica almacenada no decia a quien servia. Cerrar solo el TODO visible habria sido un falso verde. O6 no toca la mitad bloqueada de O8: la ruta IAM es la ruta donde el schema IAM registrado SI es el aplicable, asi que se cierra sin la decision de alcance de plataforma; la ruta IAM sigue sin aplicar el schema, y es una decision declarada (el schema registrado solo declara Iam::User e Iam::Group, y la ruta acepta un recurso de cualquier mundo, asi que aplicarlo en crudo seria un falso rechazo). El EvaluationRequest del kernel no tiene campo context: el contexto no viaja por el kernel. La atribucion no tiene ciclo de vida (se escribe al crear y no hay cambio, retirada ni auditoria). S-001 sigue sin cumplirse por completo. El perfil de conformidad esta en SPECS/authorization-hrn.md; la evidencia medida esta en BASELINE.md#76-cerrados-en-h1b-3-verificados-por-mutacion y #14-h1b-3--la-evaluacion-iam-consulta-las-politicas-persistidas-ejecutado."
+          },
+          "replan": {
+            "date": "2026-10-24",
+            "reason": "La afirmacion heredada ('la evaluacion IAM no consulta las politicas persistidas') habia que verificarla en el codigo antes de tocar nada, porque cerrar solo el TODO visible habria dejado otros cinco huecos abiertos y el hito habria sido un falso verde. Ademas habia que confirmar que O6 es separable de la mitad bloqueada de O8.",
+            "options": [
+              {
+                "id": "A",
+                "option": "Cerrar O6 tal como estaba escrito en la tabla de defectos: implementar la consulta del TODO y nada mas",
+                "verdict": "RECHAZADA",
+                "rationale": "inventa semantica de producto (de donde sale la lista de politicas que se consultan) y arrastra la decision de alcance de plataforma de O8 a un hito cuyo alcance es la ruta IAM"
+              },
+              {
+                "id": "B",
+                "option": "Cerrar O6 por la ruta de datos honesta: la politica guardada declara sus principales, la consulta IAM real al store, la decision sobre esas politicas y la ruta HTTP que lo expone",
+                "verdict": "ELEGIDA",
+                "rationale": "es la unica lectura que no inventa evidencia: la atribucion es el dato que faltaba, y sin el una 'consulta a las politicas persistidas' no tendria sobre que decidir"
+              },
+              {
+                "id": "C",
+                "option": "Cerrar O6 cerrando tambien la mitad del motor de O8",
+                "verdict": "RECHAZADA",
+                "rationale": "seria un cierre falso: aplicarle el esquema IAM registrado a POST /api/v1/policies/evaluate, que es generica, denegaria toda peticion fuera del mundo IAM"
+              }
+            ],
+            "accepted_consequence": "O6 queda cerrado en su alcance propio (la ruta IAM consulta y decide sobre las politicas persistidas). La mitad del motor de O8 sigue ABIERTA y con causa medida: requiere una decision de alcance de plataforma, no un cambio de codigo. El schema no se aplica en la ruta IAM, y la ausencia de atributos del principal y del recurso se declara como degradacion.",
+            "refs": [
+              "ROADMAP.md#h1b-3--la-evaluacion-iam-consulta-las-politicas-persistidas-unidad-entregable-e-independiente",
+              "SPECS/authorization-hrn.md",
+              "BASELINE.md#72-abiertos-con-consumidor-y-criterio-de-cierre",
+              "BASELINE.md#76-cerrados-en-h1b-3-verificados-por-mutacion",
+              "BASELINE.md#14-h1b-3--la-evaluacion-iam-consulta-las-politicas-persistidas-ejecutado"
+            ]
+          }
+        },
+        {
           "id": "H1b",
           "title": "Gobernanza, esquema como autoridad y superficies pendientes",
           "state": "PENDING",
@@ -482,12 +573,11 @@
           "scope": [
             "Schema aplicado a la peticion Cedar en el MOTOR de evaluacion y schema como autoridad del namespace de accion -> Hodei::Action::\"ReadAsset\" (cierra la mitad del motor de O8 y completa S-001). La mitad del playground ya se cerro en el sub-bloque H1b-2",
             "IAM permit + resource permit + tenant boundary + SCP como interseccion de limites; revocaciones activas y auditadas",
-            "Superficies HTTP pendientes: O3, O4, O6, O9 (O2 y O7 se cerraron en el sub-bloque H1b-1; la mitad del playground de O8, en H1b-2)"
+            "Superficies HTTP pendientes: O3, O4, O9 (O2 y O7 se cerraron en el sub-bloque H1b-1; la mitad del playground de O8, en H1b-2; O6, en H1b-3)"
           ],
           "closes": [
             "O3",
             "O4",
-            "O6",
             "O8-engine",
             "O9",
             "P0#2"
@@ -508,7 +598,7 @@
             "state": "PENDING",
             "ci": null,
             "binary_sha256": null,
-            "notes": "O2 y O7 se cerraron en el sub-bloque H1b-1, y la mitad del playground de O8 en H1b-2 (ver sus bloques evidence). La mitad del motor de O8 sigue pendiente y con causa medida: el esquema registrado es de alcance IAM y POST /api/v1/policies/evaluate es generico, asi que aplicarlo en crudo denegaria toda peticion fuera del mundo IAM; cerrarla exige una decision de alcance de plataforma, no un cambio de codigo. El resto de H1b (O3, O4, O6, O9, P0#2) no esta iniciado."
+            "notes": "O2 y O7 se cerraron en el sub-bloque H1b-1, la mitad del playground de O8 en H1b-2 y O6 en H1b-3 (ver sus bloques evidence). La mitad del motor de O8 sigue pendiente y con causa medida: el esquema registrado es de alcance IAM y POST /api/v1/policies/evaluate es generico, asi que aplicarlo en crudo denegaria toda peticion fuera del mundo IAM; cerrarla exige una decision de alcance de plataforma, no un cambio de codigo. El resto de H1b (O3, O4, O9, P0#2) no esta iniciado."
           },
           "already_closed_in_h1b1": [
             "O2",
@@ -516,6 +606,9 @@
           ],
           "already_closed_in_h1b2": [
             "O8-playground"
+          ],
+          "already_closed_in_h1b3": [
+            "O6"
           ]
         }
       ],
