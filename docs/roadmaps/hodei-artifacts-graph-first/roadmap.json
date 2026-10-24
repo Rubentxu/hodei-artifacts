@@ -2,7 +2,7 @@
   "schema_version": 1,
   "repo": "Rubentxu/hodei-artifacts",
   "baseline_sha": "2626e35b7c12375af0a1f23342eee4b4619bfc3c",
-  "status": "h1a_done_h1b_pending",
+  "status": "h1b1_done_h1b_pending",
   "milestones": [
     {
       "id": "H0",
@@ -44,13 +44,9 @@
           "D9 regresion permanente intermitente: b5 fallaba por el bloqueo de RocksDB (liberacion asincrona del LOCK) -> reintento acotado y dirigido solo ante ese error; cualquier otro fallo falla de inmediato"
         ],
         "open_defects": [
-          "O1",
-          "O2",
           "O3",
           "O4",
-          "O5",
           "O6",
-          "O7",
           "O8",
           "O9"
         ],
@@ -197,7 +193,7 @@
           "manifest_updated_after_publication": true,
           "manifest_update_reason": "el manifiesto publicado registra la correccion de la evidencia de limpieza (falso verde en la comprobacion de SIGTERM) y la reejecucion A1-A4 con 0 huerfanos"
         },
-        "open_defects_note": "O1 y O5 se cerraron en H1a (ver el sub-hito H1a)."
+        "open_defects_note": "O1 y O5 se cerraron en H1a y O2 y O7 en H1b-1 (ver los sub-hitos H1a y H1b-1)."
       },
       "open_defects": [
         "O2",
@@ -286,6 +282,97 @@
           }
         },
         {
+          "id": "H1b-1",
+          "title": "El schema es real en las rutas de lectura",
+          "state": "DONE",
+          "release_required": true,
+          "integration_remote_required": true,
+          "ephemeral_uat_e2e_aat_delete_after_block": true,
+          "scope": [
+            "El schema inline del playground se decodifica con el codec cedar-schema-fragments-v1 (el mismo de la persistencia) y se aplica: una politica sobre un tipo declarado se acepta y sobre un tipo no declarado se reporta (cierra O7)",
+            "Un inline_schema que no es un sobre se rechaza con 400 en vez de leerse como schema vacio; {} y null siguen siendo la peticion explicita de un schema vacio",
+            "Un schema que no declara nada deja la sintaxis como unica comprobacion: aplicarlo en crudo seria un falso rechazo, no una validacion",
+            "GET /api/v1/schemas/load delega en el LoadSchemaPort ya cableado en AppState y devuelve estado (active / no_active_schema), version, identificador y contenido (cierra O2)"
+          ],
+          "closes": [
+            "O2",
+            "O7"
+          ],
+          "defers_to_h1b": [
+            "O3",
+            "O4",
+            "O6",
+            "O8",
+            "O9",
+            "P0#2"
+          ],
+          "acceptance": {
+            "ephemeral": [
+              "B1 el binario arranca y sirve /health",
+              "B2 GET /api/v1/schemas/load con el esquema IAM registrado devuelve active con version, schema_id, recuento de tipos y el contenido (el sobre cedar-schema-fragments-v1)",
+              "B3 playground con un sobre inline que declara Iam::User y una politica sobre Nope::Ghost: la validacion nombra el tipo no declarado",
+              "B4 el mismo sobre con una politica sobre el tipo declarado: sin errores de validacion",
+              "B5 playground con un inline_schema que no es un sobre: HTTP 400"
+            ],
+            "permanent": [
+              "G13 el playground acepta una politica sobre el tipo que el schema inline declara",
+              "G14 el playground rechaza una politica sobre un tipo que el schema inline no declara, y la misma politica con {} no se reporta (el rechazo viene del schema)",
+              "G15 un inline_schema que no es un sobre es un 400, no un schema vacio silencioso",
+              "G16 GET /api/v1/schemas/load sin esquema almacenado responde 200 con no_active_schema y version y contenido nulos",
+              "G17 tras registrar el esquema IAM, GET /api/v1/schemas/load responde active con la version y el contenido"
+            ],
+            "aat": "0 procesos huerfanos; el proceso termina en SIGTERM; directorio de sesion efimero eliminado"
+          },
+          "evidence": {
+            "state": "LOCAL_PASSED",
+            "ci": null,
+            "ci_note": "PENDING: la CI remota sigue siendo la autoridad de integracion, pero H1a y H1b-1 no se han publicado (no hay push sin autorizacion), asi que no existe un run que citar.",
+            "binary_sha256": "52a69d5364882567e03691b60ae066f2da530f052d11b92f5745b2de5bb3529f",
+            "local_gate": "cargo fmt --check PASS; cargo clippy -D warnings PASS (No issues found); cargo test --workspace PASS (780 passed, 0 failed, 64 ignored)",
+            "ephemeral_uat": "B1-B5 PASS sobre el binario release (/health 200; GET /api/v1/schemas/load con status active, version latest, schema_id schema:latest, 2 tipos de entidad, 6 tipos de accion y un sobre cedar-schema-fragments-v1 con 8 fragmentos; el playground reporta 'unrecognized entity type `Nope::Ghost`' contra el esquema inline y acepta la politica sobre el tipo declarado; un inline_schema que no es un sobre devuelve HTTP 400). Limpieza verificada: SIGTERM, cierre limpio y 0 procesos huerfanos.",
+            "mutations_checked": [
+              "el cargador del playground vuelve a aceptar y descartar el schema inline (warning + schema vacio) -> G14 FAILED + G15 FAILED + 3 tests unitarios del cargador FAILED (G13 sobrevive, como se esperaba: no afirma que el schema se lea)",
+              "el validador aplica el schema aunque no declare nada (se retira la guarda declares_anything) -> G14 FAILED en su segunda mitad + test_empty_schema_validates_syntax_only FAILED (falso rechazo: 'unrecognized entity type `Iam::User`')",
+              "el handler de GET /api/v1/schemas/load vuelve al stub {\"status\":\"stub\"} -> G16 FAILED + G17 FAILED"
+            ],
+            "not_run": [
+              "typedb / typedb-server ausentes en el host: todo lo dependiente de TypeDB sigue NOT_RUN"
+            ],
+            "notes": "H1b-1 cierra O2 y O7. O8 sigue abierto: el motor sigue cargando el schema sin aplicarlo a la peticion (crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270) y el evaluador del playground sigue decidiendo con Authorizer::new(), sin schema; H1b-1 arregla la lectura, no la decision. S-001 sigue sin cumplirse por completo (namespace de entidad Hodei::* y namespace de accion Hodei::Action::\"...\"). El perfil de conformidad esta en SPECS/authorization-hrn.md; la evidencia medida esta en BASELINE.md#74-cerrados-en-h1b-1-verificados-por-mutacion y #12-h1b-1--el-schema-es-real-en-las-rutas-de-lectura-ejecutado."
+          },
+          "replan": {
+            "date": "2026-10-24",
+            "reason": "H1b mezcla la gobernanza (que necesita credenciales reales y TypeDB) con las superficies HTTP pendientes (que no dependen de nada de eso).",
+            "options": [
+              {
+                "id": "A",
+                "option": "Cerrar H1b entero en un ciclo",
+                "verdict": "RECHAZADA",
+                "rationale": "la gobernanza no es verificable sin credenciales ni TypeDB; entregarla a medias deja un estado indistinguible de 'hecho'"
+              },
+              {
+                "id": "B",
+                "option": "Cerrar solo O2 (la superficie HTTP, sin tocar el motor)",
+                "verdict": "RECHAZADA",
+                "rationale": "insuficiente: O7 es el mismo falso verde por la otra mitad del camino (leer sin aplicar); cerrar una sola mitad deja el schema siendo descartado en el playground"
+              },
+              {
+                "id": "C",
+                "option": "Cerrar O7 y O2 juntos, dejando O8 para el bloque de gobernanza",
+                "verdict": "ELEGIDA",
+                "rationale": "las dos mitades del falso verde son el mismo defecto - leer el schema y poder aplicarlo - y las dos se verifican sin credenciales ni TypeDB, con el mismo codec en las dos rutas de lectura"
+              }
+            ],
+            "accepted_consequence": "O8 sigue abierto: H1b-1 hace que el schema se lea y que valide, no que la decision dependa de el.",
+            "refs": [
+              "ROADMAP.md#h1b-1--el-schema-es-real-en-las-rutas-de-lectura-unidad-entregable-e-independiente",
+              "SPECS/authorization-hrn.md",
+              "BASELINE.md#74-cerrados-en-h1b-1-verificados-por-mutacion",
+              "BASELINE.md#12-h1b-1--el-schema-es-real-en-las-rutas-de-lectura-ejecutado"
+            ]
+          }
+        },
+        {
           "id": "H1b",
           "title": "Gobernanza, esquema como autoridad y superficies pendientes",
           "state": "PENDING",
@@ -295,14 +382,12 @@
           "scope": [
             "Schema aplicado a la peticion Cedar y schema como autoridad del namespace de accion -> Hodei::Action::\"ReadAsset\" (cierra O8 y completa S-001)",
             "IAM permit + resource permit + tenant boundary + SCP como interseccion de limites; revocaciones activas y auditadas",
-            "Superficies HTTP pendientes: O2, O3, O4, O6, O7, O9"
+            "Superficies HTTP pendientes: O3, O4, O6, O9 (O2 y O7 se cerraron en el sub-bloque H1b-1)"
           ],
           "closes": [
-            "O2",
             "O3",
             "O4",
             "O6",
-            "O7",
             "O8",
             "O9",
             "P0#2"
@@ -323,8 +408,12 @@
             "state": "PENDING",
             "ci": null,
             "binary_sha256": null,
-            "notes": "No iniciado."
-          }
+            "notes": "O2 y O7 se cerraron en el sub-bloque H1b-1 (ver sus bloque evidence). El resto de H1b (O3, O4, O6, O8, O9, P0#2) no esta iniciado."
+          },
+          "already_closed_in_h1b1": [
+            "O2",
+            "O7"
+          ]
         }
       ],
       "replan": {

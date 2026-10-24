@@ -303,18 +303,24 @@ se revirtieron):
 
 ### 7.2 Abiertos (con consumidor y criterio de cierre)
 
-**O1 y O5 se cerraron en H1a**: están en §7.3 con su mutante y su prueba
-discriminante. Los que siguen aquí siguen abiertos.
+**O1 y O5 se cerraron en H1a** (§7.3) y **O2 y O7 se cerraron en H1b-1** (§7.4),
+cada uno con su mutante y su prueba discriminante. Los que siguen aquí siguen
+abiertos.
 
 | Id | Defecto | Evidencia | Impacto | Cierre previsto |
 |---|---|---|---|---|
-| O2 | `GET /api/v1/schemas/load` devuelve `{"status":"stub"}` | `src/handlers/schemas.rs:142-149` | el esquema activo no es observable por HTTP | **H1b**: delegar en `LoadSchemaPort` |
 | O3 | `src/infrastructure/` es un módulo **no compilado**: no está declarado en `src/lib.rs`, así que `GetEffectiveScpsAdapter` no existe en el binario | `src/lib.rs` (sin `pub mod infrastructure`), `src/infrastructure/adapters/` | código que aparenta ser infraestructura sin estarlo | **H1b**: declararlo y usarlo, o eliminarlo |
 | O4 | `Cargo.lock` está en `.gitignore` | `.gitignore:5` | el build no es reproducible; el lock resuelto (Cedar 4.14.0, config-rs 0.14.1, SurrealDB 2.7.0) no se versiona. **Consecuencia observada en la CI**: `rust-ci.yml` usa `hashFiles('**/Cargo.lock')` como clave de caché, y como ese fichero no está en el repositorio la clave es constante → la caché nunca se invalida al cambiar una dependencia | **H1b**: versionar el lock del workspace (el borrado fue deliberado, commit `eb42752 "borrado cargo.lock file"`, así que **no** se revierte en H0 sin decisión del maintainer) |
 | O6 | El adaptador SurrealDB de `evaluate_iam_policies` no ejecuta consulta alguna (`TODO: Implement actual SurrealDB query`) y el use case pasa `context: None` | `crates/hodei-iam/src/features/evaluate_iam_policies/adapter.rs:93`, `.../use_case.rs:176` | la evaluación de IAM no consulta las políticas persistidas | **H1b** |
-| O7 | El cargador de schema del playground **acepta y descarta** un schema JSON no vacío: registra un warning y construye un schema **vacío** | `crates/hodei-policies/src/features/playground_evaluate/adapters/schema_loader.rs:86-94` | una evaluación contra un schema inline no valida contra ese schema: el mismo falso verde que D3 corrigió en la ruta de persistencia | **H1b**: decodificar el JSON con el codec de §7.1 D3 |
 | O8 | El motor de evaluación **carga** el schema pero no lo **aplica** (`TODO: we should actually use the loaded schema`) | `crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270` | la decisión no se valida contra el esquema activo | **H1b** (no H1a): aplicar el schema a la petición es inseparable de que el schema pase a ser la autoridad del namespace de acción (`Hodei::Action::"…"`). Ver `ADR/011` |
 | O9 | CORS permisivo en el router | `src/router.rs:52` (`CorsLayer::permissive()`) | postura de producción insegura en el borde HTTP | **H1b**: CORS por origen configurado |
+
+**Lo que H1b-1 no abre ni cierra aquí.** H1b-1 leyó el schema en las dos rutas de
+lectura (el playground y el endpoint de carga) y lo aplicó a la **validación**
+del playground. **O8 sigue abierto**: el motor de evaluación sigue cargando el
+schema sin aplicarlo a la petición, y el evaluador del playground sigue
+decidiendo sin schema (`Authorizer::new()`). Lo que H1b-1 arregla es la
+*lectura*; lo que O8 pide es la *decisión*. Ver §7.4 y §12.
 
 **Distinción que conviene no perder:** `POST /api/v1/playground/evaluate` **sí**
 evalúa de verdad (carga schema, valida políticas, evalúa). El stub era
@@ -340,6 +346,27 @@ revirtieron):
 
 Los dos mutantes se revirtieron tras observar la muerte de su prueba; la suite
 volvió a verde (`http_contract` 12/12, `authorization_isolation` 3/3).
+
+---
+
+### 7.4 Cerrados en H1b-1 (verificados por mutación)
+
+| Id | Defecto | Por qué era un falso verde | Cómo se corrigió | Prueba discriminante |
+|---|---|---|---|---|
+| O7 | El cargador de schema del playground **aceptaba y descartaba** un schema JSON no vacío: registraba un warning y construía un schema **vacío** (`schema_loader.rs`, rama no-`{}`) | la petición respondía `200` y el consumidor recibía una decisión: el fallo era **invisible**. Peor: como el schema vacío no declara nada, toda política que nombrase un tipo **parecía válida** — el mismo falso verde que D3 corrigió en la ruta de persistencia, por la otra mitad del camino (D3 rompía la reconstrucción; O7 rompía la lectura) | el schema inline se decodifica con el **mismo codec** que usa la persistencia (`cedar-schema-fragments-v1`, §7.1 D3), de modo que las dos rutas de lectura coinciden en qué es un schema. Un contenido que no es un sobre de ese formato se **rechaza** (`400`) en vez de leerse como schema vacío; `{}` y `null` siguen siendo la petición explícita de un schema vacío. El validador **aplica** el schema leído: una política sobre un tipo declarado se acepta y sobre un tipo no declarado se reporta | `G14` (**negativo**: tipo no declarado → error de validación que lo nombra; la misma política con `{}` → sin error, lo que prueba que el rechazo viene del schema) + `G15` (**negativo**: contenido que no es un sobre → `400`) + `G13` (control: tipo declarado → sin error) + 4 tests unitarios del cargador y 3 del validador |
+| O2 | `GET /api/v1/schemas/load` devolvía `{"status":"stub"}` | el endpoint respondía `200` con un cuerpo **bien formado**: un consumidor que solo mirase el código de respuesta creía tener el esquema activo. El `LoadSchemaPort` ya estaba cableado en `AppState`, y el handler lo ignoraba | el handler delega en `state.load_schema.execute(LoadSchemaCommand::latest())` y devuelve el **estado explícito** (`active` / `no_active_schema`), la **versión**, el **identificador** y el **contenido** del esquema activo. Sin esquema almacenado la respuesta es `200` con `no_active_schema` y campos nulos: «no hay esquema» es una respuesta, no un error | `G17` (**negativo**: tras registrar el esquema IAM → `active`, versión `v1.0.0` y contenido que es un sobre `cedar-schema-fragments-v1` con fragmentos) + `G16` (**negativo**: sin nada almacenado → `no_active_schema` con versión y contenido nulos) |
+
+**Mutación focalizada de H1b-1** (cada mutante debe morir; los tres murieron y
+se revirtieron):
+
+| Mutante | Test que murió |
+|---|---|
+| el cargador del playground vuelve a **aceptar y descartar** el schema inline (warning + schema vacío) | `G14` FAILED («a policy over an undeclared entity type must be reported») + `G15` FAILED (`200` donde se esperaba `400`) + 3 tests unitarios del cargador FAILED (`test_inline_envelope_is_read_as_the_schema_it_declares`, `test_inline_content_that_is_not_an_envelope_is_rejected`, `test_inline_envelope_with_an_unknown_format_is_rejected`); `G13` sobrevivió, como se esperaba: no afirma que el schema se lea, sino que un tipo declarado no se rechaza |
+| el validador **aplica el schema aunque no declare nada** (se retira la guarda `declares_anything`) | `G14` FAILED en su segunda mitad («with no schema declared only the syntax can be checked») + `test_empty_schema_validates_syntax_only` FAILED («unrecognized entity type `Iam::User`»): un schema vacío rechazo policies que no incurre en error, un **falso rechazo**, no una validación |
+| el handler de `GET /api/v1/schemas/load` vuelve al **stub** `{"status":"stub"}` | `G16` FAILED («the endpoint must answer with a declared status, not with a placeholder») + `G17` FAILED (`stub` donde se esperaba `active`) |
+
+Los tres mutantes se revirtieron tras observar la muerte de su prueba; la suite
+volvió a verde (`http_contract` 17/17).
 
 ---
 
@@ -571,10 +598,115 @@ comporta lo que debe (se niega a arrancar sin configuración legible, P5 de
   en `SPECS/authorization-hrn.md` y delimita lo diferido.
 - La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny), las
   revocaciones activas y auditadas, y las superficies HTTP O2, O3, O4, O6, O7 y
-  O9 son H1b.
+  O9 son H1b. (O2 y O7 se cerraron después, dentro de H1b, en el sub-bloque
+  **H1b-1**: §7.4 y §12.)
 - **TypeDB sigue `NOT_RUN`** en este entorno: `typedb` y `typedb-server` están
   ausentes. Ninguna comprobación que dependa de ellos se ha ejecutado ni se
   declara aprobada.
+
+---
+
+## 12. H1b-1 — el schema es real en las rutas de lectura (ejecutado)
+
+Sub-bloque de H1b que cierra **O7** (el playground lee el schema inline) y
+**O2** (`GET /api/v1/schemas/load` deja de ser un stub). Es la parte de H1b
+verificable **sin credenciales ni TypeDB**: las dos rutas de lectura del
+esquema, ni más.
+
+### 12.1 Qué cambió
+
+| Superficie | Antes | Ahora |
+|---|---|---|
+| `POST /api/v1/playground/evaluate` con `inline_schema` | el schema se aceptaba y se **descartaba** (warning + schema vacío); las políticas se validaban contra **nada** | el schema se decodifica con el codec `cedar-schema-fragments-v1` —el mismo de la persistencia— y las políticas se validan **contra ese schema**. Un contenido que no es un sobre se rechaza con `400` en vez de leerse como schema vacío |
+| `GET /api/v1/schemas/load` | `{"status":"stub"}` | delega en el `LoadSchemaPort` cableado y devuelve `status` (`active` / `no_active_schema`), `version`, `schema_id`, `content` y el recuento de tipos declarados |
+
+**La regla del esquema vacío, y por qué.** Un schema que no declara ni un tipo
+de entidad ni una acción **no puede aprobar ni reprobar nada**: aplicarlo tal
+cual haría que *toda* política que nombrase un tipo pareciera inválida. Eso es
+un **falso rechazo**, no una validación. Así que el esquema se aplica cuando
+declara algo y, cuando no declara nada, solo se comprueba la sintaxis — la
+misma regla que ya aplica el use case `validate_policy` cuando no hay esquema
+almacenado. El mutante M3 (§12.4) comprueba que esta guarda está viva: sin
+ella, `G14` muere.
+
+### 12.2 Puerta de calidad local (medida)
+
+| Comprobación | Resultado |
+|---|---|
+| `cargo fmt --all -- --check` | PASS |
+| `cargo clippy --workspace --all-targets -- -D warnings` | PASS — `No issues found` |
+| `cargo test --workspace --no-fail-fast` | PASS — **780 superadas, 0 fallidas, 64 ignoradas** (doctests) |
+| `cargo build --release --workspace` | PASS — binario `sha256=52a69d5364882567e03691b60ae066f2da530f052d11b92f5745b2de5bb3529f` |
+
+**CI remota: `PENDING`.** La autoridad de integración sigue siendo el workflow
+`Rust CI` remoto y H1a **aún no se ha publicado** (no hay push sin
+autorización), así que no existe ningún run que pueda citarse para este
+sub-bloque. La tabla anterior es evidencia **local**, y se declara como tal.
+
+### 12.3 Regresiones permanentes promovidas
+
+| Id | Ubicación | Garantía |
+|---|---|---|
+| G13 | `tests/http_contract.rs` | el playground **acepta** una política sobre el tipo que el schema inline declara (control: ninguna regla nueva introduce un rechazo falso) |
+| G14 | `tests/http_contract.rs` | el playground **rechaza** una política sobre un tipo que el schema inline **no** declara, nombrando el tipo; y la misma política con `{}` no se reporta — el rechazo viene del schema, no del validador |
+| G15 | `tests/http_contract.rs` | un `inline_schema` que no es un sobre `cedar-schema-fragments-v1` es un `400`, no un schema vacío silencioso |
+| G16 | `tests/http_contract.rs` | `GET /api/v1/schemas/load` sin esquema almacenado responde `200` con `no_active_schema` y versión/contenido nulos, con un **estado declarado** (no un marcador) |
+| G17 | `tests/http_contract.rs` | tras registrar el esquema IAM, `GET /api/v1/schemas/load` responde `active` con la versión y el **contenido**: un sobre `cedar-schema-fragments-v1` con fragmentos y tipos declarados |
+
+Además, en el crate: 4 tests unitarios del cargador (sobre leído, contenido que
+no es sobre, formato desconocido, sobre sin fragmentos) y 3 del validador
+(tipo declarado aceptado, tipo no declarado rechazado, esquema vacío → solo
+sintaxis).
+
+### 12.4 Mutación focalizada (ejecutada, con muerte observada)
+
+Los tres mutantes y las muertes están en §7.4. Se revirtieron después de
+observarlas y la suite volvió a verde (`http_contract` 17/17).
+
+### 12.5 Aceptación efímera (ejecutada y limpiada)
+
+Ciclo `PREPARE → EXECUTE → ASSERT → EVIDENCE → CLEANUP` sobre el **binario
+release construido desde el árbol de H1b-1**, ejecutado desde un directorio de
+paquete que contiene `config/default.toml` (que es como lo lee el binario).
+
+- Binario bajo prueba:
+  `sha256=52a69d5364882567e03691b60ae066f2da530f052d11b92f5745b2de5bb3529f`
+- Directorio de sesión efímero y puerto efímero: `/tmp/hodei-h1b1-uat/session`,
+  puerto `39871`
+- Script de aceptación: efímero, **fuera del repositorio**
+  (`/tmp/hodei-h1b1-uat/`), retirado al cerrar el ciclo
+
+| Id | Comprobación | Resultado observado |
+|---|---|---|
+| B1 | el binario arranca y sirve `/health` | PASS — `HTTP 200`, `status: healthy` |
+| B2 | `GET /api/v1/schemas/load` con el esquema IAM registrado en el arranque | PASS — `HTTP 200`, `status: active`, `version: latest`, `schema_id: schema:latest`, **2** tipos de entidad, **6** tipos de acción, y un `content` que es un sobre `cedar-schema-fragments-v1` con **8** fragmentos. Antes de H1b-1 esta respuesta era `{"status":"stub"}` |
+| B3 | playground con un sobre inline que declara `Iam::User` y una política sobre `Nope::Ghost` | PASS — `HTTP 200`, `decision: DENY`, `validation_errors: ["Policy 0: for policy \`policy0\`, unrecognized entity type \`Nope::Ghost\`"]`: el esquema inline **se está aplicando** |
+| B4 | el mismo sobre con una política sobre el tipo **declarado** `Iam::User` | PASS — `HTTP 200`, `decision: ALLOW`, `validation_errors: []`: el tipo declarado no se rechaza |
+| B5 | playground con un `inline_schema` que no es un sobre | PASS — `HTTP 400`, «the inline schema is not a 'cedar-schema-fragments-v1' envelope»: un contenido ilegible se **rechaza**, no se lee como esquema vacío |
+
+**Limpieza verificada:** el proceso termina con `SIGTERM` («shut down
+gracefully») y **no sobrevive ningún proceso huérfano** del binario. El
+directorio de sesión efímero es el único estado que dejó la ejecución y queda
+fuera del repositorio.
+
+**Lo que esta aceptación no cubre.** El arranque de `default.toml` registra el
+esquema IAM (`register_iam_on_startup = true`), así que el caso «no hay
+esquema activo» no aparece aquí: lo cubre la regresión permanente `G16`, que
+arranca el servicio sin registrarlo.
+
+### 12.6 Lo que H1b-1 **no** cierra
+
+- **O8 sigue abierto**: el motor de evaluación sigue **cargando** el schema sin
+  **aplicarlo** a la petición (`crates/hodei-policies/src/features/evaluate_policies/use_case.rs:267-270`),
+  y el evaluador del playground sigue decidiendo con `Authorizer::new()`, sin
+  schema. H1b-1 arregla la **lectura** del schema; O8 pide que la **decisión**
+  dependa de él, y eso exige que el schema sea la autoridad del namespace de
+  acción (`Hodei::Action::"…"`) — es el bloque de gobernanza de H1b.
+- S-001 **sigue sin cumplirse por completo**: el namespace de entidad
+  `Hodei::*` y el namespace de acción `Hodei::Action::"…"` siguen pendientes
+  por lo mismo.
+- **TypeDB sigue `NOT_RUN`**: `typedb` y `typedb-server` están ausentes.
+- O3, O4, O6 y O9 siguen abiertos, con su criterio de cierre en §7.2.
 
 ---
 

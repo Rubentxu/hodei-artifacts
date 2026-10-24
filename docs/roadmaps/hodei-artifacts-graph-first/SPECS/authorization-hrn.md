@@ -52,3 +52,62 @@ La evaluación usa un snapshot inmutable de policies y entities construido **por
 
 ### Decisión
 `forbid` explícito prevalece sobre `permit`; el default es deny. En H1a el límite de tenant es **estructural** (el scope completo del UID hace que un recurso de otra cuenta sea un recurso distinto, no el mismo), no la intersección SCP de H1b. La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny) y las revocaciones activas son H1b.
+
+## Perfil de conformidad H1b-1 (parcial, explícito)
+
+H1b-1 es el sub-bloque de H1b que arregla la **lectura** del schema en las dos
+rutas que lo consumen (defectos O7 y O2). Este perfil delimita qué se cumple y
+qué sigue diferido; lo que difiere **no** se declara cumplido.
+
+### El schema se lee con un único formato
+
+Un schema es el sobre `cedar-schema-fragments-v1`: `{"format": …,
+"fragments": [...]}`, la misma representación que la ruta de persistencia
+escribe y que la ruta de lectura de la persistencia ya reconstruía. Las tres
+rutas —persistir, leer del almacén, leer inline— coinciden ahora en **qué es un
+schema**. Un contenido que no es un sobre de ese formato **se rechaza** en vez
+de leerse como un schema vacío: un schema vacío no declara nada, así que
+aceptarlo en silencio haría que toda política que nombrase un tipo declarado
+pareciese válida y toda política que no nombrase nada pareciese válida
+también — el falso verde que S-001 prohíbe en la línea de «schema inválido no
+entra en producción».
+
+La excepción declarada es el schema **explícitamente vacío** (`{}` o `null`):
+es una petición legítima, y se distingue de «esto no es un schema» porque lo
+dice.
+
+### Validación contra el schema leído
+
+El playground **aplica** el schema que leyó: una política sobre un tipo que el
+schema declara se acepta, y una política sobre un tipo que **no** declara se
+reporta nombrando el tipo. La comprobación se hace con el validador de Cedar
+contra el schema compuesto, no con una comparación textual.
+
+**La regla del schema que no declara nada.** Un schema sin tipos de entidad ni
+acciones no puede reprobar nada: aplicarlo tal cual haría que *toda* política
+que nombrase un tipo pareciese inválida. Eso es un **falso rechazo**, no una
+validación, y por tanto está prohibido. Cuando el schema no declara nada, lo
+único que se comprueba es la **sintaxis** de la política — la misma regla que
+ya aplica el caso «no hay esquema almacenado».
+
+### El esquema activo es observable por HTTP
+
+`GET /api/v1/schemas/load` no es un marcador: delega en el puerto de lectura ya
+cableado y responde con un **estado declarado** (`active` / `no_active_schema`),
+la **versión** bajo la que el esquema está almacenado, su **identificador** y su
+**contenido**. «No hay esquema» es una respuesta (`200` con
+`no_active_schema`), no un error ni un stub: el consumidor puede distinguirlo
+de «hay un esquema y este es».
+
+### Lo que H1b-1 **no** cumple (O8, y sigue siendo H1b)
+
+- El motor de evaluación (`evaluate_policies`) sigue **cargando** el schema sin
+  **aplicarlo** a la petición, y el evaluador del playground sigue decidiendo
+  con `Authorizer::new()`, sin schema. H1b-1 hace que el schema **se lea** y que
+  **valide**; **no** hace que la **decisión** dependa de él.
+- Por tanto S-001 **sigue sin cumplirse por completo**: el namespace de
+  entidad `Hodei::*` y el namespace de acción `Hodei::Action::"ReadAsset"`
+  requieren que el schema sea la **autoridad** —que se aplique a la petición y
+  que resuelva el namespace—, y eso es el bloque de gobernanza de H1b (O8).
+- La intersección de límites (IAM ∧ recurso ∧ organización ∧ SCP-deny), las
+  revocaciones activas y auditadas, y el CORS por origen (O9) siguen abiertos.
