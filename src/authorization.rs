@@ -92,9 +92,9 @@ impl AuthorizeResourceUseCase {
             }
         };
         if !request.is_same_account()
-            || principal_hrn.partition != "hodei"
-            || request.resource().hrn().partition != "hodei"
-            || principal_hrn.partition != request.resource().hrn().partition
+            || principal_hrn.partition() != "hodei"
+            || request.resource().hrn().partition() != "hodei"
+            || principal_hrn.partition() != request.resource().hrn().partition()
         {
             return AuthorizationOutcome::deny(DenyReason::ScopeMismatch);
         }
@@ -113,14 +113,15 @@ impl AuthorizeResourceUseCase {
         action: ActionId,
         hrn: &CanonicalHrn,
     ) -> Result<AuthorizationOutcome, hodei_authz::ModelError> {
-        let authz_hrn = Hrn {
-            partition: hrn.partition.clone(),
-            service: hrn.service.clone(),
-            region: hrn.region.clone(),
-            tenant_id: hrn.account_id.clone(),
-            resource_type: hrn.resource_type.clone(),
-            resource_id: hrn.resource_id.clone(),
-        };
+        let authz_hrn = Hrn::new(
+            &hrn.partition,
+            &hrn.service,
+            &hrn.region,
+            &hrn.account_id,
+            &hrn.resource_type,
+            &hrn.resource_id,
+        )
+        .map_err(|_| hodei_authz::ModelError::InvalidResourceHrn)?;
         let resource = ResourceRef::new(authz_hrn)?;
         Ok(self.execute(context, action, resource))
     }

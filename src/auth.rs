@@ -126,7 +126,7 @@ impl PrincipalAuthenticator for JwtAuthenticator {
             .sub
             .parse()
             .map_err(|_| AuthenticationError::InvalidCredentials)?;
-        if hrn.tenant_id != claims.account {
+        if hrn.account() != claims.account {
             return Err(AuthenticationError::InvalidCredentials);
         }
 
