@@ -105,7 +105,7 @@ npm run dev
 
 La superficie administrativa (`/api/v1`: IAM, políticas, esquemas y playground) está **cerrada por defecto** porque el servicio todavía no autentica esas rutas. Sin el opt-in explícito, toda petición no-preflight a una ruta administrativa registrada bajo `/api/v1` responde `403` antes de ejecutar ningún handler.
 
-`GET` y `POST /api/v1/repositories` son rutas de negocio separadas: no las abre `admin_api_enabled`; exigen bearer verificado y responden `401` sin credencial. Ver [repository-read.md](docs/security/repository-read.md).
+`GET` y `POST /api/v1/repositories` son rutas de negocio separadas: no las abre `admin_api_enabled`; exigen bearer verificado y responden `401` sin credencial. `POST` emite eventos de auditoría sin credenciales. Ver [repository-read.md](docs/security/repository-read.md) y [audit-events.md](docs/security/audit-events.md).
 
 ```toml
 [security]

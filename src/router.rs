@@ -27,7 +27,7 @@ use std::time::Duration;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     timeout::TimeoutLayer,
-    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+    trace::{DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
 use utoipa_swagger_ui::SwaggerUi;
@@ -56,7 +56,26 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
         // Middleware layers (applied in reverse order)
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .make_span_with(|request: &Request<Body>| {
+                    let correlation_id = request
+                        .headers()
+                        .get("x-request-id")
+                        .and_then(|value| value.to_str().ok())
+                        .filter(|value| {
+                            !value.is_empty()
+                                && value.len() <= 128
+                                && value.chars().all(|character| {
+                                    !character.is_control() && !character.is_whitespace()
+                                })
+                        })
+                        .unwrap_or("-");
+                    tracing::info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                        correlation_id = %correlation_id,
+                    )
+                })
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
         .layer(TimeoutLayer::with_status_code(
@@ -122,7 +141,11 @@ fn cors_layer(config: &AppConfig) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::HeaderName::from_static("x-request-id"),
+        ])
 }
 
 /// API v1 routes

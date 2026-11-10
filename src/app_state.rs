@@ -11,6 +11,7 @@
 //! - Es construido por el composition_root
 //! - Es clonado e inyectado en cada handler de Axum
 
+use crate::audit::{AuditSink, TracingAuditSink};
 use crate::authorization::{AuthorizeResourceUseCase, AuthorizerPort};
 use crate::composition_root::CompositionRoot;
 use crate::repository::{
@@ -99,6 +100,7 @@ pub struct AppState {
     pub(crate) authenticator: Arc<dyn PrincipalAuthenticator>,
     pub(crate) repository_reader: Arc<dyn RepositoryReader>,
     pub(crate) repository_writer: Arc<dyn RepositoryWriter>,
+    pub(crate) audit_sink: Arc<dyn AuditSink>,
 }
 
 impl AppState {
@@ -162,6 +164,7 @@ impl AppState {
         authenticator: Arc<dyn PrincipalAuthenticator>,
         repository_reader: Arc<dyn RepositoryReader>,
         repository_writer: Arc<dyn RepositoryWriter>,
+        audit_sink: Arc<dyn AuditSink>,
     ) -> Self {
         let authorize_resource = Arc::new(AuthorizeResourceUseCase::new(authorization.clone()));
         Self {
@@ -185,6 +188,7 @@ impl AppState {
             authenticator,
             repository_reader,
             repository_writer,
+            audit_sink,
         }
     }
 
@@ -208,6 +212,7 @@ impl AppState {
         let repository_store = Arc::new(InMemoryRepositoryStore::empty());
         let repository_reader: Arc<dyn RepositoryReader> = repository_store.clone();
         let repository_writer: Arc<dyn RepositoryWriter> = repository_store;
+        let audit_sink = Arc::new(TracingAuditSink);
         Self {
             schema_version,
             register_entity_type: root.policy_ports.register_entity_type,
@@ -229,6 +234,7 @@ impl AppState {
             authenticator: authenticate,
             repository_reader,
             repository_writer,
+            audit_sink,
         }
     }
 
@@ -253,6 +259,12 @@ impl AppState {
     /// Inject the writer used by the create route.
     pub fn with_repository_writer(mut self, repository_writer: Arc<dyn RepositoryWriter>) -> Self {
         self.repository_writer = repository_writer;
+        self
+    }
+
+    /// Inject an audit sink (tracing by default).
+    pub fn with_audit_sink(mut self, audit_sink: Arc<dyn AuditSink>) -> Self {
+        self.audit_sink = audit_sink;
         self
     }
 

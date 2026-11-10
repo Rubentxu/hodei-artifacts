@@ -148,6 +148,7 @@ tracing-subscriber = { workspace = true }
 
 # Time utilities
 chrono = { workspace = true }
+uuid = { workspace = true }
 
 # Database
 surrealdb = { workspace = true }
