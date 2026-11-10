@@ -11,6 +11,7 @@
 //! 3. **Resolución en compilación**: Uso de generics para zero-cost abstractions
 //! 4. **Desacoplamiento**: Los handlers solo conocen los puertos, no las implementaciones
 
+use crate::authorization::{AuthorizerPort, DenyAllAuthorizer};
 use hodei_iam::register_iam_schema::factories as iam_factories;
 use hodei_policies::build_schema::factories as policy_factories;
 use hodei_policies::build_schema::ports::{BuildSchemaPort, SchemaStoragePort};
@@ -61,6 +62,7 @@ pub struct IamPorts {
 pub struct CompositionRoot {
     pub policy_ports: PolicyPorts,
     pub iam_ports: IamPorts,
+    pub(crate) authorization: Arc<dyn AuthorizerPort>,
 }
 
 impl CompositionRoot {
@@ -213,7 +215,15 @@ impl CompositionRoot {
         Self {
             policy_ports,
             iam_ports,
+            authorization: Arc::new(DenyAllAuthorizer),
         }
+    }
+
+    /// Replace the compatibility deny-all authorizer with the shared
+    /// `hodei-authz` adapter (or any other `AuthorizerPort` implementation).
+    pub fn with_authorization(mut self, authorization: Arc<dyn AuthorizerPort>) -> Self {
+        self.authorization = authorization;
+        self
     }
 
     /// Crea el puerto de playground evaluate con todas sus dependencias
@@ -268,6 +278,7 @@ impl CompositionRoot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AppState;
     use async_trait::async_trait;
     use hodei_policies::build_schema::dto::BuildSchemaCommand;
     use hodei_policies::build_schema::error::BuildSchemaError;
@@ -451,6 +462,86 @@ mod tests {
 
         // Verificamos que el error sea por falta de tipos, no por problemas de DI
         assert!(result.is_err());
+    }
+
+    struct PermitAllAuthorizer;
+
+    impl hodei_authz::Authorizer for PermitAllAuthorizer {
+        fn decide(
+            &self,
+            _request: &hodei_authz::AuthorizationRequest,
+        ) -> hodei_authz::AuthorizationOutcome {
+            hodei_authz::AuthorizationOutcome::Permit
+        }
+    }
+
+    struct TestAuthenticator;
+
+    #[async_trait]
+    impl hodei_authz::PrincipalAuthenticator for TestAuthenticator {
+        async fn authenticate(
+            &self,
+            _credentials: &hodei_authz::Credentials,
+        ) -> Result<hodei_authz::PrincipalClaims, hodei_authz::AuthenticationError> {
+            Ok(hodei_authz::PrincipalClaims::new(
+                hodei_authz::PrincipalId::new("hrn:hodei:iam::acme:User/alice").unwrap(),
+                hodei_authz::AccountId::new("acme").unwrap(),
+            ))
+        }
+    }
+
+    async fn test_context() -> hodei_authz::VerifiedContext {
+        hodei_authz::VerifiedContext::from_principal(
+            hodei_authz::verify_principal(
+                &TestAuthenticator,
+                &hodei_authz::Credentials::bearer("token"),
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
+    fn test_resource() -> hodei_authz::ResourceRef {
+        use hodei_authz::hodei_hrn::Hrn;
+        let hrn: Hrn = "hrn:hodei:artifacts:eu:acme:repository/releases"
+            .parse()
+            .unwrap();
+        hodei_authz::ResourceRef::new(hrn).unwrap()
+    }
+
+    #[tokio::test]
+    async fn authorization_adapter_is_injectable_and_reversible() {
+        use crate::authorization::{AuthorizeResourceUseCase, SharedAuthorizer};
+
+        let storage = Arc::new(MockSchemaStorage);
+        let policy_adapter = Arc::new(MockPolicyAdapter);
+        let default_root = CompositionRoot::production(storage.clone(), policy_adapter.clone());
+        let default_case = AuthorizeResourceUseCase::new(default_root.authorization.clone());
+
+        assert_eq!(
+            default_case.execute(
+                test_context().await,
+                hodei_authz::ActionId::new("artifacts", "ReadRepository").unwrap(),
+                test_resource(),
+            ),
+            hodei_authz::AuthorizationOutcome::Deny(hodei_authz::DenyReason::NoMatchingPolicy)
+        );
+
+        let shared = Arc::new(SharedAuthorizer::new(Arc::new(PermitAllAuthorizer)));
+        let root = default_root.with_authorization(shared);
+        let shared_case = AuthorizeResourceUseCase::new(root.authorization.clone());
+
+        assert_eq!(
+            shared_case.execute(
+                test_context().await,
+                hodei_authz::ActionId::new("artifacts", "ReadRepository").unwrap(),
+                test_resource(),
+            ),
+            hodei_authz::AuthorizationOutcome::Permit
+        );
+
+        let state = AppState::from_composition_root("test".to_string(), root);
+        assert!(Arc::strong_count(&state.authorize_resource) >= 1);
     }
 
     #[test]

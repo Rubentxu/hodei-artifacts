@@ -11,6 +11,7 @@
 //! - Es construido por el composition_root
 //! - Es clonado e inyectado en cada handler de Axum
 
+use crate::authorization::{AuthorizeResourceUseCase, AuthorizerPort};
 use crate::composition_root::CompositionRoot;
 use hodei_iam::register_iam_schema::ports::RegisterIamSchemaPort;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
@@ -87,6 +88,10 @@ pub struct AppState {
     /// Port for evaluating the IAM policies of a principal
     pub evaluate_iam_policies:
         Arc<dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort>,
+
+    /// Shared authorization port and the real use case that consumes it.
+    authorization: Arc<dyn AuthorizerPort>,
+    pub authorize_resource: Arc<AuthorizeResourceUseCase>,
 }
 
 impl AppState {
@@ -146,7 +151,9 @@ impl AppState {
         evaluate_iam_policies: Arc<
             dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort,
         >,
+        authorization: Arc<dyn AuthorizerPort>,
     ) -> Self {
+        let authorize_resource = Arc::new(AuthorizeResourceUseCase::new(authorization.clone()));
         Self {
             schema_version,
             register_entity_type,
@@ -163,6 +170,8 @@ impl AppState {
             update_policy,
             delete_policy,
             evaluate_iam_policies,
+            authorization,
+            authorize_resource,
         }
     }
 
@@ -196,6 +205,8 @@ impl AppState {
             update_policy: root.iam_ports.update_policy,
             delete_policy: root.iam_ports.delete_policy,
             evaluate_iam_policies: root.iam_ports.evaluate_iam_policies,
+            authorize_resource: Arc::new(AuthorizeResourceUseCase::new(root.authorization.clone())),
+            authorization: root.authorization,
         }
     }
 }
