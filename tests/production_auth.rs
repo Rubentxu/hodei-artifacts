@@ -422,3 +422,30 @@ async fn empty_secret_and_invalid_schema_fail_closed() {
         "invalid schema must fail bootstrap"
     );
 }
+
+#[tokio::test]
+async fn iam_creation_uses_the_same_production_schema() {
+    let (app, _tmp) = production_app().await;
+    let alice = token(
+        "hrn:hodei:iam::acme:User/alice",
+        "acme",
+        AUDIENCE,
+        4_000_000_000,
+    );
+    let (status, body) = request(
+        &app,
+        "POST",
+        "/api/v1/iam/policies",
+        Some(&alice),
+        Some(json!({
+            "policy_id": "outside-schema",
+            "policy_content": "permit(principal, action == Nope::Action::\"Bogus\", resource);"
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "schema must reject: {body:?}"
+    );
+}

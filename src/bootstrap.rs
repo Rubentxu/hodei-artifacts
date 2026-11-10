@@ -92,6 +92,30 @@ pub async fn bootstrap(
     info!("📦 Initializing infrastructure adapters");
     let schema_storage = initialize_schema_storage(config).await?;
 
+    // When the production bundle declares a Cedar schema, persist the same
+    // schema for IAM policy validation. The gate and the persisted evaluator
+    // then validate against one schema rather than two divergent sources.
+    if let Some(schema_path) = &config.security.authorization_schema_path {
+        let raw = fs::read_to_string(schema_path).map_err(|error| {
+            BootstrapError::Security(format!(
+                "cannot read authorization schema {schema_path}: {error}"
+            ))
+        })?;
+        let fragment: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|error| BootstrapError::Security(format!("invalid Cedar schema: {error}")))?;
+        let envelope = serde_json::json!({
+            "format": "cedar-schema-fragments-v1",
+            "fragments": [fragment],
+        });
+        schema_storage
+            .save_schema(
+                envelope.to_string(),
+                Some("authorization-bundle".to_string()),
+            )
+            .await
+            .map_err(|error| BootstrapError::Security(format!("cannot persist schema: {error}")))?;
+    }
+
     // Initialize policy adapter with the same DB client
     let policy_adapter = Arc::new(SurrealPolicyAdapter::new(
         schema_storage.db().clone().into(),
