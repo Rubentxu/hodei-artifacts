@@ -214,3 +214,37 @@ async fn attachments_and_evaluation_cannot_point_to_another_account() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn account_listing_paginates_in_the_adapter() {
+    let (app, _tmp) = app().await;
+    for id in ["a", "b", "c"] {
+        create(&app, "alice", id).await;
+    }
+    create(&app, "bob", "other").await;
+
+    let (status, first) = call(
+        &app,
+        "GET",
+        "/api/v1/iam/policies?limit=2&offset=0",
+        "alice",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first:?}");
+    assert_eq!(first["policies"].as_array().unwrap().len(), 2);
+    assert_eq!(first["page_info"]["total_count"], 3);
+    assert_eq!(first["page_info"]["has_next_page"], true);
+
+    let (status, second) = call(
+        &app,
+        "GET",
+        "/api/v1/iam/policies?limit=2&offset=2",
+        "alice",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second["policies"].as_array().unwrap().len(), 1);
+    assert_eq!(second["page_info"]["has_previous_page"], true);
+}
