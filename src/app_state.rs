@@ -271,6 +271,16 @@ impl AppState {
         self
     }
 
+    /// Inject a store implementing both repository ports (durable adapter).
+    pub fn with_repository_store<S>(mut self, store: Arc<S>) -> Self
+    where
+        S: RepositoryReader + RepositoryWriter + 'static,
+    {
+        self.repository_reader = store.clone();
+        self.repository_writer = store;
+        self
+    }
+
     /// Inject the writer used by the create route.
     pub fn with_repository_writer(mut self, repository_writer: Arc<dyn RepositoryWriter>) -> Self {
         self.repository_writer = repository_writer;

@@ -11,6 +11,7 @@ use crate::auth::JwtAuthenticator;
 use crate::authorization::SharedAuthorizer;
 use crate::composition_root::CompositionRoot;
 use crate::config::AppConfig;
+use crate::repository_surreal::SurrealRepositoryStore;
 use async_trait::async_trait;
 use cedar_policy::{Entities, Schema};
 use hodei_authz::cedar::CedarAuthorizer;
@@ -126,6 +127,16 @@ pub async fn bootstrap(
     // Step 4: Create AppState from CompositionRoot
     info!("🎯 Creating application state");
     let app_state = AppState::from_composition_root(schema_version.clone(), root);
+    let app_state = if config.repository.durable {
+        let repository_store = Arc::new(SurrealRepositoryStore::new(schema_storage.db().clone()));
+        repository_store
+            .initialize()
+            .await
+            .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+        app_state.with_repository_store(repository_store)
+    } else {
+        app_state
+    };
     let app_state = configure_production_security(app_state, config)?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
