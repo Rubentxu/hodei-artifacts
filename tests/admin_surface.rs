@@ -110,19 +110,6 @@ fn authorizer_with_policy(policy: &str) -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-fn admin_authorizer(permit_alice: bool) -> Arc<dyn AuthorizerPort> {
-    let policy = if permit_alice {
-        r#"permit(
-            principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
-            action == Admin::Action::"AccessAdminApi",
-            resource
-        );"#
-    } else {
-        ""
-    };
-    authorizer_with_policy(policy)
-}
-
 async fn test_app_with_admin_policy(admin_enabled: bool, policy: &str) -> (Router, TempDir) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let mut config = AppConfig::default();

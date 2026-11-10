@@ -12,19 +12,12 @@ const PERSISTED_FIXTURES: &[&str] = &[
     "hrn:hodei:artifacts::acme:repository/releases",
     "hrn:hodei:iam::tenant-a:User/alice",
     "hrn:hodei:repository:eu-west-1:acme:repository/releases",
+    "hrn:hodei:artifacts:eu-west-1:acme:repository/releases/v2",
 ];
 
 #[test]
 fn persisted_fixtures_match_the_published_hrn_contract() {
-    let fixtures = [
-        "hrn:hodei:artifacts:eu-west-1:acme:repository/releases",
-        "hrn:hodei:artifacts::acme:repository/releases",
-        "hrn:hodei:iam::tenant-a:User/alice",
-        "hrn:hodei:repository:eu-west-1:acme:repository/releases",
-        "hrn:hodei:artifacts:eu-west-1:acme:repository/releases/v2",
-    ];
-
-    for fixture in fixtures {
+    for fixture in PERSISTED_FIXTURES {
         let persisted = kernel::Hrn::from_string(fixture).expect("kernel HRN");
         let published = PublishedHrn::from_string(fixture).expect("published HRN");
 
