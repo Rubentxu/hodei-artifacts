@@ -97,7 +97,7 @@ pub async fn get_repository(
     let outcome = state
         .authorize_resource
         .execute_canonical(context.clone(), action.clone(), &hrn)
-        .map_err(|_| RepositoryApiError::Internal)?;
+        .map_err(|_| RepositoryApiError::BadRequest)?;
     if !outcome.allows_access() {
         return Err(RepositoryApiError::Forbidden);
     }
