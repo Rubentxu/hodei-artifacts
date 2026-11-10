@@ -22,6 +22,7 @@ pub mod bootstrap;
 pub mod composition_root;
 pub mod config;
 pub mod handlers;
+pub mod iam_backfill;
 pub mod openapi;
 pub mod repository;
 pub mod repository_surreal;
