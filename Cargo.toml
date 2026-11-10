@@ -127,7 +127,7 @@ kernel = { path = "crates/kernel" }
 hodei-iam = { path = "crates/hodei-iam" }
 hodei-policies = { path = "crates/hodei-policies" }
 # Published core; no path/git dependency to a sibling checkout.
-hodei-authz = "=0.1.1"
+hodei-authz = "=0.1.2"
 
 # Async runtime
 tokio = { workspace = true }
@@ -173,6 +173,4 @@ dotenvy = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
-hodei-hrn = "0.2.0"
-# The exact HRN version resolved by hodei-authz 0.1.1 (the real authz path).
-hodei-hrn-01 = { package = "hodei-hrn", version = "0.1.0" }
+hodei-hrn = "0.2.1"
