@@ -9,11 +9,13 @@ use axum::{
     Json,
     body::{Body, to_bytes},
     extract::{RawQuery, State},
-    http::{HeaderMap, Request, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use hodei_authz::{ActionId, Credentials, VerifiedContext, verify_principal};
 use kernel::Hrn;
+
+use crate::audit::{AuditEvent, AuditResult};
 use serde::Deserialize;
 
 use crate::app_state::AppState;
@@ -94,7 +96,7 @@ pub async fn get_repository(
         .map_err(|_| RepositoryApiError::Unavailable)?;
     let outcome = state
         .authorize_resource
-        .execute_canonical(context.clone(), action, &hrn)
+        .execute_canonical(context.clone(), action.clone(), &hrn)
         .map_err(|_| RepositoryApiError::Internal)?;
     if !outcome.allows_access() {
         return Err(RepositoryApiError::Forbidden);
@@ -131,7 +133,7 @@ pub async fn create_repository(
     State(state): State<AppState>,
     headers: HeaderMap,
     request: Request<Body>,
-) -> Result<(StatusCode, Json<RepositoryView>), RepositoryApiError> {
+) -> Result<Response, RepositoryApiError> {
     let token = bearer_token(&headers).ok_or(RepositoryApiError::Unauthorized)?;
     let principal =
         match verify_principal(state.authenticator.as_ref(), &Credentials::bearer(token)).await {
@@ -142,6 +144,7 @@ pub async fn create_repository(
             Err(_) => return Err(RepositoryApiError::Unauthorized),
         };
     let context = VerifiedContext::from_principal(principal);
+    let correlation_id = correlation_id(&headers);
 
     // Parse the body only after authentication: a missing/invalid token is
     // always 401, even if the JSON is malformed.
@@ -177,11 +180,38 @@ pub async fn create_repository(
     );
     let action =
         ActionId::new("artifacts", "CreateRepository").map_err(|_| RepositoryApiError::Internal)?;
-    let outcome = state
-        .authorize_resource
-        .execute_canonical(context.clone(), action, &hrn)
-        .map_err(|_| RepositoryApiError::Internal)?;
+    let outcome =
+        match state
+            .authorize_resource
+            .execute_canonical(context.clone(), action.clone(), &hrn)
+        {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                record_audit(
+                    &state,
+                    context.principal().subject().as_str(),
+                    &action,
+                    &hrn,
+                    AuditResult::Failed,
+                    &correlation_id,
+                );
+                return Err(RepositoryApiError::Internal);
+            }
+        };
     if !outcome.allows_access() {
+        let result = match outcome {
+            hodei_authz::AuthorizationOutcome::Deny(_) => AuditResult::Denied,
+            hodei_authz::AuthorizationOutcome::Indeterminate(_) => AuditResult::Failed,
+            hodei_authz::AuthorizationOutcome::Permit => AuditResult::Allowed,
+        };
+        record_audit(
+            &state,
+            context.principal().subject().as_str(),
+            &action,
+            &hrn,
+            result,
+            &correlation_id,
+        );
         return Err(RepositoryApiError::Forbidden);
     }
 
@@ -191,17 +221,90 @@ pub async fn create_repository(
         name.to_string(),
         request.description,
     );
-    let created = state
+    let created = match state
         .repository_writer
         .create(context.account().as_str(), &hrn, view)
         .await
-        .map_err(|error| match error {
-            crate::repository::RepositoryWriteError::AlreadyExists => RepositoryApiError::Conflict,
-            crate::repository::RepositoryWriteError::Unavailable => RepositoryApiError::Unavailable,
-            crate::repository::RepositoryWriteError::InvalidRequest => RepositoryApiError::Internal,
-        })?;
+    {
+        Ok(created) => created,
+        Err(error) => {
+            let (result, api_error) = match error {
+                crate::repository::RepositoryWriteError::AlreadyExists => {
+                    (AuditResult::Conflict, RepositoryApiError::Conflict)
+                }
+                crate::repository::RepositoryWriteError::Unavailable => {
+                    (AuditResult::Failed, RepositoryApiError::Unavailable)
+                }
+                crate::repository::RepositoryWriteError::InvalidRequest => {
+                    (AuditResult::Failed, RepositoryApiError::Internal)
+                }
+            };
+            record_audit(
+                &state,
+                context.principal().subject().as_str(),
+                &action,
+                &hrn,
+                result,
+                &correlation_id,
+            );
+            return Err(api_error);
+        }
+    };
 
-    Ok((StatusCode::CREATED, Json(created)))
+    record_audit(
+        &state,
+        context.principal().subject().as_str(),
+        &action,
+        &hrn,
+        AuditResult::Allowed,
+        &correlation_id,
+    );
+    let mut response = (StatusCode::CREATED, Json(created)).into_response();
+    response.headers_mut().insert(
+        header::HeaderName::from_static("x-request-id"),
+        HeaderValue::from_str(&correlation_id).map_err(|_| RepositoryApiError::Internal)?,
+    );
+    Ok(response)
+}
+
+fn record_audit(
+    state: &AppState,
+    actor: &str,
+    action: &ActionId,
+    resource: &Hrn,
+    result: AuditResult,
+    correlation_id: &str,
+) {
+    let event = AuditEvent::new(
+        actor,
+        action.to_string(),
+        resource.to_string(),
+        result,
+        correlation_id,
+    );
+    if state.audit_sink.record(&event).is_err() {
+        // Audit is best-effort in this slice; never turn it into a decision or
+        // a credential leak. Durable delivery is declared in the docs.
+        tracing::warn!(
+            correlation_id = %correlation_id,
+            "audit sink failed; security event was not persisted"
+        );
+    }
+}
+
+fn correlation_id(headers: &HeaderMap) -> String {
+    headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .chars()
+                    .all(|character| !character.is_control() && !character.is_whitespace())
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
 
 fn valid_repository_name(name: &str) -> bool {
