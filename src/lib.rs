@@ -15,6 +15,7 @@
 //! `hodei-policies`), which are consumed through their port traits.
 
 pub mod app_state;
+pub mod authorization;
 pub mod bootstrap;
 pub mod composition_root;
 pub mod config;
