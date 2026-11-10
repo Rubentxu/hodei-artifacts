@@ -65,6 +65,19 @@ impl AuthorizeResourceUseCase {
         Self { authorizer }
     }
 
+    /// The first argument is a [`VerifiedContext`], never a principal string
+    /// or an HTTP header.
+    ///
+    /// ```compile_fail
+    /// # use hodei_artifacts_api::authorization::AuthorizeResourceUseCase;
+    /// # fn example(
+    /// #     use_case: AuthorizeResourceUseCase,
+    /// #     action: hodei_authz::ActionId,
+    /// #     resource: hodei_authz::ResourceRef,
+    /// # ) {
+    /// let _ = use_case.execute("hrn:hodei:iam::acme:User/attacker", action, resource);
+    /// # }
+    /// ```
     pub fn execute(
         &self,
         context: VerifiedContext,

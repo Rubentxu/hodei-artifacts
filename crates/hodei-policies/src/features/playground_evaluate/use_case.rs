@@ -4,7 +4,9 @@
 //! authorization requests in a playground environment, without requiring
 //! persistence of policies or schemas.
 
-use super::dto::{EvaluationDiagnostics, PlaygroundEvaluateCommand, PlaygroundEvaluateResult};
+use super::dto::{
+    Decision, EvaluationDiagnostics, PlaygroundEvaluateCommand, PlaygroundEvaluateResult,
+};
 use super::error::PlaygroundEvaluateError;
 use super::ports::{
     ContextConverterPort, PlaygroundEvaluatePort, PolicyEvaluatorPort, PolicyValidatorPort,
@@ -184,7 +186,7 @@ impl PlaygroundEvaluateUseCase {
         debug!("Context attributes converted");
 
         // Step 5: Evaluate policies
-        let outcome = self
+        let mut outcome = self
             .policy_evaluator
             .evaluate(
                 &command.request,
@@ -197,6 +199,14 @@ impl PlaygroundEvaluateUseCase {
                 warn!("Policy evaluation failed: {}", e);
                 e
             })?;
+
+        // A policy that the schema rejects is not a policy the playground may
+        // use to grant access, even if Cedar would match its condition. The
+        // validation result is an authority gate, not just a diagnostic.
+        if !validation_errors.is_empty() {
+            outcome.decision = Decision::Deny;
+            outcome.determining_policies.clear();
+        }
 
         // Update diagnostics with matched policies count
         diagnostics.matched_policies = outcome.determining_policies.len();
