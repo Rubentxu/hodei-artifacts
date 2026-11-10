@@ -357,7 +357,7 @@ fn orphans(root: &Path, crate_roots: &[&str]) -> (Vec<String>, Walk) {
 #[test]
 fn t1_every_source_file_under_src_is_reached_from_a_crate_root() {
     let root = src_root();
-    let (unreached, walked) = orphans(&root, &["lib.rs", "main.rs"]);
+    let (unreached, walked) = orphans(&root, &["lib.rs", "main.rs", "bin/backfill-iam-scope.rs"]);
 
     assert!(
         unreached.is_empty(),

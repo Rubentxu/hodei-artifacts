@@ -19,7 +19,14 @@ Las políticas creadas antes de este cambio tienen ids sin prefijo (`policy_id`)
 2. crear una fila nueva con id `account~policy_id` y el mismo `content`/`attached_principals`, conservando el `policy_id` original como sufijo;
 3. verificar `get`/`list` desde la cuenta propietaria antes de retirar la fila antigua.
 
-No se ejecuta una migración automática porque una fila antigua no contiene la cuenta de forma inequívoca; el backfill requiere una decisión de procedencia y debe adjuntarse a una tarea operativa. Mientras tanto, las filas antiguas siguen siendo efectivas en la evaluación y no se pueden revocar por la API nueva: es un riesgo que hay que cerrar con el backfill.
+El comando operativo está en `src/bin/backfill-iam-scope.rs`:
+
+```text
+cargo run --bin backfill-iam-scope -- --db data/hodei.rocksdb \
+  --mapping backfill.json [--apply]
+```
+
+El mapping es `{ "legacy-policy-id": "account" }`. Sin `--apply` solo muestra el plan; con `--apply` copia cada fila a `account~policy_id`, conserva contenido/attachments y elimina la fila legacy **solo tras** crear la nueva. Es idempotente y se niega a migrar filas ambiguas (attachments de cuentas distintas) sin mapping explícito.
 
 ## Verificación
 
