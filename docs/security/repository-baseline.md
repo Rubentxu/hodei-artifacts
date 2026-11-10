@@ -1,5 +1,7 @@
 # Baseline de la API Artifacts y del dominio `repository`
 
+> **Actualización HSP-15:** la ruta `GET /api/v1/repositories?hrn=...` ya está montada con gate propio y lector read-only; ver [repository-read.md](repository-read.md). Este baseline sigue siendo la caracterización histórica de por qué no se reactivó el crate legacy.
+
 **Tarea:** HSP-11 (HSEC-AR-02). **Fecha:** 2026-11-10. **Alcance:** caracterizar la superficie HTTP activa y el crate `repository` desconectado, y decidir el seam para el primer `GetRepository` seguro. **No implementa** ese caso de uso; eso es HSP-15.
 
 ## 1. Resumen ejecutivo
@@ -139,9 +141,9 @@ pub struct RepositoryView {
 ```
 
 - **Ruta**: `GET /api/v1/repositories?hrn=<percent-encoded-hrn>`. Se usa query, no path, porque el HRN contiene `:` y `/` y no debe someterse a normalización de path. La query se decodifica **una vez** y se parsea estrictamente.
-- **No se registra todavía**: hasta que HSP-15 conecte identidad y autorización, la ruta no se monta. **No** se acopla a `admin_api_enabled`; activar IAM no debe abrir una ruta de negocio. El test `repository_route_is_not_served` fija que con `admin_api_enabled=true` la ruta sigue sin responder `200`.
-- **Estado**: `Arc<dyn RepositoryReader>` en `AppState` y en `CompositionRoot`; no se toca el estado de IAM/policies.
-- **Adaptador**: en HSP-15, `SurrealRepositoryReader` (tabla `repository`) o un `InMemoryRepositoryReader` determinista para tests. El contrato del puerto no obliga a Mongo ni al dominio legacy.
+- **HSP-15 ya la registra** con gate propio: `GET /api/v1/repositories?hrn=...`; no se acopla a `admin_api_enabled`. El test actual `repository_route_uses_its_own_auth_gate` fija `401` con el flag activo o inactivo.
+- **Estado**: `Arc<dyn RepositoryReader>` en `AppState` inyectable con `with_repository_auth`; el bootstrap usa un reader vacío.
+- **Adaptador**: HSP-15 implementa `InMemoryRepositoryReader` determinista; la persistencia/escritura real es HSP-16. El contrato no obliga a Mongo ni al dominio legacy.
 - **Identidad**: la cuenta se deriva del principal verificado (`AuthContextProvider` de `kernel`, hoy sin adaptador). El handler **no** usa el `account` de la query como autoridad; lo compara con la fila leída y consulta por `(account, resource_path)`. El `RepositoryReader` recibe la cuenta ya verificada, no confía en el HRN del cliente para el scope.
 - **Contrato HTTP**: sin principal → `401`; recurso inexistente, de otra cuenta o denegado → **`404` uniforme** para no filtrar existencia; `403` solo cuando el contrato permita revelar la existencia. No se hace “cargar → 403” con un recurso ajeno.
 - **HRN**: mientras Artifacts use `kernel::Hrn`, el handler debe exigir `partition = hodei`, `service = artifacts`, `resource_type = repository`, longitudes y forma canónica; `kernel::Hrn::from_string` es más laxo que el contrato. HSP-12 sustituye esta validación por `hodei-hrn` 0.2 o por un wrapper estricto. La clave de almacenamiento es la serialización canónica, nunca la query cruda ni `resource_id` como path.
@@ -169,7 +171,7 @@ HSP-15 dice “rehabilitar solo el mínimo del crate repository necesario”. Es
 
 ## 9. Riesgos y límites
 
-- No existe todavía una tabla/almacén de repositorios en producción: HSP-15 debe definir el adaptador y los fixtures; HSP-16 aporta la escritura.
+- No existe todavía una tabla/almacén de repositorios en producción: HSP-15 aporta el puerto y el lector determinista; HSP-16 aporta la persistencia/escritura.
 - El baseline se ejecutó con el workspace activo; `crates/repository` queda **NOT_RUN** por diseño (no compila).
 - El opt-in `admin_api_enabled=true` sigue sin autenticación; la ruta de repositorios no se registra hasta HSP-15/HSP-8 y no se abre con ese flag.
 - El riesgo residual es **medio** hasta que existan autenticación, autorización y validación HRN estricta; el seam no es una frontera de seguridad por sí solo.

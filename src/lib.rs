@@ -21,6 +21,7 @@ pub mod composition_root;
 pub mod config;
 pub mod handlers;
 pub mod openapi;
+pub mod repository;
 pub mod router;
 
 pub use app_state::AppState;

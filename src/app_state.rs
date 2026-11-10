@@ -13,6 +13,8 @@
 
 use crate::authorization::{AuthorizeResourceUseCase, AuthorizerPort};
 use crate::composition_root::CompositionRoot;
+use crate::repository::{DenyAllAuthenticator, InMemoryRepositoryReader, RepositoryReader};
+use hodei_authz::PrincipalAuthenticator;
 use hodei_iam::register_iam_schema::ports::RegisterIamSchemaPort;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
 use hodei_policies::evaluate_policies::ports::EvaluatePoliciesPort;
@@ -90,8 +92,10 @@ pub struct AppState {
         Arc<dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort>,
 
     /// Shared authorization port and the real use case that consumes it.
-    authorization: Arc<dyn AuthorizerPort>,
+    pub(crate) authorization: Arc<dyn AuthorizerPort>,
     pub authorize_resource: Arc<AuthorizeResourceUseCase>,
+    pub(crate) authenticator: Arc<dyn PrincipalAuthenticator>,
+    pub(crate) repository_reader: Arc<dyn RepositoryReader>,
 }
 
 impl AppState {
@@ -152,6 +156,8 @@ impl AppState {
             dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort,
         >,
         authorization: Arc<dyn AuthorizerPort>,
+        authenticator: Arc<dyn PrincipalAuthenticator>,
+        repository_reader: Arc<dyn RepositoryReader>,
     ) -> Self {
         let authorize_resource = Arc::new(AuthorizeResourceUseCase::new(authorization.clone()));
         Self {
@@ -172,6 +178,8 @@ impl AppState {
             evaluate_iam_policies,
             authorization,
             authorize_resource,
+            authenticator,
+            repository_reader,
         }
     }
 
@@ -189,6 +197,9 @@ impl AppState {
     /// let app_state = AppState::from_composition_root("v1.0.0".to_string(), root);
     /// ```
     pub fn from_composition_root(schema_version: String, root: CompositionRoot) -> Self {
+        let authorization = root.authorization;
+        let authenticate = Arc::new(DenyAllAuthenticator);
+        let repository_reader = Arc::new(InMemoryRepositoryReader::empty());
         Self {
             schema_version,
             register_entity_type: root.policy_ports.register_entity_type,
@@ -205,8 +216,28 @@ impl AppState {
             update_policy: root.iam_ports.update_policy,
             delete_policy: root.iam_ports.delete_policy,
             evaluate_iam_policies: root.iam_ports.evaluate_iam_policies,
-            authorize_resource: Arc::new(AuthorizeResourceUseCase::new(root.authorization.clone())),
-            authorization: root.authorization,
+            authorize_resource: Arc::new(AuthorizeResourceUseCase::new(authorization.clone())),
+            authorization,
+            authenticator: authenticate,
+            repository_reader,
         }
+    }
+
+    /// Replace the authorization port and rebuild the use case.
+    pub fn with_authorization(mut self, authorization: Arc<dyn AuthorizerPort>) -> Self {
+        self.authorize_resource = Arc::new(AuthorizeResourceUseCase::new(authorization.clone()));
+        self.authorization = authorization;
+        self
+    }
+
+    /// Inject the credential verifier and repository reader for the read route.
+    pub fn with_repository_auth(
+        mut self,
+        authenticator: Arc<dyn PrincipalAuthenticator>,
+        repository_reader: Arc<dyn RepositoryReader>,
+    ) -> Self {
+        self.authenticator = authenticator;
+        self.repository_reader = repository_reader;
+        self
     }
 }

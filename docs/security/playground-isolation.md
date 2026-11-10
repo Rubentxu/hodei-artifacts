@@ -12,7 +12,7 @@ El playground evalúa políticas inline y schemas inline o versionados con fines
 - El endpoint está bajo el gate administrativo: `admin_api_enabled=false` devuelve `403` antes del handler.
 - El playground recibe `inline_policies`, `inline_schema`/`schema_version` y un request ficticio; el caso de uso no depende de un almacén de políticas, por lo que no puede crear ni modificar políticas operativas.
 - El caso de uso productivo recibe `VerifiedContext`; un `principal_hrn` arbitrario no es un parámetro válido (doctest `compile_fail` en `AuthorizeResourceUseCase::execute`).
-- El playground puede devolver `ALLOW` para una simulación explícita, pero ese resultado no se reutiliza para autorizar una acción real. El caso de uso productivo (`AuthorizeResourceUseCase`) usa el Authorizer compartido y el contexto verificado; su ruta HTTP llega con HSP-15.
+- El playground puede devolver `ALLOW` para una simulación explícita, pero ese resultado no se reutiliza para autorizar una acción real. El caso de uso productivo (`AuthorizeResourceUseCase`) usa el Authorizer compartido y el contexto verificado; su ruta HTTP es `GET /api/v1/repositories?hrn=...` (HSP-15).
 
 ## Fallos seguros
 
@@ -30,7 +30,7 @@ El playground evalúa políticas inline y schemas inline o versionados con fines
 ## Límites
 
 - El playground es una herramienta administrativa, no un entorno multiusuario aislado por principal.
-- `POST /api/v1/iam/evaluate` es una evaluación administrativa sobre políticas persistidas con un principal del payload; no ejecuta operaciones. No es la autoridad productiva; HSP-15 cablea la ruta que usará `AuthorizeResourceUseCase`.
-- No hay una autoridad productiva cableada todavía: hay evaluación/simulación administrativa y el caso de uso tipado. HSP-15 los conecta y HSP-14 deja la reconciliación pendiente.
-- La autenticación del principal productivo llega con HSP-15; hasta entonces el caso de uso se prueba con un authenticator de test.
-- La reconciliación del schema/políticas productivas con el evaluador IAM es parte de HSP-14/HSP-15.
+- `POST /api/v1/iam/evaluate` es una evaluación administrativa sobre políticas persistidas con un principal del payload; no ejecuta operaciones. No es la autoridad de la lectura de repositorios.
+- `GET /api/v1/repositories` es la autoridad productiva del slice: bearer verificado, cuenta del principal, Authorizer compartido y reader read-only. Su authenticator productivo aún debe inyectarse; el bootstrap deniega con `401`.
+- La reconciliación con el evaluador IAM sigue pendiente.
+- La reconciliación del schema/políticas productivas con el evaluador IAM sigue pendiente.

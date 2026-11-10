@@ -35,10 +35,9 @@ Axum (HSP-8) -> VerifiedContext + ActionId + ResourceRef
 
 ## Límites
 
-- No hay ruta HTTP nueva todavía; HSP-15 la expone.
-- El bundle real de schema/políticas es HSP-14.
+- HSP-15 monta `GET /api/v1/repositories?hrn=...` y usa este caso de uso; la ruta tiene su propio gate y no depende de `admin_api_enabled`.
+- El bundle real de schema/políticas es HSP-14; el evaluador IAM existente sigue en `AppState` y su reconciliación queda pendiente.
 - La dependencia con `hodei-authz` está pinneada por git (`rev = 16d1fba`) para que el CI de este repo aislado pueda resolverla; HSP-18 la sustituye por la publicada.
-- El `AppState` aún no tiene un handler que use `authorize_resource`; HSP-15 expone la ruta y su productor de `VerifiedContext`.
-- Este repo **no monta todavía** un middleware de autorización (el router solo tiene admin gate/CORS/trazas). El contrato es el de `hodei-authz`/HSP-8; el caso de uso será la autoridad cuando HSP-15 exponga la ruta y la decisión dependa del estado del recurso.
-- El evaluador IAM existente sigue en `AppState`; HSP-14 reconcilia schema/políticas y evita que emita una decisión distinta de la del Authorizer compartido.
-- El productor real de `VerifiedContext` llega con HSP-15; hoy los tests construyen uno con un authenticator de prueba.
+- El `AppState` ya expone `authorize_resource`; el handler de repositorios lo invoca con el `VerifiedContext` del bearer verificado.
+- Este repo **no monta** un middleware de autorización de Axum: la ruta de repositorios hace la verificación en el handler. El contrato es el de `hodei-authz`/HSP-8.
+- El authenticator productivo de la ruta sigue pendiente: bootstrap usa `DenyAllAuthenticator` y la ruta responde `401` hasta inyectar uno real.

@@ -253,7 +253,7 @@ async fn allowed_cors_origin_does_not_open_the_admin_surface() {
 }
 
 #[tokio::test]
-async fn repository_route_is_not_served() {
+async fn repository_route_uses_its_own_auth_gate() {
     for admin_enabled in [false, true] {
         let (app, _tmp) = test_app_with(admin_enabled, Vec::new()).await;
         let response = app
@@ -266,18 +266,10 @@ async fn repository_route_is_not_served() {
             .await
             .expect("response");
 
-        let status = response.status();
-        if admin_enabled {
-            assert_eq!(
-                status,
-                StatusCode::NOT_FOUND,
-                "the registry route must remain unregistered even with admin enabled"
-            );
-        } else {
-            assert!(
-                matches!(status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND),
-                "the registry route must stay closed (admin_enabled=false), got {status}"
-            );
-        }
+        assert_eq!(
+            response.status(),
+            StatusCode::UNAUTHORIZED,
+            "the repository route must require its own credential regardless of admin_api_enabled"
+        );
     }
 }

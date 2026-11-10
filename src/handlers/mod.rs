@@ -11,6 +11,7 @@ pub mod health;
 pub mod iam;
 pub mod playground;
 pub mod policies;
+pub mod repositories;
 pub mod schemas;
 
 // Re-export commonly used types for handlers
