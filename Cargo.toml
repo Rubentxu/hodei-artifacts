@@ -126,8 +126,8 @@ description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation o
 kernel = { path = "crates/kernel" }
 hodei-iam = { path = "crates/hodei-iam" }
 hodei-policies = { path = "crates/hodei-policies" }
-# Transitional pinned source; HSP-18 replaces it with the published crate.
-hodei-authz = { git = "https://github.com/Rubentxu/hodei-authz", rev = "16d1fba7be8086d002f55535b3d82d140afd82c2" }
+# Published core; no path/git dependency to a sibling checkout.
+hodei-authz = "=0.1.1"
 
 # Async runtime
 tokio = { workspace = true }
@@ -170,3 +170,8 @@ dotenvy = { workspace = true }
 
 # Testing utilities
 tempfile = { workspace = true }
+
+[dev-dependencies]
+hodei-hrn = "0.2.0"
+# The exact HRN version resolved by hodei-authz 0.1.1 (the real authz path).
+hodei-hrn-01 = { package = "hodei-hrn", version = "0.1.0" }
