@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if config.security.admin_api_enabled {
         warn!(
-            "SECURITY: the administrative /api/v1 surface is enabled without authentication; restrict it to a trusted gateway"
+            "SECURITY: admin_api_enabled=true; the administrative /api/v1 surface stays closed until an authenticator and authorizer are configured"
         );
     }
     if !config.security.cors_allowed_origins.is_empty() {

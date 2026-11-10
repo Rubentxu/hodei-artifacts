@@ -36,7 +36,7 @@ Desglose de tests activos:
 | Doc-tests de `kernel` | 6 |
 | **Total en `9eb2bce`** | **820** |
 
-La rama de este documento añade `repository_route_is_not_served`, por lo que en la rama la suite activa es **821 passed / 0 failed / 64 ignored**.
+La rama histórica de este documento añadía `repository_route_is_not_served` (sustituido después por `repository_route_uses_its_own_auth_gate`); la suite de entonces era **821 passed / 0 failed / 64 ignored**.
 
 `crates/repository` no aporta tests al baseline: sus 4 tests de caso de uso no se compilan nunca.
 
@@ -66,11 +66,11 @@ La rama de este documento añade `repository_route_is_not_served`, por lo que en
 | POST | `/api/v1/iam/evaluate` | IAM |
 | POST | `/api/v1/playground/evaluate` | Playground |
 
-Con la configuración por defecto todas devuelven `403` con cuerpo `administrative API disabled` **antes** de ejecutar el handler. El opt-in `admin_api_enabled=true` las expone sin autenticación: es una medida temporal de HSP-10, no una frontera de seguridad definitiva.
+Con la configuración por defecto todas devuelven `403` con cuerpo `administrative API disabled` **antes** de ejecutar el handler. Desde HSP-19, `admin_api_enabled=true` solo las abre con authenticator/authorizer configurados y un `permit` Cedar; sin esa integración siguen cerradas.
 
-**No hay ruta de repositorios**, ni en `/api/v1` ni fuera. `AppState` no tiene ningún puerto de repositorios y `CompositionRoot` no ensambla ninguno.
+**En el commit histórico de este baseline no había ruta de repositorios.** Hoy existen `GET`/`POST /api/v1/repositories` con puertos y gate propios; ver [repository-read.md](repository-read.md).
 
-Matiz del gate: la capa administrativa se aplica a **todo** `/api/v1`, no solo a las 12 rutas. Una ruta desconocida bajo el prefijo responde `403` con `admin_api_enabled=false` y `404` con el flag activo; el test `repository_route_is_not_served` fija que la ruta de repositorios no se sirve en ninguno de los dos casos.
+Matiz actual: el gate administrativo se aplica a las rutas administrativas registradas; una ruta desconocida bajo `/api/v1` responde `404` y la ruta de repositorios tiene su propio gate. El test actual es `repository_route_uses_its_own_auth_gate`.
 
 El repositorio contiene además un **registry inactivo en el contrato OpenAPI**: `docs/openapi/paths/repositories.yaml` publica listar/crear/obtener/actualizar por UUID bajo `/v1/repositories`, con `ApiKeyAuth`/`BasicAuth`/`BearerAuth`. No está montado en Axum. La ruta propuesta aquí (`GET /api/v1/repositories?hrn=...`) no reconcilia todavía con esa especificación; HSP-12/HSP-15 deben decidir el contrato definitivo.
 
@@ -173,8 +173,8 @@ HSP-15 dice “rehabilitar solo el mínimo del crate repository necesario”. Es
 
 - No existe todavía una tabla/almacén de repositorios en producción: HSP-15 aporta el puerto y el lector determinista; HSP-16 aporta la persistencia/escritura.
 - El baseline se ejecutó con el workspace activo; `crates/repository` queda **NOT_RUN** por diseño (no compila).
-- El opt-in `admin_api_enabled=true` sigue sin autenticación; la ruta de repositorios no se registra hasta HSP-15/HSP-8 y no se abre con ese flag.
-- El riesgo residual es **medio** hasta que existan autenticación, autorización y validación HRN estricta; el seam no es una frontera de seguridad por sí solo.
+- El opt-in `admin_api_enabled=true` exige autenticación/autorización desde HSP-19; sin integración sigue cerrado. La ruta de repositorios no se abre con ese flag.
+- El riesgo residual era **medio** en el commit histórico. Desde HSP-15/16/19 existen gate de identidad, autorización y validación estricta para repositorios y administración; la deuda restante es autenticación productiva (HSP-20) y persistencia durable (HSP-21).
 - El contrato OpenAPI estático ya publica `/v1/repositories` por UUID con esquemas de auth, mientras Axum no sirve ninguna ruta de repositorios. HSP-12/HSP-15 deben reconciliar path, identidad y auth; este baseline no lo resuelve.
 - La decisión no elimina el crate legacy; solo evita convertirlo en dependencia runtime antes de demostrar paridad.
 - El baseline se ejecutó sobre el código de `9eb2bce`; este commit solo añade documentación y el test de ausencia de ruta, por lo que los números son reproducibles desde ese código. No se guardó un log crudo; las cifras salen de la ejecución `cargo test --workspace` y del desglose de `test result` del 2026-11-10.

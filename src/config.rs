@@ -57,17 +57,18 @@ pub struct ServerConfig {
 
 /// Security configuration
 ///
-/// The administrative API is closed by default because this service does not
-/// authenticate requests yet. Enable it only behind an authenticated gateway
-/// while the real authorization adapter is wired.
+/// The administrative API is closed by default. `admin_api_enabled` only
+/// opens it when the application state has both an authenticator and an
+/// authorizer; every request then needs a bearer credential and a Cedar
+/// permit.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// Whether the `/api/v1` administrative surface is reachable.
     ///
-    /// Default: `false`. When false every non-preflight request to a
-    /// registered `/api/v1` route is answered with `403 Forbidden` before any
-    /// handler runs. CORS preflight is answered by the outer CORS layer and
-    /// never reaches a handler; unknown routes remain `404`.
+    /// Default: `false`. When false every administrative route is answered
+    /// with `403 Forbidden` before any handler runs. The repository routes have
+    /// their own credential gate. CORS preflight is answered by the outer CORS
+    /// layer and never reaches a handler; unknown routes remain `404`.
     #[serde(default)]
     pub admin_api_enabled: bool,
 

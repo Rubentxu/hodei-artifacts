@@ -101,6 +101,10 @@ pub struct AppState {
     pub(crate) repository_reader: Arc<dyn RepositoryReader>,
     pub(crate) repository_writer: Arc<dyn RepositoryWriter>,
     pub(crate) audit_sink: Arc<dyn AuditSink>,
+    /// Whether the admin surface has an injected credential verifier and a
+    /// non-default authorizer. The gate keeps the surface closed otherwise.
+    admin_authenticator_configured: bool,
+    admin_authorizer_configured: bool,
 }
 
 impl AppState {
@@ -189,6 +193,8 @@ impl AppState {
             repository_reader,
             repository_writer,
             audit_sink,
+            admin_authenticator_configured: true,
+            admin_authorizer_configured: true,
         }
     }
 
@@ -235,13 +241,21 @@ impl AppState {
             repository_reader,
             repository_writer,
             audit_sink,
+            admin_authenticator_configured: false,
+            admin_authorizer_configured: false,
         }
+    }
+
+    /// Whether admin routes can authenticate and authorize requests.
+    pub fn admin_surface_ready(&self) -> bool {
+        self.admin_authenticator_configured && self.admin_authorizer_configured
     }
 
     /// Replace the authorization port and rebuild the use case.
     pub fn with_authorization(mut self, authorization: Arc<dyn AuthorizerPort>) -> Self {
         self.authorize_resource = Arc::new(AuthorizeResourceUseCase::new(authorization.clone()));
         self.authorization = authorization;
+        self.admin_authorizer_configured = true;
         self
     }
 
@@ -253,6 +267,7 @@ impl AppState {
     ) -> Self {
         self.authenticator = authenticator;
         self.repository_reader = repository_reader;
+        self.admin_authenticator_configured = true;
         self
     }
 
@@ -271,6 +286,7 @@ impl AppState {
     /// Replace only the credential verifier, keeping the shared default store.
     pub fn with_authenticator(mut self, authenticator: Arc<dyn PrincipalAuthenticator>) -> Self {
         self.authenticator = authenticator;
+        self.admin_authenticator_configured = true;
         self
     }
 }

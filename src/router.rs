@@ -23,6 +23,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
 };
+use hodei_authz::{ActionId, Credentials, VerifiedContext, verify_principal};
+use kernel::Hrn;
 use std::time::Duration;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
@@ -38,7 +40,7 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
     // This service does not authenticate requests yet, so the default must
     // deny before any handler runs.
     let admin_api = admin_v1_routes(app_state.clone()).layer(middleware::from_fn_with_state(
-        config.security.admin_api_enabled,
+        (config.security.admin_api_enabled, app_state.clone()),
         admin_gate,
     ));
     let repositories = repository_v1_routes(app_state);
@@ -85,16 +87,109 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
         .layer(cors_layer(config))
 }
 
-/// Fail closed on the administrative surface unless it was explicitly enabled.
+/// Fail closed on the administrative surface.
 ///
+/// The opt-in only opens the surface when the state has both a real credential
+/// verifier and a non-default authorizer. Even then every request must present
+/// a bearer credential and receive a Cedar Permit for the concrete route.
 /// CORS preflight (`OPTIONS`) is answered by the outer CORS layer and does not
 /// reach this gate; no handler runs in that path either.
-async fn admin_gate(State(enabled): State<bool>, req: Request<Body>, next: Next) -> Response {
-    if enabled {
-        next.run(req).await
-    } else {
-        (StatusCode::FORBIDDEN, "administrative API disabled").into_response()
+async fn admin_gate(
+    State((enabled, app_state)): State<(bool, AppState)>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    if !enabled {
+        return (StatusCode::FORBIDDEN, "administrative API disabled").into_response();
     }
+    if !app_state.admin_surface_ready() {
+        tracing::error!(
+            "administrative API requested but no authenticator/authorizer is configured; keeping it closed"
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            "administrative API requires authentication",
+        )
+            .into_response();
+    }
+
+    let token = match bearer_token(req.headers()) {
+        Some(token) => token,
+        None => return unauthorized(),
+    };
+    let principal = match verify_principal(
+        app_state.authenticator.as_ref(),
+        &Credentials::bearer(token),
+    )
+    .await
+    {
+        Ok(principal) => principal,
+        Err(_) => return unauthorized(),
+    };
+    let context = VerifiedContext::from_principal(principal);
+    let action = match ActionId::new("admin", "AccessAdminApi") {
+        Ok(action) => action,
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "invalid admin action").into_response();
+        }
+    };
+
+    let path = req
+        .uri()
+        .path()
+        .trim_start_matches("/api/v1/")
+        .trim_start_matches('/');
+    // Include the HTTP method so a policy cannot grant "list" and silently
+    // grant "create" on the same path.
+    let resource_path = format!(
+        "{}/{}",
+        req.method().as_str().to_ascii_lowercase(),
+        if path.is_empty() { "surface" } else { path }
+    );
+    let resource = Hrn::with_region(
+        "hodei".to_string(),
+        "admin".to_string(),
+        "global".to_string(),
+        context.account().as_str().to_string(),
+        "AdminApi".to_string(),
+        resource_path,
+    );
+    let outcome = match app_state
+        .authorize_resource
+        .execute_canonical(context, action, &resource)
+    {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "authorization unavailable",
+            )
+                .into_response();
+        }
+    };
+    if !outcome.allows_access() {
+        return (StatusCode::FORBIDDEN, "administrative permission denied").into_response();
+    }
+
+    next.run(req).await
+}
+
+fn unauthorized() -> Response {
+    let mut response = (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    response
+        .headers_mut()
+        .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+    response
+}
+
+fn bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    let token = token.trim();
+    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() {
+        return None;
+    }
+    Some(token.to_string())
 }
 
 /// Build the CORS policy from the explicit origin allowlist.
