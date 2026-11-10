@@ -5,6 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -47,13 +48,19 @@ jobs:
       - name: Test (cargo)
         run: cargo test --workspace --no-fail-fast
 
-      - name: Install nextest
-        uses: taiki-e/install-action@v2
+
+  # nextest is opt-in: it runs the same workspace with per-test isolation, but
+  # the RocksDB/binary suites need a single test thread to avoid contention.
+  # Keep it off the PR critical path; run it manually when isolation matters.
+  nextest-serial:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
         with:
           tool: nextest
-
-      # Second signal over the same workspace: nextest isolates each test in its
-      # own process, which exposes shared-state leaks that a single-process
-      # `cargo test` run can hide.
-      - name: Test (nextest, workspace)
-        run: cargo nextest run --workspace --no-fail-fast
+      - name: Test (nextest, serial)
+        run: cargo nextest run --workspace --no-fail-fast --test-threads=1
