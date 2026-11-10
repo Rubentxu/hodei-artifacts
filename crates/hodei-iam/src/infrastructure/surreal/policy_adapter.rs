@@ -287,6 +287,50 @@ impl<C: surrealdb::Connection> PolicyLister for SurrealPolicyAdapter<C> {
             has_previous_page,
         })
     }
+    async fn list_for_account(
+        &self,
+        account: &str,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, ListPoliciesError> {
+        let rows: Vec<HodeiPolicyDbRow> = self
+            .db
+            .select("policy")
+            .await
+            .map_err(|e| ListPoliciesError::RepositoryError(e.to_string()))?;
+        let prefix = format!("{account}~");
+        let mut filtered: Vec<(String, HodeiPolicyDbRow)> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let id = short_id(&row.id);
+                let short = id.strip_prefix(&prefix)?.to_string();
+                Some((short, row))
+            })
+            .collect();
+        filtered.sort_by(|a, b| a.0.cmp(&b.0));
+        let total_count = filtered.len();
+        let page = filtered
+            .into_iter()
+            .skip(query.offset)
+            .take(query.limit)
+            .map(|(short, _row)| PolicySummary {
+                hrn: Hrn::new(
+                    "hodei".to_string(),
+                    "iam".to_string(),
+                    account.to_string(),
+                    "Policy".to_string(),
+                    short.clone(),
+                ),
+                name: short,
+                description: None,
+            })
+            .collect::<Vec<_>>();
+        Ok(ListPoliciesResponse {
+            policies: page,
+            total_count,
+            has_next_page: query.offset + query.limit < total_count,
+            has_previous_page: query.offset > 0,
+        })
+    }
 }
 
 #[async_trait]

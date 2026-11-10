@@ -75,6 +75,17 @@ pub trait PolicyLister: Send + Sync {
         &self,
         query: ListPoliciesQuery,
     ) -> Result<ListPoliciesResponse, ListPoliciesError>;
+
+    /// List only the policies owned by `account`. Adapters override this to
+    /// push the tenant filter into their store; the default preserves the old
+    /// behavior for in-memory/test implementations.
+    async fn list_for_account(
+        &self,
+        _account: &str,
+        query: ListPoliciesQuery,
+    ) -> Result<ListPoliciesResponse, ListPoliciesError> {
+        self.list(query).await
+    }
 }
 
 /// Port for the ListPolicies use case
