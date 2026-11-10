@@ -116,7 +116,7 @@ cors_allowed_origins = []
 ```
 
 - `HODEI_SECURITY__ADMIN_API_ENABLED=true` no sustituye autenticación: exige authenticator y authorizer efectivos. Si faltan, la superficie permanece cerrada y se registra un `error!`.
-- Con integración configurada, las rutas administrativas responden `401` + `WWW-Authenticate: Bearer` al anónimo y `403` a una identidad sin permiso. La ruta de repositorios mantiene su propio gate y su authenticator productivo llega con HSP-20.
+- Con integración configurada, las rutas administrativas responden `401` + `WWW-Authenticate: Bearer` al anónimo y `403` a una identidad sin permiso. La ruta de repositorios usa el mismo bundle JWT+Cedar; ver [production-auth.md](docs/security/production-auth.md).
 - Los healthchecks (`/health`, `/health/ready`, `/health/live`) y Swagger/OpenAPI siguen públicos. Swagger expone el contrato (rutas y esquemas), no datos ni efectos; no es una frontera de seguridad.
 - El preflight CORS (`OPTIONS`) lo responde la capa CORS exterior y no alcanza ningún handler.
 - `tests/admin_surface.rs` verifica las 12 rutas administrativas (anónimo, sin permiso, permitido, flag false/true, método/recurso), la allowlist CORS (incluido `*` en configuración no validada) y que los healthchecks siguen disponibles.

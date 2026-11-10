@@ -11,7 +11,7 @@
 | `true`, configurados | `401` + `WWW-Authenticate: Bearer` | `401` | `403 administrative permission denied` | handler |
 
 - El gate usa el mismo `PrincipalAuthenticator` y `AuthorizeResourceUseCase` que las rutas de repositorios. La cuenta sale del `VerifiedContext`; no se acepta identidad por cabeceras.
-- Acción: `Admin::Action::"AccessAdminApi"`. Recurso: `hrn:hodei:admin:global:<cuenta>:AdminApi/<método>/<ruta>`; incluir el método evita que un `permit` de listado habilite creación sobre la misma ruta. Una política puede restringir método y ruta (`get/schemas/load`, `post/playground/evaluate`, etc.).
+- Acción: `Admin::Action::"AccessAdminApi"`. Recurso: `hrn:hodei:admin:global:<cuenta>:AdminApi/<método>-<ruta-con-guiones>`; incluir el método evita que un `permit` de listado habilite creación sobre la misma ruta. Una política puede restringir método y ruta (`get-schemas-load`, `post-playground-evaluate`, etc.). El path se codifica en un solo segmento para que la jerarquía Cedar no exija ancestros no declarados en el schema.
 - El arranque emite un `error!` si `admin_api_enabled=true` y falta la integración; `bootstrap` deja el estado no listo y el gate responde `403`.
 - Healthchecks, Swagger y OpenAPI siguen públicos; no ejecutan handlers administrativos.
 - El preflight CORS sigue respondiendo en la capa exterior.

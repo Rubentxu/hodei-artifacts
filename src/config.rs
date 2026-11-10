@@ -61,7 +61,7 @@ pub struct ServerConfig {
 /// opens it when the application state has both an authenticator and an
 /// authorizer; every request then needs a bearer credential and a Cedar
 /// permit.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// Whether the `/api/v1` administrative surface is reachable.
     ///
@@ -79,11 +79,66 @@ pub struct SecurityConfig {
     /// configuration.
     #[serde(default)]
     pub cors_allowed_origins: Vec<String>,
+
+    /// HS256 secret used to verify production JWTs. Never logged.
+    #[serde(default)]
+    pub auth_jwt_secret: Option<String>,
+    /// Expected JWT issuer.
+    #[serde(default)]
+    pub auth_issuer: Option<String>,
+    /// Expected JWT audience.
+    #[serde(default)]
+    pub auth_audience: Option<String>,
+    /// Cedar policy bundle for production authorization.
+    #[serde(default)]
+    pub authorization_policy_path: Option<String>,
+    /// Cedar schema used to validate the policy bundle.
+    #[serde(default)]
+    pub authorization_schema_path: Option<String>,
+}
+
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SecurityConfig")
+            .field("admin_api_enabled", &self.admin_api_enabled)
+            .field("cors_allowed_origins", &self.cors_allowed_origins)
+            .field(
+                "auth_jwt_secret",
+                &self.auth_jwt_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("auth_issuer", &self.auth_issuer)
+            .field("auth_audience", &self.auth_audience)
+            .field("authorization_policy_path", &self.authorization_policy_path)
+            .field("authorization_schema_path", &self.authorization_schema_path)
+            .finish()
+    }
 }
 
 impl SecurityConfig {
     /// Validate the security configuration.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        let auth_fields = [
+            self.auth_jwt_secret.is_some(),
+            self.auth_issuer.is_some(),
+            self.auth_audience.is_some(),
+            self.authorization_policy_path.is_some(),
+            self.authorization_schema_path.is_some(),
+        ];
+        if auth_fields.iter().any(|present| *present) && !auth_fields.iter().all(|present| *present)
+        {
+            return Err(ConfigError::Message(
+                "Production security requires auth_jwt_secret, auth_issuer, auth_audience, authorization_policy_path and authorization_schema_path together".to_string(),
+            ));
+        }
+        if self.auth_issuer.as_deref().is_some_and(str::is_empty)
+            || self.auth_audience.as_deref().is_some_and(str::is_empty)
+            || self.auth_jwt_secret.as_deref().is_some_and(str::is_empty)
+        {
+            return Err(ConfigError::Message(
+                "Production auth issuer, audience and JWT secret cannot be empty".to_string(),
+            ));
+        }
         for origin in &self.cors_allowed_origins {
             if origin.trim().is_empty() {
                 return Err(ConfigError::Message(

@@ -7,9 +7,15 @@
 //! - Optional IAM schema registration
 
 use crate::app_state::AppState;
+use crate::auth::JwtAuthenticator;
+use crate::authorization::SharedAuthorizer;
 use crate::composition_root::CompositionRoot;
 use crate::config::AppConfig;
 use async_trait::async_trait;
+use cedar_policy::{Entities, Schema};
+use hodei_authz::cedar::CedarAuthorizer;
+use hodei_authz::hrn_mapper::HrnCedarMapper;
+use std::fs;
 
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
 use hodei_iam::register_iam_schema::dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};
@@ -53,6 +59,9 @@ pub enum BootstrapError {
 
     #[error("Failed to register IAM schema: {0}")]
     SchemaRegistration(String),
+
+    #[error("Invalid production security configuration: {0}")]
+    Security(String),
 }
 
 /// Bootstrap the application with the given configuration
@@ -113,6 +122,7 @@ pub async fn bootstrap(
     // Step 4: Create AppState from CompositionRoot
     info!("🎯 Creating application state");
     let app_state = AppState::from_composition_root(schema_version.clone(), root);
+    let app_state = configure_production_security(app_state, config)?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
             "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"
@@ -125,6 +135,61 @@ pub async fn bootstrap(
     );
 
     Ok(app_state)
+}
+
+/// Configure the production JWT authenticator and Cedar authorizer when the
+/// security settings provide the complete bundle. A partial bundle is a
+/// startup error, not a silent fallback to DenyAll.
+fn configure_production_security(
+    state: AppState,
+    config: &AppConfig,
+) -> Result<AppState, BootstrapError> {
+    let security = &config.security;
+    let fields = [
+        security.auth_jwt_secret.is_some(),
+        security.auth_issuer.is_some(),
+        security.auth_audience.is_some(),
+        security.authorization_policy_path.is_some(),
+        security.authorization_schema_path.is_some(),
+    ];
+    if !fields.iter().any(|present| *present) {
+        return Ok(state);
+    }
+    let (Some(secret), Some(issuer), Some(audience), Some(policy_path), Some(schema_path)) = (
+        security.auth_jwt_secret.clone(),
+        security.auth_issuer.clone(),
+        security.auth_audience.clone(),
+        security.authorization_policy_path.clone(),
+        security.authorization_schema_path.clone(),
+    ) else {
+        return Err(BootstrapError::Security(
+            "authentication and authorization settings must be configured together".to_string(),
+        ));
+    };
+
+    let policies = fs::read_to_string(&policy_path).map_err(|error| {
+        BootstrapError::Security(format!(
+            "cannot read authorization policy bundle {policy_path}: {error}"
+        ))
+    })?;
+    let schema_text = fs::read_to_string(&schema_path).map_err(|error| {
+        BootstrapError::Security(format!(
+            "cannot read authorization schema {schema_path}: {error}"
+        ))
+    })?;
+    let schema = Schema::from_json_str(&schema_text)
+        .map_err(|error| BootstrapError::Security(format!("invalid Cedar schema: {error}")))?;
+    let cedar = CedarAuthorizer::from_policies(
+        &policies,
+        Entities::empty(),
+        Arc::new(HrnCedarMapper),
+        schema,
+    )
+    .map_err(|error| BootstrapError::Security(format!("invalid Cedar policy bundle: {error}")))?;
+
+    Ok(state
+        .with_authenticator(Arc::new(JwtAuthenticator::new(secret, issuer, audience)))
+        .with_authorization(Arc::new(SharedAuthorizer::new(Arc::new(cedar)))))
 }
 
 /// Id under which a schema stored without an explicit version is kept.
