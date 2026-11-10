@@ -156,7 +156,7 @@ mod tests {
         let policy_validator = Arc::new(MockPolicyValidator::new_with_errors(
             validation_errors.clone(),
         ));
-        let policy_evaluator = Arc::new(MockPolicyEvaluator::new_with_deny());
+        let policy_evaluator = Arc::new(MockPolicyEvaluator::new_with_allow());
         let context_converter = Arc::new(MockContextConverter::new());
 
         let use_case = PlaygroundEvaluateUseCase::new(
@@ -174,6 +174,11 @@ mod tests {
         // Assert
         assert!(result.is_ok());
         let result = result.unwrap();
+        assert_eq!(
+            result.decision,
+            Decision::Deny,
+            "validation errors must override an Allow from the evaluator"
+        );
         assert_eq!(result.errors.len(), 2);
         assert_eq!(result.diagnostics.validation_errors.len(), 2);
         assert_eq!(

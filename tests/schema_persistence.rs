@@ -28,7 +28,12 @@ use hodei_artifacts_api::composition_root::CompositionRoot;
 use hodei_iam::features::register_iam_schema::dto::RegisterIamSchemaCommand;
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
 use hodei_policies::build_schema::ports::SchemaStoragePort;
+use hodei_policies::load_schema::dto::LoadSchemaCommand;
+use hodei_policies::playground_evaluate::dto::{
+    Decision, PlaygroundAuthorizationRequest, PlaygroundEvaluateCommand,
+};
 use hodei_policies::validate_policy::dto::ValidatePolicyCommand;
+use kernel::Hrn;
 use std::sync::Arc;
 use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, RocksDb};
@@ -145,5 +150,150 @@ async fn s3_the_registered_schema_is_the_schema_that_validates() {
         !undeclared_entity.is_valid,
         "a policy over an undeclared entity type must be rejected: {:?}",
         undeclared_entity.errors
+    );
+}
+
+/// S4: a versioned schema is loaded again and evaluated reproducibly.
+#[tokio::test]
+async fn s4_versioned_schema_cycle_is_reproducible() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_database(&tmp.path().join("db")).await;
+
+    let storage = Arc::new(SurrealSchemaAdapter::new(db.clone()));
+    let policy_adapter = Arc::new(SurrealPolicyAdapter::new(Arc::new(db)));
+    let root = CompositionRoot::production(storage, policy_adapter);
+
+    let registered = root
+        .iam_ports
+        .register_iam_schema
+        .register(
+            RegisterIamSchemaCommand::new()
+                .with_version("v1")
+                .with_validation(true),
+        )
+        .await
+        .expect("schema registration");
+    assert_eq!(registered.schema_version, "v1");
+
+    let loaded = root
+        .policy_ports
+        .load_schema
+        .execute(LoadSchemaCommand::with_version("v1"))
+        .await
+        .expect("the versioned schema must load");
+    assert_eq!(loaded.version.as_deref(), Some("v1"));
+    assert!(
+        loaded.content.contains("CreateUser"),
+        "the loaded schema must contain the registered IAM action"
+    );
+
+    let request = PlaygroundAuthorizationRequest {
+        principal: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "acme".to_string(),
+            "User".to_string(),
+            "alice".to_string(),
+        ),
+        action: Hrn::action("iam", "CreateUser"),
+        resource: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "acme".to_string(),
+            "User".to_string(),
+            "bob".to_string(),
+        ),
+        context: Default::default(),
+    };
+    let command = PlaygroundEvaluateCommand::new_with_schema_version(
+        "v1".to_string(),
+        vec!["permit(principal, action == Action::\"CreateUser\", resource);".to_string()],
+        request,
+    );
+
+    let first = root
+        .policy_ports
+        .playground_evaluate
+        .evaluate(command.clone())
+        .await
+        .expect("first evaluation");
+    let second = root
+        .policy_ports
+        .playground_evaluate
+        .evaluate(command)
+        .await
+        .expect("second evaluation");
+
+    assert_eq!(first.decision, Decision::Allow);
+    assert!(
+        first.diagnostics.validation_errors.is_empty(),
+        "the versioned schema must validate the policy"
+    );
+    assert_eq!(
+        first.decision, second.decision,
+        "the same schema and policy must produce the same decision"
+    );
+}
+
+/// S5: a schema-invalid policy cannot grant, even if its condition matches.
+#[tokio::test]
+async fn s5_schema_invalid_policy_cannot_grant() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_database(&tmp.path().join("db")).await;
+
+    let storage = Arc::new(SurrealSchemaAdapter::new(db.clone()));
+    let policy_adapter = Arc::new(SurrealPolicyAdapter::new(Arc::new(db)));
+    let root = CompositionRoot::production(storage, policy_adapter);
+
+    root.iam_ports
+        .register_iam_schema
+        .register(
+            RegisterIamSchemaCommand::new()
+                .with_version("v1")
+                .with_validation(true),
+        )
+        .await
+        .expect("schema registration");
+
+    let request = PlaygroundAuthorizationRequest {
+        principal: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "acme".to_string(),
+            "User".to_string(),
+            "alice".to_string(),
+        ),
+        action: Hrn::action("iam", "CreateUser"),
+        resource: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "acme".to_string(),
+            "User".to_string(),
+            "bob".to_string(),
+        ),
+        context: Default::default(),
+    };
+    // The condition is true for the request, but `NoSuchAction` is not in the
+    // schema. Validation must gate the decision.
+    let command = PlaygroundEvaluateCommand::new_with_schema_version(
+        "v1".to_string(),
+        vec![
+            "permit(principal, action, resource) when { action != Action::\"NoSuchAction\" };"
+                .to_string(),
+        ],
+        request,
+    );
+
+    let result = root
+        .policy_ports
+        .playground_evaluate
+        .evaluate(command)
+        .await
+        .expect("evaluation");
+
+    assert_eq!(result.decision, Decision::Deny);
+    assert!(
+        !result.errors.is_empty() || !result.diagnostics.validation_errors.is_empty(),
+        "the schema error must be reported"
     );
 }
