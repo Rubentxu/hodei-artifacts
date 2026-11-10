@@ -131,7 +131,7 @@ const INLINE_SCHEMA_DECLARING_AMBIGUOUS_READ: &str = r#"{"format":"cedar-schema-
 
 /// A policy over the entity type the inline schema declares.
 const POLICY_OVER_DECLARED_TYPE: &str =
-    r#"permit(principal == Iam::User::"hrn:aws:iam::account-a:User/alice", action, resource);"#;
+    r#"permit(principal == Iam::User::"hrn:hodei:iam::acme:User/alice", action, resource);"#;
 
 /// A policy over an entity type no schema declares.
 const POLICY_OVER_UNDECLARED_TYPE: &str =
@@ -147,16 +147,16 @@ const POLICY_OVER_CONTEXT_IP: &str =
 
 /// A policy that permits one principal of account A and nothing else.
 const IAM_POLICY_OVER_ONE_PRINCIPAL: &str =
-    r#"permit(principal == Iam::User::"hrn:aws:iam::account-a:User/alice", action, resource);"#;
+    r#"permit(principal == Iam::User::"hrn:hodei:iam::acme:User/alice", action, resource);"#;
 
 /// The principal the IAM policy is attached to.
-const IAM_ATTACHED_PRINCIPAL: &str = "hrn:aws:iam::account-a:User/alice";
+const IAM_ATTACHED_PRINCIPAL: &str = "hrn:hodei:iam::acme:User/alice";
 
 /// A principal of another account the IAM policy is not attached to.
-const IAM_UNATTACHED_PRINCIPAL: &str = "hrn:aws:iam::account-b:User/bob";
+const IAM_UNATTACHED_PRINCIPAL: &str = "hrn:hodei:iam::acme:User/bob";
 
 /// The resource the IAM verb is requested on.
-const IAM_EVALUATED_RESOURCE: &str = "hrn:aws:iam::account-a:User/bob";
+const IAM_EVALUATED_RESOURCE: &str = "hrn:hodei:iam::acme:User/bob";
 
 struct ContractAuthenticator;
 
@@ -377,7 +377,7 @@ async fn g6_iam_policy_lifecycle_is_consistent_end_to_end() {
     let hrn = created["hrn"].as_str().expect("create must return an HRN");
     assert_eq!(
         hrn,
-        format!("hrn:hodei:iam::default:Policy/{policy_id}"),
+        format!("hrn:hodei:iam::acme:Policy/{policy_id}"),
         "the canonical HRN must be usable as an identifier by the other endpoints"
     );
 
@@ -543,8 +543,8 @@ async fn g9_a_permit_allows_and_names_the_determining_policy() {
         Method::POST,
         "/api/v1/policies/evaluate",
         Some(evaluate_body(
-            "hrn:aws:iam::account-a:User/alice",
-            "hrn:aws:iam::account-a:User/bob",
+            "hrn:hodei:iam::acme:User/alice",
+            "hrn:hodei:iam::acme:User/bob",
             &[VALID_POLICY],
         )),
     )
@@ -565,8 +565,8 @@ async fn g10_an_explicit_forbid_prevails_over_the_permit() {
         Method::POST,
         "/api/v1/policies/evaluate",
         Some(evaluate_body(
-            "hrn:aws:iam::account-a:User/alice",
-            "hrn:aws:iam::account-a:User/bob",
+            "hrn:hodei:iam::acme:User/alice",
+            "hrn:hodei:iam::acme:User/bob",
             &[VALID_POLICY, "forbid(principal, action, resource);"],
         )),
     )
@@ -586,8 +586,8 @@ async fn g10_an_explicit_forbid_prevails_over_the_permit() {
         Method::POST,
         "/api/v1/policies/evaluate",
         Some(evaluate_body(
-            "hrn:aws:iam::account-a:User/alice",
-            "hrn:aws:iam::account-a:User/bob",
+            "hrn:hodei:iam::acme:User/alice",
+            "hrn:hodei:iam::acme:User/bob",
             &[],
         )),
     )
@@ -607,7 +607,7 @@ async fn g11_a_malformed_hrn_is_a_bad_request() {
         "/api/v1/policies/evaluate",
         Some(evaluate_body(
             "not-an-hrn",
-            "hrn:aws:iam::account-a:User/bob",
+            "hrn:hodei:iam::acme:User/bob",
             &[VALID_POLICY],
         )),
     )
@@ -625,7 +625,7 @@ async fn g11_a_malformed_hrn_is_a_bad_request() {
         Method::POST,
         "/api/v1/policies/evaluate",
         Some(evaluate_body(
-            "hrn:aws:iam::account-a:User/alice",
+            "hrn:hodei:iam::acme:User/alice",
             "hrn:aws:iam::account-a:User/",
             &[VALID_POLICY],
         )),
@@ -645,7 +645,7 @@ async fn g11_a_malformed_hrn_is_a_bad_request() {
 async fn g12_a_policy_scoped_to_one_account_does_not_reach_another_account() {
     let (app, _tmp) = test_app().await;
 
-    let policy = "permit(principal, action, resource) when { principal == Iam::User::\"hrn:aws:iam::account-a:User/alice\" };";
+    let policy = "permit(principal, action, resource) when { principal == Iam::User::\"hrn:hodei:iam::acme:User/alice\" };";
 
     // The principal of account A is the one the policy names: allowed.
     let (status, body) = request(
@@ -653,8 +653,8 @@ async fn g12_a_policy_scoped_to_one_account_does_not_reach_another_account() {
         Method::POST,
         "/api/v1/policies/evaluate",
         Some(evaluate_body(
-            "hrn:aws:iam::account-a:User/alice",
-            "hrn:aws:iam::account-a:User/bob",
+            "hrn:hodei:iam::acme:User/alice",
+            "hrn:hodei:iam::acme:User/bob",
             &[policy],
         )),
     )
@@ -672,7 +672,7 @@ async fn g12_a_policy_scoped_to_one_account_does_not_reach_another_account() {
         "/api/v1/policies/evaluate",
         Some(evaluate_body(
             "hrn:aws:iam::account-b:User/alice",
-            "hrn:aws:iam::account-a:User/alice",
+            "hrn:hodei:iam::acme:User/alice",
             &[policy],
         )),
     )
@@ -712,7 +712,7 @@ fn playground_request_body(
         "inline_schema": inline_schema,
         "inline_policies": policies,
         "request": {
-            "principal": "hrn:aws:iam::account-a:User/alice",
+            "principal": "hrn:hodei:iam::acme:User/alice",
             "action": action,
             "resource": resource,
             "context": context,
@@ -728,7 +728,7 @@ fn playground_body(inline_schema: &str, policies: &[&str]) -> Value {
         inline_schema,
         policies,
         "hrn:aws:iam::account-a:Action/read",
-        "hrn:aws:iam::account-a:User/bob",
+        "hrn:hodei:iam::acme:User/bob",
         json!({}),
     )
 }
@@ -952,7 +952,7 @@ async fn g18_the_decision_follows_the_schema_that_was_given() {
             INLINE_SCHEMA_DECLARING_READ,
             &[VALID_POLICY],
             "hrn:aws:iam::account-a:Action/write",
-            "hrn:aws:iam::account-a:User/bob",
+            "hrn:hodei:iam::acme:User/bob",
             json!({}),
         )),
     )
@@ -1057,7 +1057,7 @@ async fn g20_the_context_of_the_request_reaches_the_evaluation() {
         INLINE_SCHEMA_DECLARING_READ_WITH_CONTEXT,
         &[POLICY_OVER_CONTEXT_IP],
         "hrn:aws:iam::account-a:Action/read",
-        "hrn:aws:iam::account-a:User/bob",
+        "hrn:hodei:iam::acme:User/bob",
         json!({"ip": {"type": "String", "value": "10.0.0.1"}}),
     );
 
@@ -1085,7 +1085,7 @@ async fn g20_the_context_of_the_request_reaches_the_evaluation() {
             INLINE_SCHEMA_DECLARING_READ_WITH_CONTEXT,
             &[POLICY_OVER_CONTEXT_IP],
             "hrn:aws:iam::account-a:Action/read",
-            "hrn:aws:iam::account-a:User/bob",
+            "hrn:hodei:iam::acme:User/bob",
             json!({"ip": {"type": "String", "value": "10.0.0.2"}}),
         )),
     )

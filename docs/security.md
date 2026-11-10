@@ -15,3 +15,5 @@ Documentos de seguridad de Hodei Artifacts.
 - [Autenticación y autorización de producción](security/production-auth.md): JWT HS256/JWKS, Cedar validado y arranque fail-closed.
 
 - [Persistencia durable de repositorios](security/repository-durable.md): adaptador SurrealDB, unicidad y configuración.
+
+- [Scope de cuenta en IAM](security/iam-account-scope.md): handlers, prefijo persistido y backfill.
