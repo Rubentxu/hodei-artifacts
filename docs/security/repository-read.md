@@ -60,7 +60,7 @@ Authorization: Bearer <token>
 ## Límites
 
 - `InMemoryRepositoryStore` es el adaptador del slice; la persistencia real (SurrealDB) sigue pendiente. No se reactiva el crate legacy.
-- `POST` y `GET` comparten auth/authorizer; el authenticator productivo (JWT/OIDC) sigue pendiente.
-- No hay JWT/OIDC productivo todavía: el authenticator se inyecta; el bootstrap por defecto deniega todo (`401`).
+- `POST` y `GET` comparten auth/authorizer; HSP-20 conecta JWT HS256 o JWKS RS256/ES256 en el bootstrap cuando se configura el bundle de seguridad.
+- Sin bundle, el bootstrap sigue fail-closed (`401`); ver [production-auth.md](production-auth.md).
 - El store de creación es en memoria; HSP-18/adaptador de persistencia lo sustituirá.
 - El contrato OpenAPI estático histórico (`/v1/repositories` por UUID) no se ha reconciliado con esta ruta; HSP-18/contrato lo harán.

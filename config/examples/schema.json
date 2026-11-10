@@ -1,0 +1,20 @@
+{
+  "": { "entityTypes": {}, "actions": {} },
+  "Iam": {
+    "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } },
+    "actions": {}
+  },
+  "Artifacts": {
+    "entityTypes": { "Repository": { "shape": { "type": "Record", "attributes": {} } } },
+    "actions": {
+      "CreateRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
+      "ReadRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } }
+    }
+  },
+  "Admin": {
+    "entityTypes": { "AdminApi": { "shape": { "type": "Record", "attributes": {} } } },
+    "actions": {
+      "AccessAdminApi": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Admin::AdminApi"] } }
+    }
+  }
+}

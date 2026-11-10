@@ -40,6 +40,7 @@ target/
 
 # Local-only config overrides and secrets (tracked profiles under config/ stay tracked)
 /config/*.local.toml
+/config/local.toml
 /config/secrets/
 
 # Archive packages must never be committed (roadmap bundles, build drops)

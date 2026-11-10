@@ -16,6 +16,7 @@
 
 pub mod app_state;
 pub mod audit;
+pub mod auth;
 pub mod authorization;
 pub mod bootstrap;
 pub mod composition_root;

@@ -141,11 +141,12 @@ async fn admin_gate(
         .trim_start_matches('/');
     // Include the HTTP method so a policy cannot grant "list" and silently
     // grant "create" on the same path.
-    let resource_path = format!(
-        "{}/{}",
-        req.method().as_str().to_ascii_lowercase(),
-        if path.is_empty() { "surface" } else { path }
-    );
+    let route = if path.is_empty() {
+        "surface".to_string()
+    } else {
+        path.replace('/', "-")
+    };
+    let resource_path = format!("{}-{route}", req.method().as_str().to_ascii_lowercase());
     let resource = Hrn::with_region(
         "hodei".to_string(),
         "admin".to_string(),

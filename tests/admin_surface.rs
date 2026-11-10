@@ -326,7 +326,7 @@ async fn a_permit_for_one_method_and_path_does_not_grant_another() {
         r#"permit(
             principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
             action == Admin::Action::"AccessAdminApi",
-            resource == Admin::AdminApi::"hrn:hodei:admin:global:acme:AdminApi/get/iam/policies"
+            resource == Admin::AdminApi::"hrn:hodei:admin:global:acme:AdminApi/get-iam-policies"
         );"#,
     )
     .await;

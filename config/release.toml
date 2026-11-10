@@ -26,6 +26,13 @@ storage_type = "rocksdb"
 # The administrative /api/v1 surface stays closed unless an authenticator and
 # authorizer are injected; every request still needs a bearer and Cedar permit.
 admin_api_enabled = false
+# Production bundle: set all five together or bootstrap fails closed.
+# auth_jwt_secret = ""
+# auth_jwks_path = "config/jwks.json"
+# auth_issuer = "https://issuer.example"
+# auth_audience = "hodei-artifacts"
+# authorization_policy_path = "config/examples/policies.cedar"
+# authorization_schema_path = "config/examples/schema.json"
 # Empty means no cross-origin access. List explicit origins; '*' is rejected.
 cors_allowed_origins = []
 

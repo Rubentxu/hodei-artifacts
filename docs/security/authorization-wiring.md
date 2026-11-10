@@ -40,4 +40,4 @@ Axum (HSP-8) -> VerifiedContext + ActionId + ResourceRef
 - La dependencia con `hodei-authz` es la versión publicada `=0.1.1` desde HSP-18; el `Cargo.lock` versionado fija la resolución.
 - El `AppState` ya expone `authorize_resource`; el handler de repositorios lo invoca con el `VerifiedContext` del bearer verificado.
 - Este repo **no monta** un middleware de autorización de Axum: la ruta de repositorios hace la verificación en el handler. El contrato es el de `hodei-authz`/HSP-8.
-- El authenticator productivo de la ruta sigue pendiente: bootstrap usa `DenyAllAuthenticator` y la ruta responde `401` hasta inyectar uno real.
+- HSP-20 inyecta el authenticator JWT/JWKS y el authorizer Cedar desde el bundle de seguridad; sin bundle, bootstrap mantiene `DenyAll` y la ruta responde `401`.
