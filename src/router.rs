@@ -37,10 +37,12 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
     // The administrative surface is closed unless it is explicitly enabled.
     // This service does not authenticate requests yet, so the default must
     // deny before any handler runs.
-    let api = api_v1_routes(app_state).layer(middleware::from_fn_with_state(
+    let admin_api = admin_v1_routes(app_state.clone()).layer(middleware::from_fn_with_state(
         config.security.admin_api_enabled,
         admin_gate,
     ));
+    let repositories = repository_v1_routes(app_state);
+    let api = admin_api.merge(repositories);
 
     Router::new()
         // Health check endpoints
@@ -124,7 +126,7 @@ fn cors_layer(config: &AppConfig) -> CorsLayer {
 }
 
 /// API v1 routes
-fn api_v1_routes(app_state: AppState) -> Router {
+fn admin_v1_routes(app_state: AppState) -> Router {
     Router::new()
         // Schema management
         .route(
@@ -170,5 +172,16 @@ fn api_v1_routes(app_state: AppState) -> Router {
         // .route("/users", post(crate::handlers::users::create_user))
         // .route("/users/:id", get(crate::handlers::users::get_user))
         // .route("/groups", post(crate::handlers::groups::create_group))
+        .with_state(app_state)
+}
+
+/// Repository routes have their own credential/authorization gate; they are
+/// deliberately not behind `admin_api_enabled`.
+fn repository_v1_routes(app_state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/repositories",
+            get(crate::handlers::repositories::get_repository),
+        )
         .with_state(app_state)
 }

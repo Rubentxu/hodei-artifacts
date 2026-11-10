@@ -7,3 +7,5 @@ Documentos de seguridad de Hodei Artifacts.
 - [Wiring del Authorizer compartido](security/authorization-wiring.md): puerto, caso de uso y sustitución reversible.
 
 - [Aislamiento del playground](security/playground-isolation.md): simulación vs autorización productiva, gate y fallos seguros.
+
+- [Lectura autorizada de repositorios](security/repository-read.md): ruta, identidad, 404 uniforme y lector read-only.

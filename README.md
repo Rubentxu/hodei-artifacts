@@ -103,7 +103,9 @@ npm run dev
 
 ## 🔒 Seguridad por defecto
 
-La superficie administrativa (`/api/v1`: IAM, políticas, esquemas y playground) está **cerrada por defecto** porque el servicio todavía no autentica peticiones. Sin el opt-in explícito, toda petición no-preflight a una ruta registrada bajo `/api/v1` responde `403` antes de ejecutar ningún handler.
+La superficie administrativa (`/api/v1`: IAM, políticas, esquemas y playground) está **cerrada por defecto** porque el servicio todavía no autentica esas rutas. Sin el opt-in explícito, toda petición no-preflight a una ruta administrativa registrada bajo `/api/v1` responde `403` antes de ejecutar ningún handler.
+
+`GET /api/v1/repositories` es una ruta de negocio separada: no la abre `admin_api_enabled`; exige bearer verificado y responde `401` sin credencial. Ver [repository-read.md](docs/security/repository-read.md).
 
 ```toml
 [security]
@@ -114,7 +116,7 @@ cors_allowed_origins = []
 ```
 
 - `HODEI_SECURITY__ADMIN_API_ENABLED=true` habilita la superficie solo si se asume el riesgo; no sustituye autenticación. Al arrancar se emite un `warn!` explícito.
-- Se responde `403`, no `401`: no existe todavía un esquema de autenticación que emitir en `WWW-Authenticate`. El `401` llegará con el adaptador de autenticación (HSP-8).
+- Las rutas administrativas responden `403` (gate) y no emiten `WWW-Authenticate`; la ruta de repositorios responde `401` con `WWW-Authenticate: Bearer` cuando falta la credencial. El authenticator productivo de esta ruta sigue pendiente de configurar.
 - Los healthchecks (`/health`, `/health/ready`, `/health/live`) y Swagger/OpenAPI siguen públicos. Swagger expone el contrato (rutas y esquemas), no datos ni efectos; no es una frontera de seguridad.
 - El preflight CORS (`OPTIONS`) lo responde la capa CORS exterior y no alcanza ningún handler.
 - `tests/admin_surface.rs` verifica las 12 rutas administrativas con cuerpo de gate, el opt-in explícito, la allowlist CORS (incluido `*` en configuración no validada) y que los healthchecks siguen disponibles.
