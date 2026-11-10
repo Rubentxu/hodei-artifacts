@@ -8,7 +8,8 @@ El gate administrativo inserta el `VerifiedContext` en la petición. Los handler
 - `get`/`update`/`delete`: el HRN solicitado debe pertenecer a la cuenta verificada. Un HRN de otra cuenta devuelve `404 Policy not found` antes de consultar o mutar.
 - `list`: el adaptador lista la tabla y el handler filtra solo las filas con prefijo `account~`; el `total_count` refleja el conjunto filtrado.
 - `evaluate`: principal **y recurso** deben pertenecer a la cuenta verificada; los ids determinantes se devuelven solo si llevan el prefijo de la cuenta y sin ese prefijo.
-- El adaptador SurrealDB conserva la tabla global `policy`, pero **el identificador persistido incluye la cuenta**, de modo que dos cuentas pueden usar el mismo `policy_id` sin colisión.
+- El adaptador SurrealDB conserva la tabla global `policy`, pero **el identificador persistido incluye la cuenta** y cada fila guarda `account`, de modo que dos cuentas pueden usar el mismo `policy_id` sin colisión.
+- `list_for_account` filtra, cuenta y pagina por `account` en la consulta SurrealDB. El índice `policy_account` se crea con `SurrealPolicyAdapter::initialize_scope` como migración explícita; el bootstrap no lo ejecuta porque mantener esa transacción abierta retenía el lock de RocksDB y rompía el arranque repetido.
 
 ## Migración/backfill
 
@@ -32,5 +33,5 @@ No se ejecuta una migración automática porque una fila antigua no contiene la 
 
 ## Límites
 
-- El filtrado de `list` se hace en el handler tras el listado del adaptador; la paginación/`total_count` no se delega todavía a una consulta por cuenta.
+- El índice de `account` requiere ejecutar la migración `initialize_scope` una vez; el bootstrap no la ejecuta automáticamente.
 - La tabla antigua `policy` no se elimina; el backfill es operativo y debe auditarse.
