@@ -155,6 +155,9 @@ async fn test_app() -> (Router, TempDir) {
     let tmp = tempfile::tempdir().expect("temp dir");
 
     let mut config = AppConfig::default();
+    // This contract exercises the administrative surface on purpose; the
+    // production default is closed (see tests/admin_surface.rs).
+    config.security.admin_api_enabled = true;
     config.rocksdb.path = tmp
         .path()
         .join("hodei.rocksdb")

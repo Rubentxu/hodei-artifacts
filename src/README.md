@@ -340,16 +340,14 @@ Los spans de `tracing` pueden exportarse a sistemas de métricas como Prometheus
 
 ### CORS
 
-Actualmente configurado como permisivo (`CorsLayer::permissive()`). **DEBE configurarse apropiadamente en producción:**
+Configurado con allowlist explícita (`security.cors_allowed_origins`). Vacío por defecto: sin acceso cross-origin. `*` y orígenes no canónicos se rechazan al validar la configuración (la barra final se acepta y se normaliza).
 
-```rust
-.layer(
-    CorsLayer::new()
-        .allow_origin(Origin::exact("https://app.hodei.io".parse().unwrap()))
-        .allow_methods([Method::GET, Method::POST])
-        .allow_headers([AUTHORIZATION, CONTENT_TYPE])
-)
+```toml
+[security]
+cors_allowed_origins = ["https://app.hodei.io"]
 ```
+
+La capa CORS no sustituye autenticación: con la superficie admin cerrada, un origen permitido sigue recibiendo `403`.
 
 ### Timeouts
 

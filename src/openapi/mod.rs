@@ -14,7 +14,7 @@ use utoipa::OpenApi;
     info(
         title = "Hodei Artifacts API",
         version = "2.1.0",
-        description = "REST API for Hodei Artifacts - A secure, policy-driven artifact management system with IAM integration\n\n## Features\n- **IAM Policy Management**: Full CRUD operations for IAM policies\n- **Policy Playground**: Test policies ad-hoc without persistence\n- **Schema Management**: Cedar schema registration and validation\n- **Authorization**: Cedar policy engine integration\n- **Policy Validation**: Validate Cedar policies against schemas\n- **Policy Evaluation**: Evaluate policies against authorization requests\n\n## Architecture\n- Clean Architecture + Vertical Slice Architecture (VSA)\n- Event-driven design\n- SurrealDB backend\n- Axum web framework\n- Cedar policy engine",
+        description = "REST API for Hodei Artifacts - A secure, policy-driven artifact management system with IAM integration\n\n## Features\n- **IAM Policy Management**: Full CRUD operations for IAM policies\n- **Policy Playground**: Test policies ad-hoc without persistence\n- **Schema Management**: Cedar schema registration and validation\n- **Authorization**: Cedar policy engine integration\n- **Policy Validation**: Validate Cedar policies against schemas\n- **Policy Evaluation**: Evaluate policies against authorization requests\n\n## Architecture\n- Clean Architecture + Vertical Slice Architecture (VSA)\n- Event-driven design\n- SurrealDB backend\n- Axum web framework\n- Cedar policy engine\n\n## Security\n- The /api/v1 administrative surface is disabled by default and returns 403 until security.admin_api_enabled is set.",
         contact(
             name = "Hodei Team",
             email = "support@hodei.io"

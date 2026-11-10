@@ -39,6 +39,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Initialize logging
     initialize_logging(&config)?;
 
+    if config.security.admin_api_enabled {
+        warn!(
+            "SECURITY: the administrative /api/v1 surface is enabled without authentication; restrict it to a trusted gateway"
+        );
+    }
+    if !config.security.cors_allowed_origins.is_empty() {
+        info!(
+            "CORS allowed origins: {:?}",
+            config.security.cors_allowed_origins
+        );
+    }
+
     info!("🚀 Starting Hodei Artifacts API");
     info!("📋 Configuration loaded");
     info!("   Server: {}", config.server_address());

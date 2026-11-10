@@ -4,6 +4,7 @@
 //! from multiple sources with hierarchical precedence and validation.
 
 use ::config::{Config, ConfigError, Environment, File};
+use axum::http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -20,6 +21,10 @@ use std::env;
 pub struct AppConfig {
     /// Server configuration
     pub server: ServerConfig,
+
+    /// Security configuration
+    #[serde(default)]
+    pub security: SecurityConfig,
 
     /// Database configuration
     pub database: DatabaseConfig,
@@ -48,6 +53,101 @@ pub struct ServerConfig {
 
     /// Maximum request body size in bytes (default: 10MB)
     pub max_body_size: usize,
+}
+
+/// Security configuration
+///
+/// The administrative API is closed by default because this service does not
+/// authenticate requests yet. Enable it only behind an authenticated gateway
+/// while the real authorization adapter is wired.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    /// Whether the `/api/v1` administrative surface is reachable.
+    ///
+    /// Default: `false`. When false every non-preflight request to a
+    /// registered `/api/v1` route is answered with `403 Forbidden` before any
+    /// handler runs. CORS preflight is answered by the outer CORS layer and
+    /// never reaches a handler; unknown routes remain `404`.
+    #[serde(default)]
+    pub admin_api_enabled: bool,
+
+    /// Browser origins allowed by CORS.
+    ///
+    /// Default: empty, which means no cross-origin access. Wildcards are
+    /// rejected so the permissive policy cannot be reintroduced by
+    /// configuration.
+    #[serde(default)]
+    pub cors_allowed_origins: Vec<String>,
+}
+
+impl SecurityConfig {
+    /// Validate the security configuration.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        for origin in &self.cors_allowed_origins {
+            if origin.trim().is_empty() {
+                return Err(ConfigError::Message(
+                    "CORS origin cannot be empty. Set HODEI_SECURITY__CORS_ALLOWED_ORIGINS or remove the entry".to_string(),
+                ));
+            }
+            if origin.trim() == "*" {
+                return Err(ConfigError::Message(
+                    "CORS wildcard is not allowed. List explicit origins instead of '*'"
+                        .to_string(),
+                ));
+            }
+            if origin != &origin.to_ascii_lowercase() {
+                return Err(ConfigError::Message(format!(
+                    "Invalid CORS origin '{}'. Use lowercase scheme and host",
+                    origin
+                )));
+            }
+            if origin.contains('#') {
+                return Err(ConfigError::Message(format!(
+                    "Invalid CORS origin '{}'. Origins cannot contain a fragment",
+                    origin
+                )));
+            }
+            let uri: axum::http::Uri = origin.parse().map_err(|_| {
+                ConfigError::Message(format!(
+                    "Invalid CORS origin '{}'. Use a valid origin such as https://app.example",
+                    origin
+                ))
+            })?;
+            let default_port = match uri.scheme_str() {
+                Some("http") => uri.port_u16() == Some(80),
+                Some("https") => uri.port_u16() == Some(443),
+                _ => false,
+            };
+            let non_canonical_port = uri.authority().is_some_and(|authority| {
+                authority
+                    .as_str()
+                    .rsplit_once(':')
+                    .is_some_and(|(_, port)| port.len() > 1 && port.starts_with('0'))
+            });
+            let valid_authority = uri
+                .authority()
+                .is_some_and(|authority| !authority.as_str().contains('@'))
+                && uri.host().is_some_and(|host| !host.contains('*'))
+                && matches!(uri.scheme_str(), Some("http" | "https"))
+                && (uri.path().is_empty() || uri.path() == "/")
+                && uri.query().is_none()
+                && !default_port
+                && !non_canonical_port;
+            if !valid_authority {
+                return Err(ConfigError::Message(format!(
+                    "Invalid CORS origin '{}'. Use scheme and authority only, such as https://app.example",
+                    origin
+                )));
+            }
+            HeaderValue::from_str(origin).map_err(|_| {
+                ConfigError::Message(format!(
+                    "Invalid CORS origin '{}'. Use a valid origin such as https://app.example",
+                    origin
+                ))
+            })?;
+        }
+        Ok(())
+    }
 }
 
 /// Database configuration
@@ -201,6 +301,7 @@ impl AppConfig {
     /// Ok(()) if configuration is valid, ConfigError with clear message if invalid
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.server.validate()?;
+        self.security.validate()?;
         self.database.validate()?;
         self.rocksdb.validate()?;
         self.logging.validate()?;
@@ -231,6 +332,8 @@ fn environment_source() -> Environment {
         .prefix_separator("_")
         .separator("__")
         .try_parsing(true)
+        .list_separator(",")
+        .with_list_parse_key("security.cors_allowed_origins")
 }
 
 /// Builds the configuration from the file sources and the environment source.
@@ -551,6 +654,108 @@ mod tests {
         let mut invalid_config = AppConfig::default();
         invalid_config.logging.level = "invalid".to_string();
         assert!(invalid_config.validate().is_err());
+    }
+
+    #[test]
+    fn security_defaults_are_closed() {
+        let config = AppConfig::default();
+        assert!(
+            !config.security.admin_api_enabled,
+            "the administrative surface must be closed by default"
+        );
+        assert!(
+            config.security.cors_allowed_origins.is_empty(),
+            "no browser origin is allowed by default"
+        );
+    }
+
+    #[test]
+    fn security_rejects_permissive_cors_configuration() {
+        let mut config = AppConfig::default();
+        config.security.cors_allowed_origins = vec!["*".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["not an origin".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["https://app.example/".to_string()];
+        assert!(config.validate().is_ok());
+
+        config.security.cors_allowed_origins = vec!["https://user@app.example".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["HTTPS://app.example".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["https://*.example.com".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["https://app.example:443".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["https://app.example#fragment".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["https://app.example:08443".to_string()];
+        assert!(config.validate().is_err());
+
+        config.security.cors_allowed_origins = vec!["https://app.example".to_string()];
+        assert!(config.validate().is_ok());
+
+        config.security.cors_allowed_origins = vec![
+            "http://localhost:8080".to_string(),
+            "https://[::1]:8443".to_string(),
+            "https://app.example:8443".to_string(),
+        ];
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn security_environment_overrides_are_honored() {
+        let mut overrides = overrides();
+        overrides.insert(
+            "HODEI_SECURITY__ADMIN_API_ENABLED".to_string(),
+            "true".to_string(),
+        );
+        overrides.insert(
+            "HODEI_SECURITY__CORS_ALLOWED_ORIGINS".to_string(),
+            "https://app.example,https://admin.example".to_string(),
+        );
+
+        let config = build_config(environment_source().source(Some(overrides)))
+            .expect("security environment overrides must parse");
+
+        assert!(config.security.admin_api_enabled);
+        assert_eq!(
+            config.security.cors_allowed_origins,
+            vec![
+                "https://app.example".to_string(),
+                "https://admin.example".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn deployed_config_files_keep_the_admin_surface_closed() {
+        for name in ["config/default", "config/development", "config/release"] {
+            let config: AppConfig = Config::builder()
+                .add_source(File::with_name(name))
+                .build()
+                .expect("config file must load")
+                .try_deserialize()
+                .expect("config file must deserialize");
+            assert!(
+                !config.security.admin_api_enabled,
+                "{name} must keep the administrative surface closed"
+            );
+            assert!(
+                config.security.cors_allowed_origins.is_empty(),
+                "{name} must not allow browser origins by default"
+            );
+        }
     }
 
     #[test]
