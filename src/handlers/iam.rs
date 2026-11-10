@@ -5,12 +5,13 @@
 
 use crate::app_state::AppState;
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 
+use hodei_authz::VerifiedContext;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -178,19 +179,26 @@ const POLICY_RESOURCE_TYPE: &str = "Policy";
 /// raw HRN as an id made the lookup miss the stored record, so `PUT
 /// /api/v1/iam/policies/update` and `DELETE /api/v1/iam/policies/delete`
 /// answered `404` for policies that had just been created.
-fn resolve_policy_hrn(raw: &str) -> Result<(String, kernel::Hrn), IamApiError> {
-    let requested = kernel::Hrn::from_string(raw)
-        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
+fn valid_policy_id(policy_id: &str) -> bool {
+    !policy_id.is_empty()
+        && policy_id.len() <= 128
+        && policy_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
 
-    let canonical = kernel::Hrn::new(
-        requested.partition().to_string(),
-        requested.service().to_string(),
-        requested.account_id().to_string(),
+fn scoped_policy_id(account: &str, policy_id: &str) -> String {
+    format!("{account}~{policy_id}")
+}
+
+fn account_policy_hrn(account: &str, policy_id: &str) -> kernel::Hrn {
+    kernel::Hrn::new(
+        "hodei".to_string(),
+        "iam".to_string(),
+        account.to_string(),
         POLICY_RESOURCE_TYPE.to_string(),
-        requested.resource_id().to_string(),
-    );
-
-    Ok((requested.resource_id().to_string(), canonical))
+        policy_id.to_string(),
+    )
 }
 
 // ============================================================================
@@ -211,10 +219,27 @@ fn resolve_policy_hrn(raw: &str) -> Result<(String, kernel::Hrn), IamApiError> {
 )]
 pub async fn create_policy(
     State(state): State<AppState>,
+    Extension(context): Extension<VerifiedContext>,
     Json(request): Json<CreatePolicyRequest>,
 ) -> Result<Json<CreatePolicyResponse>, IamApiError> {
+    let account = context.account().as_str().to_string();
+    let short_id = request.policy_id.trim().to_string();
+    if !valid_policy_id(&short_id) {
+        return Err(IamApiError::BadRequest(
+            "policy_id must be non-empty and contain only letters, digits, '-' or '_'".to_string(),
+        ));
+    }
+    for principal in &request.attached_principals {
+        let parsed = kernel::Hrn::from_string(principal)
+            .ok_or_else(|| IamApiError::BadRequest("Invalid attached principal HRN".to_string()))?;
+        if parsed.account_id() != account {
+            return Err(IamApiError::Forbidden(
+                "Attached principal belongs to another account".to_string(),
+            ));
+        }
+    }
     let command = hodei_iam::features::create_policy::dto::CreatePolicyCommand {
-        policy_id: request.policy_id,
+        policy_id: scoped_policy_id(&account, &short_id),
         policy_content: request.policy_content,
         description: request.description,
         attached_principals: request.attached_principals,
@@ -252,7 +277,7 @@ pub async fn create_policy(
         })?;
 
     Ok(Json(CreatePolicyResponse {
-        hrn: policy_view.id.to_string(),
+        hrn: account_policy_hrn(&account, &short_id).to_string(),
         content: policy_view.content,
         description: policy_view.description,
         attached_principals: policy_view.attached_principals,
@@ -276,9 +301,19 @@ pub async fn create_policy(
 )]
 pub async fn get_policy(
     State(state): State<AppState>,
+    Extension(context): Extension<VerifiedContext>,
     Json(request): Json<GetPolicyRequest>,
 ) -> Result<Json<GetPolicyResponse>, IamApiError> {
-    let (_policy_id, canonical_hrn) = resolve_policy_hrn(&request.policy_hrn)?;
+    let account = context.account().as_str().to_string();
+    let requested = kernel::Hrn::from_string(&request.policy_hrn)
+        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
+    if requested.account_id() != account {
+        return Err(IamApiError::NotFound("Policy not found".to_string()));
+    }
+    let canonical_hrn = account_policy_hrn(
+        &account,
+        &scoped_policy_id(&account, requested.resource_id()),
+    );
 
     let policy_view = state
         .get_policy
@@ -297,8 +332,8 @@ pub async fn get_policy(
         })?;
 
     Ok(Json(GetPolicyResponse {
-        hrn: canonical_hrn.to_string(),
-        name: policy_view.name,
+        hrn: account_policy_hrn(&account, requested.resource_id()).to_string(),
+        name: requested.resource_id().to_string(),
         content: policy_view.content,
         description: policy_view.description,
         attached_principals: policy_view.attached_principals,
@@ -323,8 +358,10 @@ pub async fn get_policy(
 )]
 pub async fn list_policies(
     State(state): State<AppState>,
+    Extension(context): Extension<VerifiedContext>,
     Query(query): Query<ListPoliciesQueryParams>,
 ) -> Result<Json<ListPoliciesResponse>, IamApiError> {
+    let account = context.account().as_str().to_string();
     let list_query = hodei_iam::features::list_policies::dto::ListPoliciesQuery {
         limit: query.limit,
         offset: query.offset,
@@ -353,24 +390,29 @@ pub async fn list_policies(
         })?;
 
     // Map domain PolicySummary to HTTP PolicySummary (adding timestamps)
+    let prefix = format!("{account}~");
     let policies: Vec<PolicySummary> = list_result
         .policies
         .into_iter()
-        .map(|p| PolicySummary {
-            hrn: p.hrn.to_string(),
-            name: p.name,
-            description: p.description,
-            created_at: chrono::Utc::now(), // TODO: Add timestamps to domain
-            updated_at: chrono::Utc::now(),
+        .filter_map(|p| {
+            let short_id = p.hrn.resource_id().strip_prefix(&prefix)?;
+            Some(PolicySummary {
+                hrn: account_policy_hrn(&account, short_id).to_string(),
+                name: short_id.to_string(),
+                description: p.description,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            })
         })
         .collect();
+    let total_count = policies.len();
 
     Ok(Json(ListPoliciesResponse {
         policies,
         page_info: PageInfo {
-            total_count: list_result.total_count,
-            has_next_page: list_result.has_next_page,
-            has_previous_page: list_result.has_previous_page,
+            total_count,
+            has_next_page: false,
+            has_previous_page: false,
         },
     }))
 }
@@ -390,12 +432,19 @@ pub async fn list_policies(
 )]
 pub async fn update_policy(
     State(state): State<AppState>,
+    Extension(context): Extension<VerifiedContext>,
     Json(request): Json<UpdatePolicyRequest>,
 ) -> Result<Json<UpdatePolicyResponse>, IamApiError> {
-    let (policy_id, canonical_hrn) = resolve_policy_hrn(&request.policy_hrn)?;
+    let account = context.account().as_str().to_string();
+    let requested = kernel::Hrn::from_string(&request.policy_hrn)
+        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
+    if requested.account_id() != account {
+        return Err(IamApiError::NotFound("Policy not found".to_string()));
+    }
+    let short_id = requested.resource_id().to_string();
 
     let command = hodei_iam::features::update_policy::dto::UpdatePolicyCommand {
-        policy_id,
+        policy_id: scoped_policy_id(&account, &short_id),
         policy_content: Some(request.policy_content),
         description: request.description,
     };
@@ -444,7 +493,7 @@ pub async fn update_policy(
         })?;
 
     Ok(Json(UpdatePolicyResponse {
-        hrn: canonical_hrn.to_string(),
+        hrn: account_policy_hrn(&account, &short_id).to_string(),
         content: policy_view.content,
         description: policy_view.description,
         created_at: chrono::Utc::now(), // TODO: Add timestamps to domain PolicyView
@@ -466,11 +515,20 @@ pub async fn update_policy(
 )]
 pub async fn delete_policy(
     State(state): State<AppState>,
+    Extension(context): Extension<VerifiedContext>,
     Json(request): Json<DeletePolicyRequest>,
 ) -> Result<Json<DeletePolicyResponse>, IamApiError> {
-    let (policy_id, canonical_hrn) = resolve_policy_hrn(&request.policy_hrn)?;
+    let account = context.account().as_str().to_string();
+    let requested = kernel::Hrn::from_string(&request.policy_hrn)
+        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
+    if requested.account_id() != account {
+        return Err(IamApiError::NotFound("Policy not found".to_string()));
+    }
+    let short_id = requested.resource_id().to_string();
 
-    let command = hodei_iam::features::delete_policy::dto::DeletePolicyCommand { policy_id };
+    let command = hodei_iam::features::delete_policy::dto::DeletePolicyCommand {
+        policy_id: scoped_policy_id(&account, &short_id),
+    };
 
     state
         .delete_policy
@@ -501,7 +559,7 @@ pub async fn delete_policy(
         })?;
 
     Ok(Json(DeletePolicyResponse {
-        deleted_hrn: canonical_hrn.to_string(),
+        deleted_hrn: account_policy_hrn(&account, &short_id).to_string(),
         message: "Policy deleted successfully".to_string(),
     }))
 }
@@ -524,12 +582,20 @@ pub async fn delete_policy(
 )]
 pub async fn evaluate_iam_policies(
     State(state): State<AppState>,
+    Extension(context): Extension<VerifiedContext>,
     Json(request): Json<EvaluateIamPoliciesRequest>,
 ) -> Result<Json<EvaluateIamPoliciesResponse>, IamApiError> {
+    let account = context.account().as_str().to_string();
     let principal_hrn = kernel::Hrn::from_string(&request.principal_hrn)
         .ok_or_else(|| IamApiError::BadRequest("Invalid principal HRN format".to_string()))?;
+    if principal_hrn.account_id() != account {
+        return Err(IamApiError::NotFound("Policy not found".to_string()));
+    }
     let resource_hrn = kernel::Hrn::from_string(&request.resource_hrn)
         .ok_or_else(|| IamApiError::BadRequest("Invalid resource HRN format".to_string()))?;
+    if resource_hrn.account_id() != account {
+        return Err(IamApiError::NotFound("Policy not found".to_string()));
+    }
 
     let command = hodei_iam::features::evaluate_iam_policies::dto::EvaluateIamPoliciesCommand {
         principal_hrn,
@@ -553,11 +619,18 @@ pub async fn evaluate_iam_policies(
             }
         })?;
 
+    let strip = |values: Vec<String>| {
+        let prefix = format!("{account}~");
+        values
+            .into_iter()
+            .filter_map(|value| value.strip_prefix(&prefix).map(str::to_string))
+            .collect()
+    };
     Ok(Json(EvaluateIamPoliciesResponse {
         decision: result.decision,
         reason: result.reason,
-        determining_policies: result.determining_policies,
-        policy_ids_evaluated: result.policy_ids_evaluated,
+        determining_policies: strip(result.determining_policies),
+        policy_ids_evaluated: strip(result.policy_ids_evaluated),
     }))
 }
 
@@ -570,6 +643,7 @@ pub async fn evaluate_iam_policies(
 pub enum IamApiError {
     BadRequest(String),
     Unauthorized(String),
+    Forbidden(String),
     NotFound(String),
     Conflict(String),
     InternalServerError(String),
@@ -580,6 +654,7 @@ impl IntoResponse for IamApiError {
         let (status, message) = match self {
             IamApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             IamApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg),
+            IamApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             IamApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             IamApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
             IamApiError::InternalServerError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),

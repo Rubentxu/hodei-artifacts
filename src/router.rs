@@ -96,7 +96,7 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
 /// reach this gate; no handler runs in that path either.
 async fn admin_gate(
     State((enabled, app_state)): State<(bool, AppState)>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Response {
     if !enabled {
@@ -155,23 +155,28 @@ async fn admin_gate(
         "AdminApi".to_string(),
         resource_path,
     );
-    let outcome = match app_state
-        .authorize_resource
-        .execute_canonical(context, action, &resource)
-    {
-        Ok(outcome) => outcome,
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "authorization unavailable",
-            )
-                .into_response();
-        }
-    };
+    let outcome =
+        match app_state
+            .authorize_resource
+            .execute_canonical(context.clone(), action, &resource)
+        {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "authorization unavailable",
+                )
+                    .into_response();
+            }
+        };
+    let context_for_next = context;
     if !outcome.allows_access() {
         return (StatusCode::FORBIDDEN, "administrative permission denied").into_response();
     }
 
+    // The handlers use the verified account for object-level IAM scope; the
+    // context comes from authentication, never from a request field.
+    req.extensions_mut().insert(context_for_next);
     next.run(req).await
 }
 
