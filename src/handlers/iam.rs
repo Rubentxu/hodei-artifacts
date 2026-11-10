@@ -369,7 +369,7 @@ pub async fn list_policies(
 
     let list_result = state
         .list_policies
-        .list(list_query)
+        .list_for_account(&account, list_query)
         .await
         .map_err(|e| match e {
             hodei_iam::features::list_policies::error::ListPoliciesError::Database(msg) => {
@@ -390,29 +390,24 @@ pub async fn list_policies(
         })?;
 
     // Map domain PolicySummary to HTTP PolicySummary (adding timestamps)
-    let prefix = format!("{account}~");
     let policies: Vec<PolicySummary> = list_result
         .policies
         .into_iter()
-        .filter_map(|p| {
-            let short_id = p.hrn.resource_id().strip_prefix(&prefix)?;
-            Some(PolicySummary {
-                hrn: account_policy_hrn(&account, short_id).to_string(),
-                name: short_id.to_string(),
-                description: p.description,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-            })
+        .map(|p| PolicySummary {
+            hrn: p.hrn.to_string(),
+            name: p.name,
+            description: p.description,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
         })
         .collect();
-    let total_count = policies.len();
 
     Ok(Json(ListPoliciesResponse {
         policies,
         page_info: PageInfo {
-            total_count,
-            has_next_page: false,
-            has_previous_page: false,
+            total_count: list_result.total_count,
+            has_next_page: list_result.has_next_page,
+            has_previous_page: list_result.has_previous_page,
         },
     }))
 }
