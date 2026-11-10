@@ -11,6 +11,7 @@
 | `true`, configurados | `401` + `WWW-Authenticate: Bearer` | `401` | `403 administrative permission denied` | handler |
 
 - El gate usa el mismo `PrincipalAuthenticator` y `AuthorizeResourceUseCase` que las rutas de repositorios. La cuenta sale del `VerifiedContext`; no se acepta identidad por cabeceras.
+- **Migración HSP-20:** el recurso pasó de `AdminApi/<método>/<ruta>` a `AdminApi/<método>-<ruta>` para que la jerarquía Cedar no exija ancestros no declarados. Las políticas con el formato anterior deben actualizarse; no hay ventana de compatibilidad dual porque el formato previo no se desplegó en producción.
 - Acción: `Admin::Action::"AccessAdminApi"`. Recurso: `hrn:hodei:admin:global:<cuenta>:AdminApi/<método>-<ruta-con-guiones>`; incluir el método evita que un `permit` de listado habilite creación sobre la misma ruta. Una política puede restringir método y ruta (`get-schemas-load`, `post-playground-evaluate`, etc.). El path se codifica en un solo segmento para que la jerarquía Cedar no exija ancestros no declarados en el schema.
 - El arranque emite un `error!` si `admin_api_enabled=true` y falta la integración; `bootstrap` deja el estado no listo y el gate responde `403`.
 - Healthchecks, Swagger y OpenAPI siguen públicos; no ejecutan handlers administrativos.
@@ -24,7 +25,7 @@
 admin_api_enabled = false
 ```
 
-`HODEI_SECURITY__ADMIN_API_ENABLED=true` no autentica por sí solo. El binario base sigue con `DenyAllAuthenticator` hasta HSP-20; por eso, con el flag activo, la API administrativa continúa cerrada (`403`) en el arranque normal. HSP-20 conecta la identidad productiva.
+`HODEI_SECURITY__ADMIN_API_ENABLED=true` no autentica por sí solo. Sin el bundle de seguridad de HSP-20 el binario sigue con `DenyAllAuthenticator` y la API administrativa permanece cerrada (`403`); con JWT/JWKS y Cedar configurados, el gate aplica la matriz anterior.
 
 ## Pruebas
 

@@ -31,6 +31,6 @@ El playground evalúa políticas inline y schemas inline o versionados con fines
 
 - El playground es una herramienta administrativa, no un entorno multiusuario aislado por principal.
 - `POST /api/v1/iam/evaluate` es una evaluación administrativa sobre políticas persistidas con un principal del payload; no ejecuta operaciones. No es la autoridad de la lectura de repositorios.
-- `GET /api/v1/repositories` es la autoridad productiva del slice: bearer verificado, cuenta del principal, Authorizer compartido y reader read-only. Su authenticator productivo aún debe inyectarse; el bootstrap deniega con `401`.
+- `GET /api/v1/repositories` es la autoridad productiva del slice: bearer verificado, cuenta del principal, Authorizer compartido y reader read-only. HSP-20 inyecta JWT/JWKS y Cedar; sin bundle, el bootstrap deniega con `401`.
 - La reconciliación con el evaluador IAM sigue pendiente.
 - La reconciliación del schema/políticas productivas con el evaluador IAM sigue pendiente.

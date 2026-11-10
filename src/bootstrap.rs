@@ -80,6 +80,10 @@ pub async fn bootstrap(
 
     // Step 0: Validate configuration and fail explicitly on any issues
     info!("🔍 Validating application configuration");
+    config
+        .security
+        .validate_production_auth()
+        .map_err(|error| BootstrapError::Security(error.to_string()))?;
     validate_bootstrap_configuration(config)
         .map_err(|e| BootstrapError::Initialization(e.to_string()))?;
 
@@ -146,7 +150,7 @@ fn configure_production_security(
 ) -> Result<AppState, BootstrapError> {
     let security = &config.security;
     let fields = [
-        security.auth_jwt_secret.is_some(),
+        security.auth_jwt_secret.is_some() || security.auth_jwks_path.is_some(),
         security.auth_issuer.is_some(),
         security.auth_audience.is_some(),
         security.authorization_policy_path.is_some(),
@@ -155,16 +159,40 @@ fn configure_production_security(
     if !fields.iter().any(|present| *present) {
         return Ok(state);
     }
-    let (Some(secret), Some(issuer), Some(audience), Some(policy_path), Some(schema_path)) = (
+    let (secret, jwks_path, issuer, audience, policy_path, schema_path) = (
         security.auth_jwt_secret.clone(),
+        security.auth_jwks_path.clone(),
         security.auth_issuer.clone(),
         security.auth_audience.clone(),
         security.authorization_policy_path.clone(),
         security.authorization_schema_path.clone(),
-    ) else {
-        return Err(BootstrapError::Security(
-            "authentication and authorization settings must be configured together".to_string(),
-        ));
+    );
+    let (Some(issuer), Some(audience), Some(policy_path), Some(schema_path)) =
+        (issuer, audience, policy_path, schema_path)
+    else {
+        let missing = [
+            (
+                security.auth_jwt_secret.is_none() && security.auth_jwks_path.is_none(),
+                "auth_jwt_secret or auth_jwks_path",
+            ),
+            (security.auth_issuer.is_none(), "auth_issuer"),
+            (security.auth_audience.is_none(), "auth_audience"),
+            (
+                security.authorization_policy_path.is_none(),
+                "authorization_policy_path",
+            ),
+            (
+                security.authorization_schema_path.is_none(),
+                "authorization_schema_path",
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(missing, name)| missing.then_some(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+        return Err(BootstrapError::Security(format!(
+            "incomplete production security bundle; missing: {missing}"
+        )));
     };
 
     let policies = fs::read_to_string(&policy_path).map_err(|error| {
@@ -187,8 +215,24 @@ fn configure_production_security(
     )
     .map_err(|error| BootstrapError::Security(format!("invalid Cedar policy bundle: {error}")))?;
 
+    let authenticator: Arc<dyn hodei_authz::PrincipalAuthenticator> = match (secret, jwks_path) {
+        (Some(secret), None) => Arc::new(JwtAuthenticator::new(secret, issuer, audience)),
+        (None, Some(jwks_path)) => {
+            let text = fs::read_to_string(&jwks_path).map_err(|error| {
+                BootstrapError::Security(format!("cannot read JWKS {jwks_path}: {error}"))
+            })?;
+            let jwks: jsonwebtoken::jwk::JwkSet = serde_json::from_str(&text)
+                .map_err(|error| BootstrapError::Security(format!("invalid JWKS: {error}")))?;
+            Arc::new(JwtAuthenticator::from_jwks(jwks, issuer, audience))
+        }
+        _ => {
+            return Err(BootstrapError::Security(
+                "exactly one of auth_jwt_secret or auth_jwks_path is required".to_string(),
+            ));
+        }
+    };
     Ok(state
-        .with_authenticator(Arc::new(JwtAuthenticator::new(secret, issuer, audience)))
+        .with_authenticator(authenticator)
         .with_authorization(Arc::new(SharedAuthorizer::new(Arc::new(cedar)))))
 }
 

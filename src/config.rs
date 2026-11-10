@@ -80,9 +80,12 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub cors_allowed_origins: Vec<String>,
 
-    /// HS256 secret used to verify production JWTs. Never logged.
-    #[serde(default)]
+    /// HS256 secret or a JWKS file for production JWTs (exactly one).
+    #[serde(default, skip_serializing)]
     pub auth_jwt_secret: Option<String>,
+    /// Local JWKS used for RS256/ES256 tokens. Never logged or serialized.
+    #[serde(default, skip_serializing)]
+    pub auth_jwks_path: Option<String>,
     /// Expected JWT issuer.
     #[serde(default)]
     pub auth_issuer: Option<String>,
@@ -107,6 +110,7 @@ impl std::fmt::Debug for SecurityConfig {
                 "auth_jwt_secret",
                 &self.auth_jwt_secret.as_ref().map(|_| "<redacted>"),
             )
+            .field("auth_jwks_path", &self.auth_jwks_path)
             .field("auth_issuer", &self.auth_issuer)
             .field("auth_audience", &self.auth_audience)
             .field("authorization_policy_path", &self.authorization_policy_path)
@@ -116,29 +120,47 @@ impl std::fmt::Debug for SecurityConfig {
 }
 
 impl SecurityConfig {
-    /// Validate the security configuration.
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        let auth_fields = [
-            self.auth_jwt_secret.is_some(),
-            self.auth_issuer.is_some(),
-            self.auth_audience.is_some(),
-            self.authorization_policy_path.is_some(),
-            self.authorization_schema_path.is_some(),
-        ];
-        if auth_fields.iter().any(|present| *present) && !auth_fields.iter().all(|present| *present)
-        {
-            return Err(ConfigError::Message(
-                "Production security requires auth_jwt_secret, auth_issuer, auth_audience, authorization_policy_path and authorization_schema_path together".to_string(),
-            ));
+    /// Validate only the production auth/authorization bundle.
+    pub fn validate_production_auth(&self) -> Result<(), ConfigError> {
+        let auth_any = self.auth_jwt_secret.is_some()
+            || self.auth_jwks_path.is_some()
+            || self.auth_issuer.is_some()
+            || self.auth_audience.is_some()
+            || self.authorization_policy_path.is_some()
+            || self.authorization_schema_path.is_some();
+        if auth_any {
+            if self.auth_jwt_secret.is_some() == self.auth_jwks_path.is_some() {
+                return Err(ConfigError::Message(
+                    "Production security requires exactly one of auth_jwt_secret or auth_jwks_path"
+                        .to_string(),
+                ));
+            }
+            if self.auth_issuer.is_none()
+                || self.auth_audience.is_none()
+                || self.authorization_policy_path.is_none()
+                || self.authorization_schema_path.is_none()
+            {
+                return Err(ConfigError::Message(
+                    "Production security requires auth_issuer, auth_audience, authorization_policy_path and authorization_schema_path together".to_string(),
+                ));
+            }
         }
         if self.auth_issuer.as_deref().is_some_and(str::is_empty)
             || self.auth_audience.as_deref().is_some_and(str::is_empty)
             || self.auth_jwt_secret.as_deref().is_some_and(str::is_empty)
+            || self.auth_jwks_path.as_deref().is_some_and(str::is_empty)
         {
             return Err(ConfigError::Message(
-                "Production auth issuer, audience and JWT secret cannot be empty".to_string(),
+                "Production auth issuer, audience, JWT secret and JWKS path cannot be empty"
+                    .to_string(),
             ));
         }
+        Ok(())
+    }
+
+    /// Validate the full security configuration.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        self.validate_production_auth()?;
         for origin in &self.cors_allowed_origins {
             if origin.trim().is_empty() {
                 return Err(ConfigError::Message(

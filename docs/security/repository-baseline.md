@@ -174,7 +174,7 @@ HSP-15 dice “rehabilitar solo el mínimo del crate repository necesario”. Es
 - No existe todavía una tabla/almacén de repositorios en producción: HSP-15 aporta el puerto y el lector determinista; HSP-16 aporta la persistencia/escritura.
 - El baseline se ejecutó con el workspace activo; `crates/repository` queda **NOT_RUN** por diseño (no compila).
 - El opt-in `admin_api_enabled=true` exige autenticación/autorización desde HSP-19; sin integración sigue cerrado. La ruta de repositorios no se abre con ese flag.
-- El riesgo residual era **medio** en el commit histórico. Desde HSP-15/16/19 existen gate de identidad, autorización y validación estricta para repositorios y administración; la deuda restante es autenticación productiva (HSP-20) y persistencia durable (HSP-21).
+- El riesgo residual era **medio** en el commit histórico. Desde HSP-15/16/19/20 existen gate de identidad, autorización JWT/Cedar y validación estricta para repositorios y administración; la deuda restante es persistencia durable (HSP-21).
 - El contrato OpenAPI estático ya publica `/v1/repositories` por UUID con esquemas de auth, mientras Axum no sirve ninguna ruta de repositorios. HSP-12/HSP-15 deben reconciliar path, identidad y auth; este baseline no lo resuelve.
 - La decisión no elimina el crate legacy; solo evita convertirlo en dependencia runtime antes de demostrar paridad.
 - El baseline se ejecutó sobre el código de `9eb2bce`; este commit solo añade documentación y el test de ausencia de ruta, por lo que los números son reproducibles desde ese código. No se guardó un log crudo; las cifras salen de la ejecución `cargo test --workspace` y del desglose de `test result` del 2026-11-10.

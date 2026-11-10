@@ -11,3 +11,5 @@ Documentos de seguridad de Hodei Artifacts.
 - [Lectura autorizada de repositorios](security/repository-read.md): ruta, identidad, 404 uniforme y lector read-only.
 
 - [Eventos de auditoría de CreateRepository](security/audit-events.md): identidad/resultado/correlación, redacción y durabilidad best-effort.
+
+- [Autenticación y autorización de producción](security/production-auth.md): JWT HS256/JWKS, Cedar validado y arranque fail-closed.
