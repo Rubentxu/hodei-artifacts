@@ -17,7 +17,14 @@ use std::env;
 /// 3. config/{RUN_MODE}.toml
 /// 4. config/default.toml
 /// 5. Hardcoded defaults
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RepositoryConfig {
+    /// Use the durable SurrealDB adapter instead of the in-memory slice.
+    #[serde(default)]
+    pub durable: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Server configuration
     pub server: ServerConfig,
@@ -25,6 +32,8 @@ pub struct AppConfig {
     /// Security configuration
     #[serde(default)]
     pub security: SecurityConfig,
+    #[serde(default)]
+    pub repository: RepositoryConfig,
 
     /// Database configuration
     pub database: DatabaseConfig,

@@ -24,6 +24,7 @@ pub mod config;
 pub mod handlers;
 pub mod openapi;
 pub mod repository;
+pub mod repository_surreal;
 pub mod router;
 
 pub use app_state::AppState;

@@ -41,3 +41,7 @@ level = "info"
 format = "pretty"
 include_timestamps = true
 include_location = false
+
+[repository]
+# Production uses the durable SurrealDB repository adapter.
+durable = true
