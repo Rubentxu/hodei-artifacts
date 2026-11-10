@@ -181,7 +181,8 @@ fn repository_v1_routes(app_state: AppState) -> Router {
     Router::new()
         .route(
             "/repositories",
-            get(crate::handlers::repositories::get_repository),
+            get(crate::handlers::repositories::get_repository)
+                .post(crate::handlers::repositories::create_repository),
         )
         .with_state(app_state)
 }

@@ -1,4 +1,4 @@
-//! Repository read endpoints.
+//! Repository read/write endpoints.
 //!
 //! This is the first productive use of the shared authorizer: the handler
 //! verifies the bearer credential, derives the account from the verified
@@ -7,12 +7,14 @@
 
 use axum::{
     Json,
+    body::{Body, to_bytes},
     extract::{RawQuery, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, Request, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use hodei_authz::{ActionId, Credentials, VerifiedContext, verify_principal};
 use kernel::Hrn;
+use serde::Deserialize;
 
 use crate::app_state::AppState;
 use crate::repository::RepositoryView;
@@ -23,6 +25,7 @@ pub enum RepositoryApiError {
     Forbidden,
     NotFound,
     BadRequest,
+    Conflict,
     Internal,
     Unavailable,
 }
@@ -34,6 +37,7 @@ impl IntoResponse for RepositoryApiError {
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not found"),
             Self::BadRequest => (StatusCode::BAD_REQUEST, "bad request"),
+            Self::Conflict => (StatusCode::CONFLICT, "conflict"),
             Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
         };
@@ -110,6 +114,112 @@ pub async fn get_repository(
     }
 
     Ok(Json(view))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateRepositoryRequest {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+}
+
+/// `POST /api/v1/repositories`
+pub async fn create_repository(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request<Body>,
+) -> Result<(StatusCode, Json<RepositoryView>), RepositoryApiError> {
+    let token = bearer_token(&headers).ok_or(RepositoryApiError::Unauthorized)?;
+    let principal =
+        match verify_principal(state.authenticator.as_ref(), &Credentials::bearer(token)).await {
+            Ok(principal) => principal,
+            Err(hodei_authz::AuthenticationError::ProviderUnavailable(_)) => {
+                return Err(RepositoryApiError::Unavailable);
+            }
+            Err(_) => return Err(RepositoryApiError::Unauthorized),
+        };
+    let context = VerifiedContext::from_principal(principal);
+
+    // Parse the body only after authentication: a missing/invalid token is
+    // always 401, even if the JSON is malformed.
+    let body = to_bytes(request.into_body(), 1024 * 1024)
+        .await
+        .map_err(|_| RepositoryApiError::BadRequest)?;
+    let request: CreateRepositoryRequest =
+        serde_json::from_slice(&body).map_err(|_| RepositoryApiError::BadRequest)?;
+
+    let name = request.name.trim();
+    if !valid_repository_name(name) {
+        return Err(RepositoryApiError::BadRequest);
+    }
+    if request
+        .description
+        .as_deref()
+        .is_some_and(|description| description.len() > 1024)
+    {
+        return Err(RepositoryApiError::BadRequest);
+    }
+    let region = request.region.as_deref().unwrap_or("global");
+    if !valid_region(region) {
+        return Err(RepositoryApiError::BadRequest);
+    }
+
+    let hrn = Hrn::with_region(
+        "hodei".to_string(),
+        "artifacts".to_string(),
+        region.to_string(),
+        context.account().as_str().to_string(),
+        "repository".to_string(),
+        name.to_string(),
+    );
+    let action =
+        ActionId::new("artifacts", "CreateRepository").map_err(|_| RepositoryApiError::Internal)?;
+    let outcome = state
+        .authorize_resource
+        .execute_canonical(context.clone(), action, &hrn)
+        .map_err(|_| RepositoryApiError::Internal)?;
+    if !outcome.allows_access() {
+        return Err(RepositoryApiError::Forbidden);
+    }
+
+    let view = RepositoryView::new(
+        hrn.to_string(),
+        context.account().as_str().to_string(),
+        name.to_string(),
+        request.description,
+    );
+    let created = state
+        .repository_writer
+        .create(context.account().as_str(), &hrn, view)
+        .await
+        .map_err(|error| match error {
+            crate::repository::RepositoryWriteError::AlreadyExists => RepositoryApiError::Conflict,
+            crate::repository::RepositoryWriteError::Unavailable => RepositoryApiError::Unavailable,
+            crate::repository::RepositoryWriteError::InvalidRequest => RepositoryApiError::Internal,
+        })?;
+
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+fn valid_repository_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name != "."
+        && name != ".."
+        && name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+}
+
+fn valid_region(region: &str) -> bool {
+    !region.is_empty()
+        && region.len() <= 64
+        && region.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
 }
 
 /// Extract exactly one `hrn` from a raw query string and percent-decode it.

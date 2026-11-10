@@ -1,4 +1,4 @@
-# Lectura autorizada de repositorios
+# Lectura y creación autorizadas de repositorios
 
 HSP-15 expone el primer vertical slice productivo: `GET /api/v1/repositories?hrn=<HRN>`.
 
@@ -27,29 +27,40 @@ Authorization: Bearer <token>
 - Lector no disponible → `503`.
 - La respuesta es `RepositoryView` (`hrn`, `account`, `name`, `description`); no incluye credenciales ni datos de almacenamiento.
 
+## Crear un repositorio
+
+`POST /api/v1/repositories` con `Authorization: Bearer` y:
+
+```json
+{"name": "releases", "description": "optional", "region": "eu"}
+```
+
+- La autenticación precede a la deserialización del body: sin token, un JSON inválido sigue siendo `401`.
+- La cuenta sale del principal verificado; el cuerpo **no** admite `account` (`deny_unknown_fields`, rechazo `400`).
+- `name` se valida (no vacío, ≤128, `[A-Za-z0-9._-]`, sin `/` ni `.`/`..`); `description` ≤1024; `region` por defecto `global` y limitada a minúsculas/dígitos/`-`.
+- `AuthorizeResourceUseCase` evalúa `CreateRepository` sobre el HRN canónico de la cuenta del principal; `Deny`/`Indeterminate` → `403` sin escritura.
+- El `RepositoryWriter` hace comprobación de unicidad e inserción bajo **un único lock** (sin TOCTOU). Éxito → `201` + `RepositoryView` con HRN; duplicado → `409`; fallo → `503`.
+- El lector y el escritor comparten el mismo store en el slice; dos peticiones concurrentes equivalentes producen exactamente una entidad.
+
 ## Implementación del slice
 
-- `RepositoryReader` es un puerto read-only; `InMemoryRepositoryReader` es el adaptador determinista del slice y de los tests.
-- `AppState` inyecta el authenticator y el reader con `with_repository_auth`; `CompositionRoot`/bootstrap usan `DenyAllAuthenticator` y un reader vacío hasta que se configure un adaptador real.
+- `RepositoryReader` es el puerto de lectura; `RepositoryWriter` el de creación. `InMemoryRepositoryStore` implementa ambos con un lock único y comprobación de unicidad atómica; `InMemoryRepositoryReader` sigue disponible para escenarios de solo lectura.
+- `AppState` inyecta authenticator/reader con `with_repository_auth` y el writer con `with_repository_writer`; el bootstrap crea **un único** `InMemoryRepositoryStore` compartido por ambos puertos, con `DenyAllAuthenticator` hasta configurar un adaptador real.
 - `AuthorizeResourceUseCase::execute_canonical` convierte el `kernel::Hrn` sin perder paths anidados.
 - La ruta se monta fuera del router administrativo (`admin_v1_routes`), en `repository_v1_routes`.
 
 ## Pruebas
 
-`tests/repository_read.rs` (7 tests in-process con router/config reales):
+`tests/repository_create.rs` (14 tests): create autorizado + readback, body con cuenta rechazado, 401/403/Indeterminate sin escritura, duplicado 409 conservando el original, nombres inválidos, 503 del writer, concurrencia multi-hilo sobre el router y sobre el store atómico, y verificación de que bootstrap comparte reader/writer.
 
-1. permit → `200` con el repositorio real y el reader llamado una vez;
-2. token ausente/inválido → `401` sin reader;
-3. identidad válida sin permiso → `403` sin reader;
-4. recurso de otra cuenta → `404` sin reader ni filtración;
-5. repositorio inexistente en la cuenta → `404` tras consultar el reader;
-6. HRN malformado → `400` sin reader;
-7. authorizer `Indeterminate` → `403` sin reader.
+`tests/repository_read.rs` (13 tests in-process con router/config reales): permit con readback, 401 ausente/inválido, 403 sin permiso y recurso de la misma cuenta no permitido, 404 ajeno/inexistente/no-repositorio con cuerpo uniforme, 400 malformado/sin query, 503 del reader, `WWW-Authenticate`, Indeterminate y ausencia de llamadas al reader en rechazos.
 
 `tests/admin_surface.rs` fija que la ruta sigue respondiendo `401` con `admin_api_enabled` true/false: su gate no es el flag administrativo.
 
 ## Límites
 
-- `InMemoryRepositoryReader` es el adaptador del slice; la persistencia/escritura real es HSP-16. No se reactiva el crate legacy.
+- `InMemoryRepositoryStore` es el adaptador del slice; la persistencia real (SurrealDB) sigue pendiente. No se reactiva el crate legacy.
+- `POST` y `GET` comparten auth/authorizer; el authenticator productivo (JWT/OIDC) sigue pendiente.
 - No hay JWT/OIDC productivo todavía: el authenticator se inyecta; el bootstrap por defecto deniega todo (`401`).
+- El store de creación es en memoria; HSP-18/adaptador de persistencia lo sustituirá.
 - El contrato OpenAPI estático histórico (`/v1/repositories` por UUID) no se ha reconciliado con esta ruta; HSP-18/contrato lo harán.

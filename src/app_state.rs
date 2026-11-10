@@ -13,7 +13,9 @@
 
 use crate::authorization::{AuthorizeResourceUseCase, AuthorizerPort};
 use crate::composition_root::CompositionRoot;
-use crate::repository::{DenyAllAuthenticator, InMemoryRepositoryReader, RepositoryReader};
+use crate::repository::{
+    DenyAllAuthenticator, InMemoryRepositoryStore, RepositoryReader, RepositoryWriter,
+};
 use hodei_authz::PrincipalAuthenticator;
 use hodei_iam::register_iam_schema::ports::RegisterIamSchemaPort;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
@@ -96,6 +98,7 @@ pub struct AppState {
     pub authorize_resource: Arc<AuthorizeResourceUseCase>,
     pub(crate) authenticator: Arc<dyn PrincipalAuthenticator>,
     pub(crate) repository_reader: Arc<dyn RepositoryReader>,
+    pub(crate) repository_writer: Arc<dyn RepositoryWriter>,
 }
 
 impl AppState {
@@ -158,6 +161,7 @@ impl AppState {
         authorization: Arc<dyn AuthorizerPort>,
         authenticator: Arc<dyn PrincipalAuthenticator>,
         repository_reader: Arc<dyn RepositoryReader>,
+        repository_writer: Arc<dyn RepositoryWriter>,
     ) -> Self {
         let authorize_resource = Arc::new(AuthorizeResourceUseCase::new(authorization.clone()));
         Self {
@@ -180,6 +184,7 @@ impl AppState {
             authorize_resource,
             authenticator,
             repository_reader,
+            repository_writer,
         }
     }
 
@@ -199,7 +204,10 @@ impl AppState {
     pub fn from_composition_root(schema_version: String, root: CompositionRoot) -> Self {
         let authorization = root.authorization;
         let authenticate = Arc::new(DenyAllAuthenticator);
-        let repository_reader = Arc::new(InMemoryRepositoryReader::empty());
+        // Reader and writer share one store in the production wiring.
+        let repository_store = Arc::new(InMemoryRepositoryStore::empty());
+        let repository_reader: Arc<dyn RepositoryReader> = repository_store.clone();
+        let repository_writer: Arc<dyn RepositoryWriter> = repository_store;
         Self {
             schema_version,
             register_entity_type: root.policy_ports.register_entity_type,
@@ -220,6 +228,7 @@ impl AppState {
             authorization,
             authenticator: authenticate,
             repository_reader,
+            repository_writer,
         }
     }
 
@@ -230,7 +239,7 @@ impl AppState {
         self
     }
 
-    /// Inject the credential verifier and repository reader for the read route.
+    /// Inject the credential verifier and repository reader for read/create.
     pub fn with_repository_auth(
         mut self,
         authenticator: Arc<dyn PrincipalAuthenticator>,
@@ -238,6 +247,18 @@ impl AppState {
     ) -> Self {
         self.authenticator = authenticator;
         self.repository_reader = repository_reader;
+        self
+    }
+
+    /// Inject the writer used by the create route.
+    pub fn with_repository_writer(mut self, repository_writer: Arc<dyn RepositoryWriter>) -> Self {
+        self.repository_writer = repository_writer;
+        self
+    }
+
+    /// Replace only the credential verifier, keeping the shared default store.
+    pub fn with_authenticator(mut self, authenticator: Arc<dyn PrincipalAuthenticator>) -> Self {
+        self.authenticator = authenticator;
         self
     }
 }
