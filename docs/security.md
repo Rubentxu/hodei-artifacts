@@ -17,3 +17,5 @@ Documentos de seguridad de Hodei Artifacts.
 - [Persistencia durable de repositorios](security/repository-durable.md): adaptador SurrealDB, unicidad y configuración.
 
 - [Scope de cuenta en IAM](security/iam-account-scope.md): handlers, prefijo persistido y backfill.
+
+- [Un solo parser HRN](security/hrn-parser.md): delegación al contrato y parser explícito de acciones.

@@ -241,7 +241,7 @@ fn convert_to_command(
     let principal = Hrn::from_string(&request.request.principal)
         .ok_or_else(|| format!("Invalid principal HRN: {}", request.request.principal))?;
 
-    let action = Hrn::from_string(&request.request.action)
+    let action = Hrn::from_action_string(&request.request.action)
         .ok_or_else(|| format!("Invalid action HRN: {}", request.request.action))?;
 
     let resource = Hrn::from_string(&request.request.resource)

@@ -175,34 +175,44 @@ impl Hrn {
     /// Acepta tanto el HRN v2 como su alias v1 (región vacía). Cualquier otra
     /// forma se rechaza.
     pub fn from_string(hrn_str: &str) -> Option<Self> {
-        let parts: Vec<&str> = hrn_str.split(':').collect();
-        if parts.len() != 6 || parts[0] != "hrn" {
+        // Delegate resource parsing to the single canonical contract. Keeping
+        // a second, more permissive parser here let the HTTP edge accept shapes
+        // that authorization rejected later.
+        let parsed = hodei_hrn::Hrn::from_string(hrn_str)?;
+        Some(Self {
+            partition: parsed.partition().to_string(),
+            service: parsed.service().to_string(),
+            region: parsed.region().to_string(),
+            account_id: parsed.account().to_string(),
+            resource_type: parsed.resource_type().to_string(),
+            resource_id: parsed.resource_path().to_string(),
+        })
+    }
+
+    /// Parse the separate action identity. Actions are verbs, not resources;
+    /// the canonical resource parser intentionally rejects them, so callers
+    /// that model an action as an Hrn use this explicit constructor.
+    pub fn from_action_string(input: &str) -> Option<Self> {
+        let parts: Vec<&str> = input.split(':').collect();
+        if parts.len() != 6
+            || parts[0] != "hrn"
+            || parts[1].is_empty()
+            || parts[2].is_empty()
+            || parts[4].is_empty()
+        {
             return None;
         }
-
-        let resource_parts: Vec<&str> = parts[5].splitn(2, '/').collect();
-        if resource_parts.len() != 2 {
+        let resource: Vec<&str> = parts[5].splitn(2, '/').collect();
+        if resource.len() != 2 || resource[0] != "Action" || resource[1].is_empty() {
             return None;
         }
-
-        if parts[1].is_empty() || parts[2].is_empty() || parts[4].is_empty() {
-            return None;
-        }
-
-        // The resource type and the resource id are both mandatory: an HRN
-        // without them does not identify anything, so accepting it would
-        // create identities that collide with each other.
-        if resource_parts[0].is_empty() || resource_parts[1].is_empty() {
-            return None;
-        }
-
-        Some(Hrn {
+        Some(Self {
             partition: parts[1].to_string(),
             service: Self::normalize_service_name(parts[2]),
             region: parts[3].to_string(),
             account_id: parts[4].to_string(),
-            resource_type: resource_parts[0].to_string(),
-            resource_id: resource_parts[1].to_string(),
+            resource_type: "Action".to_string(),
+            resource_id: resource[1].to_string(),
         })
     }
 
@@ -617,4 +627,14 @@ mod tests {
             "a v1 hrn must not gain a region field: {serialized}"
         );
     }
+}
+
+#[test]
+fn canonical_resource_parser_rejects_actions_and_lax_paths() {
+    assert!(Hrn::from_string("hrn:hodei:api::default:Action/read").is_none());
+    assert!(Hrn::from_string("hrn:hodei:artifacts:eu:acme:repository/releases//v2").is_none());
+    let action = Hrn::from_action_string("hrn:hodei:api::default:Action/read")
+        .expect("the explicit action parser accepts action identities");
+    assert!(action.is_action());
+    assert_eq!(action.resource_id, "read");
 }
