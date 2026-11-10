@@ -6,6 +6,7 @@ Tipos, errores y utilidades compartidas para consistencia transversal en todo el
 
 Este crate contiene:
 - **Tipos de dominio comunes** (HRN, PackageCoordinates, etc.)
+  - Migración source-aware de HRN persistidos: [HRN_MIGRATION.md](HRN_MIGRATION.md)
 - **Enums compartidos** (ArtifactType, HashAlgorithm, etc.)
 - **Estructuras de datos** (ContentHash, Lifecycle, etc.)
 - **Utilidades de seguridad** (validación, autorización)

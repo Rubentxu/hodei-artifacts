@@ -30,6 +30,7 @@
 pub mod attributes;
 pub mod entity;
 pub mod hrn;
+pub mod hrn_migration;
 pub mod policy;
 pub mod value_objects;
 
@@ -42,6 +43,7 @@ pub use entity::{
     Principal, Resource,
 };
 pub use hrn::Hrn;
+pub use hrn_migration::{HrnMigrationError, HrnSource, MigratedHrn};
 
 // Re-export de Value Objects para uso ergonómico
 pub use value_objects::{AttributeName, ResourceTypeName, ServiceName, ValidationError};

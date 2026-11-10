@@ -1,0 +1,34 @@
+[
+  {
+    "name": "artifacts_v2_acme",
+    "stored": "hrn:hodei:artifacts:eu-west-1:acme:repository/releases",
+    "source": "ArtifactsV2",
+    "canonical": "hrn:hodei:artifacts:eu-west-1:acme:repository/releases"
+  },
+  {
+    "name": "artifacts_v1_acme",
+    "stored": "hrn:hodei:artifacts::acme:repository/releases",
+    "source": "ArtifactsV1",
+    "canonical": "hrn:hodei:artifacts::acme:repository/releases"
+  },
+  {
+    "name": "authz_v01_tenant_a",
+    "stored": "hrn:hodei:iam::tenant-a:User/alice",
+    "expected_account": "tenant-a",
+    "source": "AuthzV01",
+    "canonical": "hrn:hodei:iam::tenant-a:User/alice"
+  },
+  {
+    "name": "legacy_repository",
+    "stored": "hrn:hodei:repository:eu-west-1:acme:repository/releases",
+    "expected_account": "acme",
+    "source": "LegacyRepository",
+    "canonical": "hrn:hodei:artifacts:eu-west-1:acme:repository/releases"
+  },
+  {
+    "name": "nested_path",
+    "stored": "hrn:hodei:artifacts:eu-west-1:acme:repository/releases/v2",
+    "source": "ArtifactsV2",
+    "canonical": "hrn:hodei:artifacts:eu-west-1:acme:repository/releases/v2"
+  }
+]
