@@ -101,6 +101,24 @@ npm install
 npm run dev
 ```
 
+## 🔒 Seguridad por defecto
+
+La superficie administrativa (`/api/v1`: IAM, políticas, esquemas y playground) está **cerrada por defecto** porque el servicio todavía no autentica peticiones. Sin el opt-in explícito, toda petición no-preflight a una ruta registrada bajo `/api/v1` responde `403` antes de ejecutar ningún handler.
+
+```toml
+[security]
+# Solo detrás de un gateway autenticado mientras se cablea el autorizador real.
+admin_api_enabled = false
+# Lista explícita de orígenes. Vacío = sin acceso cross-origin. '*' se rechaza.
+cors_allowed_origins = []
+```
+
+- `HODEI_SECURITY__ADMIN_API_ENABLED=true` habilita la superficie solo si se asume el riesgo; no sustituye autenticación. Al arrancar se emite un `warn!` explícito.
+- Se responde `403`, no `401`: no existe todavía un esquema de autenticación que emitir en `WWW-Authenticate`. El `401` llegará con el adaptador de autenticación (HSP-8).
+- Los healthchecks (`/health`, `/health/ready`, `/health/live`) y Swagger/OpenAPI siguen públicos. Swagger expone el contrato (rutas y esquemas), no datos ni efectos; no es una frontera de seguridad.
+- El preflight CORS (`OPTIONS`) lo responde la capa CORS exterior y no alcanza ningún handler.
+- `tests/admin_surface.rs` verifica las 12 rutas administrativas con cuerpo de gate, el opt-in explícito, la allowlist CORS (incluido `*` en configuración no validada) y que los healthchecks siguen disponibles.
+
 ## Documentación
 
 - **📖 [Documentación completa](./docs/README.md)**
