@@ -4,12 +4,23 @@
 //! authenticate requests yet, so the default configuration must not expose
 //! them. The tests drive the real router in-process, without binding a port.
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode, header},
 };
+use cedar_policy::Entities;
+use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
+use hodei_authz::cedar::CedarAuthorizer;
+use hodei_authz::hrn_mapper::HrnCedarMapper;
+use hodei_authz::{
+    AccountId, AuthenticationError, Credentials, PrincipalAuthenticator, PrincipalClaims,
+    PrincipalId,
+};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -62,6 +73,113 @@ async fn test_app_with(
 
     let app = build_router(state, &config);
     (app, tmp)
+}
+
+struct AdminAuthenticator;
+
+#[async_trait]
+impl PrincipalAuthenticator for AdminAuthenticator {
+    async fn authenticate(
+        &self,
+        credentials: &Credentials,
+    ) -> Result<PrincipalClaims, AuthenticationError> {
+        let token = match credentials {
+            Credentials::Bearer(token) => token.as_str(),
+            _ => return Err(AuthenticationError::InvalidCredentials),
+        };
+        let name = match token {
+            "alice" => "alice",
+            "bob" => "bob",
+            _ => return Err(AuthenticationError::InvalidCredentials),
+        };
+        Ok(PrincipalClaims::new(
+            PrincipalId::new(format!("hrn:hodei:iam::acme:User/{name}")).unwrap(),
+            AccountId::new("acme").unwrap(),
+        ))
+    }
+}
+
+fn authorizer_with_policy(policy: &str) -> Arc<dyn AuthorizerPort> {
+    Arc::new(SharedAuthorizer::new(Arc::new(
+        CedarAuthorizer::from_policies_unchecked(
+            policy,
+            Entities::empty(),
+            Arc::new(HrnCedarMapper),
+        )
+        .expect("authorizer"),
+    )))
+}
+
+fn admin_authorizer(permit_alice: bool) -> Arc<dyn AuthorizerPort> {
+    let policy = if permit_alice {
+        r#"permit(
+            principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+            action == Admin::Action::"AccessAdminApi",
+            resource
+        );"#
+    } else {
+        ""
+    };
+    authorizer_with_policy(policy)
+}
+
+async fn test_app_with_admin_policy(admin_enabled: bool, policy: &str) -> (Router, TempDir) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let mut config = AppConfig::default();
+    config.security.admin_api_enabled = admin_enabled;
+    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+
+    let state = bootstrap(
+        &config,
+        BootstrapConfig {
+            register_iam_schema: false,
+            schema_version: None,
+            validate_schemas: false,
+        },
+    )
+    .await
+    .expect("bootstrap")
+    .with_authenticator(Arc::new(AdminAuthenticator))
+    .with_authorization(authorizer_with_policy(policy));
+    (build_router(state, &config), tmp)
+}
+
+async fn test_app_with_admin_auth(permit_alice: bool) -> (Router, TempDir) {
+    let policy = if permit_alice {
+        r#"permit(
+            principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+            action == Admin::Action::"AccessAdminApi",
+            resource
+        );"#
+    } else {
+        ""
+    };
+    test_app_with_admin_policy(true, policy).await
+}
+
+async fn response_of_with_token(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+) -> (StatusCode, String) {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(token) = token {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    let response = app
+        .clone()
+        .oneshot(builder.body(Body::from("{}")).expect("request"))
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
 async fn response_of(app: &Router, method: &str, uri: &str) -> (StatusCode, String) {
@@ -143,14 +261,113 @@ async fn cors_does_not_allow_arbitrary_origins_by_default() {
 }
 
 #[tokio::test]
-async fn administrative_routes_can_be_enabled_explicitly() {
+async fn administrative_routes_require_a_configured_authenticator_and_authorizer() {
     let (app, _tmp) = test_app_with(true, Vec::new()).await;
+    for (method, uri) in ADMIN_ROUTES {
+        let (status, body) = response_of(&app, method, uri).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
+        assert_eq!(body, "administrative API requires authentication");
+    }
+}
 
-    let (status, _body) = response_of(&app, "GET", "/api/v1/schemas/load").await;
+#[tokio::test]
+async fn anonymous_requests_are_401_when_admin_auth_is_configured() {
+    let (app, _tmp) = test_app_with_admin_auth(true).await;
+    for (method, uri) in ADMIN_ROUTES {
+        let (status, _body) = response_of_with_token(&app, method, uri, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+    }
+}
+
+#[tokio::test]
+async fn anonymous_admin_request_carries_a_bearer_challenge() {
+    let (app, _tmp) = test_app_with_admin_auth(true).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/schemas/load")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(
-        status,
-        StatusCode::OK,
-        "the explicit opt-in must restore the administrative surface"
+        response.headers().get(header::WWW_AUTHENTICATE).unwrap(),
+        "Bearer"
+    );
+}
+
+#[tokio::test]
+async fn admin_flag_stays_required_when_auth_is_configured() {
+    let (app, _tmp) = test_app_with_admin_policy(
+        false,
+        r#"permit(principal, action == Admin::Action::"AccessAdminApi", resource);"#,
+    )
+    .await;
+    let (status, body) =
+        response_of_with_token(&app, "GET", "/api/v1/schemas/load", Some("alice")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, "administrative API disabled");
+}
+
+#[tokio::test]
+async fn invalid_admin_token_is_401() {
+    let (app, _tmp) = test_app_with_admin_auth(true).await;
+    let (status, _) =
+        response_of_with_token(&app, "GET", "/api/v1/schemas/load", Some("invalid")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_permit_for_one_method_and_path_does_not_grant_another() {
+    let (app, _tmp) = test_app_with_admin_policy(
+        true,
+        r#"permit(
+            principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+            action == Admin::Action::"AccessAdminApi",
+            resource == Admin::AdminApi::"hrn:hodei:admin:global:acme:AdminApi/get/iam/policies"
+        );"#,
+    )
+    .await;
+
+    let (get_status, _) =
+        response_of_with_token(&app, "GET", "/api/v1/iam/policies", Some("alice")).await;
+    assert_eq!(get_status, StatusCode::OK);
+
+    let (post_status, _) =
+        response_of_with_token(&app, "POST", "/api/v1/iam/policies", Some("alice")).await;
+    assert_eq!(
+        post_status,
+        StatusCode::FORBIDDEN,
+        "a GET permit must not grant POST on the same path"
+    );
+}
+
+#[tokio::test]
+async fn identity_without_admin_permission_is_403() {
+    let (app, _tmp) = test_app_with_admin_auth(true).await;
+    let (status, body) =
+        response_of_with_token(&app, "GET", "/api/v1/schemas/load", Some("bob")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body, "administrative permission denied");
+}
+
+#[tokio::test]
+async fn permitted_admin_reaches_schemas_and_playground() {
+    let (app, _tmp) = test_app_with_admin_auth(true).await;
+
+    let (schemas_status, _) =
+        response_of_with_token(&app, "GET", "/api/v1/schemas/load", Some("alice")).await;
+    assert_eq!(schemas_status, StatusCode::OK);
+
+    let (playground_status, _) =
+        response_of_with_token(&app, "POST", "/api/v1/playground/evaluate", Some("alice")).await;
+    assert!(
+        playground_status.is_success()
+            || playground_status == StatusCode::BAD_REQUEST
+            || playground_status == StatusCode::UNPROCESSABLE_ENTITY,
+        "a permitted admin must reach the playground handler, got {playground_status}"
     );
 }
 

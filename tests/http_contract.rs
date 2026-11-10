@@ -68,12 +68,23 @@
 //! Each test bootstraps its own application on a throwaway RocksDB directory,
 //! so tests never share mutable state.
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Method, Request, StatusCode},
 };
+use cedar_policy::Entities;
+use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
+use hodei_authz::cedar::CedarAuthorizer;
+use hodei_authz::hrn_mapper::HrnCedarMapper;
+use hodei_authz::{
+    AccountId, AuthenticationError, Credentials, PrincipalAuthenticator, PrincipalClaims,
+    PrincipalId,
+};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -147,6 +158,37 @@ const IAM_UNATTACHED_PRINCIPAL: &str = "hrn:aws:iam::account-b:User/bob";
 /// The resource the IAM verb is requested on.
 const IAM_EVALUATED_RESOURCE: &str = "hrn:aws:iam::account-a:User/bob";
 
+struct ContractAuthenticator;
+
+#[async_trait]
+impl PrincipalAuthenticator for ContractAuthenticator {
+    async fn authenticate(
+        &self,
+        _credentials: &Credentials,
+    ) -> Result<PrincipalClaims, AuthenticationError> {
+        Ok(PrincipalClaims::new(
+            PrincipalId::new("hrn:hodei:iam::acme:User/contract-admin").unwrap(),
+            AccountId::new("acme").unwrap(),
+        ))
+    }
+}
+
+fn contract_admin_authorizer() -> Arc<dyn AuthorizerPort> {
+    let policy = r#"permit(
+        principal,
+        action == Admin::Action::"AccessAdminApi",
+        resource
+    );"#;
+    Arc::new(SharedAuthorizer::new(Arc::new(
+        CedarAuthorizer::from_policies_unchecked(
+            policy,
+            Entities::empty(),
+            Arc::new(HrnCedarMapper),
+        )
+        .expect("authorizer"),
+    )))
+}
+
 /// Bootstraps the application on a throwaway RocksDB directory.
 ///
 /// The returned `TempDir` must outlive the router: dropping it first would
@@ -175,7 +217,9 @@ async fn test_app() -> (Router, TempDir) {
         },
     )
     .await
-    .expect("bootstrap must succeed for the HTTP contract");
+    .expect("bootstrap must succeed for the HTTP contract")
+    .with_authenticator(Arc::new(ContractAuthenticator))
+    .with_authorization(contract_admin_authorizer());
 
     let app = build_router(state, &config);
     (app, tmp)
@@ -188,7 +232,10 @@ async fn request(
     uri: &str,
     body: Option<Value>,
 ) -> (StatusCode, Value) {
-    let builder = Request::builder().method(method).uri(uri);
+    let builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", "Bearer contract-admin");
 
     let request = match body {
         Some(value) => builder

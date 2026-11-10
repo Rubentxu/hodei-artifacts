@@ -103,23 +103,23 @@ npm run dev
 
 ## 🔒 Seguridad por defecto
 
-La superficie administrativa (`/api/v1`: IAM, políticas, esquemas y playground) está **cerrada por defecto** porque el servicio todavía no autentica esas rutas. Sin el opt-in explícito, toda petición no-preflight a una ruta administrativa registrada bajo `/api/v1` responde `403` antes de ejecutar ningún handler.
+La superficie administrativa (`/api/v1`: IAM, políticas, esquemas y playground) está **cerrada por defecto**. `admin_api_enabled=true` solo la abre si el `AppState` tiene authenticator y authorizer configurados; sin ellos sigue cerrada con `403`. Con integración configurada, una petición anónima recibe `401`, una identidad sin permiso `403` y solo un `permit` Cedar alcanza el handler. Ver [admin-surface.md](docs/security/admin-surface.md).
 
 `GET` y `POST /api/v1/repositories` son rutas de negocio separadas: no las abre `admin_api_enabled`; exigen bearer verificado y responden `401` sin credencial. `POST` emite eventos de auditoría sin credenciales. Ver [repository-read.md](docs/security/repository-read.md) y [audit-events.md](docs/security/audit-events.md).
 
 ```toml
 [security]
-# Solo detrás de un gateway autenticado mientras se cablea el autorizador real.
+# Solo abre la administración con authenticator + authorizer configurados.
 admin_api_enabled = false
 # Lista explícita de orígenes. Vacío = sin acceso cross-origin. '*' se rechaza.
 cors_allowed_origins = []
 ```
 
-- `HODEI_SECURITY__ADMIN_API_ENABLED=true` habilita la superficie solo si se asume el riesgo; no sustituye autenticación. Al arrancar se emite un `warn!` explícito.
-- Las rutas administrativas responden `403` (gate) y no emiten `WWW-Authenticate`; la ruta de repositorios responde `401` con `WWW-Authenticate: Bearer` cuando falta la credencial. El authenticator productivo de esta ruta sigue pendiente de configurar.
+- `HODEI_SECURITY__ADMIN_API_ENABLED=true` no sustituye autenticación: exige authenticator y authorizer efectivos. Si faltan, la superficie permanece cerrada y se registra un `error!`.
+- Con integración configurada, las rutas administrativas responden `401` + `WWW-Authenticate: Bearer` al anónimo y `403` a una identidad sin permiso. La ruta de repositorios mantiene su propio gate y su authenticator productivo llega con HSP-20.
 - Los healthchecks (`/health`, `/health/ready`, `/health/live`) y Swagger/OpenAPI siguen públicos. Swagger expone el contrato (rutas y esquemas), no datos ni efectos; no es una frontera de seguridad.
 - El preflight CORS (`OPTIONS`) lo responde la capa CORS exterior y no alcanza ningún handler.
-- `tests/admin_surface.rs` verifica las 12 rutas administrativas con cuerpo de gate, el opt-in explícito, la allowlist CORS (incluido `*` en configuración no validada) y que los healthchecks siguen disponibles.
+- `tests/admin_surface.rs` verifica las 12 rutas administrativas (anónimo, sin permiso, permitido, flag false/true, método/recurso), la allowlist CORS (incluido `*` en configuración no validada) y que los healthchecks siguen disponibles.
 
 ## Documentación
 

@@ -37,8 +37,8 @@ validate = true
 storage_type = "rocksdb"
 
 [security]
-# The administrative /api/v1 surface is closed until a verified authorizer is
-# wired. Enable only behind an authenticated gateway.
+# The administrative /api/v1 surface stays closed unless an authenticator and
+# authorizer are injected; every request still needs a bearer and Cedar permit.
 admin_api_enabled = false
 # Empty means no cross-origin access. List explicit origins; '*' is rejected.
 cors_allowed_origins = []

@@ -19,7 +19,7 @@ El playground evalúa políticas inline y schemas inline o versionados con fines
 - Sin políticas: el comando se rechaza con `400`; no hay decisión `ALLOW`.
 - Schema incongruente: los errores de validación **fuerzan `DENY`** y se reportan, aunque la condición Cedar casara.
 - `schema_version` inexistente: error de carga (`500` en el handler actual); no se degrada a schema vacío.
-- `admin_api_enabled=true` no autentica; el playground sigue siendo una herramienta administrativa de un despliegue controlado.
+- `admin_api_enabled=true` no autentica por sí solo: el gate exige un authenticator/authorizer configurados y un `permit` Cedar para `Admin::Action::"AccessAdminApi"` sobre la ruta del playground.
 
 ## Pruebas
 

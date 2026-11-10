@@ -113,6 +113,11 @@ pub async fn bootstrap(
     // Step 4: Create AppState from CompositionRoot
     info!("🎯 Creating application state");
     let app_state = AppState::from_composition_root(schema_version.clone(), root);
+    if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
+        tracing::error!(
+            "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"
+        );
+    }
 
     info!(
         "✅ Bootstrap completed successfully (schema version: {})",

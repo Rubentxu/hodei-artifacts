@@ -5,15 +5,57 @@
 //! - an inline evaluation does not create or mutate operational policies;
 //! - a missing policy or a schema mismatch never produces an `ALLOW`.
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode, header},
 };
+use cedar_policy::Entities;
+use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
+use hodei_authz::cedar::CedarAuthorizer;
+use hodei_authz::hrn_mapper::HrnCedarMapper;
+use hodei_authz::{
+    AccountId, AuthenticationError, Credentials, PrincipalAuthenticator, PrincipalClaims,
+    PrincipalId,
+};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
+
+struct PlaygroundAuthenticator;
+
+#[async_trait]
+impl PrincipalAuthenticator for PlaygroundAuthenticator {
+    async fn authenticate(
+        &self,
+        _credentials: &Credentials,
+    ) -> Result<PrincipalClaims, AuthenticationError> {
+        Ok(PrincipalClaims::new(
+            PrincipalId::new("hrn:hodei:iam::acme:User/playground-admin").unwrap(),
+            AccountId::new("acme").unwrap(),
+        ))
+    }
+}
+
+fn playground_admin_authorizer() -> Arc<dyn AuthorizerPort> {
+    let policy = r#"permit(
+        principal,
+        action == Admin::Action::"AccessAdminApi",
+        resource
+    );"#;
+    Arc::new(SharedAuthorizer::new(Arc::new(
+        CedarAuthorizer::from_policies_unchecked(
+            policy,
+            Entities::empty(),
+            Arc::new(HrnCedarMapper),
+        )
+        .expect("authorizer"),
+    )))
+}
 
 async fn test_app(admin_enabled: bool) -> (Router, TempDir) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -34,7 +76,9 @@ async fn test_app(admin_enabled: bool) -> (Router, TempDir) {
         },
     )
     .await
-    .expect("bootstrap must succeed");
+    .expect("bootstrap must succeed")
+    .with_authenticator(Arc::new(PlaygroundAuthenticator))
+    .with_authorization(playground_admin_authorizer());
     (build_router(state, &config), tmp)
 }
 
@@ -45,6 +89,7 @@ async fn post_json(app: &Router, uri: &str, body: Value) -> (StatusCode, Value) 
             Request::builder()
                 .method("POST")
                 .uri(uri)
+                .header(header::AUTHORIZATION, "Bearer playground-admin")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
                 .expect("request"),
@@ -65,6 +110,7 @@ async fn get_json(app: &Router, uri: &str) -> (StatusCode, Value) {
         .oneshot(
             Request::builder()
                 .uri(uri)
+                .header(header::AUTHORIZATION, "Bearer playground-admin")
                 .body(Body::empty())
                 .expect("request"),
         )
