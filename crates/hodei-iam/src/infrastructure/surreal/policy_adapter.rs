@@ -100,6 +100,20 @@ impl<C: surrealdb::Connection> SurrealPolicyAdapter<C> {
     pub fn new(db: Arc<Surreal<C>>) -> Self {
         Self { db }
     }
+
+    /// Ensure the tenant-scoped index exists. Idempotent.
+    pub async fn initialize_scope(&self) -> Result<(), String> {
+        self.db
+            .query(
+                "DEFINE FIELD IF NOT EXISTS account ON policy TYPE option<string>; \
+                 DEFINE INDEX IF NOT EXISTS policy_account ON policy FIELDS account;",
+            )
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -128,9 +142,15 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
         let policy_table = "policy";
         let policy_id = policy_hrn.resource_id();
 
+        let account = command
+            .policy_id
+            .split_once('~')
+            .map(|(account, _)| account)
+            .unwrap_or("default");
         let content_value = serde_json::json!({
             "content": policy.content(),
             "attached_principals": command.attached_principals,
+            "account": account,
         });
 
         let created: Result<Option<HodeiPolicyDbRow>, surrealdb::Error> = self
@@ -292,40 +312,54 @@ impl<C: surrealdb::Connection> PolicyLister for SurrealPolicyAdapter<C> {
         account: &str,
         query: ListPoliciesQuery,
     ) -> Result<ListPoliciesResponse, ListPoliciesError> {
+        let count_query = "SELECT count() FROM policy WHERE account = $account GROUP ALL";
+        let counts: Vec<serde_json::Value> = self
+            .db
+            .query(count_query)
+            .bind(("account", account.to_string()))
+            .await
+            .map_err(|e| ListPoliciesError::RepositoryError(e.to_string()))?
+            .take(0)
+            .map_err(|e| ListPoliciesError::RepositoryError(e.to_string()))?;
+        let total_count = counts
+            .first()
+            .and_then(|value| value.get("count"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+
         let rows: Vec<HodeiPolicyDbRow> = self
             .db
-            .select("policy")
+            .query("SELECT * FROM policy WHERE account = $account ORDER BY id LIMIT $limit START $offset")
+            .bind(("account", account.to_string()))
+            .bind(("limit", query.limit))
+            .bind(("offset", query.offset))
             .await
+            .map_err(|e| ListPoliciesError::RepositoryError(e.to_string()))?
+            .take(0)
             .map_err(|e| ListPoliciesError::RepositoryError(e.to_string()))?;
-        let prefix = format!("{account}~");
-        let mut filtered: Vec<(String, HodeiPolicyDbRow)> = rows
+        let policies = rows
             .into_iter()
-            .filter_map(|row| {
-                let id = short_id(&row.id);
-                let short = id.strip_prefix(&prefix)?.to_string();
-                Some((short, row))
+            .map(|row| {
+                let short = short_id(&row.id);
+                let short = short
+                    .split_once('~')
+                    .map(|(_, id)| id.to_string())
+                    .unwrap_or(short);
+                PolicySummary {
+                    hrn: Hrn::new(
+                        "hodei".to_string(),
+                        "iam".to_string(),
+                        account.to_string(),
+                        "Policy".to_string(),
+                        short.clone(),
+                    ),
+                    name: short,
+                    description: None,
+                }
             })
             .collect();
-        filtered.sort_by(|a, b| a.0.cmp(&b.0));
-        let total_count = filtered.len();
-        let page = filtered
-            .into_iter()
-            .skip(query.offset)
-            .take(query.limit)
-            .map(|(short, _row)| PolicySummary {
-                hrn: Hrn::new(
-                    "hodei".to_string(),
-                    "iam".to_string(),
-                    account.to_string(),
-                    "Policy".to_string(),
-                    short.clone(),
-                ),
-                name: short,
-                description: None,
-            })
-            .collect::<Vec<_>>();
         Ok(ListPoliciesResponse {
-            policies: page,
+            policies,
             total_count,
             has_next_page: query.offset + query.limit < total_count,
             has_previous_page: query.offset > 0,
