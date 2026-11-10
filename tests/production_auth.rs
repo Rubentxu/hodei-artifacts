@@ -1,7 +1,5 @@
 //! Production bootstrap with a real JWT verifier and Cedar policy bundle.
 
-use std::sync::Arc;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
