@@ -142,6 +142,14 @@ pub struct EngineRequest<'a> {
     pub resource: &'a dyn HodeiEntity,
     /// Additional context for policy evaluation
     pub context: HashMap<String, serde_json::Value>,
+    /// The action as the active schema declares it.
+    ///
+    /// An action is not only a verb: Cedar allows two namespaced actions to
+    /// share an id, so the namespace is part of the identity. The schema is
+    /// the authority over it, and when a schema is in force this carries the
+    /// uid the schema resolved. Without it the request is evaluated against
+    /// the flat `Action::"<verb>"` form.
+    pub action_uid: Option<cedar_policy::EntityUid>,
 }
 
 impl<'a> EngineRequest<'a> {
@@ -156,12 +164,19 @@ impl<'a> EngineRequest<'a> {
             action,
             resource,
             context: HashMap::new(),
+            action_uid: None,
         }
     }
 
     /// Add context to the request
     pub fn with_context(mut self, context: HashMap<String, serde_json::Value>) -> Self {
         self.context = context;
+        self
+    }
+
+    /// Set the action as the active schema declares it.
+    pub fn with_action_uid(mut self, action_uid: cedar_policy::EntityUid) -> Self {
+        self.action_uid = Some(action_uid);
         self
     }
 

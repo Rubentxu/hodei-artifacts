@@ -1,24 +1,35 @@
 //! The static gate bundle and the persisted IAM evaluator are separate
 //! authorities. A persisted administrative policy must not silently become an
-//! effective permission for repository requests.
+//! effective permission for repository requests, and both circuits have to
+//! reach the same decision for the same request.
+//!
+//! The two circuits are compared over the whole decision matrix — permit,
+//! deny, forbid and indeterminate — because a divergence that only shows up on
+//! one branch of the matrix is a divergence all the same.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use cedar_policy::Entities;
-use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
+use cedar_policy::{Entities, Schema};
+use hodei_artifacts_api::authorization::{
+    AuthorizeResourceUseCase, AuthorizerPort, SharedAuthorizer,
+};
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
 use hodei_authz::{
-    AccountId, AuthenticationError, Credentials, PrincipalAuthenticator, PrincipalClaims,
-    PrincipalId,
+    AccountId, AuthenticationError, AuthorizationOutcome, Credentials, DenyReason,
+    PrincipalAuthenticator, PrincipalClaims, PrincipalId, ResourceRef, VerifiedContext,
+    verify_principal,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
+
+const PRINCIPAL: &str = "hrn:hodei:iam::acme:User/alice";
+const RESOURCE: &str = "hrn:hodei:artifacts:eu:acme:repository/releases";
 
 struct Alice;
 
@@ -30,7 +41,7 @@ impl PrincipalAuthenticator for Alice {
     ) -> Result<PrincipalClaims, AuthenticationError> {
         match credentials {
             Credentials::Bearer(token) if token == "alice" => Ok(PrincipalClaims::new(
-                PrincipalId::new("hrn:hodei:iam::acme:User/alice").unwrap(),
+                PrincipalId::new(PRINCIPAL).unwrap(),
                 AccountId::new("acme").unwrap(),
             )),
             _ => Err(AuthenticationError::InvalidCredentials),
@@ -38,38 +49,169 @@ impl PrincipalAuthenticator for Alice {
     }
 }
 
-async fn app() -> (axum::Router, TempDir) {
+/// The schema both circuits share.
+///
+/// The repository carries an `owner` attribute so a policy can be valid
+/// against the schema and still be impossible to evaluate against an entity
+/// that does not carry it. That is the indeterminate case. Two actions are
+/// declared so a policy can name an action that does not apply to the request
+/// under test, which is the deny case.
+///
+/// The same text feeds the Cedar authorizer and the bundle the deployment
+/// declares, so both circuits really do work on one schema.
+const SHARED_SCHEMA_JSON: &str = r#"{
+  "": { "entityTypes": {}, "actions": {} },
+  "Iam": {
+    "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } },
+    "actions": {}
+  },
+  "Admin": {
+    "entityTypes": { "AdminApi": { "shape": { "type": "Record", "attributes": {} } } },
+    "actions": {
+      "AccessAdminApi": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Admin::AdminApi"]
+        }
+      }
+    }
+  },
+  "Artifacts": {
+    "entityTypes": {
+      "Repository": {
+        "shape": {
+          "type": "Record",
+          "attributes": { "owner": { "type": "String", "required": false } }
+        }
+      }
+    },
+    "actions": {
+      "ReadRepository": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Repository"]
+        }
+      },
+      "CreateRepository": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Repository"]
+        }
+      }
+    }
+  }
+}"#;
+
+/// The permit that opens the administrative surface.
+///
+/// The IAM routes are behind the admin gate, so the bundle has to carry it
+/// for the persisted evaluator to be reachable at all. It is conditioned on
+/// its own action, so it never matches the repository request under test.
+const ADMIN_PERMIT: &str =
+    r#"permit(principal, action == Admin::Action::"AccessAdminApi", resource);"#;
+
+/// The schema both circuits share.
+fn shared_schema() -> Schema {
+    Schema::from_json_str(SHARED_SCHEMA_JSON).expect("the shared schema")
+}
+
+/// The decision each circuit has to reach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expected {
+    /// The policy permits the request.
+    Permit,
+    /// A `forbid` matched the request.
+    Forbid,
+    /// No policy matched the request.
+    NoMatchingPolicy,
+    /// The policy cannot be evaluated against the entity.
+    Indeterminate,
+}
+
+/// One row of the decision matrix.
+struct Case {
+    name: &'static str,
+    policy: &'static str,
+    /// The service the action under test belongs to.
+    service: &'static str,
+    /// The action under test.
+    action: &'static str,
+    expected: Expected,
+    /// Whether the request is allowed.
+    allowed: bool,
+}
+
+const CASES: &[Case] = &[
+    Case {
+        name: "permit",
+        policy: r#"permit(principal, action == Artifacts::Action::"ReadRepository", resource);"#,
+        service: "artifacts",
+        action: "ReadRepository",
+        expected: Expected::Permit,
+        allowed: true,
+    },
+    Case {
+        // The IAM stores one policy per row, and Cedar parses one policy at a
+        // time, so a forbid is stored on its own.
+        name: "forbid",
+        policy: r#"forbid(principal, action == Artifacts::Action::"ReadRepository", resource);"#,
+        service: "artifacts",
+        action: "ReadRepository",
+        expected: Expected::Forbid,
+        allowed: false,
+    },
+    Case {
+        name: "deny",
+        policy: r#"permit(principal, action == Artifacts::Action::"CreateRepository", resource);"#,
+        service: "artifacts",
+        action: "ReadRepository",
+        expected: Expected::NoMatchingPolicy,
+        allowed: false,
+    },
+    Case {
+        // The action under test is one the schema does not declare, so the
+        // gate cannot build the request and stays undecided.
+        name: "indeterminate",
+        policy: "permit(principal, action, resource);",
+        service: "iam",
+        action: "CreateUser",
+        expected: Expected::Indeterminate,
+        allowed: false,
+    },
+];
+
+/// Boot the application with the shared schema declared as the bundle.
+///
+/// The IAM schema is registered too, so the test also proves that registering
+/// it does not displace the bundle: the schema the gate enforces and the
+/// schema the validator applies have to be the same one.
+async fn app(policy: &str) -> (axum::Router, TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = true;
+    config.security.auth_jwt_secret = Some("hsp-28-matrix-secret".to_string());
+    config.security.auth_issuer = Some("https://issuer.example".to_string());
+    config.security.auth_audience = Some("hodei-artifacts".to_string());
     config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
 
-    // Static bundle: it only authorizes the admin surface, not repositories.
-    let policy = r#"permit(
-        principal,
-        action == Admin::Action::"AccessAdminApi",
-        resource
-    );"#;
-    let authorizer: Arc<dyn AuthorizerPort> = Arc::new(SharedAuthorizer::new(Arc::new(
-        CedarAuthorizer::from_policies_unchecked(
-            policy,
-            Entities::empty(),
-            Arc::new(HrnCedarMapper),
-        )
-        .unwrap(),
-    )));
+    let schema_path = tmp.path().join("schema.json");
+    let policy_path = tmp.path().join("policies.cedar");
+    std::fs::write(&schema_path, SHARED_SCHEMA_JSON).unwrap();
+    std::fs::write(&policy_path, format!("{ADMIN_PERMIT}\n{policy}")).unwrap();
+    config.security.authorization_schema_path = Some(schema_path.to_string_lossy().into_owned());
+    config.security.authorization_policy_path = Some(policy_path.to_string_lossy().into_owned());
+
     let state = bootstrap(
         &config,
         BootstrapConfig {
-            register_iam_schema: false,
+            register_iam_schema: true,
             schema_version: None,
             validate_schemas: false,
         },
     )
     .await
     .unwrap()
-    .with_authenticator(Arc::new(Alice))
-    .with_authorization(authorizer);
+    .with_authenticator(Arc::new(Alice));
     (build_router(state, &config), tmp)
 }
 
@@ -104,9 +246,166 @@ async fn call(
     )
 }
 
+/// The gate's decision for one policy set.
+async fn gate_decision(policy: &str, service: &str, action_name: &str) -> AuthorizationOutcome {
+    let authorizer: Arc<dyn AuthorizerPort> = Arc::new(SharedAuthorizer::new(Arc::new(
+        CedarAuthorizer::from_policies(
+            policy,
+            Entities::empty(),
+            Arc::new(HrnCedarMapper),
+            shared_schema(),
+        )
+        .unwrap(),
+    )));
+    let use_case = AuthorizeResourceUseCase::new(authorizer);
+    let context = VerifiedContext::from_principal(
+        verify_principal(&Alice, &Credentials::bearer("alice"))
+            .await
+            .unwrap(),
+    );
+    let action = hodei_authz::ActionId::new(service, action_name).unwrap();
+    let hrn: hodei_authz::hodei_hrn::Hrn = RESOURCE.parse().unwrap();
+    use_case.execute(context, action, ResourceRef::new(hrn).unwrap())
+}
+
+#[tokio::test]
+async fn the_decision_matrix_agrees_across_both_circuits() {
+    for case in CASES {
+        let (app, _tmp) = app(case.policy).await;
+
+        // The gate decides with the bundle schema and the policy set.
+        let outcome = gate_decision(case.policy, case.service, case.action).await;
+        match case.expected {
+            Expected::Permit => assert_eq!(
+                outcome,
+                AuthorizationOutcome::Permit,
+                "the gate must permit: {}",
+                case.name
+            ),
+            Expected::Forbid => assert_eq!(
+                outcome,
+                AuthorizationOutcome::deny(DenyReason::ExplicitForbid),
+                "the gate must forbid: {}",
+                case.name
+            ),
+            Expected::NoMatchingPolicy => assert_eq!(
+                outcome,
+                AuthorizationOutcome::deny(DenyReason::NoMatchingPolicy),
+                "the gate must find no matching policy: {}",
+                case.name
+            ),
+            Expected::Indeterminate => assert!(
+                matches!(outcome, AuthorizationOutcome::Indeterminate(_)),
+                "the gate must be unable to decide: {}, got {outcome:?}",
+                case.name
+            ),
+        }
+        assert_eq!(outcome.allows_access(), case.allowed, "gate: {}", case.name);
+
+        // The IAM circuit stores the same policy set and evaluates the same
+        // request against it.
+        let (status, created) = call(
+            &app,
+            "POST",
+            "/api/v1/iam/policies",
+            Some(json!({
+                "policy_id": format!("case-{}", case.name),
+                "policy_content": case.policy,
+                "attached_principals": [PRINCIPAL]
+            })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the IAM circuit must accept the policy of the case {}: {created:?}",
+            case.name
+        );
+
+        let (status, decision) = call(
+            &app,
+            "POST",
+            "/api/v1/iam/evaluate",
+            Some(json!({
+                "principal_hrn": PRINCIPAL,
+                "action": case.action,
+                "resource_hrn": RESOURCE
+            })),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "evaluate {}: {decision:?}",
+            case.name
+        );
+        let iam_allowed = decision["decision"].as_bool().unwrap_or(false);
+
+        // Both circuits reach the same effective decision.
+        assert_eq!(
+            iam_allowed,
+            case.allowed,
+            "the evaluator disagrees on {}: gate allows {}, the evaluator allows {iam_allowed}",
+            case.name,
+            outcome.allows_access(),
+        );
+    }
+}
+
+#[tokio::test]
+async fn registering_the_iam_schema_does_not_displace_the_bundle_schema() {
+    let (app, _tmp) = app(CASES[0].policy).await;
+
+    // The bundle declares Artifacts::ReadRepository, so a policy that uses it
+    // is valid. The IAM schema does not declare it, so a validator that
+    // selected the IAM schema would reject the very policies the gate
+    // enforces.
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/policies",
+        Some(json!({
+            "policy_id": "bundle-action",
+            "policy_content":
+                "permit(principal, action == Artifacts::Action::\"ReadRepository\", resource);",
+            "attached_principals": [PRINCIPAL]
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the bundle schema must be the one that validates: {created:?}"
+    );
+
+    // The IAM schema declares Iam::CreateUser, but the bundle does not, so
+    // the gate could not enforce it either. The validator has to agree.
+    let (status, rejected) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/policies",
+        Some(json!({
+            "policy_id": "iam-only-action",
+            "policy_content":
+                "permit(principal, action == Iam::Action::\"CreateUser\", resource);",
+            "attached_principals": [PRINCIPAL]
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a policy the gate would reject must not be accepted: {rejected:?}"
+    );
+}
+
 #[tokio::test]
 async fn persisted_iam_policy_does_not_change_the_static_gate() {
-    let (app, _tmp) = app().await;
+    // The gate's bundle opens the admin surface and nothing else, so the
+    // repository surface stays closed.
+    let (app, _tmp) =
+        app(r#"permit(principal, action == Artifacts::Action::"CreateRepository", resource);"#)
+            .await;
 
     let (status, created) = call(
         &app,
@@ -114,8 +413,9 @@ async fn persisted_iam_policy_does_not_change_the_static_gate() {
         "/api/v1/iam/policies",
         Some(json!({
             "policy_id": "diagnostic",
-            "policy_content": "permit(principal, action, resource);",
-            "attached_principals": ["hrn:hodei:iam::acme:User/alice"]
+            "policy_content":
+                "permit(principal, action == Artifacts::Action::\"ReadRepository\", resource);",
+            "attached_principals": [PRINCIPAL]
         })),
     )
     .await;
@@ -127,9 +427,9 @@ async fn persisted_iam_policy_does_not_change_the_static_gate() {
         "POST",
         "/api/v1/iam/evaluate",
         Some(json!({
-            "principal_hrn": "hrn:hodei:iam::acme:User/alice",
-            "action": "CreateUser",
-            "resource_hrn": "hrn:hodei:iam::acme:User/bob"
+            "principal_hrn": PRINCIPAL,
+            "action": "ReadRepository",
+            "resource_hrn": RESOURCE
         })),
     )
     .await;

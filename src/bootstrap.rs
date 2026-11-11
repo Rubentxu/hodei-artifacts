@@ -21,7 +21,9 @@ use std::fs;
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
 use hodei_iam::register_iam_schema::dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};
 use hodei_policies::build_schema::error::BuildSchemaError;
-use hodei_policies::build_schema::ports::{SchemaStoragePort, StoredSchema};
+use hodei_policies::build_schema::ports::{
+    AUTHORIZATION_BUNDLE_SCHEMA_ID, SchemaStoragePort, StoredSchema,
+};
 use serde::Deserialize;
 use std::sync::Arc;
 use surrealdb::Surreal;
@@ -110,7 +112,7 @@ pub async fn bootstrap(
         schema_storage
             .save_schema(
                 envelope.to_string(),
-                Some("authorization-bundle".to_string()),
+                Some(AUTHORIZATION_BUNDLE_SCHEMA_ID.to_string()),
             )
             .await
             .map_err(|error| BootstrapError::Security(format!("cannot persist schema: {error}")))?;
@@ -123,7 +125,22 @@ pub async fn bootstrap(
 
     // Step 2: Use Composition Root to create all use case ports
     info!("🏗️  Creating use cases via CompositionRoot");
-    let root = CompositionRoot::production(schema_storage.clone(), policy_adapter);
+    // When the deployment declares a bundle schema, that schema is the one
+    // every policy is validated and evaluated against. Naming it is what
+    // keeps the gate and the persisted evaluator on the same declarations: the
+    // IAM schema registered below would otherwise displace it simply by being
+    // stored later, and the two circuits would validate against different
+    // schemas without anybody deciding that.
+    let authoritative_schema_id = config
+        .security
+        .authorization_schema_path
+        .as_ref()
+        .map(|_| AUTHORIZATION_BUNDLE_SCHEMA_ID.to_string());
+    let root = CompositionRoot::production_with_authoritative_schema(
+        schema_storage.clone(),
+        policy_adapter,
+        authoritative_schema_id,
+    );
 
     // Step 3: Determine schema version
     let schema_version = if bootstrap_config.register_iam_schema {

@@ -32,7 +32,7 @@
 
 use super::translator;
 use super::types::{AuthorizationDecision, EngineError, EngineRequest, PolicyDocument};
-use cedar_policy::{Authorizer, Context, Entities, Policy, PolicySet, Request};
+use cedar_policy::{Authorizer, Context, Entities, Policy, PolicySet, Request, Schema};
 use kernel::HodeiEntity;
 use tracing::{debug, info};
 
@@ -147,6 +147,7 @@ impl AuthorizationEngine {
         &self,
         snapshot: &EvaluationSnapshot,
         request: &EngineRequest<'_>,
+        schema: Option<&Schema>,
     ) -> Result<AuthorizationDecision, EngineError> {
         debug!("Starting authorization evaluation");
 
@@ -159,10 +160,16 @@ impl AuthorizationEngine {
         debug!("Translated entities successfully");
 
         // 2. Build Cedar action EntityUid
-        // The action namespace is flat, the same form the registered schema
-        // declares and the same form `ActionTrait::action_name()` produces.
-        let action_uid = translator::translate_action_to_cedar_euid(request.action)
-            .map_err(|e| EngineError::EvaluationFailed(format!("Invalid action: {}", e)))?;
+        //
+        // The schema is the authority over the action's namespace: it decides
+        // which uid the requested verb denotes. Without a schema in force the
+        // action is the flat form the registered schema declares, which is
+        // what a request carries when no schema governs it.
+        let action_uid = match &request.action_uid {
+            Some(uid) => uid.clone(),
+            None => translator::translate_action_to_cedar_euid(request.action)
+                .map_err(|e| EngineError::EvaluationFailed(format!("Invalid action: {}", e)))?,
+        };
 
         // 3. Build Cedar Context from request context
         let cedar_context = if request.context.is_empty() {
@@ -182,18 +189,19 @@ impl AuthorizationEngine {
             })?
         };
 
-        // 4. Build Cedar Request in schema-less mode
-        // We operate without schema validation, which allows:
-        // - Any principal type to use any action
-        // - Actions defined as strings without ActionTrait types
-        // - Maximum flexibility in policy evaluation
-        // Cedar evaluates policies based on entity attributes and policy conditions
+        // 4. Build the Cedar request.
+        //
+        // Without a schema in force the request is built in schema-less mode:
+        // any principal type may use any action, and the action is just a
+        // string. With a schema in force the request is checked against it,
+        // so the entity types and the action have to conform to what the
+        // schema declares.
         let cedar_request = Request::new(
             principal_cedar.uid().clone(),
             action_uid,
             resource_cedar.uid().clone(),
             cedar_context,
-            None, // Schema-less mode: no type validation
+            schema,
         )
         .map_err(|e| EngineError::EvaluationFailed(format!("Failed to build request: {}", e)))?;
 
@@ -395,7 +403,9 @@ mod tests {
             .expect("snapshot");
 
         let request = EngineRequest::new(&alice, "Read", &alice);
-        let decision = engine.evaluate(&snapshot, &request).expect("decision");
+        let decision = engine
+            .evaluate(&snapshot, &request, None)
+            .expect("decision");
 
         assert!(decision.is_allowed());
         assert_eq!(decision.determining_policies(), ["p1"]);
@@ -408,7 +418,9 @@ mod tests {
         let snapshot = engine.build_snapshot(&[], &[&alice]).expect("snapshot");
 
         let request = EngineRequest::new(&alice, "Read", &alice);
-        let decision = engine.evaluate(&snapshot, &request).expect("decision");
+        let decision = engine
+            .evaluate(&snapshot, &request, None)
+            .expect("decision");
 
         assert!(!decision.is_allowed());
     }
@@ -432,7 +444,9 @@ mod tests {
             .expect("snapshot");
 
         let request = EngineRequest::new(&alice, "Read", &alice);
-        let decision = engine.evaluate(&snapshot, &request).expect("decision");
+        let decision = engine
+            .evaluate(&snapshot, &request, None)
+            .expect("decision");
 
         assert!(!decision.is_allowed());
         assert_eq!(decision.determining_policies(), ["forbid_alice"]);
@@ -457,11 +471,15 @@ mod tests {
             .expect("snapshot");
 
         let request_a = EngineRequest::new(&alice_in_a, "Read", &alice_in_a);
-        let decision_a = engine.evaluate(&snapshot, &request_a).expect("decision a");
+        let decision_a = engine
+            .evaluate(&snapshot, &request_a, None)
+            .expect("decision a");
         assert!(decision_a.is_allowed());
 
         let request_b = EngineRequest::new(&alice_in_b, "Read", &alice_in_b);
-        let decision_b = engine.evaluate(&snapshot, &request_b).expect("decision b");
+        let decision_b = engine
+            .evaluate(&snapshot, &request_b, None)
+            .expect("decision b");
         assert!(
             !decision_b.is_allowed(),
             "a policy scoped to account-a must not grant account-b"
@@ -506,10 +524,12 @@ mod tests {
                     let request = EngineRequest::new(alice.as_ref(), "Read", alice.as_ref());
                     let decision = if index % 2 == 0 {
                         engine
-                            .evaluate(&allow_snapshot, &request)
+                            .evaluate(&allow_snapshot, &request, None)
                             .expect("decision")
                     } else {
-                        engine.evaluate(&deny_snapshot, &request).expect("decision")
+                        engine
+                            .evaluate(&deny_snapshot, &request, None)
+                            .expect("decision")
                     };
                     decision.is_allowed()
                 })

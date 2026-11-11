@@ -22,6 +22,35 @@ pub struct EvaluatePoliciesUseCase {
 
     /// Schema storage port for loading schemas
     schema_storage: Arc<dyn SchemaStoragePort>,
+
+    /// The identity of the schema this deployment declares authoritative.
+    ///
+    /// When a request does not name a schema, this one is used. It is
+    /// selected by identity rather than by being the most recently stored
+    /// one, so a schema registered later cannot displace the declarations the
+    /// gate enforces.
+    authoritative_schema_id: Option<String>,
+}
+
+/// The schema a request is evaluated against, and the version it was stored
+/// under.
+///
+/// The version is reported even when the stored content cannot be decoded:
+/// the record exists, and hiding its version would hide a deployment that
+/// stores something unusable.
+struct LoadedSchema {
+    version: Option<String>,
+    schema: Option<cedar_policy::Schema>,
+}
+
+impl LoadedSchema {
+    /// No schema governs the request.
+    fn empty() -> Self {
+        Self {
+            version: None,
+            schema: None,
+        }
+    }
 }
 
 impl EvaluatePoliciesUseCase {
@@ -34,6 +63,23 @@ impl EvaluatePoliciesUseCase {
         Self {
             engine: AuthorizationEngine::new(),
             schema_storage,
+            authoritative_schema_id: None,
+        }
+    }
+
+    /// Create an evaluation use case that falls back to one named schema.
+    ///
+    /// A request that names a schema still gets that one, because the
+    /// playground asks for a specific version on purpose. A request that
+    /// names none gets the schema the deployment declares authoritative.
+    pub fn with_authoritative_schema(
+        schema_storage: Arc<dyn SchemaStoragePort>,
+        authoritative_schema_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            engine: AuthorizationEngine::new(),
+            schema_storage,
+            authoritative_schema_id: Some(authoritative_schema_id.into()),
         }
     }
 
@@ -88,8 +134,8 @@ impl EvaluatePoliciesUseCase {
 
         // Step 1: Load schema based on evaluation mode
         let schema_result = self.load_schema_for_evaluation(&command).await;
-        let (used_schema_version, diagnostics) = match schema_result {
-            Ok((version, diags)) => (version, diags),
+        let (loaded_schema, diagnostics) = match schema_result {
+            Ok((schema, diags)) => (schema, diags),
             Err(e) => {
                 // In Strict mode, schema load failures are fatal
                 if command.evaluation_mode == EvaluationMode::Strict {
@@ -100,8 +146,23 @@ impl EvaluatePoliciesUseCase {
                     "Schema loading failed but continuing in non-strict mode: {}",
                     e
                 );
-                (None, vec![])
+                (LoadedSchema::empty(), vec![])
             }
+        };
+
+        let used_schema_version = loaded_schema.version.clone();
+
+        // The schema governs the request only when the deployment declares one.
+        //
+        // The schema registered at runtime is scoped to the IAM world, and
+        // the evaluate endpoint accepts generic requests, so applying it
+        // would deny every request outside that world. A deployment that
+        // declares its own bundle says which schema governs its requests, and
+        // only then does the schema decide the action and check the request.
+        let governing_schema = if self.authoritative_schema_id.is_some() {
+            loaded_schema.schema.as_ref()
+        } else {
+            None
         };
 
         // Step 2: Build the immutable snapshot for this request
@@ -133,18 +194,65 @@ impl EvaluatePoliciesUseCase {
         );
 
         // Step 3: Build engine request
-        let engine_request = crate::internal::engine::types::EngineRequest::new(
+        let mut engine_request = crate::internal::engine::types::EngineRequest::new(
             command.request.principal,
             command.request.action,
             command.request.resource,
         )
         .with_context(command.request.context.clone().unwrap_or_default());
 
+        // The schema decides which action the requested verb denotes, so the
+        // request is built with the uid it resolves. An action the schema does
+        // not declare, or one it declares more than once, has no single
+        // answer, and the request is denied rather than answered by picking
+        // one of the candidates.
+        let mut action_failure: Option<String> = None;
+        if let Some(schema) = governing_schema
+            && crate::internal::engine::authority::declares_anything(schema)
+        {
+            match crate::internal::engine::authority::resolve_action(schema, command.request.action)
+            {
+                crate::internal::engine::authority::ActionResolution::Resolved(uid) => {
+                    engine_request = engine_request.with_action_uid(uid);
+                }
+                crate::internal::engine::authority::ActionResolution::NotDeclared => {
+                    warn!(
+                        action = command.request.action,
+                        "The action is not declared in the schema"
+                    );
+                    action_failure = Some(format!(
+                        "the action `{}` is not declared in the schema",
+                        command.request.action
+                    ));
+                }
+                crate::internal::engine::authority::ActionResolution::Ambiguous(candidates) => {
+                    let names: Vec<String> = candidates.iter().map(|uid| uid.to_string()).collect();
+                    warn!(
+                        action = command.request.action,
+                        "The action is ambiguous in the schema"
+                    );
+                    action_failure = Some(format!(
+                        "the action `{}` is declared more than once in the schema: {}",
+                        command.request.action,
+                        names.join(", ")
+                    ));
+                }
+            }
+        }
+
         // Step 4: Evaluate authorization against this request's snapshot
-        let decision = self
-            .engine
-            .evaluate(&snapshot, &engine_request)
-            .map_err(|e| EvaluatePoliciesError::EvaluationError(e.to_string()))?;
+        let decision = match action_failure {
+            Some(reason) => {
+                // The request cannot be checked against the schema that
+                // governs it, so it is denied and the reason says why.
+                info!(reason = %reason, "Denying a request the schema cannot answer");
+                crate::internal::engine::types::AuthorizationDecision::deny_with_reason(reason)
+            }
+            None => self
+                .engine
+                .evaluate(&snapshot, &engine_request, governing_schema)
+                .map_err(|e| EvaluatePoliciesError::EvaluationError(e.to_string()))?,
+        };
 
         debug!(
             decision = decision.is_allowed(),
@@ -217,7 +325,7 @@ impl EvaluatePoliciesUseCase {
         command: &EvaluatePoliciesCommand<'_>,
     ) -> Result<
         (
-            Option<String>,
+            LoadedSchema,
             Vec<crate::features::evaluate_policies::dto::EvaluationDiagnostic>,
         ),
         EvaluatePoliciesError,
@@ -234,13 +342,21 @@ impl EvaluatePoliciesUseCase {
                         policy_id: None,
                     },
                 );
-                Ok((None, diagnostics))
+                Ok((LoadedSchema::empty(), diagnostics))
             }
             EvaluationMode::Strict | EvaluationMode::BestEffortNoSchema => {
+                // The schema a request evaluates against: the one it names, the
+                // one this deployment declares authoritative, or the most
+                // recently stored one when the deployment names none.
+                let requested_version = command.schema_version.clone().or_else(|| {
+                    self.authoritative_schema_id
+                        .as_ref()
+                        .map(|id| id.to_string())
+                });
                 // Try to load the schema
                 let schema_load_result = self
                     .schema_storage
-                    .load_schema(command.schema_version.clone())
+                    .load_schema(requested_version.clone())
                     .await;
 
                 match schema_load_result {
@@ -262,14 +378,51 @@ impl EvaluatePoliciesUseCase {
                             },
                         );
 
-                        // The loaded schema is not applied to the request yet: the
-                        // engine evaluates in schema-less mode. Applying it (and
-                        // making the schema the authority of the action namespace)
-                        // is scheduled for H1b; see
-                        // `ADR/011-h1a-identity-and-decision-core.md` and BASELINE
-                        // defect O8.
-
-                        Ok((version, diagnostics))
+                        // The schema is decoded so it can govern the request:
+                        // it is the authority over which action the requested
+                        // verb denotes, and over whether the request conforms
+                        // at all. A schema that cannot be decoded is a
+                        // deployment failure rather than an unusual request,
+                        // so it is reported: in Strict mode it is fatal, and in
+                        // BestEffort mode the request is evaluated without a
+                        // schema and the diagnostic says so.
+                        match stored_schema.parse() {
+                            Ok(schema) => Ok((
+                                LoadedSchema {
+                                    version,
+                                    schema: Some(schema),
+                                },
+                                diagnostics,
+                            )),
+                            Err(e) => {
+                                if command.evaluation_mode == EvaluationMode::Strict {
+                                    warn!("The stored schema could not be applied: {}", e);
+                                    Err(EvaluatePoliciesError::StrictModeSchemaRequired)
+                                } else {
+                                    warn!(
+                                        "The stored schema could not be applied: {}, continuing without schema",
+                                        e
+                                    );
+                                    diagnostics.push(
+                                        crate::features::evaluate_policies::dto::EvaluationDiagnostic {
+                                            level: DiagnosticLevel::Warning,
+                                            message: format!(
+                                                "The stored schema could not be applied, evaluating without schema: {}",
+                                                e
+                                            ),
+                                            policy_id: None,
+                                        },
+                                    );
+                                    Ok((
+                                        LoadedSchema {
+                                            version,
+                                            schema: None,
+                                        },
+                                        diagnostics,
+                                    ))
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         if command.evaluation_mode == EvaluationMode::Strict {
@@ -291,7 +444,7 @@ impl EvaluatePoliciesUseCase {
                                     policy_id: None,
                                 },
                             );
-                            Ok((None, diagnostics))
+                            Ok((LoadedSchema::empty(), diagnostics))
                         }
                     }
                 }

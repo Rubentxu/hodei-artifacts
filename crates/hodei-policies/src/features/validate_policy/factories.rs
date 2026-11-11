@@ -53,3 +53,17 @@ pub fn create_validate_policy_use_case_with_schema<S: SchemaStoragePort + 'stati
 ) -> Arc<dyn ValidatePolicyPort> {
     Arc::new(ValidatePolicyUseCase::with_schema_storage(schema_storage))
 }
+
+/// Build a validation use case that checks policies against one named schema.
+///
+/// The named schema is the one the deployment declares authoritative, so a
+/// schema registered later cannot displace it.
+pub fn create_validate_policy_use_case_with_authoritative_schema<S: SchemaStoragePort + 'static>(
+    schema_storage: Arc<S>,
+    authoritative_schema_id: impl Into<String>,
+) -> Arc<dyn ValidatePolicyPort> {
+    Arc::new(ValidatePolicyUseCase::with_authoritative_schema(
+        schema_storage,
+        authoritative_schema_id,
+    ))
+}
