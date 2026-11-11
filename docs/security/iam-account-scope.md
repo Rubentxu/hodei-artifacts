@@ -26,7 +26,24 @@ cargo run --bin backfill-iam-scope -- --db data/hodei.rocksdb \
   --mapping backfill.json [--apply]
 ```
 
-El mapping es `{ "legacy-policy-id": "account" }`. Sin `--apply` solo muestra el plan; con `--apply` copia cada fila a `account~policy_id`, conserva contenido/attachments y elimina la fila legacy **solo tras** crear la nueva. Es idempotente y se niega a migrar filas ambiguas (attachments de cuentas distintas) sin mapping explícito.
+El mapping es `{ "legacy-policy-id": "account" }`. Sin `--apply` solo muestra el plan; con `--apply` copia cada fila a `account~policy_id`, conserva contenido/attachments y elimina la fila legacy **solo tras** crear la nueva.
+
+El backfill se apoya en tres garantías:
+
+- **Atomicidad.** La copia y la revocación viajan en una única transacción de SurrealDB, de modo que un fallo entre ambas nunca deja las dos filas vivas ni una política legacy sin scope. La transacción cubre un lote de filas, y un fallo revierte el lote completo.
+- **Titularidad explícita.** La cuenta se toma del mapping o de los `attached_principals`, que deben pertenecer todos a la misma cuenta. Un adjunto que no es un HRN válido hace la fila ambigua en lugar de descartarse en silencio, porque si se ignorara la fila podría migrarse bajo la cuenta de los adjuntos que sí parsean.
+- **Conflictos sin sobrescritura.** Si la fila destino ya existe, se compara su contenido con el de la fila legacy. Si coincide, solo se revoca la legacy; si difiere, la fila se reporta como conflicto y no se toca ni la legacy ni la destino.
+
+El comando sale con código distinto de cero cuando hay filas ambiguas o conflictos, de modo que un pipeline pueda detectar una migración que requiere intervención manual.
+
+### Salida del comando
+
+Cada fila del plan se imprime con su estado (`ready`, `already-migrated`, `ambiguous`, `conflict`) y, cuando el estado lo explica, con el motivo. El resumen final cuenta las filas migradas, revocadas, omitidas, ambiguas y en conflicto:
+
+```text
+legacy-a -> Some("acme~legacy-a") [ready]
+migrated=1 revoked=0 skipped=0 ambiguous=0 conflicts=0 apply=true
+```
 
 ## Verificación
 
@@ -37,6 +54,19 @@ El mapping es `{ "legacy-policy-id": "account" }`. Sin `--apply` solo muestra el
 - cada cuenta lista solo su política.
 
 `tests/http_contract.rs` mantiene el ciclo create/get/update/delete/list/evaluate con la cuenta autenticada.
+
+`tests/iam_backfill.rs` cubre la migración contra un RocksDB real:
+
+- el dry run lista la cuenta propuesta sin escribir nada;
+- el apply copia contenido, attachments y cuenta, y revoca la fila legacy;
+- una segunda pasada no migra nada (idempotencia);
+- un adjunto con HRN inválido hace la fila ambigua;
+- una fila sin adjuntos ni mapping es ambigua;
+- un mapping explícito resuelve una fila sin adjuntos;
+- una fila destino con otra política se reporta como conflicto y no se sobrescribe;
+- una fila destino con la misma política revoca la legacy pendiente;
+- una escritura rechazada por la base de datos revierte el lote completo, sin dejar copias parciales ni filas legacy revocadas a medias;
+- el comando operador se ejecuta contra una base real y publica el plan.
 
 ## Límites
 

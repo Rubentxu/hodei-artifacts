@@ -127,3 +127,8 @@ docs/web-bundles/
 .bmad-core/
 /.github/instructions/copilot-instructions.md
 /docs/repomix-example.md
+
+# The global git ignore excludes any directory named `bin/`, which also
+# captures `src/bin/`. Cargo auto-discovers binaries there, so the rule is
+# negated to keep the operator binaries versioned.
+!/src/bin/
