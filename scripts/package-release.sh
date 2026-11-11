@@ -26,6 +26,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${1:-$ROOT/dist}"
 BIN_NAME="hodei-artifacts-api"
+# The operator command that declares the account index of the IAM policies.
+# It travels with the service because the deployment needs it: the index
+# cannot be declared by the running service, and a deployment that cannot
+# run it would keep scanning the table.
+MIGRATION_BIN_NAME="ensure-iam-index"
 
 cd "$ROOT"
 
@@ -73,11 +78,17 @@ done
 # --- Build ------------------------------------------------------------------
 
 echo "==> building the release binary"
-cargo build --release --bin "$BIN_NAME"
+cargo build --release --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME"
 
 BIN_PATH="$(find "${TARGET_DIR}/release" -maxdepth 1 -type f -name "$BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$BIN_PATH" ]; then
   echo "error: the release binary was not produced" >&2
+  exit 1
+fi
+
+MIGRATION_BIN_PATH="$(find "${TARGET_DIR}/release" -maxdepth 1 -type f -name "$MIGRATION_BIN_NAME" -perm -u+x | head -n 1)"
+if [ -z "$MIGRATION_BIN_PATH" ]; then
+  echo "error: the operator command was not produced" >&2
   exit 1
 fi
 
@@ -88,6 +99,7 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/config"
 
 install -m 0755 "$BIN_PATH" "$STAGE/bin/$BIN_NAME"
+install -m 0755 "$MIGRATION_BIN_PATH" "$STAGE/bin/$MIGRATION_BIN_NAME"
 install -m 0644 "$CONFIG_FILE" "$STAGE/config/default.toml"
 install -m 0644 README.md "$STAGE/README.md"
 install -m 0644 LICENSE "$STAGE/LICENSE"

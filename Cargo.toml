@@ -10,6 +10,12 @@ members = [
     "crates/hodei-policies",
     ".", # Stub implementation - original code in src_disabled_migration_needed/
 ]
+# Crates that live in the tree but are not part of the build. They are
+# legacy: they do not compile against the current kernel, and pretending they
+# are members would make the workspace fail to load.
+exclude = [
+    "crates/policies",
+]
 resolver = "2"
 
 

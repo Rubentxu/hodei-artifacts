@@ -9,6 +9,44 @@ Este proyecto está en estado **pre-GA**. Las versiones publicadas hasta la
 fecha son *baselines reconciliados*: no declaran paridad con Nexus CE ni
 compatibilidad de protocolo completa.
 
+## [No publicado]
+
+Cambios que todavia no estan en una release. El formato sigue
+[Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
+
+### Changed
+
+- **Cambio incompatible**: la accion del playground de politicas se expresa
+  ahora en la forma canonica `Namespace::Action::"nombre"`
+  (`Api::Action::"read"`), que es la que usa el gate. Antes se aceptaba la
+  forma `hrn:<particion>:<servicio>::<cuenta>:Action/<nombre>`, y tambien la
+  grafia `Namespace::Action::nombre` sin comillas, que el parser canonico
+  rechaza.
+- Las respuestas de las politicas IAM (`GET`, `POST`, `PUT` y el listado)
+  incluyen `created_at` y `updated_at` con las marcas que guarda la base de
+  datos. Una fila escrita antes de que existieran las marcas devuelve `null`
+  en esos campos, que es la manera de decir que no hay marca, y no la de
+  inventar una.
+- La CI se segmenta en tres suites -- rapida, de integracion y de
+  infraestructura -- y cada una mide su duracion en el log y en el resumen
+  del job. La suite rapida es la que responde primero en una pull request.
+
+### Added
+
+- `ensure-iam-index`, comando operador que declara el indice `policy_account`
+  de las politicas IAM. Viaja en la distribucion, junto al binario del
+  servicio, y se ejecuta con el servicio detenido: declarar el indice desde
+  el servicio retiene el bloqueo de la base de datos en el proceso.
+
+### Fixed
+
+- El motor de evaluacion aplica el schema que gobierna las peticiones: la
+  accion se resuelve contra el schema y la peticion se construye con el. Una
+  peticion que no encaja con el schema se deniega con el motivo, en vez de
+  responder con un error de servidor.
+- Un schema que no declara ni un tipo de entidad ni una accion ya no rechaza
+  las peticiones: un schema que no dice nada no puede rechazar nada.
+
 ## [0.2.0] - 2026-10-24
 
 Release del roadmap **Hodei Artifacts Graph-First** tras los hitos **H1a** y

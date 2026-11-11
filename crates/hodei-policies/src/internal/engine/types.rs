@@ -116,6 +116,14 @@ pub enum EngineError {
     #[error("Evaluation failed: {0}")]
     EvaluationFailed(String),
 
+    /// The request does not conform to the schema that governs it
+    ///
+    /// It is not an internal failure: the request asks for something the
+    /// schema does not describe, and the answer to that is a denial with a
+    /// reason, not an error the caller cannot act on.
+    #[error("The request does not conform to the schema: {0}")]
+    NonConformantRequest(String),
+
     /// Required entity is not registered
     #[error("Entity not found: {0}")]
     EntityNotFound(String),

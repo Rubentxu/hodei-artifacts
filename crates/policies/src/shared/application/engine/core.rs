@@ -114,11 +114,15 @@ impl AuthorizationEngine {
         );
 
         // 2. Build Cedar action EntityUid
-        let action_hrn = kernel::Hrn::action(
+        //
+        // An action is a verb, not a resource: it has its own identity, and
+        // the Cedar uid is built from it. The kernel no longer has a
+        // constructor that turns a verb into a resource HRN.
+        let action_uid_str = format!(
+            "{}::Action::\"{}\"",
             request.principal_hrn().service(),
-            request.action,
+            request.action
         );
-        let action_uid_str = action_hrn.entity_uid_string();
         let action_uid = EntityUid::from_str(&action_uid_str)
             .map_err(|e| EngineError::EvaluationFailed(format!("Invalid action: {}", e)))?;
 

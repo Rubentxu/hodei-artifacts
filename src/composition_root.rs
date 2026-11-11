@@ -392,8 +392,8 @@ mod tests {
                     PolicyId::new("test-id"),
                     "permit(principal, action, resource);".to_string(),
                 ),
-                created_at: now,
-                updated_at: now,
+                created_at: Some(now),
+                updated_at: Some(now),
             })
         }
     }

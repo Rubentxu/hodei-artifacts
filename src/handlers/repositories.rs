@@ -92,8 +92,7 @@ pub async fn get_repository(
         return Err(RepositoryApiError::NotFound);
     }
 
-    let action = ActionId::new("artifacts", "ReadRepository")
-        .map_err(|_| RepositoryApiError::Unavailable)?;
+    let action = crate::actions::read_repository();
     let outcome = state
         .authorize_resource
         .execute_canonical(context.clone(), action.clone(), &hrn)
@@ -178,8 +177,7 @@ pub async fn create_repository(
         "repository".to_string(),
         name.to_string(),
     );
-    let action =
-        ActionId::new("artifacts", "CreateRepository").map_err(|_| RepositoryApiError::Internal)?;
+    let action = crate::actions::create_repository();
     let outcome =
         match state
             .authorize_resource

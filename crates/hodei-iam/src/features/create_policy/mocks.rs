@@ -243,8 +243,8 @@ impl CreatePolicyPort for MockCreatePolicyPort {
         let now = chrono::Utc::now();
         Ok(crate::features::create_policy::dto::CreatedPolicy {
             policy,
-            created_at: now,
-            updated_at: now,
+            created_at: Some(now),
+            updated_at: Some(now),
         })
     }
 }

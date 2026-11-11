@@ -203,7 +203,18 @@ impl AuthorizationEngine {
             cedar_context,
             schema,
         )
-        .map_err(|e| EngineError::EvaluationFailed(format!("Failed to build request: {}", e)))?;
+        .map_err(|e| {
+            // With a schema in force, a request that does not fit it is not
+            // an internal failure: it is a request the schema does not
+            // describe, and the answer is a denial with a reason.
+            if schema.is_some() {
+                EngineError::NonConformantRequest(format!(
+                    "the request does not conform to the schema: {e}"
+                ))
+            } else {
+                EngineError::EvaluationFailed(format!("Failed to build request: {e}"))
+            }
+        })?;
 
         // 5. Evaluate with Cedar against the request's own snapshot
         let response =

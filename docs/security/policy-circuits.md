@@ -55,10 +55,25 @@ indeterminate— sobre los dos circuitos con el mismo schema y la misma polític
 - una política persistida que concede `ReadRepository` no abre el gate: el gate solo aplica
   su bundle.
 
+## Los resultados que cada circuito puede dar
+
+El gate responde `Permit`, `Deny` —por `forbid` o por no encajar ninguna política— o
+`Indeterminate`, que es cuando Cedar no puede decidir.
+
+El evaluador persistido responde **permitido o denegado**, y su decisión efectiva es la
+misma en los cuatro casos de la matriz. Cuando no puede evaluar, no inventa una decisión:
+una petición que no encaja con el schema se **deniega con el motivo**, y un error de
+evaluación es un error. La comparación entre los dos circuitos es, por tanto, sobre la
+decisión efectiva, no sobre el tipo de resultado.
+
 ## Límites
 
 - El IAM guarda **una política por fila** y Cedar analiza una política cada vez, así que una
   fila no puede contener a la vez un `permit` y un `forbid`: un `forbid` se guarda solo.
 - El gate no recarga el bundle en caliente: el bundle es el snapshot efectivo y cambia con el
   despliegue.
+- El key set de JWKS se lee al arrancar: rotar una clave exige reiniciar el servicio.
+- Una fila escrita antes de que existieran las marcas se actualiza con marca de actualización
+  y sin marca de creación: se sabe cuándo se actualizó por última vez, pero no cuándo se
+  creó. Es lo que hay, y las respuestas lo dicen con un `null` en lugar de inventar una fecha.
 

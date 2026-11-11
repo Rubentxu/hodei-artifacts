@@ -14,6 +14,7 @@
 //! Business logic lives in the bounded contexts (`kernel`, `hodei-iam`,
 //! `hodei-policies`), which are consumed through their port traits.
 
+pub mod actions;
 pub mod app_state;
 pub mod audit;
 pub mod auth;

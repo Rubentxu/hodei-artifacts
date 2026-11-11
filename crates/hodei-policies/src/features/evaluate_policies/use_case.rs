@@ -160,7 +160,10 @@ impl EvaluatePoliciesUseCase {
         // declares its own bundle says which schema governs its requests, and
         // only then does the schema decide the action and check the request.
         let governing_schema = if self.authoritative_schema_id.is_some() {
-            loaded_schema.schema.as_ref()
+            loaded_schema
+                .schema
+                .as_ref()
+                .filter(|schema| crate::internal::engine::authority::declares_anything(schema))
         } else {
             None
         };
@@ -248,10 +251,23 @@ impl EvaluatePoliciesUseCase {
                 info!(reason = %reason, "Denying a request the schema cannot answer");
                 crate::internal::engine::types::AuthorizationDecision::deny_with_reason(reason)
             }
-            None => self
+            None => match self
                 .engine
                 .evaluate(&snapshot, &engine_request, governing_schema)
-                .map_err(|e| EvaluatePoliciesError::EvaluationError(e.to_string()))?,
+            {
+                Ok(decision) => decision,
+                // A request that does not fit the schema that governs it is
+                // denied with the reason, not answered with an error: the
+                // caller asked for something the schema does not describe,
+                // and the gate answers the same way.
+                Err(crate::internal::engine::types::EngineError::NonConformantRequest(reason)) => {
+                    info!(reason = %reason, "Denying a request the schema does not describe");
+                    crate::internal::engine::types::AuthorizationDecision::deny_with_reason(reason)
+                }
+                Err(error) => {
+                    return Err(EvaluatePoliciesError::EvaluationError(error.to_string()));
+                }
+            },
         };
 
         debug!(
