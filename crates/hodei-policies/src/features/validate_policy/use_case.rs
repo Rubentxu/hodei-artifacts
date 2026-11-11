@@ -14,6 +14,12 @@ use tracing::{info, warn};
 pub struct ValidatePolicyUseCase<S: SchemaStoragePort> {
     /// Optional schema storage for schema-based validation
     schema_storage: Option<Arc<S>>,
+    /// The identity of the schema this deployment declares authoritative.
+    ///
+    /// When it is set, that schema is the one every policy is validated
+    /// against, and it is selected by identity rather than by being the most
+    /// recently stored one.
+    authoritative_schema_id: Option<String>,
 }
 
 impl<S: SchemaStoragePort> Default for ValidatePolicyUseCase<S> {
@@ -27,6 +33,7 @@ impl<S: SchemaStoragePort> ValidatePolicyUseCase<S> {
     pub fn new() -> Self {
         Self {
             schema_storage: None,
+            authoritative_schema_id: None,
         }
     }
 
@@ -37,6 +44,23 @@ impl<S: SchemaStoragePort> ValidatePolicyUseCase<S> {
     pub fn with_schema_storage(schema_storage: Arc<S>) -> Self {
         Self {
             schema_storage: Some(schema_storage),
+            authoritative_schema_id: None,
+        }
+    }
+
+    /// Create a use case that validates against one named schema.
+    ///
+    /// The named schema is the one the deployment declares authoritative, so a
+    /// schema registered later cannot displace it. A deployment that names a
+    /// schema which is not stored fails closed: the policies are not reported
+    /// as valid against a schema nobody declared.
+    pub fn with_authoritative_schema(
+        schema_storage: Arc<S>,
+        authoritative_schema_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            schema_storage: Some(schema_storage),
+            authoritative_schema_id: Some(authoritative_schema_id.into()),
         }
     }
 
@@ -47,7 +71,7 @@ impl<S: SchemaStoragePort> ValidatePolicyUseCase<S> {
         self.validate(command).await
     }
 
-    /// Load the latest schema from storage if available
+    /// Load the schema this deployment validates against, if available
     ///
     /// The three outcomes are kept apart on purpose:
     ///
@@ -57,27 +81,48 @@ impl<S: SchemaStoragePort> ValidatePolicyUseCase<S> {
     /// - `Err(..)`: a schema *is* stored but could not be applied. This is
     ///   never downgraded to "no schema": a policy that cannot be checked
     ///   against the schema must not be reported as valid.
+    ///
+    /// A deployment that names an authoritative schema gets exactly that one.
+    /// Selecting the most recently stored schema instead would let a schema
+    /// registered after the bundle displace it, and the gate would then
+    /// enforce declarations the validator never saw.
     async fn load_schema(&self) -> Result<Option<Schema>, ValidatePolicyError> {
         if let Some(ref storage) = self.schema_storage {
-            match storage.get_latest_schema().await {
-                Ok(Some(schema_string)) => {
-                    info!("Retrieved schema from storage for validation");
-                    let schema = crate::internal::engine::schema_codec::decode(&schema_string)
-                        .map_err(|e| {
-                            ValidatePolicyError::ValidationError(format!(
-                                "the stored schema could not be applied: {e}"
-                            ))
-                        })?;
-                    Ok(Some(schema))
-                }
-                Ok(None) => {
-                    warn!("No schema found in storage");
-                    Ok(None)
-                }
-                Err(e) => Err(ValidatePolicyError::ValidationError(format!(
-                    "the stored schema could not be read: {e}"
-                ))),
-            }
+            let schema_string = match &self.authoritative_schema_id {
+                Some(id) => match storage.get_schema_by_version(id).await {
+                    Ok(Some(schema_string)) => schema_string,
+                    Ok(None) => {
+                        return Err(ValidatePolicyError::ValidationError(format!(
+                            "the authoritative schema `{id}` is not stored"
+                        )));
+                    }
+                    Err(e) => {
+                        return Err(ValidatePolicyError::ValidationError(format!(
+                            "the authoritative schema `{id}` could not be read: {e}"
+                        )));
+                    }
+                },
+                None => match storage.get_latest_schema().await {
+                    Ok(Some(schema_string)) => schema_string,
+                    Ok(None) => {
+                        warn!("No schema found in storage");
+                        return Ok(None);
+                    }
+                    Err(e) => {
+                        return Err(ValidatePolicyError::ValidationError(format!(
+                            "the stored schema could not be read: {e}"
+                        )));
+                    }
+                },
+            };
+            info!("Retrieved schema from storage for validation");
+            let schema =
+                crate::internal::engine::schema_codec::decode(&schema_string).map_err(|e| {
+                    ValidatePolicyError::ValidationError(format!(
+                        "the stored schema could not be applied: {e}"
+                    ))
+                })?;
+            Ok(Some(schema))
         } else {
             Ok(None)
         }

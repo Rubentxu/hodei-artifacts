@@ -90,6 +90,38 @@ impl CompositionRoot {
             + hodei_iam::features::evaluate_iam_policies::ports::PolicyFinderPort
             + 'static,
     {
+        Self::production_with_authoritative_schema(schema_storage, policy_adapter, None)
+    }
+
+    /// Build the production composition with one declared authoritative schema.
+    ///
+    /// The identity names the schema every policy is validated and evaluated
+    /// against when a request does not name another one. It is what keeps the
+    /// gate and the persisted evaluator on the same declarations: selecting
+    /// the most recently stored schema would let a schema registered after
+    /// the bundle displace it.
+    ///
+    /// # Argumentos
+    ///
+    /// * `schema_storage` - Adaptador concreto para almacenamiento de esquemas
+    /// * `policy_adapter` - Adaptador concreto para gestión de políticas IAM
+    /// * `authoritative_schema_id` - Identidad del esquema declarado por el
+    ///   despliegue, o `None` cuando el despliegue no declara ninguno
+    pub fn production_with_authoritative_schema<S, P>(
+        schema_storage: Arc<S>,
+        policy_adapter: Arc<P>,
+        authoritative_schema_id: Option<String>,
+    ) -> Self
+    where
+        S: SchemaStoragePort + Clone + 'static,
+        P: hodei_iam::features::create_policy::ports::CreatePolicyPort
+            + hodei_iam::features::get_policy::ports::PolicyReader
+            + hodei_iam::features::list_policies::ports::PolicyLister
+            + hodei_iam::features::update_policy::ports::UpdatePolicyPort
+            + hodei_iam::features::delete_policy::ports::DeletePolicyPort
+            + hodei_iam::features::evaluate_iam_policies::ports::PolicyFinderPort
+            + 'static,
+    {
         info!("🏗️  Initializing Composition Root (Production)");
 
         // ============================================================
@@ -110,17 +142,27 @@ impl CompositionRoot {
 
         // 1.3. Validate policy
         info!("  ├─ ValidatePolicyPort");
-        let validate_policy =
-            hodei_policies::validate_policy::factories::create_validate_policy_use_case_with_schema(
-                schema_storage.clone(),
-            );
+        let validate_policy = match &authoritative_schema_id {
+            Some(id) => hodei_policies::validate_policy::factories::
+                create_validate_policy_use_case_with_authoritative_schema(
+                    schema_storage.clone(),
+                    id.clone(),
+                ),
+            None => hodei_policies::validate_policy::factories::
+                create_validate_policy_use_case_with_schema(schema_storage.clone()),
+        };
 
         // 1.4. Evaluate policies
         info!("  ├─ EvaluatePoliciesPort");
-        let evaluate_policies =
-            hodei_policies::evaluate_policies::factories::create_evaluate_policies_use_case(
-                schema_storage.clone(),
-            );
+        let evaluate_policies = match &authoritative_schema_id {
+            Some(id) => hodei_policies::evaluate_policies::factories::
+                create_evaluate_policies_use_case_with_authoritative_schema(
+                    schema_storage.clone(),
+                    id.clone(),
+                ),
+            None => hodei_policies::evaluate_policies::factories::
+                create_evaluate_policies_use_case(schema_storage.clone()),
+        };
 
         // 1.5. Playground evaluate
         info!("  └─ PlaygroundEvaluatePort");
@@ -192,12 +234,26 @@ impl CompositionRoot {
         let evaluate_iam_policies: Arc<
             dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort,
         > = Arc::new(
-            hodei_iam::features::evaluate_iam_policies::use_case::EvaluateIamPoliciesUseCase::new(
-                iam_policy_finder,
-                entity_resolver.clone(),
-                entity_resolver,
-                schema_storage.clone(),
-            ),
+            match &authoritative_schema_id {
+                Some(id) => {
+                    hodei_iam::features::evaluate_iam_policies::use_case::EvaluateIamPoliciesUseCase::
+                        with_authoritative_schema(
+                            iam_policy_finder,
+                            entity_resolver.clone(),
+                            entity_resolver,
+                            schema_storage.clone(),
+                            id.clone(),
+                        )
+                }
+                None => {
+                    hodei_iam::features::evaluate_iam_policies::use_case::EvaluateIamPoliciesUseCase::new(
+                        iam_policy_finder,
+                        entity_resolver.clone(),
+                        entity_resolver,
+                        schema_storage.clone(),
+                    )
+                }
+            },
         );
 
         let iam_ports = IamPorts {

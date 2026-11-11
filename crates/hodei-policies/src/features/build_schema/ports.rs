@@ -9,6 +9,15 @@ use cedar_policy::Schema;
 use crate::features::build_schema::dto::{BuildSchemaCommand, BuildSchemaResult};
 use crate::features::build_schema::error::BuildSchemaError;
 
+/// The identity under which a deployment stores its authorization bundle schema.
+///
+/// A schema is stored under its own version, so the identity is also the record
+/// id. Naming it is what keeps the bundle authoritative: a reader that selects
+/// "the most recently stored schema" lets any later registration displace the
+/// schema the gate actually enforces, so the two circuits end up validating
+/// against different declarations without anybody deciding that.
+pub const AUTHORIZATION_BUNDLE_SCHEMA_ID: &str = "authorization-bundle";
+
 /// Stored schema data retrieved from storage
 #[derive(Debug, Clone)]
 pub struct StoredSchema {

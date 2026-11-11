@@ -39,3 +39,17 @@ pub fn create_evaluate_policies_use_case(
 ) -> Arc<dyn EvaluatePoliciesPort> {
     Arc::new(EvaluatePoliciesUseCase::new(schema_storage))
 }
+
+/// Build an evaluation use case that falls back to one named schema.
+///
+/// A request that names a schema still gets that one; a request that names
+/// none gets the schema the deployment declares authoritative.
+pub fn create_evaluate_policies_use_case_with_authoritative_schema(
+    schema_storage: Arc<dyn SchemaStoragePort>,
+    authoritative_schema_id: impl Into<String>,
+) -> Arc<dyn EvaluatePoliciesPort> {
+    Arc::new(EvaluatePoliciesUseCase::with_authoritative_schema(
+        schema_storage,
+        authoritative_schema_id,
+    ))
+}

@@ -86,11 +86,51 @@ impl EvaluateIamPoliciesUseCase {
         resource_resolver: Arc<dyn ResourceResolverPort>,
         schema_storage: Arc<dyn SchemaStoragePort>,
     ) -> Self {
+        Self::with_policies_evaluator(
+            policy_finder,
+            principal_resolver,
+            resource_resolver,
+            EvaluatePoliciesUseCase::new(schema_storage),
+        )
+    }
+
+    /// Build an evaluator whose requests are governed by one named schema.
+    ///
+    /// The named schema is the one the deployment declares authoritative, so
+    /// the evaluator resolves the action and checks the request against the
+    /// same declarations the gate enforces. Without it the evaluator would
+    /// select the most recently stored schema, which a later registration can
+    /// displace.
+    pub fn with_authoritative_schema(
+        policy_finder: Arc<dyn PolicyFinderPort>,
+        principal_resolver: Arc<dyn PrincipalResolverPort>,
+        resource_resolver: Arc<dyn ResourceResolverPort>,
+        schema_storage: Arc<dyn SchemaStoragePort>,
+        authoritative_schema_id: impl Into<String>,
+    ) -> Self {
+        Self::with_policies_evaluator(
+            policy_finder,
+            principal_resolver,
+            resource_resolver,
+            EvaluatePoliciesUseCase::with_authoritative_schema(
+                schema_storage,
+                authoritative_schema_id,
+            ),
+        )
+    }
+
+    /// Build an evaluator over an already built policies evaluator.
+    fn with_policies_evaluator(
+        policy_finder: Arc<dyn PolicyFinderPort>,
+        principal_resolver: Arc<dyn PrincipalResolverPort>,
+        resource_resolver: Arc<dyn ResourceResolverPort>,
+        policies_evaluator: EvaluatePoliciesUseCase,
+    ) -> Self {
         Self {
             policy_finder,
             principal_resolver,
             resource_resolver,
-            policies_evaluator: EvaluatePoliciesUseCase::new(schema_storage),
+            policies_evaluator,
         }
     }
 }
