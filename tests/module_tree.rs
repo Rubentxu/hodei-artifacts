@@ -353,11 +353,51 @@ fn orphans(root: &Path, crate_roots: &[&str]) -> (Vec<String>, Walk) {
     (unreached, walked)
 }
 
+/// The crate roots of the application crate.
+///
+/// The library and the binary are roots, and so is every binary under
+/// `src/bin`: rustc compiles each of them as a crate of its own, so they are
+/// part of the build even though no `mod` declaration reaches them. They are
+/// discovered rather than listed, so adding a binary does not mean editing
+/// this test.
+fn crate_roots(root: &Path) -> Vec<String> {
+    let mut roots = vec!["lib.rs".to_string(), "main.rs".to_string()];
+
+    let bin = root.join("bin");
+    let Ok(entries) = fs::read_dir(&bin) else {
+        return roots;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|e| e == "rs") {
+            let name = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            roots.push(name);
+        } else if path.is_dir() {
+            let main = path.join("main.rs");
+            if main.is_file() {
+                let name = main
+                    .strip_prefix(root)
+                    .unwrap_or(&main)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                roots.push(name);
+            }
+        }
+    }
+    roots.sort();
+    roots
+}
+
 /// T1 — every source file of the application crate is part of the build.
 #[test]
 fn t1_every_source_file_under_src_is_reached_from_a_crate_root() {
     let root = src_root();
-    let (unreached, walked) = orphans(&root, &["lib.rs", "main.rs", "bin/backfill-iam-scope.rs"]);
+    let roots = crate_roots(&root);
+    let (unreached, walked) = orphans(&root, &roots.iter().map(String::as_str).collect::<Vec<_>>());
 
     assert!(
         unreached.is_empty(),

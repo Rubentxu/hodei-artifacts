@@ -102,6 +102,12 @@ impl<C: surrealdb::Connection> SurrealPolicyAdapter<C> {
     }
 
     /// Ensure the tenant-scoped index exists. Idempotent.
+    ///
+    /// Defining an index on the local engine keeps the database directory
+    /// locked by the process that defined it, so this cannot run inside the
+    /// service: the service would serve correctly but the same process could
+    /// not open the database again. It belongs to a command of its own, which
+    /// releases the lock when it exits.
     pub async fn initialize_scope(&self) -> Result<(), String> {
         self.db
             .query(
@@ -114,6 +120,39 @@ impl<C: surrealdb::Connection> SurrealPolicyAdapter<C> {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+
+    /// Whether the account index is in place.
+    ///
+    /// The listing filters, counts and paginates by account inside SurrealDB,
+    /// and that query leans on this index. A missing index costs the listing
+    /// its speed, not its isolation, so the answer is reported rather than
+    /// enforced: a deployment that has not run the command still serves
+    /// correctly.
+    pub async fn scope_initialized(&self) -> Result<bool, String> {
+        let mut response = self
+            .db
+            .query("INFO FOR TABLE policy")
+            .await
+            .map_err(|e| e.to_string())?
+            .check()
+            .map_err(|e| e.to_string())?;
+        let info = response
+            .take::<Option<TableInfo>>(0)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        Ok(info.indexes.contains_key(ACCOUNT_INDEX_NAME))
+    }
+}
+
+/// The name of the index the IAM listing relies on.
+pub const ACCOUNT_INDEX_NAME: &str = "policy_account";
+
+/// What the database reports about a table.
+#[derive(Default, Deserialize)]
+struct TableInfo {
+    #[serde(default)]
+    indexes: std::collections::BTreeMap<String, String>,
 }
 
 #[async_trait]

@@ -123,6 +123,27 @@ pub async fn bootstrap(
         schema_storage.db().clone().into(),
     ));
 
+    // The account index of the IAM policies cannot be declared from here:
+    // defining an index on the local engine keeps the database directory
+    // locked by the process that defined it, so the service would serve
+    // correctly but could never open the database again — which breaks
+    // booting twice against the same database. The index belongs to a command
+    // of its own, and a deployment that has not run it is told so, with the
+    // command to run.
+    match policy_adapter.scope_initialized().await {
+        Ok(true) => {}
+        Ok(false) => warn!(
+            "⚠️  The policy account index is missing. The IAM listing still isolates by account, \
+             but it scans the table. Run `cargo run --bin ensure-iam-index -- --db <path>` \
+             (or the released binary with --db) to declare it."
+        ),
+        Err(error) => warn!(
+            "⚠️  The policy account index could not be checked: {}. Run \
+             `cargo run --bin ensure-iam-index -- --db <path>` to declare it.",
+            error
+        ),
+    }
+
     // Step 2: Use Composition Root to create all use case ports
     info!("🏗️  Creating use cases via CompositionRoot");
     // When the deployment declares a bundle schema, that schema is the one
