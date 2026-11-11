@@ -2530,6 +2530,7 @@ dependencies = [
  "bincode",
  "cedar-policy 4.14.1",
  "chrono",
+ "hodei-hrn",
  "serde",
  "serde_json",
  "surrealdb",
