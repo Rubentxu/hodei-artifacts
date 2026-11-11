@@ -22,7 +22,6 @@ use hodei_policies::register_action_type::ports::RegisterActionTypePort;
 use hodei_policies::register_entity_type::dto::RegisterEntityTypeCommand;
 use hodei_policies::register_entity_type::error::RegisterEntityTypeError;
 use hodei_policies::register_entity_type::ports::RegisterEntityTypePort;
-use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 /// What the registration mocks were actually asked to register.
@@ -90,10 +89,6 @@ impl RegisterEntityTypePort for MockRegisterEntityTypePort {
 
         Ok(())
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 /// Mock implementation of RegisterActionTypePort for testing
@@ -148,10 +143,6 @@ impl RegisterActionTypePort for MockRegisterActionTypePort {
         }
 
         Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 

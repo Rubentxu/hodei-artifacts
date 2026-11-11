@@ -186,6 +186,11 @@ const CASES: &[Case] = &[
 /// it does not displace the bundle: the schema the gate enforces and the
 /// schema the validator applies have to be the same one.
 async fn app(policy: &str) -> (axum::Router, TempDir) {
+    app_with_version(policy, None).await
+}
+
+/// The same application, with the IAM schema registered under a version.
+async fn app_with_version(policy: &str, version: Option<&str>) -> (axum::Router, TempDir) {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = true;
@@ -205,7 +210,7 @@ async fn app(policy: &str) -> (axum::Router, TempDir) {
         &config,
         BootstrapConfig {
             register_iam_schema: true,
-            schema_version: None,
+            schema_version: version.map(str::to_string),
             validate_schemas: false,
         },
     )
@@ -582,5 +587,56 @@ async fn a_bundle_that_disagrees_with_the_service_does_not_start() {
     assert!(
         message.contains("Artifacts") && message.contains("Warehouse"),
         "the error must name both namespaces: {message}"
+    );
+}
+
+/// A decision says which schema governed it.
+///
+/// A decision without the version that produced it cannot be attributed: the
+/// same request, evaluated against another version of the schema, can reach
+/// another decision, and then nobody can say which semantics applied.
+///
+/// The deployment declares the bundle authoritative, and a schema is stored
+/// under its own version, so the version that governed the evaluation is the
+/// identity of the bundle.
+#[tokio::test]
+async fn the_evaluation_names_the_schema_that_governed_it() {
+    let (app, _tmp) = app_with_version(
+        r#"permit(principal, action == Artifacts::Action::"ReadRepository", resource);"#,
+        Some("v1"),
+    )
+    .await;
+
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/policies",
+        Some(json!({
+            "policy_id": "versioned",
+            "policy_content":
+                "permit(principal, action == Artifacts::Action::\"ReadRepository\", resource);",
+            "attached_principals": [PRINCIPAL]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create: {created:?}");
+
+    let (status, decision) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/evaluate",
+        Some(json!({
+            "principal_hrn": PRINCIPAL,
+            "action": "ReadRepository",
+            "resource_hrn": RESOURCE
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "evaluate: {decision:?}");
+
+    assert_eq!(
+        decision["schema_version"].as_str(),
+        Some("authorization-bundle"),
+        "the decision must name the schema that governed it: {decision:?}"
     );
 }

@@ -66,6 +66,7 @@ jobs:
           started=$(date +%s)
           cargo test --workspace --lib --bins \
             --test authorization_isolation \
+            --test architecture_fitness \
             --test ci_suites \
             --test hrn_migration \
             --test hrn_parity \

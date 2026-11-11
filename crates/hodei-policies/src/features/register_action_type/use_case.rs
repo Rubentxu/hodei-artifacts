@@ -158,11 +158,6 @@ impl RegisterActionTypeUseCase {
         Ok(())
     }
 
-    /// Downcast helper for accessing the concrete use case
-    pub fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     /// Execute action type registration from a command
     ///
     /// This is the command-based interface that satisfies the port trait. It
@@ -178,10 +173,6 @@ impl RegisterActionTypeUseCase {
 /// Implementation of RegisterActionTypePort trait for RegisterActionTypeUseCase
 #[async_trait]
 impl RegisterActionTypePort for RegisterActionTypeUseCase {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     async fn execute(
         &self,
         command: RegisterActionTypeCommand,

@@ -147,11 +147,6 @@ impl RegisterEntityTypeUseCase {
         Ok(())
     }
 
-    /// Downcast helper for accessing the concrete use case
-    pub fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     /// Execute entity type registration from a command
     ///
     /// This is the command-based interface that satisfies the port trait. It
@@ -167,10 +162,6 @@ impl RegisterEntityTypeUseCase {
 /// Implementation of RegisterEntityTypePort trait for RegisterEntityTypeUseCase
 #[async_trait]
 impl RegisterEntityTypePort for RegisterEntityTypeUseCase {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     async fn execute(
         &self,
         command: RegisterEntityTypeCommand,

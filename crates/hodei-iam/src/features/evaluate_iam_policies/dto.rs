@@ -43,6 +43,15 @@ pub struct EvaluateIamPoliciesResult {
 
     /// The ids of the policies that were consulted.
     pub policy_ids_evaluated: Vec<String>,
+
+    /// The version of the schema that governed the evaluation.
+    ///
+    /// A decision without the version that produced it cannot be attributed:
+    /// the same request, evaluated against another version of the schema, can
+    /// reach another decision, and then nobody can say which semantics
+    /// applied. It is absent when the evaluation ran without a schema, which
+    /// happens when the deployment declares none.
+    pub schema_version: Option<String>,
 }
 
 #[cfg(test)]

@@ -162,6 +162,9 @@ pub struct EvaluateIamPoliciesResponse {
     pub determining_policies: Vec<String>,
     /// The ids of the policies that were consulted
     pub policy_ids_evaluated: Vec<String>,
+    /// The version of the schema that governed the evaluation, when there was
+    /// one
+    pub schema_version: Option<String>,
 }
 /// Response from policy deletion
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -796,6 +799,7 @@ pub async fn evaluate_iam_policies(
     };
     Ok(Json(EvaluateIamPoliciesResponse {
         decision: result.decision,
+        schema_version: result.schema_version,
         reason: result.reason,
         determining_policies: strip(result.determining_policies),
         policy_ids_evaluated: strip(result.policy_ids_evaluated),

@@ -14,12 +14,6 @@ use async_trait::async_trait;
 /// It represents the use case's public interface.
 #[async_trait]
 pub trait RegisterActionTypePort: Send + Sync {
-    /// Downcast to Any for accessing concrete implementation methods
-    ///
-    /// This method is needed to access generic methods like `register<T>()`
-    /// that cannot be expressed in the trait due to Rust's trait object limitations.
-    fn as_any(&self) -> &dyn std::any::Any;
-
     /// Register an action type in the schema builder
     ///
     /// This method adds an action type definition to the accumulating schema builder,
