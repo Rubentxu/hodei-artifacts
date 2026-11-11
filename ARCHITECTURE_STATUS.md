@@ -34,6 +34,7 @@ no llega a ese listón está etiquetado, y la etiqueta dice en qué estado está
 | `crates/hodei-iam` | IAM: usuarios, grupos, políticas; persistencia en SurrealDB. | `implementada` |
 | `crates/hodei-policies` | Motor Cedar: schema, validación, evaluación, registro. | `implementada` |
 | `crates/hodei-evidence` | Contexto de evidencia y registro de eventos (M1): los contratos, sin adapter. | `implementada` |
+| `crates/hodei-evidence-storage` | Los adaptadores de la evidencia sobre el almacen que ya existe. | `implementada` |
 | `.` (`hodei-artifacts-api`) | API HTTP: composición, arranque, rutas, auditoría. | `implementada` |
 
 El kernel no depende de ningún mecanismo concreto: ni SurrealDB, ni Axum, ni
@@ -157,7 +158,30 @@ contenido y version mayor del normalizador-- son campos ✓. Por eso puede
 distinguir una entrega repetida de una revision nueva, y por eso la revision
 no sobrescribe la historia.
 
-## 7. El nucleo no depende de mecanismos concretos
+## 7. El ledger de eventos
+
+`crates/hodei-evidence-storage` implementa el puerto del ledger sobre el
+almacen que el despliegue ya usa. El detalle que lo define: **el
+identificador de un registro del ledger es la posicion que ocupa en su
+corriente** (`event_ledger:corriente~posicion`).
+
+De ahi salen tres cosas a la vez:
+
+- **La unicidad de la posicion es atomica**: es la clave primaria, asi que
+  dos escritores no pueden tomar la misma posicion.
+- **No hace falta ningun indice**, y eso importa mas de lo que parece:
+  definir un indice en el motor local mantiene bloqueado el directorio de
+  la base de datos por el proceso que lo define, de modo que un servicio que
+  declarara un indice en su camino no podria reiniciar nunca. Con la
+  posicion como identificador, el servicio no declara nada.
+- **El orden de una corriente es el orden de sus identificadores**.
+
+El precio se dice con su nombre: leer una corriente es un recorrido de la
+tabla, no una busqueda por indice. A la escala en la que trabaja M1 es el
+canje correcto, y la medida a escala queda para la UAT de M1 en vez de
+darse por supuesta.
+
+## 8. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.
 La persistencia real vive en `crates/hodei-iam/src/infrastructure/surreal/`.
@@ -180,7 +204,7 @@ el **preflight de almacenamiento**, que se invoca aparte al arrancar y
 reporta los fallos del almacenamiento como lo que son: un problema de la
 maquina, no de la configuracion.
 
-## 9. Las comprobaciones de forma
+## 10. Las comprobaciones de forma
 
 Una arquitectura que solo existe en un documento se deshace en el primer
 commit que nadie revisa con cuidado. `tests/architecture_fitness.rs` lee el
@@ -203,7 +227,7 @@ de prueba tiene que estar en exactamente una suite, ninguna suite puede
 nombrar un target que no existe, y el inventario de lo descubierto se
 imprime en el log del job.
 
-## 10. Lo que este documento no dice
+## 11. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté

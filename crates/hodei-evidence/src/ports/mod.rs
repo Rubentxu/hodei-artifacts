@@ -35,14 +35,18 @@ pub trait EvidenceStore: Send + Sync {
 
 /// The position the ledger expects a stream to be at.
 ///
-/// This is the optimistic concurrency of the ledger: the writer says which
-/// position it believes it is writing at, and the ledger refuses when the
-/// stream moved. It is what lets two writers work without a global lock.
+/// This is the optimistic concurrency of the ledger: the writer says where it
+/// believes the stream is, and the ledger refuses when the stream moved. It
+/// is what lets two writers work without a global lock.
+///
+/// The position that was expected is the **last written** one, so the event
+/// that follows goes to the next position. A stream that has no events yet
+/// is `Absent`, and the first event goes to position zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedVersion {
-    /// The stream must be exactly at this position.
+    /// The last written position is this one.
     At(u64),
-    /// The stream must not exist yet.
+    /// The stream has no events yet.
     Absent,
 }
 
@@ -52,6 +56,14 @@ impl ExpectedVersion {
         match self {
             Self::At(position) => current == Some(*position),
             Self::Absent => current.is_none(),
+        }
+    }
+
+    /// The position the next event occupies when the expectation holds.
+    pub fn next_position(&self) -> u64 {
+        match self {
+            Self::At(position) => position + 1,
+            Self::Absent => 0,
         }
     }
 }
@@ -83,12 +95,16 @@ pub enum LedgerError {
 /// The cursor is a position in the history, not an offset into a table. A
 /// consumer that stops and resumes with the same cursor continues where it
 /// left, and it does not miss or repeat an event because the ledger grew.
+///
+/// The position is the one of the **next event to read**, so the cursor at
+/// the beginning of a stream is position zero and the first event of the
+/// stream is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedgerCursor {
     /// The stream the cursor is in.
     pub stream_id: String,
-    /// The position after the last event that was read.
-    pub after_position: u64,
+    /// The position of the next event to read.
+    pub next_position: u64,
 }
 
 impl LedgerCursor {
@@ -96,15 +112,15 @@ impl LedgerCursor {
     pub fn start_of(stream_id: impl Into<String>) -> Self {
         Self {
             stream_id: stream_id.into(),
-            after_position: 0,
+            next_position: 0,
         }
     }
 
-    /// A cursor after an event.
-    pub fn after(stream_id: impl Into<String>, position: u64) -> Self {
+    /// A cursor that continues at a position.
+    pub fn from_position(stream_id: impl Into<String>, position: u64) -> Self {
         Self {
             stream_id: stream_id.into(),
-            after_position: position,
+            next_position: position,
         }
     }
 }
