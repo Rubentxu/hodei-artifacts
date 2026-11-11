@@ -1,6 +1,8 @@
-# Eventos de auditoría de CreateRepository
+# Eventos de auditoría de las mutaciones
 
 El borde de efecto de creación emite un evento estructurado con identidad, acción, recurso, resultado y correlación. El evento **nunca** contiene el bearer ni credenciales.
+
+Quedan auditadas dos superficies: la creación de repositorios, que audita desde el principio, y las mutaciones de la configuración de autorización —alta, modificación y baja de políticas IAM—, que **no** se auditaban y dejaron de dejar rastro. Una mutación de la configuración de autorización es una mutación crítica por definición: decide quién puede hacer qué, y sin rastro no hay forma de reconstruir quien la hizo.
 
 ## Evento
 
@@ -12,7 +14,7 @@ El borde de efecto de creación emite un evento estructurado con identidad, acci
 | `correlation_id` | `x-request-id` validado o UUID generado |
 | `timestamp` | UTC |
 | `actor` | HRN del subject verificado |
-| `action` | `Artifacts::Action::"CreateRepository"` |
+| `action` | `Artifacts::Action::"CreateRepository"`, `CreatePolicy`, `UpdatePolicy`, `DeletePolicy` |
 | `resource` | HRN canónico del repositorio |
 | `result` | `allowed` / `denied` / `conflict` / `failed` |
 
@@ -22,6 +24,25 @@ El borde de efecto de creación emite un evento estructurado con identidad, acci
 - `failed`: `Indeterminate`, error del motor de autorización o fallo del writer; no se completó.
 - Los errores de validación del body (400) ocurren antes del borde de efecto y no emiten evento; el 401 no tiene actor verificado.
 - Sin token no hay actor verificado y no se emite evento de operación (el `401` se rechaza antes).
+
+## Mutaciones de la configuración de autorización
+
+Las tres mutaciones de políticas IAM emiten su evento con la misma forma:
+
+| Operación | `action` | `resource` |
+| --- | --- | --- |
+| Alta | `CreatePolicy` | HRN canónico de la política |
+| Modificación | `UpdatePolicy` | HRN canónico de la política |
+| Baja | `DeletePolicy` | HRN canónico de la política |
+
+Los resultados se distinguen igual que en el resto:
+
+- `allowed`: la política quedó creada, modificada o borrada.
+- `denied`: la operación se rechazó —un principal adjunto de otra cuenta, o una política de otra cuenta— y no se escribió nada.
+- `conflict`: la política ya existía.
+- `failed`: la validación o el almacenamiento fallaron.
+
+La denegación se registra **antes** de responder, y el evento nombra la política de la que se trata aunque la operación no llegue a escribirse: un rechazo que no deja rastro es indistinguible de una petición que nunca ocurrió.
 
 ## Redacción
 
@@ -37,6 +58,12 @@ El token se consume en `verify_principal` y no se pasa al evento ni a `record_au
 
 ## Pruebas
 
+`tests/iam_audit.rs` (3 tests) cubre las mutaciones de la configuración de autorización:
+
+1. las tres mutaciones emiten su evento con actor, acción, recurso y resultado, y con la correlación de la petición;
+2. una mutación rechazada emite `denied` y no `failed`, porque un rechazo y un fallo no son lo mismo;
+3. el evento no contiene el token ni el contenido de la política.
+
 `tests/audit_events.rs` (7 tests):
 
 1. create permitido emite actor/acción/recurso/resultado/correlación y no contiene token;
@@ -49,7 +76,7 @@ El token se consume en `verify_principal` y no se pasa al evento ni a `record_au
 
 ## Límites
 
-- No hay outbox ni almacén de auditoría todavía; la durabilidad de la mutación crítica es una deuda explícita.
+- No hay outbox ni almacén de auditoría todavía; la durabilidad de la mutación crítica es una deuda explícita. Medido: el workspace no tiene outbox, y el sink por defecto escribe campos estructurados en `tracing`. Las mutaciones de la configuración de autorización tienen la misma limite que la creación de repositorios: el evento se emite en el proceso, y un sink caído lo pierde sin cambiar la respuesta.
 - No se envía a Audit Trail remoto; no se implementa E2E de esa plataforma.
 - El `x-request-id` es una correlación de traza; se valida y se devuelve en la respuesta para poder unir log/evento. No es una identidad.
 - La desviación frente a ADR-009 (evento atómico/outbox en mutaciones críticas) es explícita: este slice es best-effort.
