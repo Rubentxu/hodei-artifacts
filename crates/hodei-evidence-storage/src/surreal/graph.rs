@@ -234,14 +234,7 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
     /// nobody can follow.
     async fn apply(&self, changes: GraphChangeSet) -> Result<(), GraphError> {
         for node in &changes.nodes {
-            self.db
-                .query("UPSERT $id CONTENT $content")
-                .bind(("id", self.node_id(&node.id)))
-                .bind(("content", node_row(node)))
-                .await
-                .map_err(|_error| GraphError::Unavailable)?
-                .check()
-                .map_err(|error| GraphError::Rejected(error.to_string()))?;
+            self.upsert(self.node_id(&node.id), node_row(node)).await?;
         }
 
         for relation in &changes.relations {
@@ -258,14 +251,11 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
                 )));
             }
 
-            self.db
-                .query("UPSERT $id CONTENT $content")
-                .bind(("id", self.relation_id(&relation.identity())))
-                .bind(("content", relation_row(relation)))
-                .await
-                .map_err(|_error| GraphError::Unavailable)?
-                .check()
-                .map_err(|error| GraphError::Rejected(error.to_string()))?;
+            self.upsert(
+                self.relation_id(&relation.identity()),
+                relation_row(relation),
+            )
+            .await?;
         }
 
         Ok(())
@@ -278,7 +268,7 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
             self.db
                 .query(format!("REMOVE TABLE IF EXISTS {table}"))
                 .await
-                .map_err(|_error| GraphError::Unavailable)?
+                .map_err(|error| GraphError::Unavailable(error.to_string()))?
                 .check()
                 .map_err(|error| GraphError::Rejected(error.to_string()))?;
         }
@@ -300,7 +290,7 @@ impl<C: Connection> GraphQuery for SurrealGraphStore<C> {
             .bind(("tenant", tenant.to_string()))
             .bind(("kind", kind.as_str().to_string()))
             .await
-            .map_err(|_error| GraphError::Unavailable)?;
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
         let rows: Vec<NodeRow> = response
             .take(0)
             .map_err(|error| GraphError::Rejected(error.to_string()))?;
@@ -324,6 +314,72 @@ impl<C: Connection> GraphQuery for SurrealGraphStore<C> {
         node: &Hrn,
     ) -> Result<Vec<GraphRelation>, GraphError> {
         self.relations_where(tenant, "to", &node.to_string()).await
+    }
+
+    /// The deployments of an artefact.
+    async fn deployments(
+        &self,
+        tenant: &Hrn,
+        artifact: &Hrn,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        let mut deployments = Vec::new();
+        for relation in self.relations_from(tenant, artifact).await? {
+            if relation.relation == hodei_evidence::RelationType::DeployedAs {
+                deployments.extend(
+                    self.node_of_kind(tenant, &relation.to, NodeKind::Deployment)
+                        .await?,
+                );
+            }
+        }
+        Ok(deployments)
+    }
+
+    /// The artefacts a build produced.
+    async fn artifacts_of_build(
+        &self,
+        tenant: &Hrn,
+        build: &Hrn,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        let mut artifacts = Vec::new();
+        for relation in self.relations_to(tenant, build).await? {
+            if relation.relation == hodei_evidence::RelationType::Produced {
+                artifacts.extend(
+                    self.node_of_kind(tenant, &relation.to, NodeKind::Artifact)
+                        .await?,
+                );
+            }
+        }
+        Ok(artifacts)
+    }
+
+    /// The artefacts of a repository.
+    ///
+    /// It is the walk of three saltos: el repositorio, sus revisiones, las
+    /// construcciones que dispararon y los artefactos que produjeron.
+    async fn artifacts_of_repository(
+        &self,
+        tenant: &Hrn,
+        repository: &Hrn,
+    ) -> Result<Vec<GraphNode>, GraphError> {
+        let mut artifacts: Vec<GraphNode> = Vec::new();
+
+        for relation in self.relations_from(tenant, repository).await? {
+            if relation.relation != hodei_evidence::RelationType::HasRevision {
+                continue;
+            }
+            for trigger in self.relations_from(tenant, &relation.to).await? {
+                if trigger.relation != hodei_evidence::RelationType::Triggered {
+                    continue;
+                }
+                for artifact in self.artifacts_of_build(tenant, &trigger.to).await? {
+                    if !artifacts.iter().any(|held| held.id == artifact.id) {
+                        artifacts.push(artifact);
+                    }
+                }
+            }
+        }
+
+        Ok(artifacts)
     }
 
     /// The lineage of an artefact.
@@ -419,11 +475,45 @@ impl<C: Connection> SurrealGraphStore<C> {
             .bind(("tenant", tenant.to_string()))
             .bind(("value", value.to_string()))
             .await
-            .map_err(|_error| GraphError::Unavailable)?;
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
         let rows: Vec<RelationRow> = response
             .take(0)
             .map_err(|error| GraphError::Rejected(error.to_string()))?;
         Ok(rows.iter().filter_map(relation_of).collect())
+    }
+
+    /// Writes a record, and tries again when another writer got there at the
+    /// same moment.
+    async fn upsert<T: serde::Serialize + Clone + Send + Sync + 'static>(
+        &self,
+        id: surrealdb::sql::Thing,
+        content: T,
+    ) -> Result<(), GraphError> {
+        let mut attempts = 0;
+        loop {
+            let written = self
+                .db
+                .query("UPSERT $id CONTENT $content")
+                .bind(("id", id.clone()))
+                .bind(("content", content.clone()))
+                .await
+                .map_err(|error| GraphError::Unavailable(error.to_string()));
+
+            let failure = match written {
+                Ok(response) => response.check().err().map(|error| error.to_string()),
+                Err(error) => Some(error.to_string()),
+            };
+
+            match failure {
+                None => return Ok(()),
+                Some(message)
+                    if crate::is_conflict(&message) && attempts < crate::CONFLICT_RETRIES =>
+                {
+                    attempts += 1;
+                }
+                Some(message) => return Err(GraphError::Rejected(message)),
+            }
+        }
     }
 
     /// Whether the graph has a node with this identity.
@@ -433,7 +523,7 @@ impl<C: Connection> SurrealGraphStore<C> {
             .query("SELECT * FROM $id")
             .bind(("id", self.node_id(id)))
             .await
-            .map_err(|_error| GraphError::Unavailable)?;
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
         let rows: Vec<NodeRow> = response
             .take(0)
             .map_err(|error| GraphError::Rejected(error.to_string()))?;
@@ -453,5 +543,86 @@ impl<C: Connection> SurrealGraphStore<C> {
             .into_iter()
             .filter(|node| &node.id == id)
             .collect())
+    }
+}
+
+/// The row of a checkpoint, as it is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointRow {
+    /// The consumer that projects.
+    pub consumer: String,
+    /// The stream it projects.
+    pub stream_id: String,
+    /// The next position it has to project.
+    pub next_position: i64,
+}
+
+/// The table the checkpoints live in.
+///
+/// It is a table of its own, and not a table of the graph: emptying the
+/// graph to rebuild it does not take the checkpoints with it, because a
+/// checkpoint that disappears with the projection would make the rebuild
+/// start again from the beginning every time.
+pub const CHECKPOINT_TABLE: &str = "projection_checkpoint";
+
+/// The checkpoints of the projections, over the store that already exists.
+pub struct SurrealProjectionCheckpoints<C: Connection> {
+    db: Arc<Surreal<C>>,
+}
+
+impl<C: Connection> SurrealProjectionCheckpoints<C> {
+    /// The checkpoints, over a database.
+    pub fn new(db: Arc<Surreal<C>>) -> Self {
+        Self { db }
+    }
+
+    /// The identifier of the record of a checkpoint.
+    fn checkpoint_id(consumer: &str, stream_id: &str) -> surrealdb::sql::Thing {
+        surrealdb::sql::Thing::from((
+            CHECKPOINT_TABLE.to_string(),
+            format!("{}|{}", escape_id(consumer), escape_id(stream_id)),
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl<C: Connection> hodei_evidence::application::projection::ProjectionCheckpoints
+    for SurrealProjectionCheckpoints<C>
+{
+    /// Where a consumer is.
+    async fn checkpoint(&self, consumer: &str, stream_id: &str) -> Result<Option<u64>, GraphError> {
+        let mut response = self
+            .db
+            .query("SELECT * FROM $id")
+            .bind(("id", Self::checkpoint_id(consumer, stream_id)))
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        let rows: Vec<CheckpointRow> = response
+            .take(0)
+            .map_err(|error| GraphError::Rejected(error.to_string()))?;
+        Ok(rows.first().map(|row| row.next_position.max(0) as u64))
+    }
+
+    /// Says where a consumer is.
+    async fn set_checkpoint(
+        &self,
+        consumer: &str,
+        stream_id: &str,
+        position: u64,
+    ) -> Result<(), GraphError> {
+        let row = CheckpointRow {
+            consumer: consumer.to_string(),
+            stream_id: stream_id.to_string(),
+            next_position: position as i64,
+        };
+        self.db
+            .query("UPSERT $id CONTENT $content")
+            .bind(("id", Self::checkpoint_id(consumer, stream_id)))
+            .bind(("content", row))
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?
+            .check()
+            .map_err(|error| GraphError::Rejected(error.to_string()))?;
+        Ok(())
     }
 }

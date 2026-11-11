@@ -50,6 +50,9 @@ pub enum RebuildError {
     /// The graph could not be written.
     #[error("the graph could not be written: {0}")]
     Graph(String),
+    /// The projector could not project an event.
+    #[error("the projector failed: {0}")]
+    Projector(String),
 }
 
 /// Replays the ledger into a projection and compares it with the one in use.
@@ -98,7 +101,9 @@ where
 
         for event in &page.events {
             report.events_read += 1;
-            let changes = projector.project(event);
+            let changes = projector
+                .project(event)
+                .map_err(|error| RebuildError::Projector(error.to_string()))?;
             if changes.is_empty() {
                 continue;
             }

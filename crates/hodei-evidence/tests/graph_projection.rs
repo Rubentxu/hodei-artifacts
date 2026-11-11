@@ -75,8 +75,8 @@ fn p1_the_projection_is_deterministic() {
     let projector = EvidenceGraphProjector::new();
     let event = accepted_event();
 
-    let first = projector.project(&event);
-    let second = projector.project(&event);
+    let first = projector.project(&event).expect("the event projects");
+    let second = projector.project(&event).expect("the event projects");
 
     assert_eq!(first, second, "the same event projects the same changes");
     assert!(!first.is_empty(), "the event projects something");
@@ -86,7 +86,9 @@ fn p1_the_projection_is_deterministic() {
 #[test]
 fn p2_an_accepted_event_projects_the_nodes_and_the_relation() {
     let projector = EvidenceGraphProjector::new();
-    let changes = projector.project(&accepted_event());
+    let changes = projector
+        .project(&accepted_event())
+        .expect("the event projects");
 
     // The two nodes of the relation, plus the evidence itself.
     let kinds: Vec<&str> = changes
@@ -134,7 +136,10 @@ fn p3_an_event_that_changes_nothing_projects_nothing() {
     .build();
 
     assert!(
-        projector.project(&rejected).is_empty(),
+        projector
+            .project(&rejected)
+            .expect("the event projects")
+            .is_empty(),
         "a rejection is history, not a change"
     );
 }
@@ -143,7 +148,9 @@ fn p3_an_event_that_changes_nothing_projects_nothing() {
 #[test]
 fn p4_a_relation_is_identified_by_its_type_and_its_ends() {
     let projector = EvidenceGraphProjector::new();
-    let changes = projector.project(&accepted_event());
+    let changes = projector
+        .project(&accepted_event())
+        .expect("the event projects");
     let relation = &changes.relations[0];
 
     assert_eq!(

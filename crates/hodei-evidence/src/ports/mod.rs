@@ -102,8 +102,8 @@ pub enum LedgerError {
     #[error("the event cannot be recorded: {0}")]
     InvalidEvent(String),
     /// The store is not available.
-    #[error("the ledger is not available")]
-    Unavailable,
+    #[error("the ledger is not available: {0}")]
+    Unavailable(String),
 }
 
 /// The cursor of a read over the ledger.
@@ -238,8 +238,8 @@ pub trait EventLedger: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
     /// The store is not available.
-    #[error("the evidence store is not available")]
-    Unavailable,
+    #[error("the evidence store is not available: {0}")]
+    Unavailable(String),
     /// The record cannot be stored as it is.
     #[error("the evidence cannot be stored: {0}")]
     InvalidRecord(String),

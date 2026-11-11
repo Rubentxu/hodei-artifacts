@@ -36,6 +36,9 @@ pub mod domain;
 pub mod ports;
 
 pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionRequest};
+pub use application::projection::{
+    ProjectionCheckpoints, ProjectionError, ProjectionReport, project_stream,
+};
 pub use application::projector::{EvidenceGraphProjector, evidence_hrn};
 pub use application::rebuild::{GraphFingerprint, RebuildError, RebuildReport, rebuild_graph};
 pub use domain::content::{ContentDigest, ContentError, ContentRef, DigestAlgorithm};

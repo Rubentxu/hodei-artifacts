@@ -146,7 +146,7 @@ impl<C: Connection> SurrealEventLedger<C> {
             .bind(("table", LEDGER_TABLE.to_string()))
             .bind(("stream", stream_id.to_string()))
             .await
-            .map_err(|_error| LedgerError::Unavailable)?;
+            .map_err(|error| LedgerError::Unavailable(error.to_string()))?;
         let rows: Vec<PositionRow> = response.take(0).map_err(|_error| {
             LedgerError::InvalidEvent("the ledger row could not be read".to_string())
         })?;
@@ -164,7 +164,7 @@ impl<C: Connection> SurrealEventLedger<C> {
             .query("SELECT * FROM $id")
             .bind(("id", Self::record_id(stream_id, position)))
             .await
-            .map_err(|_error| LedgerError::Unavailable)?;
+            .map_err(|error| LedgerError::Unavailable(error.to_string()))?;
         let rows: Vec<LedgerRecord> = response.take(0).map_err(|_error| {
             LedgerError::InvalidEvent("the ledger row could not be read".to_string())
         })?;
@@ -327,7 +327,7 @@ impl<C: Connection> EventLedger for SurrealEventLedger<C> {
             .bind(("next", cursor.next_position as i64))
             .bind(("limit", limit as i64))
             .await
-            .map_err(|_error| LedgerError::Unavailable)?;
+            .map_err(|error| LedgerError::Unavailable(error.to_string()))?;
 
         let rows: Vec<LedgerRecord> = response.take(0).map_err(|_error| {
             LedgerError::InvalidEvent("the ledger row could not be read".to_string())
