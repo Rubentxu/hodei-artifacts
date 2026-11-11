@@ -69,6 +69,7 @@ jobs:
             --test architecture_fitness \
             --test ci_suites \
             --test evidence_contract \
+            --test graph_contract \
             --test graph_projection \
             --test hrn_migration \
             --test hrn_parity \

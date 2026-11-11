@@ -51,8 +51,7 @@ impl fmt::Display for EventId {
 /// The categories are the ones of the plan. Adding one is a compatible
 /// addition; changing the meaning of one is not, and that is what a new
 /// event type and a new schema version are for.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EventType {
     /// Evidence arrived.
     EvidenceReceived,
@@ -108,8 +107,63 @@ pub enum EventType {
     BehaviorSideEffectCompleted,
 
     /// An event this version does not know.
-    #[serde(untagged)]
     Other(String),
+}
+
+impl EventType {
+    /// The type of an event, from the name it is written with.
+    ///
+    /// A name that this version does not know is not an error: it is an
+    /// event of a type that came later, and the history has to be able to
+    /// hold it. That is what `Other` is for.
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "evidence.received" => Self::EvidenceReceived,
+            "evidence.rejected" => Self::EvidenceRejected,
+            "evidence.accepted" => Self::EvidenceAccepted,
+            "evidence.superseded" => Self::EvidenceSuperseded,
+            "evidence.verification_changed" => Self::EvidenceVerificationChanged,
+            "projection.applied" => Self::ProjectionApplied,
+            "projection.failed" => Self::ProjectionFailed,
+            "projection.checkpointed" => Self::ProjectionCheckpointed,
+            "projection.rebuild_started" => Self::ProjectionRebuildStarted,
+            "projection.rebuild_completed" => Self::ProjectionRebuildCompleted,
+            "trust.evaluation_requested" => Self::TrustEvaluationRequested,
+            "trust.decision_created" => Self::TrustDecisionCreated,
+            "trust.decision_superseded" => Self::TrustDecisionSuperseded,
+            "policy.version_activated" => Self::PolicyVersionActivated,
+            "security_case.opened" => Self::SecurityCaseOpened,
+            "security_case.updated" => Self::SecurityCaseUpdated,
+            "security_case.verification_requested" => Self::SecurityCaseVerificationRequested,
+            "security_case.verified_fixed" => Self::SecurityCaseVerifiedFixed,
+            "behavior.scheduled" => Self::BehaviorScheduled,
+            "behavior.started" => Self::BehaviorStarted,
+            "behavior.completed" => Self::BehaviorCompleted,
+            "behavior.failed" => Self::BehaviorFailed,
+            "behavior.side_effect_requested" => Self::BehaviorSideEffectRequested,
+            "behavior.side_effect_completed" => Self::BehaviorSideEffectCompleted,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl fmt::Display for EventType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for EventType {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for EventType {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Ok(EventType::from_name(&name))
+    }
 }
 
 impl EventType {

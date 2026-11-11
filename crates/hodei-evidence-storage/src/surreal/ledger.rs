@@ -382,7 +382,7 @@ fn row_to_envelope(row: &LedgerRecord) -> Result<EventEnvelope, String> {
     let mut builder = EventEnvelope::builder(
         EventId::new(row.event_id.clone()),
         tenant,
-        EventType::Other(row.event_type.clone()),
+        EventType::from_name(&row.event_type),
     )
     .stream(row.stream_id.clone(), row.stream_position as u64)
     .occurred_at(row.occurred_at)

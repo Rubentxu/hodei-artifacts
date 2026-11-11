@@ -16,13 +16,20 @@ use crate::ports::graph::GraphProjector;
 
 /// The identity of a piece of evidence, as a node of the graph.
 ///
-/// The evidence is not an artefact and does not live in the account's
-/// namespace of resources, so it has its own identity: the one it was
-/// given when it was accepted.
-fn evidence_hrn(id: &crate::domain::evidence::EvidenceId) -> kernel::Hrn {
+/// The evidence lives in the account of the tenant that produced it, with
+/// its own kind of resource, so that a node of the graph is named the same
+/// way wherever it appears.
+pub fn evidence_hrn(tenant: &kernel::Hrn, id: &crate::domain::evidence::EvidenceId) -> kernel::Hrn {
+    // The identity of an evidence carries the algorithm of its digest, and
+    // an identity does not hold a colon.
+    let safe = id.as_str().replace(':', "-");
     kernel::Hrn::from_string(&format!(
-        "hrn:hodei:evidence::global:Evidence/{}",
-        id.as_str()
+        "hrn:{}:{}:{}:{}:Evidence/{}",
+        tenant.partition(),
+        tenant.service(),
+        tenant.region(),
+        tenant.account_id(),
+        safe
     ))
     .expect("the identity of an evidence is a valid HRN")
 }
@@ -61,7 +68,7 @@ impl GraphProjector for EvidenceGraphProjector {
 
         // The piece of evidence itself is a node.
         changes = changes.with_node(GraphNode::new(
-            evidence_hrn(&payload.evidence_id),
+            evidence_hrn(&payload.tenant_hrn, &payload.evidence_id),
             payload.tenant_hrn.clone(),
             crate::domain::graph::NodeKind::Evidence,
             event.occurred_at(),

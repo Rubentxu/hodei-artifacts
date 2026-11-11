@@ -6,7 +6,9 @@
 //! A check of the architecture proves it, and the compiler proves it too.
 
 pub mod evidence_store;
+pub mod graph;
 pub mod ledger;
 
 pub use evidence_store::{EVIDENCE_TABLE, EvidenceRow, SurrealEvidenceStore};
+pub use graph::{ACTIVE_PROJECTION, REBUILD_PROJECTION, SurrealGraphStore};
 pub use ledger::{LEDGER_TABLE, LedgerRecord, SurrealEventLedger};
