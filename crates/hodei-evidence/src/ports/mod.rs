@@ -16,6 +16,8 @@ use crate::domain::content::ContentDigest;
 use crate::domain::event::{EventEnvelope, EventId};
 use crate::domain::evidence::{EvidenceId, EvidenceRecord};
 use crate::domain::ingestion::IngestionEnvelope;
+
+pub mod graph;
 use async_trait::async_trait;
 use std::fmt;
 

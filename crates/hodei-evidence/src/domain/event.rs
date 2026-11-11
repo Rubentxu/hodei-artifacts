@@ -177,6 +177,9 @@ pub struct EvidencePayload {
     /// The evidence that this one supersedes, when it supersedes one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<EvidenceId>,
+    /// The relation that the evidence claims, when it claims one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation_claim: Option<crate::domain::graph::RelationClaim>,
 }
 
 /// The envelope of an event.

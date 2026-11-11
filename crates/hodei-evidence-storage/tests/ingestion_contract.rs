@@ -64,6 +64,7 @@ fn an_envelope(external_id: &str, content: &[u8], kind: EvidenceType) -> Ingesti
         schema_version: None,
         source: SourceRef::by_external_id(external_id),
         content_digest: ContentDigest::of_bytes(content),
+        relation_claim: None,
         observed_at: moment(10),
         valid_from: None,
         verification: EvidenceVerification::verified("signature"),

@@ -36,6 +36,7 @@ pub mod domain;
 pub mod ports;
 
 pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionRequest};
+pub use application::projector::EvidenceGraphProjector;
 pub use domain::content::{ContentDigest, ContentError, ContentRef, DigestAlgorithm};
 pub use domain::event::{
     EventEnvelope, EventEnvelopeBuilder, EventError, EventId, EventType, EvidencePayload,
@@ -44,9 +45,13 @@ pub use domain::evidence::{
     EvidenceError, EvidenceId, EvidenceRecord, EvidenceRecordBuilder, EvidenceType,
     EvidenceVerification, Normalization, Producer, SourceRef, VerificationStatus,
 };
+pub use domain::graph::{
+    GraphChangeSet, GraphNode, GraphRelation, NodeKind, RelationClaim, RelationType,
+};
 pub use domain::idempotency::{IdempotencyKey, Redelivery};
 pub use domain::ingestion::{IngestionEnvelope, IngestionOutcome, RejectionReason};
 pub use domain::version::{SchemaVersion, Upcaster, Upcasters, VersionError};
+pub use ports::graph::{GraphError, GraphProjector, GraphQuery, GraphWriter, Lineage};
 pub use ports::{
     AuthenticationError, ContentStore, DeliveryGuarantee, EnvelopeAuthenticator, EventLedger,
     EventPage, EvidenceStore, ExpectedVersion, LedgerCursor, LedgerError, StoreError,
