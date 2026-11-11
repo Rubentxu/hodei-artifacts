@@ -2,3 +2,4 @@
 
 pub mod ingestion;
 pub mod projector;
+pub mod rebuild;

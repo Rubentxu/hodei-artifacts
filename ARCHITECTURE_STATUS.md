@@ -209,7 +209,40 @@ El digest del contenido es el hash de sus bytes, y lo calcula el contrato
 (`ContentDigest::of_bytes`), de modo que el productor, Hodei y quien compruebe
 la evidencia mas tarde llegan al mismo valor.
 
-## 9. El nucleo no depende de mecanismos concretos
+## 9. El grafo
+
+El grafo es una **proyeccion** del registro de eventos, no una segunda
+verdad: el registro es la historia y el grafo se puede tirar y
+reconstruir. Por eso nadie escribe una relacion: el proyector lee los
+eventos admitidos y dice lo que significan, y el escritor aplica lo que el
+proyector dijo.
+
+Los nodos de M1 son repositorio, revision, construccion, artefacto,
+despliegue y evidencia. Las relaciones son tipadas y no enlaces anonimos,
+porque la pregunta que el grafo responde depende del tipo de la relacion y
+no solo de sus extremos. Una relacion lleva **la evidencia que la sostiene**
+y el momento en que se observo.
+
+Las consultas son de cuenta: una consulta nunca cruza de una cuenta a otra.
+
+### La reconstruccion
+
+La reconstruccion relee el registro por el mismo proyector y construye una
+proyeccion **aparte** de la que esta en uso. La comparacion es semantica:
+dos grafos son el mismo cuando tienen los mismos nodos y las mismas
+relaciones con el mismo apoyo, no cuando sus bytes coinciden. El grafo en
+uso no se vacia nunca antes de que la reconstruccion haya pasado la
+comprobacion, y la reconstruccion no altera el registro.
+
+### Lo que NO se afirma
+
+El rendimiento de la reconstruccion a escala, el coste de las consultas
+criticas y el comportamiento con una cuenta que tiene mucho se quedan para
+la UAT de M1. No hay indice en las tablas del grafo, por la misma razon que
+en el registro: un indice declarado por el servicio bloquearia el
+directorio de la base de datos y el servicio no podria reiniciar.
+
+## 10. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.
 La persistencia real vive en `crates/hodei-iam/src/infrastructure/surreal/`.
@@ -232,7 +265,7 @@ el **preflight de almacenamiento**, que se invoca aparte al arrancar y
 reporta los fallos del almacenamiento como lo que son: un problema de la
 maquina, no de la configuracion.
 
-## 11. Las comprobaciones de forma
+## 12. Las comprobaciones de forma
 
 Una arquitectura que solo existe en un documento se deshace en el primer
 commit que nadie revisa con cuidado. `tests/architecture_fitness.rs` lee el
@@ -255,7 +288,7 @@ de prueba tiene que estar en exactamente una suite, ninguna suite puede
 nombrar un target que no existe, y el inventario de lo descubierto se
 imprime en el log del job.
 
-## 12. Lo que este documento no dice
+## 13. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté

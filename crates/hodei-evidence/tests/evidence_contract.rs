@@ -195,3 +195,52 @@ fn the_event_carries_the_history_and_its_payload() {
     assert_eq!(read.evidence_id, payload.evidence_id);
     assert_eq!(read.content_digest, payload.content_digest);
 }
+/// C8 The type of an event survives the round trip through the history.
+///
+/// The name of a type is what the ledger writes down and what it reads
+/// back. A type that is written one way and read another is a type that
+/// stops being recognized the moment it comes back from the store, and
+/// everything that decides what an event means stops working with it.
+#[test]
+fn c8_the_event_type_survives_the_round_trip() {
+    let types = [
+        EventType::EvidenceReceived,
+        EventType::EvidenceRejected,
+        EventType::EvidenceAccepted,
+        EventType::ProjectionApplied,
+        EventType::ProjectionRebuildCompleted,
+        EventType::TrustDecisionCreated,
+        EventType::BehaviorSideEffectCompleted,
+    ];
+
+    for event_type in types {
+        let json = serde_json::to_string(&event_type).expect("the type serializes");
+        let read: EventType = serde_json::from_str(&json).expect("the type is read");
+        assert_eq!(
+            read, event_type,
+            "the type {json} comes back as the same type"
+        );
+        assert_eq!(
+            event_type.as_str(),
+            json.trim_matches('"'),
+            "the name of a type and the way it is written are the same"
+        );
+    }
+}
+
+/// C9 A type that this version does not know is kept, not refused.
+///
+/// The history has to be able to hold an event of a type that came later:
+/// a version that cannot read it has to say so, not pretend it never
+/// happened.
+#[test]
+fn c9_a_type_that_is_not_known_is_kept() {
+    let json = "\"evidence.something_new\"";
+    let read: EventType = serde_json::from_str(json).expect("the type is read");
+    assert_eq!(read, EventType::Other("evidence.something_new".to_string()));
+    assert_eq!(read.as_str(), "evidence.something_new");
+    assert!(
+        read.mutates_graph(),
+        "an event that changes something still changes it, even when the type is not known"
+    );
+}
