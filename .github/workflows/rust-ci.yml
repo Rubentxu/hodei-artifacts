@@ -68,6 +68,7 @@ jobs:
             --test authorization_isolation \
             --test architecture_fitness \
             --test ci_suites \
+            --test evidence_contract \
             --test hrn_migration \
             --test hrn_parity \
             --test legacy_quarantine \
