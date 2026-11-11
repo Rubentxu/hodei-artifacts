@@ -4,4 +4,5 @@ pub mod content;
 pub mod event;
 pub mod evidence;
 pub mod idempotency;
+pub mod ingestion;
 pub mod version;

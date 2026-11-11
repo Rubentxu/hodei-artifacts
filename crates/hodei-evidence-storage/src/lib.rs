@@ -9,6 +9,13 @@
 //! the crate of the domain **cannot** name a database engine, so the
 //! contracts it publishes cannot depend on one by accident.
 
+pub mod authenticator;
+pub mod content_store;
 pub mod surreal;
 
-pub use surreal::{LEDGER_TABLE, LedgerRecord, SurrealEventLedger};
+pub use authenticator::{HmacEnvelopeAuthenticator, ProducerCredentials};
+pub use content_store::InMemoryContentStore;
+pub use surreal::{
+    EVIDENCE_TABLE, EvidenceRow, LEDGER_TABLE, LedgerRecord, SurrealEventLedger,
+    SurrealEvidenceStore,
+};

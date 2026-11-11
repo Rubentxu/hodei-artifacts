@@ -135,7 +135,7 @@ impl<C: Connection> SurrealEventLedger<C> {
     }
 
     /// The position the stream is at, or `None` when it has no events yet.
-    async fn current_position(&self, stream_id: &str) -> Result<Option<u64>, LedgerError> {
+    pub async fn current_position(&self, stream_id: &str) -> Result<Option<u64>, LedgerError> {
         let mut response = self
             .db
             .query(
@@ -360,6 +360,11 @@ impl<C: Connection> EventLedger for SurrealEventLedger<C> {
             events,
             next_cursor,
         })
+    }
+
+    /// Where a stream is.
+    async fn position(&self, stream_id: &str) -> Result<Option<u64>, LedgerError> {
+        self.current_position(stream_id).await
     }
 }
 
