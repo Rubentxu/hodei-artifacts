@@ -12,8 +12,10 @@
 //! idempotency key is part of the event, so a consumer can tell a repeat
 //! from a new fact.
 
+use crate::domain::content::ContentDigest;
 use crate::domain::event::{EventEnvelope, EventId};
 use crate::domain::evidence::{EvidenceId, EvidenceRecord};
+use crate::domain::ingestion::IngestionEnvelope;
 use async_trait::async_trait;
 use std::fmt;
 
@@ -31,6 +33,18 @@ pub trait EvidenceStore: Send + Sync {
     /// It returns nothing when there is no such record. Absence is not an
     /// error: the caller asked whether it is there.
     async fn get(&self, id: &EvidenceId) -> Result<Option<EvidenceRecord>, StoreError>;
+
+    /// Reads the last piece of evidence a producer delivered under an
+    /// external identity.
+    ///
+    /// The external identity is what tells Hodei that two deliveries are
+    /// about the same thing: the same run, the same report, the same
+    /// artefact. It is how the ingestion tells a repetition from a revision.
+    async fn find_by_external_id(
+        &self,
+        producer: &crate::domain::evidence::Producer,
+        external_id: &str,
+    ) -> Result<Option<EvidenceRecord>, StoreError>;
 }
 
 /// The position the ledger expects a stream to be at.
@@ -141,6 +155,54 @@ impl EventPage {
     }
 }
 
+/// The store of the raw content of the evidence.
+///
+/// The content is kept by its digest, and it is kept because the evidence
+/// has to be verifiable later: a claim without the bytes it claims cannot be
+/// checked again.
+#[async_trait]
+pub trait ContentStore: Send + Sync {
+    /// Keeps the content and returns its digest.
+    ///
+    /// Keeping the same content twice is not an error: the content is
+    /// identified by its digest, so it is stored once.
+    async fn put(&self, content: Vec<u8>) -> Result<ContentDigest, StoreError>;
+
+    /// Reads the content of a digest.
+    ///
+    /// It returns nothing when there is no such content.
+    async fn get(&self, digest: &ContentDigest) -> Result<Option<Vec<u8>>, StoreError>;
+}
+
+/// The authenticator of the producer of an envelope.
+///
+/// It answers one question: does this envelope really come from the producer
+/// it says, and is the producer allowed to speak for that account. The
+/// question is asked BEFORE anything is accepted, because an envelope that
+/// nobody vouched for must not reach the store.
+#[async_trait]
+pub trait EnvelopeAuthenticator: Send + Sync {
+    /// Authenticates an envelope.
+    async fn authenticate(&self, envelope: &IngestionEnvelope) -> Result<(), AuthenticationError>;
+}
+
+/// The error of an envelope that could not be authenticated.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AuthenticationError {
+    /// The signature does not match what the envelope says.
+    #[error("the signature does not match the envelope")]
+    InvalidSignature,
+    /// The producer is not known.
+    #[error("the producer is not known")]
+    UnknownProducer,
+    /// The producer may not speak for that account.
+    #[error("the producer may not speak for that account")]
+    NotAllowedForAccount,
+    /// The authenticator is not available.
+    #[error("the authenticator is not available")]
+    Unavailable,
+}
+
 /// The ledger of events.
 ///
 /// The ledger is the durable history: what Hodei accepted and changed, in
@@ -161,6 +223,13 @@ pub trait EventLedger: Send + Sync {
 
     /// Reads a page of events after a cursor.
     async fn read(&self, cursor: LedgerCursor, limit: usize) -> Result<EventPage, LedgerError>;
+
+    /// Where a stream is.
+    ///
+    /// It is the position of the last event of the stream, or nothing when
+    /// the stream has no events yet. A writer asks for it before it writes,
+    /// and writes at the position that follows.
+    async fn position(&self, stream_id: &str) -> Result<Option<u64>, LedgerError>;
 }
 
 /// The error of a store that cannot do its job.

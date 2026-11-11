@@ -46,12 +46,24 @@ pub struct ContentDigest {
 }
 
 impl ContentDigest {
-    /// A SHA-256 digest.
+    /// A SHA-256 digest of a value that is already the hexadecimal of the
+    /// hash.
     pub fn sha256(value: impl Into<String>) -> Self {
         Self {
             algorithm: DigestAlgorithm::Sha256,
             value: value.into().to_ascii_lowercase(),
         }
+    }
+
+    /// The SHA-256 digest of some bytes.
+    ///
+    /// The digest of a content is the hash of its bytes, and computing it
+    /// belongs to the contract: the producer, Hodei and anybody checking the
+    /// evidence later have to arrive at the same value.
+    pub fn of_bytes(bytes: &[u8]) -> Self {
+        use sha2::Digest;
+        let hash = sha2::Sha256::digest(bytes);
+        Self::sha256(hex_of(&hash))
     }
 
     /// Whether the digest is well formed: a non-empty value of hexadecimal
@@ -105,6 +117,16 @@ impl ContentRef {
             object_ref: None,
         }
     }
+}
+
+/// The hexadecimal of the bytes.
+fn hex_of(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
 }
 
 /// The error of a malformed content reference.

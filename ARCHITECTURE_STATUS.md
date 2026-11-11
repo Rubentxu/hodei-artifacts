@@ -181,7 +181,35 @@ tabla, no una busqueda por indice. A la escala en la que trabaja M1 es el
 canje correcto, y la medida a escala queda para la UAT de M1 en vez de
 darse por supuesta.
 
-## 8. El nucleo no depende de mecanismos concretos
+## 8. La admision de la evidencia
+
+La canalizacion del plan, con sus pasos y lo que cada uno garantiza:
+
+```
+receive -> authenticate producer -> validate envelope/schema ->
+calculate content digest -> deduplicate/idempotency check ->
+preserve raw evidence -> normalize deterministically ->
+validate canonical identities -> accept/reject -> append accepted event
+```
+
+Dos reglas la atraviesan:
+
+- **Lo que no se admite no muta nada.** Un rechazo escribe su evento --un
+  rechazo es historia-- y deja intactos el almacen de evidencia y el grafo.
+- **La historia no se sobrescribe.** La misma entrega dos veces devuelve el
+  resultado que ya existe; la misma identidad externa con contenido distinto
+  es una revision nueva que conserva la anterior.
+
+El sobre de entrada lleva una firma sobre su **forma canonica**: una
+secuencia de bytes con longitud por delante de cada campo, de modo que dos
+sobres distintos no pueden producir los mismos bytes. La firma se comprueba
+ANTES de admitir nada.
+
+El digest del contenido es el hash de sus bytes, y lo calcula el contrato
+(`ContentDigest::of_bytes`), de modo que el productor, Hodei y quien compruebe
+la evidencia mas tarde llegan al mismo valor.
+
+## 9. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.
 La persistencia real vive en `crates/hodei-iam/src/infrastructure/surreal/`.
@@ -204,7 +232,7 @@ el **preflight de almacenamiento**, que se invoca aparte al arrancar y
 reporta los fallos del almacenamiento como lo que son: un problema de la
 maquina, no de la configuracion.
 
-## 10. Las comprobaciones de forma
+## 11. Las comprobaciones de forma
 
 Una arquitectura que solo existe en un documento se deshace en el primer
 commit que nadie revisa con cuidado. `tests/architecture_fitness.rs` lee el
@@ -227,7 +255,7 @@ de prueba tiene que estar en exactamente una suite, ninguna suite puede
 nombrar un target que no existe, y el inventario de lo descubierto se
 imprime en el log del job.
 
-## 11. Lo que este documento no dice
+## 12. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté

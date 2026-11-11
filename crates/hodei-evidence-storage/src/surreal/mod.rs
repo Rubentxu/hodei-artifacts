@@ -5,6 +5,8 @@
 //! engine, so the contracts it publishes cannot accidentally depend on one.
 //! A check of the architecture proves it, and the compiler proves it too.
 
+pub mod evidence_store;
 pub mod ledger;
 
+pub use evidence_store::{EVIDENCE_TABLE, EvidenceRow, SurrealEvidenceStore};
 pub use ledger::{LEDGER_TABLE, LedgerRecord, SurrealEventLedger};

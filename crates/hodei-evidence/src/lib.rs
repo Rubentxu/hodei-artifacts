@@ -31,9 +31,11 @@
 //! handling of secrets structural instead of a promise: a record of
 //! evidence has no field where a secret would go.
 
+pub mod application;
 pub mod domain;
 pub mod ports;
 
+pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionRequest};
 pub use domain::content::{ContentDigest, ContentError, ContentRef, DigestAlgorithm};
 pub use domain::event::{
     EventEnvelope, EventEnvelopeBuilder, EventError, EventId, EventType, EvidencePayload,
@@ -43,8 +45,9 @@ pub use domain::evidence::{
     EvidenceVerification, Normalization, Producer, SourceRef, VerificationStatus,
 };
 pub use domain::idempotency::{IdempotencyKey, Redelivery};
+pub use domain::ingestion::{IngestionEnvelope, IngestionOutcome, RejectionReason};
 pub use domain::version::{SchemaVersion, Upcaster, Upcasters, VersionError};
 pub use ports::{
-    DeliveryGuarantee, EventLedger, EventPage, EvidenceStore, ExpectedVersion, LedgerCursor,
-    LedgerError, StoreError,
+    AuthenticationError, ContentStore, DeliveryGuarantee, EnvelopeAuthenticator, EventLedger,
+    EventPage, EvidenceStore, ExpectedVersion, LedgerCursor, LedgerError, StoreError,
 };

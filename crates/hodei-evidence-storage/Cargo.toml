@@ -7,9 +7,11 @@ edition = "2024"
 async-trait = { workspace = true }
 chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
+hmac = "0.12"
 kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 surrealdb = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
