@@ -114,6 +114,7 @@ jobs:
             --test http_contract \
             --test iam_account_index \
             --test iam_backfill \
+            --test iam_policy_timestamps \
             --test iam_scope \
             --test playground_isolation \
             --test policy_circuits \

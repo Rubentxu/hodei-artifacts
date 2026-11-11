@@ -147,12 +147,16 @@ impl CreatePolicyUseCase {
         info!("Policy validation successful, persisting policy");
 
         // Create the policy through the port
-        let policy = self.policy_port.create(command.clone()).await?;
+        let created = self.policy_port.create(command.clone()).await?;
+        let policy = created.policy;
 
         info!("Policy created successfully: {}", policy.id());
 
         // Convert to view DTO
-        let now = chrono::Utc::now();
+        //
+        // The timestamps are the ones the store recorded, not a fresh reading
+        // of the clock: a response that says when the policy was created has
+        // to say what the database holds.
 
         // Build HRN from policy ID.
         //
@@ -173,8 +177,8 @@ impl CreatePolicyUseCase {
             content: policy.content().to_string(),
             description: command.description.clone(),
             attached_principals: command.attached_principals.clone(),
-            created_at: now,
-            updated_at: now,
+            created_at: Some(created.created_at),
+            updated_at: Some(created.updated_at),
         };
 
         Ok(view)

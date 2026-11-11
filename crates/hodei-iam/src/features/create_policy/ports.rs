@@ -19,7 +19,6 @@ use crate::features::create_policy::dto::CreatePolicyCommand;
 use crate::features::create_policy::error::CreatePolicyError;
 use async_trait::async_trait;
 // use hodei_policies::features::validate_policy::ValidatePolicyPort; // Temporarily disabled - unused
-use kernel::domain::policy::HodeiPolicy;
 
 /// Port for validating IAM policy content
 ///
@@ -122,7 +121,10 @@ pub trait CreatePolicyPort: Send + Sync {
     /// let policy = port.create(command).await?;
     /// println!("Created policy with HRN: {}", policy.id);
     /// ```
-    async fn create(&self, command: CreatePolicyCommand) -> Result<HodeiPolicy, CreatePolicyError>;
+    async fn create(
+        &self,
+        command: CreatePolicyCommand,
+    ) -> Result<crate::features::create_policy::dto::CreatedPolicy, CreatePolicyError>;
 }
 
 /// Port for the CreatePolicy use case

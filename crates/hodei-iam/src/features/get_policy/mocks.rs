@@ -81,6 +81,8 @@ mod tests {
             content: "permit(principal, action, resource);".to_string(),
             description: None,
             attached_principals: Vec::new(),
+            created_at: None,
+            updated_at: None,
         };
         let reader = MockPolicyReader::with_policy(policy.clone());
         let result = reader.get_by_hrn(&hrn).await;

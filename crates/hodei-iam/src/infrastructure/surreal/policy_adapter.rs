@@ -57,6 +57,16 @@ struct HodeiPolicyDbRow {
     /// instead of failing the whole query.
     #[serde(default)]
     attached_principals: Vec<String>,
+    /// When the policy was created.
+    ///
+    /// Optional because a row written before the marks existed still has to
+    /// read back: reporting no mark is honest, reporting the clock of the
+    /// process would not be.
+    #[serde(default)]
+    created_at: Option<String>,
+    /// When the policy was last updated.
+    #[serde(default)]
+    updated_at: Option<String>,
 }
 
 /// Intermediate structure for reading back the content of a policy record.
@@ -67,6 +77,12 @@ struct HodeiPolicyDbRow {
 struct HodeiPolicyContentRow {
     /// The policy content
     content: String,
+    /// When the policy was created.
+    #[serde(default)]
+    created_at: Option<String>,
+    /// When the policy was last updated.
+    #[serde(default)]
+    updated_at: Option<String>,
 }
 
 impl From<HodeiPolicyDbRow> for HodeiPolicy {
@@ -87,6 +103,29 @@ fn short_id(thing: &surrealdb::sql::Thing) -> String {
         surrealdb::sql::Id::String(value) => value.clone(),
         surrealdb::sql::Id::Number(value) => value.to_string(),
         other => other.to_string(),
+    }
+}
+
+/// The spelling a timestamp is stored with.
+///
+/// It is the spelling the responses use, so what a response says is
+/// character for character what the database holds.
+fn mark(instant: chrono::DateTime<chrono::Utc>) -> String {
+    instant.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+}
+
+/// The mark of a stored timestamp, as the domain type.
+///
+/// The store keeps the mark as RFC 3339 text, which reads back the same
+/// instants it was written with.
+fn parse_mark(value: Option<String>) -> Option<chrono::DateTime<chrono::Utc>> {
+    let value = value?;
+    match chrono::DateTime::parse_from_rfc3339(&value) {
+        Ok(mark) => Some(mark.with_timezone(&chrono::Utc)),
+        Err(error) => {
+            warn!("The stored timestamp could not be read: {}", error);
+            None
+        }
     }
 }
 
@@ -157,7 +196,10 @@ struct TableInfo {
 
 #[async_trait]
 impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
-    async fn create(&self, command: CreatePolicyCommand) -> Result<HodeiPolicy, CreatePolicyError> {
+    async fn create(
+        &self,
+        command: CreatePolicyCommand,
+    ) -> Result<crate::features::create_policy::dto::CreatedPolicy, CreatePolicyError> {
         info!("Creating policy with ID: {}", command.policy_id);
 
         // Create HRN for the policy.
@@ -186,10 +228,17 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
             .split_once('~')
             .map(|(account, _)| account)
             .unwrap_or("default");
+        // The store keeps the marks of the policy, so what a response says
+        // about the creation is what the database holds.
+        let now = chrono::Utc::now();
+        let created_at = mark(now);
+        let updated_at = created_at.clone();
         let content_value = serde_json::json!({
             "content": policy.content(),
             "attached_principals": command.attached_principals,
             "account": account,
+            "created_at": created_at,
+            "updated_at": updated_at,
         });
 
         let created: Result<Option<HodeiPolicyDbRow>, surrealdb::Error> = self
@@ -200,9 +249,17 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
 
         match created {
             Ok(Some(db_row)) => {
+                let created_at = parse_mark(db_row.created_at.clone());
+                let updated_at = parse_mark(db_row.updated_at.clone());
                 let created_policy = HodeiPolicy::from(db_row);
                 info!("Policy created successfully");
-                Ok(created_policy)
+                Ok(crate::features::create_policy::dto::CreatedPolicy {
+                    policy: created_policy,
+                    // The row carries what was written; if it does not, the
+                    // marks are absent rather than invented.
+                    created_at: created_at.unwrap_or(now),
+                    updated_at: updated_at.unwrap_or(now),
+                })
             }
             Ok(None) => {
                 error!("Failed to create policy - no policy returned");
@@ -239,6 +296,8 @@ impl<C: surrealdb::Connection> PolicyReader for SurrealPolicyAdapter<C> {
                 // The attachment is read before the row is consumed by the
                 // conversion into the domain policy.
                 let attached_principals = db_row.attached_principals.clone();
+                let created_at = parse_mark(db_row.created_at.clone());
+                let updated_at = parse_mark(db_row.updated_at.clone());
                 let policy = HodeiPolicy::from(db_row);
                 debug!("Policy found: {}", hrn);
                 Ok(GetPolicyView {
@@ -247,6 +306,8 @@ impl<C: surrealdb::Connection> PolicyReader for SurrealPolicyAdapter<C> {
                     content: policy.content().to_string(),
                     description: None, // HodeiPolicy doesn't have description field
                     attached_principals,
+                    created_at,
+                    updated_at,
                 })
             }
             Ok(None) => {
@@ -327,6 +388,8 @@ impl<C: surrealdb::Connection> PolicyLister for SurrealPolicyAdapter<C> {
                         hrn: hrn.clone(),
                         name: policy_short_id,
                         description: None, // HodeiPolicy doesn't have description field
+                        created_at: parse_mark(row.created_at.clone()),
+                        updated_at: parse_mark(row.updated_at.clone()),
                     }
                 })
                 .collect(),
@@ -394,6 +457,8 @@ impl<C: surrealdb::Connection> PolicyLister for SurrealPolicyAdapter<C> {
                     ),
                     name: short,
                     description: None,
+                    created_at: parse_mark(row.created_at.clone()),
+                    updated_at: parse_mark(row.updated_at.clone()),
                 }
             })
             .collect();
@@ -440,10 +505,21 @@ impl<C: surrealdb::Connection> UpdatePolicyPort for SurrealPolicyAdapter<C> {
                 //
                 // `policy_content: None` means "keep the current content", so
                 // the SET clause is only emitted when new content is given.
+                //
+                // The creation mark is not in the SET clause, so the update
+                // leaves it alone; the update mark is set to the moment of the
+                // write.
                 let query = match command.policy_content {
-                    Some(_) => "UPDATE $policy SET content = $content RETURN content",
-                    None => "UPDATE $policy RETURN content",
+                    Some(_) => {
+                        "UPDATE $policy SET content = $content, updated_at = $updated_at \
+                         RETURN content, created_at, updated_at"
+                    }
+                    None => {
+                        "UPDATE $policy SET updated_at = $updated_at \
+                         RETURN content, created_at, updated_at"
+                    }
                 };
+                let updated_at = mark(chrono::Utc::now());
 
                 let mut response = self
                     .db
@@ -453,6 +529,7 @@ impl<C: surrealdb::Connection> UpdatePolicyPort for SurrealPolicyAdapter<C> {
                         surrealdb::sql::Thing::from((policy_table, policy_id.as_str())),
                     ))
                     .bind(("content", command.policy_content))
+                    .bind(("updated_at", updated_at))
                     .await
                     .map_err(|e| {
                         error!("Database error while updating policy: {}", e);
@@ -480,6 +557,8 @@ impl<C: surrealdb::Connection> UpdatePolicyPort for SurrealPolicyAdapter<C> {
                             name: policy_short_id,
                             content: row.content,
                             description: None, // HodeiPolicy doesn't have description field
+                            created_at: parse_mark(row.created_at.clone()),
+                            updated_at: parse_mark(row.updated_at.clone()),
                         })
                     }
                     None => {

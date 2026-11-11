@@ -68,6 +68,16 @@ pub struct PolicySummary {
 
     /// Optional description
     pub description: Option<String>,
+
+    /// Cuándo se creó la política, tal y como quedó persistido
+    ///
+    /// Es `None` para una fila escrita antes de que existieran las marcas de
+    /// tiempo.
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// Cuándo se actualizó la política por última vez, tal y como quedó
+    /// persistido
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Pagination information

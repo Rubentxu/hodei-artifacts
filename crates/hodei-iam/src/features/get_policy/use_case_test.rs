@@ -38,6 +38,8 @@ mod tests {
             content: "permit(principal, action, resource);".to_string(),
             description: Some("A test policy for unit testing".to_string()),
             attached_principals: Vec::new(),
+            created_at: None,
+            updated_at: None,
         }
     }
 
@@ -140,6 +142,8 @@ mod tests {
             content: "permit(principal, action, resource);".to_string(),
             description: Some("First policy".to_string()),
             attached_principals: Vec::new(),
+            created_at: None,
+            updated_at: None,
         };
 
         let policy2 = PolicyView {
@@ -154,6 +158,8 @@ mod tests {
             content: "forbid(principal, action, resource);".to_string(),
             description: Some("Second policy".to_string()),
             attached_principals: Vec::new(),
+            created_at: None,
+            updated_at: None,
         };
 
         let reader = MockPolicyReader::with_policies(vec![policy1.clone(), policy2.clone()]);
@@ -199,6 +205,8 @@ mod tests {
             content: "permit(principal, action, resource);".to_string(),
             description: None,
             attached_principals: Vec::new(),
+            created_at: None,
+            updated_at: None,
         };
 
         let reader = MockPolicyReader::with_policy(policy_view.clone());
@@ -273,6 +281,8 @@ mod tests {
             .to_string(),
             description: Some("A complex policy with conditions".to_string()),
             attached_principals: Vec::new(),
+            created_at: None,
+            updated_at: None,
         };
 
         let reader = MockPolicyReader::with_policy(complex_policy.clone());

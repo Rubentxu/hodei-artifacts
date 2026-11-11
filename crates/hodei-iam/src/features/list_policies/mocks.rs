@@ -98,6 +98,8 @@ mod tests {
             ),
             name: format!("Policy {}", id),
             description: None,
+            created_at: None,
+            updated_at: None,
         }
     }
 
