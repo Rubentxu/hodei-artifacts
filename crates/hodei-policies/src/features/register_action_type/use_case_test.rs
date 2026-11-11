@@ -395,4 +395,112 @@ mod tests {
 
         assert_eq!(use_case.count().unwrap(), 0);
     }
+
+    /// A malformed contribution is refused with a typed error, and nothing is
+    /// registered.
+    ///
+    /// A registration that returns success without registering anything is the
+    /// worst kind of failure: the caller believes the schema is complete, and
+    /// it is not. The count is where that failure shows.
+    #[tokio::test]
+    async fn a_malformed_contribution_is_refused_and_registers_nothing() {
+        let builder = Arc::new(Mutex::new(EngineBuilder::new()));
+        let use_case = RegisterActionTypeUseCase::new(builder);
+
+        let before = use_case.count().expect("the count is readable");
+
+        // An action type that declares no principal type cannot produce a
+        // Cedar schema.
+        let outcome = use_case
+            .execute(RegisterActionTypeCommand::new(
+                "Broken".to_string(),
+                String::new(),
+                "Storage::Document".to_string(),
+            ))
+            .await;
+
+        assert!(
+            outcome.is_err(),
+            "a contribution that cannot produce a schema must not report success"
+        );
+        let error = outcome.expect_err("the contribution is refused");
+        assert!(
+            matches!(
+                error,
+                RegisterActionTypeError::InvalidActionType(_)
+                    | RegisterActionTypeError::SchemaGenerationError(_)
+            ),
+            "the error must be typed, not a string: {error:?}"
+        );
+
+        let after = use_case.count().expect("the count is readable");
+        assert_eq!(
+            before, after,
+            "a refused contribution must not move the count of registered actions"
+        );
+    }
+
+    /// The contribution that succeeds is really in the schema it produced.
+    ///
+    /// The caller may act on the success, so the success has to mean that the
+    /// schema declares what was registered.
+    #[tokio::test]
+    async fn a_valid_contribution_is_in_the_compiled_schema() {
+        let builder = Arc::new(Mutex::new(EngineBuilder::new()));
+        let use_case = RegisterActionTypeUseCase::new(builder.clone());
+
+        // The action refers to two entity types, so they have to be declared
+        // for the schema to compose.
+        let entity_use_case =
+            crate::features::register_entity_type::use_case::RegisterEntityTypeUseCase::new(
+                builder.clone(),
+            );
+        for entity_type in ["Iam::User", "Artifacts::Repository"] {
+            entity_use_case
+                .execute(
+                    crate::features::register_entity_type::dto::RegisterEntityTypeCommand::new(
+                        entity_type.to_string(),
+                    ),
+                )
+                .await
+                .expect("a well formed entity type is registered");
+        }
+        drop(entity_use_case);
+
+        use_case
+            .execute(RegisterActionTypeCommand::new(
+                "ReadRepository".to_string(),
+                "Iam::User".to_string(),
+                "Artifacts::Repository".to_string(),
+            ))
+            .await
+            .expect("a well formed contribution is registered");
+
+        assert_eq!(
+            use_case.count().expect("the count is readable"),
+            1,
+            "the contribution is registered"
+        );
+
+        // The builder is consumed when the schema is built, so the
+        // registration releases it first.
+        drop(use_case);
+        let built = Arc::try_unwrap(builder)
+            .ok()
+            .expect("the registration released the builder")
+            .into_inner()
+            .expect("the builder lock")
+            .build_schema()
+            .expect("the contribution composes a valid schema");
+
+        // The action is declared under the name the contribution gave it.
+        let declared: Vec<String> = built
+            .actions()
+            .map(|uid| uid.id().unescaped().to_string())
+            .collect();
+        assert!(
+            declared.contains(&"ReadRepository".to_string()),
+            "the registered action must be declared by the compiled schema: {declared:?}"
+        );
+    }
 }
