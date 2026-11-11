@@ -9,7 +9,20 @@ El gate administrativo inserta el `VerifiedContext` en la petición. Los handler
 - `list`: el adaptador lista la tabla y el handler filtra solo las filas con prefijo `account~`; el `total_count` refleja el conjunto filtrado.
 - `evaluate`: principal **y recurso** deben pertenecer a la cuenta verificada; los ids determinantes se devuelven solo si llevan el prefijo de la cuenta y sin ese prefijo.
 - El adaptador SurrealDB conserva la tabla global `policy`, pero **el identificador persistido incluye la cuenta** y cada fila guarda `account`, de modo que dos cuentas pueden usar el mismo `policy_id` sin colisión.
-- `list_for_account` filtra, cuenta y pagina por `account` en la consulta SurrealDB. El índice `policy_account` se crea con `SurrealPolicyAdapter::initialize_scope` como migración explícita; el bootstrap no lo ejecuta porque mantener esa transacción abierta retenía el lock de RocksDB y rompía el arranque repetido.
+- `list_for_account` filtra, cuenta y pagina por `account` en la consulta SurrealDB. El índice `policy_account` lo declara el comando operador `ensure-iam-index`, y **no** el arranque del servicio.
+
+### Por qué el índice no se declara en el arranque
+
+Medido sobre el motor local: definir un índice mantiene el directorio de la base de datos bloqueado por el proceso que lo define. El servicio serviría igual, pero ese proceso no volvería a abrir la base de datos, y el arranque repetido contra la misma base —una garantía explícita del bootstrap— se rompería. Variantes descartadas por medición: la sentencia sin `.check()`, con `BEGIN`/`COMMIT` explícitos, y el índice sin la definición de campo: todas retienen el bloqueo igual.
+
+Por eso el índice lo declara un comando aparte, que además libera el bloqueo al terminar. El orden de despliegue es el habitual de un paso de migración: **el comando se ejecuta con el servicio detenido**.
+
+```bash
+# Con el servicio detenido:
+cargo run --bin ensure-iam-index -- --db data/hodei.rocksdb
+```
+
+La sentencia es idempotente, así que el comando se puede ejecutar en cada despliegue. Si el índice falta, el servicio **arranca igual** y lo dice en el log, nombrando el comando: un índice ausente cuesta al listado su velocidad, no su aislamiento.
 
 ## Migración/backfill
 
@@ -70,5 +83,5 @@ migrated=1 revoked=0 skipped=0 ambiguous=0 conflicts=0 apply=true
 
 ## Límites
 
-- El índice de `account` requiere ejecutar la migración `initialize_scope` una vez; el bootstrap no la ejecuta automáticamente.
+- El índice de `account` requiere ejecutar `ensure-iam-index` con el servicio detenido. El arranque no puede declararlo: hacerlo retiene el bloqueo de la base de datos en el proceso y rompe el arranque repetido.
 - La tabla antigua `policy` no se elimina; el backfill es operativo y debe auditarse.
