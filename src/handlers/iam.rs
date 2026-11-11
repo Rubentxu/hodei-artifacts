@@ -276,7 +276,7 @@ pub async fn create_policy(
     headers: HeaderMap,
     Json(request): Json<CreatePolicyRequest>,
 ) -> Result<Json<CreatePolicyResponse>, IamApiError> {
-    let correlation = correlation_id(&headers);
+    let correlation = correlation_id(&headers, &state.identity);
     let account = context.account().as_str().to_string();
     let short_id = request.policy_id.trim().to_string();
     // The resource of the event is the policy the operation is about, even
@@ -533,7 +533,7 @@ pub async fn update_policy(
     headers: HeaderMap,
     Json(request): Json<UpdatePolicyRequest>,
 ) -> Result<Json<UpdatePolicyResponse>, IamApiError> {
-    let correlation = correlation_id(&headers);
+    let correlation = correlation_id(&headers, &state.identity);
     let account = context.account().as_str().to_string();
     let requested = kernel::Hrn::from_string(&request.policy_hrn).ok_or_else(|| {
         audit_policy(
@@ -651,7 +651,7 @@ pub async fn delete_policy(
     headers: HeaderMap,
     Json(request): Json<DeletePolicyRequest>,
 ) -> Result<Json<DeletePolicyResponse>, IamApiError> {
-    let correlation = correlation_id(&headers);
+    let correlation = correlation_id(&headers, &state.identity);
     let account = context.account().as_str().to_string();
     let requested = kernel::Hrn::from_string(&request.policy_hrn).ok_or_else(|| {
         audit_policy(

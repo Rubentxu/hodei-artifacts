@@ -26,6 +26,7 @@ use hodei_policies::playground_evaluate::ports::PlaygroundEvaluatePort;
 use hodei_policies::register_action_type::ports::RegisterActionTypePort;
 use hodei_policies::register_entity_type::ports::RegisterEntityTypePort;
 use hodei_policies::validate_policy::port::ValidatePolicyPort;
+use kernel::application::ports::clock::Identity;
 use std::sync::Arc;
 
 /// Application state containing all use case ports
@@ -101,6 +102,11 @@ pub struct AppState {
     pub(crate) repository_reader: Arc<dyn RepositoryReader>,
     pub(crate) repository_writer: Arc<dyn RepositoryWriter>,
     pub(crate) audit_sink: Arc<dyn AuditSink>,
+    /// The clock and the identifier generator the security trail uses.
+    ///
+    /// They are seams: the production wiring reads the machine, and a test
+    /// pins them so that the trail it compares is reproducible.
+    pub(crate) identity: Identity,
     /// Whether the admin surface has an injected credential verifier and a
     /// non-default authorizer. The gate keeps the surface closed otherwise.
     admin_authenticator_configured: bool,
@@ -143,6 +149,7 @@ impl AppState {
     ///     root.policy_ports.evaluate_policies,
     ///     root.policy_ports.playground_evaluate,
     ///     root.iam_ports.register_iam_schema,
+    ///     // ... the rest of the ports ...
     /// );
     /// ```
     #[allow(clippy::too_many_arguments, dead_code)]
@@ -169,6 +176,7 @@ impl AppState {
         repository_reader: Arc<dyn RepositoryReader>,
         repository_writer: Arc<dyn RepositoryWriter>,
         audit_sink: Arc<dyn AuditSink>,
+        identity: Identity,
     ) -> Self {
         let authorize_resource = Arc::new(AuthorizeResourceUseCase::new(authorization.clone()));
         Self {
@@ -193,6 +201,7 @@ impl AppState {
             repository_reader,
             repository_writer,
             audit_sink,
+            identity,
             admin_authenticator_configured: true,
             admin_authorizer_configured: true,
         }
@@ -241,6 +250,7 @@ impl AppState {
             repository_reader,
             repository_writer,
             audit_sink,
+            identity: Identity::system(),
             admin_authenticator_configured: false,
             admin_authorizer_configured: false,
         }
@@ -290,6 +300,17 @@ impl AppState {
     /// Inject an audit sink (tracing by default).
     pub fn with_audit_sink(mut self, audit_sink: Arc<dyn AuditSink>) -> Self {
         self.audit_sink = audit_sink;
+        self
+    }
+
+    /// Replace the clock and the identifier generator the security trail
+    /// uses.
+    ///
+    /// A test that pins them gets the same moment and the same identifiers on
+    /// every execution, and the trail it compares becomes a fact instead of a
+    /// recollection.
+    pub fn with_identity(mut self, identity: Identity) -> Self {
+        self.identity = identity;
         self
     }
 

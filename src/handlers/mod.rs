@@ -18,6 +18,7 @@ use axum::http::HeaderMap;
 
 use crate::app_state::AppState;
 use crate::audit::{AuditEvent, AuditResult};
+use kernel::application::ports::clock::Identity;
 
 /// Record a security event.
 ///
@@ -34,7 +35,15 @@ pub(crate) fn record_audit(
     result: AuditResult,
     correlation_id: &str,
 ) {
-    let event = AuditEvent::new(actor, action, resource, result, correlation_id);
+    let event = AuditEvent::new(
+        state.identity.new_id(),
+        state.identity.now(),
+        actor,
+        action,
+        resource,
+        result,
+        correlation_id,
+    );
     if state.audit_sink.record(&event).is_err() {
         tracing::warn!(
             correlation_id = %correlation_id,
@@ -49,7 +58,7 @@ pub(crate) fn record_audit(
 /// is generated otherwise. A caller-supplied value is accepted only when it
 /// is short and free of control characters and whitespace, because it ends up
 /// in a log line.
-pub(crate) fn correlation_id(headers: &HeaderMap) -> String {
+pub(crate) fn correlation_id(headers: &HeaderMap, identity: &Identity) -> String {
     headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok())
@@ -61,5 +70,5 @@ pub(crate) fn correlation_id(headers: &HeaderMap) -> String {
                     .all(|character| !character.is_control() && !character.is_whitespace())
         })
         .map(str::to_string)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        .unwrap_or_else(|| identity.new_id())
 }

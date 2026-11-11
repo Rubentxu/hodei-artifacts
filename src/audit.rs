@@ -45,7 +45,15 @@ pub struct AuditEvent {
 }
 
 impl AuditEvent {
+    /// The event, with the identity and the moment taken from the given
+    /// seams.
+    ///
+    /// The moment and the identifier are facts about the machine, not about
+    /// the operation. Taking them from a seam is what lets a test pin them
+    /// and compare two executions of the same operation.
     pub fn new(
+        event_id: impl Into<String>,
+        timestamp: DateTime<Utc>,
         actor: impl Into<String>,
         action: impl Into<String>,
         resource: impl Into<String>,
@@ -53,9 +61,9 @@ impl AuditEvent {
         correlation_id: impl Into<String>,
     ) -> Self {
         Self {
-            event_id: uuid::Uuid::new_v4().to_string(),
+            event_id: event_id.into(),
             correlation_id: correlation_id.into(),
-            timestamp: Utc::now(),
+            timestamp,
             actor: actor.into(),
             action: action.into(),
             resource: resource.into(),
