@@ -120,7 +120,18 @@ de organizaciones". **Ninguna de las dos cosas es cierta hoy.**
 | `docs/api/`, `docs/openapi/`, `docs/postman/` | `referencia`: artefactos generados |
 | `docs/testing-organization.md` | `deprecada`: describe una organización de pruebas que ya no es la de este repositorio |
 
-## 5. Lo que este documento no dice
+## 5. Costuras de la configuracion
+
+La validacion de la configuracion es **pura**: mira la configuracion y nada
+mas. No toca el sistema de ficheros ni la red, de modo que la misma
+configuracion valida siempre igual y validarla no deja directorios atras.
+
+Si la maquina puede honrar la configuracion es otra pregunta, y la contesta
+el **preflight de almacenamiento**, que se invoca aparte al arrancar y
+reporta los fallos del almacenamiento como lo que son: un problema de la
+maquina, no de la configuracion.
+
+## 6. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté

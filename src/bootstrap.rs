@@ -89,6 +89,13 @@ pub async fn bootstrap(
         .map_err(|error| BootstrapError::Security(error.to_string()))?;
     validate_bootstrap_configuration(config)
         .map_err(|e| BootstrapError::Initialization(e.to_string()))?;
+    // The storage preflight is separate from the validation on purpose: the
+    // validation looks at the configuration and cannot fail because of the
+    // machine, while the preflight looks at the machine and says so when it
+    // is the machine that is wrong.
+    config
+        .preflight_storage()
+        .map_err(|error| BootstrapError::Initialization(format!("storage preflight: {error}")))?;
 
     // Step 1: Initialize infrastructure with RocksDB
     info!("📦 Initializing infrastructure adapters");
@@ -564,6 +571,10 @@ async fn initialize_schema_storage(
 ///
 /// This function performs additional validation beyond what's in AppConfig::validate()
 /// to ensure the application fails fast on configuration problems.
+///
+/// It looks at the configuration only. Whether the storage can be used is a
+/// question about the machine, and `AppConfig::preflight_storage` answers
+/// it, separately and with its own error.
 fn validate_bootstrap_configuration(
     config: &AppConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -586,32 +597,6 @@ fn validate_bootstrap_configuration(
         return Err(Box::new(BootstrapError::Initialization(
             "RocksDB path is required but not configured".to_string(),
         )));
-    }
-
-    // Validate that the RocksDB path parent directory is writable
-    let path = std::path::Path::new(&config.rocksdb.path);
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            // Try to create directory to validate permissions
-            std::fs::create_dir_all(parent).map_err(|e| {
-                BootstrapError::Initialization(format!(
-                    "Cannot create RocksDB directory '{}': {}",
-                    parent.display(),
-                    e
-                ))
-            })?;
-        } else {
-            // Check if directory is writable
-            let test_file = parent.join(".hodei_test_write");
-            if let Err(e) = std::fs::write(&test_file, "test") {
-                return Err(Box::new(BootstrapError::Initialization(format!(
-                    "RocksDB directory '{}' is not writable: {}",
-                    parent.display(),
-                    e
-                ))));
-            }
-            let _ = std::fs::remove_file(test_file); // Clean up test file
-        }
     }
 
     info!("✅ Configuration validation passed");

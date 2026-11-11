@@ -395,6 +395,16 @@ impl AppConfig {
         Ok(())
     }
 
+    /// Check that the storage the configuration names can actually be used.
+    ///
+    /// This is the infrastructure preflight, and it is the part that touches
+    /// the filesystem. It runs when the service starts, not when somebody
+    /// validates a configuration, and its failures say that the problem is
+    /// the storage and not the configuration.
+    pub fn preflight_storage(&self) -> Result<(), ConfigError> {
+        self.rocksdb.preflight_storage()
+    }
+
     /// Get the server bind address
     ///
     /// Returns a string in the format "host:port"
@@ -515,7 +525,16 @@ impl DatabaseConfig {
 }
 
 impl RocksDbConfig {
-    /// Validate RocksDB configuration
+    /// Validate the RocksDB configuration.
+    ///
+    /// This check is pure: it looks at the configuration and nothing else. It
+    /// does not touch the filesystem, so validating a configuration twice
+    /// gives the same answer twice, and validating one never leaves a
+    /// directory behind.
+    ///
+    /// Whether the path can actually be used is a question about the machine,
+    /// not about the configuration, and it is answered by
+    /// `preflight_storage`.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.path.is_empty() {
             return Err(ConfigError::Message(
@@ -524,6 +543,29 @@ impl RocksDbConfig {
             ));
         }
 
+        if self.max_open_files <= 0 {
+            return Err(ConfigError::Message(
+                "RocksDB max_open_files must be positive. Please set HODEI_ROCKSDB__MAX_OPEN_FILES to a value > 0".to_string()
+            ));
+        }
+
+        if self.write_buffer_size == 0 {
+            return Err(ConfigError::Message(
+                "RocksDB write_buffer_size cannot be 0. Please set HODEI_ROCKSDB__WRITE_BUFFER_SIZE to a positive value".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check that the storage the configuration names can actually be used.
+    ///
+    /// This is the infrastructure preflight: it touches the filesystem, it
+    /// creates the directory when the configuration says it may, and it
+    /// reports what is wrong with the machine -- not with the configuration.
+    /// A service that cannot write where it was told to write says so here,
+    /// before it starts accepting requests.
+    pub fn preflight_storage(&self) -> Result<(), ConfigError> {
         // RocksDB path is actually a directory that contains the database files
         let path = std::path::Path::new(&self.path);
 
@@ -590,18 +632,6 @@ impl RocksDbConfig {
                     }
                 }
             }
-        }
-
-        if self.max_open_files <= 0 {
-            return Err(ConfigError::Message(
-                "RocksDB max_open_files must be positive. Please set HODEI_ROCKSDB__MAX_OPEN_FILES to a value > 0".to_string()
-            ));
-        }
-
-        if self.write_buffer_size == 0 {
-            return Err(ConfigError::Message(
-                "RocksDB write_buffer_size cannot be 0. Please set HODEI_ROCKSDB__WRITE_BUFFER_SIZE to a positive value".to_string()
-            ));
         }
 
         Ok(())
@@ -872,5 +902,78 @@ mod tests {
             ..Default::default()
         };
         assert!(invalid_config.validate().is_err());
+    }
+
+    /// The validation does not touch the filesystem.
+    ///
+    /// Validating a configuration is a question about the configuration. When
+    /// the answer depended on the machine, two validations of the same
+    /// configuration could disagree, and validating one left directories
+    /// behind.
+    #[test]
+    fn the_validation_does_not_touch_the_filesystem() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("not-created");
+
+        let config = RocksDbConfig {
+            path: missing.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+
+        // The path does not exist and the validation says nothing about it:
+        // the shape of the configuration is valid.
+        assert!(
+            config.validate().is_ok(),
+            "a path that does not exist yet is a valid configuration"
+        );
+        assert!(
+            !missing.exists(),
+            "the validation must not create the directory"
+        );
+
+        // And it leaves nothing behind in the parent either.
+        let entries = std::fs::read_dir(tmp.path()).unwrap().count();
+        assert_eq!(entries, 0, "the validation must not write anything");
+    }
+
+    /// The preflight is the part that talks to the machine.
+    ///
+    /// It creates the directory when the configuration allows it, and it says
+    /// that the problem is the storage when the storage is the problem.
+    #[test]
+    fn the_preflight_creates_the_storage_and_reports_the_storage_problem() {
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().join("created-by-the-preflight");
+        let database = parent.join("db");
+
+        let config = RocksDbConfig {
+            path: database.to_string_lossy().into_owned(),
+            create_if_missing: true,
+            ..Default::default()
+        };
+
+        config
+            .preflight_storage()
+            .expect("the preflight can create it");
+        assert!(
+            parent.exists(),
+            "the preflight creates the directory the database will live in"
+        );
+
+        // A path that is a file, and not a directory, is a storage problem.
+        let file = tmp.path().join("a-file");
+        std::fs::write(&file, "not a directory").unwrap();
+        let config = RocksDbConfig {
+            path: file.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+
+        let error = config
+            .preflight_storage()
+            .expect_err("a file is not a valid storage path");
+        assert!(
+            error.to_string().contains("not a directory"),
+            "the error must say what is wrong with the storage: {error}"
+        );
     }
 }
