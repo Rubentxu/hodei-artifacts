@@ -2017,6 +2017,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hodei-evidence-storage"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hodei-evidence",
+ "kernel",
+ "serde",
+ "serde_json",
+ "surrealdb",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "hodei-hrn"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

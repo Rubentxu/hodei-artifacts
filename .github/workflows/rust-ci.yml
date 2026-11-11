@@ -127,6 +127,7 @@ jobs:
             --test http_contract \
             --test iam_account_index \
             --test iam_audit \
+            --test ledger_contract \
             --test iam_backfill \
             --test iam_policy_timestamps \
             --test iam_scope \
