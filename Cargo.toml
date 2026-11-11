@@ -1,20 +1,29 @@
 [workspace]
-# Active workspace members (only core libs + root app). Root crate (.) kept to allow the API binary.
-# NOTE: hodei-artifacts-api (root ".") temporarily has stub implementation during policies migration
+# The active workspace: the shared kernel, the IAM and policy bounded
+# contexts, and the API that composes them.
+#
+# The root crate (.) is the API binary and library; it is not a stub. The
+# crates listed under `exclude` live in the tree but are not part of the
+# build: they are a previous generation that does not compile against the
+# current kernel, and pretending they are members would make the workspace
+# fail to load. Their status and the reason for keeping them are in
+# ARCHITECTURE_STATUS.md.
 members = [
     "crates/kernel",
-    # "crates/policies", legacy code
     "crates/hodei-iam",
-    # "crates/hodei-organizations",
-    # "crates/hodei-authorizer",
     "crates/hodei-policies",
-    ".", # Stub implementation - original code in src_disabled_migration_needed/
+    ".",
 ]
-# Crates that live in the tree but are not part of the build. They are
-# legacy: they do not compile against the current kernel, and pretending they
-# are members would make the workspace fail to load.
 exclude = [
+    "crates/artifact",
+    "crates/distribution",
+    "crates/hodei-authorizer",
+    "crates/hodei-organizations",
     "crates/policies",
+    "crates/repository",
+    "crates/search",
+    "crates/security",
+    "crates/supply-chain",
 ]
 resolver = "2"
 
@@ -127,9 +136,6 @@ edition = "2024"
 license = "MIT"
 publish = false
 description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation over HRN identities"
-
-# Configuración recomendada para tests rápidos:
-# cargo nextest run --lib -p kernel -p hodei-organizations -p hodei-iam -p hodei-authorizer
 
 
 
