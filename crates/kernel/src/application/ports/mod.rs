@@ -4,6 +4,7 @@
 //! the interfaces between the application layer and infrastructure layer.
 pub mod auth_context;
 pub mod authorization;
+pub mod clock;
 pub mod event_bus;
 pub mod unit_of_work;
 // Cross-context (shared kernel) ports for IAM and Organizations
@@ -64,6 +65,9 @@ pub mod organizations {
 pub use auth_context::{AuthContextError, AuthContextProvider, SessionMetadata};
 pub use authorization::{
     AuthorizationError, EvaluationDecision, EvaluationRequest, IamPolicyEvaluator, ScpEvaluator,
+};
+pub use clock::{
+    Clock, CountingIdGenerator, FixedClock, IdGenerator, Identity, SystemClock, UuidGenerator,
 };
 pub use event_bus::{
     DomainEvent, EventBus, EventEnvelope, EventHandler, EventPublisher, Subscription,

@@ -2534,7 +2534,6 @@ dependencies = [
  "hodei-hrn",
  "serde",
  "serde_json",
- "surrealdb",
  "thiserror 2.0.21",
  "time",
  "tokio",

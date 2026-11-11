@@ -17,7 +17,6 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 bincode = { workspace = true }
 chrono = { workspace = true }
-surrealdb = { workspace = true }
 hodei-hrn = "0.2.1"
 
 [dev-dependencies]

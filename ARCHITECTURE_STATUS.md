@@ -120,7 +120,33 @@ de organizaciones". **Ninguna de las dos cosas es cierta hoy.**
 | `docs/api/`, `docs/openapi/`, `docs/postman/` | `referencia`: artefactos generados |
 | `docs/testing-organization.md` | `deprecada`: describe una organización de pruebas que ya no es la de este repositorio |
 
-## 5. Costuras de la configuracion
+## 5. Costuras del tiempo y de la identidad
+
+Un momento y un identificador no son entradas: son hechos sobre la maquina.
+Cuando el codigo los lee directamente, el resultado depende de cuando se
+ejecuto, y dos ejecuciones de la misma operacion no se pueden comparar. Eso
+importa donde el resultado es evidencia: una traza cuyo momento no se puede
+reproducir no se puede comprobar.
+
+Por eso el reloj y el generador de identificadores son **costuras**
+(`kernel::application::ports::clock`): el cableado de produccion lee la
+maquina, y una prueba los fija para que la traza que compara sea un hecho y
+no un recuerdo. La traza de auditoria los usa ya para su identificador, su
+momento y su correlacion.
+
+## 6. El nucleo no depende de mecanismos concretos
+
+El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.
+La persistencia real vive en `crates/hodei-iam/src/infrastructure/surreal/`.
+
+El kernel tenia un adaptador de SurrealDB de 403 lineas que era un
+**placeholder**: su `connect()` no conectaba, devolvia `Ok`, y seis tests
+"de integracion" solo comprobaban su propia contabilidad. No lo usaba nadie
+y arrastraba la dependencia concreta al nucleo protegido, asi que se
+retiro. La cobertura real de la base de datos esta en los tres tests de
+integracion de `hodei-iam`, que si hablan con SurrealDB.
+
+## 7. Costuras de la configuracion
 
 La validacion de la configuracion es **pura**: mira la configuracion y nada
 mas. No toca el sistema de ficheros ni la red, de modo que la misma
@@ -131,7 +157,7 @@ el **preflight de almacenamiento**, que se invoca aparte al arrancar y
 reporta los fallos del almacenamiento como lo que son: un problema de la
 maquina, no de la configuracion.
 
-## 6. Lo que este documento no dice
+## 8. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté

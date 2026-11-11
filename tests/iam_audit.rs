@@ -24,6 +24,7 @@ use hodei_authz::{
     AccountId, AuthenticationError, Credentials, PrincipalAuthenticator, PrincipalClaims,
     PrincipalId,
 };
+use kernel::application::ports::clock::{CountingIdGenerator, FixedClock, Identity};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -55,6 +56,11 @@ impl PrincipalAuthenticator for Accounts {
 }
 
 async fn app() -> (axum::Router, TempDir, Arc<InMemoryAuditSink>) {
+    app_with_identity(Identity::system()).await
+}
+
+/// The same application, with the clock and the identifier generator pinned.
+async fn app_with_identity(identity: Identity) -> (axum::Router, TempDir, Arc<InMemoryAuditSink>) {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = true;
@@ -81,7 +87,8 @@ async fn app() -> (axum::Router, TempDir, Arc<InMemoryAuditSink>) {
     .unwrap()
     .with_authenticator(Arc::new(Accounts))
     .with_authorization(authorizer)
-    .with_audit_sink(sink.clone());
+    .with_audit_sink(sink.clone())
+    .with_identity(identity);
     (build_router(state, &config), tmp, sink)
 }
 
@@ -257,4 +264,80 @@ async fn the_trail_never_carries_the_token() {
             "the event must not carry the policy content: {rendered}"
         );
     }
+}
+
+/// The trail is reproducible when the clock and the identifier generator are
+/// pinned.
+///
+/// A moment and an identifier are facts about the machine, not about the
+/// operation. When the code reads them directly, two executions of the same
+/// operation cannot be compared, and an event whose moment cannot be
+/// reproduced cannot be checked.
+#[tokio::test]
+async fn the_trail_is_reproducible_with_pinned_seams() {
+    // A fresh identity for each run: the same clock, the same generator, and
+    // a counter that starts at zero, so the two runs are comparable.
+    let identity = || {
+        Identity::new(
+            Arc::new(FixedClock::at("2026-01-02T03:04:05Z").expect("a valid moment")),
+            Arc::new(CountingIdGenerator::with_prefix("event-")),
+        )
+    };
+    let (app, _tmp, sink) = app_with_identity(identity()).await;
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/policies",
+        "alice",
+        Some(json!({
+            "policy_id": "pinned",
+            "policy_content": "permit(principal, action, resource);",
+            "attached_principals": ["hrn:hodei:iam::acme:User/alice"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let events = sink.events();
+    assert_eq!(events.len(), 1, "the creation must be in the trail");
+    assert_eq!(
+        events[0].timestamp.to_rfc3339(),
+        "2026-01-02T03:04:05+00:00",
+        "the moment must come from the clock, not from the machine"
+    );
+    assert!(
+        events[0].event_id.starts_with("event-"),
+        "the identifier must come from the generator, not from the machine: {}",
+        events[0].event_id
+    );
+    let first_run_id = events[0].event_id.clone();
+
+    // And a second run produces the same trail: the same operation, the same
+    // moment and the same identifiers.
+    let (app, _tmp, sink) = app_with_identity(identity()).await;
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/policies",
+        "alice",
+        Some(json!({
+            "policy_id": "pinned",
+            "policy_content": "permit(principal, action, resource);",
+            "attached_principals": ["hrn:hodei:iam::acme:User/alice"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let events = sink.events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].timestamp.to_rfc3339(),
+        "2026-01-02T03:04:05+00:00"
+    );
+    assert_eq!(
+        events[0].event_id, first_run_id,
+        "the same operation must produce the same trail"
+    );
 }

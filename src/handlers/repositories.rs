@@ -144,7 +144,7 @@ pub async fn create_repository(
             Err(_) => return Err(RepositoryApiError::Unauthorized),
         };
     let context = VerifiedContext::from_principal(principal);
-    let correlation_id = correlation_id(&headers);
+    let correlation_id = correlation_id(&headers, &state.identity);
 
     // Parse the body only after authentication: a missing/invalid token is
     // always 401, even if the JSON is malformed.
