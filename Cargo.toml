@@ -12,6 +12,7 @@ members = [
     "crates/kernel",
     "crates/hodei-iam",
     "crates/hodei-policies",
+    "crates/hodei-evidence",
     ".",
 ]
 exclude = [

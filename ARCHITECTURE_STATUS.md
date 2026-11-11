@@ -33,6 +33,7 @@ no llega a ese listón está etiquetado, y la etiqueta dice en qué estado está
 | `crates/kernel` | Núcleo compartido: identidad HRN v2, tipos de dominio, puertos. | `implementada` |
 | `crates/hodei-iam` | IAM: usuarios, grupos, políticas; persistencia en SurrealDB. | `implementada` |
 | `crates/hodei-policies` | Motor Cedar: schema, validación, evaluación, registro. | `implementada` |
+| `crates/hodei-evidence` | Contexto de evidencia y registro de eventos (M1): los contratos, sin adapter. | `implementada` |
 | `.` (`hodei-artifacts-api`) | API HTTP: composición, arranque, rutas, auditoría. | `implementada` |
 
 El kernel no depende de ningún mecanismo concreto: ni SurrealDB, ni Axum, ni
@@ -134,7 +135,29 @@ maquina, y una prueba los fija para que la traza que compara sea un hecho y
 no un recuerdo. La traza de auditoria los usa ya para su identificador, su
 momento y su correlacion.
 
-## 6. El nucleo no depende de mecanismos concretos
+## 6. El contexto de evidencia
+
+`crates/hodei-evidence` es el primer contexto de M1. Contiene los contratos
+y nada mas: no hay adapter, ni almacen, ni HTTP, ni una sola dependencia de
+un motor de base de datos (una comprobacion de forma lo verifica ✓).
+
+Dos reglas dan forma a los contratos:
+
+- **El contenido se referencia, no se copia.** Un registro de evidencia
+  guarda el digest y la localizacion de su contenido, y no el contenido. Eso
+  hace que el manejo de secretos sea estructural y no una promesa: un
+  registro no tiene donde llevar un token.
+- **La envoltura de evento es inmutable por construccion.** Los campos son
+  privados y no hay manera de cambiarlos; una correccion es otro evento, no
+  una edicion. Un doctest `compile_fail` lo demuestra.
+
+La clave de idempotencia es **estructurada**, no un texto que haya que
+desmontar: sus cuatro hechos --productor, identidad externa, digest del
+contenido y version mayor del normalizador-- son campos ✓. Por eso puede
+distinguir una entrega repetida de una revision nueva, y por eso la revision
+no sobrescribe la historia.
+
+## 7. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.
 La persistencia real vive en `crates/hodei-iam/src/infrastructure/surreal/`.
@@ -157,7 +180,7 @@ el **preflight de almacenamiento**, que se invoca aparte al arrancar y
 reporta los fallos del almacenamiento como lo que son: un problema de la
 maquina, no de la configuracion.
 
-## 8. Las comprobaciones de forma
+## 9. Las comprobaciones de forma
 
 Una arquitectura que solo existe en un documento se deshace en el primer
 commit que nadie revisa con cuidado. `tests/architecture_fitness.rs` lee el
@@ -166,7 +189,7 @@ repositorio y falla cuando aparece una forma que el diseño prohibe:
 | Comprobacion | Que prohibe |
 | --- | --- |
 | `the_active_code_does_not_downcast` | Bajar a una implementacion concreta por downcast. |
-| `a_protected_crate_does_not_depend_on_a_concrete_mechanism` | Que el nucleo protegido nombre un motor de base de datos o un framework de HTTP. |
+| `a_protected_crate_does_not_depend_on_a_concrete_mechanism` | Que el nucleo protegido o los contratos de evidencia nombren un motor de base de datos o un framework de HTTP. |
 | `the_active_code_does_not_import_another_context_internals` | Importar lo interno de otro contexto. |
 | `there_is_no_success_of_filler` | Un `todo!()`, o un fichero de pruebas que se declara marcador de posicion sin pruebas dentro. |
 
@@ -180,7 +203,7 @@ de prueba tiene que estar en exactamente una suite, ninguna suite puede
 nombrar un target que no existe, y el inventario de lo descubierto se
 imprime en el log del job.
 
-## 9. Lo que este documento no dice
+## 10. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté

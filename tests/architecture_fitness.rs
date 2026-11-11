@@ -11,8 +11,9 @@
 //!    la que la aplicacion baje al tipo concreto. El codigo activo no lo
 //!    usaba, pero el puerto lo ofrecia, y una puerta ofrecida es una puerta
 //!    que se puede volver a abrir.
-//! 2. El nucleo protegido no depende de un mecanismo concreto. La
-//!    persistencia real vive en el contexto que la posee.
+//! 2. El nucleo protegido y los contratos de evidencia no dependen de un
+//!    mecanismo concreto. La persistencia real vive en el contexto que la
+//!    posee.
 //! 3. El codigo activo no importa lo interno de otro contexto.
 //! 4. No hay exito de relleno: ni un `todo!()`, ni un fichero de pruebas que
 //!    se declara a si mismo un marcador de posicion sin pruebas dentro.
@@ -23,11 +24,12 @@ use std::path::{Path, PathBuf};
 /// The roots of the active workspace. The crates that live in the tree but
 /// are not members are a previous generation: they are not built, they are
 /// not deployed, and they do not constrain the active code.
-const ACTIVE_ROOTS: [&str; 4] = [
+const ACTIVE_ROOTS: [&str; 5] = [
     "src",
     "crates/kernel",
     "crates/hodei-iam",
     "crates/hodei-policies",
+    "crates/hodei-evidence",
 ];
 
 fn repository_root() -> PathBuf {
@@ -137,7 +139,7 @@ fn the_check_would_catch_a_downcast() {
 /// The kernel is the shared core: it names the vocabulary everybody uses,
 /// and it must not drag a database engine or an HTTP framework into every
 /// crate that uses it.
-const PROTECTED_CRATES: [&str; 1] = ["crates/kernel"];
+const PROTECTED_CRATES: [&str; 2] = ["crates/kernel", "crates/hodei-evidence"];
 
 /// The mechanisms a protected crate must not depend on.
 ///
