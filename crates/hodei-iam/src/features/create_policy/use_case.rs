@@ -177,8 +177,8 @@ impl CreatePolicyUseCase {
             content: policy.content().to_string(),
             description: command.description.clone(),
             attached_principals: command.attached_principals.clone(),
-            created_at: Some(created.created_at),
-            updated_at: Some(created.updated_at),
+            created_at: created.created_at,
+            updated_at: created.updated_at,
         };
 
         Ok(view)

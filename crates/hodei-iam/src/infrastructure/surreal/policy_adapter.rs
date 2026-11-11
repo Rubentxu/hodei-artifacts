@@ -110,8 +110,14 @@ fn short_id(thing: &surrealdb::sql::Thing) -> String {
 ///
 /// It is the spelling the responses use, so what a response says is
 /// character for character what the database holds.
+///
+/// The sub-second digits are the ones `chrono` itself writes when it
+/// serialises a timestamp -- `AutoSi`, which drops the trailing zeros -- and
+/// not a fixed count: a stored mark with nine digits and a response with six
+/// are the same instant written differently, and a comparison of the two
+/// strings would fail once every thousand marks.
 fn mark(instant: chrono::DateTime<chrono::Utc>) -> String {
-    instant.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+    instant.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
 }
 
 /// The mark of a stored timestamp, as the domain type.
@@ -256,9 +262,11 @@ impl<C: surrealdb::Connection> CreatePolicyPort for SurrealPolicyAdapter<C> {
                 Ok(crate::features::create_policy::dto::CreatedPolicy {
                     policy: created_policy,
                     // The row carries what was written; if it does not, the
-                    // marks are absent rather than invented.
-                    created_at: created_at.unwrap_or(now),
-                    updated_at: updated_at.unwrap_or(now),
+                    // marks are absent rather than invented. Falling back to
+                    // the clock of the process would put a time in the
+                    // response that the database does not hold.
+                    created_at,
+                    updated_at,
                 })
             }
             Ok(None) => {
@@ -713,5 +721,44 @@ impl<C: surrealdb::Connection> IamPolicyFinderPort for SurrealPolicyAdapter<C> {
             principal_hrn
         );
         Ok(policy_set)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stored mark and the response have to be the same text.
+    ///
+    /// The response serialises the timestamp it read; the store holds the
+    /// text it wrote. If the two spellings differ, a response can say
+    /// something the database does not hold -- and a test that compares them
+    /// fails once every thousand marks, which is the worst kind of failure:
+    /// it looks like a broken deployment and it is a broken format.
+    #[test]
+    fn the_stored_mark_is_the_text_the_response_says() {
+        let awkward = [
+            "2023-11-14T22:13:20.000000000Z",
+            "2023-11-14T22:13:20.123456000Z",
+            "2023-11-14T22:13:20.123456789Z",
+            "2023-11-14T22:13:20.000001000Z",
+            "2023-11-14T22:13:20.100000000Z",
+        ];
+        for text in awkward {
+            let instant = chrono::DateTime::parse_from_rfc3339(text)
+                .expect("a timestamp")
+                .with_timezone(&chrono::Utc);
+
+            let stored = mark(instant);
+            let said = serde_json::to_string(&instant).expect("a serialised timestamp");
+            let said = said.trim_matches('"');
+
+            assert_eq!(
+                stored, said,
+                "the stored mark and the response must be the same text for {text}"
+            );
+            // And it reads back as the same instant.
+            assert_eq!(parse_mark(Some(stored)), Some(instant));
+        }
     }
 }

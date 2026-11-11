@@ -21,27 +21,65 @@ fn workflow_path() -> PathBuf {
     manifest_dir().join(".github/workflows/rust-ci.yml")
 }
 
-/// The integration test targets of the crate, by file name without extension.
+/// The integration test targets of every member of the workspace, by file
+/// name without extension.
+///
+/// The members are read from the workspace manifest, not assumed: a crate that
+/// joins the workspace brings its own test targets, and a target that belongs
+/// to no suite stops being run at all. Looking only at the root package's
+/// `tests` directory misses every target of every other member, which is
+/// exactly how a suite of the member crates was dropped from the workflow
+/// without this test noticing.
 fn test_targets() -> Vec<String> {
-    let tests = manifest_dir().join("tests");
-    let mut found: Vec<String> = fs::read_dir(&tests)
-        .unwrap_or_else(|error| panic!("cannot read {}: {error}", tests.display()))
-        .flatten()
-        .filter_map(|entry| {
+    let mut found: Vec<String> = Vec::new();
+    for member in workspace_members() {
+        let tests = member.join("tests");
+        let Ok(entries) = fs::read_dir(&tests) else {
+            continue;
+        };
+        for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().is_some_and(|extension| extension == "rs") {
-                Some(
-                    path.file_stem()
-                        .map(|stem| stem.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                )
-            } else {
-                None
+            if path.extension().is_some_and(|extension| extension == "rs")
+                && let Some(name) = path.file_stem()
+            {
+                found.push(name.to_string_lossy().into_owned());
             }
-        })
-        .collect();
+        }
+    }
     found.sort();
+    found.dedup();
     found
+}
+
+/// The directories of the members of the workspace.
+///
+/// The root package is the manifest itself; the rest are the paths the
+/// workspace manifest names.
+fn workspace_members() -> Vec<PathBuf> {
+    let root = manifest_dir();
+    let manifest = fs::read_to_string(root.join("Cargo.toml"))
+        .unwrap_or_else(|error| panic!("cannot read the workspace manifest: {error}"));
+
+    let mut members = vec![root.clone()];
+    let mut inside = false;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with("members") {
+            inside = true;
+            continue;
+        }
+        if inside {
+            if line.starts_with(']') {
+                break;
+            }
+            let member = line.trim().trim_end_matches(',').trim();
+            let member = member.trim_matches('"');
+            if !member.is_empty() && !member.starts_with('#') {
+                members.push(root.join(member));
+            }
+        }
+    }
+    members
 }
 
 /// The test targets each suite of the workflow names.
@@ -202,6 +240,22 @@ fn no_test_target_is_left_out_of_the_suites() {
     );
 }
 
+/// The doctests are run by the workflow.
+///
+/// They are not a test target, so no suite names them, and a segmentation
+/// that forgot them would drop them silently: the guard cannot see a target
+/// that is not one.
+#[test]
+fn the_workflow_runs_the_doctests() {
+    let workflow = fs::read_to_string(workflow_path())
+        .unwrap_or_else(|error| panic!("cannot read the workflow: {error}"));
+
+    assert!(
+        workflow.contains("cargo test --workspace --doc"),
+        "the workflow must run the doctests; they are not a test target, so no suite names them"
+    );
+}
+
 /// The workflow must not run the whole suite twice: the segmentation exists to
 /// stop a suite from being duplicated, and a second `--workspace` without a
 /// target filter would run everything again.
@@ -215,12 +269,62 @@ fn the_workflow_does_not_run_the_whole_workspace_twice() {
         .filter(|line| line.contains("cargo test --workspace"))
         .filter(|line| !line.contains("--test "))
         .filter(|line| !line.contains("nextest"))
+        // The doctests are not a target: `cargo test --workspace --doc` runs
+        // them, and that is the only way to run them.
+        .filter(|line| !line.contains("--doc"))
         .count();
 
     assert_eq!(
         whole_workspace, 0,
         "the workflow runs `cargo test --workspace` without naming the targets, which runs the \
          whole suite again and undoes the segmentation"
+    );
+}
+
+/// A job that runs on every pull request must not run the whole workspace.
+///
+/// The nextest job is opt-in on purpose: it runs the same workspace with
+/// per-test isolation, and the RocksDB suites need a single thread. That is
+/// only acceptable while it stays out of the pull request path; a job that
+/// runs the whole suite there would undo the segmentation behind the
+/// segmentation's back.
+#[test]
+fn no_job_that_runs_on_pull_requests_runs_the_whole_workspace() {
+    let workflow = fs::read_to_string(workflow_path())
+        .unwrap_or_else(|error| panic!("cannot read the workflow: {error}"));
+
+    // The jobs of the workflow, each with its steps joined.
+    let mut job_name = String::new();
+    let mut manual_only = false;
+    let mut offenders: Vec<String> = Vec::new();
+
+    for line in logical_lines(&workflow) {
+        if line.starts_with("  ") && line.ends_with(':') && !line.starts_with("    ") {
+            // A new job.
+            job_name = line.trim_end_matches(':').trim().to_string();
+            manual_only = false;
+            continue;
+        }
+        if line.trim_start().starts_with("if:") {
+            manual_only = line.contains("workflow_dispatch");
+            continue;
+        }
+        if manual_only {
+            continue;
+        }
+        let runs_whole_workspace = line.contains("cargo nextest run --workspace")
+            || (line.contains("cargo test --workspace")
+                && !line.contains("--test ")
+                && !line.contains("--doc"));
+        if runs_whole_workspace {
+            offenders.push(format!("{job_name}: {line}"));
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "these jobs run the whole workspace on every pull request, which undoes the \
+         segmentation: {offenders:?}"
     );
 }
 

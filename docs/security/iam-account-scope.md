@@ -17,8 +17,13 @@ Medido sobre el motor local: definir un índice mantiene el directorio de la bas
 
 Por eso el índice lo declara un comando aparte, que además libera el bloqueo al terminar. El orden de despliegue es el habitual de un paso de migración: **el comando se ejecuta con el servicio detenido**.
 
+El comando lee **la misma configuración que el servicio** —los ficheros y los overrides `HODEI_*`—, de modo que declara el índice en la base de datos y el namespace que el servicio usa de verdad. Un comando que fijara el namespace o la base de datos a mano declararía el índice donde el servicio no mira, y el servicio seguiría escaneando la tabla. Los argumentos `--db`, `--namespace` y `--database` solo sustituyen a la configuración cuando hace falta, y el comando dice en voz alta qué ruta está usando.
+
 ```bash
 # Con el servicio detenido:
+ensure-iam-index
+
+# O, desde un checkout del código:
 cargo run --bin ensure-iam-index -- --db data/hodei.rocksdb
 ```
 

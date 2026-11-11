@@ -14,6 +14,8 @@ use std::sync::Arc;
 struct MockSchemaStorage {
     should_fail: bool,
     has_schema: bool,
+    /// The stored content, when the mock holds a real schema.
+    content: Option<String>,
 }
 
 impl MockSchemaStorage {
@@ -21,6 +23,7 @@ impl MockSchemaStorage {
         Self {
             should_fail: false,
             has_schema: false,
+            content: None,
         }
     }
 
@@ -28,6 +31,7 @@ impl MockSchemaStorage {
         Self {
             should_fail: false,
             has_schema: true,
+            content: Some("mock_schema_debug".to_string()),
         }
     }
 
@@ -36,6 +40,19 @@ impl MockSchemaStorage {
         Self {
             should_fail: true,
             has_schema: false,
+            content: None,
+        }
+    }
+
+    /// A stored schema that declares nothing.
+    ///
+    /// It is a valid schema -- the envelope the storage keeps -- with no
+    /// entity types and no actions, so it constrains nothing.
+    fn with_empty_schema() -> Self {
+        Self {
+            should_fail: false,
+            has_schema: true,
+            content: Some(r#"{"format":"cedar-schema-fragments-v1","fragments":[]}"#.to_string()),
         }
     }
 }
@@ -62,7 +79,7 @@ impl SchemaStoragePort for MockSchemaStorage {
             ));
         }
         if self.has_schema {
-            Ok(Some("mock_schema_debug".to_string()))
+            Ok(self.content.clone())
         } else {
             Ok(None)
         }
@@ -78,7 +95,7 @@ impl SchemaStoragePort for MockSchemaStorage {
             ));
         }
         if self.has_schema {
-            Ok(Some("mock_schema_debug".to_string()))
+            Ok(self.content.clone())
         } else {
             Ok(None)
         }
@@ -795,4 +812,62 @@ async fn test_clear_cache() {
 
     let result = use_case.clear_cache().await;
     assert!(result.is_ok());
+}
+
+/// A schema that declares nothing constrains nothing.
+///
+/// The playground has always worked that way. The engine used to apply such a
+/// schema as it was, and Cedar rejected every request it did not describe --
+/// a false rejection, because a schema that says nothing cannot refuse
+/// anything.
+#[tokio::test]
+async fn a_schema_that_declares_nothing_constrains_nothing() {
+    let schema_storage = Arc::new(MockSchemaStorage::with_empty_schema());
+    let use_case =
+        EvaluatePoliciesUseCase::with_authoritative_schema(schema_storage, "authorization-bundle");
+
+    let user = MockUser {
+        hrn: Hrn::new(
+            "aws".to_string(),
+            "iam".to_string(),
+            "hodei-test".to_string(),
+            "user".to_string(),
+            "alice".to_string(),
+        ),
+        name: "Alice".to_string(),
+        active: true,
+        role: "developer".to_string(),
+        department: "engineering".to_string(),
+    };
+
+    let document = MockDocument {
+        hrn: Hrn::new(
+            "aws".to_string(),
+            "storage".to_string(),
+            "hodei-test".to_string(),
+            "document".to_string(),
+            "doc1".to_string(),
+        ),
+        title: "Test Document".to_string(),
+        classification: "public".to_string(),
+        owner: "alice".to_string(),
+    };
+
+    let policy = HodeiPolicy::new(
+        PolicyId::new("policy1".to_string()),
+        "permit(principal, action, resource);".to_string(),
+    );
+    let policy_set = HodeiPolicySet::new(vec![policy]);
+
+    let entities: Vec<&dyn HodeiEntity> = vec![&user, &document];
+    let request = AuthorizationRequest::new(&user, "read", &document);
+
+    let command = EvaluatePoliciesCommand::new(request, &policy_set, &entities)
+        .with_evaluation_mode(EvaluationMode::Strict);
+
+    let result = use_case
+        .execute(command)
+        .await
+        .expect("a schema that declares nothing must not reject the request");
+    assert_eq!(result.decision, Decision::Allow);
 }

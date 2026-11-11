@@ -134,12 +134,13 @@ pub async fn bootstrap(
         Ok(true) => {}
         Ok(false) => warn!(
             "⚠️  The policy account index is missing. The IAM listing still isolates by account, \
-             but it scans the table. Run `cargo run --bin ensure-iam-index -- --db <path>` \
-             (or the released binary with --db) to declare it."
+             but it scans the table. Stop the service and run `ensure-iam-index` (shipped \
+             alongside it in bin/) to declare it; from a source checkout: \
+             `cargo run --bin ensure-iam-index -- --db <path>`."
         ),
         Err(error) => warn!(
-            "⚠️  The policy account index could not be checked: {}. Run \
-             `cargo run --bin ensure-iam-index -- --db <path>` to declare it.",
+            "⚠️  The policy account index could not be checked: {}. Stop the service and run \
+             `ensure-iam-index` to declare it.",
             error
         ),
     }
@@ -280,6 +281,19 @@ fn configure_production_security(
     })?;
     let schema = Schema::from_json_str(&schema_text)
         .map_err(|error| BootstrapError::Security(format!("invalid Cedar schema: {error}")))?;
+    // The bundle has to declare the actions the service authorizes with.
+    //
+    // The gate builds the Cedar uid of an action from its service and its
+    // name, and the bundle has to declare exactly that action. A bundle that
+    // declared the verb under another namespace would leave the gate unable
+    // to decide -- Cedar refuses a request it cannot fit -- while the
+    // persisted evaluator resolved the same verb against the schema and
+    // reached a decision. A deployment that does not start is better than
+    // one whose two circuits disagree about what an action is.
+    crate::actions::check_service_declared(&schema, config.security.admin_api_enabled).map_err(
+        |error| BootstrapError::Security(format!("invalid authorization bundle: {error}")),
+    )?;
+
     let cedar = CedarAuthorizer::from_policies(
         &policies,
         Entities::empty(),

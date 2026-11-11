@@ -446,3 +446,141 @@ async fn persisted_iam_policy_does_not_change_the_static_gate() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+/// A request whose entity types the schema does not describe is denied with
+/// a reason, not answered with an error.
+///
+/// The gate answers the same way: a request that does not fit the schema is
+/// a denial, because the caller asked for something the schema does not
+/// describe. Answering with a server error would tell the caller nothing it
+/// could act on, and would differ from the gate.
+#[tokio::test]
+async fn a_request_that_does_not_fit_the_schema_is_denied_with_a_reason() {
+    let (app, _tmp) = app(CASES[0].policy).await;
+
+    // The evaluator only evaluates the policies attached to the principal, so
+    // the request needs one to reach the engine at all.
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/policies",
+        Some(json!({
+            "policy_id": "attached",
+            "policy_content": "permit(principal, action, resource);",
+            "attached_principals": [PRINCIPAL]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create: {created:?}");
+
+    // The resource is of a type the schema does not declare.
+    let (status, decision) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/evaluate",
+        Some(json!({
+            "principal_hrn": PRINCIPAL,
+            "action": "ReadRepository",
+            "resource_hrn": "hrn:hodei:storage::acme:Document/doc1"
+        })),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a request the schema does not describe must be denied, not fail: {decision:?}"
+    );
+    assert_eq!(decision["decision"], json!(false));
+    let reason = decision["reason"].as_str().expect("a reason");
+    assert!(
+        reason.contains("schema"),
+        "the reason must say the schema does not describe the request: {reason:?}"
+    );
+}
+
+/// A bundle that does not declare the actions the service authorizes with is
+/// a deployment that does not start.
+///
+/// The gate builds the Cedar uid of an action from its service and its name;
+/// the persisted evaluator resolves the verb against the schema. A bundle
+/// that declared the verb under another namespace would leave the gate unable
+/// to decide while the evaluator decided happily, so the disagreement is
+/// caught at boot instead of in production.
+#[tokio::test]
+async fn a_bundle_that_disagrees_with_the_service_does_not_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut config = AppConfig::default();
+    config.security.admin_api_enabled = true;
+    config.security.auth_jwt_secret = Some("hsp-28-mismatch-secret".to_string());
+    config.security.auth_issuer = Some("https://issuer.example".to_string());
+    config.security.auth_audience = Some("hodei-artifacts".to_string());
+    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+
+    // The verb is declared, but under another namespace than the one the
+    // service builds: `Warehouse::Action::"ReadRepository"` instead of
+    // `Artifacts::Action::"ReadRepository"`.
+    let schema_path = tmp.path().join("schema.json");
+    let policy_path = tmp.path().join("policies.cedar");
+    std::fs::write(
+        &schema_path,
+        r#"{
+  "": { "entityTypes": {}, "actions": {} },
+  "Iam": { "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } }, "actions": {} },
+  "Admin": {
+    "entityTypes": { "AdminApi": { "shape": { "type": "Record", "attributes": {} } } },
+    "actions": {
+      "AccessAdminApi": {
+        "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Admin::AdminApi"] }
+      }
+    }
+  },
+  "Warehouse": {
+    "entityTypes": {
+      "Repository": { "shape": { "type": "Record", "attributes": {} } }
+    },
+    "actions": {
+      "ReadRepository": {
+        "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Warehouse::Repository"] }
+      },
+      "CreateRepository": {
+        "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Warehouse::Repository"] }
+      }
+    }
+  }
+}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &policy_path,
+        r#"permit(principal, action == Warehouse::Action::"ReadRepository", resource);"#,
+    )
+    .unwrap();
+    config.security.authorization_schema_path = Some(schema_path.to_string_lossy().into_owned());
+    config.security.authorization_policy_path = Some(policy_path.to_string_lossy().into_owned());
+
+    let outcome = bootstrap(
+        &config,
+        BootstrapConfig {
+            register_iam_schema: false,
+            schema_version: None,
+            validate_schemas: false,
+        },
+    )
+    .await;
+
+    let error = match outcome {
+        Ok(_) => panic!("the service must not start with a bundle it disagrees with"),
+        Err(error) => error,
+    };
+
+    let message = error.to_string();
+    assert!(
+        message.contains("ReadRepository"),
+        "the error must name the action that disagrees: {message}"
+    );
+    assert!(
+        message.contains("Artifacts") && message.contains("Warehouse"),
+        "the error must name both namespaces: {message}"
+    );
+}

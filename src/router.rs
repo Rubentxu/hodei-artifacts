@@ -23,7 +23,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
 };
-use hodei_authz::{ActionId, Credentials, VerifiedContext, verify_principal};
+use hodei_authz::{Credentials, VerifiedContext, verify_principal};
 use kernel::Hrn;
 use std::time::Duration;
 use tower_http::{
@@ -127,12 +127,7 @@ async fn admin_gate(
         Err(_) => return unauthorized(),
     };
     let context = VerifiedContext::from_principal(principal);
-    let action = match ActionId::new("admin", "AccessAdminApi") {
-        Ok(action) => action,
-        Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "invalid admin action").into_response();
-        }
-    };
+    let action = crate::actions::access_admin_api();
 
     let path = req
         .uri()

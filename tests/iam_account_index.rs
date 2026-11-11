@@ -19,6 +19,7 @@ use serde::Deserialize;
 use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, RocksDb};
 
+/// What the database reports about a table.
 #[derive(Default, Deserialize)]
 struct TableInfo {
     #[serde(default)]
@@ -50,6 +51,10 @@ fn run_ensure_index(db_path: &Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_ensure-iam-index"))
         .arg("--db")
         .arg(db_path)
+        .arg("--namespace")
+        .arg("hodei")
+        .arg("--database")
+        .arg("artifacts")
         .output()
         .expect("the ensure-iam-index command must run")
 }
@@ -60,11 +65,16 @@ fn run_ensure_index(db_path: &Path) -> std::process::Output {
 /// fails with a lock error that says nothing about the index. That error —
 /// and only that error — is retried inside a bounded window.
 async fn open(path: &Path) -> Surreal<Db> {
+    open_in(path, "hodei", "artifacts").await
+}
+
+/// Open a database in a given namespace and database.
+async fn open_in(path: &Path, namespace: &str, database: &str) -> Surreal<Db> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         match Surreal::new::<RocksDb>(path).await {
             Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+                db.use_ns(namespace).use_db(database).await.expect("ns/db");
                 return db;
             }
             Err(error) => {
@@ -155,6 +165,54 @@ async fn the_deployment_path_declares_the_index_before_the_service_starts() {
     assert!(
         names.iter().any(|name| name == "policy_account"),
         "the index must survive the service booting, found {names:?}"
+    );
+}
+
+/// The command declares the index in the database the service uses.
+///
+/// The namespace and the database come from the configuration, and the
+/// configuration is overridable: a command that hardcoded them would declare
+/// the index in a database the service never opens, and would report success
+/// while the service kept scanning the table.
+#[tokio::test]
+async fn the_command_uses_the_namespace_and_database_of_the_service() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("db");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ensure-iam-index"))
+        .arg("--db")
+        .arg(&db_path)
+        .env("HODEI_DATABASE__NAMESPACE", "acme")
+        .env("HODEI_DATABASE__DATABASE", "tenant")
+        .output()
+        .expect("the ensure-iam-index command must run");
+    assert!(
+        output.status.success(),
+        "the command must succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains("acme/tenant"),
+        "the command must name the namespace and the database it used: {said:?}"
+    );
+
+    // The index is in that database, and not in the default one.
+    let db = open_in(&db_path, "acme", "tenant").await;
+    let mut response = db
+        .query("INFO FOR TABLE policy")
+        .await
+        .expect("the table must be readable");
+    assert!(response.take_errors().is_empty());
+    let info = response
+        .take::<Option<TableInfo>>(0)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    assert!(
+        info.indexes.contains_key("policy_account"),
+        "the index must be in the configured database, found {:?}",
+        info.indexes.keys().collect::<Vec<_>>()
     );
 }
 

@@ -135,10 +135,13 @@ pub struct CreatedPolicy {
     pub policy: kernel::domain::policy::HodeiPolicy,
 
     /// When the store recorded the creation.
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    ///
+    /// It is absent when the row carries no mark: the clock of the process
+    /// is not a substitute for a mark the database does not hold.
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 
     /// When the store recorded the last update.
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[cfg(test)]

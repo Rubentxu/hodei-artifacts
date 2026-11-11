@@ -47,7 +47,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs', 'crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -67,12 +67,24 @@ jobs:
           cargo test --workspace --lib --bins \
             --test authorization_isolation \
             --test ci_suites \
+            --test hrn_migration \
             --test hrn_parity \
             --test legacy_quarantine \
-            --test module_tree || status=$?
+            --test module_tree \
+            --test surrealdb_integration_test || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
           echo "### Suite fast (unit and contract): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit ${status:-0}
+
+      - name: Suite fast doctests
+        id: suite-doctests
+        run: |
+          started=$(date +%s)
+          cargo test --workspace --doc || status=$?
+          elapsed=$(( $(date +%s) - started ))
+          echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
+          echo "### Suite fast (doctests): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
           exit ${status:-0}
 
   # The suites that need the embedded database and the ones that boot the
@@ -100,7 +112,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs', 'crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -116,6 +128,9 @@ jobs:
             --test iam_backfill \
             --test iam_policy_timestamps \
             --test iam_scope \
+            --test integration_create_group_comprehensive_test \
+            --test integration_create_policy_new_test \
+            --test integration_create_user_comprehensive_test \
             --test playground_isolation \
             --test policy_circuits \
             --test repository_create \
@@ -149,7 +164,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs', 'crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 

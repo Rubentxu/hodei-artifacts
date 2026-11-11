@@ -52,9 +52,15 @@ impl PrincipalAuthenticator for Accounts {
 
 async fn app() -> (axum::Router, TempDir) {
     let tmp = tempfile::tempdir().unwrap();
+    let app = boot(&tmp.path().join("db")).await;
+    (app, tmp)
+}
+
+/// The service, over a database that already exists.
+async fn boot(db_path: &Path) -> axum::Router {
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = true;
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    config.rocksdb.path = db_path.to_string_lossy().into_owned();
     let policy = r#"permit(principal, action == Admin::Action::"AccessAdminApi", resource);"#;
     let authorizer: Arc<dyn AuthorizerPort> = Arc::new(SharedAuthorizer::new(Arc::new(
         CedarAuthorizer::from_policies_unchecked(
@@ -64,19 +70,38 @@ async fn app() -> (axum::Router, TempDir) {
         )
         .unwrap(),
     )));
-    let state = bootstrap(
-        &config,
-        BootstrapConfig {
-            register_iam_schema: false,
-            schema_version: None,
-            validate_schemas: false,
-        },
-    )
-    .await
-    .unwrap()
-    .with_authenticator(Arc::new(Accounts))
-    .with_authorization(authorizer);
-    (build_router(state, &config), tmp)
+    // The embedded database holds an exclusive lock, and releasing it is
+    // asynchronous, so the boot can arrive while the previous holder is
+    // still letting go. Only that error is retried.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let state = loop {
+        match bootstrap(
+            &config,
+            BootstrapConfig {
+                register_iam_schema: false,
+                schema_version: None,
+                validate_schemas: false,
+            },
+        )
+        .await
+        {
+            Ok(state) => break state,
+            Err(error) => {
+                let message = error.to_string();
+                let lock_contention = message.contains("lock hold by current process")
+                    || message.contains("No locks available")
+                    || message.contains("Resource temporarily unavailable");
+                if !lock_contention || std::time::Instant::now() >= deadline {
+                    panic!("the service must start: {error}");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    };
+    let state = state
+        .with_authenticator(Arc::new(Accounts))
+        .with_authorization(authorizer);
+    build_router(state, &config)
 }
 
 async fn call(
@@ -300,4 +325,53 @@ async fn the_read_and_the_listing_report_the_stored_marks() {
         read["updated_at"].as_str(),
         "the read and the listing must report the same update mark"
     );
+}
+
+/// A row written before the marks existed is read without them.
+///
+/// The response says so explicitly: the mark is absent, not replaced by the
+/// clock of the process. Inventing one would put a time in the answer that
+/// the database does not hold, and a policy that was created before the
+/// marks would look like it was created when it was read.
+#[tokio::test]
+async fn a_row_without_marks_is_reported_without_marks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("db");
+
+    // A row written by an older version: no marks at all. It is written
+    // before the service starts, because the service holds the database
+    // while it runs.
+    {
+        let db = open(&db_path).await;
+        let mut response = db
+            .query(
+                "CREATE $id CONTENT { content: 'permit(principal, action, resource);', \
+                 account: 'acme', attached_principals: ['hrn:hodei:iam::acme:User/alice'] }",
+            )
+            .bind(("id", surrealdb::sql::Thing::from(("policy", "acme~legacy"))))
+            .await
+            .expect("the row must be writable");
+        assert!(
+            response.take_errors().is_empty(),
+            "the row must be writable without errors"
+        );
+    }
+
+    let app = boot(&db_path).await;
+
+    let (status, listed) = call(&app, "GET", "/api/v1/iam/policies", None).await;
+    assert_eq!(status, StatusCode::OK, "list: {listed:?}");
+    let summary = listed["policies"]
+        .as_array()
+        .expect("the listing has policies")
+        .iter()
+        .find(|policy| policy["name"] == "legacy")
+        .expect("the policy must be listed")
+        .clone();
+    assert_eq!(
+        summary["created_at"],
+        json!(null),
+        "a row without marks must report none: {summary:?}"
+    );
+    assert_eq!(summary["updated_at"], json!(null));
 }

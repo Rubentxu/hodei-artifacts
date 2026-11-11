@@ -22,6 +22,20 @@ const RSA_PRIVATE_KEY: &str = include_str!("fixtures/rsa-private.pem");
 /// The key id the JWKS publishes and the tokens name.
 const KEY_ID: &str = "test-key";
 
+/// The key set the scenario publishes.
+///
+/// The key is published under two ids, so the selection by id is what decides
+/// which key verifies a token: a service that fell back to "the only key"
+/// would accept a token naming an id it does not publish, and the contract
+/// would not be a contract.
+fn key_set() -> String {
+    let published = serde_json::from_str::<serde_json::Value>(JWKS).expect("the key set");
+    let key = published["keys"][0].clone();
+    let mut second = key.clone();
+    second["kid"] = serde_json::json!("another-published-key");
+    serde_json::json!({ "keys": [key, second] }).to_string()
+}
+
 const SCHEMA: &str = r#"{
   "": { "entityTypes": {}, "actions": {} },
   "Iam": { "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } }, "actions": {} },
@@ -55,6 +69,28 @@ struct Claims {
 fn rs256_token(sub: &str, account: &str) -> String {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(KEY_ID.to_string());
+    encode(
+        &header,
+        &Claims {
+            sub: sub.to_string(),
+            account: account.to_string(),
+            exp: 4_000_000_000,
+            iss: ISSUER.to_string(),
+            aud: AUDIENCE.to_string(),
+        },
+        &EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY.as_bytes()).expect("the rsa key"),
+    )
+    .unwrap()
+}
+
+/// A token signed with RS256 and a key id the key set does not publish.
+///
+/// The signature is valid: the same key signs it. Only the key id is wrong,
+/// so a service that selected the key by id refuses it, and a service that
+/// fell back to "the only key" would not.
+fn rs256_token_with_unknown_kid(sub: &str, account: &str) -> String {
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("a-key-the-set-does-not-publish".to_string());
     encode(
         &header,
         &Claims {
@@ -113,6 +149,10 @@ fn start(
     let mut command = Command::new(BIN);
     command
         .env_remove("RUN_MODE")
+        // The credential of the scenario is the only one the service gets:
+        // the configuration accepts exactly one of the two.
+        .env_remove("HODEI_SECURITY__AUTH_JWT_SECRET")
+        .env_remove("HODEI_SECURITY__AUTH_JWKS_PATH")
         .env("HODEI_SERVER__HOST", "127.0.0.1")
         .env("HODEI_SERVER__PORT", port.to_string())
         .env("HODEI_ROCKSDB__PATH", db)
@@ -233,7 +273,7 @@ fn restart_scenario(credential: Credential) {
     // publishes it, and it lives in the scenario's own directory so two
     // scenarios running at once do not share it.
     let jwks = tmp.path().join("jwks.json");
-    std::fs::write(&jwks, JWKS).unwrap();
+    std::fs::write(&jwks, key_set()).unwrap();
     let jwks_path = jwks.to_string_lossy().into_owned();
 
     let port = free_port();
@@ -316,4 +356,50 @@ fn repository_survives_a_real_process_restart_with_jwks_rs256() {
 #[test]
 fn repository_survives_a_real_process_restart_with_the_shared_secret() {
     restart_scenario(Credential::SharedSecret);
+}
+
+/// The key set selects the key by the id the token names.
+///
+/// A token whose signature is valid but whose key id the set does not publish
+/// is refused: the service chooses the key by id, and a service that fell
+/// back to "the only key" would let it through.
+#[test]
+fn a_token_naming_a_key_the_set_does_not_publish_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = tmp.path().join("db").to_string_lossy().into_owned();
+    let policy = tmp.path().join("policies.cedar");
+    let schema = tmp.path().join("schema.json");
+    std::fs::write(&policy, POLICY).unwrap();
+    std::fs::write(&schema, SCHEMA).unwrap();
+
+    let jwks = tmp.path().join("jwks.json");
+    std::fs::write(&jwks, key_set()).unwrap();
+    let jwks_path = jwks.to_string_lossy().into_owned();
+
+    let port = free_port();
+    let mut child = start(
+        port,
+        &db,
+        policy.to_str().unwrap(),
+        schema.to_str().unwrap(),
+        Credential::Jwks,
+        Some(&jwks_path),
+    );
+    wait_health(port);
+
+    // The repository does not exist, so the answer is "not found" -- what
+    // matters is that it is not "unauthorized": the token was accepted.
+    let repository = "/api/v1/repositories?hrn=hrn:hodei:artifacts:eu:acme:repository/releases";
+    let valid = rs256_token("hrn:hodei:iam::acme:User/alice", "acme");
+    let (status, _) = request(port, "GET", repository, Some(&valid), None);
+    assert_ne!(status, 401, "the published key must verify its token");
+
+    let unknown = rs256_token_with_unknown_kid("hrn:hodei:iam::acme:User/alice", "acme");
+    let (status, _) = request(port, "GET", repository, Some(&unknown), None);
+    assert_eq!(
+        status, 401,
+        "a token naming a key the set does not publish must be refused"
+    );
+
+    stop(&mut child);
 }
