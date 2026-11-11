@@ -161,6 +161,7 @@ fn the_event_carries_the_history_and_its_payload() {
         tenant_hrn: account(),
         content_digest: digest("a").to_string(),
         supersedes: None,
+        relation_claim: None,
     };
 
     let event = EventEnvelope::builder(

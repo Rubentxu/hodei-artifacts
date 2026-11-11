@@ -221,6 +221,7 @@ impl EvidenceIngestion {
             tenant_hrn: envelope.tenant_hrn.clone(),
             content_digest: envelope.content_digest.to_string(),
             supersedes,
+            relation_claim: envelope.relation_claim.clone(),
         };
 
         let event = EventEnvelope::builder(

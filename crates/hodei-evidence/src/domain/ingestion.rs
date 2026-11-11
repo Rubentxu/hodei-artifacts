@@ -29,6 +29,7 @@ use crate::domain::content::ContentDigest;
 use crate::domain::evidence::{
     EvidenceId, EvidenceType, EvidenceVerification, Normalization, Producer, SourceRef,
 };
+use crate::domain::graph::RelationClaim;
 use chrono::{DateTime, Utc};
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,14 @@ pub struct IngestionEnvelope {
     /// The correlation of the request that brought it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
+    /// The relation that the evidence claims, when it claims one.
+    ///
+    /// The evidence says things about the world --this build produced this
+    /// artefact-- and that is what the graph is made of. The claim is what
+    /// carries the statement from the envelope to the event, and from the
+    /// event to the graph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation_claim: Option<RelationClaim>,
     /// The signature of the producer over the canonical form.
     pub signature: String,
 }
@@ -148,6 +157,15 @@ impl IngestionEnvelope {
             "correlation_id",
             self.correlation_id.as_deref().unwrap_or("").as_bytes(),
         );
+        if let Some(claim) = &self.relation_claim {
+            write("claim.relation", claim.relation.as_str().as_bytes());
+            let from = claim.from.to_string();
+            write("claim.from", from.as_bytes());
+            let to = claim.to.to_string();
+            write("claim.to", to.as_bytes());
+            write("claim.from_kind", claim.from_kind.as_str().as_bytes());
+            write("claim.to_kind", claim.to_kind.as_str().as_bytes());
+        }
         bytes
     }
 }
