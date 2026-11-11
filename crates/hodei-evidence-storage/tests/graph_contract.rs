@@ -210,7 +210,10 @@ async fn admit_journey(
         }
         let mut changes = hodei_evidence::GraphChangeSet::empty();
         for event in &page.events {
-            changes = merge(changes, projector.project(event));
+            changes = merge(
+                changes,
+                projector.project(event).expect("the event projects"),
+            );
         }
         if !changes.is_empty() {
             graph.apply(changes).await.expect("the graph is written");

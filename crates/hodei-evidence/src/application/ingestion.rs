@@ -210,7 +210,7 @@ impl EvidenceIngestion {
             .position(&stream)
             .await
             .map_err(|error| IngestionError::Ledger(error.to_string()))?;
-        let expected = match current {
+        let mut expected = match current {
             Some(position) => ExpectedVersion::At(position),
             None => ExpectedVersion::Absent,
         };
@@ -224,12 +224,12 @@ impl EvidenceIngestion {
             relation_claim: envelope.relation_claim.clone(),
         };
 
-        let event = EventEnvelope::builder(
+        let mut event = EventEnvelope::builder(
             EventId::new(format!("evt-{}", envelope.content_digest)),
             envelope.tenant_hrn.clone(),
             event_type,
         )
-        .stream(stream, position)
+        .stream(stream.clone(), position)
         .occurred_at(envelope.observed_at)
         .recorded_at(Utc::now())
         .producer(envelope.producer.clone())
@@ -238,12 +238,31 @@ impl EvidenceIngestion {
         .map_err(|error| IngestionError::Contract(error.to_string()))?
         .build();
 
-        let id = self
-            .ledger
-            .append(expected, event)
-            .await
-            .map_err(|error| IngestionError::Ledger(error.to_string()))?;
-        Ok(id)
+        // Another writer may have taken the position between the read and
+        // the write. That is not a failure of the delivery: the event is
+        // still valid, and it goes at the position that is free now. So
+        // the write is tried again, a few times, and each time the position
+        // is read again.
+        let mut attempts = 0;
+        loop {
+            match self.ledger.append(expected, event.clone()).await {
+                Ok(id) => return Ok(id),
+                Err(crate::ports::LedgerError::VersionConflict { .. }) if attempts < RETRIES => {
+                    attempts += 1;
+                    let current = self
+                        .ledger
+                        .position(&stream)
+                        .await
+                        .map_err(|error| IngestionError::Ledger(error.to_string()))?;
+                    expected = match current {
+                        Some(position) => ExpectedVersion::At(position),
+                        None => ExpectedVersion::Absent,
+                    };
+                    event = event.with_position(expected.next_position());
+                }
+                Err(error) => return Err(IngestionError::Ledger(error.to_string())),
+            }
+        }
     }
 }
 
@@ -260,6 +279,9 @@ pub enum IngestionError {
     #[error("a contract could not be built: {0}")]
     Contract(String),
 }
+
+/// How many times a write is tried when another writer took the position.
+const RETRIES: usize = 8;
 
 /// The reason of a refusal, given the error of the authenticator.
 fn rejection_for(error: crate::ports::AuthenticationError) -> RejectionReason {

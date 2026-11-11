@@ -242,7 +242,40 @@ la UAT de M1. No hay indice en las tablas del grafo, por la misma razon que
 en el registro: un indice declarado por el servicio bloquearia el
 directorio de la base de datos y el servicio no podria reiniciar.
 
-## 10. El nucleo no depende de mecanismos concretos
+## 10. La UAT de M1
+
+Los ocho escenarios de `uat/M1-EVIDENCE-GRAPH-UAT.md`, ejecutados sobre
+fixtures locales y servicios efimeros, sin integraciones obligatorias con
+otros productos. El comando:
+
+```
+cargo test -p hodei-evidence-storage --test m1_uat -- --nocapture
+```
+
+| Escenario | Que demuestra | Resultado |
+|---|---|---|
+| M1-UAT-01 | el linaje de la fuente al despliegue, con la evidencia en las relaciones criticas | PASSED |
+| M1-UAT-02 | la entrega repetida diez veces y a la vez: un solo registro y un solo conjunto de relaciones | PASSED |
+| M1-UAT-03 | la revision de un registro externo conserva el historico | PASSED |
+| M1-UAT-04 | la evidencia invalida se rechaza con un motivo y no deja nodos en el grafo | PASSED |
+| M1-UAT-05 | la reconstruccion dice lo mismo que el grafo en uso, en las cuatro consultas criticas | PASSED |
+| M1-UAT-06 | el fallo de la proyeccion no mueve el checkpoint, y al recuperarlo aplica cada evento una vez | PASSED |
+| M1-UAT-07 | el aislamiento entre cuentas, con los mismos nombres externos en las dos | PASSED |
+| M1-UAT-08 | la linea base del rendimiento de referencia | PASSED (linea base, no un objetivo: el sobre de rendimiento no esta acordado) |
+
+### Lo que la UAT dejo abierto
+
+- **Las consultas recorren las tablas.** No hay indice, por la razon que ya
+  esta escrita: un indice declarado por el servicio bloquearia el
+  directorio de la base de datos. La latencia crece con el tamano de la
+  cuenta, y el numero medido (unos 10 ms por consulta de uno a tres saltos
+  sobre el conjunto de referencia) es una linea base, no un objetivo.
+- **El contenido de la evidencia vive en memoria.** El SPIKE-009 decidira
+  donde viven los contenidos grandes.
+- **La firma es HMAC con un secreto por productor.** La verificacion con
+  firma de un tercero es de un hito posterior.
+
+## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.
 La persistencia real vive en `crates/hodei-iam/src/infrastructure/surreal/`.
@@ -265,7 +298,7 @@ el **preflight de almacenamiento**, que se invoca aparte al arrancar y
 reporta los fallos del almacenamiento como lo que son: un problema de la
 maquina, no de la configuracion.
 
-## 12. Las comprobaciones de forma
+## 13. Las comprobaciones de forma
 
 Una arquitectura que solo existe en un documento se deshace en el primer
 commit que nadie revisa con cuidado. `tests/architecture_fitness.rs` lee el
@@ -288,7 +321,7 @@ de prueba tiene que estar en exactamente una suite, ninguna suite puede
 nombrar un target que no existe, y el inventario de lo descubierto se
 imprime en el log del job.
 
-## 13. Lo que este documento no dice
+## 14. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté

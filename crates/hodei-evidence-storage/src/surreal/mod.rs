@@ -10,5 +10,8 @@ pub mod graph;
 pub mod ledger;
 
 pub use evidence_store::{EVIDENCE_TABLE, EvidenceRow, SurrealEvidenceStore};
-pub use graph::{ACTIVE_PROJECTION, REBUILD_PROJECTION, SurrealGraphStore};
+pub use graph::{
+    ACTIVE_PROJECTION, CHECKPOINT_TABLE, REBUILD_PROJECTION, SurrealGraphStore,
+    SurrealProjectionCheckpoints,
+};
 pub use ledger::{LEDGER_TABLE, LedgerRecord, SurrealEventLedger};

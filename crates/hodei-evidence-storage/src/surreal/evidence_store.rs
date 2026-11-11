@@ -74,15 +74,33 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
     /// record, and the store says the same identity.
     async fn put(&self, evidence: EvidenceRecord) -> Result<EvidenceId, StoreError> {
         let row = row_from(&evidence);
-        self.db
-            .query("UPSERT $id CONTENT $content")
-            .bind(("id", Self::record_id(evidence.id().as_str())))
-            .bind(("content", row))
-            .await
-            .map_err(|_error| StoreError::Unavailable)?
-            .check()
-            .map_err(|error| StoreError::InvalidRecord(error.to_string()))?;
-        Ok(evidence.id().clone())
+        let mut attempts = 0;
+        loop {
+            let written = self
+                .db
+                .query("UPSERT $id CONTENT $content")
+                .bind(("id", Self::record_id(evidence.id().as_str())))
+                .bind(("content", row.clone()))
+                .await
+                .map_err(|error| StoreError::Unavailable(error.to_string()));
+
+            let failure = match written {
+                Ok(response) => response.check().err().map(|error| error.to_string()),
+                Err(error) => Some(error.to_string()),
+            };
+
+            match failure {
+                None => return Ok(evidence.id().clone()),
+                Some(message)
+                    if crate::is_conflict(&message) && attempts < crate::CONFLICT_RETRIES =>
+                {
+                    // Another writer got there at the same moment. The write
+                    // is the same one, so trying it again is safe.
+                    attempts += 1;
+                }
+                Some(message) => return Err(StoreError::InvalidRecord(message)),
+            }
+        }
     }
 
     /// Reads a piece of evidence by its identity.
@@ -92,7 +110,7 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
             .query("SELECT * FROM $id")
             .bind(("id", Self::record_id(id.as_str())))
             .await
-            .map_err(|_error| StoreError::Unavailable)?;
+            .map_err(|error| StoreError::Unavailable(error.to_string()))?;
         let rows: Vec<EvidenceRow> = response
             .take(0)
             .map_err(|error| StoreError::InvalidRecord(error.to_string()))?;
@@ -117,7 +135,7 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
             .bind(("producer", producer.id.clone()))
             .bind(("external", external_id.to_string()))
             .await
-            .map_err(|_error| StoreError::Unavailable)?;
+            .map_err(|error| StoreError::Unavailable(error.to_string()))?;
         let rows: Vec<EvidenceRow> = response
             .take(0)
             .map_err(|error| StoreError::InvalidRecord(error.to_string()))?;

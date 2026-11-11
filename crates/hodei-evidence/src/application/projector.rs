@@ -47,23 +47,26 @@ impl EvidenceGraphProjector {
 
 impl GraphProjector for EvidenceGraphProjector {
     /// The changes that an event implies.
-    fn project(&self, event: &EventEnvelope) -> GraphChangeSet {
+    fn project(
+        &self,
+        event: &EventEnvelope,
+    ) -> Result<GraphChangeSet, crate::ports::graph::ProjectionError> {
         let mut changes = GraphChangeSet::empty();
 
         // Only the events that change the graph are projected. A rejection,
         // a failed projection or a checkpoint are history, not changes.
         if !event.event_type().mutates_graph() {
-            return changes;
+            return Ok(changes);
         }
         if !matches!(event.event_type(), EventType::EvidenceAccepted) {
-            return changes;
+            return Ok(changes);
         }
 
         let Ok(payload) = event.payload_as::<EvidencePayload>() else {
             // A payload that is not of the shape the event type declares says
             // nothing about the graph. It is not an error of the projection:
             // it is an event that does not project.
-            return changes;
+            return Ok(changes);
         };
 
         // The piece of evidence itself is a node.
@@ -76,7 +79,7 @@ impl GraphProjector for EvidenceGraphProjector {
 
         // And the relation it claims, with the evidence that supports it.
         let Some(claim) = payload.relation_claim.clone() else {
-            return changes;
+            return Ok(changes);
         };
 
         changes = changes
@@ -101,6 +104,6 @@ impl GraphProjector for EvidenceGraphProjector {
                 event.occurred_at(),
             ));
 
-        changes
+        Ok(changes)
     }
 }

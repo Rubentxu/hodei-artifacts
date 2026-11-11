@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GraphError {
     /// The graph is not available.
-    #[error("the graph is not available")]
-    Unavailable,
+    #[error("the graph is not available: {0}")]
+    Unavailable(String),
     /// The change could not be applied.
     #[error("the change could not be applied: {0}")]
     Rejected(String),
@@ -69,6 +69,27 @@ pub trait GraphQuery: Send + Sync {
     /// This is the question the product exists to answer, so it has its own
     /// method and not a general traversal that every caller has to build.
     async fn lineage(&self, tenant: &Hrn, artifact: &Hrn) -> Result<Lineage, GraphError>;
+
+    /// The deployments of an artefact.
+    async fn deployments(&self, tenant: &Hrn, artifact: &Hrn)
+    -> Result<Vec<GraphNode>, GraphError>;
+
+    /// The artefacts a build produced.
+    async fn artifacts_of_build(
+        &self,
+        tenant: &Hrn,
+        build: &Hrn,
+    ) -> Result<Vec<GraphNode>, GraphError>;
+
+    /// The artefacts of a repository.
+    ///
+    /// It is the walk of three saltos: el repositorio, sus revisiones, las
+    /// construcciones que dispararon y los artefactos que produjeron.
+    async fn artifacts_of_repository(
+        &self,
+        tenant: &Hrn,
+        repository: &Hrn,
+    ) -> Result<Vec<GraphNode>, GraphError>;
 }
 
 /// The lineage of an artefact.
@@ -94,15 +115,30 @@ pub struct Lineage {
     pub evidence: Vec<GraphRelation>,
 }
 
+/// The error of a projector that could not project an event.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ProjectionError {
+    /// The event is not of a shape the projector understands.
+    #[error("the event is not of a shape the projector understands: {0}")]
+    Shape(String),
+    /// The projector cannot work right now.
+    #[error("the projector cannot work right now: {0}")]
+    Unavailable(String),
+}
+
 /// The projector of the graph.
 ///
 /// It reads the events that were accepted and says what the graph has to
 /// look like. It is a pure function of the events: the same events produce
 /// the same change set, whatever order they are read in and however many
 /// times they are read.
+///
+/// It can fail, and it has to: a projection that cannot fail is a
+/// projection that cannot be recovered. When it fails, the event stays in
+/// the ledger, the checkpoint does not move, and a later run tries again.
 pub trait GraphProjector: Send + Sync {
     /// The changes that an event implies.
-    fn project(&self, event: &EventEnvelope) -> GraphChangeSet;
+    fn project(&self, event: &EventEnvelope) -> Result<GraphChangeSet, ProjectionError>;
 }
 
 /// The relations that the projector of M1 knows how to build.

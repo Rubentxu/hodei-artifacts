@@ -312,6 +312,17 @@ impl EventEnvelope {
         self.stream_position
     }
 
+    /// The same event, at another position of its stream.
+    ///
+    /// It is what a writer does when it reads the stream again and finds
+    /// that the position it was going to write at is already taken: the
+    /// event is the same event, and the position is the one that is free.
+    pub fn with_position(&self, position: u64) -> Self {
+        let mut event = self.clone();
+        event.stream_position = position;
+        event
+    }
+
     /// What the event says happened.
     pub fn event_type(&self) -> &EventType {
         &self.event_type
