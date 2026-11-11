@@ -175,6 +175,7 @@ impl EvaluateIamPoliciesPort for EvaluateIamPoliciesUseCase {
                 reason: "No IAM policies found for principal (implicit deny)".to_string(),
                 determining_policies: Vec::new(),
                 policy_ids_evaluated: Vec::new(),
+                schema_version: None,
             });
         }
 
@@ -253,6 +254,7 @@ impl EvaluateIamPoliciesPort for EvaluateIamPoliciesUseCase {
             reason,
             determining_policies: evaluation_result.determining_policies,
             policy_ids_evaluated: evaluation_result.policy_ids_evaluated,
+            schema_version: evaluation_result.used_schema_version,
         })
     }
 }

@@ -3,6 +3,8 @@
 //! These tests verify the business logic for evaluating IAM policies.
 //! They use mocked dependencies to isolate the use case logic.
 
+use crate::features::evaluate_iam_policies::dto::EvaluateIamPoliciesCommand;
+use crate::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort;
 use crate::features::evaluate_iam_policies::{
     mocks::MockPolicyFinder,
     ports::{PrincipalResolverPort, ResourceResolverPort},
@@ -291,4 +293,52 @@ async fn test_evaluate_iam_policies_empty_policy_set() {
     // With empty policy set, the result should be Denied (default deny)
     assert!(!decision.decision);
     assert!(decision.reason.contains("No IAM policies"));
+}
+
+/// The decision names the version of the schema that governed it.
+///
+/// A decision without the version that produced it cannot be attributed: the
+/// same request, evaluated against another version of the schema, can reach
+/// another decision, and then nobody can say which semantics applied.
+#[tokio::test]
+async fn the_decision_names_the_schema_version_that_governed_it() {
+    let policy = HodeiPolicy::new(
+        PolicyId::new("test-policy"),
+        r#"permit(principal, action, resource);"#.to_string(),
+    );
+    let policy_set = HodeiPolicySet::new(vec![policy]);
+
+    let use_case = EvaluateIamPoliciesUseCase::with_authoritative_schema(
+        Arc::new(MockPolicyFinder::new(policy_set)),
+        Arc::new(MockPrincipalResolver),
+        Arc::new(MockResourceResolver),
+        Arc::new(MockSchemaStorage),
+        "v1",
+    );
+
+    let command = EvaluateIamPoliciesCommand {
+        principal_hrn: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "User".to_string(),
+            "test-user".to_string(),
+        ),
+        action_name: "read".to_string(),
+        resource_hrn: Hrn::new(
+            "hodei".to_string(),
+            "iam".to_string(),
+            "default".to_string(),
+            "Resource".to_string(),
+            "test-resource".to_string(),
+        ),
+    };
+
+    let result = use_case.evaluate(command).await;
+    let decision = result.expect("the evaluation runs");
+    assert_eq!(
+        decision.schema_version.as_deref(),
+        Some("v1"),
+        "the decision must name the version of the schema that governed it"
+    );
 }
