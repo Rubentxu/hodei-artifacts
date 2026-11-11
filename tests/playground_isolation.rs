@@ -130,7 +130,7 @@ fn playground_body(policies: Vec<String>, schema: &str) -> Value {
         "inline_policies": policies,
         "request": {
             "principal": "hrn:hodei:iam::acme:User/alice",
-            "action": "hrn:hodei:iam::acme:Action/ReadRepository",
+            "action": "Iam::Action::\"ReadRepository\"",
             "resource": "hrn:hodei:artifacts:eu:acme:repository/releases",
             "context": {}
         }

@@ -75,13 +75,6 @@ impl Hrn {
         self.region.is_empty()
     }
 
-    /// ¿Este HRN denota una acción y no un recurso?
-    ///
-    /// Las acciones son verbos, no recursos: no llevan scope de cuenta.
-    pub fn is_action(&self) -> bool {
-        self.resource_type == "Action"
-    }
-
     /// Convención: nombre de servicio siempre en minúsculas (puede contener dígitos y '-')
     fn normalize_service_name(service: &str) -> String {
         service.to_ascii_lowercase()
@@ -186,33 +179,6 @@ impl Hrn {
             account_id: parsed.account().to_string(),
             resource_type: parsed.resource_type().to_string(),
             resource_id: parsed.resource_path().to_string(),
-        })
-    }
-
-    /// Parse the separate action identity. Actions are verbs, not resources;
-    /// the canonical resource parser intentionally rejects them, so callers
-    /// that model an action as an Hrn use this explicit constructor.
-    pub fn from_action_string(input: &str) -> Option<Self> {
-        let parts: Vec<&str> = input.split(':').collect();
-        if parts.len() != 6
-            || parts[0] != "hrn"
-            || parts[1].is_empty()
-            || parts[2].is_empty()
-            || parts[4].is_empty()
-        {
-            return None;
-        }
-        let resource: Vec<&str> = parts[5].splitn(2, '/').collect();
-        if resource.len() != 2 || resource[0] != "Action" || resource[1].is_empty() {
-            return None;
-        }
-        Some(Self {
-            partition: parts[1].to_string(),
-            service: Self::normalize_service_name(parts[2]),
-            region: parts[3].to_string(),
-            account_id: parts[4].to_string(),
-            resource_type: "Action".to_string(),
-            resource_id: resource[1].to_string(),
         })
     }
 
@@ -325,21 +291,6 @@ impl Hrn {
         match chars.next() {
             Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
             None => String::new(),
-        }
-    }
-
-    /// Constructor de conveniencia para acciones (`Action::"name"`)
-    ///
-    /// Una acción no lleva scope de cuenta: su identificador Cedar es el
-    /// nombre plano de la acción en el namespace `Action`.
-    pub fn action(service: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            partition: "aws".to_string(),
-            service: Self::normalize_service_name(&service.into()),
-            region: String::new(),
-            account_id: String::new(),
-            resource_type: "Action".to_string(),
-            resource_id: name.into(),
         }
     }
 }
@@ -586,15 +537,6 @@ mod tests {
     }
 
     #[test]
-    fn action_constructor_builds_action_type() {
-        let hrn = Hrn::action("iam", "CreateUser");
-        assert_eq!(hrn.resource_type, "Action");
-        assert!(hrn.is_action());
-        let type_name = hrn.entity_type_name();
-        assert!(type_name.contains("Iam::Action"));
-    }
-
-    #[test]
     fn accessor_methods() {
         let hrn = Hrn::new(
             "aws".to_string(),
@@ -633,8 +575,4 @@ mod tests {
 fn canonical_resource_parser_rejects_actions_and_lax_paths() {
     assert!(Hrn::from_string("hrn:hodei:api::default:Action/read").is_none());
     assert!(Hrn::from_string("hrn:hodei:artifacts:eu:acme:repository/releases//v2").is_none());
-    let action = Hrn::from_action_string("hrn:hodei:api::default:Action/read")
-        .expect("the explicit action parser accepts action identities");
-    assert!(action.is_action());
-    assert_eq!(action.resource_id, "read");
 }

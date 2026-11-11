@@ -727,7 +727,7 @@ fn playground_body(inline_schema: &str, policies: &[&str]) -> Value {
     playground_request_body(
         inline_schema,
         policies,
-        "hrn:aws:iam::account-a:Action/read",
+        "Iam::Action::\"read\"",
         "hrn:hodei:iam::acme:User/bob",
         json!({}),
     )
@@ -951,7 +951,7 @@ async fn g18_the_decision_follows_the_schema_that_was_given() {
         Some(playground_request_body(
             INLINE_SCHEMA_DECLARING_READ,
             &[VALID_POLICY],
-            "hrn:aws:iam::account-a:Action/write",
+            "Iam::Action::\"write\"",
             "hrn:hodei:iam::acme:User/bob",
             json!({}),
         )),
@@ -1056,7 +1056,7 @@ async fn g20_the_context_of_the_request_reaches_the_evaluation() {
     let body_with_ip = playground_request_body(
         INLINE_SCHEMA_DECLARING_READ_WITH_CONTEXT,
         &[POLICY_OVER_CONTEXT_IP],
-        "hrn:aws:iam::account-a:Action/read",
+        "Iam::Action::\"read\"",
         "hrn:hodei:iam::acme:User/bob",
         json!({"ip": {"type": "String", "value": "10.0.0.1"}}),
     );
@@ -1084,7 +1084,7 @@ async fn g20_the_context_of_the_request_reaches_the_evaluation() {
         Some(playground_request_body(
             INLINE_SCHEMA_DECLARING_READ_WITH_CONTEXT,
             &[POLICY_OVER_CONTEXT_IP],
-            "hrn:aws:iam::account-a:Action/read",
+            "Iam::Action::\"read\"",
             "hrn:hodei:iam::acme:User/bob",
             json!({"ip": {"type": "String", "value": "10.0.0.2"}}),
         )),
@@ -1116,7 +1116,7 @@ async fn g21_a_request_that_does_not_conform_to_the_schema_is_denied() {
         Some(playground_request_body(
             INLINE_SCHEMA_DECLARING_READ,
             &[VALID_POLICY],
-            "hrn:aws:iam::account-a:Action/read",
+            "Iam::Action::\"read\"",
             "hrn:aws:storage::account-a:Document/doc1",
             json!({}),
         )),

@@ -4,6 +4,7 @@
 //! in the playground environment, where policies and schemas can be tested
 //! without persistence.
 
+use hodei_authz::model::ActionId;
 use kernel::Hrn;
 use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
@@ -111,7 +112,13 @@ pub struct PlaygroundAuthorizationRequest {
     pub principal: Hrn,
 
     /// The action being requested
-    pub action: Hrn,
+    ///
+    /// An action is a verb, not a resource. It has its own identity, the one
+    /// the gate authorizes with, and that identity is a service and a name.
+    /// Borrowing the resource HRN to carry a verb made the playground answer
+    /// questions about resources, and it needed a constructor that exists only
+    /// for this.
+    pub action: ActionId,
 
     /// The resource being accessed
     pub resource: Hrn,
@@ -123,7 +130,7 @@ pub struct PlaygroundAuthorizationRequest {
 
 impl PlaygroundAuthorizationRequest {
     /// Create a new authorization request
-    pub fn new(principal: Hrn, action: Hrn, resource: Hrn) -> Self {
+    pub fn new(principal: Hrn, action: ActionId, resource: Hrn) -> Self {
         Self {
             principal,
             action,
@@ -366,6 +373,40 @@ impl EvaluationDiagnostics {
 mod tests {
     use super::*;
 
+    /// The action of a playground request is the canonical action identity,
+    /// the same one the gate authorizes with, and not a resource that borrows
+    /// the shape of an HRN to carry a verb.
+    #[test]
+    fn the_action_is_the_canonical_action_identity() {
+        let action = ActionId::new("api", "read").expect("a valid action");
+
+        assert_eq!(action.service(), "api");
+        assert_eq!(action.name(), "read");
+        assert_eq!(action.to_cedar_uid(), "Api::Action::\"read\"");
+
+        // It travels as that identity, and reads back as it.
+        let encoded = serde_json::to_string(&action).expect("the action must serialize");
+        assert_eq!(encoded, "\"Api::Action::\\\"read\\\"\"");
+        let decoded: ActionId = serde_json::from_str(&encoded).expect("the action must parse");
+        assert_eq!(decoded, action);
+    }
+
+    /// The canonical parser rejects what is not a canonical action identity,
+    /// so the playground does not accept a second, parallel spelling.
+    #[test]
+    fn the_canonical_parser_rejects_a_parallel_spelling() {
+        for rejected in [
+            "hrn:hodei:api::default:Action/read",
+            "Api::Action::read",
+            "read",
+        ] {
+            assert!(
+                ActionId::from_cedar_uid(rejected).is_err(),
+                "`{rejected}` is not a canonical action identity"
+            );
+        }
+    }
+
     #[test]
     fn test_command_validation_requires_schema() {
         let request = PlaygroundAuthorizationRequest::new(
@@ -376,7 +417,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),
@@ -406,7 +447,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),
@@ -436,7 +477,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),
@@ -466,7 +507,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),
@@ -501,7 +542,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),

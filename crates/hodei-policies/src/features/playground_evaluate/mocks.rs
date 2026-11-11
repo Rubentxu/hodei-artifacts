@@ -13,6 +13,7 @@ use super::ports::{
 };
 use async_trait::async_trait;
 use cedar_policy::Schema;
+use hodei_authz::model::ActionId;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -289,7 +290,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),
@@ -320,7 +321,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),

@@ -14,6 +14,7 @@ mod tests {
         MockContextConverter, MockPolicyEvaluator, MockPolicyValidator, MockSchemaLoader,
     };
     use super::super::use_case::PlaygroundEvaluateUseCase;
+    use hodei_authz::model::ActionId;
     use kernel::Hrn;
     use std::sync::Arc;
 
@@ -27,7 +28,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),
@@ -312,7 +313,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            Hrn::action("api", "read"),
+            ActionId::new("api", "read").expect("a valid action"),
             Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),

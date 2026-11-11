@@ -97,17 +97,13 @@ pub fn translate_action_to_cedar_euid(name: &str) -> Result<EntityUid, Translati
     ))
 }
 
-/// Translate any HRN to a Cedar EntityUid, applying the action special case
+/// Translate any HRN to a Cedar EntityUid.
 ///
-/// An HRN whose resource type is `Action` denotes a verb, not a resource:
-/// it maps to the flat action UID. Any other HRN maps to the scoped
-/// resource UID.
+/// An HRN names a resource, so it maps to the scoped resource UID. A verb is
+/// not an HRN: it has its own identity, and it is translated by
+/// [`translate_action_to_cedar_euid`].
 pub fn translate_hrn_to_cedar_euid(hrn: &Hrn) -> Result<EntityUid, TranslationError> {
-    if hrn.is_action() {
-        translate_action_to_cedar_euid(hrn.resource_id())
-    } else {
-        translate_to_cedar_euid(hrn)
-    }
+    translate_to_cedar_euid(hrn)
 }
 
 /// Translate a HodeiEntity to a Cedar Entity
@@ -389,9 +385,7 @@ mod tests {
     /// registrado y que produce `ActionTrait::action_name()`.
     #[test]
     fn an_action_maps_to_the_flat_action_uid() {
-        let action = Hrn::action("iam", "CreateUser");
-
-        let uid = translate_hrn_to_cedar_euid(&action).expect("action uid");
+        let uid = translate_action_to_cedar_euid("CreateUser").expect("action uid");
 
         assert_eq!(uid.type_name().to_string(), "Action");
         assert_eq!(uid.id().escaped(), "CreateUser");
