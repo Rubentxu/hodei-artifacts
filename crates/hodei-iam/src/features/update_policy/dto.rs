@@ -162,6 +162,14 @@ pub struct PolicyView {
 
     /// Optional description of the policy
     pub description: Option<String>,
+
+    /// When the policy was created, as it was persisted
+    ///
+    /// The update does not change it: it is the mark of the creation.
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// When the policy was updated, as it was persisted
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[cfg(test)]
@@ -254,6 +262,8 @@ mod tests {
             name: "test-policy".to_string(),
             content: "permit(principal, action, resource);".to_string(),
             description: Some("Test".to_string()),
+            created_at: None,
+            updated_at: None,
         };
 
         let cloned = view.clone();
@@ -269,6 +279,8 @@ mod tests {
             name: "test-policy".to_string(),
             content: "permit(principal, action, resource);".to_string(),
             description: Some("Test".to_string()),
+            created_at: None,
+            updated_at: None,
         };
 
         let json = serde_json::to_string(&view).unwrap();

@@ -58,6 +58,8 @@ mod tests {
             content: "permit(principal, action, resource);".to_string(),
             description: None,
             attached_principals: Vec::new(),
+            created_at: None,
+            updated_at: None,
         };
         let policy_reader: Arc<dyn PolicyReader> = Arc::new(MockPolicyReader::with_policy(policy));
 

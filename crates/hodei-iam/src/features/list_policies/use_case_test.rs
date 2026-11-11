@@ -31,6 +31,8 @@ mod tests {
             ),
             name: format!("Policy {}", id),
             description: Some(format!("Test policy {}", id)),
+            created_at: None,
+            updated_at: None,
         }
     }
 
@@ -330,6 +332,8 @@ mod tests {
             ),
             name: "Policy Without Description".to_string(),
             description: None,
+            created_at: None,
+            updated_at: None,
         };
 
         let policies = vec![policy_without_description.clone()];

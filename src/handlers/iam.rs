@@ -43,8 +43,10 @@ pub struct CreatePolicyResponse {
     pub description: Option<String>,
     /// The canonical HRNs the policy is attached to
     pub attached_principals: Vec<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// When the policy was created, as it was persisted
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the policy was updated, as it was persisted
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Request to get a policy by HRN
@@ -62,8 +64,10 @@ pub struct GetPolicyResponse {
     pub description: Option<String>,
     /// The canonical HRNs the policy is attached to
     pub attached_principals: Vec<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// When the policy was created, as it was persisted
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the policy was updated, as it was persisted
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Query parameters for listing policies
@@ -92,8 +96,10 @@ pub struct PolicySummary {
     pub hrn: String,
     pub name: String,
     pub description: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// When the policy was created, as it was persisted
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the policy was updated, as it was persisted
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Pagination information
@@ -119,8 +125,10 @@ pub struct UpdatePolicyResponse {
     pub hrn: String,
     pub content: String,
     pub description: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// When the policy was created, as it was persisted
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the policy was updated, as it was persisted
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Request to delete a policy
@@ -337,8 +345,8 @@ pub async fn get_policy(
         content: policy_view.content,
         description: policy_view.description,
         attached_principals: policy_view.attached_principals,
-        created_at: chrono::Utc::now(), // TODO: Add timestamps to domain PolicyView
-        updated_at: chrono::Utc::now(),
+        created_at: policy_view.created_at,
+        updated_at: policy_view.updated_at,
     }))
 }
 
@@ -389,7 +397,11 @@ pub async fn list_policies(
             }
         })?;
 
-    // Map domain PolicySummary to HTTP PolicySummary (adding timestamps)
+    // Map domain PolicySummary to HTTP PolicySummary
+    //
+    // The marks are the ones the store holds, not a reading of the clock: a
+    // listing that says when each policy was created has to say what the
+    // database holds.
     let policies: Vec<PolicySummary> = list_result
         .policies
         .into_iter()
@@ -397,8 +409,8 @@ pub async fn list_policies(
             hrn: p.hrn.to_string(),
             name: p.name,
             description: p.description,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            created_at: p.created_at,
+            updated_at: p.updated_at,
         })
         .collect();
 
@@ -491,8 +503,8 @@ pub async fn update_policy(
         hrn: account_policy_hrn(&account, &short_id).to_string(),
         content: policy_view.content,
         description: policy_view.description,
-        created_at: chrono::Utc::now(), // TODO: Add timestamps to domain PolicyView
-        updated_at: chrono::Utc::now(),
+        created_at: policy_view.created_at,
+        updated_at: policy_view.updated_at,
     }))
 }
 

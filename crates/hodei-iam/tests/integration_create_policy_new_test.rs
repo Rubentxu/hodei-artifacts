@@ -399,22 +399,15 @@ async fn integration_timestamps_are_consistent() {
     let after = chrono::Utc::now();
 
     // Assert - timestamps should be within reasonable bounds
+    let created_at = view.created_at.expect("the creation must report its mark");
+    let updated_at = view.updated_at.expect("the creation must report its mark");
     assert!(
-        view.created_at >= before,
+        created_at >= before,
         "created_at should be after test start"
     );
-    assert!(
-        view.created_at <= after,
-        "created_at should be before test end"
-    );
-    assert!(
-        view.updated_at >= view.created_at,
-        "updated_at >= created_at"
-    );
-    assert!(
-        view.updated_at <= after,
-        "updated_at should be before test end"
-    );
+    assert!(created_at <= after, "created_at should be before test end");
+    assert!(updated_at >= created_at, "updated_at >= created_at");
+    assert!(updated_at <= after, "updated_at should be before test end");
 }
 
 // =============================================================================

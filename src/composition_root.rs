@@ -382,14 +382,19 @@ mod tests {
             &self,
             _command: hodei_iam::features::create_policy::dto::CreatePolicyCommand,
         ) -> Result<
-            kernel::domain::policy::HodeiPolicy,
+            hodei_iam::features::create_policy::dto::CreatedPolicy,
             hodei_iam::features::create_policy::error::CreatePolicyError,
         > {
             use kernel::domain::policy::{HodeiPolicy, PolicyId};
-            Ok(HodeiPolicy::new(
-                PolicyId::new("test-id"),
-                "permit(principal, action, resource);".to_string(),
-            ))
+            let now = chrono::Utc::now();
+            Ok(hodei_iam::features::create_policy::dto::CreatedPolicy {
+                policy: HodeiPolicy::new(
+                    PolicyId::new("test-id"),
+                    "permit(principal, action, resource);".to_string(),
+                ),
+                created_at: now,
+                updated_at: now,
+            })
         }
     }
 
@@ -413,6 +418,8 @@ mod tests {
                 name: "test-policy".to_string(),
                 content: "permit(principal, action, resource);".to_string(),
                 description: Some("Test policy".to_string()),
+                created_at: None,
+                updated_at: None,
                 attached_principals: Vec::new(),
             })
         }

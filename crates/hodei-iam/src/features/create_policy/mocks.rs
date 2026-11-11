@@ -205,7 +205,10 @@ impl MockCreatePolicyPort {
 
 #[async_trait]
 impl CreatePolicyPort for MockCreatePolicyPort {
-    async fn create(&self, command: CreatePolicyCommand) -> Result<HodeiPolicy, CreatePolicyError> {
+    async fn create(
+        &self,
+        command: CreatePolicyCommand,
+    ) -> Result<crate::features::create_policy::dto::CreatedPolicy, CreatePolicyError> {
         // Increment call counter
         *self.call_count.lock().unwrap() += 1;
 
@@ -237,7 +240,12 @@ impl CreatePolicyPort for MockCreatePolicyPort {
         // Store the created policy
         self.created_policies.lock().unwrap().push(policy.clone());
 
-        Ok(policy)
+        let now = chrono::Utc::now();
+        Ok(crate::features::create_policy::dto::CreatedPolicy {
+            policy,
+            created_at: now,
+            updated_at: now,
+        })
     }
 }
 

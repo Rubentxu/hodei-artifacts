@@ -173,6 +173,8 @@ impl UpdatePolicyPort for MockUpdatePolicyPort {
             name: command.policy_id.clone(),
             content: content.clone(),
             description: description.clone(),
+            created_at: None,
+            updated_at: None,
         })
     }
 }

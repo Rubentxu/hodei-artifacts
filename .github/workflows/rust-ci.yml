@@ -72,7 +72,7 @@ jobs:
             --test module_tree || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
-          echo "### Suite fast (unit and contract): ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Suite fast (unit and contract): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
           exit ${status:-0}
 
   # The suites that need the embedded database and the ones that boot the
@@ -114,6 +114,7 @@ jobs:
             --test http_contract \
             --test iam_account_index \
             --test iam_backfill \
+            --test iam_policy_timestamps \
             --test iam_scope \
             --test playground_isolation \
             --test policy_circuits \
@@ -123,7 +124,7 @@ jobs:
             --test schema_persistence || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
-          echo "### Suite integration (database): ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Suite integration (database): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
           exit ${status:-0}
 
   infrastructure:
@@ -164,7 +165,7 @@ jobs:
             --test repository_restart_contract || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
-          echo "### Suite infrastructure (boot and processes): ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Suite infrastructure (boot and processes): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
           exit ${status:-0}
 
   # nextest is opt-in: it runs the same workspace with per-test isolation, but

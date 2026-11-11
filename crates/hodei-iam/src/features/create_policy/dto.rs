@@ -118,10 +118,26 @@ pub struct PolicyView {
     /// see exactly who the policy is effective for.
     pub attached_principals: Vec<String>,
 
-    /// Timestamp when the policy was created
+    /// When the policy was created, as it was persisted
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+
+    /// When the policy was last updated, as it was persisted
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// A policy that has just been persisted, with the timestamps the store kept.
+///
+/// The store owns the clock: the timestamps it recorded are the ones the
+/// caller is told about, so what a response says is what the database holds.
+#[derive(Debug, Clone)]
+pub struct CreatedPolicy {
+    /// The policy as it was persisted.
+    pub policy: kernel::domain::policy::HodeiPolicy,
+
+    /// When the store recorded the creation.
     pub created_at: chrono::DateTime<chrono::Utc>,
 
-    /// Timestamp when the policy was last updated
+    /// When the store recorded the last update.
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -194,8 +210,8 @@ mod tests {
             content: "permit(principal, action, resource);".to_string(),
             description: Some("Test".to_string()),
             attached_principals: vec!["hrn:aws:iam::account-a:User/alice".to_string()],
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            created_at: Some(chrono::Utc::now()),
+            updated_at: Some(chrono::Utc::now()),
         };
 
         let cloned = view.clone();
