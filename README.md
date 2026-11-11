@@ -2,7 +2,9 @@
 
 > 🏗️ **Parte de [Hodei Platform](https://github.com/Rubentxu)** — Una alternativa opensource a Azure DevOps, construida pieza a pieza.
 
-**Hodei Artifacts** es el componente de gestión de artefactos y autorización multi-capa del ecosistema Hodei. Proporciona IAM granular, gestión de organizaciones, análisis de políticas Cedar y APIs completas para integración con otras piezas de la plataforma.
+**Hodei Artifacts** es la base de seguridad y de confianza sobre la que se construye el catálogo de artefactos del ecosistema Hodei: IAM granular, políticas Cedar, auditoría de seguridad y una API HTTP verificada.
+
+> **Estado actual: hito M0 — Convergencia.** Lo que el producto hace hoy, lo que es experimental y lo que todavía no existe está en **[ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)**. Ese documento manda sobre cualquier otro material de arquitectura: este README describe la base, no el producto completo.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)](https://www.rust-lang.org/)
@@ -10,11 +12,12 @@
 
 ## 🎯 Propósito en Hodei Platform
 
-Este monorepo implementa los **cimientos de seguridad y gestión de artifacts** para toda la plataforma:
-- **Autorización granular** con políticas Cedar (IAM, Organizations, SCPs)
-- **Registry de artifacts** multi-formato con control de acceso
-- **API unificada** con docs OpenAPI para integración
-- **Frontend** para gestión visual de políticas y artifacts
+Este monorepo construye la **base de seguridad** sobre la que se levanta el
+catálogo de artefactos de la plataforma:
+- **Autorización granular** con políticas Cedar, aislada por cuenta
+- **Auditoría de seguridad** de las mutaciones que cambian la configuración
+- **API HTTP** con OpenAPI, con su contrato verificado por pruebas
+- **Frontend** experimental, con sus pruebas de componente
 
 ## 🏗️ Otros componentes del ecosistema
 - [hodei_pipelines](https://github.com/Rubentxu/hodei_pipelines) — Plataforma ejecución CI/CD (Kotlin)
@@ -27,57 +30,71 @@ Este monorepo implementa los **cimientos de seguridad y gestión de artifacts** 
 
 ## Arquitectura
 
-Este monorepo Rust contiene múltiples crates organizados por dominio:
+Este monorepo Rust tiene cuatro crates en el workspace y nueve crates
+heredados que **no** se compilan ni se despliegan. La clasificación de cada
+uno, con el motivo, está en [ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md).
 
 ```
 crates/
-├── artifact/          # Gestión de artifacts y registry
-├── distribution/      # Distribución y entrega
-├── hodei-authorizer/  # Motor de autorización Cedar
+├── kernel/            # Núcleo compartido: HRN v2, dominio, puertos
 ├── hodei-iam/         # Identity & Access Management
-├── hodei-organizations/ # Gestión de organizaciones
-├── policies/          # Análisis y validación de políticas
-├── repository/        # Abstracción de repositorios
-├── search/           # Búsqueda y indexación
-├── security/         # Seguridad y compliance  
-├── shared/           # Utilidades compartidas
-└── supply-chain/     # Supply chain security
+├── hodei-policies/    # Motor Cedar: schema, validación, evaluación
+└── (9 crates heredados, excluidos del workspace; ver ARCHITECTURE_STATUS.md)
 ```
 
-## Características principales
+El kernel no depende de ningún mecanismo concreto: ni base de datos, ni HTTP.
+Una comprobación de forma arquitectónica lo verifica en la CI.
 
-### 🔐 Autorización multi-capa
-- **IAM**: Usuarios, roles, permisos granulares
-- **Organizations**: Gestión jerárquica con SCPs (Service Control Policies)
-- **Cedar**: Motor de políticas declarativas con análisis estático
-- **Multi-tenancy**: Aislamiento completo entre organizaciones
+## Características
 
-### 📦 Registry de artifacts
-- Soporte multi-formato (Docker, Maven, npm, PyPI, etc.)
-- Control de acceso basado en políticas
-- Metadatos ricos y búsqueda avanzada
-- Supply chain security y firma de artifacts
+Lo que existe hoy, con su etiqueta. `implementada` significa que hay ruta
+real y prueba que se ejecuta en la CI.
 
-### 🔍 Análisis de políticas
-- Validación estática de políticas Cedar
-- Simulación de autorizaciones
-- Reportes de cobertura y gaps de seguridad
-- Playground interactivo para testing
+### 🔐 Seguridad e IAM — `implementada`
+- **Cuentas aisladas**: una cuenta no ve ni muta lo de otra, con un `404`
+  uniforme que no revela la existencia del recurso ajeno.
+- **Políticas Cedar**: schema declarativo, validación contra el schema que
+  gobierna, y evaluación que resuelve el verbo contra ese schema.
+- **Autenticación**: secreto compartido o JWKS/RS256, con verificación de la
+  clave por `kid`.
+- **Auditoría**: las mutaciones de la configuración de autorización dejan
+  rastro con actor, operación, recurso y resultado, nunca con el token.
+- **Bundle declarado**: el arranque comprueba que el bundle declara
+  exactamente las acciones que el servicio autoriza y se niega a arrancar si
+  discrepa.
 
-### 🌐 API y Frontend
-- **API REST** completa con docs OpenAPI
-- **Frontend Vue.js** para gestión visual
-- **WebSockets** para actualizaciones en tiempo real
-- **CLI** para automatización
+### 📦 Catálogo de artefactos por digest — `planificada` (M1)
+Todavía no existe. El roadmap v3 lo situa en M1: registrar un artefacto por
+su digest y consultar su linaje, sin almacenar sus bytes.
+
+### 🧬 Grafo de evidencia, cápsulas de confianza y puerta de promoción — `planificada` (M1–M3)
+Todavía no existen. Son el corazón del producto y llegan después de la base
+segura que este repositorio construye hoy.
+
+### 🔍 Análisis de políticas — `implementada` en su parte viva
+- Validación y evaluación de políticas Cedar contra el schema efectivo.
+- Playground para probar una política a mano.
+- Lo que no existe: simulación de autorizaciones, reportes de cobertura y
+  análisis de brechas.
+
+### 🌐 API y frontend
+- **API REST** con OpenAPI, segmentada en suites de CI por lo que cada una
+  necesita.
+- **Frontend** (React, TypeScript, Tailwind): `experimental`. Tiene sus
+  pruebas de componente y ahora se ejecutan, pero su navegación describe
+  superficies que el backend actual no expone.
 
 ## Stack tecnológico
 
 - **Backend**: Rust (Axum), Tokio async runtime
-- **Base de datos**: SurrealDB (multi-modelo)
+- **Base de datos**: SurrealDB (motor local RocksDB)
 - **Autorización**: Cedar Policy Language
-- **Frontend**: Vue.js 3, TypeScript, Tailwind CSS
-- **Testing**: Property-based testing, E2E con Playwright
-- **Deployment**: Docker, Kubernetes, Terraform
+- **Identidad**: HRN v2 (`hodei-hrn`), con un único parser canónico
+- **Frontend**: React 19, TypeScript, Tailwind CSS, Vitest
+- **Testing**: suites de Rust segmentadas por CI, y pruebas de componente en
+  el frontend
+- **Despliegue**: empaquetado por script de release. No hay imagen de
+  contenedor ni orquestación: no se afirma nada que no se pueda demostrar.
 
 ## Quickstart
 

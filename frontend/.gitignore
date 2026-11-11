@@ -38,15 +38,10 @@ test-integration*.js
 test-routes*.js
 test-simple.js
 
-# Test configuration files
-vitest.config.ts
-tsconfig.vitest.json
-
-# Test setup files
-src/__tests__/
-src/**/__tests__/
-src/shared/test/
-src/shared/test/mocks/
+# The test lane is part of the project: the runner's configuration, the setup
+# files and the tests are tracked. The rules that used to ignore them meant
+# that a new test file was silently untracked, and a test that is not in the
+# repository is a test nobody runs.
 
 # Report files
 ARREGLOS_FINALES.md
