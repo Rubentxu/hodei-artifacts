@@ -155,7 +155,7 @@ pub struct EvaluationDiagnosticsDto {
 ///   ],
 ///   "request": {
 ///     "principal": "hodei::iam::default::User::alice",
-///     "action": "hodei::api::Action::read",
+///     "action": "Api::Action::\"read\"",
 ///     "resource": "hodei::storage::default::Document::doc1",
 ///     "context": {
 ///       "ip": {
@@ -241,8 +241,11 @@ fn convert_to_command(
     let principal = Hrn::from_string(&request.request.principal)
         .ok_or_else(|| format!("Invalid principal HRN: {}", request.request.principal))?;
 
-    let action = Hrn::from_action_string(&request.request.action)
-        .ok_or_else(|| format!("Invalid action HRN: {}", request.request.action))?;
+    // The action is parsed with the canonical parser of the authorization
+    // core: an action is a verb with its own identity, not a resource, and
+    // the playground does not need a second way of reading one.
+    let action = hodei_authz::model::ActionId::from_cedar_uid(&request.request.action)
+        .map_err(|error| format!("Invalid action '{}': {}", request.request.action, error))?;
 
     let resource = Hrn::from_string(&request.request.resource)
         .ok_or_else(|| format!("Invalid resource HRN: {}", request.request.resource))?;
@@ -416,7 +419,7 @@ mod tests {
             inline_policies: vec!["permit(principal, action, resource);".to_string()],
             request: PlaygroundAuthorizationRequestDto {
                 principal: "hrn:hodei:iam::default:User/alice".to_string(),
-                action: "hrn:hodei:api::default:Action/read".to_string(),
+                action: "Api::Action::\"read\"".to_string(),
                 resource: "hrn:hodei:storage::default:Document/doc1".to_string(),
                 context: HashMap::new(),
             },
@@ -434,7 +437,7 @@ mod tests {
             inline_policies: vec!["permit(principal, action, resource);".to_string()],
             request: PlaygroundAuthorizationRequestDto {
                 principal: "invalid-hrn".to_string(),
-                action: "hodei::api::Action::read".to_string(),
+                action: "Api::Action::\"read\"".to_string(),
                 resource: "hodei::storage::default::Document::doc1".to_string(),
                 context: HashMap::new(),
             },

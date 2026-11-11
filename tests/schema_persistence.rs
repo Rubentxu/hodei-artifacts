@@ -25,6 +25,7 @@
 
 use hodei_artifacts_api::bootstrap::SurrealSchemaAdapter;
 use hodei_artifacts_api::composition_root::CompositionRoot;
+use hodei_authz::model::ActionId;
 use hodei_iam::features::register_iam_schema::dto::RegisterIamSchemaCommand;
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
 use hodei_policies::build_schema::ports::SchemaStoragePort;
@@ -195,7 +196,7 @@ async fn s4_versioned_schema_cycle_is_reproducible() {
             "User".to_string(),
             "alice".to_string(),
         ),
-        action: Hrn::action("iam", "CreateUser"),
+        action: ActionId::new("iam", "CreateUser").expect("a valid action"),
         resource: Hrn::new(
             "hodei".to_string(),
             "iam".to_string(),
@@ -263,7 +264,7 @@ async fn s5_schema_invalid_policy_cannot_grant() {
             "User".to_string(),
             "alice".to_string(),
         ),
-        action: Hrn::action("iam", "CreateUser"),
+        action: ActionId::new("iam", "CreateUser").expect("a valid action"),
         resource: Hrn::new(
             "hodei".to_string(),
             "iam".to_string(),

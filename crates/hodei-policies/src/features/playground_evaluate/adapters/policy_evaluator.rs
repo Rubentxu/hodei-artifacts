@@ -14,6 +14,7 @@ use cedar_policy::{
     Authorizer, Context, Entities, EntityUid, Policy, PolicySet, Request, RestrictedExpression,
     Schema,
 };
+use hodei_authz::model::ActionId;
 use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::{debug, info, warn};
@@ -109,19 +110,24 @@ impl PolicyEvaluatorAdapter {
         })
     }
 
-    /// Convert an action HRN to a Cedar EntityUid
+    /// Convert an action identity to a Cedar EntityUid
     ///
-    /// An action HRN denotes a verb, not a resource: it maps to the flat
-    /// `Action::"name"` form, the same form the evaluation engine and the
-    /// registered schema use.
+    /// An action is a verb, not a resource: without a schema that says which
+    /// namespace it belongs to, it maps to the flat `Action::"name"` form, the
+    /// same form the evaluation engine and the registered schema use.
     fn action_to_entity_uid(
         &self,
-        hrn: &kernel::Hrn,
+        action: &ActionId,
     ) -> Result<EntityUid, PlaygroundEvaluateError> {
-        crate::internal::engine::translator::translate_hrn_to_cedar_euid(hrn).map_err(|e| {
-            warn!(hrn = %hrn, error = %e, "Failed to convert action HRN to EntityUid");
-            PlaygroundEvaluateError::InvalidRequest(format!("Invalid action '{}': {}", hrn, e))
-        })
+        crate::internal::engine::translator::translate_action_to_cedar_euid(action.name()).map_err(
+            |e| {
+                warn!(action = %action, error = %e, "Failed to convert the action to an EntityUid");
+                PlaygroundEvaluateError::InvalidRequest(format!(
+                    "Invalid action '{}': {}",
+                    action, e
+                ))
+            },
+        )
     }
 
     /// Build a Cedar authorization request
@@ -259,7 +265,7 @@ impl PolicyEvaluatorPort for PolicyEvaluatorAdapter {
         // declares nothing constrains nothing, so it is not applied; a schema
         // that declares something decides which action the requested verb
         // denotes.
-        let action_id = request.action.resource_id();
+        let action_id = request.action.name();
         let (action, schema_for_request) = if authority::declares_anything(schema) {
             match authority::resolve_action(schema, action_id) {
                 ActionResolution::Resolved(uid) => (uid, Some(schema)),
@@ -354,7 +360,7 @@ mod tests {
                 "User".to_string(),
                 "alice".to_string(),
             ),
-            kernel::Hrn::action("api", action),
+            ActionId::new("api", action).expect("a valid action"),
             kernel::Hrn::new(
                 "hodei".to_string(),
                 "storage".to_string(),

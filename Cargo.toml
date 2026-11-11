@@ -37,6 +37,11 @@ version = "0.2.0"
 license = "MIT"
 
 [workspace.dependencies]
+# The published authorization core; no path/git dependency to a sibling
+# checkout. The canonical identity of an action lives here, so every crate
+# that needs it names the same version.
+hodei-authz = "=0.1.2"
+
 # Core async & runtime
 tokio = { version = "^1.47", features = ["full"] }
 async-trait = { version = "0.1.89" }
@@ -127,7 +132,7 @@ kernel = { path = "crates/kernel" }
 hodei-iam = { path = "crates/hodei-iam" }
 hodei-policies = { path = "crates/hodei-policies" }
 # Published core; no path/git dependency to a sibling checkout.
-hodei-authz = "=0.1.2"
+hodei-authz = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
