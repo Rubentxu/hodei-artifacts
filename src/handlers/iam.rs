@@ -7,11 +7,14 @@ use crate::app_state::AppState;
 use axum::{
     Extension, Json,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 
 use hodei_authz::VerifiedContext;
+
+use crate::audit::AuditResult;
+use crate::handlers::{correlation_id, record_audit};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -195,6 +198,45 @@ fn valid_policy_id(policy_id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
 }
 
+/// Record a security event for a policy operation.
+///
+/// The event identifies the principal that acted, the operation, the policy
+/// it was about and how it ended. It never carries the token or the content
+/// of the policy.
+fn audit_policy(
+    state: &AppState,
+    context: &VerifiedContext,
+    action: &str,
+    resource: &str,
+    result: AuditResult,
+    correlation_id: &str,
+) {
+    record_audit(
+        state,
+        context.principal().subject().as_str(),
+        action,
+        resource,
+        result,
+        correlation_id,
+    );
+}
+
+/// How a failed policy operation shows up in the trail.
+///
+/// A conflict and a refusal are not the same thing, and the trail has to tell
+/// them apart: a conflict means the state was already there, and a refusal
+/// means the operation was not allowed.
+fn policy_result(
+    error: &hodei_iam::features::create_policy::error::CreatePolicyError,
+) -> AuditResult {
+    use hodei_iam::features::create_policy::error::CreatePolicyError;
+    match error {
+        CreatePolicyError::PolicyAlreadyExists(_) => AuditResult::Conflict,
+        CreatePolicyError::Unauthorized => AuditResult::Denied,
+        _ => AuditResult::Failed,
+    }
+}
+
 fn scoped_policy_id(account: &str, policy_id: &str) -> String {
     format!("{account}~{policy_id}")
 }
@@ -228,19 +270,49 @@ fn account_policy_hrn(account: &str, policy_id: &str) -> kernel::Hrn {
 pub async fn create_policy(
     State(state): State<AppState>,
     Extension(context): Extension<VerifiedContext>,
+    headers: HeaderMap,
     Json(request): Json<CreatePolicyRequest>,
 ) -> Result<Json<CreatePolicyResponse>, IamApiError> {
+    let correlation = correlation_id(&headers);
     let account = context.account().as_str().to_string();
     let short_id = request.policy_id.trim().to_string();
+    // The resource of the event is the policy the operation is about, even
+    // when the operation fails: a refused creation is part of the trail.
+    let resource = account_policy_hrn(&account, &short_id).to_string();
     if !valid_policy_id(&short_id) {
+        audit_policy(
+            &state,
+            &context,
+            "CreatePolicy",
+            &resource,
+            AuditResult::Failed,
+            &correlation,
+        );
         return Err(IamApiError::BadRequest(
             "policy_id must be non-empty and contain only letters, digits, '-' or '_'".to_string(),
         ));
     }
     for principal in &request.attached_principals {
-        let parsed = kernel::Hrn::from_string(principal)
-            .ok_or_else(|| IamApiError::BadRequest("Invalid attached principal HRN".to_string()))?;
+        let parsed = kernel::Hrn::from_string(principal).ok_or_else(|| {
+            audit_policy(
+                &state,
+                &context,
+                "CreatePolicy",
+                &resource,
+                AuditResult::Failed,
+                &correlation,
+            );
+            IamApiError::BadRequest("Invalid attached principal HRN".to_string())
+        })?;
         if parsed.account_id() != account {
+            audit_policy(
+                &state,
+                &context,
+                "CreatePolicy",
+                &resource,
+                AuditResult::Denied,
+                &correlation,
+            );
             return Err(IamApiError::Forbidden(
                 "Attached principal belongs to another account".to_string(),
             ));
@@ -253,11 +325,16 @@ pub async fn create_policy(
         attached_principals: request.attached_principals,
     };
 
-    let policy_view = state
-        .create_policy
-        .execute(command)
-        .await
-        .map_err(|e| match e {
+    let policy_view = state.create_policy.execute(command).await.map_err(|e| {
+        audit_policy(
+            &state,
+            &context,
+            "CreatePolicy",
+            &resource,
+            policy_result(&e),
+            &correlation,
+        );
+        match e {
             hodei_iam::features::create_policy::error::CreatePolicyError::EmptyPolicyContent => {
                 IamApiError::BadRequest("Policy content cannot be empty".to_string())
             }
@@ -282,7 +359,17 @@ pub async fn create_policy(
             hodei_iam::features::create_policy::error::CreatePolicyError::Unauthorized => {
                 IamApiError::Unauthorized("Insufficient permissions".to_string())
             }
-        })?;
+        }
+    })?;
+
+    audit_policy(
+        &state,
+        &context,
+        "CreatePolicy",
+        &resource,
+        AuditResult::Allowed,
+        &correlation,
+    );
 
     Ok(Json(CreatePolicyResponse {
         hrn: account_policy_hrn(&account, &short_id).to_string(),
@@ -440,15 +527,35 @@ pub async fn list_policies(
 pub async fn update_policy(
     State(state): State<AppState>,
     Extension(context): Extension<VerifiedContext>,
+    headers: HeaderMap,
     Json(request): Json<UpdatePolicyRequest>,
 ) -> Result<Json<UpdatePolicyResponse>, IamApiError> {
+    let correlation = correlation_id(&headers);
     let account = context.account().as_str().to_string();
-    let requested = kernel::Hrn::from_string(&request.policy_hrn)
-        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
+    let requested = kernel::Hrn::from_string(&request.policy_hrn).ok_or_else(|| {
+        audit_policy(
+            &state,
+            &context,
+            "UpdatePolicy",
+            &request.policy_hrn,
+            AuditResult::Failed,
+            &correlation,
+        );
+        IamApiError::BadRequest("Invalid HRN format".to_string())
+    })?;
     if requested.account_id() != account {
+        audit_policy(
+            &state,
+            &context,
+            "UpdatePolicy",
+            &request.policy_hrn,
+            AuditResult::Denied,
+            &correlation,
+        );
         return Err(IamApiError::NotFound("Policy not found".to_string()));
     }
     let short_id = requested.resource_id().to_string();
+    let resource = account_policy_hrn(&account, &short_id).to_string();
 
     let command = hodei_iam::features::update_policy::dto::UpdatePolicyCommand {
         policy_id: scoped_policy_id(&account, &short_id),
@@ -456,11 +563,16 @@ pub async fn update_policy(
         description: request.description,
     };
 
-    let policy_view = state
-        .update_policy
-        .update(command)
-        .await
-        .map_err(|e| match e {
+    let policy_view = state.update_policy.update(command).await.map_err(|e| {
+        audit_policy(
+            &state,
+            &context,
+            "UpdatePolicy",
+            &resource,
+            AuditResult::Failed,
+            &correlation,
+        );
+        match e {
             hodei_iam::features::update_policy::error::UpdatePolicyError::PolicyNotFound(msg) => {
                 IamApiError::NotFound(format!("Policy not found: {}", msg))
             }
@@ -497,7 +609,17 @@ pub async fn update_policy(
             hodei_iam::features::update_policy::error::UpdatePolicyError::Unauthorized => {
                 IamApiError::Unauthorized("Insufficient permissions".to_string())
             }
-        })?;
+        }
+    })?;
+
+    audit_policy(
+        &state,
+        &context,
+        "UpdatePolicy",
+        &resource,
+        AuditResult::Allowed,
+        &correlation,
+    );
 
     Ok(Json(UpdatePolicyResponse {
         hrn: account_policy_hrn(&account, &short_id).to_string(),
@@ -523,15 +645,35 @@ pub async fn update_policy(
 pub async fn delete_policy(
     State(state): State<AppState>,
     Extension(context): Extension<VerifiedContext>,
+    headers: HeaderMap,
     Json(request): Json<DeletePolicyRequest>,
 ) -> Result<Json<DeletePolicyResponse>, IamApiError> {
+    let correlation = correlation_id(&headers);
     let account = context.account().as_str().to_string();
-    let requested = kernel::Hrn::from_string(&request.policy_hrn)
-        .ok_or_else(|| IamApiError::BadRequest("Invalid HRN format".to_string()))?;
+    let requested = kernel::Hrn::from_string(&request.policy_hrn).ok_or_else(|| {
+        audit_policy(
+            &state,
+            &context,
+            "DeletePolicy",
+            &request.policy_hrn,
+            AuditResult::Failed,
+            &correlation,
+        );
+        IamApiError::BadRequest("Invalid HRN format".to_string())
+    })?;
     if requested.account_id() != account {
+        audit_policy(
+            &state,
+            &context,
+            "DeletePolicy",
+            &request.policy_hrn,
+            AuditResult::Denied,
+            &correlation,
+        );
         return Err(IamApiError::NotFound("Policy not found".to_string()));
     }
     let short_id = requested.resource_id().to_string();
+    let resource = account_policy_hrn(&account, &short_id).to_string();
 
     let command = hodei_iam::features::delete_policy::dto::DeletePolicyCommand {
         policy_id: scoped_policy_id(&account, &short_id),
@@ -541,7 +683,16 @@ pub async fn delete_policy(
         .delete_policy
         .delete(&command.policy_id)
         .await
-        .map_err(|e| match e {
+        .map_err(|e| {
+            audit_policy(
+                &state,
+                &context,
+                "DeletePolicy",
+                &resource,
+                AuditResult::Failed,
+                &correlation,
+            );
+            match e {
             hodei_iam::features::delete_policy::error::DeletePolicyError::PolicyNotFound(msg) => {
                 IamApiError::NotFound(format!("Policy not found: {}", msg))
             }
@@ -563,7 +714,17 @@ pub async fn delete_policy(
             hodei_iam::features::delete_policy::error::DeletePolicyError::Unauthorized => {
                 IamApiError::Unauthorized("Insufficient permissions".to_string())
             }
+        }
         })?;
+
+    audit_policy(
+        &state,
+        &context,
+        "DeletePolicy",
+        &resource,
+        AuditResult::Allowed,
+        &correlation,
+    );
 
     Ok(Json(DeletePolicyResponse {
         deleted_hrn: account_policy_hrn(&account, &short_id).to_string(),

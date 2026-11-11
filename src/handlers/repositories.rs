@@ -12,13 +12,14 @@ use axum::{
     http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use hodei_authz::{ActionId, Credentials, VerifiedContext, verify_principal};
+use hodei_authz::{Credentials, VerifiedContext, verify_principal};
 use kernel::Hrn;
 
-use crate::audit::{AuditEvent, AuditResult};
+use crate::audit::AuditResult;
 use serde::Deserialize;
 
 use crate::app_state::AppState;
+use crate::handlers::{correlation_id, record_audit};
 use crate::repository::RepositoryView;
 
 #[derive(Debug)]
@@ -188,8 +189,8 @@ pub async fn create_repository(
                 record_audit(
                     &state,
                     context.principal().subject().as_str(),
-                    &action,
-                    &hrn,
+                    &action.to_string(),
+                    &hrn.to_string(),
                     AuditResult::Failed,
                     &correlation_id,
                 );
@@ -205,8 +206,8 @@ pub async fn create_repository(
         record_audit(
             &state,
             context.principal().subject().as_str(),
-            &action,
-            &hrn,
+            &action.to_string(),
+            &hrn.to_string(),
             result,
             &correlation_id,
         );
@@ -240,8 +241,8 @@ pub async fn create_repository(
             record_audit(
                 &state,
                 context.principal().subject().as_str(),
-                &action,
-                &hrn,
+                &action.to_string(),
+                &hrn.to_string(),
                 result,
                 &correlation_id,
             );
@@ -252,8 +253,8 @@ pub async fn create_repository(
     record_audit(
         &state,
         context.principal().subject().as_str(),
-        &action,
-        &hrn,
+        &action.to_string(),
+        &hrn.to_string(),
         AuditResult::Allowed,
         &correlation_id,
     );
@@ -263,46 +264,6 @@ pub async fn create_repository(
         HeaderValue::from_str(&correlation_id).map_err(|_| RepositoryApiError::Internal)?,
     );
     Ok(response)
-}
-
-fn record_audit(
-    state: &AppState,
-    actor: &str,
-    action: &ActionId,
-    resource: &Hrn,
-    result: AuditResult,
-    correlation_id: &str,
-) {
-    let event = AuditEvent::new(
-        actor,
-        action.to_string(),
-        resource.to_string(),
-        result,
-        correlation_id,
-    );
-    if state.audit_sink.record(&event).is_err() {
-        // Audit is best-effort in this slice; never turn it into a decision or
-        // a credential leak. Durable delivery is declared in the docs.
-        tracing::warn!(
-            correlation_id = %correlation_id,
-            "audit sink failed; security event was not persisted"
-        );
-    }
-}
-
-fn correlation_id(headers: &HeaderMap) -> String {
-    headers
-        .get("x-request-id")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value
-                    .chars()
-                    .all(|character| !character.is_control() && !character.is_whitespace())
-        })
-        .map(str::to_string)
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
 
 fn valid_repository_name(name: &str) -> bool {
