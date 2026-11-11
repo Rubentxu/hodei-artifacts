@@ -7,8 +7,26 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# The suites are segmented by what they need, not by how long they take:
+#
+#   fast           unit tests and contract tests that need neither the embedded
+#                  database nor a spawned process.
+#   integration    the tests that use the embedded database, including the ones
+#                  that drive the operator commands against it.
+#   infrastructure the tests that boot the application, restart it, or run its
+#                  binary as a process.
+#
+# Each suite runs exactly once, in its own step, and each step records its
+# duration in the job summary. `tests/ci_suites.rs` reads this file and fails
+# when a test target is missing from a suite or when a suite names a target
+# that does not exist, so the segmentation cannot drift away from the tests.
+
 jobs:
-  build-and-test:
+  # The fast gate. This is the job a pull request waits for: it answers the
+  # question "does this change break the unit and contract tests?" without
+  # paying for the suites that need infrastructure.
+  fast:
+    name: Fast suite (unit and contract)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -39,15 +57,115 @@ jobs:
       - name: Clippy (deny warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Check (all targets)
-        run: cargo check --workspace --all-targets
-
       - name: Build
         run: cargo build --workspace
 
-      - name: Test (cargo)
-        run: cargo test --workspace --no-fail-fast
+      - name: Suite fast (unit and contract)
+        id: suite-fast
+        run: |
+          started=$(date +%s)
+          cargo test --workspace --lib --bins \
+            --test authorization_isolation \
+            --test ci_suites \
+            --test hrn_parity \
+            --test legacy_quarantine \
+            --test module_tree || status=$?
+          elapsed=$(( $(date +%s) - started ))
+          echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
+          echo "### Suite fast (unit and contract): ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+          exit ${status:-0}
 
+  # The suites that need the embedded database and the ones that boot the
+  # application. They start after the fast gate, so they reuse the compiled
+  # artifacts it left in the cache instead of compiling the workspace again.
+  integration:
+    name: Integration suite (database)
+    needs: fast
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Suite integration (database)
+        id: suite-integration
+        run: |
+          started=$(date +%s)
+          cargo test --workspace \
+            --test admin_surface \
+            --test audit_events \
+            --test http_contract \
+            --test iam_account_index \
+            --test iam_backfill \
+            --test iam_scope \
+            --test playground_isolation \
+            --test policy_circuits \
+            --test repository_create \
+            --test repository_durable \
+            --test repository_read \
+            --test schema_persistence || status=$?
+          elapsed=$(( $(date +%s) - started ))
+          echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
+          echo "### Suite integration (database): ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+          exit ${status:-0}
+
+  infrastructure:
+    name: Infrastructure suite (boot and processes)
+    needs: fast
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Suite infrastructure (boot and processes)
+        id: suite-infrastructure
+        run: |
+          started=$(date +%s)
+          cargo test --workspace \
+            --test binary_contract \
+            --test bootstrap_integration \
+            --test distribution_contract \
+            --test production_auth \
+            --test repository_restart_contract || status=$?
+          elapsed=$(( $(date +%s) - started ))
+          echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
+          echo "### Suite infrastructure (boot and processes): ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+          exit ${status:-0}
 
   # nextest is opt-in: it runs the same workspace with per-test isolation, but
   # the RocksDB/binary suites need a single test thread to avoid contention.
