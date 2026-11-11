@@ -330,6 +330,40 @@ fn no_job_that_runs_on_pull_requests_runs_the_whole_workspace() {
 
 /// The suite lists are kept in one place, so a reviewer can see the whole
 /// segmentation without reading three jobs.
+/// The inventory of the tests that are discovered and the suite each one
+/// runs in.
+///
+/// The guard proves that the segmentation does not drift. The inventory says
+/// what it actually is, in the log of the job, because a suite whose
+/// contents nobody has read is a suite nobody maintains.
+#[test]
+fn the_inventory_of_the_discovered_tests_is_reported() {
+    let targets = test_targets();
+    let suites = suites_in_workflow();
+
+    let mut lines = Vec::new();
+    for target in &targets {
+        let suite = suites
+            .iter()
+            .find(|(_, list)| list.contains(target))
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| "NONE".to_string());
+        lines.push(format!("  {target} -> {suite}"));
+    }
+
+    println!(
+        "test inventory: {} target(s) discovered, {} suite(s) declared\n{}",
+        targets.len(),
+        suites.len(),
+        lines.join("\n")
+    );
+
+    assert!(
+        !targets.is_empty(),
+        "the workspace has test targets, so the inventory cannot be empty"
+    );
+}
+
 #[test]
 fn the_suites_are_listed_in_the_workflow() {
     let suites = suites_in_workflow();

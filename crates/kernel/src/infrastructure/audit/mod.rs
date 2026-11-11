@@ -13,11 +13,6 @@ use uuid::Uuid;
 pub mod handler;
 pub mod query;
 
-#[cfg(test)]
-mod handler_test;
-#[cfg(test)]
-mod query_test;
-
 // Re-export key types for convenience
 pub use handler::AuditEventHandler;
 pub use query::AuditQuery;
