@@ -157,7 +157,30 @@ el **preflight de almacenamiento**, que se invoca aparte al arrancar y
 reporta los fallos del almacenamiento como lo que son: un problema de la
 maquina, no de la configuracion.
 
-## 8. Lo que este documento no dice
+## 8. Las comprobaciones de forma
+
+Una arquitectura que solo existe en un documento se deshace en el primer
+commit que nadie revisa con cuidado. `tests/architecture_fitness.rs` lee el
+repositorio y falla cuando aparece una forma que el diseño prohibe:
+
+| Comprobacion | Que prohibe |
+| --- | --- |
+| `the_active_code_does_not_downcast` | Bajar a una implementacion concreta por downcast. |
+| `a_protected_crate_does_not_depend_on_a_concrete_mechanism` | Que el nucleo protegido nombre un motor de base de datos o un framework de HTTP. |
+| `the_active_code_does_not_import_another_context_internals` | Importar lo interno de otro contexto. |
+| `there_is_no_success_of_filler` | Un `todo!()`, o un fichero de pruebas que se declara marcador de posicion sin pruebas dentro. |
+
+La comprobacion del downcast trae consigo la prueba de que ella misma
+falla cuando encuentra un downcast, y la de las dependencias, la de que
+reconoce una dependencia prohibida y no confunde un comentario con una. Una
+comprobacion que no puede fallar no es una comprobacion.
+
+`tests/ci_suites.rs` hace lo mismo con la segmentacion de la CI: cada target
+de prueba tiene que estar en exactamente una suite, ninguna suite puede
+nombrar un target que no existe, y el inventario de lo descubierto se
+imprime en el log del job.
+
+## 9. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté

@@ -98,9 +98,9 @@ impl<S: SchemaStoragePort> LoadSchemaUseCase<S> {
 
         info!("Retrieved schema version '{}' from storage", version);
 
-        // Parse the schema string back into a Schema object
-        // Note: Currently we're using debug format, so parsing might not work
-        // This is a placeholder for when proper serialization is implemented
+        // The stored representation is the stable codec of the fragments, not
+        // a rendering of the built schema: it decodes back into the same
+        // schema it was built from.
         let schema = self.parse_schema(&schema_string)?;
 
         info!("Successfully loaded schema version '{}'", version);
