@@ -34,6 +34,7 @@
 pub mod application;
 pub mod domain;
 pub mod ports;
+pub mod standards;
 
 pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionRequest};
 pub use application::projection::{

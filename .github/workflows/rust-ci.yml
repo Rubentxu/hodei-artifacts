@@ -76,7 +76,8 @@ jobs:
             --test hrn_parity \
             --test legacy_quarantine \
             --test module_tree \
-            --test scale_model || status=$?
+            --test scale_model \
+            --test standards_contract || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
           echo "### Suite fast (unit and contract): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
