@@ -1,0 +1,16 @@
+[package]
+name = "hodei-trust-policy"
+version = "0.1.0"
+edition = "2021"
+description = "La politica de confianza de Hodei: su contexto, sus requisitos, su decision y su historial."
+license = "MIT"
+
+[dependencies]
+hodei-evidence = { path = "../hodei-evidence" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+kernel = { path = "../kernel" }

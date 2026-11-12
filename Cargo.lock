@@ -2089,6 +2089,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hodei-trust-policy"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hodei-evidence",
+ "kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.40.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -568,6 +568,78 @@ evidencia enlazada. Es una lectura, tiene su propia accion de Cedar
 no cruza de cuenta: la capsula de otra cuenta se esconde tras el mismo 404
 que la que no existe.
 
+## 10-quater. La politica de confianza, y por que no es Cedar (M3)
+
+### La conclusion del SPIKE-004
+
+**La politica de confianza NO se expresa en Cedar.** No es una conclusion
+sobre lo bueno que es Cedar: es una conclusion sobre la forma de los dos
+lenguajes, y se puede escribir entera.
+
+Cedar evalua **una peticion cada vez**, contra una tripleta `(principal,
+accion, recurso)`, y responde si o no con un motivo para el no. Una politica
+de confianza no es ninguna de esas cosas:
+
+- Es un **conjunto de requisitos** sobre un **contexto precalculado**: la
+  capsula dice trece cosas del artefacto y la politica dice cuales tienen
+  que cumplirse. Cedar no tiene agregados, de modo que "el inventario esta
+  completo *y* la procedencia esta verificada *y* no hay una vulnerabilidad
+  critica alcanzable" son tres politicas que no se conocen entre si, y la
+  regla que dice "gana la peor" no existe en Cedar.
+- Tiene que producir **codigos de motivo** como salida. Los motivos de
+  Cedar son texto de diagnostico sobre una peticion; los codigos de motivo
+  de una decision de confianza son un conjunto cerrado que un informe, una
+  politica y una auditoria pueden leer todos, y son por requisito y no por
+  peticion.
+- Es **versionada y se activa con historial**. El conjunto de Cedar es el
+  que se ha cargado; no hay nocion de un conjunto que se activo en un
+  momento y bajo el que una decision de hace seis meses se pueda leer
+  todavia.
+
+Lo que Cedar **si** hace, y mejor que nadie, es decidir **quien puede hacer
+que**. Esa es la mitad de la autorizacion, se queda en Cedar, y es
+exactamente para lo que su modelo esta hecho.
+
+La frontera queda asi:
+
+```text
+Cedar                    ->  quien puede promover esto
+el motor de confianza    ->  si el artefacto cumple
+```
+
+Y la puerta que junta las dos mitades dice **cual de las dos decidio**, de
+modo que un rechazo nunca es un acertijo.
+
+Las computaciones propias de la confianza --que es alcanzable, que es
+critico, que esta expuesto-- ocurren **antes** de la evaluacion y llegan
+como hechos en el contexto. Una politica que consultara un grafo seria una
+politica cuya decision depende de cuando se pregunto, que es lo contrario
+de reproducible.
+
+### El contexto, versionado y determinista
+
+El contexto es un **valor**, no un mango: una vez construido no cambia, y
+dos contextos con el mismo contenido son el mismo contexto. Lleva la version
+del constructor que lo armo, y la decision la nombra, de modo que una
+decision de hace meses se puede leer con las reglas que la produjo.
+
+### La decision, inmutable y con codigos
+
+La decision dice el resultado (`ALLOW`, `DENY`, `WARN`, `REQUIRE_APPROVAL`),
+los codigos de motivo, que le paso a cada requisito, la version del
+contexto, la del conjunto de politicas y la de su esquema, el hash de la
+capsula y la evidencia que se uso. `WARN` no es un `ALLOW` encubierto, y
+la politica decide si lo que falta es una negacion o una peticion de
+aprobacion --el motor no lo decide, porque eso es una cuestion de la
+organizacion y no del software.
+
+### La activacion con historial
+
+Un conjunto de politicas no es un fichero que se lee cuando hace falta: se
+**activa**. Activarlo dice que a partir de ahora decide esta version, y
+deja constancia. Cambiar la politica no reescribe el pasado: las decisiones
+nombran la version con la que se tomaron, y esa version sigue ahi.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.
