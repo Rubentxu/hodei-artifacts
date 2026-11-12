@@ -8,6 +8,7 @@
 
 use async_trait::async_trait;
 
+use crate::policy::TrustPolicy;
 use crate::promotion::{DecisionId, PromotionDecision, PromotionRequest, PromotionTarget};
 
 /// Why a decision could not be read or written.
@@ -46,6 +47,19 @@ pub trait DecisionStore: Send + Sync {
         &self,
         correlation_id: &str,
     ) -> Result<Option<PromotionDecision>, DecisionStoreError>;
+}
+
+/// The loader of the policy that decides.
+///
+/// A policy that cannot be loaded is not a policy that refuses: it is an
+/// operational failure, and the promotion has to tell the two apart. The
+/// loader is a port so that the failure can be produced where it happens
+/// --a store that is down, a set that was never activated-- and not
+/// simulated in the caller.
+#[async_trait]
+pub trait PolicyLoader: Send + Sync {
+    /// The policy set that is active for an identifier.
+    async fn active_policy(&self, policy_id: &str) -> Result<TrustPolicy, DecisionStoreError>;
 }
 
 /// The destinations a promotion can go to.

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 use crate::policy::TrustPolicy;
+use crate::ports::DecisionStoreError;
 
 /// The record of one activation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +121,21 @@ impl PolicyRegistry {
     pub fn activation_count(&self) -> usize {
         let inner = self.inner.lock().expect("the registry is not poisoned");
         inner.history.len()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::ports::PolicyLoader for PolicyRegistry {
+    /// The policy set that is active for an identifier.
+    ///
+    /// A set that was never activated is not an empty set: it is a
+    /// failure to load, and the promotion tells it apart from a refusal.
+    async fn active_policy(&self, policy_id: &str) -> Result<TrustPolicy, DecisionStoreError> {
+        self.active(policy_id).ok_or_else(|| {
+            DecisionStoreError::Unavailable(format!(
+                "there is no active policy set for {policy_id}"
+            ))
+        })
     }
 }
 

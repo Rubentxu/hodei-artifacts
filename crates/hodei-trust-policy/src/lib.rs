@@ -68,6 +68,7 @@ pub mod promotion;
 pub mod reasons;
 pub mod registry;
 pub mod service;
+pub mod simulation;
 
 pub use context::{
     ExceptionFact, Exposure, RiskFacts, SubjectFact, TargetEnvironment, TrustContext,
@@ -77,7 +78,7 @@ pub use decision::{evaluate, Outcome, RequirementOutcome, TrustDecision};
 pub use exception::{ApprovalOutcome, ExceptionRequest, ExceptionState, RefusalReason};
 pub use gate::{AuthorizationResult, DecidedBy, GateResult, PromotionGate};
 pub use policy::{OnFailure, Requirement, RequirementKind, TrustPolicy};
-pub use ports::{DecisionStore, DecisionStoreError, PromotionTargets};
+pub use ports::{DecisionStore, DecisionStoreError, PolicyLoader, PromotionTargets};
 pub use promotion::{
     DecisionId, PromotionDecision, PromotionFailure, PromotionOutcome, PromotionRequest,
     PromotionTarget,
@@ -85,6 +86,7 @@ pub use promotion::{
 pub use reasons::ReasonCode;
 pub use registry::{Activation, PolicyRegistry};
 pub use service::PromotionService;
+pub use simulation::{simulate, AffectedRelease, SimulationReport};
 
 /// The version of the schema that a policy set is written against.
 ///
