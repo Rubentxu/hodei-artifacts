@@ -6,6 +6,7 @@ description = "El grafo de riesgo de Hodei: las vulnerabilidades, el estado afec
 license = "MIT"
 
 [dependencies]
+async-trait = { workspace = true }
 chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
 kernel = { path = "../kernel" }

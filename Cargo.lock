@@ -2092,12 +2092,29 @@ dependencies = [
 name = "hodei-risk"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "hodei-evidence",
  "kernel",
  "semver",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "hodei-risk-storage"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hodei-evidence",
+ "hodei-evidence-storage",
+ "hodei-risk",
+ "kernel",
+ "serde_json",
+ "surrealdb",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
