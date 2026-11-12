@@ -1955,6 +1955,7 @@ dependencies = [
  "config",
  "dotenvy",
  "hodei-authz",
+ "hodei-evidence",
  "hodei-evidence-storage",
  "hodei-hrn",
  "hodei-iam",

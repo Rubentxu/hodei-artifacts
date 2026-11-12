@@ -40,10 +40,14 @@ const SCHEMA: &str = r#"{
   "": { "entityTypes": {}, "actions": {} },
   "Iam": { "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } }, "actions": {} },
   "Artifacts": {
-    "entityTypes": { "Repository": { "shape": { "type": "Record", "attributes": {} } } },
+    "entityTypes": {
+      "Repository": { "shape": { "type": "Record", "attributes": {} } },
+      "Artifact": { "shape": { "type": "Record", "attributes": {} } }
+    },
     "actions": {
       "CreateRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
-      "ReadRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } }
+      "ReadRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
+      "ReadCapsule": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Artifact"] } }
     }
   }
 }"#;

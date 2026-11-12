@@ -29,6 +29,16 @@ pub fn create_repository() -> ActionId {
     ActionId::new("artifacts", "CreateRepository").expect("a valid action")
 }
 
+/// Reading the trust capsule of a release.
+///
+/// The capsule is a read: it is a view of the evidence that is there, and
+/// reading it does not change anything. It has its own action because it
+/// answers a different question than the repository does, and a deployment
+/// may want to let one and not the other.
+pub fn read_capsule() -> ActionId {
+    ActionId::new("artifacts", "ReadCapsule").expect("a valid action")
+}
+
 /// Reaching the administrative surface.
 pub fn access_admin_api() -> ActionId {
     ActionId::new("admin", "AccessAdminApi").expect("a valid action")
@@ -36,7 +46,12 @@ pub fn access_admin_api() -> ActionId {
 
 /// Every action the service authorizes with.
 pub fn all() -> Vec<ActionId> {
-    vec![read_repository(), create_repository(), access_admin_api()]
+    vec![
+        read_repository(),
+        create_repository(),
+        read_capsule(),
+        access_admin_api(),
+    ]
 }
 
 /// Check that the bundle declares the action the service authorizes with.
@@ -88,6 +103,7 @@ pub fn check_declared(schema: &Schema, action: &ActionId) -> Result<(), String> 
 /// never needs to declare it.
 pub fn check_service_declared(schema: &Schema, admin_enabled: bool) -> Result<(), String> {
     check_declared(schema, &read_repository())?;
+    check_declared(schema, &read_capsule())?;
     check_declared(schema, &create_repository())?;
     if admin_enabled {
         check_declared(schema, &access_admin_api())?;

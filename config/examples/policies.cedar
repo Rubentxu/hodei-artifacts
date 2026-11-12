@@ -14,3 +14,8 @@ permit(
     action == Admin::Action::"AccessAdminApi",
     resource
 );
+permit(
+    principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+    action == Artifacts::Action::"ReadCapsule",
+    resource
+);

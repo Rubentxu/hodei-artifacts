@@ -22,6 +22,8 @@ pub mod authorization;
 pub mod bootstrap;
 pub mod composition_root;
 pub mod config;
+pub mod evidence;
+pub mod evidence_surreal;
 pub mod handlers;
 pub mod iam_backfill;
 pub mod openapi;

@@ -47,6 +47,20 @@ pub trait EvidenceStore: Send + Sync {
         producer: &crate::domain::evidence::Producer,
         external_id: &str,
     ) -> Result<Option<EvidenceRecord>, StoreError>;
+
+    /// Reads the pieces of evidence that speak about a subject.
+    ///
+    /// The trust capsule is assembled from them, so the question "what do
+    /// we know about this artefact" has to be answerable from the store
+    /// and not by a scan of everything.
+    ///
+    /// The evidence of **other accounts** is never returned: the account
+    /// is part of the question and not a filter that a caller can forget.
+    async fn evidence_of_subject(
+        &self,
+        account: &str,
+        subject: &kernel::Hrn,
+    ) -> Result<Vec<EvidenceRecord>, StoreError>;
 }
 
 /// The position the ledger expects a stream to be at.

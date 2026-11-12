@@ -23,10 +23,14 @@ const SCHEMA: &str = r#"{
     "actions": {}
   },
   "Artifacts": {
-    "entityTypes": { "Repository": { "shape": { "type": "Record", "attributes": {} } } },
+    "entityTypes": {
+      "Repository": { "shape": { "type": "Record", "attributes": {} } },
+      "Artifact": { "shape": { "type": "Record", "attributes": {} } }
+    },
     "actions": {
       "CreateRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
-      "ReadRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } }
+      "ReadRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
+      "ReadCapsule": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Artifact"] } }
     }
   },
   "Admin": {

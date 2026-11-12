@@ -7,6 +7,7 @@
 //! - Mapping results to HTTP responses
 //! - Error handling and logging
 
+pub mod capsules;
 pub mod health;
 pub mod iam;
 pub mod playground;

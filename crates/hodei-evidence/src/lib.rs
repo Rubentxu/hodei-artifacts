@@ -36,6 +36,7 @@ pub mod domain;
 pub mod ports;
 pub mod standards;
 
+pub use application::capsule::{CapsuleAssembler, FreshnessThreshold};
 pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionRequest};
 pub use application::projection::{
     ProjectionCheckpoints, ProjectionError, ProjectionReport, project_stream,

@@ -1,5 +1,6 @@
 //! The domain of the evidence and the event ledger.
 
+pub mod capsule;
 pub mod content;
 pub mod event;
 pub mod evidence;

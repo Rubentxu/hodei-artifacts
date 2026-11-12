@@ -303,5 +303,6 @@ fn repository_v1_routes(app_state: AppState) -> Router {
             get(crate::handlers::repositories::get_repository)
                 .post(crate::handlers::repositories::create_repository),
         )
+        .route("/capsules", get(crate::handlers::capsules::get_capsule))
         .with_state(app_state)
 }

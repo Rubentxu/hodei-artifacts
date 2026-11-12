@@ -67,6 +67,20 @@ pub struct EvidenceRow {
     pub recorded_at: chrono::DateTime<chrono::Utc>,
     /// How far its verification goes.
     pub verification_status: String,
+    /// The account the evidence belongs to.
+    ///
+    /// The tenant of the record is a full HRN, and the account is the part
+    /// of it that says whose evidence it is. The store keeps the account
+    /// apart so that "what do we know about this artefact" can be
+    /// answered without knowing the tenant HRN that the ingestion used.
+    pub account: String,
+    /// The subjects the evidence speaks about.
+    ///
+    /// They are in the row and not only inside the record, because the
+    /// question "what do we know about this artefact" has to be answerable
+    /// without reading every record there is.
+    #[serde(default)]
+    pub subjects: Vec<String>,
     /// The whole record, so that it can be read back whole.
     pub record: serde_json::Value,
 }
@@ -170,6 +184,32 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
         Ok(rows.into_iter().next().and_then(|row| record_from(&row)))
     }
 
+    /// Reads the pieces of evidence that speak about a subject.
+    ///
+    /// The account is part of the question: the evidence of another
+    /// account never comes back.
+    async fn evidence_of_subject(
+        &self,
+        account: &str,
+        subject: &kernel::Hrn,
+    ) -> Result<Vec<EvidenceRecord>, StoreError> {
+        let mut response = self
+            .db
+            .query(
+                "SELECT * FROM type::table($table) \
+                 WHERE account = $account AND subjects CONTAINS $subject",
+            )
+            .bind(("table", EVIDENCE_TABLE.to_string()))
+            .bind(("account", account.to_string()))
+            .bind(("subject", subject.to_string()))
+            .await
+            .map_err(|error| StoreError::Unavailable(error.to_string()))?;
+        let rows: Vec<EvidenceRow> = response
+            .take(0)
+            .map_err(|error| StoreError::InvalidRecord(error.to_string()))?;
+        Ok(rows.iter().filter_map(record_from).collect())
+    }
+
     /// Reads the last piece of evidence a producer delivered under an external
     /// identity.
     async fn find_by_external_id(
@@ -221,6 +261,12 @@ fn row_from(evidence: &EvidenceRecord) -> EvidenceRow {
         observed_at: evidence.observed_at(),
         recorded_at: evidence.recorded_at(),
         verification_status: evidence.verification().status.to_string(),
+        account: evidence.tenant_hrn().account_id().to_string(),
+        subjects: evidence
+            .subject_refs()
+            .iter()
+            .map(|subject| subject.to_string())
+            .collect(),
         record: serde_json::to_value(evidence).unwrap_or(serde_json::Value::Null),
     }
 }
