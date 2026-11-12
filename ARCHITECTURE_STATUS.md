@@ -858,6 +858,77 @@ respuestas, y las dos se guardan. La mas nueva decide el estado, y el
 estado **dice que analizador y que version** lo produjo, porque una
 alcanzabilidad que no nombra su version no se puede reproducir ni discutir.
 
+## 10-nonies. El SPIKE-003: un segundo almacen NO se justifica (M5)
+
+### La pregunta y la condicion
+
+El SPIKE-003 pregunta si una **proyeccion analitica** --un segundo
+almacen, uno hecho para las consultas de varios saltos-- mejora
+materialmente las consultas de varios saltos y de dependencias como para
+justificar el coste permanente de operacion de otro almacen.
+
+La condicion es explicita: comparar **solo** cuando existe una carga de
+referencia. Y la comparacion que importa no es "la proyeccion contra un
+ejemplo": es el **grafo transaccional con sus indices** contra **el mismo
+grafo sin ellos**, porque esa es la diferencia entre lo que el despliegue
+tiene y lo que podria tener con un segundo almacen.
+
+### La carga: la misma del SPIKE-012
+
+`ScaleModel::of_size(2, 10)`: **107 148 piezas de evidencia**, exactamente
+la carga de referencia del SPIKE-012. La admision tardo 196.2 s y la
+proyeccion 155.5 s, que es lo que el SPIKE-012 habia medido (164.9 s): la
+carga es la misma y la maquina es la misma.
+
+Encima de esa carga se escribio la **capa de riesgo**: 26 056 artefactos,
+78 218 componentes, y una vulnerabilidad que es de un componente
+compartido por una fraccion de los artefactos. El radio de impacto es,
+asi, una fraccion de la carga y no la carga entera.
+
+### La medida
+
+| | Radio de impacto p50 | p95 | max | Linaje p50 | p95 |
+|---|---|---|---|---|---|
+| **con los indices** | **1 ms** | **1 ms** | 13 ms | 2 ms | 3 ms |
+| **sin los indices** | 16 556 ms | 17 677 ms | 21 431 ms | 15 107 ms | 16 269 ms |
+
+El objetivo --**p95 de 50 ms**-- estaba escrito antes de medir, con su
+razon: el linaje responde en un p95 de 3.29 ms a la escala de referencia, y
+el radio de impacto camina varios saltos, asi que el objetivo es quince
+veces eso.
+
+### La conclusion
+
+**El segundo almacen NO se justifica.** Y no por una intuicion: por una
+medida.
+
+- El grafo transaccional **con sus indices** responde la pregunta de
+  varios saltos en un **p95 de 1 ms**, que es cincuenta veces mejor que el
+  objetivo y que no necesita nada mas.
+- La diferencia entre el grafo con indices y el mismo grafo sin ellos es
+  de **17 677 veces** en el radio de impacto y de **5 400 veces** en el
+  linaje. La mejora material que se buscaba ya esta, y la produce un
+  indice, no un almacen.
+- Una proyeccion analitica tendria que **reconstruirse** cada vez que los
+  datos cambian, y la reconstruccion a la escala de referencia se midio en
+  **656.6 s** (SPIKE-012). O sea: un segundo almacen para ahorrar
+  milisegundos en una consulta, a cambio de minutos de reconstruccion cada
+  vez que la verdad cambia.
+
+### Y un defecto que la medicion encontro
+
+El primer recorrido del radio de impacto **leia todas las relaciones de la
+cuenta** y filtraba despues. Eso es O(N) en el tamano de la cuenta, y en
+una carga pequena ya costaba 305 ms: el coste no era la forma de los datos,
+era **el numero de viajes**.
+
+El recorrido ahora es **acotado**: arranca en la vulnerabilidad y solo
+visita los nodos a los que se puede llegar, y los nodos de un nivel se
+preguntan **juntos**. En la carga pequena, de 305 ms a 1 ms. Y el
+recorrido acotado es ademas el que el indice sirve: cada paso es una
+lectura por el final de una relacion, y los indices del grafo estan
+exactamente ahi.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.

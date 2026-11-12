@@ -202,6 +202,19 @@ impl<C: Connection> SurrealGraphStore<C> {
     }
 
     /// The table of the nodes.
+    /// The table the relations live in.
+    ///
+    /// It is public because an adapter that asks the graph a question of
+    /// many nodes at once has to know where the relations are.
+    pub fn relation_table_name(&self) -> String {
+        self.relation_table()
+    }
+
+    /// The database the store is over.
+    pub fn db(&self) -> Arc<Surreal<C>> {
+        self.db.clone()
+    }
+
     fn node_table(&self) -> String {
         format!("{}_node", self.projection)
     }

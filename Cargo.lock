@@ -2136,6 +2136,7 @@ dependencies = [
  "hodei-evidence-storage",
  "hodei-risk",
  "kernel",
+ "serde",
  "serde_json",
  "surrealdb",
  "tempfile",
