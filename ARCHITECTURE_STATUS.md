@@ -858,76 +858,85 @@ respuestas, y las dos se guardan. La mas nueva decide el estado, y el
 estado **dice que analizador y que version** lo produjo, porque una
 alcanzabilidad que no nombra su version no se puede reproducir ni discutir.
 
-## 10-nonies. El SPIKE-003: un segundo almacen NO se justifica (M5)
+## 10-nonies. El SPIKE-003: la pregunta sigue abierta (M5)
 
-### La pregunta y la condicion
+### QUE PASO, Y POR QUE LA MEDICION SE CORRIGIO
 
-El SPIKE-003 pregunta si una **proyeccion analitica** --un segundo
-almacen, uno hecho para las consultas de varios saltos-- mejora
-materialmente las consultas de varios saltos y de dependencias como para
-justificar el coste permanente de operacion de otro almacen.
+La primera medicion del SPIKE-003 decia que el radio de impacto respondia
+en un p95 de **1 ms**, y la conclusion era que un segundo almacen no hacia
+falta. **Esa medicion era de un recorrido VACIO**: la consulta del recorrido
+llegaba con HRN donde las columnas del almacen tienen TEXTO, no encontraba
+ninguna fila y la lectura fallaba al deserializar. Una consulta que no
+encuentra nada es una consulta que mide el vacio.
 
-La condicion es explicita: comparar **solo** cuando existe una carga de
-referencia. Y la comparacion que importa no es "la proyeccion contra un
-ejemplo": es el **grafo transaccional con sus indices** contra **el mismo
-grafo sin ellos**, porque esa es la diferencia entre lo que el despliegue
-tiene y lo que podria tener con un segundo almacen.
+El defecto se encontro al escribir la UAT de M6, que usa el radio de
+impacto de verdad: el recorrido no encontraba ni el artefacto. Corregido, el
+recorrido alcanza 522 sujetos y la medicion dice otra cosa.
 
-### La carga: la misma del SPIKE-012
+### La medicion corregida, con la misma carga de referencia
 
-`ScaleModel::of_size(2, 10)`: **107 148 piezas de evidencia**, exactamente
-la carga de referencia del SPIKE-012. La admision tardo 196.2 s y la
-proyeccion 155.5 s, que es lo que el SPIKE-012 habia medido (164.9 s): la
-carga es la misma y la maquina es la misma.
+`ScaleModel::of_size(2, 10)`: **107 148 piezas de evidencia**, la misma
+carga del SPIKE-012. La admision tardo 206.4 s y la proyeccion 156.4 s.
 
-Encima de esa carga se escribio la **capa de riesgo**: 26 056 artefactos,
-78 218 componentes, y una vulnerabilidad que es de un componente
-compartido por una fraccion de los artefactos. El radio de impacto es,
-asi, una fraccion de la carga y no la carga entera.
-
-### La medida
-
-| | Radio de impacto p50 | p95 | max | Linaje p50 | p95 |
+| | radio p50 | radio p95 | radio max | linaje p50 | linaje p95 |
 |---|---|---|---|---|---|
-| **con los indices** | **1 ms** | **1 ms** | 13 ms | 2 ms | 3 ms |
-| **sin los indices** | 16 556 ms | 17 677 ms | 21 431 ms | 15 107 ms | 16 269 ms |
+| con los indices | 601 ms | **701 ms** | 747 ms | 3 ms | 3 ms |
 
 El objetivo --**p95 de 50 ms**-- estaba escrito antes de medir, con su
-razon: el linaje responde en un p95 de 3.29 ms a la escala de referencia, y
-el radio de impacto camina varios saltos, asi que el objetivo es quince
-veces eso.
+razon: el linaje responde en un p95 de 3.29 ms y el radio de impacto camina
+varios saltos. **El objetivo no se alcanza por catorce veces.**
 
-### La conclusion
+### Por que, que esta medido
 
-**El segundo almacen NO se justifica.** Y no por una intuicion: por una
-medida.
+El coste no es la forma de los datos ni la forma de la consulta: es **el
+numero de relaciones que hay que leer** y **el coste por relacion de este
+almacen**. Medido sobre 20 000 relaciones, leyendo 500:
 
-- El grafo transaccional **con sus indices** responde la pregunta de
-  varios saltos en un **p95 de 1 ms**, que es cincuenta veces mejor que el
-  objetivo y que no necesita nada mas.
-- La diferencia entre el grafo con indices y el mismo grafo sin ellos es
-  de **17 677 veces** en el radio de impacto y de **5 400 veces** en el
-  linaje. La mejora material que se buscaba ya esta, y la produce un
-  indice, no un almacen.
-- Una proyeccion analitica tendria que **reconstruirse** cada vez que los
-  datos cambian, y la reconstruccion a la escala de referencia se midio en
-  **656.6 s** (SPIKE-012). O sea: un segundo almacen para ahorrar
-  milisegundos en una consulta, a cambio de minutos de reconstruccion cada
-  vez que la verdad cambia.
+| La lectura | Cuanto |
+|---|---|
+| ancha (6 columnas), con `IN` | 502 ms (~1.0 ms por fila) |
+| estrecha (1 columna), con `IN` | 454 ms (~0.9 ms por fila) |
+| estrecha, una consulta por fila | 1014 ms |
 
-### Y un defecto que la medicion encontro
+**SurrealDB sobre RocksDB devuelve cada fila a ~1 ms**, y ni el numero de
+columnas ni la forma de la consulta lo cambian. El recorrido del radio de
+impacto tiene que leer ~1044 relaciones (522 de contencion y 522 de
+despliegue) y por tanto no puede bajar de ~600 ms en este almacen.
 
-El primer recorrido del radio de impacto **leia todas las relaciones de la
-cuenta** y filtraba despues. Eso es O(N) en el tamano de la cuenta, y en
-una carga pequena ya costaba 305 ms: el coste no era la forma de los datos,
-era **el numero de viajes**.
+Y el linaje, que lee **pocas** relaciones, responde en 3 ms. La diferencia
+entre las dos consultas no es la forma de los datos: es **cuantas
+relaciones hay que leer**.
 
-El recorrido ahora es **acotado**: arranca en la vulnerabilidad y solo
-visita los nodos a los que se puede llegar, y los nodos de un nivel se
-preguntan **juntos**. En la carga pequena, de 305 ms a 1 ms. Y el
-recorrido acotado es ademas el que el indice sirve: cada paso es una
-lectura por el final de una relacion, y los indices del grafo estan
-exactamente ahi.
+### Lo que esto dice del indice
+
+El indice **si** importa: sin el, la misma lectura tarda 11.3 s en vez de
+0.5 s. Multiplica por veintidos. Lo que no hace es quitar el suelo, porque
+el suelo es el coste por fila.
+
+### Las tres vias, y la que sigue abierta
+
+1. **El grafo transaccional con sus indices**: 701 ms. No llega al
+   objetivo, y el motivo es medido y no es la forma de la consulta.
+2. **La proyeccion analitica** (LadybugDB): lee las mismas relaciones en
+   **columnas**. Mil filas en un motor columnar son milisegundos, no
+   milisegundos por fila. La mejora que se busca es real y ahora se puede
+   cuantificar por que.
+3. **La vista materializada del impacto**, DENTRO del mismo almacen: la
+   proyeccion escribe el radio de impacto cuando llega la vulnerabilidad, y
+   la consulta lee **una** fila en vez de 1044. Es la respuesta de CQRS, no
+   necesita un segundo proceso, y tiene su propia pregunta de consistencia.
+
+**La decision NO se toma todavia.** Tomarla sobre la medicion defectuosa
+seria el peor de los dos mundos: ni anadir un almacen sin medirlo, ni
+cerrar la pregunta con un numero que no era. El spike queda abierto con
+tres medidas pendientes: la mitad sin indices del recorrido corregido, el
+prototipo minimo de la proyeccion analitica sobre la misma carga, y la via
+de la vista materializada. Con los tres numeros, la decision es una cuenta.
+
+Lo que si esta hecho y verificado: el recorrido **acotado** --que solo
+visita los nodos alcanzables y pregunta los nodos de un nivel **juntos**--,
+los adaptadores del radio de impacto y de los casos de seguridad, y la UAT
+de M6 que los usa sobre el grafo y las decisiones de verdad.
 
 ## 10-decies. M6: el runtime de las reacciones (SPIKE-006)
 
