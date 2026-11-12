@@ -16,6 +16,7 @@ members = [
     "crates/hodei-evidence-storage",
     "crates/hodei-trust-policy",
     "crates/hodei-trust-policy-storage",
+    "crates/hodei-risk",
     ".",
 ]
 exclude = [

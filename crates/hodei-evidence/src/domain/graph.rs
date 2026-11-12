@@ -46,6 +46,10 @@ pub enum NodeKind {
     Deployment,
     /// A piece of accepted evidence.
     Evidence,
+    /// A component of an artefact, named by its coordinates.
+    Component,
+    /// A vulnerability, named by the identifier of its advisory.
+    Vulnerability,
 }
 
 impl NodeKind {
@@ -58,6 +62,8 @@ impl NodeKind {
             Self::Artifact => "artifact",
             Self::Deployment => "deployment",
             Self::Evidence => "evidence",
+            Self::Component => "component",
+            Self::Vulnerability => "vulnerability",
         }
     }
 }
@@ -88,6 +94,17 @@ pub enum RelationType {
     DeployedAs,
     /// A build is described by a piece of evidence.
     DescribedBy,
+    /// An artefact contains a component.
+    Contains,
+    /// A component depends on another component.
+    ///
+    /// The relation does not say whether the dependency is direct or
+    /// transitive: that is a property of the path, and a property of a
+    /// path is not a property of an edge. The traversal is what tells
+    /// them apart.
+    DependsOn,
+    /// A component is affected by a vulnerability.
+    AffectedBy,
 }
 
 impl RelationType {
@@ -100,6 +117,9 @@ impl RelationType {
             Self::Produced => "produced",
             Self::DeployedAs => "deployed_as",
             Self::DescribedBy => "described_by",
+            Self::Contains => "contains",
+            Self::DependsOn => "depends_on",
+            Self::AffectedBy => "affected_by",
         }
     }
 }

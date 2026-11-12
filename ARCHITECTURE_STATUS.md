@@ -683,6 +683,80 @@ Una excepcion caducada no vale nada en la decision, y solo la excepcion
 **nombrada** waivea el requisito: una excepcion viva que no es la que la
 politica nombro no waivea nada aunque este activa.
 
+## 10-sexies. El grafo de riesgo, y la regla que lo sostiene (M4)
+
+### La regla que lo sostiene
+
+**LA AUSENCIA DE EVIDENCIA NO ES EVIDENCIA DE AUSENCIA.**
+
+Un artefacto sin inventario tiene estado **desconocido**, nunca "no
+afectado". Una version que no se puede comparar es desconocida, nunca "no
+afectada". Un VEX que nadie verifico no silencia un hallazgo.
+
+Un sistema que no puede decir "nadie lo sabe" acaba diciendo que un
+despliegue con cuatrocientas dependencias esta bien, y asi es como la
+gente deja de leer los informes.
+
+### El estado tiene TRES valores
+
+| Estado | Que dice |
+|---|---|
+| `affected` | el artefacto contiene algo de lo que habla el aviso |
+| `unaffected` | la evidencia dice que no |
+| `unknown` | nadie lo sabe, y "nadie lo sabe" no es "no afectado" |
+
+El tercero es el que pesa, y es el que un sistema con dos valores no puede
+expresar.
+
+### El emparejamiento de versiones
+
+Resuelve la version exacta, el rango y -- lo que importa -- la version
+**desconocida**. Un rango de OSV se lee por sus eventos (`introduced`,
+`fixed`, `last_affected`), y una version que no se puede ordenar deja la
+respuesta en desconocido. Un rango de tipo `GIT` es sobre commits y no
+sobre versiones, y tambien deja la respuesta en desconocido.
+
+### El VEX es una DECLARACION, y se dice de quien
+
+Una declaracion verificada es un hecho sobre el producto; una declaracion
+que nadie verifico es una declaracion que alguien escribio. La diferencia
+es todo el punto: un VEX **no verificado** que dice "esta corregido" no
+cierra el hallazgo, y el hallazgo se queda a la vista con la declaracion al
+lado. Y solo la declaracion **nombrada** para el componente lo mueve: una
+declaracion viva que no es la del componente no mueve nada aunque este
+activa.
+
+La comparacion del producto con el componente entiende las dos formas de
+escribir el mismo paquete: un VEX lo nombra por su PURL y el hallazgo por
+sus coordenadas.
+
+### El radio de impacto y la PROFUNDIDAD
+
+El recorrido es `vulnerabilidad -> componente -> dependiente -> artefacto ->
+despliegue`, y lo interesante no es el recorrido sino **la profundidad**. Una
+dependencia que el artefacto tiene directamente es otra cosa que una que
+tiene a traves de otras tres, y un informe que dice "afectado" sin decir
+cual es un informe que la gente deja de leer.
+
+La profundidad es una propiedad del **camino**, no de la arista: la arista
+de un componente al del que depende no sabe si la dependencia es directa o
+transitiva, y el recorrido es lo que las distingue.
+
+### El caso de seguridad
+
+Un hallazgo es un hecho, no una tarea. El caso de seguridad es la tarea:
+dice que lo abrio, que esta afectado, hasta donde llega el daño, quien lo
+tiene y **que probaria que esta corregido**.
+
+El caso tiene una **linea del tiempo**, y la linea del tiempo es la razon
+de que el caso sea un objeto y no una fila que se sobrescribe: el estado
+se deriva de la evidencia mas nueva, pero el disparador que lo abrio sigue
+ahi, y tambien cada cambio.
+
+Y la remediacion verificada **necesita la evidencia del despliegue**: un
+problema cerrado sin la evidencia de que el artefacto afectado dejo de
+correr es una esperanza, y una esperanza no cierra un caso.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.

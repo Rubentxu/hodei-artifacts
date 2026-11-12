@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.6.0",
+  "id": "GHSA-hodei-test-0001",
+  "aliases": ["CVE-2024-99999"],
+  "published": "2024-05-01T00:00:00Z",
+  "modified": "2024-05-02T00:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "Maven",
+        "name": "org.example:lib-b",
+        "purl": "pkg:maven/org.example/lib-b@2.0.0"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [{ "introduced": "0" }, { "fixed": "2.0.1" }]
+        }
+      ]
+    }
+  ],
+  "references": [
+    { "type": "ADVISORY", "url": "https://example.test/advisories/GHSA-hodei-test-0001" }
+  ],
+  "database_specific": { "severity": "HIGH" }
+}

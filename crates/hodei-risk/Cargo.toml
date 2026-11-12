@@ -1,0 +1,17 @@
+[package]
+name = "hodei-risk"
+version = "0.1.0"
+edition = "2024"
+description = "El grafo de riesgo de Hodei: las vulnerabilidades, el estado afectado y el caso de seguridad."
+license = "MIT"
+
+[dependencies]
+chrono = { workspace = true }
+hodei-evidence = { path = "../hodei-evidence" }
+kernel = { path = "../kernel" }
+semver = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+kernel = { path = "../kernel" }
