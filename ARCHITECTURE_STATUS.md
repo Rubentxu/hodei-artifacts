@@ -799,6 +799,65 @@ que la sostiene, de modo que el grafo no acepta una relacion cuya evidencia
 no esta --que es lo correcto, porque una relacion sin evidencia es una
 afirmacion.
 
+## 10-octies. La alcanzabilidad, con su contrato de evidencia (M5)
+
+### La conclusion del SPIKE-007
+
+**Hodei no construye un analizador de codigo universal.** Lo que construye
+es un contrato de evidencia de alcanzabilidad que **entiende y usa** la
+evidencia que otro produjo, con su cobertura y sus limites declarados.
+
+La razon no es que el analisis de codigo sea dificil: es que un
+`UNREACHABLE` sin cobertura y sin limites es una **apuesta**, y una
+apuesta no reduce la incertidumbre de un hallazgo. Lo que si la reduce es
+un `REACHABLE` con su camino, porque ahi hay algo que mirar.
+
+El camino que se elige es el de **adaptar un analizador**, no el de
+construir uno: el puerto es lo que deja entrar a cualquier analizador, y
+el proveedor local que vive aqui es **acotado a proposito** -- lee un
+programa que se le describio y produce la evidencia de esa descripcion.
+Demuestra que la cadena funciona y no presume ser mas.
+
+### LA REGLA: LO QUE NO SE PUEDE RESOLVER ES UNKNOWN, NUNCA UNREACHABLE
+
+Una llamada que se resuelve en tiempo de ejecucion y que el analizador no
+siguio **no es una prueba** de que el codigo no se alcanza: es una prueba
+de que nadie lo sabe. Y un analisis que no cubrio todo el codigo tampoco
+prueba nada.
+
+El orden de las reglas es fijo, y importa:
+
+1. Si hay un camino desde un punto de entrada, el simbolo es
+   **REACHABLE**, y el camino va en la respuesta.
+2. Si no hay camino, pero el analisis no cubrio todo o encontro algo que no
+   pudo resolver, el simbolo es **UNKNOWN**.
+3. Solo cuando no hay camino, la cobertura fue completa y no hubo
+   limitaciones, el simbolo es **UNREACHABLE**.
+
+La primera gana sobre la segunda y la segunda sobre la tercera: un simbolo
+alcanzable es alcanzable aunque el analisis encontro otra cosa que no pudo
+resolver, y un simbolo cuyo analisis fue incompleto es desconocido aunque
+no haya camino.
+
+### La identidad del codigo
+
+Un simbolo se identifica con **tres** cosas: el modulo, el fichero y el
+simbolo. No una y no dos. Un nombre solo no es una identidad --dos modulos
+pueden tener una funcion `parse`--; un fichero solo tampoco --una
+construccion puede producir el mismo fichero dos veces--; y un modulo solo
+tampoco --el mismo modulo se puede construir para dos objetivos--.
+
+Y la identidad es lo que permite **emparejar un simbolo vulnerable** con lo
+que Hodei analizo, sin que un "alcanzable" falso sea facil de producir por
+casualidad.
+
+### Las versiones del analizador se conservan
+
+El mismo codigo analizado por dos versiones de un analizador puede dar dos
+respuestas, y las dos se guardan. La mas nueva decide el estado, y el
+estado **dice que analizador y que version** lo produjo, porque una
+alcanzabilidad que no nombra su version no se puede reproducir ni discutir.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.

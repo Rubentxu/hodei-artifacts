@@ -1,0 +1,16 @@
+[package]
+name = "hodei-reachability"
+version = "0.1.0"
+edition = "2024"
+description = "La alcanzabilidad del codigo de Hodei: su contrato de evidencia y su estado."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+tokio = { workspace = true }
