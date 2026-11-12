@@ -1,0 +1,15 @@
+[package]
+name = "hodei-reactive"
+version = "0.1.0"
+edition = "2024"
+description = "El runtime de las reacciones de seguridad de Hodei."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

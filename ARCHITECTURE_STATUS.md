@@ -929,6 +929,89 @@ recorrido acotado es ademas el que el indice sirve: cada paso es una
 lectura por el final de una relacion, y los indices del grafo estan
 exactamente ahi.
 
+## 10-decies. M6: el runtime de las reacciones (SPIKE-006)
+
+### La conclusion del spike, y por que
+
+El SPIKE-006 preguntaba: "¿hace falta un runtime minimo, o un manejador de
+eventos ordinario basta?" Y la exit gate del hito lo pide literal:
+**observable, acotado, idempotente y reconstruible**.
+
+La respuesta es que un manejador ordinario **no basta**, y se ve en las
+cuatro propiedades:
+
+| Lo que pide la exit gate | Lo que tiene un manejador de eventos |
+|---|---|
+| idempotente | nada: es una llamada a una funcion y repetirla repite el efecto |
+| acotado | nada: nada frena un bucle, y un bucle que dispara efectos es un incidente |
+| observable | el log, que no es una traza con causalidad |
+| reconstruible | nada: no hay estado durable que leer |
+
+Asi que el runtime **si** hace falta, pero el minimo: no hay lenguaje de
+workflows, no hay plugins dinamicos, no hay planificador distribuido y no
+hay DSL. El runtime hace **cuatro cosas** y nada mas:
+
+- **Suscribir**: un registro de comportamientos, cada uno con lo que le
+  interesa.
+- **Guardar**: la condicion se comprueba; si no se cumple, la reaccion no
+  corre y **el motivo queda en la traza**.
+- **Registrar**: la ejecucion es durable, con su cadena de causalidad, su
+  numero de intentos y su traza.
+- **Acotar**: un presupuesto corta la cadena cuando se excede, y **el corte
+  queda en la traza**.
+
+Las reacciones de verdad --la del CVE y la de la caducidad de una
+excepcion-- son **codigo**, no reglas: se registran en el runtime y el
+runtime las llama. El runtime no sabe que es un caso de seguridad ni que
+es una decision de confianza: eso lo saben las reacciones, a traves de
+puertos.
+
+### Lo que el crate hace
+
+`hodei-reactive` son cuatro modulos y un registro:
+
+- `events`: el evento, la suscripcion y el predicado del payload. El
+  predicado es un conjunto **cerrado** (`FieldEquals`, `FieldExists`,
+  `FieldAbsent`): un predicado que pudiera decir cualquier cosa seria un
+  lenguaje de consultas, y un lenguaje de consultas aqui seria un motor de
+  workflows con otro nombre.
+- `behavior`: el comportamiento, la guarda, el efecto y la traza.
+- `execution`: el registro durable, el presupuesto y el corte.
+- `runtime`: el despacho, el registro de comportamientos y el almacen de las
+  ejecuciones.
+
+### La semantica que se promise, y que esta probada
+
+| Lo prometido | Donde se prueba |
+|---|---|
+| un comportamiento se registra, se suscribe y corre cuando el evento encaja | `a_behaviour_runs_when_the_event_matches` |
+| la traza es durable y un fallo reintenta con la semantica declarada | `the_trace_is_durable_and_a_failure_retries` |
+| el presupuesto corta la cadena y el corte queda en la traza | `the_budget_cuts_the_chain_and_the_cut_is_in_the_trace` |
+| los efectos son idempotentes y repetir la reaccion no duplica el efecto | `the_effects_are_idempotent_and_the_repetition_does_not_duplicate_them` |
+| un CVE nuevo dispara la reevaluacion y, si procede, el caso | `a_new_vulnerability_triggers_the_reevaluation_and_the_case` |
+| una vulnerabilidad que no toca nada no reevalua nada | `a_vulnerability_that_touches_nothing_reevaluates_nothing` |
+| la caducidad de una excepcion dispara su reaccion | `the_expiry_of_an_exception_triggers_its_reaction` |
+| la reconstruccion no repite los efectos externos | `the_replay_does_not_repeat_the_external_effect` |
+
+### Dos decisiones que la implementacion tomo y que conviene saber
+
+1. **La clave de la idempotencia es la del EFECTO, no la del evento.** Un
+   evento repetido no vuelve a correr el comportamiento, y un evento
+   DISTINTO que produce el mismo efecto lo suprime en vez de aplicarlo dos
+   veces. Con la clave del evento, dos eventos distintos queJmueven el mismo
+   efecto lo habrian hecho dos veces.
+2. **La reconstruccion no ejecuta nada.** `replay` lee los registros
+   durables y **usa el resultado que quedo grabado**; el efecto externo no
+   se repite, ni siquiera cuando la reaccion se reconstruye despues de un
+   reinicio. Esa es la propiedad de "reconstruible" de la exit gate.
+
+### Lo que NO se ha construido, y por que
+
+El SPIKE-006 era explicito sobre lo que no hay que construir, y no se ha
+construido: ni motor de workflows generico, ni plugins dinamicos, ni
+planificador distribuido, ni DSL de workflows, ni interfaz de usuario. El
+runtime es un registro, una traza y un presupuesto.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.

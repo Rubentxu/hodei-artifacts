@@ -20,6 +20,7 @@ members = [
     "crates/hodei-risk-storage",
     "crates/hodei-reachability",
     "crates/hodei-reachability-storage",
+    "crates/hodei-reactive",
     ".",
 ]
 exclude = [
