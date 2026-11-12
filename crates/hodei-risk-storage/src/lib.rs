@@ -12,7 +12,9 @@
 use async_trait::async_trait;
 use hodei_evidence::domain::graph::{GraphChangeSet, RelationType};
 use hodei_evidence::ports::graph::{GraphQuery, GraphWriter};
-use hodei_risk::case::BlastRadius;
+pub mod reactions;
+
+use hodei_risk::case::{BlastRadius, SubjectDepth};
 use hodei_risk::ports::RiskRelationError;
 use hodei_risk::traversal::Edge;
 use kernel::Hrn;
@@ -113,9 +115,19 @@ pub async fn blast_radius<C: Connection>(
     // The nodes of a level are asked about TOGETHER, because the cost of
     // a walk of varios saltos is the de los viajes and not the de los
     // datos.
+    //
+    // And the level of a node IS how far the dependency is: the node the
+    // vulnerability is in is at distance zero, and the artefact that
+    // holds it is at distance one.
     let mut containers: BTreeMap<String, Vec<kernel::Hrn>> = BTreeMap::new();
+    let mut levels: BTreeMap<String, usize> = BTreeMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut level: Vec<kernel::Hrn> = affected.clone();
+    let mut depth = 0usize;
+
+    for node in &affected {
+        levels.insert(node.to_string(), 0);
+    }
 
     while !level.is_empty() {
         let mut next_level: Vec<kernel::Hrn> = Vec::new();
@@ -138,23 +150,21 @@ pub async fn blast_radius<C: Connection>(
         let dependents = relations_to_many(graph, tenant, &level, RelationType::DependsOn).await?;
         for dependent in dependents {
             let key = dependent.to_string();
-            if seen.insert(key) {
+            if seen.insert(key.clone()) {
+                levels.insert(key, depth + 1);
                 next_level.push(dependent);
             }
         }
 
-        // The nodes of the level that were already visited do not go
-        // again.
-        level = next_level
-            .into_iter()
-            .filter(|node| seen.insert(node.to_string()))
-            .collect();
+        level = next_level;
+        depth += 1;
     }
 
     // And the deployments of the artefacts that hold them.
     let mut affected_subjects: BTreeSet<String> = BTreeSet::new();
     let mut affected_deployments: BTreeSet<String> = BTreeSet::new();
     let mut affected_components: BTreeSet<String> = BTreeSet::new();
+    let mut depths: Vec<SubjectDepth> = Vec::new();
 
     for component in &affected {
         affected_components.insert(component.to_string());
@@ -178,10 +188,34 @@ pub async fn blast_radius<C: Connection>(
         affected_deployments.insert(deployment.to_string());
     }
 
+    // The depth of each subject: the distance from the component the
+    // vulnerability is in to the artefact that holds it.
+    for artefact in &artefacts {
+        let key = artefact.to_string();
+        let mut subject_depth = usize::MAX;
+        for (component, owners) in &containers {
+            if owners.iter().any(|owner| owner.to_string() == key) {
+                let level = levels.get(component).copied().unwrap_or(0);
+                subject_depth = subject_depth.min(level + 1);
+            }
+        }
+        depths.push(SubjectDepth {
+            subject: key,
+            depth: if subject_depth == usize::MAX {
+                1
+            } else {
+                subject_depth
+            },
+            deployments: affected_deployments.iter().cloned().collect(),
+        });
+    }
+    depths.sort_by(|one, other| one.subject.cmp(&other.subject));
+
     Ok(BlastRadius {
         affected_subjects: affected_subjects.into_iter().collect(),
         affected_deployments: affected_deployments.into_iter().collect(),
         affected_components: affected_components.into_iter().collect(),
+        depths,
     })
 }
 
@@ -195,7 +229,7 @@ pub async fn relations_from_many<C: Connection>(
     if nodes.is_empty() {
         return Ok(Vec::new());
     }
-    let ids: Vec<kernel::Hrn> = nodes.to_vec();
+    let ids: Vec<String> = nodes.iter().map(|node| node.to_string()).collect();
     let mut response = graph
         .db()
         .query(
@@ -212,7 +246,10 @@ pub async fn relations_from_many<C: Connection>(
     let rows: Vec<RelationRow> = response
         .take(0)
         .map_err(|error| RiskError::Unavailable(error.to_string()))?;
-    Ok(rows.into_iter().map(|row| row.from).collect())
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| kernel::Hrn::from_string(&row.from))
+        .collect())
 }
 
 /// The relations that end at MANY nodes, of a kind.
@@ -234,7 +271,10 @@ pub async fn relations_to_many<C: Connection>(
     if nodes.is_empty() {
         return Ok(Vec::new());
     }
-    let ids: Vec<kernel::Hrn> = nodes.to_vec();
+    // The relations hold the HRN as TEXT, and the binding has to be the
+    // same text: a binding of HRN objects no encuentra las filas, y una
+    // consulta que no encuentra nada es una consulta que mide el vacio.
+    let ids: Vec<String> = nodes.iter().map(|node| node.to_string()).collect();
     let mut response = graph
         .db()
         .query(
@@ -251,17 +291,23 @@ pub async fn relations_to_many<C: Connection>(
     let rows: Vec<RelationRow> = response
         .take(0)
         .map_err(|error| RiskError::Unavailable(error.to_string()))?;
-    Ok(rows.into_iter().map(|row| row.from).collect())
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| kernel::Hrn::from_string(&row.from))
+        .collect())
 }
 
 /// The relation of a row.
+///
+/// The HRNs are TEXT in the store, and they are read as text: an HRN
+/// read as an object fails, y un fallo al leer no es un resultado.
 #[derive(Debug, Clone, serde::Deserialize)]
 struct RelationRow {
     /// The node the relation starts at.
-    from: kernel::Hrn,
+    from: String,
     /// The node the relation ends at.
     #[allow(dead_code)]
-    to: kernel::Hrn,
+    to: String,
 }
 
 /// The relations that end at a node, of a kind.

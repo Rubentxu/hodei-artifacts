@@ -51,20 +51,50 @@ pub trait SecurityCaseSink: Send + Sync {
     ) -> Result<String, String>;
 }
 
+/// What a reevaluation has to take into account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reevaluation {
+    /// The subject whose decision is reevaluated.
+    pub subject: String,
+    /// Why it is reevaluated.
+    pub reason: ReasonCode,
+    /// The vulnerabilities that are known to reach it.
+    ///
+    /// They travel con la peticion porque son el hecho que cambia la
+    /// decision: sin ellos, la reevaluacion no tendria con que ser
+    /// distinta de la decision anterior.
+    pub advisories: Vec<String>,
+    /// The moment of the reevaluation.
+    pub at: DateTime<Utc>,
+}
+
+impl Reevaluation {
+    /// A reevaluation of a subject, and why.
+    pub fn new(subject: impl Into<String>, reason: ReasonCode, at: DateTime<Utc>) -> Self {
+        Self {
+            subject: subject.into(),
+            reason,
+            advisories: Vec::new(),
+            at,
+        }
+    }
+
+    /// The reevaluation knows of a vulnerability.
+    pub fn with_advisory(mut self, advisory: impl Into<String>) -> Self {
+        self.advisories.push(advisory.into());
+        self
+    }
+}
+
 /// What the reaction does with the decision of a promotion.
 #[async_trait]
 pub trait DecisionRequester: Send + Sync {
     /// A decision is asked for, and the old one is superseded.
     ///
-    /// The chain of decisiones es lo que permite explicar por que una
+    /// The chain de decisiones es lo que permite explicar por que una
     /// promocion que era ALLOW paso a ser DENY: la nueva dice cual
     /// sustituyo a la anterior.
-    async fn request_reevaluation(
-        &self,
-        subject: &str,
-        reason: ReasonCode,
-        now: DateTime<Utc>,
-    ) -> Result<String, String>;
+    async fn request_reevaluation(&self, request: Reevaluation) -> Result<String, String>;
 }
 
 /// Why a decision was asked for.
@@ -173,9 +203,12 @@ impl Behavior for VulnerabilityReaction {
             let decision = self
                 .decisions
                 .request_reevaluation(
-                    &subject.subject,
-                    ReasonCode::VulnerabilityImpacted,
-                    event.happened_at,
+                    Reevaluation::new(
+                        subject.subject.clone(),
+                        ReasonCode::VulnerabilityImpacted,
+                        event.happened_at,
+                    )
+                    .with_advisory(&advisory),
                 )
                 .await
                 .map_err(BehaviorError::transient)?;
@@ -256,7 +289,11 @@ impl Behavior for ExceptionExpiryReaction {
 
         let decision = self
             .decisions
-            .request_reevaluation(&subject, ReasonCode::ExceptionExpired, event.happened_at)
+            .request_reevaluation(Reevaluation::new(
+                subject.clone(),
+                ReasonCode::ExceptionExpired,
+                event.happened_at,
+            ))
             .await
             .map_err(BehaviorError::transient)?;
 

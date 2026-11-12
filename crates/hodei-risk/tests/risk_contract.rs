@@ -256,6 +256,7 @@ fn the_security_case_opens_with_its_state_and_the_verified_remediation_closes_it
             affected_subjects: vec![
                 "hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-a".to_string(),
             ],
+            depths: Vec::new(),
             affected_deployments: vec!["production".to_string()],
             affected_components: vec!["org.example:lib-b".to_string()],
         },
@@ -342,6 +343,7 @@ fn the_new_evidence_updates_the_case_without_erasing_the_history() {
         vec![affected],
         BlastRadius {
             affected_subjects: Vec::new(),
+            depths: Vec::new(),
             affected_deployments: Vec::new(),
             affected_components: Vec::new(),
         },

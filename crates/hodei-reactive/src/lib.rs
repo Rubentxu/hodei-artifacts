@@ -38,7 +38,7 @@ pub use events::{Event, EventKind, PayloadPredicate, Subscription};
 pub use execution::{Budget, BudgetState, ExecutionOutcome, ExecutionRecord};
 pub use reactions::{
     BlastRadiusSource, DecisionRequester, ExceptionExpiryReaction, ImpactedSubject, ReasonCode,
-    SecurityCaseSink, VulnerabilityReaction,
+    Reevaluation, SecurityCaseSink, VulnerabilityReaction,
 };
 pub use runtime::{
     DispatchReport, ExecutionStore, InMemoryExecutionStore, ReactiveRuntime, RuntimeError,

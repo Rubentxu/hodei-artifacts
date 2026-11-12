@@ -510,6 +510,7 @@ async fn m4_uat_05_new_evidence_updates_case() {
                 ],
                 affected_deployments: vec!["production".to_string()],
                 affected_components: vec!["org.example:p2".to_string()],
+                depths: Vec::new(),
             },
             VerificationCriteria::new(Some("sha256:fixed".to_string()))
                 .with_deployments_removed(vec!["production".to_string()]),
@@ -573,6 +574,7 @@ async fn m4_uat_06_verified_remediation() {
                 ],
                 affected_deployments: vec!["production".to_string()],
                 affected_components: vec!["org.example:p2".to_string()],
+                depths: Vec::new(),
             },
             VerificationCriteria::new(Some("sha256:fixed-a2".to_string()))
                 .with_deployments_removed(vec!["production".to_string()]),
