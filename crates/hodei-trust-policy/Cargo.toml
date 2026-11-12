@@ -6,10 +6,12 @@ description = "La politica de confianza de Hodei: su contexto, sus requisitos, s
 license = "MIT"
 
 [dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-chrono = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }

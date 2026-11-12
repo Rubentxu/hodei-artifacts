@@ -640,6 +640,49 @@ Un conjunto de politicas no es un fichero que se lee cuando hace falta: se
 deja constancia. Cambiar la politica no reescribe el pasado: las decisiones
 nombran la version con la que se tomaron, y esa version sigue ahi.
 
+## 10-quinquies. La promocion, con su decision duradera (M3)
+
+### La decision se escribe, y se queda escrita
+
+Una promocion es una **peticion** y una **decision**, y la decision se
+escribe. Dice quien decidio, con que politica, sobre que evidencia, y con
+que resultado -- y lo sigue diciendo despues de que la promocion ocurriera,
+porque un flag que dice "promovido" sin historia no es una decision sino
+una anecdota.
+
+El almacen no ofrece forma de **cambiar** una decision: una decision que se
+puede editar no es una decision. Y la decision viaja entera -- la politica,
+el contexto, las entradas y las razones -- en un solo documento, porque
+partirla en columnas haria posible leer media decision.
+
+### La ausencia no es un refusal
+
+Hay tres fallos que se parecen y que no son lo mismo, y el sistema los
+distingue:
+
+| Lo que pasa | Como se dice |
+|---|---|
+| los criterios no se cumplen | `DENY` |
+| los criterios no se pudieron mirar porque faltaba una entrada obligatoria | `INDETERMINATE` |
+| no hay distribucion a la que promover | `not supported` |
+
+El segundo importa porque el primero espera una aprobacion y el segundo
+espera la evidencia. El tercero no es una decision: no hay a donde ir, y
+la respuesta honesta es que la operacion no esta soportada, nunca un
+exito que no ocurrio. Y la decision se escribe igual, con lo que paso.
+
+### La excepcion tiene tres partes
+
+Una excepcion no es un interruptor: es **algo que alguien pidio**, que
+**otro alguien aprobo** y que **deja de funcionar en un momento que se
+escribio al aprobarla**. La caducidad es obligatoria y el codigo lo
+comprueba: una excepcion sin caducidad no se aprueba. Y el que pide no
+puede aprobar la suya.
+
+Una excepcion caducada no vale nada en la decision, y solo la excepcion
+**nombrada** waivea el requisito: una excepcion viva que no es la que la
+politica nombro no waivea nada aunque este activa.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.

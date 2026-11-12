@@ -32,6 +32,14 @@ pub enum Outcome {
     Warn,
     /// The promotion needs somebody's approval.
     RequireApproval,
+    /// The promotion could not be decided.
+    ///
+    /// This is not the same as a refusal. A refusal says "the criteria
+    /// were not met"; this says "the criteria were never looked at",
+    /// because a mandatory input was not there. The two are told apart
+    /// because they lead to different places: one waits for an approval,
+    /// the other waits for the evidence.
+    Indeterminate,
 }
 
 impl Outcome {
@@ -47,6 +55,7 @@ impl Outcome {
             Self::Deny => "DENY",
             Self::Warn => "WARN",
             Self::RequireApproval => "REQUIRE_APPROVAL",
+            Self::Indeterminate => "INDETERMINATE",
         }
     }
 }
