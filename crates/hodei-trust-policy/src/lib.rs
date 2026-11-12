@@ -60,20 +60,31 @@
 
 pub mod context;
 pub mod decision;
+pub mod exception;
 pub mod gate;
 pub mod policy;
+pub mod ports;
+pub mod promotion;
 pub mod reasons;
 pub mod registry;
+pub mod service;
 
 pub use context::{
     ExceptionFact, Exposure, RiskFacts, SubjectFact, TargetEnvironment, TrustContext,
     TrustContextBuilder, TRUST_CONTEXT_VERSION,
 };
 pub use decision::{evaluate, Outcome, RequirementOutcome, TrustDecision};
+pub use exception::{ApprovalOutcome, ExceptionRequest, ExceptionState, RefusalReason};
 pub use gate::{AuthorizationResult, DecidedBy, GateResult, PromotionGate};
 pub use policy::{OnFailure, Requirement, RequirementKind, TrustPolicy};
+pub use ports::{DecisionStore, DecisionStoreError, PromotionTargets};
+pub use promotion::{
+    DecisionId, PromotionDecision, PromotionFailure, PromotionOutcome, PromotionRequest,
+    PromotionTarget,
+};
 pub use reasons::ReasonCode;
 pub use registry::{Activation, PolicyRegistry};
+pub use service::PromotionService;
 
 /// The version of the schema that a policy set is written against.
 ///
