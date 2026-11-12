@@ -130,5 +130,7 @@ docs/web-bundles/
 
 # The global git ignore excludes any directory named `bin/`, which also
 # captures `src/bin/`. Cargo auto-discovers binaries there, so the rule is
-# negated to keep the operator binaries versioned.
-!/src/bin/
+# negated to keep the operator binaries versioned. The negation is not
+# anchored to the root: a member crate keeps its binaries in its own
+# `src/bin/`, and those are binaries too.
+!**/src/bin/

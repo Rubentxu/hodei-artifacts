@@ -24,7 +24,7 @@ use hodei_evidence::{
     IngestionOutcome, IngestionRequest, LedgerCursor, Lineage, NodeKind, Normalization, Producer,
     RelationClaim, RelationType, SourceRef, rebuild_graph,
 };
-use hodei_evidence_storage::surreal::SurrealGraphStore;
+use hodei_evidence_storage::surreal::{SurrealGraphStore, declare_indexes};
 use hodei_evidence_storage::{
     HmacEnvelopeAuthenticator, InMemoryContentStore, ProducerCredentials, SurrealEventLedger,
     SurrealEvidenceStore,
@@ -428,5 +428,69 @@ async fn g6_the_rebuild_does_not_alter_the_ledger() {
     assert_eq!(
         before.events, after.events,
         "the events are the same ones, untouched"
+    );
+}
+
+/// G7 The graph declares the indexes its questions lean on.
+///
+/// The measure of the scale model (SPIKE-012) said the answer: without an
+/// index the graph answers a question that touches ten relations by
+/// reading every relation there is, and the question of three hops by
+/// reading the table three times. With the indexes, the same question went
+/// from 585 ms to 2 ms on the reference load.
+///
+/// The index cannot be declared by the service: defining one on the local
+/// engine keeps the database directory locked by the process that defines
+/// it. An operator command declares it from its own process. The adapter
+/// only says whether they are in place, so that a deployment that has not
+/// run the command still serves correctly.
+#[tokio::test]
+async fn g7_the_graph_reports_whether_the_indexes_are_in_place() {
+    let (_ledger, _evidence_store, graph, _rebuilt) = stores().await;
+
+    // A graph that was never indexed says so.
+    assert!(
+        !graph
+            .indexes_initialized()
+            .await
+            .expect("the indexes are read"),
+        "a graph without the operator command has no indexes"
+    );
+
+    // The operator command declares them, and then the graph says so.
+    declare_indexes(graph.database())
+        .await
+        .expect("the indexes are declared");
+    assert!(
+        graph
+            .indexes_initialized()
+            .await
+            .expect("the indexes are read"),
+        "a graph with the indexes declared says so"
+    );
+}
+
+/// G8 Emptying the graph keeps the indexes.
+///
+/// The emptying of a projection used to remove the table, and removing the
+/// table removes the indexes with it: the graph would go back to reading
+/// the whole table for every question, and the measure of the scale model
+/// showed what that costs.
+#[tokio::test]
+async fn g8_emptying_the_graph_keeps_the_indexes() {
+    let (_ledger, _evidence_store, graph, _rebuilt) = stores().await;
+
+    declare_indexes(graph.database())
+        .await
+        .expect("the indexes are declared");
+
+    graph.clear().await.expect("the graph is emptied");
+
+    assert!(
+        graph
+            .indexes_initialized()
+            .await
+            .expect("the indexes are read"),
+        "emptying the graph keeps the indexes"
     );
 }

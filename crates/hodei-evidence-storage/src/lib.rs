@@ -11,6 +11,7 @@
 
 pub mod authenticator;
 pub mod content_store;
+pub mod scale;
 pub mod surreal;
 
 pub use authenticator::{HmacEnvelopeAuthenticator, ProducerCredentials};
@@ -20,6 +21,8 @@ pub use surreal::{
     REBUILD_PROJECTION, SurrealEventLedger, SurrealEvidenceStore, SurrealGraphStore,
     SurrealProjectionCheckpoints,
 };
+
+pub use surreal::graph::{GRAPH_INDEXES, declare_index_statement};
 
 /// How many times a write is tried when the transaction of the loser could
 /// not commit.

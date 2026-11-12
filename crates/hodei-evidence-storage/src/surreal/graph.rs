@@ -35,6 +35,53 @@ pub const ACTIVE_PROJECTION: &str = "graph";
 /// The name of the projection that a rebuild builds into.
 pub const REBUILD_PROJECTION: &str = "graph_rebuild";
 
+/// The indexes the graph needs, and the table each one is on.
+///
+/// The measure of the scale model (SPIKE-012) said the answer: without
+/// these, the graph answers a question that touches ten relations by
+/// reading every relation there is, and a question of three hops by
+/// reading the table three times. With them, the same question went from
+/// 435 ms to 4.8 ms on the reference load.
+///
+/// The declarations are given here, and not in the adapter, because
+/// declaring an index on the local engine keeps the database directory
+/// locked by the process that declares it. An operator command declares
+/// them from its own process and releases the lock when it exits.
+pub const GRAPH_INDEXES: &[(&str, &str)] = &[
+    ("graph_node", "tenant_hrn, kind"),
+    ("graph_relation", "tenant_hrn, from"),
+    ("graph_relation", "tenant_hrn, to"),
+    ("graph_rebuild_node", "tenant_hrn, kind"),
+    ("graph_rebuild_relation", "tenant_hrn, from"),
+    ("graph_rebuild_relation", "tenant_hrn, to"),
+];
+
+/// The statement that declares an index, and makes it if it is not there.
+///
+/// The name of the index is derived from the table and from the fields it
+/// indexes on, so that the same index is not declared twice under two
+/// names.
+pub fn declare_index_statement(table: &str, fields: &str) -> String {
+    let name = index_name(table, fields);
+    format!("DEFINE INDEX IF NOT EXISTS {name} ON TABLE {table} FIELDS {fields}")
+}
+
+/// The name of an index, derived from the table and the fields.
+///
+/// A name is written out in a statement, so it carries nothing but letters,
+/// digits and underscores.
+fn index_name(table: &str, fields: &str) -> String {
+    let mut name = String::with_capacity(table.len() + fields.len() + 1);
+    for character in table.chars().chain(fields.chars()) {
+        if character.is_ascii_alphanumeric() {
+            name.push(character);
+        } else {
+            name.push('_');
+        }
+    }
+    name
+}
+
 /// The row of a node, as it is stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeRow {
@@ -49,6 +96,14 @@ pub struct NodeRow {
     pub attributes: serde_json::Value,
     /// When the graph learned about it.
     pub observed_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// What the database reports about a table.
+#[derive(Debug, Default, serde::Deserialize)]
+struct TableInfo {
+    /// The indexes the table has, by name.
+    #[serde(default)]
+    indexes: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// The row of a relation, as it is stored.
@@ -98,6 +153,52 @@ impl<C: Connection> SurrealGraphStore<C> {
     /// The name of the projection.
     pub fn projection(&self) -> &str {
         &self.projection
+    }
+
+    /// The database the graph is in.
+    ///
+    /// The operator command that declares the indexes needs the handle, and
+    /// the test that proves the indexes are in place needs to declare them
+    /// the way the command does.
+    pub fn database(&self) -> &Arc<Surreal<C>> {
+        &self.db
+    }
+
+    /// Whether the indexes the graph needs are in place.
+    ///
+    /// A missing index costs the graph its speed and not its correctness:
+    /// the same questions are answered, and they are answered by reading
+    /// more. The answer is reported rather than enforced, so a deployment
+    /// that has not run the operator command still serves correctly.
+    pub async fn indexes_initialized(&self) -> Result<bool, GraphError> {
+        let wanted = GRAPH_INDEXES
+            .iter()
+            .filter(|(table, _)| *table == self.node_table() || *table == self.relation_table())
+            .count();
+        let present = self.index_count(&self.node_table()).await?
+            + self.index_count(&self.relation_table()).await?;
+        Ok(present >= wanted)
+    }
+
+    /// How many indexes a table has.
+    ///
+    /// The name of the table is written out, because the statement does
+    /// not take a table as a bound value. The name comes from the code, and
+    /// it is checked anyway.
+    async fn index_count(&self, table: &str) -> Result<usize, GraphError> {
+        let table = Self::checked_table(table)?;
+        let mut response = self
+            .db
+            .query(format!("INFO FOR TABLE {table}"))
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        let info: Option<TableInfo> = response
+            .take(0)
+            .map_err(|error| GraphError::Rejected(error.to_string()))?;
+        Ok(info
+            .and_then(|info| info.indexes)
+            .map(|indexes| indexes.len())
+            .unwrap_or_default())
     }
 
     /// The table of the nodes.
@@ -262,11 +363,16 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
     }
 
     /// Empties the projection.
+    ///
+    /// The rows are deleted and the table is kept: removing the table
+    /// would remove the indexes with it, and the graph would go back to
+    /// reading the whole table for every question. The measure of the
+    /// scale model showed what that costs.
     async fn clear(&self) -> Result<(), GraphError> {
         for table in [self.node_table(), self.relation_table()] {
             let table = Self::checked_table(&table)?;
             self.db
-                .query(format!("REMOVE TABLE IF EXISTS {table}"))
+                .query(format!("DELETE {table}"))
                 .await
                 .map_err(|error| GraphError::Unavailable(error.to_string()))?
                 .check()
@@ -390,10 +496,18 @@ impl<C: Connection> GraphQuery for SurrealGraphStore<C> {
     /// revisions to the repository -- and it says nothing that the graph does
     /// not hold.
     async fn lineage(&self, tenant: &Hrn, artifact: &Hrn) -> Result<Lineage, GraphError> {
-        let mut lineage = Lineage::default();
-
-        let artefacts = self.nodes(tenant, NodeKind::Artifact).await?;
-        lineage.artifact = artefacts.into_iter().find(|node| &node.id == artifact);
+        // The artefact is read by its identity: reading all the artefacts of
+        // the account to find one of them was the most expensive read of the
+        // whole lineage, and the measure of the scale model showed it.
+        let artefact = self
+            .node_of_kind(tenant, artifact, NodeKind::Artifact)
+            .await?
+            .into_iter()
+            .next();
+        let mut lineage = Lineage {
+            artifact: artefact,
+            ..Lineage::default()
+        };
 
         // The builds that produced it: the relations that END at the
         // artefact are the ones that say who produced it.
@@ -531,17 +645,37 @@ impl<C: Connection> SurrealGraphStore<C> {
     }
 
     /// A node of a kind, by its identity.
+    ///
+    /// The identity of a node IS the identity of its record, so the node is
+    /// read by its identity and not found among the nodes of its kind. The
+    /// measure of the scale model found the difference: looking for a node
+    /// among all the nodes of a kind reads the whole table, and the lineage
+    /// of an artefact does that once per hop.
+    ///
+    /// The account and the kind are checked on the row that comes back: a
+    /// record that belongs to another account, or that is another kind of
+    /// node, is not the node that was asked for.
     async fn node_of_kind(
         &self,
         tenant: &Hrn,
         id: &Hrn,
         kind: NodeKind,
     ) -> Result<Vec<GraphNode>, GraphError> {
-        Ok(self
-            .nodes(tenant, kind)
-            .await?
-            .into_iter()
-            .filter(|node| &node.id == id)
+        let mut response = self
+            .db
+            .query("SELECT * FROM $id")
+            .bind(("id", self.node_id(id)))
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        let rows: Vec<NodeRow> = response
+            .take(0)
+            .map_err(|error| GraphError::Rejected(error.to_string()))?;
+
+        Ok(rows
+            .iter()
+            .filter(|row| row.tenant_hrn == tenant.to_string())
+            .filter(|row| row.kind == kind.as_str())
+            .filter_map(node_of)
             .collect())
     }
 }

@@ -145,6 +145,9 @@ description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation o
 kernel = { path = "crates/kernel" }
 hodei-iam = { path = "crates/hodei-iam" }
 hodei-policies = { path = "crates/hodei-policies" }
+# The adapters of the evidence context: the operator command that declares
+# the indexes of the graph needs to know which ones the graph needs.
+hodei-evidence-storage = { path = "crates/hodei-evidence-storage" }
 # Published core; no path/git dependency to a sibling checkout.
 hodei-authz = { workspace = true }
 

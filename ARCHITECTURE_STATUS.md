@@ -181,6 +181,135 @@ tabla, no una busqueda por indice. A la escala en la que trabaja M1 es el
 canje correcto, y la medida a escala queda para la UAT de M1 en vez de
 darse por supuesta.
 
+### Lo que la medida a escala cambio (SPIKE-012)
+
+La medida de la escala de referencia (HSP-70) **midio** ese canje y dio el
+numero. Sobre la carga de referencia, con el grafo escrito sin indice:
+
+| Consulta | p50 sin indice | p95 sin indice |
+| --- | --- | --- |
+| el linaje de un artefacto | 585 ms | 596 ms |
+| los despliegues de un artefacto | 136 ms | 147 ms |
+| de una construccion a sus artefactos | 137 ms | 141 ms |
+| de un repositorio a sus artefactos | 1509 ms | 1553 ms |
+
+La conclusion del SPIKE-012 es que **la indexacion actual no aguanta, y lo
+que hace falta no es particionar**. Las cuatro consultas son de uno a tres
+saltos sobre un grafo de 22 020 nodos y 7340 relaciones, y sus numeros
+crecen con el tamano de la tabla: el grafo respondia a una pregunta que
+tocaba diez relaciones leyendo todas las relaciones. Particionar por
+cuenta habria repartido el coste sin quitarlo, y habria multiplicado el
+almacen por el numero de cuentas.
+
+La respuesta son **indices, declarados por un comando del operador**:
+`ensure-graph-index` declara los indices de las tablas del grafo desde su
+propio proceso, con el mismo argumento que ya existe para
+`ensure-iam-index` (definir un indice en el motor local mantiene bloqueado
+el directorio de la base de datos por el proceso que lo define, de modo que
+el servicio no puede declararlos en su propio camino). El grafo **no** los
+declara: los dice, y el comando los deja.
+
+Con los indices en el sitio, las mismas consultas sobre la misma carga:
+
+| Consulta | p50 con indice | p95 con indice |
+| --- | --- | --- |
+| el linaje de un artefacto | 2.66 ms | 3.29 ms |
+| los despliegues de un artefacto | 1.30 ms | 1.67 ms |
+| de una construccion a sus artefactos | 0.43 ms | 0.55 ms |
+| de un repositorio a sus artefactos | 0.44 ms | 0.55 ms |
+
+La comparacion es de 90 veces a 3400 veces, segun la consulta. Es el mismo
+grafo, los mismos datos y las mismas preguntas: lo unico que cambio es que
+las tablas tienen el indice que las preguntas necesitan.
+
+### La envolvente medida, y como crece
+
+La carga de referencia son **107 148 piezas de evidencia** sobre 321 444
+nodos y 107 148 relaciones, y la medida de tres tamanos dice como crece:
+
+| Tamano | Piezas | Admision p50 | Proyeccion | Linaje p50 | Linaje p95 | Reconstruccion |
+| --- | --- | --- | --- | --- | --- | --- |
+| pequeno | 7 340 | 1.70 ms | 10.9 s | 2.66 ms | 3.29 ms | 37.9 s |
+| medio | 33 801 | 1.79 ms | 47.8 s | 3.09 ms | 3.81 ms | 193.8 s |
+| **referencia** | **107 148** | **1.81 ms** | **164.9 s** | **3.32 ms** | **3.68 ms** | **656.6 s** |
+
+Las consultas **crecen casi poco**: de 7 340 a 107 148 piezas --catorce
+veces mas carga-- el linaje pasa de 2.66 ms a 3.32 ms, y el p95 de 3.29 ms
+a 3.68 ms. Esa es la forma que hace falta: **el coste de una consulta
+depende de la respuesta y no del almacen**. Sin los indices, el mismo
+crecimiento multiplicaba el linaje por diez.
+
+La admision tambien es plana por pieza (1.70 ms -> 1.81 ms), porque la
+admision pregunta "en que posicion esta la corriente" y la respuesta se
+busca por la identidad de la cabeza, y no recorriendo la tabla.
+
+La proyeccion y la reconstruccion **si** crecen con el volumen, y con
+razon: la proyeccion escribe un evento por evento (164.9 s para 107 148
+eventos son 1.5 ms por evento) y la reconstruccion reconstruye el grafo
+entero (656.6 s). Son trabajos de escritura, no de lectura, y su coste es
+proporcional a lo que escriben. Lo que importa es que las **lecturas** --la
+parte que el usuario siente-- no crecen con el almacen.
+
+### Los cuatro defectos que la medida encontro
+
+La medida no solo midio: encontro. Los cuatro estaban en el camino de la
+carga, y los cuatro estan corregidos con una prueba que los defiende.
+
+1. **La admision era cuadratica en la longitud de la corriente.** El
+   adaptador preguntaba al registro "en que posicion esta la corriente"
+   recorriendo la tabla de eventos y tomando la ultima fila. Ahora hay una
+   tabla de cabezas (`event_ledger_head`), y la pregunta se responde por la
+   identidad de la cabeza, en la misma transaccion que escribe el evento.
+2. **La busqueda de evidencia externa recorria la tabla entera.** Ahora hay
+   una tabla de indices externos (`evidence_external`) y la busqueda son
+   dos lecturas por identidad.
+3. **El grafo encontraba un nodo recorriendo la tabla.** Las consultas del
+   linaje pedian "los nodos de tipo artefacto" y elegian de entre ellos el
+   buscado. La identidad de un nodo **es** la identidad de su registro, asi
+   que ahora se lee por su identidad.
+4. **La proyeccion leia la corriente recorriendo la tabla.** La pagina se
+   pedia con "cuales son los eventos de esta corriente despues de esta
+   posicion", y eso leia la tabla entera y la ordenaba, de modo que el
+   coste de la proyeccion crecia mas rapido que la corriente: de 7 340
+   piezas a 33 801 --4.6 veces-- el tiempo de proyeccion paso de 18.1 s a
+   211.9 s, once veces mas. Ahora la pagina se pide **por las identidades
+   de sus eventos**, que es lo que el propio diseno del registro ya
+   permitia: la identidad de un evento **es** su posicion, y las posiciones
+   de una corriente son contiguas porque el escritor que espera la
+   posicion `p` escribe en la `p + 1`. La misma pagina tardo 47.8 s en vez
+   de 211.9 s, y el tiempo ya no crece con el almacen: 43 ms con 5 000
+   filas en la tabla y 47 ms con 100 000.
+
+Ademas, el vaciado de una proyeccion **quitaba la tabla**, y quitar la
+tabla se lleva los indices por delante: el grafo volvia a recorrer la tabla
+entera en cada pregunta. Ahora el vaciado borra las filas y deja la tabla,
+y una prueba (`g8`) lo defiende.
+
+### La forma de la carga de referencia
+
+El modelo de escala (`crates/hodei-evidence-storage/src/scale.rs`) no es un
+numero: es una forma. Las cuentas se reparten entre un minimo y un maximo
+con una progresion geometrica, y cada nivel de la forma se reparte asi
+mismo: los repositorios por cuenta, las revisiones por repositorio, las
+construcciones por revision. Una carga en la que todo cuelga de un solo
+repositorio no se parece a un grafo real, y por eso la forma se reparte.
+
+El modelo tiene **una sola fuente de verdad**: la cuenta de eventos que se
+esperan es la suma de los viajes, y el viaje de cada cuenta sale de la
+misma forma que la cuenta. La prueba `the_count_of_the_events_is_the_size_of_the_journeys`
+lo demuestra para el modelo pequeno y para el de referencia.
+
+La medida encontro tambien un defecto del modelo: dos piezas del mismo viaje
+llevaban la misma identidad, y dos cuentas distintas llevaban identidades
+que se pisaban. El almacen toma la segunda por una repeticion y guarda un
+solo hecho, asi que 858 piezas de la carga de referencia nunca llegaron a
+ser hechos y la carga era menor de lo que el modelo decia. Las identidades
+llevan ahora la cuenta, la construccion y el artefacto que nombran, y dos
+pruebas nuevas (`no_two_pieces_of_a_journey_carry_the_same_identity` y
+`no_two_accounts_carry_the_same_identity`) defienden el modelo de esa
+misma clase de error.
+
+
 ## 8. La admision de la evidencia
 
 La canalizacion del plan, con sus pasos y lo que cada uno garantiza:
@@ -236,11 +365,17 @@ comprobacion, y la reconstruccion no altera el registro.
 
 ### Lo que NO se afirma
 
-El rendimiento de la reconstruccion a escala, el coste de las consultas
-criticas y el comportamiento con una cuenta que tiene mucho se quedan para
-la UAT de M1. No hay indice en las tablas del grafo, por la misma razon que
-en el registro: un indice declarado por el servicio bloquearia el
-directorio de la base de datos y el servicio no podria reiniciar.
+- **El contenido de la evidencia vive en memoria.** El SPIKE-009 decidira
+  donde viven los contenidos grandes.
+- **La firma es HMAC con un secreto por productor.** La verificacion con
+  firma de un tercero es de un hito posterior.
+- **El aislamiento entre cuentas es logico, no fisico.** Las cuentas
+  comparten las tablas del grafo y del registro, y la separacion la hace la
+  consulta. La medida lo confirma: el coste de una consulta crece con el
+  volumen **total** del almacen y no con el de la cuenta, porque la
+  pregunta se responde con el indice y el indice es comun. El
+  particionado por cuenta queda para cuando la cuenta mas grande lo
+  pida, y la medida dice que todavia no lo pide.
 
 ## 10. La UAT de M1
 
@@ -261,15 +396,18 @@ cargo test -p hodei-evidence-storage --test m1_uat -- --nocapture
 | M1-UAT-05 | la reconstruccion dice lo mismo que el grafo en uso, en las cuatro consultas criticas | PASSED |
 | M1-UAT-06 | el fallo de la proyeccion no mueve el checkpoint, y al recuperarlo aplica cada evento una vez | PASSED |
 | M1-UAT-07 | el aislamiento entre cuentas, con los mismos nombres externos en las dos | PASSED |
-| M1-UAT-08 | la linea base del rendimiento de referencia | PASSED (linea base, no un objetivo: el sobre de rendimiento no esta acordado) |
+| M1-UAT-08 | la linea base del rendimiento de referencia | PASSED (SPIKE-012: la envolvente esta medida y la conclusion dice que la indexacion actual no aguanta y que lo que hace falta son indices, no particionar) |
 
 ### Lo que la UAT dejo abierto
 
-- **Las consultas recorren las tablas.** No hay indice, por la razon que ya
-  esta escrita: un indice declarado por el servicio bloquearia el
-  directorio de la base de datos. La latencia crece con el tamano de la
-  cuenta, y el numero medido (unos 10 ms por consulta de uno a tres saltos
-  sobre el conjunto de referencia) es una linea base, no un objetivo.
+- **Las consultas dependien de que el operador haya declarado los
+  indices.** El grafo no los declara --un indice declarado por el servicio
+  bloquearia el directorio de la base de datos-- y el comando
+  `ensure-graph-index` los declara desde su propio proceso. Un despliegue
+  que no lo ha ejecutado sigue respondiendo bien, pero recorre las tablas:
+  la UAT lo midio en unos 10 ms por consulta de uno a tres saltos. El grafo
+  **dice** si los indices estan (`indexes_initialized`), de modo que el
+  estado es observable en vez de supuesto.
 - **El contenido de la evidencia vive en memoria.** El SPIKE-009 decidira
   donde viven los contenidos grandes.
 - **La firma es HMAC con un secreto por productor.** La verificacion con

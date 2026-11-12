@@ -31,6 +31,11 @@ BIN_NAME="hodei-artifacts-api"
 # cannot be declared by the running service, and a deployment that cannot
 # run it would keep scanning the table.
 MIGRATION_BIN_NAME="ensure-iam-index"
+# The operator command that declares the indexes of the evidence graph. It
+# travels with the service for the same reason: the indexes cannot be
+# declared by the running service, and the measure of the scale model
+# showed what the graph costs without them.
+GRAPH_INDEX_BIN_NAME="ensure-graph-index"
 
 cd "$ROOT"
 
@@ -78,7 +83,7 @@ done
 # --- Build ------------------------------------------------------------------
 
 echo "==> building the release binary"
-cargo build --release --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME"
+cargo build --release --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME" --bin "$GRAPH_INDEX_BIN_NAME"
 
 BIN_PATH="$(find "${TARGET_DIR}/release" -maxdepth 1 -type f -name "$BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$BIN_PATH" ]; then
@@ -92,6 +97,12 @@ if [ -z "$MIGRATION_BIN_PATH" ]; then
   exit 1
 fi
 
+GRAPH_INDEX_BIN_PATH="$(find "${TARGET_DIR}/release" -maxdepth 1 -type f -name "$GRAPH_INDEX_BIN_NAME" -perm -u+x | head -n 1)"
+if [ -z "$GRAPH_INDEX_BIN_PATH" ]; then
+  echo "error: the operator command of the graph indexes was not produced" >&2
+  exit 1
+fi
+
 # --- Assemble ---------------------------------------------------------------
 
 echo "==> assembling $PKG_NAME"
@@ -100,6 +111,7 @@ mkdir -p "$STAGE/bin" "$STAGE/config"
 
 install -m 0755 "$BIN_PATH" "$STAGE/bin/$BIN_NAME"
 install -m 0755 "$MIGRATION_BIN_PATH" "$STAGE/bin/$MIGRATION_BIN_NAME"
+install -m 0755 "$GRAPH_INDEX_BIN_PATH" "$STAGE/bin/$GRAPH_INDEX_BIN_NAME"
 install -m 0644 "$CONFIG_FILE" "$STAGE/config/default.toml"
 install -m 0644 README.md "$STAGE/README.md"
 install -m 0644 LICENSE "$STAGE/LICENSE"
