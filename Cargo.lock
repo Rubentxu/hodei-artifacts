@@ -2089,6 +2089,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hodei-risk"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "hodei-evidence",
+ "kernel",
+ "semver",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hodei-trust-policy"
 version = "0.1.0"
 dependencies = [

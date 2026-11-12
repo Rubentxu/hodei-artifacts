@@ -1,0 +1,18 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://example.test/vex/1",
+  "author": "https://example.test/security",
+  "timestamp": "2024-05-10T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "CVE-2024-99999" },
+      "products": [
+        { "@id": "pkg:maven/org.example/lib-b@2.0.0" }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "the vulnerable path is not built into the artefact"
+    }
+  ]
+}

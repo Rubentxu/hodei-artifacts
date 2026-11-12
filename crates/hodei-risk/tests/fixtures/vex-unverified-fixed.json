@@ -1,0 +1,17 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://example.test/vex/2",
+  "author": "https://example.test/security",
+  "timestamp": "2024-05-11T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": { "name": "CVE-2024-99999" },
+      "products": [
+        { "@id": "pkg:maven/org.example/lib-b@2.0.0" }
+      ],
+      "status": "fixed",
+      "justification": "vulnerable_code_not_present"
+    }
+  ]
+}

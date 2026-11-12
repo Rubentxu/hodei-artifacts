@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.6.0",
+  "id": "GHSA-hodei-test-0002",
+  "modified": "2024-06-01T00:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "Maven",
+        "name": "org.example:lib-c",
+        "purl": "pkg:maven/org.example/lib-c@3.1.0"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [{ "introduced": "1.0.0" }, { "last_affected": "3.0.9" }]
+        }
+      ]
+    }
+  ]
+}
