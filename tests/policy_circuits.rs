@@ -83,6 +83,12 @@ const SHARED_SCHEMA_JSON: &str = r#"{
           "type": "Record",
           "attributes": { "owner": { "type": "String", "required": false } }
         }
+      },
+      "Artifact": {
+        "shape": {
+          "type": "Record",
+          "attributes": {}
+        }
       }
     },
     "actions": {
@@ -96,6 +102,12 @@ const SHARED_SCHEMA_JSON: &str = r#"{
         "appliesTo": {
           "principalTypes": ["Iam::User"],
           "resourceTypes": ["Artifacts::Repository"]
+        }
+      },
+      "ReadCapsule": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Artifact"]
         }
       }
     }

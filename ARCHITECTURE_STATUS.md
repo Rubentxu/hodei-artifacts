@@ -506,6 +506,68 @@ componentes: por debajo, los hechos caben de sobra en linea; por encima,
 los hechos se mueven tambien al almacen direccionado por contenido y la
 base de datos se queda con el indice de identidades y las aristas.
 
+## 10-ter. La capsula de confianza y el perfil (M2)
+
+Una capsula de confianza es **el pasaporte verificable de una release**: una
+foto del estado de la confianza en un instante dado, con su hash y su
+version, de modo que dos capsulas de la misma release se puedan comparar y
+una capsula se pueda volver a verificar.
+
+### La distincion que lo sostiene
+
+**Presente no es verificado.** Y una dimension sin evidencia no se rellena
+con una suposicion: es `MISSING`, y `MISSING` no es un estado favorable. El
+modelo de amenazas lo dice --"la evidencia que falta no es lo mismo que la
+evidencia que pasa"-- y el perfil lo dice en un valor que una politica puede
+leer.
+
+Los estados son explicitos y no son booleanos, porque un booleano no puede
+decir "la evidencia esta ahi pero es vieja" aparte de "la evidencia esta ahi
+y sostiene":
+
+| Estado | Que dice | Veredicto |
+|---|---|---|
+| `VERIFIED` | la evidencia esta ahi, se comprobó y sostiene | si |
+| `UNVERIFIED` | la evidencia esta ahi y nadie la comprobó | **no** |
+| `INVALID` | la evidencia esta ahi, se comprobó y no sostiene | **no** |
+| `CONTRADICTORY` | la evidencia esta ahi y dice mas de una cosa | **no** |
+| `STALE` | la evidencia esta ahi y es mas vieja que el umbral | **no** |
+| `FRESH` | la evidencia esta ahi y es actual | si |
+| `MISSING` | no hay evidencia | **no** |
+| `UNKNOWN` | hay evidencia y no zanja la pregunta | **no** |
+| `COMPLETE` / `PARTIAL` | lo que un inventario dice de si mismo | si / no |
+| `NOT_APPLICABLE` | la dimension no aplica a este sujeto | -- |
+
+Las cuatro que la UAT de M2 exige que sean distinguibles --la ausente, la
+caducada, la invalida y la contradictoria-- lo son, y ninguna cuenta como
+buena.
+
+### El hash cubre las entradas, no el momento
+
+Eso es todo el sentido del hash. Una decision que apunta a una capsula
+apunta a la evidencia exacta de la que se hizo la lectura, y un lector
+posterior puede comprobar que la capsula de ese hash sigue diciendo lo que
+decia. Si el momento del ensamblaje fuera parte del hash, dos lectores de la
+misma evidencia tendrian dos capsulas distintas y no se podrian comparar. Y
+la **version** del ensamblaje si es parte del hash: una capsula ensamblada
+por otra version es otra lectura.
+
+### Lo que la dimension dice
+
+Cada dimension dice la identidad de su evidencia, o dice que no hay ninguna,
+y el enlace lleva lo que un lector necesita para ir a mirar: la identidad de
+la evidencia, hasta donde llega su verificacion, y la version del
+normalizador que la leyo --porque el mismo documento leido por dos
+normalizadores son dos piezas de evidencia y no una.
+
+### La API
+
+`GET /api/v1/capsules?hrn=...` devuelve la capsula y su perfil, con la
+evidencia enlazada. Es una lectura, tiene su propia accion de Cedar
+(`Artifacts::Action::"ReadCapsule"`, sobre el tipo `Artifacts::Artifact`), y
+no cruza de cuenta: la capsula de otra cuenta se esconde tras el mismo 404
+que la que no existe.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.

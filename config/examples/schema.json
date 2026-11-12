@@ -1,20 +1,87 @@
 {
-  "": { "entityTypes": {}, "actions": {} },
+  "": {
+    "entityTypes": {},
+    "actions": {}
+  },
   "Iam": {
-    "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } },
+    "entityTypes": {
+      "User": {
+        "shape": {
+          "type": "Record",
+          "attributes": {}
+        }
+      }
+    },
     "actions": {}
   },
   "Artifacts": {
-    "entityTypes": { "Repository": { "shape": { "type": "Record", "attributes": {} } } },
+    "entityTypes": {
+      "Repository": {
+        "shape": {
+          "type": "Record",
+          "attributes": {}
+        }
+      },
+      "Artifact": {
+        "shape": {
+          "type": "Record",
+          "attributes": {}
+        }
+      }
+    },
     "actions": {
-      "CreateRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
-      "ReadRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } }
+      "CreateRepository": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
+      },
+      "ReadRepository": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
+      },
+      "ReadCapsule": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Artifact"
+          ]
+        }
+      }
     }
   },
   "Admin": {
-    "entityTypes": { "AdminApi": { "shape": { "type": "Record", "attributes": {} } } },
+    "entityTypes": {
+      "AdminApi": {
+        "shape": {
+          "type": "Record",
+          "attributes": {}
+        }
+      }
+    },
     "actions": {
-      "AccessAdminApi": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Admin::AdminApi"] } }
+      "AccessAdminApi": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Admin::AdminApi"
+          ]
+        }
+      }
     }
   }
 }

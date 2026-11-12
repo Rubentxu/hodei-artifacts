@@ -14,6 +14,7 @@
 use crate::audit::{AuditSink, TracingAuditSink};
 use crate::authorization::{AuthorizeResourceUseCase, AuthorizerPort};
 use crate::composition_root::CompositionRoot;
+use crate::evidence::{EmptyEvidenceReader, EvidenceReader};
 use crate::repository::{
     DenyAllAuthenticator, InMemoryRepositoryStore, RepositoryReader, RepositoryWriter,
 };
@@ -101,6 +102,12 @@ pub struct AppState {
     pub(crate) authenticator: Arc<dyn PrincipalAuthenticator>,
     pub(crate) repository_reader: Arc<dyn RepositoryReader>,
     pub(crate) repository_writer: Arc<dyn RepositoryWriter>,
+    /// The reader of the accepted evidence.
+    ///
+    /// The trust capsule is assembled from the evidence that is there, and
+    /// the evidence is read through a port and not through a concrete
+    /// store.
+    pub(crate) evidence_reader: Arc<dyn EvidenceReader>,
     pub(crate) audit_sink: Arc<dyn AuditSink>,
     /// The clock and the identifier generator the security trail uses.
     ///
@@ -200,6 +207,7 @@ impl AppState {
             authenticator,
             repository_reader,
             repository_writer,
+            evidence_reader: Arc::new(EmptyEvidenceReader),
             audit_sink,
             identity,
             admin_authenticator_configured: true,
@@ -249,6 +257,7 @@ impl AppState {
             authenticator: authenticate,
             repository_reader,
             repository_writer,
+            evidence_reader: Arc::new(EmptyEvidenceReader),
             audit_sink,
             identity: Identity::system(),
             admin_authenticator_configured: false,
@@ -282,6 +291,12 @@ impl AppState {
     }
 
     /// Inject a store implementing both repository ports (durable adapter).
+    /// Replace the reader of the accepted evidence.
+    pub fn with_evidence_store(mut self, store: Arc<dyn EvidenceReader>) -> Self {
+        self.evidence_reader = store;
+        self
+    }
+
     pub fn with_repository_store<S>(mut self, store: Arc<S>) -> Self
     where
         S: RepositoryReader + RepositoryWriter + 'static,

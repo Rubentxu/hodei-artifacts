@@ -207,6 +207,12 @@ pub async fn bootstrap(
     } else {
         app_state
     };
+    // The evidence of the deployment is read from the same store the
+    // repositories live in: the trust capsule is assembled from the
+    // evidence that is there, and the evidence is there.
+    let app_state = app_state.with_evidence_store(crate::evidence_surreal::reader_over(Arc::new(
+        schema_storage.db().clone(),
+    )));
     let app_state = configure_production_security(app_state, config)?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
