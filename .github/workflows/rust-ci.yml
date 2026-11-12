@@ -70,6 +70,7 @@ jobs:
             --test capsule_contract \
             --test trust_policy_contract \
             --test promotion_contract \
+            --test m3_uat \
             --test capsule_read \
             --test ci_suites \
             --test evidence_contract \

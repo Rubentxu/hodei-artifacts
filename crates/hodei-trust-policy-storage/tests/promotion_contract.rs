@@ -29,7 +29,7 @@ use hodei_trust_policy::promotion::{
 };
 use hodei_trust_policy::reasons::ReasonCode;
 use hodei_trust_policy::{
-    evaluate, ApprovalOutcome, ExceptionRequest, ExceptionState, Outcome, PromotionGate,
+    evaluate, ApprovalOutcome, ExceptionRequest, ExceptionState, Outcome, PolicyRegistry,
     PromotionService, Requirement, RequirementKind, RiskFacts, TrustContext, TrustPolicy,
 };
 use hodei_trust_policy_storage::{StaticPromotionTargets, SurrealDecisionStore};
@@ -146,7 +146,14 @@ async fn service(with_target: bool) -> (Arc<SurrealDecisionStore<Db>>, Promotion
     } else {
         Arc::new(StaticPromotionTargets::default())
     };
-    let service = PromotionService::new(store.clone(), targets);
+    let policies = Arc::new(PolicyRegistry::empty());
+    policies.activate(
+        production_policy(),
+        "alice",
+        "the policy of production",
+        Utc::now(),
+    );
+    let service = PromotionService::new(store.clone(), targets, policies);
     (store, service)
 }
 
@@ -169,7 +176,6 @@ fn request() -> PromotionRequest {
 #[tokio::test]
 async fn a_no_from_either_half_blocks_the_promotion() {
     let (_store, service) = service(true).await;
-    let gate = PromotionGate::new(production_policy());
 
     // El principal no esta permitido: no se promueve.
     let refused = service
@@ -178,7 +184,7 @@ async fn a_no_from_either_half_blocks_the_promotion() {
             request(),
             AuthorizationResult::Deny,
             complete_context(),
-            gate.clone(),
+            "production",
         )
         .await
         .expect("the promotion runs");
@@ -208,7 +214,7 @@ async fn a_no_from_either_half_blocks_the_promotion() {
             request(),
             AuthorizationResult::Permit,
             context,
-            gate,
+            "production",
         )
         .await
         .expect("the promotion runs");
@@ -227,7 +233,6 @@ async fn a_no_from_either_half_blocks_the_promotion() {
 #[tokio::test]
 async fn a_compliant_release_is_promoted() {
     let (_store, service) = service(true).await;
-    let gate = PromotionGate::new(production_policy());
 
     let outcome = service
         .request_promotion(
@@ -235,7 +240,7 @@ async fn a_compliant_release_is_promoted() {
             request(),
             AuthorizationResult::Permit,
             complete_context(),
-            gate,
+            "production",
         )
         .await
         .expect("the promotion runs");
@@ -258,7 +263,6 @@ async fn a_compliant_release_is_promoted() {
 #[tokio::test]
 async fn the_decision_is_persisted_and_can_be_consulted_later() {
     let (store, service) = service(true).await;
-    let gate = PromotionGate::new(production_policy());
 
     service
         .request_promotion(
@@ -266,7 +270,7 @@ async fn the_decision_is_persisted_and_can_be_consulted_later() {
             request(),
             AuthorizationResult::Permit,
             complete_context(),
-            gate,
+            "production",
         )
         .await
         .expect("the promotion runs");
@@ -315,7 +319,6 @@ async fn the_decision_is_persisted_and_can_be_consulted_later() {
 #[tokio::test]
 async fn writing_the_same_decision_twice_leaves_one_decision() {
     let (store, service) = service(true).await;
-    let gate = PromotionGate::new(production_policy());
     let context = complete_context();
 
     service
@@ -324,7 +327,7 @@ async fn writing_the_same_decision_twice_leaves_one_decision() {
             request(),
             AuthorizationResult::Permit,
             context.clone(),
-            gate.clone(),
+            "production",
         )
         .await
         .expect("the promotion runs");
@@ -334,7 +337,7 @@ async fn writing_the_same_decision_twice_leaves_one_decision() {
             request(),
             AuthorizationResult::Permit,
             context,
-            gate,
+            "production",
         )
         .await
         .expect("the promotion runs");
@@ -353,7 +356,6 @@ async fn writing_the_same_decision_twice_leaves_one_decision() {
 #[tokio::test]
 async fn the_missing_mandatory_evidence_produces_indeterminate() {
     let (_store, service) = service(true).await;
-    let gate = PromotionGate::new(production_policy());
 
     let context = TrustContext::builder(&capsule_without_sbom())
         .with_risk(RiskFacts {
@@ -369,7 +371,7 @@ async fn the_missing_mandatory_evidence_produces_indeterminate() {
             request(),
             AuthorizationResult::Permit,
             context,
-            gate,
+            "production",
         )
         .await
         .expect("the promotion runs");
@@ -508,7 +510,6 @@ async fn an_expired_exception_is_worth_nothing_in_the_decision() {
 #[tokio::test]
 async fn without_a_target_the_mutation_answers_not_supported() {
     let (_store, service) = service(false).await;
-    let gate = PromotionGate::new(production_policy());
 
     let outcome = service
         .request_promotion(
@@ -516,7 +517,7 @@ async fn without_a_target_the_mutation_answers_not_supported() {
             request(),
             AuthorizationResult::Permit,
             complete_context(),
-            gate,
+            "production",
         )
         .await
         .expect("the promotion runs");
@@ -545,7 +546,6 @@ async fn without_a_target_the_mutation_answers_not_supported() {
 #[tokio::test]
 async fn the_decision_of_a_promotion_without_a_target_is_written_down() {
     let (store, service) = service(false).await;
-    let gate = PromotionGate::new(production_policy());
 
     service
         .request_promotion(
@@ -553,7 +553,7 @@ async fn the_decision_of_a_promotion_without_a_target_is_written_down() {
             request(),
             AuthorizationResult::Permit,
             complete_context(),
-            gate,
+            "production",
         )
         .await
         .expect("the promotion runs");

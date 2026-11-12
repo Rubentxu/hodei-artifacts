@@ -98,6 +98,8 @@ pub struct PromotionDecision {
     pub outcome: Outcome,
     /// Which of the two halves decided it.
     pub decided_by: crate::gate::DecidedBy,
+    /// The result of the authorization.
+    pub authorization: crate::gate::AuthorizationResult,
     /// The decision of the trust.
     pub trust: TrustDecision,
     /// The context that was measured.

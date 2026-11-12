@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::context::TrustContext;
 use crate::decision::{Outcome, TrustDecision};
 use crate::gate::{AuthorizationResult, DecidedBy, PromotionGate};
-use crate::ports::{DecisionStore, PromotionTargets};
+use crate::ports::{DecisionStore, PolicyLoader, PromotionTargets};
 use crate::promotion::{
     DecisionId, PromotionDecision, PromotionFailure, PromotionOutcome, PromotionRequest,
 };
@@ -29,12 +29,22 @@ use crate::reasons::ReasonCode;
 pub struct PromotionService {
     store: Arc<dyn DecisionStore>,
     targets: Arc<dyn PromotionTargets>,
+    policies: Arc<dyn PolicyLoader>,
 }
 
 impl PromotionService {
-    /// A service over a store and a set of destinations.
-    pub fn new(store: Arc<dyn DecisionStore>, targets: Arc<dyn PromotionTargets>) -> Self {
-        Self { store, targets }
+    /// A service over a store, a set of destinations and a loader of the
+    /// policy that decides.
+    pub fn new(
+        store: Arc<dyn DecisionStore>,
+        targets: Arc<dyn PromotionTargets>,
+        policies: Arc<dyn PolicyLoader>,
+    ) -> Self {
+        Self {
+            store,
+            targets,
+            policies,
+        }
     }
 
     /// Asks for a promotion and writes the decision down.
@@ -47,7 +57,7 @@ impl PromotionService {
         request: PromotionRequest,
         authorization: AuthorizationResult,
         context: TrustContext,
-        gate: PromotionGate,
+        policy_id: &str,
     ) -> Result<PromotionOutcome, crate::ports::DecisionStoreError> {
         let target = self
             .targets
@@ -55,7 +65,45 @@ impl PromotionService {
             .await?;
 
         let decided_at = context.assembled_at;
-        let result = gate.evaluate(authorization, &context);
+
+        // The policy that decides is LOADED, and it may fail to load. A
+        // policy that cannot be loaded is not a policy that refuses: it is
+        // an operational failure, and the promotion tells the two apart.
+        // The failure is closed -- nothing advances -- and the decision is
+        // written down all the same, so that the absence is visible.
+        let policy = match self.policies.active_policy(policy_id).await {
+            Ok(policy) => policy,
+            Err(_) => {
+                let decision = PromotionDecision {
+                    id,
+                    request,
+                    outcome: Outcome::Indeterminate,
+                    decided_by: DecidedBy::Trust,
+                    authorization,
+                    trust: TrustDecision {
+                        outcome: Outcome::Indeterminate,
+                        reasons: vec![ReasonCode::PolicyUnavailable],
+                        requirements: Vec::new(),
+                        context_version: context.version.clone(),
+                        policy_id: policy_id.to_string(),
+                        policy_version: "unloaded".to_string(),
+                        schema_version: crate::POLICY_SCHEMA_VERSION.to_string(),
+                        capsule_hash: context.capsule_hash.clone(),
+                        evidence_ids: context.evidence_ids.clone(),
+                        decided_at,
+                    },
+                    context,
+                    reasons: vec![ReasonCode::PolicyUnavailable],
+                    applied: false,
+                    decided_at,
+                };
+                self.store.put(&decision).await?;
+                return Ok(PromotionOutcome::Failed(PromotionFailure::Refused));
+            }
+        };
+
+        let gate = PromotionGate::new(policy);
+        let result = gate.evaluate(authorization.clone(), &context);
 
         // The outcome of the promotion is the outcome of the gate, with
         // one adjustment: a criterion that could not be looked at because
@@ -87,6 +135,7 @@ impl PromotionService {
             request,
             outcome,
             decided_by,
+            authorization,
             trust,
             context,
             reasons,
