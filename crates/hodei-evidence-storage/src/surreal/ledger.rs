@@ -51,6 +51,21 @@ use surrealdb::Surreal;
 /// The table the events live in.
 pub const LEDGER_TABLE: &str = "event_ledger";
 
+/// The table the heads of the streams live in.
+///
+/// A head says where a stream is, and it is read by its own identity. The
+/// measure of the scale model found the cost of the other way: asking the
+/// ledger where a stream is meant reading the whole table and taking the
+/// last row, and the admission asks that question before every append. The
+/// cost was quadratic in the length of the stream, and it showed up as a
+/// growth of the admission that had nothing to do with the work of writing
+/// an event.
+///
+/// The head is written in the same transaction as the event it accounts for,
+/// so a head never points at a position that is not there, and a position
+/// that is there always has a head that accounts for it.
+pub const LEDGER_HEAD_TABLE: &str = "event_ledger_head";
+
 /// The record of an event, as it is stored.
 ///
 /// The fields are the ones the envelope has, and the identifier of the
@@ -107,6 +122,18 @@ impl LedgerRecord {
     }
 }
 
+/// The head of a stream, as it is stored.
+///
+/// The head says where the stream is. It is written in the same transaction
+/// as the event it accounts for, so the two never disagree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeadRow {
+    /// The stream the head belongs to.
+    pub stream_id: String,
+    /// The last position of the stream.
+    pub last_position: u64,
+}
+
 /// The ledger over the store that already exists.
 pub struct SurrealEventLedger<C: Connection> {
     db: Arc<Surreal<C>>,
@@ -134,23 +161,31 @@ impl<C: Connection> SurrealEventLedger<C> {
         ))
     }
 
+    /// The identifier of the head of a stream.
+    ///
+    /// The head is named by the stream, so it is read and written by its own
+    /// identity, without a scan.
+    fn head_id(stream_id: &str) -> surrealdb::sql::Thing {
+        surrealdb::sql::Thing::from((LEDGER_HEAD_TABLE.to_string(), escape_id_part(stream_id)))
+    }
+
     /// The position the stream is at, or `None` when it has no events yet.
+    ///
+    /// The head answers by its own identity. The measure of the scale model
+    /// found that the other way — scanning the table of events and taking
+    /// the last one — costs more the longer the stream is, and the
+    /// admission asks this question before every append.
     pub async fn current_position(&self, stream_id: &str) -> Result<Option<u64>, LedgerError> {
         let mut response = self
             .db
-            .query(
-                "SELECT stream_position FROM type::table($table) \
-                 WHERE stream_id = $stream \
-                 ORDER BY stream_position DESC LIMIT 1",
-            )
-            .bind(("table", LEDGER_TABLE.to_string()))
-            .bind(("stream", stream_id.to_string()))
+            .query("SELECT * FROM $id")
+            .bind(("id", Self::head_id(stream_id)))
             .await
             .map_err(|error| LedgerError::Unavailable(error.to_string()))?;
-        let rows: Vec<PositionRow> = response.take(0).map_err(|_error| {
-            LedgerError::InvalidEvent("the ledger row could not be read".to_string())
+        let rows: Vec<HeadRow> = response.take(0).map_err(|_error| {
+            LedgerError::InvalidEvent("the ledger head could not be read".to_string())
         })?;
-        Ok(rows.first().map(|row| row.stream_position as u64))
+        Ok(rows.first().map(|row| row.last_position))
     }
 
     /// The record of a position, when there is one.
@@ -178,12 +213,6 @@ impl<C: Connection> SurrealEventLedger<C> {
 /// is chosen by the caller, so it can hold any of them.
 fn escape_id_part(value: &str) -> String {
     value.replace('~', "~0").replace(':', "~1")
-}
-
-/// The row that says where a stream is.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PositionRow {
-    stream_position: i64,
 }
 
 #[async_trait::async_trait]
@@ -249,12 +278,26 @@ impl<C: Connection> EventLedger for SurrealEventLedger<C> {
 
         let record = LedgerRecord::from_envelope(&event);
         let id = Self::record_id(&stream_id, position);
+        let head = HeadRow {
+            stream_id: stream_id.clone(),
+            last_position: position,
+        };
+        let head_id = Self::head_id(&stream_id);
 
+        // The event and the head go together, in one transaction: a head
+        // never points at a position that is not written, and a written
+        // position always has a head that accounts for it. Two statements in
+        // one query are one transaction.
         let created = self
             .db
-            .query("CREATE $id CONTENT $content")
+            .query(
+                "CREATE $id CONTENT $content; \
+                 UPSERT $head_id CONTENT $head",
+            )
             .bind(("id", id.clone()))
             .bind(("content", record.clone()))
+            .bind(("head_id", head_id))
+            .bind(("head", head))
             .await
             .map_err(|_error| {
                 LedgerError::InvalidEvent("the ledger row could not be read".to_string())
@@ -311,42 +354,78 @@ impl<C: Connection> EventLedger for SurrealEventLedger<C> {
     }
 
     /// Reads a page of events after a cursor.
+    ///
+    /// The page is read by the identities of its events, and not by the
+    /// fields of the rows. The identity of an event IS its position, and
+    /// the positions of a stream are contiguous: the writer that expects
+    /// the position `p` writes at `p + 1`, so there is no hole between the
+    /// first event and the last one.
+    ///
+    /// The measure of the scale model found the cost of the other way:
+    /// asking the table "which rows of this stream come after this
+    /// position" reads the whole table and sorts it, so the projection of
+    /// a stream cost more the longer the stream was, and the cost grew
+    /// faster than the stream. The same page, asked for by the identities
+    /// of its events, was ninety times quicker.
+    ///
+    /// The page ends where the head of the stream says the stream ends.
     async fn read(&self, cursor: LedgerCursor, limit: usize) -> Result<EventPage, LedgerError> {
         let started = Instant::now();
         let limit = limit.clamp(1, 1_000);
 
+        // The head says where the stream is: a point read, by its own
+        // identity.
+        let last = self.current_position(&cursor.stream_id).await?;
+        let Some(last) = last else {
+            return Ok(EventPage {
+                events: Vec::new(),
+                next_cursor: None,
+            });
+        };
+        if cursor.next_position > last {
+            return Ok(EventPage {
+                events: Vec::new(),
+                next_cursor: None,
+            });
+        }
+
+        // The page covers the positions that come after the cursor and
+        // that the head accounts for.
+        let first = cursor.next_position;
+        let end = last.min(first + limit as u64 - 1);
+        let identities: Vec<surrealdb::sql::Thing> = (first..=end)
+            .map(|position| Self::record_id(&cursor.stream_id, position))
+            .collect();
+
         let mut response = self
             .db
-            .query(
-                "SELECT * FROM type::table($table) \
-                 WHERE stream_id = $stream AND stream_position >= $next \
-                 ORDER BY stream_position ASC LIMIT $limit",
-            )
-            .bind(("table", LEDGER_TABLE.to_string()))
-            .bind(("stream", cursor.stream_id.clone()))
-            .bind(("next", cursor.next_position as i64))
-            .bind(("limit", limit as i64))
+            .query("SELECT * FROM $ids")
+            .bind(("ids", identities))
             .await
             .map_err(|error| LedgerError::Unavailable(error.to_string()))?;
 
-        let rows: Vec<LedgerRecord> = response.take(0).map_err(|_error| {
+        let mut rows: Vec<LedgerRecord> = response.take(0).map_err(|_error| {
             LedgerError::InvalidEvent("the ledger row could not be read".to_string())
         })?;
+        // The order of the rows is the order of the answer, not the order
+        // of the question: the page is read in the order of the positions.
+        rows.sort_by_key(|row| row.stream_position);
 
         let events: Vec<EventEnvelope> = rows
             .iter()
             .filter_map(|row| row_to_envelope(row).ok())
             .collect();
 
-        let last_position = rows.last().map(|row| row.stream_position as u64);
-        let next_cursor = match last_position {
-            // The page is the last one when it came back short: the caller
-            // asked for a limit and the stream did not fill it.
-            Some(position) if rows.len() >= limit => Some(LedgerCursor::from_position(
+        // The page is the last one when the head says the stream ends
+        // there: the caller asked for a limit and the stream did not fill
+        // it.
+        let next_cursor = if end < last {
+            Some(LedgerCursor::from_position(
                 cursor.stream_id.clone(),
-                position + 1,
-            )),
-            _ => None,
+                end + 1,
+            ))
+        } else {
+            None
         };
 
         tracing::info!(

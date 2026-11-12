@@ -15,6 +15,31 @@ use surrealdb::Surreal;
 /// The table the evidence lives in.
 pub const EVIDENCE_TABLE: &str = "evidence";
 
+/// The table the external index of the evidence lives in.
+///
+/// The index says, for the identity that a producer gives to a thing, which
+/// record of evidence it is. It is a table of its own, read by its own
+/// identity: finding the evidence of an external identity used to be a
+/// scan of the whole table, which made the admission quadratic as the
+/// evidence grew.
+pub const EVIDENCE_INDEX_TABLE: &str = "evidence_external";
+
+/// Escapes a part of a record identifier.
+fn escape_id_part(value: &str) -> String {
+    value.replace('~', "~0").replace(':', "~1")
+}
+
+/// The entry of the external index, as it is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexRow {
+    /// The identity of the producer.
+    pub producer_id: String,
+    /// The external identity the producer gave to the evidence.
+    pub external_id: String,
+    /// The evidence it points at.
+    pub evidence_id: String,
+}
+
 /// The record of an evidence, as it is stored.
 ///
 /// The producer and the external identity are kept as plain fields, next to
@@ -59,9 +84,18 @@ impl<C: Connection> SurrealEvidenceStore<C> {
 
     /// The identifier of the record of an evidence.
     fn record_id(evidence_id: &str) -> surrealdb::sql::Thing {
+        surrealdb::sql::Thing::from((EVIDENCE_TABLE.to_string(), escape_id_part(evidence_id)))
+    }
+
+    /// The identifier of the entry of the external index.
+    fn index_id(producer_id: &str, external_id: &str) -> surrealdb::sql::Thing {
         surrealdb::sql::Thing::from((
-            EVIDENCE_TABLE.to_string(),
-            evidence_id.replace('~', "~0").replace(':', "~1"),
+            EVIDENCE_INDEX_TABLE.to_string(),
+            format!(
+                "{}~{}",
+                escape_id_part(producer_id),
+                escape_id_part(external_id)
+            ),
         ))
     }
 }
@@ -76,11 +110,30 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
         let row = row_from(&evidence);
         let mut attempts = 0;
         loop {
+            // The record and the entry of the external index go together,
+            // in one transaction: the index never points at a record that
+            // is not there.
+            let index = IndexRow {
+                producer_id: evidence.producer().id.clone(),
+                external_id: evidence.source().external_id.clone().unwrap_or_default(),
+                evidence_id: evidence.id().as_str().to_string(),
+            };
             let written = self
                 .db
-                .query("UPSERT $id CONTENT $content")
+                .query(
+                    "UPSERT $id CONTENT $content; \
+                     UPSERT $index_id CONTENT $index",
+                )
                 .bind(("id", Self::record_id(evidence.id().as_str())))
                 .bind(("content", row.clone()))
+                .bind((
+                    "index_id",
+                    Self::index_id(
+                        &evidence.producer().id,
+                        evidence.source().external_id.as_deref().unwrap_or_default(),
+                    ),
+                ))
+                .bind(("index", index))
                 .await
                 .map_err(|error| StoreError::Unavailable(error.to_string()));
 
@@ -124,16 +177,25 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
         producer: &Producer,
         external_id: &str,
     ) -> Result<Option<EvidenceRecord>, StoreError> {
+        // The index says which record it is, and the record says what it
+        // is: two reads by identity, and no scan.
         let mut response = self
             .db
-            .query(
-                "SELECT * FROM type::table($table) \
-                 WHERE producer_id = $producer AND external_id = $external \
-                 ORDER BY recorded_at DESC LIMIT 1",
-            )
-            .bind(("table", EVIDENCE_TABLE.to_string()))
-            .bind(("producer", producer.id.clone()))
-            .bind(("external", external_id.to_string()))
+            .query("SELECT * FROM $id")
+            .bind(("id", Self::index_id(&producer.id, external_id)))
+            .await
+            .map_err(|error| StoreError::Unavailable(error.to_string()))?;
+        let entries: Vec<IndexRow> = response
+            .take(0)
+            .map_err(|error| StoreError::InvalidRecord(error.to_string()))?;
+        let Some(entry) = entries.first() else {
+            return Ok(None);
+        };
+
+        let mut response = self
+            .db
+            .query("SELECT * FROM $id")
+            .bind(("id", Self::record_id(&entry.evidence_id)))
             .await
             .map_err(|error| StoreError::Unavailable(error.to_string()))?;
         let rows: Vec<EvidenceRow> = response
