@@ -67,7 +67,7 @@ impl fmt::Display for IdentityNamespace {
 /// be done with it". Only [`MappingConfidence::Confirmed`] and
 /// [`MappingConfidence::Deterministic`] may be used as a verdict; the other
 /// two are hints, and a hint that nobody confirmed is not evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MappingConfidence {
     /// The source document says both names for the same thing.
@@ -91,6 +91,35 @@ pub enum MappingConfidence {
     ///
     /// The mapping is not resolved and must not be resolved by guessing.
     Ambiguous,
+}
+
+/// The order of the confidences is the order of their strength.
+///
+/// It is written by hand and not derived, because the declaration order of
+/// the variants says nothing about how sure they are, and a `min()` over
+/// two confidences has to mean "the weaker one".
+impl Ord for MappingConfidence {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.strength().cmp(&other.strength())
+    }
+}
+
+impl PartialOrd for MappingConfidence {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl MappingConfidence {
+    /// How sure the grade is, from the weakest to the strongest.
+    fn strength(&self) -> u8 {
+        match self {
+            Self::Ambiguous => 0,
+            Self::Unconfirmed => 1,
+            Self::Deterministic => 2,
+            Self::Confirmed => 3,
+        }
+    }
 }
 
 impl MappingConfidence {

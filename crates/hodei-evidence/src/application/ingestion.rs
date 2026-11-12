@@ -314,10 +314,35 @@ fn validate_envelope(envelope: &IngestionEnvelope) -> Result<(), RejectionReason
     Ok(())
 }
 
+/// The identity of a piece of evidence, derived from what makes it
+/// different from another one.
+fn evidence_identity(envelope: &IngestionEnvelope) -> String {
+    format!(
+        "evd-{}-{}-{}-{}",
+        envelope.evidence_type,
+        envelope.producer.id,
+        envelope.source.external_id.as_deref().unwrap_or("none"),
+        envelope.content_digest
+    )
+}
+
 /// The record of the evidence of an envelope.
+///
+/// The identity of the record is **derived**, so that the same evidence
+/// accepted twice has the same identity and the acceptance is idempotent
+/// without a table of lookups. And it is derived from everything that makes
+/// two pieces of evidence different pieces of evidence: the kind, the
+/// producer, the external identity the producer gave it, and the content.
+///
+/// The content alone is not enough. The same bytes said by two producers are
+/// two claims, and the same bytes under two kinds are two claims: the
+/// attestation that says "this is the provenance" and the same attestation
+/// that says "this is the signature verification" are two readings of one
+/// document, and a graph that kept only one of them would be saying
+/// something that nobody said.
 fn record_from(envelope: &IngestionEnvelope) -> EvidenceRecord {
     EvidenceRecord::builder(
-        EvidenceId::new(format!("evd-{}", envelope.content_digest)),
+        EvidenceId::new(evidence_identity(envelope)),
         envelope.tenant_hrn.clone(),
     )
     .subjects(envelope.subject_refs.clone())

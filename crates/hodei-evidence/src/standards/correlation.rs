@@ -138,6 +138,19 @@ pub fn correlate_identities(
         });
     }
 
+    // The confidence of the mapping is never better than the confidence of
+    // its weakest side, and never better than `deterministic`: a
+    // correlation relates two names that came from two places, and a rule
+    // that relates them is not an assertion by a document. Correlating a
+    // confirmed name with an unconfirmed hint leaves a hint.
+    let confidence = if left.confidence >= MappingConfidence::Deterministic
+        && right.confidence >= MappingConfidence::Deterministic
+    {
+        MappingConfidence::Deterministic
+    } else {
+        left.confidence.min(right.confidence)
+    };
+
     match (&left.namespace, &left.value, &right.value) {
         (IdentityNamespace::Purl, left_purl, right_purl) => {
             let left_canonical = canonicalize_purl(left_purl);
@@ -149,7 +162,7 @@ pub fn correlate_identities(
                 {
                     Ok(Correlation {
                         same: true,
-                        confidence: MappingConfidence::Deterministic,
+                        confidence,
                         left: left.clone(),
                         right: right.clone(),
                         reason: format!(
@@ -159,7 +172,7 @@ pub fn correlate_identities(
                 }
                 (Some(_), Some(_)) => Ok(Correlation {
                     same: false,
-                    confidence: MappingConfidence::Deterministic,
+                    confidence,
                     left: left.clone(),
                     right: right.clone(),
                     reason: "the two names canonicalize to different things".to_string(),
@@ -177,7 +190,7 @@ pub fn correlate_identities(
             if left_digest == right_digest {
                 Ok(Correlation {
                     same: true,
-                    confidence: MappingConfidence::Deterministic,
+                    confidence,
                     left: left.clone(),
                     right: right.clone(),
                     reason: "the two names are the same digest".to_string(),
@@ -185,7 +198,7 @@ pub fn correlate_identities(
             } else {
                 Ok(Correlation {
                     same: false,
-                    confidence: MappingConfidence::Deterministic,
+                    confidence,
                     left: left.clone(),
                     right: right.clone(),
                     reason: "the two names are different digests".to_string(),

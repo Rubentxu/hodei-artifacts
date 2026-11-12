@@ -73,6 +73,7 @@ jobs:
             --test evidence_contract \
             --test graph_contract \
             --test m1_uat \
+            --test m2_uat \
             --test graph_projection \
             --test hrn_migration \
             --test hrn_parity \
