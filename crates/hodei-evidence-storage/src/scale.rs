@@ -231,11 +231,13 @@ impl ScaleModel {
         // accounts share the store, and a piece of one account that
         // carried the identity of a piece of another account would be
         // taken for a repetition of it.
-        for repository_index in 0..shape.repositories {
+        for (repository_index, _) in shape.revisions.iter().enumerate() {
             let repository = format!("repo-{account_index}-{repository_index}");
-            let revisions = shape.revisions[repository_index];
 
-            for revision_index in 0..revisions {
+            // The revisions of the repository and its builds are the same
+            // list, and the walk goes over the builds: asi el indice de
+            // la revision y el de sus construcciones no pueden separarse.
+            for (revision_index, builds) in shape.builds[repository_index].iter().enumerate() {
                 let revision = format!("rev-{account_index}-{repository_index}-{revision_index}");
                 pieces.push((
                     revision.clone(),
@@ -250,8 +252,7 @@ impl ScaleModel {
                     }),
                 ));
 
-                let builds = shape.builds[repository_index][revision_index];
-                for build_index in 0..builds {
+                for build_index in 0..*builds {
                     let build = format!(
                         "build-{account_index}-{repository_index}-{revision_index}-{build_index}"
                     );
