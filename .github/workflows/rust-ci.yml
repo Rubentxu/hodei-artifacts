@@ -74,6 +74,7 @@ jobs:
             --test risk_contract \
             --test m4_uat \
             --test reachability_contract \
+            --test m5_uat \
             --test capsule_read \
             --test ci_suites \
             --test evidence_contract \

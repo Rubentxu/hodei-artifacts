@@ -92,14 +92,7 @@ impl InMemoryReachabilityStore {
         let mut candidates: Vec<&ReachabilityEvidence> = evidences
             .iter()
             .filter(|evidence| evidence.coverage.source_revision == source_revision)
-            .filter(|evidence| {
-                evidence
-                    .coverage
-                    .symbols
-                    .iter()
-                    .any(|covered| covered == &symbol.identity)
-                    || evidence.coverage.complete
-            })
+            .filter(|evidence| evidence.coverage.covers(&symbol.identity))
             .collect();
 
         if candidates.is_empty() {
@@ -155,14 +148,7 @@ impl ReachabilityStore for InMemoryReachabilityStore {
             .evidence_of_revision(source_revision)
             .await?
             .into_iter()
-            .filter(|evidence| {
-                evidence
-                    .coverage
-                    .symbols
-                    .iter()
-                    .any(|covered| covered == symbol)
-                    || evidence.coverage.complete
-            })
+            .filter(|evidence| evidence.coverage.covers(symbol))
             .collect())
     }
 

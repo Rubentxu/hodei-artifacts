@@ -115,9 +115,15 @@ impl Coverage {
     }
 
     /// Whether a symbol was covered by the analysis.
+    ///
+    /// A complete coverage that names no symbols covered all of them: the
+    /// document does not have to enumerate everything it looked at. A
+    /// coverage that names symbols covered exactly those.
     pub fn covers(&self, symbol: &CodeIdentity) -> bool {
-        self.symbols.is_empty() && self.complete
-            || self.symbols.iter().any(|covered| covered == symbol)
+        if self.symbols.is_empty() {
+            return self.complete;
+        }
+        self.symbols.iter().any(|covered| covered == symbol)
     }
 }
 
