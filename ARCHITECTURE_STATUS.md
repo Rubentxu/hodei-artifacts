@@ -33,7 +33,7 @@ no llega a ese listón está etiquetado, y la etiqueta dice en qué estado está
 | `crates/kernel` | Núcleo compartido: identidad HRN v2, tipos de dominio, puertos. | `implementada` |
 | `crates/hodei-iam` | IAM: usuarios, grupos, políticas; persistencia en SurrealDB. | `implementada` |
 | `crates/hodei-policies` | Motor Cedar: schema, validación, evaluación, registro. | `implementada` |
-| `crates/hodei-evidence` | Contexto de evidencia y registro de eventos (M1): los contratos, sin adapter. | `implementada` |
+| `crates/hodei-evidence` | Contexto de evidencia y registro de eventos (M1) y los normalizadores de los estandares (M2): los contratos, sin adapter. | `implementada` |
 | `crates/hodei-evidence-storage` | Los adaptadores de la evidencia sobre el almacen que ya existe. | `implementada` |
 | `.` (`hodei-artifacts-api`) | API HTTP: composición, arranque, rutas, auditoría. | `implementada` |
 
@@ -412,6 +412,99 @@ cargo test -p hodei-evidence-storage --test m1_uat -- --nocapture
   donde viven los contenidos grandes.
 - **La firma es HMAC con un secreto por productor.** La verificacion con
   firma de un tercero es de un hito posterior.
+
+## 10-bis. Los estandares que Hodei lee (M2)
+
+Los estandares entran por **normalizadores locales y fixtures de
+conformidad**, antes de que se encargue cualquier conector de proveedor.
+Eso lo dice el plan y esto es donde se cumple.
+
+### El modelo propio, y no la forma del estandar
+
+Hay **un** modelo de inventario, y es de Hodei. CycloneDX 1.7 y SPDX 3.0
+son dos normalizadores del mismo modelo: el camino de compatibilidad con
+SPDX no es un segundo modelo ni un segundo formato de cable, es un segundo
+normalizador que produce los mismos hechos. La prueba lo dice: los dos
+documentos de la suite dicen lo mismo y salen en los mismos hechos.
+
+| En el documento | CycloneDX 1.7 | SPDX 3.0 | En el modelo |
+|---|---|---|---|
+| el sujeto | `metadata.component` | el paquete al que apunta `DESCRIBES` | `SbomSubject`, y ademas un componente |
+| los componentes | `components[]` | `packages[]` | `SbomComponent` |
+| el PURL | `components[].purl` | `externalRefs[referenceType=purl]` | identidad `purl`, confianza `confirmed` |
+| el digest | `components[].hashes[]` | `externalRefs[referenceType=sha256]` | identidad `content_digest`, confianza `confirmed` |
+| las dependencias | `dependencies[].dependsOn` | `relationships[DEPENDS_ON]` | `SbomDependency` |
+| el momento | `metadata.timestamp` | `creationInfo.created` | `document_timestamp` |
+
+Dos reglas que la tabla hizo visibles:
+
+- **El sujeto es tambien un componente.** CycloneDX lo nombra aparte y
+  SPDX lo nombra entre los paquetes, y el grafo de dependencias arranca en
+  el. El modelo tiene una sola regla para los dos, y un normalizador que
+  lo encuentre solo como sujeto lo anade a los componentes.
+- **Solo se guardan las aristas que existen.** CycloneDX escribe una
+  entrada por cada componente. Una entrada vacia dice que ese componente no
+  depende de nada, y eso ya lo dice su ausencia.
+
+### La incertidumbre se ve
+
+Una identidad externa lleva su espacio de nombres, su valor, su evidencia
+de origen, su confianza, su vigencia y la version de su canonicalizacion.
+La confianza no es una escala de "que tan buena" sino de "que se puede
+hacer con ella":
+
+| Grado | Que significa | Veredicto |
+|---|---|---|
+| `confirmed` | el documento lo dice | si |
+| `deterministic` | lo produjo una regla versionada | si |
+| `unconfirmed` | una pista: se parece, nadie lo confirmo | **no** |
+| `ambiguous` | mas de una cosa podria ser la | **no** |
+
+Es la linea del modelo de amenazas: "un mapeo ambiguo queda sin resolver o
+con confianza baja" y "ninguna fusion heuristica puede satisfacer en
+silencio una politica de alta garantia".
+
+### La atrestacion se verifica, no se copia
+
+Una atrestacion sin verificar es una declaracion, y el dominio distingue
+las dos cosas: `Verified`, `Invalid` con su motivo, y `Unverified` con su
+motivo. La verificacion es **real**: la envoltura DSSE se comprueba contra
+la clave de su emisor, sobre la codificacion PAE --que incluye el tipo
+del payload-- y no sobre los bytes del payload.
+
+Las causas del rechazo son un conjunto cerrado de siete, cada una con lo que
+hay que mirar: envoltura malformada, payload ilegible, sin firma, clave
+desconocida, firma malformada, la firma no corresponde al payload, y el
+sujeto no es el que se ofrecio. Una clave que el despliegue no conoce **no**
+se reporta como una firma mala: es un fallo de la confianza y no de la
+firma, y las dos cosas llevan a reparaciones distintas.
+
+La atrestacion se ata al artefacto: una procedencia que habla de otro
+digest no es evidencia sobre este artefacto, y el motivo lo dice.
+
+### Lo que no se hace, y por que
+
+La verificacion en linea --el registro de transparencia de Sigstore y la
+renovacion de la raiz de confianza-- es otro hito. Aqui se verifica el
+formato de Sigstore contra la clave que se le da al despliegue, y la
+limitacion queda escrita en el codigo.
+
+### Donde vive el contenido (SPIKE-009)
+
+La regla que sale de la medida **no es una regla de tamano sino de uso**:
+los **hechos** van en linea, porque el grafo responde de ellos, y el
+documento crudo va **siempre** por referencia, porque solo se inspecciona.
+El documento crudo no va nunca dentro del registro de evidencia, sea del
+tamano que sea: un registro lleva una `ContentRef` --digest y `object_ref`
+opaco-- y no el contenido, y por eso no tiene donde meter un secreto. El
+`object_ref` es opaco a proposito, y por eso el contrato no filtra el
+almacen al dominio.
+
+Medido: un componente del modelo nativo son 296 bytes, de modo que 10 000
+componentes son 2.9 MiB de hechos. El umbral propuesto es 10 000
+componentes: por debajo, los hechos caben de sobra en linea; por encima,
+los hechos se mueven tambien al almacen direccionado por contenido y la
+base de datos se queda con el indice de identidades y las aristas.
 
 ## 11. El nucleo no depende de mecanismos concretos
 

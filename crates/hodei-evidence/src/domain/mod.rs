@@ -6,4 +6,5 @@ pub mod evidence;
 pub mod graph;
 pub mod idempotency;
 pub mod ingestion;
+pub mod standards;
 pub mod version;

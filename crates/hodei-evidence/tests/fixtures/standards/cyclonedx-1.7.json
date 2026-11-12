@@ -1,0 +1,84 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-03-04T10:15:00Z",
+    "component": {
+      "bom-ref": "pkg:oci/web@sha256:ac9da485d6eac8c161117ecd4155cf50bdb330c8241234d669aef1edba265a06",
+      "type": "container",
+      "name": "web",
+      "version": "1.0.0",
+      "purl": "pkg:oci/web@sha256:ac9da485d6eac8c161117ecd4155cf50bdb330c8241234d669aef1edba265a06",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ac9da485d6eac8c161117ecd4155cf50bdb330c8241234d669aef1edba265a06"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "pkg:maven/org.example/lib-a@1.2.3",
+      "type": "library",
+      "name": "lib-a",
+      "version": "1.2.3",
+      "purl": "pkg:maven/org.example/lib-a@1.2.3"
+    },
+    {
+      "bom-ref": "pkg:maven/org.example/lib-b@2.0.0",
+      "type": "library",
+      "name": "lib-b",
+      "version": "2.0.0",
+      "purl": "pkg:maven/org.example/lib-b@2.0.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7228493599080d271c0d276600ae9a03ee0b154e853d9ff7689568ad0d73079d"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:golang/github.com/example/lib-c@v1.4.2",
+      "type": "library",
+      "name": "lib-c",
+      "version": "v1.4.2",
+      "purl": "pkg:golang/github.com/example/lib-c@v1.4.2"
+    },
+    {
+      "bom-ref": "lib-unknown",
+      "type": "library",
+      "name": "lib-unknown",
+      "version": "0.1.0"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:oci/web@sha256:ac9da485d6eac8c161117ecd4155cf50bdb330c8241234d669aef1edba265a06",
+      "dependsOn": [
+        "pkg:maven/org.example/lib-a@1.2.3"
+      ]
+    },
+    {
+      "ref": "pkg:maven/org.example/lib-a@1.2.3",
+      "dependsOn": [
+        "pkg:maven/org.example/lib-b@2.0.0"
+      ]
+    },
+    {
+      "ref": "pkg:maven/org.example/lib-b@2.0.0",
+      "dependsOn": [
+        "pkg:golang/github.com/example/lib-c@v1.4.2"
+      ]
+    },
+    {
+      "ref": "pkg:golang/github.com/example/lib-c@v1.4.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "lib-unknown",
+      "dependsOn": []
+    }
+  ]
+}
