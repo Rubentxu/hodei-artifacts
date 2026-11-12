@@ -23,6 +23,7 @@ pub mod affected;
 pub mod case;
 pub mod ingestion;
 pub mod osv;
+pub mod ports;
 pub mod projection;
 pub mod traversal;
 pub mod version;
@@ -39,6 +40,7 @@ pub use osv::{
     OSV_SCHEMA_VERSION, OsvAdvisory, OsvAffected, OsvError, OsvEvent, OsvPackage, OsvRange,
     OsvReference, read_osv,
 };
+pub use ports::{RiskRelationError, RiskRelationSource};
 pub use projection::{component_hrn, project, vulnerability_hrn};
 pub use traversal::{AffectedPath, Edge, affected_paths, blast_radius};
 pub use version::{Match, match_version};

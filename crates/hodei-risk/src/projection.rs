@@ -39,6 +39,15 @@ pub fn component_hrn(tenant: &Hrn, name: &str) -> Hrn {
     )
 }
 
+/// The identity of a piece of evidence in the graph.
+///
+/// It is the same identity the rest of Hodei uses, so that a relation
+/// that the risk writes and a relation that the projection writes point
+/// at the same node.
+pub fn evidence_hrn(tenant: &Hrn, id: &hodei_evidence::EvidenceId) -> Hrn {
+    hodei_evidence::application::projector::evidence_hrn(tenant, id)
+}
+
 /// The identity of a vulnerability in the graph.
 pub fn vulnerability_hrn(tenant: &Hrn, advisory_id: &str) -> Hrn {
     Hrn::with_region(
@@ -76,8 +85,39 @@ pub fn project(
 ) -> GraphChangeSet {
     let mut changes = GraphChangeSet::empty();
 
+    // The piece of evidence is a node of the graph, and every relation
+    // that comes from it says which one supports it. The graph does not
+    // accept a relation whose evidence is not there, and it is right.
+    changes = changes.with_node(GraphNode::new(
+        evidence_hrn(tenant, &evidence_id),
+        tenant.clone(),
+        NodeKind::Evidence,
+        observed_at,
+    ));
+
+    // The artefact that owns the inventory is a node of the graph: the
+    // relations that start at it are the ones that say what it holds.
+    changes = changes.with_node(GraphNode::new(
+        artifact.clone(),
+        tenant.clone(),
+        NodeKind::Artifact,
+        observed_at,
+    ));
+
     // The components of the inventory.
     for component in &inventory.components {
+        // The subject is the artefact itself, and it is not a component of
+        // itself. The document lists it among the components so that its
+        // dependencies have something to point at, and the projection
+        // reads that as what it is.
+        if inventory
+            .subject
+            .as_ref()
+            .is_some_and(|subject| subject.reference == component.reference)
+        {
+            continue;
+        }
+
         let id = component_hrn(tenant, &component.name);
         changes = changes.with_node(GraphNode::new(
             id.clone(),
@@ -255,8 +295,8 @@ mod tests {
 
         assert_eq!(
             changes.nodes.len(),
-            4,
-            "the subject, two components and the vulnerability"
+            5,
+            "the evidence, the subject, two components and the vulnerability"
         );
         assert_eq!(
             changes.relations.len(),

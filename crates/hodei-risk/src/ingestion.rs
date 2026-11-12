@@ -27,7 +27,11 @@ pub fn matches_package(package: &str, component_name: &str, purl: Option<&str>) 
     if package == component_name {
         return true;
     }
-    // The PURL of the advisory names the package inside it.
+    // The PURL of the advisory names the package inside it, and that name
+    // is compared with the name of the COMPONENT. Comparing it with the
+    // name of the package would say that every component matches an
+    // advisory that carries a PURL, because the PURL always names the
+    // package the advisory is about.
     let Some(purl) = purl else {
         return false;
     };
@@ -40,7 +44,8 @@ pub fn matches_package(package: &str, component_name: &str, purl: Option<&str>) 
         .map(|(name, _)| name)
         .unwrap_or(without_type);
     let name = name.split_once('?').map(|(name, _)| name).unwrap_or(name);
-    name.replace('/', ":") == package || name == package
+
+    name == component_name || name.replace('/', ":") == component_name
 }
 
 /// The component of an inventory, with the version the advisory compares.

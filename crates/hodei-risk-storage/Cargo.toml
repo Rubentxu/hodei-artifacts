@@ -1,0 +1,20 @@
+[package]
+name = "hodei-risk-storage"
+version = "0.1.0"
+edition = "2024"
+description = "El almacen de las relaciones del grafo de riesgo de Hodei."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+hodei-evidence = { path = "../hodei-evidence" }
+hodei-evidence-storage = { path = "../hodei-evidence-storage" }
+hodei-risk = { path = "../hodei-risk" }
+kernel = { path = "../kernel" }
+surrealdb = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }

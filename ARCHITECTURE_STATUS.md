@@ -757,6 +757,48 @@ Y la remediacion verificada **necesita la evidencia del despliegue**: un
 problema cerrado sin la evidencia de que el artefacto afectado dejo de
 correr es una esperanza, y una esperanza no cierra un caso.
 
+## 10-septies. El grafo de riesgo en el grafo de confianza (M4)
+
+### Los tipos del grafo, leidos desde el dominio
+
+El grafo de riesgo **no es un grafo aparte**: es el grafo de confianza con
+tres tipos de nodo y tres tipos de arista mas.
+
+```text
+artefacto  --contains-->   componente
+componente --depends_on-> componente
+componente --affected_by-> vulnerabilidad
+```
+
+Y hay una decision de diseño que se pago cara: **la lectura de los tipos
+vive en el dominio**, no en el almacen. El almacen tenia su propia tabla
+de tipos, y cuando se anadio un tipo nuevo --el componente-- el almacen
+seguia leyendolo como "desconocido" y lo tiraba. Un tipo que se anade al
+dominio tiene que leerse en todas partes, y por eso la lectura es una
+funcion del dominio y no una copia.
+
+### El sujeto no es un componente de si mismo
+
+El documento de inventario lista al sujeto entre sus componentes, porque
+sus dependencias tienen que apuntar a algo. La proyeccion lo lee como lo
+que es: el sujeto es el artefacto, y no un componente del artefacto.
+
+### Las aristas del sujeto no se escriben dos veces
+
+Las aristas que arrancan en el sujeto son las que el artefacto sostiene
+sus componentes con. Escribirlas tambien como dependencias contaria la
+dependencia **dos veces** en el recorrido, y la profundidad --la distancia
+que dice si la dependencia es directa o transitiva-- dejaria de ser la
+distancia.
+
+### La proyeccion es una funcion pura
+
+No consulta nada y no decide: dice lo que el grafo deberia tener, y el
+grafo se escribe entero o no se escribe. Y toda relacion dice la evidencia
+que la sostiene, de modo que el grafo no acepta una relacion cuya evidencia
+no esta --que es lo correcto, porque una relacion sin evidencia es una
+afirmacion.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.

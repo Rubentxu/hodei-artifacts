@@ -279,15 +279,7 @@ fn relation_row(relation: &GraphRelation) -> RelationRow {
 fn node_of(row: &NodeRow) -> Option<GraphNode> {
     let id = Hrn::from_string(&row.node_id)?;
     let tenant = Hrn::from_string(&row.tenant_hrn)?;
-    let kind = match row.kind.as_str() {
-        "repository" => NodeKind::Repository,
-        "source_revision" => NodeKind::SourceRevision,
-        "build" => NodeKind::Build,
-        "artifact" => NodeKind::Artifact,
-        "deployment" => NodeKind::Deployment,
-        "evidence" => NodeKind::Evidence,
-        _ => return None,
-    };
+    let kind = NodeKind::parse(&row.kind)?;
     let attributes = match row.attributes.as_object() {
         Some(attributes) => attributes.clone(),
         None => serde_json::Map::new(),
@@ -307,15 +299,7 @@ fn relation_of(row: &RelationRow) -> Option<GraphRelation> {
     let from = Hrn::from_string(&row.from)?;
     let to = Hrn::from_string(&row.to)?;
     let tenant = Hrn::from_string(&row.tenant_hrn)?;
-    let relation = match row.relation_type.as_str() {
-        "has_revision" => RelationType::HasRevision,
-        "triggered" => RelationType::Triggered,
-        "used_source" => RelationType::UsedSource,
-        "produced" => RelationType::Produced,
-        "deployed_as" => RelationType::DeployedAs,
-        "described_by" => RelationType::DescribedBy,
-        _ => return None,
-    };
+    let relation = RelationType::parse(&row.relation_type)?;
     Some(GraphRelation {
         relation,
         from,

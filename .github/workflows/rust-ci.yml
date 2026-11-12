@@ -72,6 +72,7 @@ jobs:
             --test promotion_contract \
             --test m3_uat \
             --test risk_contract \
+            --test m4_uat \
             --test capsule_read \
             --test ci_suites \
             --test evidence_contract \

@@ -53,6 +53,26 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
+    /// The kind of a name, when it is one this version knows.
+    ///
+    /// The reading lives here and not in the store, so that a kind that is
+    /// added to the domain is read everywhere and not only where somebody
+    /// remembered to add it. A kind that is not known returns nothing, and
+    /// the store does not pretend that an unknown kind is one it knows.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "repository" => Some(Self::Repository),
+            "source_revision" => Some(Self::SourceRevision),
+            "build" => Some(Self::Build),
+            "artifact" => Some(Self::Artifact),
+            "deployment" => Some(Self::Deployment),
+            "evidence" => Some(Self::Evidence),
+            "component" => Some(Self::Component),
+            "vulnerability" => Some(Self::Vulnerability),
+            _ => None,
+        }
+    }
+
     /// The name of the kind, as it is written.
     pub fn as_str(&self) -> &str {
         match self {
@@ -108,6 +128,26 @@ pub enum RelationType {
 }
 
 impl RelationType {
+    /// The type of a name, when it is one this version knows.
+    ///
+    /// The reading lives here for the same reason that the reading of the
+    /// kinds lives here: a type that is added to the domain has to be read
+    /// everywhere, and not only en el sitio que alguien recordo.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "has_revision" => Some(Self::HasRevision),
+            "triggered" => Some(Self::Triggered),
+            "used_source" => Some(Self::UsedSource),
+            "produced" => Some(Self::Produced),
+            "deployed_as" => Some(Self::DeployedAs),
+            "described_by" => Some(Self::DescribedBy),
+            "contains" => Some(Self::Contains),
+            "depends_on" => Some(Self::DependsOn),
+            "affected_by" => Some(Self::AffectedBy),
+            _ => None,
+        }
+    }
+
     /// The name of the type, as it is written.
     pub fn as_str(&self) -> &str {
         match self {
