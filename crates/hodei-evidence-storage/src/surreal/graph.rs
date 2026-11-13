@@ -119,9 +119,45 @@ pub struct RelationRow {
     pub from: String,
     /// The node the relation ends at.
     pub to: String,
+    /// The evidence that supports the relation. It is the COMPAT field:
+    /// the provenance completa vive en los apoyos, y esta dice el ultimo
+    /// que se dijo, que es una de las procedencias validas de siempre.
+    pub evidence_id: String,
+    /// asserted | unknown. Una fila del formato ANTERIOR no lo lleva, y
+    /// se lee como una relacion afirmada: los datos ya persistidos no se
+    /// rompen.
+    #[serde(default = "default_relation_status")]
+    pub status: String,
+    /// When the relation was observed.
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// The status a relation row carries when nothing else was said.
+fn default_relation_status() -> String {
+    "asserted".to_string()
+}
+
+/// The row of ONE support of ONE relation.
+///
+/// The support is the record of what a piece of evidence says about a
+/// relation: su identidad es la relacion Y la evidencia, asi que decir
+/// el mismo apoyo dos veces es el mismo apoyo, y dos evidencias sobre la
+/// misma relacion son dos apoyos de UNA relacion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupportRow {
+    /// The identity of the relation the support belongs to.
+    pub relation_id: String,
+    /// The account the relation belongs to.
+    pub tenant_hrn: String,
+    /// The type of the relation.
+    pub relation_type: String,
+    /// The node the relation starts at.
+    pub from: String,
+    /// The node the relation ends at.
+    pub to: String,
     /// The evidence that supports the relation.
     pub evidence_id: String,
-    /// When the relation was observed.
+    /// When the support was observed.
     pub observed_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -224,6 +260,11 @@ impl<C: Connection> SurrealGraphStore<C> {
         format!("{}_relation", self.projection)
     }
 
+    /// The table of the supports.
+    fn support_table(&self) -> String {
+        format!("{}_support", self.projection)
+    }
+
     /// The name of a table, checked before it is written into a statement.
     ///
     /// The statements that work on a whole table need its name written out:
@@ -257,10 +298,50 @@ impl<C: Connection> SurrealGraphStore<C> {
     fn relation_id(&self, identity: &str) -> surrealdb::sql::Thing {
         surrealdb::sql::Thing::from((self.relation_table(), escape_id(identity)))
     }
+
+    /// The identifier of the record of a support: the relation AND the
+    /// evidence, so the same support said twice is the same record, and
+    /// two evidences on the same relation are two records.
+    fn support_id(&self, identity: &str, evidence: &str) -> surrealdb::sql::Thing {
+        surrealdb::sql::Thing::from((
+            self.support_table(),
+            escape_id(format!("{identity}|{evidence}").as_str()),
+        ))
+    }
+
+    /// The supports of one relation, oldest first: la procedencia de la
+    /// relacion, dicho con las evidencias que la afirman HOY.
+    pub async fn supports_of(
+        &self,
+        identity: &str,
+    ) -> Result<Vec<(hodei_evidence::EvidenceId, chrono::DateTime<chrono::Utc>)>, GraphError> {
+        let table = Self::checked_table(&self.support_table())?;
+        let mut response = self
+            .db
+            .query("SELECT * FROM type::table($table) WHERE relation_id = $identity")
+            .bind(("table", table))
+            .bind(("identity", identity.to_string()))
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        let rows: Vec<SupportRow> = response
+            .take(0)
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        let mut supports: Vec<(hodei_evidence::EvidenceId, chrono::DateTime<chrono::Utc>)> =
+            rows.into_iter()
+                .map(|row| {
+                    (
+                        hodei_evidence::EvidenceId::new(row.evidence_id),
+                        row.observed_at,
+                    )
+                })
+                .collect();
+        supports.sort_by(|left, right| left.1.cmp(&right.1));
+        Ok(supports)
+    }
 }
 
 /// Escapes a part of a record identifier.
-fn escape_id(value: &str) -> String {
+pub fn escape_id(value: &str) -> String {
     value.replace('~', "~0").replace(':', "~1")
 }
 
@@ -278,6 +359,20 @@ fn node_row(node: &GraphNode) -> NodeRow {
 /// The row of a relation.
 fn relation_row(relation: &GraphRelation) -> RelationRow {
     RelationRow {
+        relation_id: relation.identity(),
+        tenant_hrn: relation.tenant_hrn.to_string(),
+        relation_type: relation.relation.as_str().to_string(),
+        from: relation.from.to_string(),
+        to: relation.to.to_string(),
+        evidence_id: relation.evidence_id.as_str().to_string(),
+        status: "asserted".to_string(),
+        observed_at: relation.observed_at,
+    }
+}
+
+/// The row of the support that a relation carries.
+fn support_row(relation: &GraphRelation) -> SupportRow {
+    SupportRow {
         relation_id: relation.identity(),
         tenant_hrn: relation.tenant_hrn.to_string(),
         relation_type: relation.relation.as_str().to_string(),
@@ -355,19 +450,41 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
             }
         }
 
-        if changes.nodes.is_empty() && changes.relations.is_empty() {
+        if changes.is_empty() {
             return Ok(());
         }
 
         // The unit: BEGIN, every upsert, COMMIT. The transaction is one
         // query, so the atomicity belongs to the server and does not
         // bleed into whatever else runs over the same connection.
+        // The withdrawal recomputes the status of the relation from the
+        // supports that are LEFT: con apoyos sigue siendo una afirmacion,
+        // y sin ellos lo que queda es UNKNOWN, nunca falsa seguridad.
+        // Son dos UPDATE con WHERE en lugar de un IF: el SQL del grafo no
+        // lleva condicionales, y dos sentencias acotadas dicen lo mismo
+        // sin una gramatica de mas.
         let mut sql = String::from("BEGIN TRANSACTION;\n");
         for index in 0..changes.nodes.len() {
             sql.push_str(&format!("UPSERT $nid{index} CONTENT $n{index};\n"));
         }
         for index in 0..changes.relations.len() {
             sql.push_str(&format!("UPSERT $rid{index} CONTENT $r{index};\n"));
+            sql.push_str(&format!("UPSERT $sid{index} CONTENT $s{index};\n"));
+        }
+        for index in 0..changes.withdrawals.len() {
+            sql.push_str(&format!("DELETE $wid{index};\n"));
+            sql.push_str(&format!(
+                "LET $wleft{index} = (SELECT id FROM type::table($wtable{index}) \
+                 WHERE relation_id = $wrelid{index} AND evidence_id != $wev{index} LIMIT 1);\n"
+            ));
+            sql.push_str(&format!(
+                "UPDATE $wrid{index} SET status = 'unknown' \
+                 WHERE array::len($wleft{index}) == 0;\n"
+            ));
+            sql.push_str(&format!(
+                "UPDATE $wrid{index} SET status = 'asserted' \
+                 WHERE array::len($wleft{index}) > 0;\n"
+            ));
         }
         sql.push_str("COMMIT;\n");
 
@@ -385,7 +502,30 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
             for (index, relation) in changes.relations.iter().enumerate() {
                 statement = statement
                     .bind((format!("rid{index}"), self.relation_id(&relation.identity())))
-                    .bind((format!("r{index}"), relation_row(relation)));
+                    .bind((format!("r{index}"), relation_row(relation)))
+                    .bind((
+                        format!("sid{index}"),
+                        self.support_id(&relation.identity(), relation.evidence_id.as_str()),
+                    ))
+                    .bind((format!("s{index}"), support_row(relation)));
+            }
+            let support_table = Self::checked_table(&self.support_table())?;
+            for (index, withdrawal) in changes.withdrawals.iter().enumerate() {
+                statement = statement
+                    .bind((
+                        format!("wid{index}"),
+                        self.support_id(&withdrawal.identity(), withdrawal.evidence_id.as_str()),
+                    ))
+                    .bind((format!("wtable{index}"), support_table.clone()))
+                    .bind((
+                        format!("wrelid{index}"),
+                        withdrawal.identity(),
+                    ))
+                    .bind((
+                        format!("wev{index}"),
+                        withdrawal.evidence_id.as_str().to_string(),
+                    ))
+                    .bind((format!("wrid{index}"), self.relation_id(&withdrawal.identity())));
             }
 
             let written = statement
@@ -415,7 +555,7 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
     /// reading the whole table for every question. The measure of the
     /// scale model showed what that costs.
     async fn clear(&self) -> Result<(), GraphError> {
-        for table in [self.node_table(), self.relation_table()] {
+        for table in [self.node_table(), self.relation_table(), self.support_table()] {
             let table = Self::checked_table(&table)?;
             self.db
                 .query(format!("DELETE {table}"))
@@ -625,8 +765,12 @@ impl<C: Connection> SurrealGraphStore<C> {
         field: &str,
         value: &str,
     ) -> Result<Vec<GraphRelation>, GraphError> {
+        // Una relacion sin apoyos ya no es una afirmacion: lo que queda
+        // es UNKNOWN, y las preguntas del grafo no la usan. Las filas del
+        // formato anterior no llevan status, y siguen siendo afirmadas.
         let query = format!(
-            "SELECT * FROM type::table($table) WHERE tenant_hrn = $tenant AND {field} = $value"
+            "SELECT * FROM type::table($table) WHERE tenant_hrn = $tenant AND {field} = $value \
+             AND (status IS NONE OR status = 'asserted')"
         );
         let mut response = self
             .db

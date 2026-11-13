@@ -280,6 +280,56 @@ pub struct RelationClaim {
     pub to_kind: NodeKind,
 }
 
+/// The withdrawal of ONE support of ONE relation.
+///
+/// A relation is asserted by the evidence that supports it, and one
+/// evidence can be withdrawn without touching the others: una evidencia
+/// supersedida retira SU apoyo, y los apoyos independientes se quedan.
+/// The withdrawal names the relation by its identity --the type and its
+/// two ends-- and the evidence whose support goes away.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphRelationWithdrawal {
+    /// The type of the relation whose support is withdrawn.
+    pub relation: RelationType,
+    /// The node the relation starts at.
+    pub from: Hrn,
+    /// The node the relation ends at.
+    pub to: Hrn,
+    /// The account the relation belongs to.
+    pub tenant_hrn: Hrn,
+    /// The evidence whose support is withdrawn.
+    pub evidence_id: EvidenceId,
+    /// When the withdrawal was observed.
+    pub observed_at: DateTime<Utc>,
+}
+
+impl GraphRelationWithdrawal {
+    /// A withdrawal of one evidence's support on one relation.
+    pub fn new(
+        relation: RelationType,
+        from: Hrn,
+        to: Hrn,
+        tenant_hrn: Hrn,
+        evidence_id: EvidenceId,
+        observed_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            relation,
+            from,
+            to,
+            tenant_hrn,
+            evidence_id,
+            observed_at,
+        }
+    }
+
+    /// The identity of the relation whose support is withdrawn: the same
+    /// identity the relation itself carries.
+    pub fn identity(&self) -> String {
+        format!("{}|{}|{}", self.relation.as_str(), self.from, self.to)
+    }
+}
+
 /// The changes that the projector says the graph needs.
 ///
 /// A change set is the only way the graph changes. It is written at once or
@@ -292,6 +342,10 @@ pub struct GraphChangeSet {
     /// The relations that have to be in the graph.
     #[serde(default)]
     pub relations: Vec<GraphRelation>,
+    /// The supports that have to go away: what a superseded evidence
+    /// withdraws, one support at a time, without touching the others.
+    #[serde(default)]
+    pub withdrawals: Vec<GraphRelationWithdrawal>,
 }
 
 impl GraphChangeSet {
@@ -302,7 +356,7 @@ impl GraphChangeSet {
 
     /// Whether the change set would change nothing.
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty() && self.relations.is_empty()
+        self.nodes.is_empty() && self.relations.is_empty() && self.withdrawals.is_empty()
     }
 
     /// The change set, with a node.
@@ -314,6 +368,12 @@ impl GraphChangeSet {
     /// The change set, with a relation.
     pub fn with_relation(mut self, relation: GraphRelation) -> Self {
         self.relations.push(relation);
+        self
+    }
+
+    /// The change set, with a support withdrawal.
+    pub fn with_withdrawal(mut self, withdrawal: GraphRelationWithdrawal) -> Self {
+        self.withdrawals.push(withdrawal);
         self
     }
 

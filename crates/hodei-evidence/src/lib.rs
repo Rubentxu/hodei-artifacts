@@ -52,7 +52,8 @@ pub use domain::evidence::{
     EvidenceVerification, Normalization, Producer, SourceRef, VerificationStatus,
 };
 pub use domain::graph::{
-    GraphChangeSet, GraphNode, GraphRelation, NodeKind, RelationClaim, RelationType,
+    GraphChangeSet, GraphNode, GraphRelation, GraphRelationWithdrawal, NodeKind, RelationClaim,
+    RelationType,
 };
 pub use domain::idempotency::{IdempotencyKey, Redelivery};
 pub use domain::ingestion::{IngestionEnvelope, IngestionOutcome, RejectionReason};

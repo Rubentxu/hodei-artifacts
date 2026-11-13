@@ -11,7 +11,7 @@
 //! and not a change, and the projector says so by projecting nothing.
 
 use crate::domain::event::{EventEnvelope, EventType, EvidencePayload};
-use crate::domain::graph::{GraphChangeSet, GraphNode, GraphRelation};
+use crate::domain::graph::{GraphChangeSet, GraphNode, GraphRelation, GraphRelationWithdrawal};
 use crate::ports::graph::GraphProjector;
 
 /// The identity of a piece of evidence, as a node of the graph.
@@ -58,6 +58,29 @@ impl GraphProjector for EvidenceGraphProjector {
         if !event.event_type().mutates_graph() {
             return Ok(changes);
         }
+        // A superseded evidence WITHDRAWS its support: una revision dice
+        // que el apoyo anterior se va, uno, y los demas se quedan. The
+        // withdrawal needs to know WHICH support it withdraws: without
+        // the claim and without the superseded evidence, the event says
+        // nothing about the graph.
+        if matches!(event.event_type(), EventType::EvidenceSuperseded) {
+            let Ok(payload) = event.payload_as::<EvidencePayload>() else {
+                return Ok(changes);
+            };
+            let (Some(superseded), Some(claim)) = (payload.supersedes.clone(), payload.relation_claim.clone())
+            else {
+                return Ok(changes);
+            };
+            return Ok(changes.with_withdrawal(GraphRelationWithdrawal::new(
+                claim.relation,
+                claim.from,
+                claim.to,
+                payload.tenant_hrn.clone(),
+                superseded,
+                event.occurred_at(),
+            )));
+        }
+
         if !matches!(event.event_type(), EventType::EvidenceAccepted) {
             return Ok(changes);
         }
