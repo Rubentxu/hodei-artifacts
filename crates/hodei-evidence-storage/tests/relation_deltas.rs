@@ -20,7 +20,7 @@ use hodei_evidence::{EvidenceId, InMemoryRelationDeltaLedger};
 use hodei_evidence_storage::surreal::delta::SurrealRelationDeltaLedger;
 use hodei_evidence_storage::surreal::graph::SurrealGraphStore;
 use kernel::Hrn;
-use surrealdb::engine::local::{Db, RocksDb};
+use surrealdb::engine::local::RocksDb;
 use surrealdb::Surreal;
 
 fn tenant_a() -> Hrn {

@@ -66,6 +66,8 @@ jobs:
           started=$(date +%s)
           cargo test --workspace --lib --bins \
             --test authorization_isolation \
+            --test outbox_flow \
+            --test planned_isolation \
             --test architecture_fitness \
             --test capsule_contract \
             --test trust_policy_contract \
@@ -146,15 +148,21 @@ jobs:
           started=$(date +%s)
           cargo test --workspace \
             --test admin_surface \
+            --test atomic_projection \
             --test audit_events \
             --test http_contract \
             --test iam_account_index \
             --test iam_audit \
             --test ingestion_contract \
             --test ledger_contract \
+            --test planned_migration \
+            --test reactions_isolation \
+            --test relation_deltas \
             --test iam_backfill \
             --test iam_policy_timestamps \
             --test iam_scope \
+            --test impact_view \
+            --test intent_store \
             --test integration_create_group_comprehensive_test \
             --test integration_create_policy_new_test \
             --test integration_create_user_comprehensive_test \
@@ -163,7 +171,8 @@ jobs:
             --test repository_create \
             --test repository_durable \
             --test repository_read \
-            --test schema_persistence || status=$?
+            --test schema_persistence \
+            --test support_reconciliation || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
           echo "### Suite integration (database): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -202,6 +211,7 @@ jobs:
           cargo test --workspace \
             --test binary_contract \
             --test bootstrap_integration \
+            --test crash_recovery \
             --test distribution_contract \
             --test production_auth \
             --test repository_restart_contract || status=$?

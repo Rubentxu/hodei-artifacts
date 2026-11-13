@@ -21,7 +21,7 @@ use hodei_reactive::reactions::{
 };
 use hodei_reactive::runtime::{ExecutionStore, ReactiveRuntime};
 use hodei_risk_storage::reactions::{SurrealBlastRadius, SurrealSecurityCaseStore};
-use hodei_trust_policy::ports::{DecisionStore, PolicyLoader};
+use hodei_trust_policy::ports::DecisionStore;
 use hodei_trust_policy::promotion::PromotionTarget;
 use hodei_trust_policy::service::PromotionService;
 use hodei_trust_policy::{PolicyRegistry, Requirement, RequirementKind, TrustPolicy};

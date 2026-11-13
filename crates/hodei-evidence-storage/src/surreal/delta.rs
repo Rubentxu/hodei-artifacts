@@ -219,7 +219,7 @@ impl<C: Connection> RelationDeltaLedger for SurrealRelationDeltaLedger<C> {
             .map_err(|error| error.to_string())?
             .take(0)
             .map_err(|error| error.to_string())?;
-        rows.sort_by(|left, right| left.seq.cmp(&right.seq));
+        rows.sort_by_key(|row| row.seq);
         let wanted: Vec<(u64, RelationDelta)> = rows
             .iter()
             .filter_map(|row| delta_of(row).map(|delta| (row.seq, delta)))
