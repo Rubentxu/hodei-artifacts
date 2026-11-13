@@ -159,3 +159,125 @@ fn p4_a_relation_is_identified_by_its_type_and_its_ends() {
         "the identity of a relation is its type and its two ends"
     );
 }
+
+/// The event of a superseded piece of evidence: the NEW evidence says
+/// which one it supersedes, and claims the SAME relation with its own
+/// facts.
+fn superseded_event() -> EventEnvelope {
+    let claim = RelationClaim {
+        relation: RelationType::Produced,
+        from: build(),
+        to: artifact(),
+        from_kind: NodeKind::Build,
+        to_kind: NodeKind::Artifact,
+    };
+    let payload = EvidencePayload {
+        evidence_id: EvidenceId::new("evd-2"),
+        tenant_hrn: account(),
+        content_digest: "sha256:bb".to_string(),
+        supersedes: Some(EvidenceId::new("evd-1")),
+        relation_claim: Some(claim),
+    };
+
+    EventEnvelope::builder(
+        EventId::new("evt-2"),
+        account(),
+        EventType::EvidenceSuperseded,
+    )
+    .stream("tenant-acme", 1)
+    .occurred_at(moment())
+    .recorded_at(moment())
+    .typed_payload(payload)
+    .expect("the payload serializes")
+    .build()
+}
+
+/// P5 A superseded event projects the WITHDRAWAL of the support the
+/// superseded evidence had on the claimed relation, and it projects
+/// NOTHING ELSE: the new evidence's own support was already said by its
+/// acceptance.
+#[test]
+fn p5_a_superseded_event_withdraws_the_support_of_the_superseded_evidence() {
+    let projector = EvidenceGraphProjector::new();
+    let changes = projector
+        .project(&superseded_event())
+        .expect("the event projects");
+
+    assert_eq!(
+        changes.relations.len(),
+        0,
+        "the superseded event does not re-assert anything: {:?}",
+        changes.relations
+    );
+    assert_eq!(
+        changes.withdrawals.len(),
+        1,
+        "the superseded event withdraws one support: {:?}",
+        changes.withdrawals
+    );
+    let withdrawal = &changes.withdrawals[0];
+    assert_eq!(withdrawal.evidence_id, EvidenceId::new("evd-1"),
+        "the support withdrawn is the SUPERSEDED evidence's, not the new one's");
+    assert_eq!(withdrawal.relation, RelationType::Produced);
+    assert_eq!(withdrawal.from, build());
+    assert_eq!(withdrawal.to, artifact());
+    assert_eq!(withdrawal.tenant_hrn, account());
+}
+
+/// P6 A superseded event without a claim or without the evidence it
+/// supersedes says nothing about the graph: no withdrawal can be said
+/// without knowing WHICH support it withdraws.
+#[test]
+fn p6_a_superseded_event_without_a_claim_projects_nothing() {
+    let projector = EvidenceGraphProjector::new();
+
+    // Sin claim: no se sabe que apoyo se retira.
+    let no_claim = EvidencePayload {
+        evidence_id: EvidenceId::new("evd-2"),
+        tenant_hrn: account(),
+        content_digest: "sha256:bb".to_string(),
+        supersedes: Some(EvidenceId::new("evd-1")),
+        relation_claim: None,
+    };
+    let event = EventEnvelope::builder(
+        EventId::new("evt-3"),
+        account(),
+        EventType::EvidenceSuperseded,
+    )
+    .typed_payload(no_claim)
+    .expect("the payload serializes")
+    .build();
+    let changes = projector.project(&event).expect("the event projects");
+    assert!(
+        changes.is_empty(),
+        "without a claim there is no withdrawal: {changes:?}"
+    );
+
+    // Sin supersedes: no hay apoyo anterior que retirar.
+    let no_supersedes = EvidencePayload {
+        evidence_id: EvidenceId::new("evd-2"),
+        tenant_hrn: account(),
+        content_digest: "sha256:bb".to_string(),
+        supersedes: None,
+        relation_claim: Some(RelationClaim {
+            relation: RelationType::Produced,
+            from: build(),
+            to: artifact(),
+            from_kind: NodeKind::Build,
+            to_kind: NodeKind::Artifact,
+        }),
+    };
+    let event = EventEnvelope::builder(
+        EventId::new("evt-4"),
+        account(),
+        EventType::EvidenceSuperseded,
+    )
+    .typed_payload(no_supersedes)
+    .expect("the payload serializes")
+    .build();
+    let changes = projector.project(&event).expect("the event projects");
+    assert!(
+        changes.is_empty(),
+        "without a superseded evidence there is no withdrawal: {changes:?}"
+    );
+}

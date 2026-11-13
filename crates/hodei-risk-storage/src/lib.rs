@@ -234,7 +234,8 @@ pub async fn relations_from_many<C: Connection>(
         .db()
         .query(
             "SELECT * FROM type::table($table) \
-             WHERE tenant_hrn = $tenant AND relation_type = $relation AND from IN $ids",
+             WHERE tenant_hrn = $tenant AND relation_type = $relation AND from IN $ids \
+             AND (status IS NONE OR status = 'asserted')",
         )
         .bind(("table", graph.relation_table_name()))
         .bind(("tenant", tenant.to_string()))
@@ -279,7 +280,8 @@ pub async fn relations_to_many<C: Connection>(
         .db()
         .query(
             "SELECT * FROM type::table($table) \
-             WHERE tenant_hrn = $tenant AND relation_type = $relation AND to IN $ids",
+             WHERE tenant_hrn = $tenant AND relation_type = $relation AND to IN $ids \
+             AND (status IS NONE OR status = 'asserted')",
         )
         .bind(("table", graph.relation_table_name()))
         .bind(("tenant", tenant.to_string()))
