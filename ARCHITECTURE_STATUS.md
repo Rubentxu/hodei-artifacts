@@ -858,85 +858,75 @@ respuestas, y las dos se guardan. La mas nueva decide el estado, y el
 estado **dice que analizador y que version** lo produjo, porque una
 alcanzabilidad que no nombra su version no se puede reproducir ni discutir.
 
-## 10-nonies. El SPIKE-003: la pregunta sigue abierta (M5)
+## 10-nonies. El SPIKE-003: la proyeccion analitica NO se anade (M5)
 
-### QUE PASO, Y POR QUE LA MEDICION SE CORRIGIO
+### Que se midio, y con que datos
 
-La primera medicion del SPIKE-003 decia que el radio de impacto respondia
-en un p95 de **1 ms**, y la conclusion era que un segundo almacen no hacia
-falta. **Esa medicion era de un recorrido VACIO**: la consulta del recorrido
-llegaba con HRN donde las columnas del almacen tienen TEXTO, no encontraba
-ninguna fila y la lectura fallaba al deserializar. Una consulta que no
-encuentra nada es una consulta que mide el vacio.
+La comparacion es del **mismo dataset** y del **mismo recorrido**: el
+binario de la medicion construye el grafo en SurrealDB, lo mide y lo
+exporta; el prototipo importa ese mismo dataset en LadybugDB y hace la
+misma pregunta.
 
-El defecto se encontro al escribir la UAT de M6, que usa el radio de
-impacto de verdad: el recorrido no encontraba ni el artefacto. Corregido, el
-recorrido alcanza 522 sujetos y la medicion dice otra cosa.
+La medicion del grafo transaccional, a la carga de referencia del SPIKE-012
+(107 148 piezas, 331 664 nodos, 211 373 relaciones):
 
-### La medicion corregida, con la misma carga de referencia
+| | radio p50 | radio p95 | radio max | linaje p95 |
+|---|---|---|---|---|
+| el grafo transaccional | 579 ms | **650 ms** | 795 ms | 4 ms |
+| la proyeccion analitica (escala pequena) | 18 ms | 23 ms | 31 ms | n/a |
+| el grafo transaccional (escala pequena) | 2 ms | 3 ms | 3 ms | 1 ms |
 
-`ScaleModel::of_size(2, 10)`: **107 148 piezas de evidencia**, la misma
-carga del SPIKE-012. La admision tardo 206.4 s y la proyeccion 156.4 s.
+Y el coste de la proyeccion, que es la otra mitad de la pregunta:
 
-| | radio p50 | radio p95 | radio max | linaje p50 | linaje p95 |
-|---|---|---|---|---|---|
-| con los indices | 601 ms | **701 ms** | 747 ms | 3 ms | 3 ms |
-
-El objetivo --**p95 de 50 ms**-- estaba escrito antes de medir, con su
-razon: el linaje responde en un p95 de 3.29 ms y el radio de impacto camina
-varios saltos. **El objetivo no se alcanza por catorce veces.**
-
-### Por que, que esta medido
-
-El coste no es la forma de los datos ni la forma de la consulta: es **el
-numero de relaciones que hay que leer** y **el coste por relacion de este
-almacen**. Medido sobre 20 000 relaciones, leyendo 500:
-
-| La lectura | Cuanto |
+| | coste |
 |---|---|
-| ancha (6 columnas), con `IN` | 502 ms (~1.0 ms por fila) |
-| estrecha (1 columna), con `IN` | 454 ms (~0.9 ms por fila) |
-| estrecha, una consulta por fila | 1014 ms |
+| reconstruir el grafo transaccional | 656.6 s (11 min) |
+| importar el mismo dataset en LadybugDB | **> 55 min y 5 GB** |
 
-**SurrealDB sobre RocksDB devuelve cada fila a ~1 ms**, y ni el numero de
-columnas ni la forma de la consulta lo cambian. El recorrido del radio de
-impacto tiene que leer ~1044 relaciones (522 de contencion y 522 de
-despliegue) y por tanto no puede bajar de ~600 ms en este almacen.
+### La conclusion
 
-Y el linaje, que lee **pocas** relaciones, responde en 3 ms. La diferencia
-entre las dos consultas no es la forma de los datos: es **cuantas
-relaciones hay que leer**.
+**No se anade una proyeccion analitica secundaria.** Y ahora por un motivo
+bueno y no por una medicion del vacio:
 
-### Lo que esto dice del indice
+1. El grafo transaccional **no llega** al objetivo de 50 ms: responde en
+   650 ms. La diferencia esta medida: este almacen devuelve **cada fila a
+   ~1 ms** (502 ms con seis columnas, 454 ms con una, 1014 ms con una
+   consulta por fila) y el recorrido lee ~1044 relaciones.
+2. La proyeccion analitica, medida con el SDK de Rust, **no es mas rapida**:
+   23 ms contra 3 ms en el mismo recorrido a escala pequena, porque su API
+   pregunta de un nodo en un nodo y el grafo transaccional pregunta los
+   nodos de un nivel juntos.
+3. Y su **coste de proyeccion** dwarfs la pregunta que viene a resolver:
+   mas de 55 minutos y 5 GB a la escala de referencia, contra los 11
+   minutos de reconstruccion del almacen transaccional. Se pagarian 55
+   minutos de reconstruccion por cada vez que la verdad cambia para
+   ahorrar milisegundos en una consulta.
 
-El indice **si** importa: sin el, la misma lectura tarda 11.3 s en vez de
-0.5 s. Multiplica por veintidos. Lo que no hace es quitar el suelo, porque
-el suelo es el coste por fila.
+### Y la salida que queda
 
-### Las tres vias, y la que sigue abierta
+La forma de alcanzar el objetivo **dentro del mismo almacen**: una **vista
+materializada del impacto**, que la proyeccion escribe cuando llega una
+vulnerabilidad y que la consulta lee en **una** fila en vez de ~1044. Es
+la respuesta de CQRS, no necesita un segundo proceso ni una segunda
+verdad, y es el camino que queda por medir.
 
-1. **El grafo transaccional con sus indices**: 701 ms. No llega al
-   objetivo, y el motivo es medido y no es la forma de la consulta.
-2. **La proyeccion analitica** (LadybugDB): lee las mismas relaciones en
-   **columnas**. Mil filas en un motor columnar son milisegundos, no
-   milisegundos por fila. La mejora que se busca es real y ahora se puede
-   cuantificar por que.
-3. **La vista materializada del impacto**, DENTRO del mismo almacen: la
-   proyeccion escribe el radio de impacto cuando llega la vulnerabilidad, y
-   la consulta lee **una** fila en vez de 1044. Es la respuesta de CQRS, no
-   necesita un segundo proceso, y tiene su propia pregunta de consistencia.
+La decision esta escrita en `ADR-012-no-secondary-analytic-projection.md`.
 
-**La decision NO se toma todavia.** Tomarla sobre la medicion defectuosa
-seria el peor de los dos mundos: ni anadir un almacen sin medirlo, ni
-cerrar la pregunta con un numero que no era. El spike queda abierto con
-tres medidas pendientes: la mitad sin indices del recorrido corregido, el
-prototipo minimo de la proyeccion analitica sobre la misma carga, y la via
-de la vista materializada. Con los tres numeros, la decision es una cuenta.
+### Dos cosas que el prototipo dijo de la integracion
 
-Lo que si esta hecho y verificado: el recorrido **acotado** --que solo
-visita los nodos alcanzables y pregunta los nodos de un nivel **juntos**--,
-los adaptadores del radio de impacto y de los casos de seguridad, y la UAT
-de M6 que los usa sobre el grafo y las decisiones de verdad.
+1. **Los dos motores no conviven en el mismo binario**: la libreria
+   precompilada de LadybugDB trae su propio zstd y choca con el de
+   SurrealDB. Una proyeccion secundaria es un proceso aparte, y el
+   prototipo tiene que parecerse a lo que seria.
+2. **El motor analitico necesita OpenSSL a mano**: su cliente HTTP con TLS
+   viene compilado con TLS y el enlazador no lo resuelve solo.
+
+### Lo que quedo sin medir, y por que esta escrito
+
+La vista materializada del impacto **no esta medida todavia**: su coste de
+mantenimiento y el p95 que daria es lo que decide si el objetivo se
+alcanza sin un segundo proceso. Es el trabajo que sigue, y su medicion
+pertenece al grafo de riesgo (M4/M5).
 
 ## 10-decies. M6: el runtime de las reacciones (SPIKE-006)
 
