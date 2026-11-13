@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use kernel::Hrn;
 
 use crate::claim::{AIClaim, ClaimError, ClaimKind, InvestigationTrace, check_the_claim};
 use crate::guard::{ActionKind, CapabilityGuard, ProposedAction};
@@ -28,6 +29,18 @@ use crate::scope::{RetrievalScope, ScopeViolation, ScopedFact, check_the_scope};
 pub trait EvidenceRetriever: Send + Sync {
     /// El subgrafo del sujeto, dentro del alcance.
     async fn retrieve(&self, scope: &RetrievalScope) -> Result<Vec<ScopedFact>, String>;
+}
+
+/// De donde salen las afirmaciones de alcanzabilidad.
+///
+/// La alcanzabilidad es un hecho del grafo de codigo, y llega por su
+/// propio camino: no es evidencia del artefacto, es evidencia del simbolo.
+/// Por eso tiene su puerto, y por eso el investigador puede investigar un
+/// caso sin alcanzabilidad (y entonces no dice nada de ella).
+#[async_trait::async_trait]
+pub trait ReachabilityFacts: Send + Sync {
+    /// Los hechos de alcanzabilidad del sujeto.
+    async fn facts_of(&self, subject: &Hrn) -> Result<Vec<ScopedFact>, String>;
 }
 
 /// Por que la investigacion no se pudo hacer.
