@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::behavior::{Behavior, BehaviorError, Effect, GuardOutcome, Reaction};
 use crate::events::{Event, EventKind, PayloadPredicate, Subscription};
+use crate::intent::{Intent, IntentExecutor, Plan, PlanningBehavior, ReadScope, Receipt};
 
 /// The subject that a vulnerability reaches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,5 +314,336 @@ impl Behavior for ExceptionExpiryReaction {
                 serde_json::json!({"subject": subject, "decision": decision}),
             )],
         })
+    }
+}
+
+/// The planned reaction to a vulnerability that was accepted.
+///
+/// It is the SAME chain as the legacy [`VulnerabilityReaction`], cut at
+/// the seam: the planner READS the blast radius and SAYS intents, and it
+/// does not touch a single sink. The case and the decisions belong to
+/// the executor, which touches them after the intents are said and
+/// claimed. What the planner cannot say is the decision itself: una
+/// decision que todavia no se tomo no se dice, y un evento que inventa
+/// su valor no es un evento.
+///
+/// A vulnerability that touches nothing says nothing: el ruido es lo que
+/// hace que la gente deje de leer los informes.
+pub struct PlannedVulnerabilityReaction {
+    radius: Arc<dyn BlastRadiusSource>,
+}
+
+impl PlannedVulnerabilityReaction {
+    /// The planner with its read port.
+    pub fn new(radius: Arc<dyn BlastRadiusSource>) -> Self {
+        Self { radius }
+    }
+}
+
+#[async_trait]
+impl PlanningBehavior for PlannedVulnerabilityReaction {
+    fn name(&self) -> &str {
+        "vulnerability_impact"
+    }
+
+    fn subscription(&self) -> Subscription {
+        Subscription::to(EventKind::VulnerabilityAccepted).where_(PayloadPredicate::FieldExists {
+            field: "advisory".to_string(),
+        })
+    }
+
+    fn guard(&self, event: &Event) -> GuardOutcome {
+        let Some(_advisory) = event.payload.get("advisory").and_then(|v| v.as_str()) else {
+            return GuardOutcome::Skip("the event does not name a vulnerability".to_string());
+        };
+        let Some(_account) = event.payload.get("account").and_then(|v| v.as_str()) else {
+            return GuardOutcome::Skip("the event does not name an account".to_string());
+        };
+        GuardOutcome::Pass
+    }
+
+    async fn plan(&self, event: &Event, scope: &ReadScope) -> Result<Plan, BehaviorError> {
+        let advisory = event
+            .payload
+            .get("advisory")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| BehaviorError::permanent("the event does not name a vulnerability"))?
+            .to_string();
+        let account = event
+            .payload
+            .get("account")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| BehaviorError::permanent("the event does not name an account"))?
+            .to_string();
+
+        // The blast radius: what the vulnerability reaches. This is the
+        // phase that MUST NOT touch: the radius is a READ, and what it
+        // returns is what the intents are computed from.
+        let impacted = self
+            .radius
+            .impacted(&account, &advisory)
+            .await
+            .map_err(BehaviorError::transient)?;
+
+        if impacted.is_empty() {
+            // A vulnerability that touches nothing does not cause any
+            // reevaluation: no intents, no events, no noise.
+            return Ok(Plan::default());
+        }
+
+        // The intent of the case: ONE case per advisory, said once.
+        let case_intent = Intent::new(
+            self.name(),
+            event,
+            &scope.causation,
+            scope.tenant.clone(),
+            "security_case",
+            format!("case:{advisory}"),
+            scope.event_id.clone(),
+            serde_json::json!({
+                "advisory": advisory,
+                "at": scope.at.to_rfc3339(),
+                "impacted": impacted,
+            }),
+        );
+        let mut intents = vec![case_intent];
+
+        // And one intent of reevaluation per subject the vulnerability
+        // reaches.
+        for entry in &impacted {
+            intents.push(Intent::new(
+                self.name(),
+                event,
+                &scope.causation,
+                scope.tenant.clone(),
+                "decision_reevaluation",
+                format!("decision:{advisory}:{}", entry.subject),
+                scope.event_id.clone(),
+                serde_json::json!({
+                    "subject": entry.subject,
+                    "advisory": advisory,
+                    "reason": ReasonCode::VulnerabilityImpacted,
+                    "at": scope.at.to_rfc3339(),
+                }),
+            ));
+        }
+
+        Ok(Plan {
+            intents,
+            events: Vec::new(),
+        })
+    }
+}
+
+/// The planned reaction to an exception that expired.
+///
+/// An exception that expired **cannot** be applied: the reevaluation
+/// happens with la excepcion ya sin vigor, y no con ella. The planner
+/// needs no read: the subject is said by the event, and the decision
+/// belongs to the executor.
+pub struct PlannedExceptionExpiryReaction;
+
+impl PlannedExceptionExpiryReaction {
+    /// The planner, which needs no port to say what it wants.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for PlannedExceptionExpiryReaction {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl PlanningBehavior for PlannedExceptionExpiryReaction {
+    fn name(&self) -> &str {
+        "exception_expired"
+    }
+
+    fn subscription(&self) -> Subscription {
+        Subscription::to(EventKind::ExceptionExpired)
+    }
+
+    fn guard(&self, event: &Event) -> GuardOutcome {
+        match event
+            .payload
+            .get("subject")
+            .and_then(|value| value.as_str())
+        {
+            Some(_) => GuardOutcome::Pass,
+            None => GuardOutcome::Skip("the event does not name a subject".to_string()),
+        }
+    }
+
+    async fn plan(&self, event: &Event, scope: &ReadScope) -> Result<Plan, BehaviorError> {
+        let subject = event
+            .payload
+            .get("subject")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| BehaviorError::permanent("the event does not name a subject"))?
+            .to_string();
+
+        let intent = Intent::new(
+            self.name(),
+            event,
+            &scope.causation,
+            scope.tenant.clone(),
+            "decision_reevaluation",
+            format!("decision:expired:{subject}"),
+            scope.event_id.clone(),
+            serde_json::json!({
+                "subject": subject,
+                "reason": ReasonCode::ExceptionExpired,
+                "at": scope.at.to_rfc3339(),
+            }),
+        );
+
+        Ok(Plan {
+            intents: vec![intent],
+            events: Vec::new(),
+        })
+    }
+}
+
+/// What a `security_case` intent carries.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CaseEffect {
+    /// The advisory the case is about.
+    advisory: String,
+    /// The moment of the observation the case was computed from.
+    at: DateTime<Utc>,
+    /// The subjects the advisory reaches.
+    impacted: Vec<ImpactedSubject>,
+}
+
+/// What a `decision_reevaluation` intent carries.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct DecisionEffect {
+    /// The subject whose decision is reevaluated.
+    subject: String,
+    /// Why it is reevaluated.
+    reason: ReasonCode,
+    /// The advisories that are known to reach it, when there are any.
+    #[serde(default)]
+    advisory: Option<String>,
+    /// The moment of the observation the intent was computed from.
+    at: DateTime<Utc>,
+}
+
+/// The executor of the domain intents: the one that TOUCHES.
+///
+/// It is the second half of the seam the planners open: the case and the
+/// reevaluation happen HERE, after the intents are said and claimed.
+/// Before any write it validates what it can know by itself -- the
+/// tenant of the intent is the tenant of the composition, una
+/// reclamacion no es una identidad -- and the facts of the decision are
+/// computed at apply time from the CURRENT truth, never from the
+/// payload's memory of what they were.
+pub struct DomainIntentExecutor {
+    tenant: String,
+    cases: Arc<dyn SecurityCaseSink>,
+    decisions: Arc<dyn DecisionRequester>,
+}
+
+impl DomainIntentExecutor {
+    /// The executor with its tenant and its two ports.
+    pub fn new(
+        tenant: impl Into<String>,
+        cases: Arc<dyn SecurityCaseSink>,
+        decisions: Arc<dyn DecisionRequester>,
+    ) -> Self {
+        Self {
+            tenant: tenant.into(),
+            cases,
+            decisions,
+        }
+    }
+}
+
+#[async_trait]
+impl IntentExecutor for DomainIntentExecutor {
+    async fn apply(&self, intent: &Intent) -> Receipt {
+        // The tenant: the intent says who it serves, and an intent of
+        // another tenant is NOT ours to serve. It is a refusal without
+        // retry, because no amount of retries makes the composition
+        // right.
+        if intent.tenant != self.tenant {
+            return Receipt::Failed {
+                reason: format!(
+                    "the intent says tenant {} and this executor is {}",
+                    intent.tenant, self.tenant
+                ),
+                retryable: false,
+            };
+        }
+
+        match intent.kind.as_str() {
+            "security_case" => {
+                let Ok(effect) = serde_json::from_value::<CaseEffect>(intent.payload.clone())
+                else {
+                    return Receipt::Failed {
+                        reason: format!(
+                            "the intent {} does not carry a case this executor understands",
+                            intent.identity
+                        ),
+                        retryable: false,
+                    };
+                };
+                if effect.advisory.trim().is_empty() {
+                    return Receipt::Failed {
+                        reason: "the case does not say which advisory it is about".to_string(),
+                        retryable: false,
+                    };
+                }
+                match self
+                    .cases
+                    .open_or_update(&effect.advisory, &effect.impacted, effect.at)
+                    .await
+                {
+                    Ok(_case) => Receipt::Applied,
+                    Err(reason) => Receipt::Failed {
+                        reason,
+                        retryable: true,
+                    },
+                }
+            }
+            "decision_reevaluation" => {
+                let Ok(effect) =
+                    serde_json::from_value::<DecisionEffect>(intent.payload.clone())
+                else {
+                    return Receipt::Failed {
+                        reason: format!(
+                            "the intent {} does not carry a reevaluation this executor understands",
+                            intent.identity
+                        ),
+                        retryable: false,
+                    };
+                };
+                if effect.subject.trim().is_empty() {
+                    return Receipt::Failed {
+                        reason: "the reevaluation does not say which subject it serves"
+                            .to_string(),
+                        retryable: false,
+                    };
+                }
+                let mut request = Reevaluation::new(effect.subject, effect.reason, effect.at);
+                if let Some(advisory) = effect.advisory {
+                    request = request.with_advisory(advisory);
+                }
+                match self.decisions.request_reevaluation(request).await {
+                    Ok(_decision) => Receipt::Applied,
+                    Err(reason) => Receipt::Failed {
+                        reason,
+                        retryable: true,
+                    },
+                }
+            }
+            other => Receipt::Failed {
+                reason: format!("the intent kind {other} is not one this executor touches"),
+                retryable: false,
+            },
+        }
     }
 }

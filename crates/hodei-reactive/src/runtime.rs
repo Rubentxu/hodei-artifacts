@@ -31,7 +31,7 @@ use crate::behavior::{Behavior, BehaviorOutcome, Effect, Reaction, TraceEntry};
 use crate::events::{Event, EventKind};
 use crate::execution::ExecutionOutcome;
 use crate::execution::{Budget, BudgetState, ExecutionRecord};
-use crate::intent::{IntentExecutor, PlanningBehavior, ReadScope};
+use crate::intent::{Intent, IntentExecutor, IntentOutbox, PlanningBehavior, ReadScope, Receipt};
 
 /// Why the runtime could not do what it was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +170,10 @@ pub struct ReactiveRuntime {
     planners: Vec<Arc<dyn PlanningBehavior>>,
     /// The one that touches, after the plan is recorded.
     executor: Option<Arc<dyn IntentExecutor>>,
+    /// The outbox where the intents wait between being said and being
+    /// done. The planned path does not start without one: un intent que
+    /// no se dice durable no se puede reconciliar.
+    outbox: Option<Arc<dyn IntentOutbox>>,
     /// The tenant of the runtime: the authority of the planned path. It
     /// comes from the composition, and NOT from an event payload, because
     /// an event is a claim and not an identity.
@@ -185,6 +189,7 @@ impl ReactiveRuntime {
             budget,
             planners: Vec::new(),
             executor: None,
+            outbox: None,
             planned_tenant: None,
         }
     }
@@ -193,6 +198,12 @@ impl ReactiveRuntime {
     pub fn with_tenant(mut self, tenant: impl Into<String>) -> Self {
         self.planned_tenant = Some(tenant.into());
         self
+    }
+
+    /// The outbox where the intents of the planned path wait between
+    /// being said and being done. Sin outbox no hay ruta planificada.
+    pub fn with_outbox(&mut self, outbox: Arc<dyn IntentOutbox>) {
+        self.outbox = Some(outbox);
     }
 
     /// Registers a behaviour.
@@ -255,11 +266,11 @@ impl ReactiveRuntime {
     ///
     /// The order is the seam: **plan, record, then touch**. The planner
     /// reads through its authorized scope and returns intents; the intents
-    /// are written down in the execution record BEFORE the executor is
-    /// called, so a crash in between leaves an intent that is said and not
-    /// done -- what the recovery reconciles. The executor is the only one
-    /// that touches, and its once-only guarantee is the same key the
-    /// legacy effects use, so there is ONE idempotency, not two.
+    /// are written down in the execution record BEFORE they are carried
+    /// through the outbox: said first, done after. The outbox is where an
+    /// intent waits between being said and being done, and the executor is
+    /// the only one that touches -- its receipt says what became of the
+    /// effect, and the outbox keeps the receipt.
     pub async fn dispatch_planned(
         &self,
         event: Event,
@@ -276,6 +287,12 @@ impl ReactiveRuntime {
                     .to_string(),
             ));
         };
+        let Some(outbox) = self.outbox.clone() else {
+            return Err(RuntimeError::Unavailable(
+                "the planned path needs an outbox of intents, and there is none".to_string(),
+            ));
+        };
+        let _ = &tenant;
 
         let mut report = DispatchReport::default();
         let mut state = BudgetState::new(self.budget.clone());
@@ -374,54 +391,23 @@ impl ReactiveRuntime {
                         }
                         record = record.finished(ExecutionOutcome::Completed, now);
 
-                        // The plan is recorded BEFORE the executor is
-                        // called: said first, done after.
+                        // The plan is recorded BEFORE anything touches:
+                        // said first, done after.
                         self.store.put(record.clone()).await;
                         report.executions.push(record);
 
+                        // The intents cross the outbox, one by one.
                         for intent in plan.intents {
-                            let already = self
-                                .store
-                                .applied_effects().await
-                                .iter()
-                                .any(|applied| {
-                                    applied.idempotency_key == intent.idempotency_key
-                                });
-                            if already {
-                                report.suppressed.push(intent.as_effect());
-                                continue;
-                            }
-                            match executor.apply(&intent).await {
-                                Ok(()) => {
-                                    self.store.record_effect(intent.as_effect()).await;
-                                    report.applied.push(intent.as_effect());
-                                }
-                                Err(reason) => {
-                                    // The intent is said and not done:
-                                    // the failed apply is in the store,
-                                    // and the recovery reconciles.
-                                    let failed = ExecutionRecord::new(
-                                        format!("apply:{}", intent.identity),
-                                        planner.name(),
-                                        current.id.clone(),
-                                        causation.clone(),
-                                        now,
-                                    )
-                                    .note(format!("intent:{}", intent.identity), now)
-                                    .finished(
-                                        ExecutionOutcome::Failed {
-                                            reason: format!(
-                                                "the intent {} could not be applied: {}",
-                                                intent.identity, reason
-                                            ),
-                                            retryable: true,
-                                        },
-                                        now,
-                                    );
-                                    self.store.put(failed.clone()).await;
-                                    report.executions.push(failed);
-                                }
-                            }
+                            self.carry_intent(
+                                &outbox,
+                                &executor,
+                                &intent,
+                                &current.id,
+                                &causation,
+                                now,
+                                &mut report,
+                            )
+                            .await;
                         }
 
                         // And the events the plan causes.
@@ -454,6 +440,210 @@ impl ReactiveRuntime {
         }
 
         Ok(report)
+    }
+
+    /// Picks up the intents that a crash left behind: the pending ones,
+    /// and the claimed ones whose lease died. It does NOT plan again --
+    /// the plan is already recorded -- and it does NOT touch what is
+    /// already applied: the receipt that says what is true closes the
+    /// intent without a second effect. Lo desconocido NO esta aqui: no
+    /// se reejecuta, se reconcilia.
+    pub async fn resume(&self, now: DateTime<Utc>) -> Result<DispatchReport, RuntimeError> {
+        let Some(executor) = self.executor.clone() else {
+            return Err(RuntimeError::Unavailable(
+                "no executor of intents is registered".to_string(),
+            ));
+        };
+        let Some(outbox) = self.outbox.clone() else {
+            return Err(RuntimeError::Unavailable(
+                "the planned path needs an outbox of intents, and there is none".to_string(),
+            ));
+        };
+        if self.planned_tenant.is_none() {
+            return Err(RuntimeError::Unavailable(
+                "the planned path needs the tenant of the composition, and there is none"
+                    .to_string(),
+            ));
+        }
+
+        let mut report = DispatchReport::default();
+        let pending = outbox
+            .recover_pending(now)
+            .await
+            .map_err(RuntimeError::Unavailable)?;
+        for intent in pending {
+            self.carry_intent(
+                &outbox,
+                &executor,
+                &intent,
+                &intent.origin.event_id,
+                &intent.origin.causation,
+                now,
+                &mut report,
+            )
+            .await;
+        }
+        Ok(report)
+    }
+
+    /// Carries ONE intent through the outbox: it is said there, claimed
+    /// with a compare-and-set, applied by the executor, and the receipt
+    /// of what became of the effect is written down. The effect lands
+    /// once -- the same key the legacy effects use -- and what nobody
+    /// knows waits for the reconciliation, never for a blind retry.
+    async fn carry_intent(
+        &self,
+        outbox: &Arc<dyn IntentOutbox>,
+        executor: &Arc<dyn IntentExecutor>,
+        intent: &Intent,
+        event_id: &str,
+        causation: &[String],
+        now: DateTime<Utc>,
+        report: &mut DispatchReport,
+    ) {
+        // The intent is SAID, durably. Saying it twice is the same as
+        // saying it once.
+        if let Err(reason) = outbox.put_pending(intent).await {
+            let record = ExecutionRecord::new(
+                format!("deliver:{}", intent.identity),
+                "runtime",
+                event_id.to_string(),
+                causation.to_vec(),
+                now,
+            )
+            .note(format!("intent:{}", intent.identity), now)
+            .finished(
+                ExecutionOutcome::Failed {
+                    reason: format!("the intent {} could not be said: {reason}", intent.identity),
+                    retryable: true,
+                },
+                now,
+            );
+            self.store.put(record.clone()).await;
+            report.executions.push(record);
+            return;
+        }
+
+        // The claim is a compare-and-set: the worker that wins touches,
+        // and the one that loses knows the intent is somebody else's.
+        let owner = self.the_owner();
+        let claimed = outbox
+            .claim(&intent.identity, &owner, now + chrono::Duration::seconds(60), now)
+            .await;
+        match claimed {
+            Err(reason) => {
+                let record = ExecutionRecord::new(
+                    format!("claim:{}", intent.identity),
+                    "runtime",
+                    event_id.to_string(),
+                    causation.to_vec(),
+                    now,
+                )
+                .note(format!("intent:{}", intent.identity), now)
+                .finished(
+                    ExecutionOutcome::Failed {
+                        reason: format!(
+                            "the intent {} could not be claimed: {reason}",
+                            intent.identity
+                        ),
+                        retryable: true,
+                    },
+                    now,
+                );
+                self.store.put(record.clone()).await;
+                report.executions.push(record);
+                return;
+            }
+            Ok(None) => {
+                // Lost the race: the intent belongs to another claim, and
+                // the effect it carries is not ours to repeat.
+                report.suppressed.push(intent.as_effect());
+                return;
+            }
+            Ok(Some(_)) => {}
+        }
+
+        // The effect that already landed: the receipt says so, and the
+        // intent closes WITHOUT touching again. This is what a claimed
+        // intent whose effect landed but whose receipt did not looks
+        // like, after a crash in between.
+        let already = self
+            .store
+            .applied_effects()
+            .await
+            .iter()
+            .any(|applied| applied.idempotency_key == intent.idempotency_key);
+        if already {
+            let _ = outbox
+                .record_receipt(&intent.identity, &Receipt::Applied)
+                .await;
+            report.suppressed.push(intent.as_effect());
+            return;
+        }
+
+        // The touch, and the receipt of what became of it.
+        let receipt = executor.apply(intent).await;
+        let _ = outbox
+            .record_receipt(&intent.identity, &receipt)
+            .await;
+        match receipt {
+            Receipt::Applied => {
+                self.store.record_effect(intent.as_effect()).await;
+                report.applied.push(intent.as_effect());
+            }
+            Receipt::Failed { reason, retryable } => {
+                let record = ExecutionRecord::new(
+                    format!("apply:{}", intent.identity),
+                    "runtime",
+                    event_id.to_string(),
+                    causation.to_vec(),
+                    now,
+                )
+                .note(format!("intent:{}", intent.identity), now)
+                .finished(
+                    ExecutionOutcome::Failed {
+                        reason: format!(
+                            "the intent {} could not be applied: {reason}",
+                            intent.identity
+                        ),
+                        retryable,
+                    },
+                    now,
+                );
+                self.store.put(record.clone()).await;
+                report.executions.push(record);
+            }
+            Receipt::Unknown { reason } => {
+                let record = ExecutionRecord::new(
+                    format!("apply:{}", intent.identity),
+                    "runtime",
+                    event_id.to_string(),
+                    causation.to_vec(),
+                    now,
+                )
+                .note(format!("intent:{}", intent.identity), now)
+                .finished(
+                    ExecutionOutcome::Unknown {
+                        reason: format!(
+                            "the intent {} was sent and nobody knows whether it landed: {reason}",
+                            intent.identity
+                        ),
+                    },
+                    now,
+                );
+                self.store.put(record.clone()).await;
+                report.executions.push(record);
+            }
+        }
+    }
+
+    /// The worker that claims: the runtime, with the tenant of the
+    /// composition.
+    fn the_owner(&self) -> String {
+        format!(
+            "runtime:{}",
+            self.planned_tenant.clone().unwrap_or_default()
+        )
     }
 
     /// Delivers an event and runs what reacts to it.

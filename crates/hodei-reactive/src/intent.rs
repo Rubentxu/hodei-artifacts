@@ -144,14 +144,18 @@ pub struct Plan {
 /// The executor of intents: the one that TOUCHES.
 ///
 /// The runtime records the plan first and calls the executor after; the
-/// executor is the only place where an external effect happens. The
-/// durable execution store builds on this seam.
+/// executor is the only place where an external effect happens. Its
+/// answer is a [`Receipt`], because "what happened" is a fact about the
+/// world, and the three answers -- it landed, it did not, nobody knows --
+/// are not the same and do not lead to the same next step.
 #[async_trait::async_trait]
 pub trait IntentExecutor: Send + Sync {
     /// Applies one intent. The once-only guarantee lives in the key: the
-    /// runtime asks before calling, and the executor failing is a
-    /// failure of the moment unless it says otherwise.
-    async fn apply(&self, intent: &Intent) -> Result<(), String>;
+    /// runtime asks before calling, and the executor says what became of
+    /// the effect with a receipt, NOT with a bare error: un fallo que se
+    /// puede reintentar, uno que no, y lo que nadie sabe son tres cosas
+    /// distintas.
+    async fn apply(&self, intent: &Intent) -> Receipt;
 }
 
 /// What an effect turned out to be, when it came back.
@@ -226,6 +230,185 @@ pub trait IntentOutbox: Send + Sync {
     /// reconciliation happened, somebody looked at the real world, and
     /// NOW the intent may be tried again.
     async fn reconcile(&self, identity: &str) -> Result<(), String>;
+}
+
+/// The outbox of intents, in memory.
+///
+/// The reference material of the port, for the tests and the processes
+/// that do not outlive their own memory: the same states, the same
+/// compare-and-set, the same receipts. Lo que el store durable guarda en
+/// SurrealDB, este lo guarda en el proceso, y las MISMAS reglas.
+#[derive(Debug, Clone, Default)]
+pub struct InMemoryIntentOutbox {
+    inner: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, OutboxRow>>>,
+}
+
+/// The row of an intent in the memory outbox.
+#[derive(Debug, Clone)]
+struct OutboxRow {
+    state: String,
+    lease_owner: Option<String>,
+    lease_until: Option<DateTime<Utc>>,
+    receipt: Option<Receipt>,
+    intent: Intent,
+}
+
+impl InMemoryIntentOutbox {
+    /// An outbox with nothing in it.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// The state of one intent, for the reader that asks what became of
+    /// what was said.
+    pub fn state_of(&self, identity: &str) -> Option<String> {
+        self.inner
+            .lock()
+            .expect("the outbox is not poisoned")
+            .get(identity)
+            .map(|row| row.state.clone())
+    }
+
+    /// The receipt of one intent, when there is one.
+    pub fn receipt_of(&self, identity: &str) -> Option<Receipt> {
+        self.inner
+            .lock()
+            .expect("the outbox is not poisoned")
+            .get(identity)
+            .and_then(|row| row.receipt.clone())
+    }
+
+    /// Every intent and its state, sorted by identity.
+    pub fn states(&self) -> Vec<(String, String)> {
+        let mut states: Vec<(String, String)> = self
+            .inner
+            .lock()
+            .expect("the outbox is not poisoned")
+            .iter()
+            .map(|(identity, row)| (identity.clone(), row.state.clone()))
+            .collect();
+        states.sort();
+        states
+    }
+}
+
+#[async_trait::async_trait]
+impl IntentOutbox for InMemoryIntentOutbox {
+    async fn put_pending(&self, intent: &Intent) -> Result<(), String> {
+        let mut inner = self.inner.lock().expect("the outbox is not poisoned");
+        inner
+            .entry(intent.identity.clone())
+            .or_insert_with(|| OutboxRow {
+                state: "pending".to_string(),
+                lease_owner: None,
+                lease_until: None,
+                receipt: None,
+                intent: intent.clone(),
+            });
+        Ok(())
+    }
+
+    async fn claim(
+        &self,
+        identity: &str,
+        lease_owner: &str,
+        lease_until: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<Option<Intent>, String> {
+        let mut inner = self.inner.lock().expect("the outbox is not poisoned");
+        let Some(row) = inner.get_mut(identity) else {
+            return Ok(None);
+        };
+        // The compare-and-set: pending, or a lease that died.
+        let claimable = row.state == "pending"
+            || (row.state == "claimed"
+                && row.lease_until.is_some_and(|until| until <= now));
+        if !claimable {
+            return Ok(None);
+        }
+        row.state = "claimed".to_string();
+        row.lease_owner = Some(lease_owner.to_string());
+        row.lease_until = Some(lease_until);
+        Ok(Some(row.intent.clone()))
+    }
+
+    async fn record_receipt(
+        &self,
+        identity: &str,
+        receipt: &Receipt,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().expect("the outbox is not poisoned");
+        let Some(row) = inner.get_mut(identity) else {
+            return Err(format!(
+                "the intent {identity} is not in the outbox, so nobody can receive this receipt"
+            ));
+        };
+        // The receipt that says what is ALREADY true changes nothing.
+        let already_true = match receipt {
+            Receipt::Applied => row.state == "applied",
+            Receipt::Failed { retryable: true, .. } => row.state == "pending",
+            Receipt::Failed { .. } => row.state == "failed",
+            Receipt::Unknown { .. } => row.state == "unknown",
+        };
+        if already_true {
+            return Ok(());
+        }
+        if row.state != "claimed" {
+            return Err(format!(
+                "the intent {identity} is not claimed, so nobody can receive this receipt"
+            ));
+        }
+        let (state, lease) = match receipt {
+            Receipt::Applied => ("applied", (None, None)),
+            Receipt::Failed { retryable: true, .. } => ("pending", (None, None)),
+            Receipt::Failed { .. } => ("failed", (None, None)),
+            Receipt::Unknown { .. } => ("unknown", (None, None)),
+        };
+        row.state = state.to_string();
+        row.lease_owner = lease.0;
+        row.lease_until = lease.1;
+        row.receipt = Some(receipt.clone());
+        Ok(())
+    }
+
+    async fn recover_pending(&self, now: DateTime<Utc>) -> Result<Vec<Intent>, String> {
+        let mut inner = self.inner.lock().expect("the outbox is not poisoned");
+        let mut pending: Vec<Intent> = Vec::new();
+        for row in inner.values_mut() {
+            if row.state == "claimed"
+                && row.lease_until.is_some_and(|until| until <= now)
+            {
+                // The lease that died goes back to the market.
+                row.state = "pending".to_string();
+                row.lease_owner = None;
+                row.lease_until = None;
+            }
+            if row.state == "pending" {
+                pending.push(row.intent.clone());
+            }
+        }
+        pending.sort_by(|left, right| left.identity.cmp(&right.identity));
+        Ok(pending)
+    }
+
+    async fn reconcile(&self, identity: &str) -> Result<(), String> {
+        let mut inner = self.inner.lock().expect("the outbox is not poisoned");
+        let Some(row) = inner.get_mut(identity) else {
+            return Err(format!(
+                "the intent {identity} is not in the outbox, so there is nothing to reconcile"
+            ));
+        };
+        if row.state != "unknown" {
+            return Err(format!(
+                "the intent {identity} is not unknown, so there is nothing to reconcile"
+            ));
+        }
+        row.state = "pending".to_string();
+        row.receipt = None;
+        row.lease_owner = None;
+        row.lease_until = None;
+        Ok(())
+    }
 }
 
 /// A behaviour that PLANS: it reads and it says, without touching.
