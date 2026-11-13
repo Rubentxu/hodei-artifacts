@@ -34,12 +34,38 @@ impl<C: Connection> SurrealBlastRadius<C> {
 impl<C: Connection> BlastRadiusSource for SurrealBlastRadius<C> {
     async fn impacted(
         &self,
-        _account: &str,
+        account: &str,
         advisory: &str,
     ) -> Result<Vec<ImpactedSubject>, String> {
+        // The account of the request, the tenant of the adapter and the
+        // account of the advisory have to be the SAME one. The account
+        // comes from an event, and an event is a claim, not an identity:
+        // the only authority here is the tenant the adapter was built
+        // with. A request that names somebody else is a closed door, and
+        // an identity error is an error, never an empty answer that looks
+        // like zero impact.
+        if account.trim().is_empty() {
+            return Err("the request does not say which account it belongs to".to_string());
+        }
+
         let Some(vulnerability) = kernel::Hrn::from_string(advisory) else {
-            return Ok(Vec::new());
+            return Err(format!("the advisory {advisory} is not a canonical HRN"));
         };
+
+        if account != self.tenant.account_id() {
+            return Err(format!(
+                "the request names account {account} and this radius belongs to {}",
+                self.tenant.account_id()
+            ));
+        }
+
+        if vulnerability.account_id() != self.tenant.account_id() {
+            return Err(format!(
+                "the advisory {advisory} belongs to account {} and this radius belongs to {}",
+                vulnerability.account_id(),
+                self.tenant.account_id()
+            ));
+        }
 
         let radius = crate::blast_radius(self.graph.as_ref(), &self.tenant, &vulnerability)
             .await
