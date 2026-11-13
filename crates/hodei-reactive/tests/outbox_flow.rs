@@ -20,7 +20,7 @@ use hodei_reactive::intent::{
 use hodei_reactive::reactions::{
     DomainIntentExecutor, DecisionRequester, ImpactedSubject, Reevaluation, SecurityCaseSink,
 };
-use hodei_reactive::runtime::{ExecutionStore, InMemoryExecutionStore, ReactiveRuntime};
+use hodei_reactive::runtime::{InMemoryExecutionStore, ReactiveRuntime};
 
 /// El sujeto de los intents de prueba.
 const SUBJECT: &str = "hrn:hodei:artifacts:eu-west-1:acme:Artifact/app";

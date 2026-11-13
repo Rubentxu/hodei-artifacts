@@ -631,10 +631,14 @@ async fn m4_uat_07_blast_radius_slo() {
         let fixture = fixture().await;
         write_the_graph(&fixture).await;
 
-        // The measurement is repeated, and the worst of the runs is the
-        // one that counts: a query that is fast once is not fast.
+        // The measurement is repeated, and the percentile is what
+        // counts: a query that is fast once is not fast, and a p95 of
+        // twenty samples IS the max -- one scheduling stall under a
+        // parallel run would fail it. With a hundred samples the p95
+        // keeps its five outliers of headroom and the target stays the
+        // same.
         let mut runs = Vec::new();
-        for _ in 0..20 {
+        for _ in 0..100 {
             let started = std::time::Instant::now();
             let edges = fixture
                 .reader

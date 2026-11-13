@@ -15,10 +15,10 @@ use hodei_evidence::domain::graph::{
     GraphChangeSet, GraphNode, GraphRelation, GraphRelationWithdrawal, NodeKind, RelationType,
 };
 use hodei_evidence::ports::graph::GraphWriter;
-use hodei_evidence::{EvidenceId, RelationDeltaSubscription};
+use hodei_evidence::EvidenceId;
 use hodei_evidence_storage::surreal::delta::SurrealRelationDeltaLedger;
 use hodei_evidence_storage::surreal::graph::SurrealGraphStore;
-use hodei_risk_storage::impact_view::{SurrealImpactView, IMPACT_TABLE};
+use hodei_risk_storage::impact_view::SurrealImpactView;
 use hodei_reactive::reactions::BlastRadiusSource;
 use hodei_risk_storage::reactions::SurrealBlastRadius;
 use kernel::Hrn;

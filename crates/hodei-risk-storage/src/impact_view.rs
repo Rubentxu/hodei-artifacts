@@ -401,7 +401,7 @@ impl<C: Connection> SurrealImpactView<C> {
             .iter()
             .filter_map(|route| Hrn::from_string(&route.advisory))
             .collect();
-        advisories.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
+        advisories.sort_by_key(|advisory| advisory.to_string());
         advisories.dedup();
         Ok(advisories)
     }

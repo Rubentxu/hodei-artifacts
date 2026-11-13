@@ -264,7 +264,7 @@ impl<C: Connection> ExecutionStore for SurrealIntentStore<C> {
             .await
             .and_then(|mut response| response.take(0))
             .unwrap_or_default();
-        records.sort_by(|left, right| left.started_at.cmp(&right.started_at));
+        records.sort_by_key(|record| record.started_at);
         records
     }
 }
