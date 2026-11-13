@@ -1,0 +1,24 @@
+[package]
+name = "hodei-spike-ladybug"
+version = "0.1.0"
+edition = "2024"
+description = "El prototipo de la proyeccion analitica del SPIKE-003."
+license = "MIT"
+publish = false
+
+[dependencies]
+grust-graph = { version = "0.9", optional = true }
+grust-ladybug = { version = "0.9", optional = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde_json = { workspace = true }
+
+[features]
+default = []
+# El prototipo: la comparacion con la proyeccion analitica.
+ladybug = ["dep:grust-graph", "dep:grust-ladybug"]
+
+[[bin]]
+name = "spike003_ladybug_benchmark"
+path = "src/bin/spike003_ladybug_benchmark.rs"
+required-features = ["ladybug"]

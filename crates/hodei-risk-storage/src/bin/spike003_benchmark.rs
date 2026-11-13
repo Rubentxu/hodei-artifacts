@@ -45,6 +45,7 @@ use hodei_evidence_storage::{
     SurrealEvidenceStore, SurrealGraphStore, SurrealProjectionCheckpoints,
 };
 use kernel::Hrn;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use surrealdb::Surreal;
@@ -270,6 +271,104 @@ fn risk_layer(artefacts: &[Hrn]) -> GraphChangeSet {
     changes
 }
 
+/// The dataset of the graph, as the export writes it.
+struct TheDataset {
+    /// The nodes.
+    nodes: Vec<(String, String)>,
+    /// The edges.
+    edges: Vec<(String, String, String)>,
+}
+
+/// The graph, read kind by kind and relation by relation.
+async fn the_dataset<C: surrealdb::Connection>(
+    graph: &hodei_evidence_storage::SurrealGraphStore<C>,
+    tenant: &kernel::Hrn,
+) -> TheDataset {
+    use hodei_evidence::ports::graph::GraphQuery;
+
+    let mut nodes = Vec::new();
+    for kind in [
+        hodei_evidence::domain::graph::NodeKind::Repository,
+        hodei_evidence::domain::graph::NodeKind::SourceRevision,
+        hodei_evidence::domain::graph::NodeKind::Build,
+        hodei_evidence::domain::graph::NodeKind::Artifact,
+        hodei_evidence::domain::graph::NodeKind::Deployment,
+        hodei_evidence::domain::graph::NodeKind::Evidence,
+        hodei_evidence::domain::graph::NodeKind::Component,
+        hodei_evidence::domain::graph::NodeKind::Vulnerability,
+    ] {
+        for node in graph
+            .nodes(tenant, kind.clone())
+            .await
+            .expect("the nodes are read")
+        {
+            nodes.push((the_label_of(kind.clone()), node.id.to_string()));
+        }
+    }
+
+    let mut response = graph
+        .db()
+        .query("SELECT from, to, relation_type FROM type::table($table) WHERE tenant_hrn = $tenant")
+        .bind(("table", graph.relation_table_name()))
+        .bind(("tenant", tenant.to_string()))
+        .await
+        .expect("the relations are read");
+    let rows: Vec<RelationRow> = response.take(0).expect("the relations are read");
+
+    let mut edges = Vec::new();
+    for row in rows {
+        let Some(relation) = hodei_evidence::domain::graph::RelationType::parse(&row.relation_type)
+        else {
+            continue;
+        };
+        edges.push((the_label_of_relation(relation), row.from, row.to));
+    }
+
+    TheDataset { nodes, edges }
+}
+
+/// The label of a kind of node.
+fn the_label_of(kind: hodei_evidence::domain::graph::NodeKind) -> String {
+    use hodei_evidence::domain::graph::NodeKind;
+    match kind {
+        NodeKind::Repository => "Repository".to_string(),
+        NodeKind::SourceRevision => "SourceRevision".to_string(),
+        NodeKind::Build => "Build".to_string(),
+        NodeKind::Artifact => "Artifact".to_string(),
+        NodeKind::Deployment => "Deployment".to_string(),
+        NodeKind::Evidence => "Evidence".to_string(),
+        NodeKind::Component => "Component".to_string(),
+        NodeKind::Vulnerability => "Vulnerability".to_string(),
+    }
+}
+
+/// The label of a kind of relation.
+fn the_label_of_relation(relation: hodei_evidence::domain::graph::RelationType) -> String {
+    use hodei_evidence::domain::graph::RelationType;
+    match relation {
+        RelationType::HasRevision => "HasRevision".to_string(),
+        RelationType::Triggered => "Triggered".to_string(),
+        RelationType::UsedSource => "UsedSource".to_string(),
+        RelationType::Produced => "Produced".to_string(),
+        RelationType::DeployedAs => "DeployedAs".to_string(),
+        RelationType::DescribedBy => "DescribedBy".to_string(),
+        RelationType::Contains => "Contains".to_string(),
+        RelationType::DependsOn => "DependsOn".to_string(),
+        RelationType::AffectedBy => "AffectedBy".to_string(),
+    }
+}
+
+/// The relation of a row.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RelationRow {
+    /// The node the relation starts at.
+    from: String,
+    /// The node the relation ends at.
+    to: String,
+    /// The kind of the relation.
+    relation_type: String,
+}
+
 #[tokio::main]
 async fn main() {
     let model = the_model();
@@ -453,6 +552,58 @@ async fn main() {
     println!("blast radius: p50 {p50} ms, p95 {p95} ms, max {max} ms");
     println!("lineage: p50 {lineage_p50} ms, p95 {lineage_p95} ms, max {lineage_max} ms");
     println!("target of the blast radius: p95 {TARGET_P95_MS} ms");
+
+    // ── The export ────────────────────────────────────────────────────────
+    // The dataset leaves for the other engine, together with the numbers
+    // of this one, so that the comparison is of the SAME data and not of
+    // two similar datasets.
+    if let Ok(path) = std::env::var("HODEI_SPIKE003_EXPORT") {
+        let started = Instant::now();
+        let dataset = the_dataset(graph.as_ref(), &account()).await;
+        let file = std::fs::File::create(&path).expect("the export file opens");
+        let mut writer = std::io::BufWriter::new(file);
+        let metadata = serde_json::json!({
+            "kind": "metadata",
+            "vulnerability": vulnerability.to_string(),
+            "surrealdb": {
+                "blast_p50_ms": p50,
+                "blast_p95_ms": p95,
+                "blast_max_ms": max,
+                "lineage_p50_ms": lineage_p50,
+                "lineage_p95_ms": lineage_p95,
+                "lineage_max_ms": lineage_max,
+                "subjects": reached,
+            },
+        });
+        writeln!(writer, "{}", metadata).expect("the metadata is written");
+        for node in &dataset.nodes {
+            writeln!(
+                writer,
+                "{}",
+                serde_json::json!({"kind": "node", "label": node.0, "id": node.1})
+            )
+            .expect("the node is written");
+        }
+        for edge in &dataset.edges {
+            writeln!(
+                writer,
+                "{}",
+                serde_json::json!({
+                    "kind": "edge",
+                    "label": edge.0,
+                    "from": edge.1,
+                    "to": edge.2,
+                })
+            )
+            .expect("the edge is written");
+        }
+        println!(
+            "\n=== The export ===\n{} nodes and {} edges exported to {path} in {:.1} s",
+            dataset.nodes.len(),
+            dataset.edges.len(),
+            started.elapsed().as_secs_f64()
+        );
+    }
 
     println!("\n=== The verdict ===");
     if p95 <= TARGET_P95_MS {
