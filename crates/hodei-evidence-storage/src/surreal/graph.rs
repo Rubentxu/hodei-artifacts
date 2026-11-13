@@ -327,17 +327,22 @@ fn relation_of(row: &RelationRow) -> Option<GraphRelation> {
 impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
     /// Applies a change set.
     ///
+    /// A changeset goes in WHOLE or not at all: the validation runs
+    /// before anything is written, and the writes are ONE transaction, so
+    /// a write that fails in the middle cancels the whole thing. Un grafo
+    /// con la mitad de un changeset es un grafo que parece valido y no lo
+    /// es, y un checkpoint que avanza sobre esa mitad esconderia el
+    /// evento que falta.
+    ///
     /// The nodes go first and the relations after, because a relation that
     /// points at a node that is not there yet would be a relation that
     /// nobody can follow.
     async fn apply(&self, changes: GraphChangeSet) -> Result<(), GraphError> {
-        for node in &changes.nodes {
-            self.upsert(self.node_id(&node.id), node_row(node)).await?;
-        }
-
+        // The validation touches nothing: it reads, and it answers before
+        // the first write. A relation without its evidence is a claim,
+        // and a claim is not part of a graph that answers questions about
+        // trust.
         for relation in &changes.relations {
-            // A relation without its evidence is a claim, and a claim is not
-            // part of a graph that answers questions about trust.
             let evidence =
                 hodei_evidence::evidence_hrn(&relation.tenant_hrn, &relation.evidence_id);
             let known = changes.nodes.iter().any(|node| node.id == evidence)
@@ -348,15 +353,59 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
                     relation.evidence_id.as_str()
                 )));
             }
-
-            self.upsert(
-                self.relation_id(&relation.identity()),
-                relation_row(relation),
-            )
-            .await?;
         }
 
-        Ok(())
+        if changes.nodes.is_empty() && changes.relations.is_empty() {
+            return Ok(());
+        }
+
+        // The unit: BEGIN, every upsert, COMMIT. The transaction is one
+        // query, so the atomicity belongs to the server and does not
+        // bleed into whatever else runs over the same connection.
+        let mut sql = String::from("BEGIN TRANSACTION;\n");
+        for index in 0..changes.nodes.len() {
+            sql.push_str(&format!("UPSERT $nid{index} CONTENT $n{index};\n"));
+        }
+        for index in 0..changes.relations.len() {
+            sql.push_str(&format!("UPSERT $rid{index} CONTENT $r{index};\n"));
+        }
+        sql.push_str("COMMIT;\n");
+
+        // And it is tried again when another writer ran at the same
+        // moment: two changesets that do not touch the same rows do not
+        // lose any row because they arrived together.
+        let mut attempts = 0;
+        loop {
+            let mut statement = self.db.query(sql.clone());
+            for (index, node) in changes.nodes.iter().enumerate() {
+                statement = statement
+                    .bind((format!("nid{index}"), self.node_id(&node.id)))
+                    .bind((format!("n{index}"), node_row(node)));
+            }
+            for (index, relation) in changes.relations.iter().enumerate() {
+                statement = statement
+                    .bind((format!("rid{index}"), self.relation_id(&relation.identity())))
+                    .bind((format!("r{index}"), relation_row(relation)));
+            }
+
+            let written = statement
+                .await
+                .map_err(|error| GraphError::Unavailable(error.to_string()));
+            let failure = match written {
+                Ok(response) => response.check().err().map(|error| error.to_string()),
+                Err(error) => Some(error.to_string()),
+            };
+
+            match failure {
+                None => return Ok(()),
+                Some(message)
+                    if crate::is_conflict(&message) && attempts < crate::CONFLICT_RETRIES =>
+                {
+                    attempts += 1;
+                }
+                Some(message) => return Err(GraphError::Rejected(message)),
+            }
+        }
     }
 
     /// Empties the projection.
