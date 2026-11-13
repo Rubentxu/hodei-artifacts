@@ -90,6 +90,13 @@ pub struct SimulationFork {
     pub base: Checkpoint,
     /// Los hechos hipoteticos, superpuestos al estado real.
     pub facts: Vec<Hypothetical>,
+    /// Los sujetos DECLARADOS que la simulacion toca.
+    ///
+    /// Una simulacion que solo cambia la politica no trae hechos, y los
+    /// sujetos no se infieren de lo que no hay: se DECLARAN, y quien
+    /// declara responde de que puede simularlos.
+    #[serde(default)]
+    pub subjects: Vec<Hrn>,
     /// La politica que estaria en vigor, si la simulacion cambia la.
     pub policy: Option<TrustPolicy>,
     /// La politica que esta en vigor ahora, en el estado real.
@@ -115,11 +122,27 @@ impl SimulationFork {
             id: id.into(),
             base,
             facts: Vec::new(),
+            subjects: Vec::new(),
             policy: None,
             base_policy,
             limits: SimulationLimits::default(),
             created_at,
         }
+    }
+
+    /// Declara los sujetos que la simulacion toca.
+    ///
+    /// Es la seleccion EXPLICITA: los sujetos que se simulan son los que
+    /// se declaran mas los que traen los hechos, y una simulacion que
+    /// solo cambia la politica necesita sujetos declarados, porque de
+    /// los hechos que no hay no se infiere nada.
+    pub fn with_subjects(mut self, subjects: Vec<Hrn>) -> Self {
+        for subject in subjects {
+            if !self.subjects.contains(&subject) {
+                self.subjects.push(subject);
+            }
+        }
+        self
     }
 
     /// La politica que estaria en vigor en el fork.
@@ -148,7 +171,7 @@ impl SimulationFork {
     /// Son los que su decision puede cambiar, y por tanto los que el diff
     /// de decisiones tiene que mirar.
     pub fn affected_subjects(&self) -> Vec<Hrn> {
-        let mut subjects: Vec<Hrn> = Vec::new();
+        let mut subjects: Vec<Hrn> = self.subjects.clone();
         for fact in &self.facts {
             for subject in fact.claim.subjects() {
                 if !subjects.contains(&subject) {
@@ -236,6 +259,28 @@ impl SimulationFork {
                 "the simulation was created at {} and lives {}",
                 self.created_at, self.limits.max_lifetime
             )));
+        }
+
+        // La admision de los sujetos: los de OTRA cuenta no entran, y la
+        // comparacion es por componente canonico del HRN, no por texto.
+        // Un fork sin NINGUN sujeto no es una simulacion completa sin
+        // afectados: es una conclusion engañosa, y no se produce.
+        let subjects = self.affected_subjects();
+        if subjects.is_empty() {
+            return Err(crate::SimulationError::NotAllowed(
+                "the simulation declares no subjects: a fork that touches nobody is not a \
+                 complete simulation, it is a misleading answer"
+                    .to_string(),
+            ));
+        }
+        for subject in &subjects {
+            if subject.account_id() != self.base.account {
+                return Err(crate::SimulationError::NotAllowed(format!(
+                    "the subject {subject} belongs to account {} and the simulation is about {}",
+                    subject.account_id(),
+                    self.base.account
+                )));
+            }
         }
         Ok(())
     }

@@ -436,3 +436,114 @@ async fn the_limits_are_checked_before_simulating() {
         "y dice que la simulacion ha caducado: {error}"
     );
 }
+
+// ───────────────────────── HG-H4-01: solo politica, sin engaños ─────────────────────────
+
+/// Un evaluador que decide por la POLITICA: con la misma evidencia, una
+/// politica mas estricta cambia el resultado. Es el caso de una
+/// simulacion que solo cambia la politica y no anade ningun hecho.
+struct PolicyDrivenEvaluator;
+
+#[async_trait]
+impl DecisionEvaluator for PolicyDrivenEvaluator {
+    async fn decide(
+        &self,
+        _subject: &Hrn,
+        policy: &TrustPolicy,
+        _facts: &[Hypothetical],
+    ) -> Result<TheDecision, String> {
+        let outcome = if policy.version.starts_with('2') {
+            Outcome::Deny
+        } else {
+            Outcome::Allow
+        };
+        Ok(TheDecision {
+            outcome,
+            policy: policy.clone(),
+        })
+    }
+}
+
+/// AC1: un fork con SOLO cambio de politica y sujetos DECLARADOS
+/// produce DecisionChange cuando la politica modifica el resultado. La
+/// conclusion de hoy --"sin hechos no hay afectados"-- era un engaño:
+/// los sujetos se declaran, no se infieren de los hechos.
+#[tokio::test]
+async fn a_policy_only_fork_with_declared_subjects_changes_the_decisions() {
+    let graph = TheGraph::new(vec![RelationFact::new(
+        RelationType::DependsOn,
+        subject(),
+        component_v1(),
+    )]);
+    let service = SimulationService::new(graph.clone(), Arc::new(PolicyDrivenEvaluator));
+
+    let fork = the_fork(the_policy("1.0.0"))
+        .with_subjects(vec![subject()])
+        .with_policy(the_strict_policy("2.0.0"));
+
+    let diff = service.simulate(&fork, Utc::now()).await.expect("simula");
+
+    assert_eq!(
+        diff.decisions.len(),
+        1,
+        "la decision cambia porque la politica cambia: {:?}",
+        diff.decisions
+    );
+    let change = &diff.decisions[0];
+    assert_eq!(change.subject, subject());
+    assert_eq!(change.before, Outcome::Allow);
+    assert_eq!(change.after, Outcome::Deny);
+    assert_eq!(change.policy_version_after, "2.0.0");
+    assert!(
+        diff.structural.affected_subjects.contains(&subject()),
+        "y el diff dice a quien le llega: {:?}",
+        diff.structural.affected_subjects
+    );
+}
+
+/// AC3: un fork SIN sujetos no es una simulacion completa sin afectados:
+/// es una simulacion que no se puede hacer, y se rechaza. Un diff vacio
+/// que parezca "todo revisado, nada cambia" es una conclusion engañosa.
+#[tokio::test]
+async fn a_fork_with_no_subjects_is_rejected_not_a_silent_empty_diff() {
+    let graph = TheGraph::new(Vec::new());
+    let service = SimulationService::new(graph.clone(), Arc::new(PolicyDrivenEvaluator));
+
+    let fork = the_fork(the_policy("1.0.0")).with_policy(the_strict_policy("2.0.0"));
+
+    let error = service
+        .simulate(&fork, Utc::now())
+        .await
+        .expect_err("sin sujetos no hay simulacion que valga");
+
+    assert!(
+        matches!(error, hodei_simulation::SimulationError::NotAllowed(_)),
+        "dice que no hay sujetos declarados: {error}"
+    );
+}
+
+/// AC3: un sujeto de OTRA cuenta no se admite en la simulacion, aunque
+/// alguien lo declare. La cuenta del sujeto se compara con la del
+/// checkpoint por su componente canonico.
+#[tokio::test]
+async fn a_subject_of_another_account_is_not_admitted() {
+    let graph = TheGraph::new(Vec::new());
+    let service = SimulationService::new(graph.clone(), Arc::new(PolicyDrivenEvaluator));
+
+    let foreign = Hrn::from_string("hrn:hodei:artifacts:eu-west-1:contoso:Artifact/private")
+        .expect("un HRN");
+    let fork = the_fork(the_policy("1.0.0"))
+        .with_subjects(vec![subject(), foreign])
+        .with_policy(the_strict_policy("2.0.0"));
+
+    let error = service
+        .simulate(&fork, Utc::now())
+        .await
+        .expect_err("un sujeto de otra cuenta no entra");
+
+    assert!(
+        matches!(error, hodei_simulation::SimulationError::NotAllowed(ref reason)
+            if reason.contains("contoso")),
+        "dice que el sujeto sale de la cuenta de la simulacion: {error}"
+    );
+}

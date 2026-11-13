@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use hodei_evidence::domain::evidence::EvidenceType;
 use hodei_evidence::domain::graph::{GraphNode, GraphRelation, NodeKind, RelationType};
@@ -652,4 +653,140 @@ async fn m7_uat_05_the_same_inputs_give_the_same_diff() {
     .await;
 
     record("M7-UAT-05", result);
+}
+
+// ───────────────────────── HG-H4-01: solo politica, sin engaños ─────────────────────────
+
+/// Un lector de evidencia que FALLA al leer: el error no puede
+/// convertirse en una capsula vacia ni en un ALLOW.
+struct FailingEvidenceStore {
+    inner: Arc<SurrealEvidenceStore<Db>>,
+}
+
+#[async_trait]
+impl hodei_evidence::ports::EvidenceStore for FailingEvidenceStore {
+    async fn put(
+        &self,
+        evidence: hodei_evidence::domain::evidence::EvidenceRecord,
+    ) -> Result<hodei_evidence::EvidenceId, hodei_evidence::ports::StoreError> {
+        self.inner.put(evidence).await
+    }
+    async fn get(
+        &self,
+        id: &hodei_evidence::EvidenceId,
+    ) -> Result<Option<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+        self.inner.get(id).await
+    }
+    async fn find_by_external_id(
+        &self,
+        producer: &hodei_evidence::domain::evidence::Producer,
+        external_id: &str,
+    ) -> Result<Option<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+        self.inner.find_by_external_id(producer, external_id).await
+    }
+    async fn evidence_of_subject(
+        &self,
+        _account: &str,
+        _subject: &kernel::Hrn,
+    ) -> Result<Vec<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+        Err(hodei_evidence::ports::StoreError::Unavailable(
+            "the evidence store is down".to_string(),
+        ))
+    }
+}
+
+/// M7-UAT-06 La simulacion de SOLO politica, con sujetos declarados.
+///
+/// Given a base policy that allows everything and no risk facts at all,
+/// when simulation forks with a stricter hypothetical policy and
+/// EXPLICITLY declared subjects, then the decisions that change are
+/// listed -- y no se infiere que "sin hechos no hay afectados".
+#[tokio::test]
+async fn m7_uat_06_the_policy_only_simulation_with_declared_subjects_changes_the_decisions() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        let service = world.the_service();
+
+        // La politica de ahora lo permite todo; la hipotetica exige la
+        // trazabilidad verificada de la construccion, que este mundo no
+        // tiene: NINGUN hecho de riesgo o relacion adicional.
+        let base = TrustPolicy::new("production", "1.0.0", Vec::new());
+        let fork = the_fork(base)
+            .with_subjects(vec![subject(), other_subject()])
+            .with_policy(the_provenance_policy());
+
+        let diff = service
+            .simulate(&fork, Utc::now())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(
+            diff.decisions.len(),
+            2,
+            "los DOS sujetos declarados se evaluan: {:?}",
+            diff.decisions
+        );
+        for change in &diff.decisions {
+            assert_eq!(change.before, Outcome::Allow, "la base lo permitia");
+            assert_ne!(
+                change.before, change.after,
+                "y la politica hipotetica cambia el resultado: {:?}",
+                change
+            );
+            assert_eq!(change.policy_version_after, "1.0.0");
+        }
+        assert!(
+            diff.structural.affected_subjects.contains(&subject()),
+            "el diff dice a quien le llega: {:?}",
+            diff.structural.affected_subjects
+        );
+        Ok(())
+    }
+    .await;
+
+    record("M7-UAT-06", result);
+}
+
+/// M7-UAT-07 Un fallo de lectura de evidencia NO se convierte en
+/// decision: el error es tipado y llega, no se disfraza de capsula
+/// vacia ni de diff silencioso.
+#[tokio::test]
+async fn m7_uat_07_a_failed_evidence_read_is_not_an_allow() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        let graph: Arc<dyn SimulationGraph> = Arc::new(SurrealSimulationGraph::new(
+            world.graph.clone(),
+            account_hrn(),
+        ));
+        let decisions: Arc<dyn DecisionEvaluator> = Arc::new(CapsuleDecisionEvaluator::new(
+            Arc::new(FailingEvidenceStore {
+                inner: world.evidence.clone(),
+            }),
+            ACCOUNT,
+        ));
+        let service = SimulationService::new(graph, decisions);
+
+        let fork = the_fork(the_policy())
+            .with_subjects(vec![subject()])
+            .with_policy(the_strict_policy());
+
+        let error = service
+            .simulate(&fork, Utc::now())
+            .await
+            .expect_err("el fallo de lectura llega, no se disfraza");
+
+        assert!(
+            matches!(error, hodei_simulation::SimulationError::ReadFailed(ref reason)
+                if reason.contains("the evidence store is down")),
+            "el error es tipado y dice el por que: {error}"
+        );
+        Ok(())
+    }
+    .await;
+
+    record("M7-UAT-07", result);
 }
