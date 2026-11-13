@@ -658,7 +658,7 @@ async fn m6_uat_03_a_duplicate_event_is_idempotent() {
         assert_eq!(second.duplicates.len(), 1, "y la repeticion se reporta");
 
         // Y el efecto esta en el almacen UNA vez.
-        assert_eq!(store.applied_effects().len(), 1);
+        assert_eq!(store.applied_effects().await.len(), 1);
         Ok(())
     }
     .await;
@@ -705,7 +705,7 @@ async fn m6_uat_04_a_transient_failure_retries() {
 
         // Y el registro es durable, con la traza del fallo.
         let stored = store
-            .execution_of("notifying:evt-cve-4")
+            .execution_of("notifying:evt-cve-4").await
             .expect("el registro esta");
         assert!(stored.is_failure());
         assert!(
@@ -775,7 +775,7 @@ async fn m6_uat_05_a_permanent_failure_does_not_retry_for_ever() {
 
         // Y el fallo se puede consultar, con su cadena de causalidad.
         let stored = store
-            .execution_of("notifying:evt-cve-5")
+            .execution_of("notifying:evt-cve-5").await
             .expect("el registro esta");
         assert!(stored.is_failure());
         assert!(!stored.is_retryable_failure());
@@ -829,7 +829,7 @@ async fn m6_uat_06_a_loop_is_cut() {
         );
 
         // Y el corte se puede consultar: hay un registro con el corte.
-        let records = store.executions();
+        let records = store.executions().await;
         assert!(
             records
                 .iter()

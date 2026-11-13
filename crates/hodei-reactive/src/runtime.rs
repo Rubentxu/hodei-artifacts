@@ -81,21 +81,22 @@ impl DispatchReport {
 /// The store is what makes the reaction **once-only** and what makes the
 /// trace **durable**. A reaction whose record is not there has not
 /// happened, whatever anybody remembers.
+#[async_trait::async_trait]
 pub trait ExecutionStore: Send + Sync {
     /// The execution of a key, if it happened.
-    fn execution_of(&self, key: &str) -> Option<ExecutionRecord>;
+    async fn execution_of(&self, key: &str) -> Option<ExecutionRecord>;
 
     /// Writes an execution down.
-    fn put(&self, record: ExecutionRecord);
+    async fn put(&self, record: ExecutionRecord);
 
     /// The effects that have already been applied.
-    fn applied_effects(&self) -> Vec<Effect>;
+    async fn applied_effects(&self) -> Vec<Effect>;
 
     /// Records that an effect was applied.
-    fn record_effect(&self, effect: Effect);
+    async fn record_effect(&self, effect: Effect);
 
     /// The executions of a chain, the oldest first.
-    fn executions(&self) -> Vec<ExecutionRecord>;
+    async fn executions(&self) -> Vec<ExecutionRecord>;
 }
 
 /// The store of the executions, in memory.
@@ -117,8 +118,9 @@ impl InMemoryExecutionStore {
     }
 }
 
+#[async_trait::async_trait]
 impl ExecutionStore for InMemoryExecutionStore {
-    fn execution_of(&self, key: &str) -> Option<ExecutionRecord> {
+    async fn execution_of(&self, key: &str) -> Option<ExecutionRecord> {
         let inner = self.inner.lock().expect("the store is not poisoned");
         inner
             .executions
@@ -127,7 +129,7 @@ impl ExecutionStore for InMemoryExecutionStore {
             .cloned()
     }
 
-    fn put(&self, record: ExecutionRecord) {
+    async fn put(&self, record: ExecutionRecord) {
         let mut inner = self.inner.lock().expect("the store is not poisoned");
         inner
             .executions
@@ -135,12 +137,12 @@ impl ExecutionStore for InMemoryExecutionStore {
         inner.executions.push(record);
     }
 
-    fn applied_effects(&self) -> Vec<Effect> {
+    async fn applied_effects(&self) -> Vec<Effect> {
         let inner = self.inner.lock().expect("the store is not poisoned");
         inner.effects.clone()
     }
 
-    fn record_effect(&self, effect: Effect) {
+    async fn record_effect(&self, effect: Effect) {
         let mut inner = self.inner.lock().expect("the store is not poisoned");
         if !inner
             .effects
@@ -151,7 +153,7 @@ impl ExecutionStore for InMemoryExecutionStore {
         }
     }
 
-    fn executions(&self) -> Vec<ExecutionRecord> {
+    async fn executions(&self) -> Vec<ExecutionRecord> {
         let inner = self.inner.lock().expect("the store is not poisoned");
         inner.executions.clone()
     }
@@ -294,7 +296,7 @@ impl ReactiveRuntime {
                 .finished(ExecutionOutcome::Cut {
                     reason: reason.clone(),
                 }, now);
-                self.store.put(record.clone());
+                self.store.put(record.clone()).await;
                 report.executions.push(record);
                 break;
             }
@@ -309,7 +311,7 @@ impl ReactiveRuntime {
 
                 // Once-only: the execution is looked for before anything
                 // is planned.
-                if let Some(previous) = self.store.execution_of(&key) {
+                if let Some(previous) = self.store.execution_of(&key).await {
                     match previous.outcome {
                         ExecutionOutcome::Completed => {
                             report.duplicates.push(current.id.clone());
@@ -336,7 +338,7 @@ impl ReactiveRuntime {
                 match planner.guard(&current) {
                     crate::behavior::GuardOutcome::Skip(reason) => {
                         record = record.finished(ExecutionOutcome::Skipped { reason }, now);
-                        self.store.put(record.clone());
+                        self.store.put(record.clone()).await;
                         report.executions.push(record);
                         continue;
                     }
@@ -374,13 +376,13 @@ impl ReactiveRuntime {
 
                         // The plan is recorded BEFORE the executor is
                         // called: said first, done after.
-                        self.store.put(record.clone());
+                        self.store.put(record.clone()).await;
                         report.executions.push(record);
 
                         for intent in plan.intents {
                             let already = self
                                 .store
-                                .applied_effects()
+                                .applied_effects().await
                                 .iter()
                                 .any(|applied| {
                                     applied.idempotency_key == intent.idempotency_key
@@ -391,7 +393,7 @@ impl ReactiveRuntime {
                             }
                             match executor.apply(&intent).await {
                                 Ok(()) => {
-                                    self.store.record_effect(intent.as_effect());
+                                    self.store.record_effect(intent.as_effect()).await;
                                     report.applied.push(intent.as_effect());
                                 }
                                 Err(reason) => {
@@ -416,7 +418,7 @@ impl ReactiveRuntime {
                                         },
                                         now,
                                     );
-                                    self.store.put(failed.clone());
+                                    self.store.put(failed.clone()).await;
                                     report.executions.push(failed);
                                 }
                             }
@@ -438,7 +440,7 @@ impl ReactiveRuntime {
                                 },
                                 now,
                             );
-                        self.store.put(record.clone());
+                        self.store.put(record.clone()).await;
                         report.executions.push(record);
                     }
                 }
@@ -494,7 +496,7 @@ impl ReactiveRuntime {
                     },
                     now,
                 );
-                self.store.put(record.clone());
+                self.store.put(record.clone()).await;
                 report.executions.push(record);
                 break;
             }
@@ -509,7 +511,7 @@ impl ReactiveRuntime {
 
                 // Once-only: the execution is looked for before anything
                 // is done.
-                if let Some(previous) = self.store.execution_of(&key) {
+                if let Some(previous) = self.store.execution_of(&key).await {
                     match previous.outcome {
                         ExecutionOutcome::Completed => {
                             report.duplicates.push(current.id.clone());
@@ -531,7 +533,7 @@ impl ReactiveRuntime {
                             let (record, reaction) = self
                                 .run_behavior(behavior, &current, &causation, attempts, now)
                                 .await;
-                            self.store.put(record.clone());
+                            self.store.put(record.clone()).await;
                             report.executions.push(record);
                             effects.extend(reaction.effects.clone());
                             reactions.push(reaction);
@@ -564,7 +566,7 @@ impl ReactiveRuntime {
                 let (record, reaction) = self
                     .run_behavior(behavior, &current, &causation, 0, now)
                     .await;
-                self.store.put(record.clone());
+                self.store.put(record.clone()).await;
                 report.executions.push(record);
                 effects.extend(reaction.effects.clone());
                 reactions.push(reaction);
@@ -596,13 +598,13 @@ impl ReactiveRuntime {
             }
             let already = self
                 .store
-                .applied_effects()
+                .applied_effects().await
                 .iter()
                 .any(|applied| applied.idempotency_key == effect.idempotency_key);
             if already {
                 report.suppressed.push(effect);
             } else {
-                self.store.record_effect(effect.clone());
+                self.store.record_effect(effect.clone()).await;
                 report.applied.push(effect);
             }
         }

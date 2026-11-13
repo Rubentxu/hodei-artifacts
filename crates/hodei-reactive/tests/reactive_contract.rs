@@ -250,7 +250,7 @@ async fn the_trace_is_durable_and_a_failure_retries() {
 
     // Y el registro es durable: esta en el almacen, no solo en el informe.
     let stored = store
-        .execution_of("failing:ev-1")
+        .execution_of("failing:ev-1").await
         .expect("the record is there");
     assert!(stored.is_failure());
     assert!(
@@ -315,7 +315,7 @@ async fn the_budget_cuts_the_chain_and_the_cut_is_in_the_trace() {
     assert!(cut.contains("budget"), "and it says why: {cut}");
 
     // Y el corte queda en la traza, con su registro.
-    let records = store.executions();
+    let records = store.executions().await;
     assert!(
         records
             .iter()
@@ -369,7 +369,7 @@ async fn the_effects_are_idempotent_and_the_repetition_does_not_duplicate_them()
     );
 
     // Y en el almacen hay un solo efecto.
-    assert_eq!(store.applied_effects().len(), 1);
+    assert_eq!(store.applied_effects().await.len(), 1);
 
     // Y un evento DISTINTO que produce el mismo efecto lo suprime, en vez
     // de aplicarlo dos veces: la clave es la del efecto, no la del evento.
@@ -386,7 +386,7 @@ async fn the_effects_are_idempotent_and_the_repetition_does_not_duplicate_them()
         1,
         "the effect was already there and it is not applied twice"
     );
-    assert_eq!(store.applied_effects().len(), 1);
+    assert_eq!(store.applied_effects().await.len(), 1);
 }
 
 // ───────────────────────────── AC5 ─────────────────────────────
@@ -522,7 +522,7 @@ async fn the_replay_does_not_repeat_the_external_effect() {
     assert_eq!(replayed.duplicates.len(), 1);
     assert_eq!(behaviour.calls(), 1, "and the behaviour does not run again");
     assert_eq!(
-        store.applied_effects().len(),
+        store.applied_effects().await.len(),
         1,
         "and there is still one effect"
     );

@@ -46,7 +46,7 @@ impl IntentExecutor for SpyExecutor {
             "planned:{}:{}",
             intent.origin.behavior, intent.origin.event_id
         );
-        let record = self.store.execution_of(&key).expect("el plan esta dicho");
+        let record = self.store.execution_of(&key).await.expect("el plan esta dicho");
         assert!(
             record.trace.iter().any(|entry| entry.what == format!("intent:{}", intent.identity)),
             "el intent {} esta en la traza del plan antes de tocarse",
@@ -196,7 +196,7 @@ async fn the_plan_is_recorded_before_the_executor_touches() {
     assert_eq!(report.caused.len(), 1, "el evento causado sale al informe");
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1")
+        .execution_of("planned:spy_planning:evt-plan-1").await
         .expect("la ejecucion del plan queda");
     assert!(
         record
@@ -226,7 +226,7 @@ async fn a_validation_failure_touches_nothing() {
     assert!(report.applied.is_empty() && report.caused.is_empty());
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1")
+        .execution_of("planned:spy_planning:evt-plan-1").await
         .expect("el fallo queda escrito");
     match record.outcome {
         hodei_reactive::execution::ExecutionOutcome::Failed { retryable, .. } => {
@@ -242,7 +242,7 @@ async fn a_validation_failure_touches_nothing() {
 async fn a_preparation_failure_touches_nothing() {
     let (runtime, calls, store) = runtime_with(Mode::CannotRead, Budget::default());
 
-    let report = runtime
+    let _report = runtime
         .dispatch_planned(the_event(), Utc::now())
         .await
         .expect("el despacho corre; el fallo es de la lectura");
@@ -254,7 +254,7 @@ async fn a_preparation_failure_touches_nothing() {
     );
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1")
+        .execution_of("planned:spy_planning:evt-plan-1").await
         .expect("el fallo queda escrito");
     match record.outcome {
         hodei_reactive::execution::ExecutionOutcome::Failed { retryable, .. } => {
@@ -286,7 +286,7 @@ async fn an_exhausted_budget_touches_nothing() {
     assert!(report.applied.is_empty());
     assert!(report.cut.is_some(), "el corte queda en el informe");
 
-    let record = store.execution_of("cut:evt-plan-1").expect("el corte queda");
+    let record = store.execution_of("cut:evt-plan-1").await.expect("el corte queda");
     assert!(
         matches!(
             record.outcome,
