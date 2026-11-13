@@ -43,6 +43,17 @@ pub enum ExecutionOutcome {
         /// Why it was cut.
         reason: String,
     },
+    /// It was sent and nobody knows whether it landed.
+    ///
+    /// The honest outcome of an effect whose answer never came. It is
+    /// NOT a failure to retry: reejecutar sobre un resultado incierto es
+    /// repetir el efecto, y repetirlo es lo que la clave de idempotencia
+    /// prohibia. Lo incierto se reconcilia, y solo entonces vuelve a
+    /// intentarse.
+    Unknown {
+        /// What is known about the sending.
+        reason: String,
+    },
 }
 
 /// One execution of one behaviour.

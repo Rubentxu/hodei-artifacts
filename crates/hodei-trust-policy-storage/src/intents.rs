@@ -90,6 +90,25 @@ impl<C: Connection> SurrealIntentStore<C> {
     fn effect_id(key: &str) -> surrealdb::sql::Thing {
         Self::record_id(EFFECT_TABLE, key)
     }
+
+    /// Every intent and its state, sorted by identity, for the reader
+    /// that asks what is waiting and what became of what was said.
+    pub async fn states(&self) -> Result<Vec<(String, String)>, String> {
+        let rows: Vec<IntentRow> = self
+            .db
+            .query("SELECT * FROM type::table($table)")
+            .bind(("table", INTENT_TABLE))
+            .await
+            .map_err(|error| error.to_string())?
+            .take(0)
+            .map_err(|error| error.to_string())?;
+        let mut states: Vec<(String, String)> = rows
+            .into_iter()
+            .map(|row| (row.intent.identity, row.state))
+            .collect();
+        states.sort();
+        Ok(states)
+    }
 }
 
 #[async_trait]

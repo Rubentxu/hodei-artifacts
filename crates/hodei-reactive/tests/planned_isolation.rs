@@ -3,33 +3,40 @@
 //! The seam is provable, not inferable: whatever fails while PLANNING --
 //! the validation, the preparation, the budget -- leaves the executor
 //! without a single call. And the plan is recorded BEFORE the executor
-//! touches: the spy checks the order from inside.
+//! touches: the spy checks the order from inside. The intents cross the
+//! outbox, and what the executor says comes back as a receipt that the
+//! outbox keeps.
 
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
-use hodei_reactive::behavior::{BehaviorError, GuardOutcome};
-use hodei_reactive::events::{Event, EventKind, Subscription};
+use hodei_reactive::behavior::GuardOutcome;
+use hodei_reactive::events::{Event, EventKind};
 use hodei_reactive::execution::Budget;
-use hodei_reactive::intent::{Intent, IntentExecutor, Plan, PlanningBehavior, ReadScope};
+use hodei_reactive::intent::{
+    InMemoryIntentOutbox, Intent, IntentExecutor, Plan, PlanningBehavior, ReadScope, Receipt,
+};
 use hodei_reactive::runtime::{ExecutionStore, InMemoryExecutionStore, ReactiveRuntime};
 
 /// The spy executor: it counts every touch, and it checks, from INSIDE,
 /// that the plan of the behaviour was recorded before it was asked to
-/// touch.
+/// touch. Its answer is a RECEIPT, because "what happened" is what an
+/// executor says, and it says it in the words of the outbox.
 #[derive(Clone)]
 struct SpyExecutor {
     calls: Arc<Mutex<Vec<String>>>,
     store: Arc<dyn ExecutionStore>,
+    answer: Receipt,
 }
 
 impl SpyExecutor {
-    fn over(store: Arc<dyn ExecutionStore>) -> (Arc<Self>, Arc<Mutex<Vec<String>>>) {
+    fn over(store: Arc<dyn ExecutionStore>, answer: Receipt) -> (Arc<Self>, Arc<Mutex<Vec<String>>>) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         (
             Arc::new(Self {
                 calls: calls.clone(),
                 store,
+                answer,
             }),
             calls,
         )
@@ -38,7 +45,7 @@ impl SpyExecutor {
 
 #[async_trait::async_trait]
 impl IntentExecutor for SpyExecutor {
-    async fn apply(&self, intent: &Intent) -> Result<(), String> {
+    async fn apply(&self, intent: &Intent) -> Receipt {
         // The order is the seam: said first, done after. If this
         // assertion breaks, the runtime is touching before recording, and
         // a crash in between would lose the intent.
@@ -57,7 +64,7 @@ impl IntentExecutor for SpyExecutor {
             .lock()
             .expect("el espia no esta envenenado")
             .push(intent.identity.clone());
-        Ok(())
+        self.answer.clone()
     }
 }
 
@@ -86,10 +93,12 @@ impl SpyPlanning {
 
 /// The read the behaviour needs while planning. Failing it is the
 /// preparation failure.
-async fn the_read(mode: Mode) -> Result<&'static str, BehaviorError> {
+async fn the_read(mode: Mode) -> Result<&'static str, hodei_reactive::behavior::BehaviorError> {
     match mode {
         Mode::Plans | Mode::InvalidInput => Ok("the facts of the risk"),
-        Mode::CannotRead => Err(BehaviorError::transient("the read of the facts failed")),
+        Mode::CannotRead => {
+            Err(hodei_reactive::behavior::BehaviorError::transient("the read of the facts failed"))
+        }
     }
 }
 
@@ -99,8 +108,8 @@ impl PlanningBehavior for SpyPlanning {
         "spy_planning"
     }
 
-    fn subscription(&self) -> Subscription {
-        Subscription::to(EventKind::VulnerabilityAccepted)
+    fn subscription(&self) -> hodei_reactive::events::Subscription {
+        hodei_reactive::events::Subscription::to(EventKind::VulnerabilityAccepted)
     }
 
     fn guard(&self, event: &Event) -> GuardOutcome {
@@ -111,10 +120,10 @@ impl PlanningBehavior for SpyPlanning {
         }
     }
 
-    async fn plan(&self, event: &Event, scope: &ReadScope) -> Result<Plan, BehaviorError> {
+    async fn plan(&self, event: &Event, scope: &ReadScope) -> Result<Plan, hodei_reactive::behavior::BehaviorError> {
         // The validation failure: the input does not say what it must.
         if self.mode == Mode::InvalidInput {
-            return Err(BehaviorError::permanent(
+            return Err(hodei_reactive::behavior::BehaviorError::permanent(
                 "the advisory does not name a subject",
             ));
         }
@@ -168,23 +177,34 @@ fn the_event() -> Event {
 }
 
 /// A runtime with the spy planning and the spy executor, over the same
-/// store: the executor reads the store to check the order.
+/// store and the SAME outbox: the executor reads the store to check the
+/// order, and the outbox keeps what the intents became.
 fn runtime_with(
     mode: Mode,
     budget: Budget,
-) -> (ReactiveRuntime, Arc<Mutex<Vec<String>>>, Arc<InMemoryExecutionStore>) {
+    answer: Receipt,
+) -> (
+    ReactiveRuntime,
+    Arc<Mutex<Vec<String>>>,
+    Arc<InMemoryExecutionStore>,
+    Arc<InMemoryIntentOutbox>,
+) {
     let store = Arc::new(InMemoryExecutionStore::empty());
-    let (executor, calls) = SpyExecutor::over(store.clone());
+    let outbox = Arc::new(InMemoryIntentOutbox::empty());
+    let (executor, calls) = SpyExecutor::over(store.clone(), answer);
     let mut runtime = ReactiveRuntime::new(store.clone(), budget).with_tenant("acme");
+    runtime.with_outbox(outbox.clone());
     runtime.register_planned(SpyPlanning::with(mode), executor);
-    (runtime, calls, store)
+    (runtime, calls, store, outbox)
 }
 
-/// The plan is recorded BEFORE the executor touches, the intents are
-/// applied once each, and the events the plan causes go into the chain.
+/// The plan is recorded BEFORE the executor touches, the intents cross
+/// the outbox and land once each, and the events the plan causes go into
+/// the chain.
 #[tokio::test]
 async fn the_plan_is_recorded_before_the_executor_touches() {
-    let (runtime, calls, store) = runtime_with(Mode::Plans, Budget::default());
+    let (runtime, calls, store, outbox) =
+        runtime_with(Mode::Plans, Budget::default(), Receipt::Applied);
 
     let report = runtime
         .dispatch_planned(the_event(), Utc::now())
@@ -205,13 +225,25 @@ async fn the_plan_is_recorded_before_the_executor_touches() {
             .any(|entry| entry.what.contains("the plan says 2 intents and 1 events")),
         "el plan queda dicho en la traza"
     );
+
+    // Los intents cruzaron el outbox y los recibos dicen aplicado: el
+    // estado del intent vive en el outbox, no en la memoria del proceso.
+    for identity in calls.lock().unwrap().iter() {
+        assert_eq!(
+            outbox.state_of(identity),
+            Some("applied".to_string()),
+            "el intent {identity} quedo aplicado en el outbox"
+        );
+    }
 }
 
 /// A validation failure in the planning phase leaves the executor with
-/// ZERO calls: the plan said nothing, so nothing is done.
+/// ZERO calls: the plan said nothing, so nothing is done. And the outbox
+/// has no intents: lo que no se dijo no puede estar pendiente.
 #[tokio::test]
 async fn a_validation_failure_touches_nothing() {
-    let (runtime, calls, store) = runtime_with(Mode::InvalidInput, Budget::default());
+    let (runtime, calls, store, outbox) =
+        runtime_with(Mode::InvalidInput, Budget::default(), Receipt::Applied);
 
     let report = runtime
         .dispatch_planned(the_event(), Utc::now())
@@ -234,13 +266,19 @@ async fn a_validation_failure_touches_nothing() {
         }
         other => panic!("el resultado tiene que ser un fallo: {other:?}"),
     }
+    assert!(
+        outbox.states().is_empty(),
+        "un plan que fallo no dijo intents: {:?}",
+        outbox.states()
+    );
 }
 
 /// A preparation failure -- the read that failed -- also touches nothing,
 /// and it is retryable: the moment may fix it.
 #[tokio::test]
 async fn a_preparation_failure_touches_nothing() {
-    let (runtime, calls, store) = runtime_with(Mode::CannotRead, Budget::default());
+    let (runtime, calls, store, _outbox) =
+        runtime_with(Mode::CannotRead, Budget::default(), Receipt::Applied);
 
     let _report = runtime
         .dispatch_planned(the_event(), Utc::now())
@@ -268,13 +306,14 @@ async fn a_preparation_failure_touches_nothing() {
 /// touched: el presupuesto que llega tarde ya gasto lo que cortaba.
 #[tokio::test]
 async fn an_exhausted_budget_touches_nothing() {
-    let (runtime, calls, store) = runtime_with(
+    let (runtime, calls, store, _outbox) = runtime_with(
         Mode::Plans,
         Budget {
             max_executions: 0,
             max_depth: 8,
             max_attempts: 3,
         },
+        Receipt::Applied,
     );
 
     let report = runtime
@@ -298,10 +337,11 @@ async fn an_exhausted_budget_touches_nothing() {
 
 /// The same event delivered twice plans once and touches once: the
 /// second delivery is a duplicate whose effect is suppressed, not
-/// re-applied.
+/// re-applied, and the outbox does not change what it already said.
 #[tokio::test]
 async fn an_intent_is_applied_once_only() {
-    let (runtime, calls, _store) = runtime_with(Mode::Plans, Budget::default());
+    let (runtime, calls, _store, _outbox) =
+        runtime_with(Mode::Plans, Budget::default(), Receipt::Applied);
 
     let first = runtime
         .dispatch_planned(the_event(), Utc::now())

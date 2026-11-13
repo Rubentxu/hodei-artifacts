@@ -38,11 +38,12 @@ pub use behavior::{
 pub use events::{Event, EventKind, PayloadPredicate, Subscription};
 pub use execution::{Budget, BudgetState, ExecutionOutcome, ExecutionRecord};
 pub use intent::{
-    Intent, IntentExecutor, IntentOrigin, IntentOutbox, Plan, PlanningBehavior, ReadScope,
-    Receipt,
+    InMemoryIntentOutbox, Intent, IntentExecutor, IntentOrigin, IntentOutbox, Plan,
+    PlanningBehavior, ReadScope, Receipt,
 };
 pub use reactions::{
-    BlastRadiusSource, DecisionRequester, ExceptionExpiryReaction, ImpactedSubject, ReasonCode,
+    BlastRadiusSource, DecisionRequester, DomainIntentExecutor, ExceptionExpiryReaction,
+    ImpactedSubject, PlannedExceptionExpiryReaction, PlannedVulnerabilityReaction, ReasonCode,
     Reevaluation, SecurityCaseSink, VulnerabilityReaction,
 };
 pub use runtime::{
