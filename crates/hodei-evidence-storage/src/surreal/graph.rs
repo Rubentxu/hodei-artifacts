@@ -642,40 +642,6 @@ impl<C: Connection> SurrealGraphStore<C> {
         Ok(rows.iter().filter_map(relation_of).collect())
     }
 
-    /// Writes a record, and tries again when another writer got there at the
-    /// same moment.
-    async fn upsert<T: serde::Serialize + Clone + Send + Sync + 'static>(
-        &self,
-        id: surrealdb::sql::Thing,
-        content: T,
-    ) -> Result<(), GraphError> {
-        let mut attempts = 0;
-        loop {
-            let written = self
-                .db
-                .query("UPSERT $id CONTENT $content")
-                .bind(("id", id.clone()))
-                .bind(("content", content.clone()))
-                .await
-                .map_err(|error| GraphError::Unavailable(error.to_string()));
-
-            let failure = match written {
-                Ok(response) => response.check().err().map(|error| error.to_string()),
-                Err(error) => Some(error.to_string()),
-            };
-
-            match failure {
-                None => return Ok(()),
-                Some(message)
-                    if crate::is_conflict(&message) && attempts < crate::CONFLICT_RETRIES =>
-                {
-                    attempts += 1;
-                }
-                Some(message) => return Err(GraphError::Rejected(message)),
-            }
-        }
-    }
-
     /// Whether the graph has a node with this identity.
     async fn node_exists(&self, id: &Hrn) -> Result<bool, GraphError> {
         let mut response = self

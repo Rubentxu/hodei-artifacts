@@ -154,6 +154,80 @@ pub trait IntentExecutor: Send + Sync {
     async fn apply(&self, intent: &Intent) -> Result<(), String>;
 }
 
+/// What an effect turned out to be, when it came back.
+///
+/// The `Unknown` receipt is the honest one: the executor sent the effect
+/// and does not know whether it landed. An unknown receipt is NOT a
+/// failure to retry -- re-ejecutar sobre un resultado incierto es como
+/// repetir el efecto, y repetirlo es lo que la clave de idempotencia
+/// prohibia. Lo incierto se reconcilia, y solo entonces vuelve a
+/// intentarse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Receipt {
+    /// The effect landed, and the receipt says so.
+    Applied,
+    /// The effect did not land, and it may be tried again.
+    Failed {
+        /// What went wrong.
+        reason: String,
+        /// Whether trying again can work.
+        retryable: bool,
+    },
+    /// The effect was sent and nobody knows where it landed.
+    Unknown {
+        /// What is known about the sending.
+        reason: String,
+    },
+}
+
+/// The outbox of intents: where a plan WAITS between being said and
+/// being done.
+///
+/// The states are explicit, because a state that is guessed is a state
+/// that lies: `pending` (said, waiting for a worker), `claimed` (a
+/// worker took it, with a lease), `applied` (the receipt says it
+/// landed), `failed` (the receipt says it did not, and a retryable
+/// failure returns to `pending`), `unknown` (the receipt says nobody
+/// knows, and ONLY an explicit reconciliation returns it to `pending`).
+///
+/// The claim is a compare-and-set: two workers ask for the same intent
+/// and ONE wins. The lease is how a dead worker's intent becomes
+/// somebody else's: when the lease expires, the intent is claimable
+/// again.
+#[async_trait::async_trait]
+pub trait IntentOutbox: Send + Sync {
+    /// Says an intent: it goes in as `pending`, with everything that
+    /// makes it reconcilable. Saying it twice is the same as saying it
+    /// once.
+    async fn put_pending(&self, intent: &Intent) -> Result<(), String>;
+
+    /// Tries to take an intent from `pending` (or from an expired lease)
+    /// to `claimed`. One worker wins, and the loser knows it lost.
+    async fn claim(
+        &self,
+        identity: &str,
+        lease_owner: &str,
+        lease_until: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<Option<Intent>, String>;
+
+    /// Writes the receipt of a claimed intent. From `claimed`, and only
+    /// from `claimed`: a receipt for an intent that nobody claimed is a
+    /// receipt nobody can explain. A repeated receipt changes nothing.
+    async fn record_receipt(&self, identity: &str, receipt: &Receipt)
+        -> Result<(), String>;
+
+    /// The intents that are waiting: `pending`, and the claimed ones
+    /// whose lease expired. The ones with an `unknown` receipt are NOT
+    /// here: lo incierto no se reejecuta, se reconcilia.
+    async fn recover_pending(&self, now: DateTime<Utc>) -> Result<Vec<Intent>, String>;
+
+    /// Returns an `unknown` intent to `pending`, explicitly: the
+    /// reconciliation happened, somebody looked at the real world, and
+    /// NOW the intent may be tried again.
+    async fn reconcile(&self, identity: &str) -> Result<(), String>;
+}
+
 /// A behaviour that PLANS: it reads and it says, without touching.
 ///
 /// The legacy `Behavior::act` reads and touches in one go; this trait is
