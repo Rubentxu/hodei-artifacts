@@ -73,6 +73,7 @@ pub mod corpus;
 pub mod guard;
 pub mod investigator;
 pub mod model;
+pub mod read_set;
 pub mod redact;
 pub mod scope;
 
@@ -82,6 +83,7 @@ pub use guard::{
 };
 pub use investigator::{EvidenceRetriever, Investigation, InvestigationError, Investigator};
 pub use model::{FixtureProvider, ModelProvider, ModelRequest, ModelResponse, PROMPT_VERSION};
+pub use read_set::{ReadKind, ReadSet, ReadStamp};
 pub use scope::{
     Coverage, EvidenceReadAuthorizer, FactStatus, RetrievalBudget, RetrievalError, RetrievalScope,
     RetrievedContext, ScopeViolation, ScopedFact, TrustLevel, check_the_scope,

@@ -1254,3 +1254,167 @@ async fn many_relations_are_cut_by_the_budget_and_the_omission_is_declared() {
 
     record("M8-H3-02-04", result);
 }
+
+// ───────────────────────── HG-H3-03: el read-set verificable ─────────────────────────
+
+/// M8-H3-03-01 La traza identifica lo que se leyo CON los metadatos que
+/// bastan para verificar el origen: el digest del contenido de la
+/// evidencia y la identidad de las relaciones, sin contenido crudo.
+#[tokio::test]
+async fn the_trace_identifies_what_was_read_with_verifiable_metadata() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        let the_content = "the inventory of the artefact";
+        let evidence_id = world.admit("sbom-readset", the_content, &subject()).await;
+        world.the_risk_layer().await;
+        let investigator = world.the_investigator(&an_answer(&evidence_id));
+
+        let investigation = investigator
+            .investigate("inv-1", &the_scope(), "why are we affected?", Utc::now())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // La generacion del grafo queda dicha en el manifiesto.
+        let generation = world
+            .graph
+            .generation(&account_hrn())
+            .await
+            .map_err(|e| e.to_string())?;
+        assert!(
+            investigation
+                .trace
+                .retrieved
+                .generations
+                .iter()
+                .any(|(source, version)| source == "graph" && *version == generation),
+            "el manifiesto dice la generacion del grafo: {:?}",
+            investigation.trace.retrieved.generations
+        );
+
+        // El sello de la evidencia lleva el digest REAL del contenido:
+        // el origen se comprueba contra el digest, no contra una cita.
+        let expected_digest = hodei_evidence::ContentDigest::of_bytes(the_content.as_bytes()).to_string();
+        assert!(
+            investigation
+                .trace
+                .retrieved
+                .stamps
+                .iter()
+                .any(|stamp| stamp.kind == hodei_investigator::ReadKind::Evidence
+                    && stamp.resource == evidence_id
+                    && stamp.verified_by == expected_digest),
+            "el sello de la evidencia lleva el digest del contenido: {:?}",
+            investigation.trace.retrieved.stamps
+        );
+
+        // Y el manifiesto tiene huella: dos lecturas del mismo mundo
+        // comparten huella sin compartir relojes.
+        assert!(
+            !investigation.trace.retrieved.manifest().is_empty(),
+            "el manifiesto canonico existe"
+        );
+
+        // AC4: la traza serializada NO lleva el contenido del blob.
+        let trace_json = serde_json::to_string(&investigation.trace)
+            .map_err(|e| e.to_string())?;
+        assert!(
+            !trace_json.contains(the_content),
+            "el contenido no entra en la traza"
+        );
+        assert!(
+            !trace_json.contains("<<<DATO"),
+            "el prompt no entra en la traza"
+        );
+        Ok(())
+    }
+    .await;
+
+    record("M8-H3-03-01", result);
+}
+
+/// Una reachability que CAMBIA EL MUNDO cuando la llaman: simula que el
+/// grafo avanzo mientras la lectura estaba en marcha.
+struct WorldChangingReachability {
+    graph: Arc<SurrealGraphStore<Db>>,
+}
+
+#[async_trait]
+impl ReachabilityFacts for WorldChangingReachability {
+    async fn facts_of(&self, subject: &Hrn) -> Result<Vec<ScopedFact>, String> {
+        // La evidencia y sus relaciones ya se leyeron: el grafo avanza
+        // AHORA, antes de que la lectura termine.
+        let evidence = hodei_evidence::EvidenceId::new("ev-late-change");
+        let changes = hodei_evidence::domain::graph::GraphChangeSet::empty()
+            .with_cause("evt-mid-read")
+            .with_node(GraphNode::new(
+                component(),
+                account_hrn(),
+                NodeKind::Component,
+                Utc::now(),
+            ))
+            .with_node(GraphNode::new(
+                hodei_evidence::application::projector::evidence_hrn(&account_hrn(), &evidence),
+                account_hrn(),
+                NodeKind::Evidence,
+                Utc::now(),
+            ))
+            .with_relation(GraphRelation::new(
+                RelationType::DependsOn,
+                subject.clone(),
+                component(),
+                account_hrn(),
+                evidence,
+                Utc::now(),
+            ));
+        use hodei_evidence::ports::graph::GraphWriter;
+        self.graph.apply(changes).await.map_err(|e| e.to_string())?;
+        Ok(Vec::new())
+    }
+}
+
+/// M8-H3-03-02 AC2 en el borde REAL: el grafo cambia mientras se lee y
+/// la lectura NO se presenta como snapshot consistente. Es un Stale,
+/// fail-closed, no un contexto que parece valido.
+#[tokio::test]
+async fn a_world_that_changes_mid_read_makes_the_read_stale() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        world.admit("sbom-mid", "the inventory", &subject()).await;
+
+        let retriever = Arc::new(
+            GraphEvidenceRetriever::new(
+                world.evidence.clone(),
+                world.content.clone(),
+                world.graph.clone(),
+                Arc::new(EvaluatorReadAuthorizer::new(Arc::new(AllowOwnAccount))),
+                account_hrn(),
+            )
+            .with_reachability(Arc::new(WorldChangingReachability {
+                graph: world.graph.clone(),
+            })),
+        );
+        use hodei_investigator::investigator::EvidenceRetriever;
+
+        let error = retriever
+            .retrieve(&the_scope())
+            .await
+            .expect_err("el mundo cambio mientras se leia");
+
+        assert!(
+            matches!(
+                &error,
+                hodei_investigator::scope::RetrievalError::Stale { source, .. }
+                    if source == "graph"
+            ),
+            "la lectura obsoleta se dice obsoleta: {error}"
+        );
+        Ok(())
+    }
+    .await;
+
+    record("M8-H3-03-02", result);
+}

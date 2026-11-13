@@ -20,6 +20,7 @@ use hodei_evidence::domain::graph::NodeKind;
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
 
+use crate::read_set::ReadSet;
 use crate::redact::redact;
 
 /// Cuanto se fia de un texto.
@@ -197,13 +198,17 @@ impl ScopedFact {
     }
 }
 
-/// Lo que una recuperacion entrega: los hechos y CUANTO de lo que hay.
+/// Lo que una recuperacion entrega: los hechos, CUANTO de lo que hay y
+/// el manifiesto de lo que se leyo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetrievedContext {
     /// Los hechos, en el orden de su clave estable.
     pub facts: Vec<ScopedFact>,
     /// Si la recuperacion fue completa o se omitio algo.
     pub coverage: Coverage,
+    /// El manifiesto de las lecturas: identificadores, digests y
+    /// generaciones, sin contenido crudo.
+    pub read_set: ReadSet,
 }
 
 /// Por que la recuperacion no pudo hacerse.
@@ -219,6 +224,11 @@ pub enum RetrievalError {
         /// El recurso que no puede leer.
         resource: String,
     },
+    /// El mundo cambio mientras se leia: la generacion de una fuente al
+    /// empezar la lectura ya no es la del final. No hay snapshot
+    /// coherente que presentar, y una lectura obsoleta se dice
+    /// obsoleta.
+    Stale { source: String, expected: u64, found: u64 },
     /// El almacen no pudo atender. Negar es cerrar: si no se pudo
     /// comprobar el permiso, no se lee.
     Unavailable(String),
@@ -230,6 +240,14 @@ impl std::fmt::Display for RetrievalError {
             Self::NotAuthorized { actor, resource } => {
                 write!(formatter, "{actor} is not allowed to read {resource}")
             }
+            Self::Stale {
+                source,
+                expected,
+                found,
+            } => write!(
+                formatter,
+                "the world changed while reading: {source} was at generation {expected} and is at {found}"
+            ),
             Self::Unavailable(reason) => {
                 write!(formatter, "the retrieval is unavailable: {reason}")
             }

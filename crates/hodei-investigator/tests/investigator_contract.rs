@@ -72,6 +72,7 @@ impl EvidenceRetriever for TheRetriever {
         Ok(RetrievedContext {
             facts: self.facts.clone(),
             coverage: Coverage::Complete,
+            read_set: hodei_investigator::ReadSet::empty(),
         })
     }
 }
@@ -92,6 +93,7 @@ impl EvidenceRetriever for CountingRetriever {
             Ok(facts) => Ok(RetrievedContext {
                 facts,
                 coverage: Coverage::Complete,
+                read_set: hodei_investigator::ReadSet::empty(),
             }),
             Err(error) => Err(error),
         }
@@ -678,6 +680,7 @@ impl EvidenceRetriever for PartialRetriever {
             coverage: Coverage::Partial {
                 omitted: self.omitted,
             },
+            read_set: hodei_investigator::ReadSet::empty(),
         })
     }
 }
@@ -708,4 +711,74 @@ async fn the_trace_declares_the_coverage_of_the_context() {
         }
         other => panic!("una cobertura parcial no se esconde: {other:?}"),
     }
+}
+
+// ───────────────────────── HG-H3-03: el read-set verificable ─────────────────────────
+
+/// AC2: el mundo cambio mientras se leia. La lectura obsoleta NO se
+/// presenta como snapshot consistente: es un Stale, y se dice.
+#[tokio::test]
+async fn a_read_from_a_changed_world_is_stale_not_consistent() {
+    let scope = the_scope();
+    let retriever = Arc::new(CountingRetriever {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        answer: Err(hodei_investigator::scope::RetrievalError::Stale {
+            source: "graph".to_string(),
+            expected: 12,
+            found: 13,
+        }),
+    });
+    let investigator = Investigator::new(
+        retriever,
+        Arc::new(FixtureProvider::answering(a_valid_answer())),
+        CapabilityGuard::empty(),
+    );
+
+    let error = investigator
+        .investigate("inv-1", &scope, "why are we affected?", Utc::now())
+        .await
+        .expect_err("una lectura obsoleta no se disfraza");
+
+    assert!(
+        matches!(&error, InvestigationError::Stale(reason) if reason.contains("12") && reason.contains("13")),
+        "el stale dice de que generacion a cual: {error}"
+    );
+}
+
+/// AC1 (primitiva): el manifiesto del read-set lleva los sellos con sus
+/// digests, y la huella identifica el conjunto sin leerlo entero.
+#[test]
+fn the_read_set_manifest_is_canonical_and_verifiable() {
+    let mut read_set = hodei_investigator::ReadSet::empty();
+    read_set.generation("graph", 42);
+    read_set.read(hodei_investigator::ReadStamp::evidence(
+        "evd-sbom-1",
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    ));
+    read_set.read(hodei_investigator::ReadStamp::relation(
+        "contains|app|lib",
+        "evd-sbom-1",
+    ));
+
+    let manifest = read_set.manifest();
+    assert!(
+        manifest.contains("evd-sbom-1") && manifest.contains("contains|app|lib"),
+        "los sellos estan en el manifiesto: {manifest}"
+    );
+    // El replay del mismo conjunto da la misma huella.
+    let mut replay = hodei_investigator::ReadSet::empty();
+    replay.read(hodei_investigator::ReadStamp::relation(
+        "contains|app|lib",
+        "evd-sbom-1",
+    ));
+    replay.read(hodei_investigator::ReadStamp::evidence(
+        "evd-sbom-1",
+        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    ));
+    replay.generation("graph", 42);
+    assert_eq!(
+        read_set.fingerprint(),
+        replay.fingerprint(),
+        "el replay produce el manifiesto canonico equivalente"
+    );
 }

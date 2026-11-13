@@ -55,6 +55,9 @@ pub enum InvestigationError {
     /// Quien pregunta no puede leer lo que pide. La puerta esta cerrada
     /// ANTES de recuperar nada.
     NotAuthorized { actor: String, resource: String },
+    /// El mundo cambio mientras se leia: la lectura es obsoleta y no se
+    /// presenta como snapshot consistente.
+    Stale(String),
     /// La recuperacion se salio del alcance.
     OutOfScope(ScopeViolation),
     /// La respuesta del modelo no se pudo leer.
@@ -71,6 +74,7 @@ impl std::fmt::Display for InvestigationError {
             Self::NotAuthorized { actor, resource } => {
                 write!(formatter, "{actor} is not allowed to read {resource}")
             }
+            Self::Stale(reason) => write!(formatter, "the reads are stale: {reason}"),
             Self::OutOfScope(violation) => {
                 write!(formatter, "the retrieval left the scope: {violation}")
             }
@@ -145,6 +149,15 @@ impl Investigator {
             Err(RetrievalError::NotAuthorized { actor, resource }) => {
                 return Err(InvestigationError::NotAuthorized { actor, resource });
             }
+            Err(RetrievalError::Stale {
+                source,
+                expected,
+                found,
+            }) => {
+                return Err(InvestigationError::Stale(format!(
+                    "{source} was at generation {expected} and is at {found}"
+                )));
+            }
             Err(RetrievalError::Unavailable(reason)) => {
                 return Err(InvestigationError::NoAnswer(reason));
             }
@@ -170,6 +183,20 @@ impl Investigator {
                 .map_err(InvestigationError::InvalidClaim)?;
         }
 
+        // Las tres listas del manifiesto: lo que se leyo, lo que se le
+        // dio al modelo y lo que las afirmaciones aceptadas citaron. Son
+        // tres cosas distintas y la traza las distingue.
+        let sent_to_model: Vec<String> = facts
+            .iter()
+            .map(|fact| fact.evidence_id.clone())
+            .collect();
+        let mut cited: Vec<String> = claims
+            .iter()
+            .flat_map(|claim| claim.citations.clone())
+            .collect();
+        cited.sort();
+        cited.dedup();
+
         // 4. La traza, con la cobertura: cuanto de lo que hay se le dio
         // al modelo. Un contexto parcial se declara, nunca se esconde.
         let trace = InvestigationTrace::new(
@@ -180,6 +207,9 @@ impl Investigator {
             PROMPT_VERSION,
             known,
             context.coverage,
+            context.read_set,
+            sent_to_model,
+            cited,
             now,
         );
 
