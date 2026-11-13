@@ -113,7 +113,26 @@ fn start_binary(dir: &Path, env: &[(&str, &str)]) -> Child {
         command.env(key, value);
     }
 
-    command.spawn().expect("the binary must start")
+    // The binary is copied and then run, and on a busy machine the copy
+    // and the execution can race: the kernel says "Text file busy" while
+    // the file is still being written. That is not a defect of the
+    // distribution, it is a defect of the test, and the test waits.
+    let mut last_error = None;
+    for attempt in 0..20 {
+        match command.spawn() {
+            Ok(child) => return child,
+            Err(error) if error.raw_os_error() == Some(26) => {
+                // ETXTBSY: the file is still open for writing.
+                last_error = Some(error);
+                std::thread::sleep(Duration::from_millis(250 * (attempt + 1)));
+            }
+            Err(error) => panic!("the binary must start: {error}"),
+        }
+    }
+    panic!(
+        "the binary must start: {}",
+        last_error.expect("there is an error")
+    );
 }
 
 /// Terminates the binary and waits for it to be gone.
