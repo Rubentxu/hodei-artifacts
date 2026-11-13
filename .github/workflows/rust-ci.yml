@@ -77,6 +77,7 @@ jobs:
             --test reactive_contract \
             --test simulation_contract \
             --test m7_uat \
+            --test investigator_contract \
             --test m6_uat \
             --test m5_uat \
             --test capsule_read \
