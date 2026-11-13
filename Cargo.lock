@@ -2296,6 +2296,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "hodei-simulation"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hodei-evidence",
+ "hodei-trust-policy",
+ "kernel",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "hodei-simulation-storage"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hodei-evidence",
+ "hodei-evidence-storage",
+ "hodei-simulation",
+ "kernel",
+ "serde",
+ "surrealdb",
+]
+
+[[package]]
 name = "hodei-spike-ladybug"
 version = "0.1.0"
 dependencies = [

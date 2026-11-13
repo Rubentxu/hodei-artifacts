@@ -1,0 +1,17 @@
+[package]
+name = "hodei-simulation"
+version = "0.1.0"
+edition = "2024"
+description = "La simulacion de que pasaria si, de Hodei."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+hodei-evidence = { path = "../hodei-evidence" }
+hodei-trust-policy = { path = "../hodei-trust-policy" }
+kernel = { path = "../kernel" }
+serde = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
