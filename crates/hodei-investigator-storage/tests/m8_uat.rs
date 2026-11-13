@@ -1418,3 +1418,68 @@ async fn a_world_that_changes_mid_read_makes_the_read_stale() {
 
     record("M8-H3-03-02", result);
 }
+
+// ───────────────────────── HG-H3-04: el informe verificable ─────────────────────────
+
+/// M8-H3-04-01 El informe del caso real: versionado y serializable, con
+/// las clases distintas, la cobertura y el read-set de la traza. Y
+/// NINGUN VerifiedFact que el verificador determinista no haya otorgado:
+/// un texto del modelo sin predicado verificable es, como mucho, un
+/// EvidenceBackedClaim.
+#[tokio::test]
+async fn the_report_of_a_real_investigation_is_versioned_and_typed() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        let evidence_id = world.admit("sbom-report", "the inventory", &subject()).await;
+        world.the_risk_layer().await;
+        let investigator = world.the_investigator(&an_answer(&evidence_id));
+
+        let investigation = investigator
+            .investigate("inv-1", &the_scope(), "why are we affected?", Utc::now())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let report = &investigation.report;
+        assert_eq!(
+            report.schema_version,
+            hodei_investigator::report::REPORT_SCHEMA_VERSION
+        );
+        assert_eq!(report.subject, subject().to_string());
+
+        // El hecho del modelo no afirma ninguna relacion canónica con
+        // HRNs: NO es un VerifiedFact, es un EvidenceBackedClaim con su
+        // limite dicho.
+        assert_eq!(report.findings.len(), 2, "los dos claims: {:?}", report.findings);
+        let fact_finding = &report.findings[0];
+        assert_eq!(
+            fact_finding.kind,
+            hodei_investigator::FindingKind::EvidenceBackedClaim,
+            "sin verificador no hay hecho verificado: {:?}",
+            fact_finding
+        );
+        assert_eq!(
+            report.findings[1].kind,
+            hodei_investigator::FindingKind::Inference,
+            "la inferencia es inferencia"
+        );
+
+        // El read-set del informe es el de la traza: mismo mundo, misma
+        // huella.
+        assert_eq!(
+            report.read_set.fingerprint(),
+            investigation.trace.retrieved.fingerprint()
+        );
+
+        // AC3: el informe serializa con su version y deserializa.
+        let json = serde_json::to_string(report).map_err(|e| e.to_string())?;
+        let back: hodei_investigator::InvestigationReport =
+            serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        assert_eq!(*report, back, "el informe sobrevive al ciclo JSON");
+        Ok(())
+    }
+    .await;
+
+    record("M8-H3-04-01", result);
+}
