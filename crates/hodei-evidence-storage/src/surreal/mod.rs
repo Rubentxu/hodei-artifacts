@@ -6,6 +6,7 @@
 //! A check of the architecture proves it, and the compiler proves it too.
 
 pub mod evidence_store;
+pub mod delta;
 pub mod graph;
 pub mod ledger;
 

@@ -51,7 +51,7 @@ impl GraphProjector for EvidenceGraphProjector {
         &self,
         event: &EventEnvelope,
     ) -> Result<GraphChangeSet, crate::ports::graph::ProjectionError> {
-        let mut changes = GraphChangeSet::empty();
+        let mut changes = GraphChangeSet::empty().with_cause(event.id().as_str());
 
         // Only the events that change the graph are projected. A rejection,
         // a failed projection or a checkpoint are history, not changes.

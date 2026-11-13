@@ -99,7 +99,7 @@ impl std::fmt::Display for NodeKind {
 /// The types are named after what they say. They are not anonymous links,
 /// because the question the graph answers --"what produced this artefact?"--
 /// depends on the type of the relation and not only on its ends.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationType {
     /// A repository has a revision.
@@ -346,6 +346,11 @@ pub struct GraphChangeSet {
     /// withdraws, one support at a time, without touching the others.
     #[serde(default)]
     pub withdrawals: Vec<GraphRelationWithdrawal>,
+    /// What brought the change set, when it came from an event: la causa
+    /// es la identidad con la que los deltas de relacion se deduplican.
+    /// Un changeset sin causa no emite deltas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
 }
 
 impl GraphChangeSet {
@@ -374,6 +379,12 @@ impl GraphChangeSet {
     /// The change set, with a support withdrawal.
     pub fn with_withdrawal(mut self, withdrawal: GraphRelationWithdrawal) -> Self {
         self.withdrawals.push(withdrawal);
+        self
+    }
+
+    /// The change set, with the cause that brought it.
+    pub fn with_cause(mut self, cause: impl Into<String>) -> Self {
+        self.cause = Some(cause.into());
         self
     }
 

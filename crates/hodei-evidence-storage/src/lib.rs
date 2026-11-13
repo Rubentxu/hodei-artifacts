@@ -22,6 +22,7 @@ pub use surreal::{
     SurrealProjectionCheckpoints,
 };
 
+pub use surreal::delta::{DELTA_TABLE, DeltaRow, SurrealRelationDeltaLedger};
 pub use surreal::graph::{GRAPH_INDEXES, declare_index_statement};
 
 /// How many times a write is tried when the transaction of the loser could

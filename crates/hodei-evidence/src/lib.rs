@@ -41,9 +41,14 @@ pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionReq
 pub use application::projection::{
     ProjectionCheckpoints, ProjectionError, ProjectionReport, project_stream,
 };
+pub use application::delta::{relation_deltas, SupportSnapshot};
 pub use application::projector::{EvidenceGraphProjector, evidence_hrn};
 pub use application::rebuild::{GraphFingerprint, RebuildError, RebuildReport, rebuild_graph};
 pub use domain::content::{ContentDigest, ContentError, ContentRef, DigestAlgorithm};
+pub use domain::delta::{
+    InMemoryRelationDeltaLedger, RelationDelta, RelationDeltaKind, RelationDeltaLedger,
+    RelationDeltaSubscription,
+};
 pub use domain::event::{
     EventEnvelope, EventEnvelopeBuilder, EventError, EventId, EventType, EvidencePayload,
 };
