@@ -396,9 +396,39 @@ impl ReactiveRuntime {
                         self.store.put(record.clone()).await;
                         report.executions.push(record);
 
-                        // The intents cross the outbox, one by one.
+                        // EVERY intent of the plan is said FIRST: una
+                        // caida a mitad de camino deja TODO lo dicho en
+                        // el outbox, y el recovery no pierda ninguna
+                        // pieza del plan.
+                        for intent in &plan.intents {
+                            if let Err(reason) = outbox.put_pending(intent).await {
+                                let record = ExecutionRecord::new(
+                                    format!("deliver:{}", intent.identity),
+                                    "runtime",
+                                    current.id.clone(),
+                                    causation.clone(),
+                                    now,
+                                )
+                                .note(format!("intent:{}", intent.identity), now)
+                                .finished(
+                                    ExecutionOutcome::Failed {
+                                        reason: format!(
+                                            "the intent {} could not be said: {reason}",
+                                            intent.identity
+                                        ),
+                                        retryable: true,
+                                    },
+                                    now,
+                                );
+                                self.store.put(record.clone()).await;
+                                report.executions.push(record);
+                            }
+                        }
+
+                        // And then the intents are WORKED, one by one,
+                        // each through its claim and its receipt.
                         for intent in plan.intents {
-                            self.carry_intent(
+                            self.work_intent(
                                 &outbox,
                                 &executor,
                                 &intent,
@@ -472,7 +502,7 @@ impl ReactiveRuntime {
             .await
             .map_err(RuntimeError::Unavailable)?;
         for intent in pending {
-            self.carry_intent(
+            self.work_intent(
                 &outbox,
                 &executor,
                 &intent,
@@ -486,12 +516,13 @@ impl ReactiveRuntime {
         Ok(report)
     }
 
-    /// Carries ONE intent through the outbox: it is said there, claimed
-    /// with a compare-and-set, applied by the executor, and the receipt
-    /// of what became of the effect is written down. The effect lands
-    /// once -- the same key the legacy effects use -- and what nobody
-    /// knows waits for the reconciliation, never for a blind retry.
-    async fn carry_intent(
+    /// Works ONE intent that is already said: it is claimed with a
+    /// compare-and-set, applied by the executor, and the receipt of what
+    /// became of the effect is written down. The effect lands once -- the
+    /// same key the legacy effects use -- and what nobody knows waits for
+    /// the reconciliation, never for a blind retry. Saying the intent is
+    /// NOT this method's job: lo que no se dijo no se trabaja.
+    async fn work_intent(
         &self,
         outbox: &Arc<dyn IntentOutbox>,
         executor: &Arc<dyn IntentExecutor>,
@@ -501,29 +532,6 @@ impl ReactiveRuntime {
         now: DateTime<Utc>,
         report: &mut DispatchReport,
     ) {
-        // The intent is SAID, durably. Saying it twice is the same as
-        // saying it once.
-        if let Err(reason) = outbox.put_pending(intent).await {
-            let record = ExecutionRecord::new(
-                format!("deliver:{}", intent.identity),
-                "runtime",
-                event_id.to_string(),
-                causation.to_vec(),
-                now,
-            )
-            .note(format!("intent:{}", intent.identity), now)
-            .finished(
-                ExecutionOutcome::Failed {
-                    reason: format!("the intent {} could not be said: {reason}", intent.identity),
-                    retryable: true,
-                },
-                now,
-            );
-            self.store.put(record.clone()).await;
-            report.executions.push(record);
-            return;
-        }
-
         // The claim is a compare-and-set: the worker that wins touches,
         // and the one that loses knows the intent is somebody else's.
         let owner = self.the_owner();
@@ -592,15 +600,16 @@ impl ReactiveRuntime {
                 report.applied.push(intent.as_effect());
             }
             Receipt::Failed { reason, retryable } => {
-                let record = ExecutionRecord::new(
+                let mut record = ExecutionRecord::new(
                     format!("apply:{}", intent.identity),
                     "runtime",
                     event_id.to_string(),
                     causation.to_vec(),
                     now,
                 )
-                .note(format!("intent:{}", intent.identity), now)
-                .finished(
+                .note(format!("intent:{}", intent.identity), now);
+                record.attempts = 1;
+                record = record.finished(
                     ExecutionOutcome::Failed {
                         reason: format!(
                             "the intent {} could not be applied: {reason}",
@@ -614,15 +623,16 @@ impl ReactiveRuntime {
                 report.executions.push(record);
             }
             Receipt::Unknown { reason } => {
-                let record = ExecutionRecord::new(
+                let mut record = ExecutionRecord::new(
                     format!("apply:{}", intent.identity),
                     "runtime",
                     event_id.to_string(),
                     causation.to_vec(),
                     now,
                 )
-                .note(format!("intent:{}", intent.identity), now)
-                .finished(
+                .note(format!("intent:{}", intent.identity), now);
+                record.attempts = 1;
+                record = record.finished(
                     ExecutionOutcome::Unknown {
                         reason: format!(
                             "the intent {} was sent and nobody knows whether it landed: {reason}",

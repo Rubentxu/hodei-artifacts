@@ -60,6 +60,31 @@ struct IntentRow {
     intent: Intent,
 }
 
+/// One row of the operational state, said for the operator and for the
+/// agent that asks what is waiting, what was confirmed and why something
+/// stopped. It carries NO payload: el payload de un intent es dato, y el
+/// diagnostico es para leer el ESTADO, no para re-derivar los hechos --
+/// y credenciales no viajan en un diagnostico.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IntentDiagnostic {
+    /// The run that planned it: the behaviour's name.
+    pub run: String,
+    /// The effect it wants, once: the idempotency key.
+    pub effect: String,
+    /// The tenant the intent serves.
+    pub tenant: String,
+    /// The event that triggered it.
+    pub event_id: String,
+    /// The causation chain of the event, oldest first.
+    pub cause: Vec<String>,
+    /// How many times the effect was attempted, as the record says.
+    pub attempts: u32,
+    /// pending | claimed | applied | failed | unknown.
+    pub state: String,
+    /// Why it stopped, when a receipt says so.
+    pub failure_reason: Option<String>,
+}
+
 /// The durable store, over the database that already exists.
 pub struct SurrealIntentStore<C: Connection> {
     db: Arc<Surreal<C>>,
@@ -108,6 +133,85 @@ impl<C: Connection> SurrealIntentStore<C> {
             .collect();
         states.sort();
         Ok(states)
+    }
+
+    /// The operational state of the intents of ONE tenant, said for the
+    /// operator and for the agent that asks what is waiting, what was
+    /// confirmed and why something stopped. The read is tenant-scoped:
+    /// the caller names the tenant it serves, and NOTHING outside it is
+    /// returned -- una vista que contesta de mas es una vista que
+    /// filtra. Whoever exposes this view to the outside gates it behind
+    /// a read authorization; the view itself only knows whose eyes it
+    /// answers.
+    ///
+    /// It carries NO payload: the payload of an intent is data, and the
+    /// diagnostic is for reading the STATE, not for re-deriving the
+    /// facts.
+    pub async fn diagnose(&self, tenant: &str) -> Result<Vec<IntentDiagnostic>, String> {
+        if tenant.trim().is_empty() {
+            return Err("the diagnostic does not say which tenant it serves".to_string());
+        }
+
+        let rows: Vec<IntentRow> = self
+            .db
+            .query("SELECT * FROM type::table($table) WHERE intent.tenant = $tenant")
+            .bind(("table", INTENT_TABLE))
+            .bind(("tenant", tenant.to_string()))
+            .await
+            .map_err(|error| error.to_string())?
+            .take(0)
+            .map_err(|error| error.to_string())?;
+
+        let mut diagnostics: Vec<IntentDiagnostic> = Vec::new();
+        for row in rows {
+            // The receipt says why, when a receipt says anything.
+            let failure_reason = row.receipt.as_ref().and_then(|receipt| {
+                serde_json::from_value::<Receipt>(receipt.clone())
+                    .ok()
+                    .and_then(|receipt| match receipt {
+                        Receipt::Failed { reason, .. } => Some(reason),
+                        Receipt::Unknown { reason } => Some(reason),
+                        Receipt::Applied => None,
+                    })
+            });
+
+            // The attempts, as the record of the apply says, when there
+            // is one.
+            let attempts = match self
+                .db
+                .query("SELECT * FROM $id")
+                .bind(("id", Self::record_id(
+                    EXECUTION_TABLE,
+                    &format!("apply:{}", row.intent.identity),
+                )))
+                .await
+            {
+                Ok(mut response) => response
+                    .take::<Vec<ExecutionRecord>>(0)
+                    .map(|records| {
+                        records.first().map(|record| record.attempts).unwrap_or(0)
+                    })
+                    .unwrap_or(0),
+                Err(_) => 0,
+            };
+
+            diagnostics.push(IntentDiagnostic {
+                run: row.intent.origin.behavior.clone(),
+                effect: row.intent.idempotency_key.clone(),
+                tenant: row.intent.tenant.clone(),
+                event_id: row.intent.origin.event_id.clone(),
+                cause: row.intent.origin.causation.clone(),
+                attempts,
+                state: row.state,
+                failure_reason,
+            });
+        }
+        diagnostics.sort_by(|left, right| {
+            left.run
+                .cmp(&right.run)
+                .then_with(|| left.effect.cmp(&right.effect))
+        });
+        Ok(diagnostics)
     }
 }
 
