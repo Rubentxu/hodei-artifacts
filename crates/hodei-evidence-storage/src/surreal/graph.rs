@@ -384,7 +384,7 @@ impl<C: Connection> SurrealGraphStore<C> {
                     )
                 })
                 .collect();
-        supports.sort_by_key(|support| support.1.clone());
+        supports.sort_by_key(|support| support.1);
         Ok(supports)
     }
 }

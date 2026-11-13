@@ -22,6 +22,7 @@ use kernel::Hrn;
 use crate::claim::{AIClaim, ClaimError, ClaimKind, InvestigationTrace, check_the_claim};
 use crate::guard::{ActionKind, CapabilityGuard, ProposedAction};
 use crate::model::{ModelProvider, PROMPT_VERSION, the_prompt};
+use crate::report::{InvestigationReport, build_report};
 use crate::scope::{
     RetrievalError, RetrievalScope, ScopeViolation, ScopedFact, RetrievedContext, check_the_scope,
 };
@@ -96,6 +97,9 @@ pub struct Investigation {
     pub claims: Vec<AIClaim>,
     /// La traza: quien, con que prompt, sobre que contexto y cuando.
     pub trace: InvestigationTrace,
+    /// El informe verificable: las clases de finding, su estado de
+    /// verificacion, el read-set y la cobertura.
+    pub report: InvestigationReport,
 }
 
 /// El investigador.
@@ -197,7 +201,13 @@ impl Investigator {
         cited.sort();
         cited.dedup();
 
-        // 4. La traza, con la cobertura: cuanto de lo que hay se le dio
+        // 4. El informe, ANTES de mover el read-set a la traza: las
+        // clases de finding, con su estado de verificacion determinista,
+        // su origen y sus limites. Los mismos claims y el mismo
+        // read-set dan el mismo informe.
+        let report = build_report(&scope.subject, &claims, &context.read_set, context.coverage);
+
+        // 5. La traza, con la cobertura: cuanto de lo que hay se le dio
         // al modelo. Un contexto parcial se declara, nunca se esconde.
         let trace = InvestigationTrace::new(
             investigation,
@@ -213,7 +223,11 @@ impl Investigator {
             now,
         );
 
-        Ok(Investigation { claims, trace })
+        Ok(Investigation {
+            claims,
+            trace,
+            report,
+        })
     }
 
     /// Registra una accion que el investigador quiere hacer.

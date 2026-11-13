@@ -75,6 +75,7 @@ pub mod investigator;
 pub mod model;
 pub mod read_set;
 pub mod redact;
+pub mod report;
 pub mod scope;
 
 pub use claim::{AIClaim, ClaimError, ClaimKind, InvestigationTrace};
@@ -84,6 +85,7 @@ pub use guard::{
 pub use investigator::{EvidenceRetriever, Investigation, InvestigationError, Investigator};
 pub use model::{FixtureProvider, ModelProvider, ModelRequest, ModelResponse, PROMPT_VERSION};
 pub use read_set::{ReadKind, ReadSet, ReadStamp};
+pub use report::{Finding, FindingKind, InvestigationReport, VerificationStatus};
 pub use scope::{
     Coverage, EvidenceReadAuthorizer, FactStatus, RetrievalBudget, RetrievalError, RetrievalScope,
     RetrievedContext, ScopeViolation, ScopedFact, TrustLevel, check_the_scope,
