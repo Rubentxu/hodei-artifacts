@@ -115,6 +115,12 @@ pub enum BehaviorOutcome {
 }
 
 /// A behaviour: something that reacts to an event.
+///
+/// **Transitional.** `act` reads and touches in one go: it is the path
+/// the M6 reactions run on, and it keeps working, traced by
+/// `ReactiveRuntime::dispatch`. The reactions migrate to
+/// [`crate::intent::PlanningBehavior`], whose plan is said before it is
+/// done; there is no silent path, whichever of the two runs.
 #[async_trait::async_trait]
 pub trait Behavior: Send + Sync {
     /// The name of the behaviour.
