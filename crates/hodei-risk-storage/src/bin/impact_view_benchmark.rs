@@ -78,6 +78,12 @@ const COMPONENTS_PER_ARTEFACT: usize = 3;
 /// How many supports the per-delta phase says, one artifact per round.
 const DELTA_ROUNDS: usize = 12;
 
+/// The historical target of the blast radius, said BEFORE measuring and
+/// not adjusted after seeing the numbers: the serve is a read of the
+/// materialized view, and fifty milliseconds was the target the spike
+/// carried.
+const TARGET_P95_MS: u128 = 50;
+
 /// The percentile of a list of measurements.
 fn percentile(values: &mut [Duration], fraction: f64) -> Duration {
     if values.is_empty() {
@@ -544,6 +550,12 @@ async fn main() {
     println!("baseline walk:   p50 {b50} ms, p95 {b95} ms, max {bmax} ms, mean {:.1} ms", baseline.mean_ms());
     println!("view rebuild:    p50 {r50} ms, p95 {r95} ms, max {rmax} ms, mean {:.1} ms", rebuild.mean_ms());
     println!("view serve:      p50 {s50} ms, p95 {s95} ms, max {smax} ms, mean {:.1} ms", serve.mean_ms());
+    println!("subjects reached: {}", snapshot.subjects.len());
+    if s95 <= TARGET_P95_MS {
+        println!("historical target of the serve: p95 {s95} ms <= {TARGET_P95_MS} ms: MET");
+    } else {
+        println!("historical target of the serve: p95 {s95} ms > {TARGET_P95_MS} ms: NOT MET, and said");
+    }
 
     let after_rebuild = the_resident_memory();
 

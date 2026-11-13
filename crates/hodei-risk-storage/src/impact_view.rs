@@ -49,6 +49,93 @@ pub struct ImpactRow {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// How fresh an answer is. La frescura se EXPLICA, nunca se disfraza:
+/// una vista al dia es Current, y una respuesta calculada ahora por el
+/// recorrido autoritativo dice cual era el watermark atrasado que
+/// sustituyo.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Freshness {
+    /// The view was complete up to the version of the ledger.
+    Current,
+    /// The answer was computed NOW by the authoritative walk: la vista
+    /// estaba atrasada o no estaba.
+    Authoritative { view_watermark: u64 },
+}
+
+/// One subject of the answer, with the path that explains it: las
+/// relaciones y la evidencia que lo trajeron. El que pregunta puede
+/// comprobar el camino.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubjectPath {
+    /// The subject, as an HRN string.
+    pub subject: String,
+    /// How far the dependency is: zero for the component the
+    /// vulnerability is in.
+    pub depth: usize,
+    /// The identities of the relations that brought this subject in.
+    pub relations: Vec<String>,
+    /// The evidence that supports each of those relations.
+    pub evidences: Vec<String>,
+}
+
+/// The answer of the impact, typed and agent-readable. Es de SOLO
+/// LECTURA por construccion: no hay metodo que mutar.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImpactAnswer {
+    /// The account the answer belongs to.
+    pub tenant: String,
+    /// The advisory asked about.
+    pub advisory: String,
+    /// The subjects, with the path that explains each one.
+    pub subjects: Vec<SubjectPath>,
+    /// The deployments that run the affected artifacts.
+    pub deployments: Vec<String>,
+    /// The version the answer is complete up to.
+    pub version: u64,
+    /// Where the answer came from, and how fresh it is.
+    pub freshness: Freshness,
+}
+
+/// Why serving an answer failed. Un desajuste de cuenta NO es una
+/// respuesta vacia: es una puerta cerrada.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImpactReadError {
+    /// The advisory belongs to another account than the one served.
+    TenantMismatch { served: String, requested: String },
+    /// The advisory is not a canonical HRN.
+    NotCanonical(String),
+    /// The store failed underneath.
+    Unavailable(String),
+}
+
+impl std::fmt::Display for ImpactReadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TenantMismatch { served, requested } => write!(
+                formatter,
+                "the advisory belongs to account {requested} and this reader serves {served}"
+            ),
+            Self::NotCanonical(value) => write!(formatter, "{value} is not a canonical HRN"),
+            Self::Unavailable(reason) => write!(formatter, "the store is unavailable: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ImpactReadError {}
+
+/// The READ-ONLY port of the impact. El consumidor pregunta, y la
+/// respuesta dice de donde sale y hasta que version es completa; el
+/// consumidor NO puede mutar nada por esta puerta.
+#[async_trait::async_trait]
+pub trait ImpactReader: Send + Sync {
+    /// The answer for one advisory of one account.
+    async fn serve_impact(
+        &self,
+        tenant: &Hrn,
+        advisory: &Hrn,
+    ) -> Result<ImpactAnswer, ImpactReadError>;
+}
+
 /// The route of one advisory: the relations its walk used, with the
 /// evidence that supports each. Es la procedencia de la vista: el que
 /// pregunta puede comprobar el camino, y el que invalida sabe que
@@ -68,6 +155,12 @@ pub struct ImpactRoute {
     /// extremos pasan por la ruta.
     #[serde(default)]
     pub nodes: Vec<String>,
+    /// The path that explains each subject, as it was walked.
+    #[serde(default)]
+    pub paths: Vec<SubjectPath>,
+    /// The deployments that run the affected artifacts.
+    #[serde(default)]
+    pub deployments: Vec<String>,
     /// The version of the deltas the route was computed at.
     pub watermark: u64,
     /// When the route was written.
@@ -155,14 +248,36 @@ impl<C: Connection> SurrealImpactView<C> {
         let watermark = self.deltas.version_of(tenant).await?;
         let now = chrono::Utc::now();
 
-        // The route: the relations the walk used, and the evidence that
-        // supports each of them.
+        // The route: the relations the walk used, the evidence that
+        // supports each, and the path that explains each subject.
+        let mut paths: Vec<SubjectPath> = Vec::new();
+        for (subject, edges) in &walk.subject_routes {
+            let is_row = walk.artifacts.contains_key(subject)
+                || walk.affected_components.contains(subject);
+            if !is_row {
+                continue;
+            }
+            let depth = walk
+                .artifacts
+                .get(subject)
+                .map(|depth| if *depth == usize::MAX { 1 } else { *depth })
+                .unwrap_or(0);
+            paths.push(SubjectPath {
+                subject: subject.clone(),
+                depth,
+                relations: edges.iter().map(|(relation, _)| relation.clone()).collect(),
+                evidences: edges.iter().map(|(_, evidence)| evidence.clone()).collect(),
+            });
+        }
+        paths.sort_by(|left, right| left.subject.cmp(&right.subject));
         let route = ImpactRoute {
             tenant: tenant.to_string(),
             advisory: advisory.to_string(),
             relations: walk.route_relations.into_iter().collect(),
             evidences: walk.route_evidence.into_iter().collect(),
             nodes: walk.route_nodes.into_iter().collect(),
+            paths,
+            deployments: walk.deployments.iter().cloned().collect(),
             watermark,
             updated_at: now,
         };
@@ -303,6 +418,101 @@ impl<C: Connection> SurrealImpactView<C> {
         Ok(advisories)
     }
 
+    /// The answer for one advisory, with the freshness said, never
+    /// disguised. Una vista al dia responde de la vista; una vista
+    /// atrasada o ausente responde del recorrido autoritativo AHORA, y
+    /// el lag queda expuesto. La cuenta del advisory y la del que
+    /// pregunta tienen que ser la MISMA: un desajuste es una puerta
+    /// cerrada, no una respuesta vacia.
+    pub async fn serve_impact(
+        &self,
+        tenant: &Hrn,
+        advisory: &Hrn,
+    ) -> Result<ImpactAnswer, ImpactReadError> {
+        if advisory.account_id() != tenant.account_id() {
+            return Err(ImpactReadError::TenantMismatch {
+                served: tenant.account_id().to_string(),
+                requested: advisory.account_id().to_string(),
+            });
+        }
+
+        let said = self
+            .deltas
+            .version_of(tenant)
+            .await
+            .map_err(ImpactReadError::Unavailable)?;
+        let view_watermark = self
+            .watermark_of(tenant, &advisory.to_string())
+            .await
+            .map_err(ImpactReadError::Unavailable)?;
+
+        if let Some(watermark) = view_watermark.filter(|watermark| *watermark >= said) {
+            // The view is complete up to what the ledger has said:
+            // responde la vista, con su procedencia.
+            let mut response = self
+                .graph
+                .db()
+                .query("SELECT * FROM type::table($table) WHERE tenant = $tenant AND advisory = $advisory")
+                .bind(("table", IMPACT_TABLE))
+                .bind(("tenant", tenant.to_string()))
+                .bind(("advisory", advisory.to_string()))
+                .await
+                .map_err(|error| ImpactReadError::Unavailable(error.to_string()))?;
+            let rows: Vec<ImpactRow> = response
+                .take(0)
+                .map_err(|error| ImpactReadError::Unavailable(error.to_string()))?;
+            let routes: Vec<ImpactRoute> = self
+                .graph
+                .db()
+                .query("SELECT * FROM $id")
+                .bind(("id", Self::route_id(&tenant.to_string(), &advisory.to_string())))
+                .await
+                .map_err(|error| ImpactReadError::Unavailable(error.to_string()))?
+                .take(0)
+                .map_err(|error| ImpactReadError::Unavailable(error.to_string()))?;
+            let route = routes.first();
+            let mut subjects: Vec<SubjectPath> = rows
+                .into_iter()
+                .map(|row| {
+                    let path = route.and_then(|route| {
+                        route.paths.iter().find(|path| path.subject == row.subject)
+                    });
+                    SubjectPath {
+                        subject: row.subject,
+                        depth: row.depth,
+                        relations: path.map(|path| path.relations.clone()).unwrap_or_default(),
+                        evidences: path.map(|path| path.evidences.clone()).unwrap_or_default(),
+                    }
+                })
+                .collect();
+            subjects.sort_by(|left, right| left.subject.cmp(&right.subject));
+            return Ok(ImpactAnswer {
+                tenant: tenant.to_string(),
+                advisory: advisory.to_string(),
+                subjects,
+                deployments: route.map(|route| route.deployments.clone()).unwrap_or_default(),
+                version: watermark,
+                freshness: Freshness::Current,
+            });
+        }
+
+        // The fallback: the authoritative walk answers NOW, and the lag
+        // it substituted stays said.
+        let walk = walk_impact(self.graph.as_ref(), tenant, advisory)
+            .await
+            .map_err(ImpactReadError::Unavailable)?;
+        Ok(ImpactAnswer {
+            tenant: tenant.to_string(),
+            advisory: advisory.to_string(),
+            subjects: the_answer_subjects(&walk),
+            deployments: walk.deployments.iter().cloned().collect(),
+            version: said,
+            freshness: Freshness::Authoritative {
+                view_watermark: view_watermark.unwrap_or(0),
+            },
+        })
+    }
+
     /// The view of one advisory, with the version it is complete up to.
     /// The reader that needs the truth of the moment compares the
     /// watermark with the ledger's version: el lag se expone, nunca se
@@ -386,6 +596,9 @@ pub struct ImpactWalk {
     pub route_evidence: BTreeSet<String>,
     /// The nodes the walk traversed: los extremos de todo lo que uso.
     pub route_nodes: BTreeSet<String>,
+    /// The edges that discovered each subject: (relation identity,
+    /// evidence id), the path that explains it.
+    pub subject_routes: BTreeMap<String, Vec<(String, String)>>,
 }
 
 /// The walk records what it used as it uses it: the identity of the
@@ -438,6 +651,10 @@ pub async fn walk_impact<C: Connection>(
         if let Some(hrn) = Hrn::from_string(&row.from) {
             affected.push(hrn);
         }
+        walk.subject_routes
+            .entry(row.from.clone())
+            .or_default()
+            .push((row.relation_id.clone(), row.evidence_id.clone()));
     }
     record_route(
         &mut walk.route_relations,
@@ -474,6 +691,12 @@ pub async fn walk_impact<C: Connection>(
             &asked,
             &container_rows,
         );
+        for row in &container_rows {
+            walk.subject_routes
+                .entry(row.from.clone())
+                .or_default()
+                .push((row.relation_id.clone(), row.evidence_id.clone()));
+        }
         let containers_of: Vec<Hrn> = container_rows
             .iter()
             .filter_map(|row| Hrn::from_string(&row.from))
@@ -553,6 +776,10 @@ pub async fn walk_impact<C: Connection>(
         );
         for row in &deployment_rows {
             walk.deployments.insert(row.from.clone());
+            walk.subject_routes
+                .entry(row.from.clone())
+                .or_default()
+                .push((row.relation_id.clone(), row.evidence_id.clone()));
         }
     }
 
@@ -640,4 +867,52 @@ async fn relations_from_many_rows<C: Connection>(
     response
         .take(0)
         .map_err(|error| error.to_string())
+}
+
+/// The subjects of an answer, from a walk: the artifacts with their
+/// depth, the components the vulnerability is in at depth zero, each
+/// with the path that explains it.
+fn the_answer_subjects(walk: &ImpactWalk) -> Vec<SubjectPath> {
+    let mut subjects: Vec<SubjectPath> = Vec::new();
+    for (subject, depth) in &walk.artifacts {
+        let depth = if *depth == usize::MAX { 1 } else { *depth };
+        let edges = walk.subject_routes.get(subject);
+        subjects.push(SubjectPath {
+            subject: subject.clone(),
+            depth,
+            relations: edges
+                .map(|edges| edges.iter().map(|(relation, _)| relation.clone()).collect())
+                .unwrap_or_default(),
+            evidences: edges
+                .map(|edges| edges.iter().map(|(_, evidence)| evidence.clone()).collect())
+                .unwrap_or_default(),
+        });
+    }
+    for component in &walk.affected_components {
+        let edges = walk.subject_routes.get(component);
+        subjects.push(SubjectPath {
+            subject: component.clone(),
+            depth: 0,
+            relations: edges
+                .map(|edges| edges.iter().map(|(relation, _)| relation.clone()).collect())
+                .unwrap_or_default(),
+            evidences: edges
+                .map(|edges| edges.iter().map(|(_, evidence)| evidence.clone()).collect())
+                .unwrap_or_default(),
+        });
+    }
+    subjects.sort_by(|left, right| left.subject.cmp(&right.subject));
+    subjects
+}
+
+/// The read-only port, over the real view.
+#[async_trait::async_trait]
+impl<C: Connection> ImpactReader for SurrealImpactView<C> {
+    async fn serve_impact(
+        &self,
+        tenant: &Hrn,
+        advisory: &Hrn,
+    ) -> Result<ImpactAnswer, ImpactReadError> {
+        SurrealImpactView::serve_impact(self, tenant, advisory).await
+    }
 }

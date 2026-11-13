@@ -14,9 +14,13 @@ use surrealdb::Surreal;
 
 use crate::RiskError;
 
-/// The blast radius over the real graph.
+/// The blast radius over the real graph. Si le dan una vista del
+/// impacto, SIRVE de la vista con fallback seguro: la respuesta es la
+/// que el recorrido autoritativo dice, venga de donde venga, y una
+/// vista atrasada nunca se presenta como actual.
 pub struct SurrealBlastRadius<C: Connection> {
     graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
+    view: Option<Arc<crate::impact_view::SurrealImpactView<C>>>,
     tenant: kernel::Hrn,
 }
 
@@ -26,7 +30,26 @@ impl<C: Connection> SurrealBlastRadius<C> {
         graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
         tenant: kernel::Hrn,
     ) -> Self {
-        Self { graph, tenant }
+        Self {
+            graph,
+            view: None,
+            tenant,
+        }
+    }
+
+    /// The radius that serves from the materialized view, with the
+    /// authoritative walk as the fallback when the view is stale or
+    /// absent.
+    pub fn with_view(
+        graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
+        view: Arc<crate::impact_view::SurrealImpactView<C>>,
+        tenant: kernel::Hrn,
+    ) -> Self {
+        Self {
+            graph,
+            view: Some(view),
+            tenant,
+        }
     }
 }
 
@@ -65,6 +88,30 @@ impl<C: Connection> BlastRadiusSource for SurrealBlastRadius<C> {
                 vulnerability.account_id(),
                 self.tenant.account_id()
             ));
+        }
+
+        // Con vista: la respuesta del serve, que es la del recorrido
+        // autoritativo sea cual sea su frescura -- la vista al dia
+        // responde de la vista, y la atrasada o ausente del walk de
+        // AHORA. Los sujetos son SOLO los artefactos, el contrato de
+        // siempre: los componentes de profundidad cero no son sujetos
+        // de decision.
+        if let Some(view) = &self.view {
+            let answer = view
+                .serve_impact(&self.tenant, &vulnerability)
+                .await
+                .map_err(|error| error.to_string())?;
+            let deployments = answer.deployments.first().cloned();
+            return Ok(answer
+                .subjects
+                .into_iter()
+                .filter(|subject| subject.depth >= 1)
+                .map(|subject| ImpactedSubject {
+                    subject: subject.subject,
+                    deployment: deployments.clone(),
+                    depth: subject.depth,
+                })
+                .collect());
         }
 
         let radius = crate::blast_radius(self.graph.as_ref(), &self.tenant, &vulnerability)
