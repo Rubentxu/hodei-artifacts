@@ -20,6 +20,8 @@
 //! queries are scoped by the account and by the kind, and they lean on what
 //! the tables already hold.
 
+use super::delta::SurrealRelationDeltaLedger;
+use hodei_evidence::domain::delta::RelationDeltaLedger;
 use hodei_evidence::GraphChangeSet;
 use hodei_evidence::domain::graph::{GraphNode, GraphRelation, NodeKind};
 use hodei_evidence::ports::graph::{GraphError, GraphQuery, GraphWriter, Lineage};
@@ -164,16 +166,17 @@ pub struct SupportRow {
 /// The graph, over the store that already exists.
 pub struct SurrealGraphStore<C: Connection> {
     db: Arc<Surreal<C>>,
+    /// The ledger of the relation deltas, over the same database. Solo
+    /// la proyeccion ACTIVA emite: los deltas son hechos del grafo que
+    /// esta en uso, no de la que se esta reconstruyendo.
+    deltas: SurrealRelationDeltaLedger<C>,
     projection: String,
 }
 
 impl<C: Connection> SurrealGraphStore<C> {
     /// The graph that is in use.
     pub fn new(db: Arc<Surreal<C>>) -> Self {
-        Self {
-            db,
-            projection: ACTIVE_PROJECTION.to_string(),
-        }
+        Self::named(db, ACTIVE_PROJECTION)
     }
 
     /// A graph with a name of its own.
@@ -181,6 +184,7 @@ impl<C: Connection> SurrealGraphStore<C> {
     /// The rebuild uses it to build a projection apart from the one in use.
     pub fn named(db: Arc<Surreal<C>>, projection: impl Into<String>) -> Self {
         Self {
+            deltas: SurrealRelationDeltaLedger::new(db.clone()),
             db,
             projection: projection.into(),
         }
@@ -309,6 +313,43 @@ impl<C: Connection> SurrealGraphStore<C> {
         ))
     }
 
+
+    /// The supports that each touched relation had BEFORE the change
+    /// set, by the identity of the relation. Un changeset sin causa no
+    /// va a emitir deltas, y no hace las lecturas.
+    async fn the_supports_before(
+        &self,
+        changes: &GraphChangeSet,
+    ) -> hodei_evidence::SupportSnapshot {
+        let mut snapshot = hodei_evidence::SupportSnapshot::new();
+        if changes.cause.is_none() {
+            return snapshot;
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let identities = changes
+            .relations
+            .iter()
+            .map(|relation| relation.identity())
+            .chain(
+                changes
+                    .withdrawals
+                    .iter()
+                    .map(|withdrawal| withdrawal.identity()),
+            )
+            .collect::<Vec<_>>();
+        for identity in identities {
+            if !seen.insert(identity.clone()) {
+                continue;
+            }
+            let supports = self.supports_of(&identity).await.unwrap_or_default();
+            snapshot.insert(
+                identity,
+                supports.into_iter().map(|(evidence, _at)| evidence).collect(),
+            );
+        }
+        snapshot
+    }
+
     /// The supports of one relation, oldest first: la procedencia de la
     /// relacion, dicho con las evidencias que la afirman HOY.
     pub async fn supports_of(
@@ -433,6 +474,11 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
     /// points at a node that is not there yet would be a relation that
     /// nobody can follow.
     async fn apply(&self, changes: GraphChangeSet) -> Result<(), GraphError> {
+        // The state of the supports BEFORE the change: es contra lo que
+        // los deltas se comparan, y hay que leerlo antes de que la
+        // transaccion cambie nada.
+        let before = self.the_supports_before(&changes).await;
+
         // The validation touches nothing: it reads, and it answers before
         // the first write. A relation without its evidence is a claim,
         // and a claim is not part of a graph that answers questions about
@@ -537,7 +583,28 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
             };
 
             match failure {
-                None => return Ok(()),
+                None => {
+                    // The graph changed, and the deltas of what CHANGED
+                    // are said, with the cause the changeset brought. Un
+                    // changeset sin causa no emite, y la proyeccion que
+                    // se esta reconstruyendo tampoco: los deltas son
+                    // hechos del grafo ACTIVO.
+                    if changes.cause.is_some() && self.projection == ACTIVE_PROJECTION {
+                        let deltas = hodei_evidence::relation_deltas(
+                            changes.cause.as_deref().unwrap_or(""),
+                            &changes,
+                            &before,
+                            chrono::Utc::now(),
+                        );
+                        if !deltas.is_empty() {
+                            self.deltas
+                                .append(&deltas)
+                                .await
+                                .map_err(GraphError::Rejected)?;
+                        }
+                    }
+                    return Ok(());
+                }
                 Some(message)
                     if crate::is_conflict(&message) && attempts < crate::CONFLICT_RETRIES =>
                 {
@@ -547,6 +614,7 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
             }
         }
     }
+
 
     /// Empties the projection.
     ///
