@@ -80,6 +80,7 @@ jobs:
             --test investigator_contract \
             --test m8_uat \
             --test hub_contract \
+            --test m9_uat \
             --test m6_uat \
             --test m5_uat \
             --test capsule_read \
