@@ -58,6 +58,21 @@ impl SimulationService {
         Self { graph, decisions }
     }
 
+    /// Las relaciones del grafo real.
+    ///
+    /// Lo expone el servicio para que se pueda comprobar que el grafo no
+    /// ha cambiado: una simulacion que no deja rastro es lo que se quiere,
+    /// y "no deja rastro" se comprueba, no se promete.
+    pub async fn graph_relations(&self) -> Result<Vec<RelationFact>, SimulationError> {
+        let mut response = self
+            .graph
+            .all_relations()
+            .await
+            .map_err(SimulationError::Unavailable)?;
+        response.sort_by_key(|relation| relation.identity());
+        Ok(response)
+    }
+
     /// Simula y devuelve el diff.
     pub async fn simulate(
         &self,
@@ -95,7 +110,26 @@ impl SimulationService {
             }
         }
         let forked = fork.relations_with(&real);
-        let structural = StructuralDiff::between(&real, &forked);
+        let mut structural = StructuralDiff::between(&real, &forked);
+
+        // Los sujetos afectados son los del fork y los del diff: una
+        // simulacion que solo cambia la politica no cambia ninguna
+        // relacion, y aun asi hay sujetos a los que les afecta.
+        for subject in &subjects {
+            if !structural.affected_subjects.contains(subject) {
+                structural.affected_subjects.push(subject.clone());
+            }
+        }
+
+        // Y los despliegues de los sujetos a los que el cambio llega.
+        structural.affected_deployments = forked
+            .iter()
+            .filter(|relation| {
+                relation.relation == hodei_evidence::domain::graph::RelationType::DeployedAs
+                    && structural.affected_subjects.contains(&relation.from)
+            })
+            .map(|relation| relation.to.clone())
+            .collect();
 
         // 4. Las decisiones: las de antes con la politica de antes, y las
         // de despues con la del fork.

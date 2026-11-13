@@ -7,9 +7,16 @@ license = "MIT"
 
 [dependencies]
 async-trait = { workspace = true }
+chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
 hodei-evidence-storage = { path = "../hodei-evidence-storage" }
 hodei-simulation = { path = "../hodei-simulation" }
+hodei-trust-policy = { path = "../hodei-trust-policy" }
 kernel = { path = "../kernel" }
 serde = { workspace = true }
 surrealdb = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

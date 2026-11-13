@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
-use hodei_evidence::EvidenceId;
 use hodei_evidence::domain::graph::RelationType;
 use hodei_simulation::diff::TheDecision;
 use hodei_simulation::hypothetical::{Hypothetical, HypotheticalClaim, RelationFact};
@@ -78,6 +77,11 @@ impl SimulationGraph for TheGraph {
         let relations = self.relations.lock().expect("el grafo no esta envenenado");
         Ok(relations.len())
     }
+
+    async fn all_relations(&self) -> Result<Vec<RelationFact>, String> {
+        let relations = self.relations.lock().expect("el grafo no esta envenenado");
+        Ok(relations.clone())
+    }
 }
 
 /// El evaluador de decisiones.
@@ -108,8 +112,8 @@ impl DecisionEvaluator for TheEvaluator {
         let exposed = facts.iter().any(|fact| {
             matches!(
                 &fact.claim,
-                HypotheticalClaim::Evidence { subject: who, verified, .. }
-                    if who == subject && *verified
+                HypotheticalClaim::Risk { subject: who, critical, reachable, .. }
+                    if who == subject && *critical && *reachable
             )
         });
         if exposed {
@@ -222,11 +226,11 @@ async fn the_fork_is_isolated() {
 async fn the_hypotheticals_are_tagged() {
     let fork = the_fork(the_policy("1.0.0")).with(Hypothetical {
         tag: the_tag(),
-        claim: HypotheticalClaim::Evidence {
-            evidence: EvidenceId::new("ev-hypothetical"),
-            kind: "sbom".to_string(),
+        claim: HypotheticalClaim::Risk {
             subject: subject(),
-            verified: false,
+            advisory: "GHSA-test-0001".to_string(),
+            critical: true,
+            reachable: true,
         },
     });
 
@@ -254,11 +258,11 @@ async fn the_evidence_and_the_policy_can_be_overlaid() {
     let fork = the_fork(the_policy("1.0.0"))
         .with(Hypothetical {
             tag: the_tag(),
-            claim: HypotheticalClaim::Evidence {
-                evidence: EvidenceId::new("ev-hypothetical"),
-                kind: "vex".to_string(),
+            claim: HypotheticalClaim::Risk {
                 subject: subject(),
-                verified: true,
+                advisory: "GHSA-test-0001".to_string(),
+                critical: true,
+                reachable: true,
             },
         })
         .with_policy(the_strict_policy("2.0.0"));
@@ -332,11 +336,11 @@ async fn the_decision_diff_shows_the_changes_with_the_policy_version() {
     let fork = the_fork(the_policy("1.0.0"))
         .with(Hypothetical {
             tag: the_tag(),
-            claim: HypotheticalClaim::Evidence {
-                evidence: EvidenceId::new("ev-hypothetical"),
-                kind: "vex".to_string(),
+            claim: HypotheticalClaim::Risk {
                 subject: subject(),
-                verified: true,
+                advisory: "GHSA-test-0001".to_string(),
+                critical: true,
+                reachable: true,
             },
         })
         .with_policy(the_strict_policy("2.0.0"));
@@ -361,11 +365,11 @@ async fn a_decision_that_does_not_change_is_not_a_change() {
     // Un hecho hipotetico que no expone a nadie.
     let fork = the_fork(the_policy("1.0.0")).with(Hypothetical {
         tag: the_tag(),
-        claim: HypotheticalClaim::Evidence {
-            evidence: EvidenceId::new("ev-hypothetical"),
-            kind: "vex".to_string(),
+        claim: HypotheticalClaim::Risk {
             subject: subject(),
-            verified: false,
+            advisory: "GHSA-test-0001".to_string(),
+            critical: false,
+            reachable: false,
         },
     });
 
@@ -403,11 +407,11 @@ async fn the_limits_are_checked_before_simulating() {
     fork.limits.max_hypotheticals = 0;
     fork.facts.push(Hypothetical {
         tag: the_tag(),
-        claim: HypotheticalClaim::Evidence {
-            evidence: EvidenceId::new("ev-hypothetical"),
-            kind: "vex".to_string(),
+        claim: HypotheticalClaim::Risk {
             subject: subject(),
-            verified: true,
+            advisory: "GHSA-test-0001".to_string(),
+            critical: true,
+            reachable: true,
         },
     });
 

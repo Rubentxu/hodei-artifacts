@@ -20,6 +20,12 @@ pub struct StructuralDiff {
     pub disappeared: Vec<RelationFact>,
     /// Los sujetos a los que el cambio llega.
     pub affected_subjects: Vec<Hrn>,
+    /// Los despliegues de esos sujetos.
+    ///
+    /// Un despliegue es donde duele el cambio: un artefacto que deja de
+    /// ser promovible duele en el despliegue que lo ejecuta, y el diff
+    /// tiene que decirlo.
+    pub affected_deployments: Vec<Hrn>,
 }
 
 impl StructuralDiff {
@@ -62,6 +68,7 @@ impl StructuralDiff {
             appeared,
             disappeared,
             affected_subjects: affected,
+            affected_deployments: Vec::new(),
         }
     }
 
