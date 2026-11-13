@@ -27,6 +27,12 @@ pub trait SimulationGraph: Send + Sync {
     /// Sirve para comprobar el aislamiento: si al terminar la simulacion
     /// el grafo tiene las mismas relaciones, el fork no toco nada.
     async fn relation_count(&self) -> Result<usize, String>;
+
+    /// Todas las relaciones del grafo.
+    ///
+    /// Es una lectura cara y por eso existe aparte: el aislamiento se
+    /// comprueba con el **numero**, y el numero es lo que se compara.
+    async fn all_relations(&self) -> Result<Vec<RelationFact>, String>;
 }
 
 /// Quien decide.

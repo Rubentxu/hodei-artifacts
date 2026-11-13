@@ -11,7 +11,6 @@
 //! grafo.
 
 use chrono::{DateTime, Utc};
-use hodei_evidence::EvidenceId;
 use hodei_evidence::domain::graph::RelationType;
 use hodei_trust_policy::TrustPolicy;
 use kernel::Hrn;
@@ -75,16 +74,32 @@ pub enum HypotheticalClaim {
         /// diria nada de lo que desaparece.
         replaces: Option<RelationFact>,
     },
-    /// Una pieza de evidencia queiria, con lo que dice de su sujeto.
-    Evidence {
-        /// La evidencia.
-        evidence: EvidenceId,
-        /// De que pieza de evidencia se trata.
-        kind: String,
-        /// El sujeto del que habla.
+    /// Un riesgo que habria, con lo que se sabe de el.
+    ///
+    /// El riesgo es un hecho del sujeto: una vulnerabilidad que le
+    /// llega. Y lo que decide la politica no es el identificador de la
+    /// vulnerabilidad, sino si es critica y si es alcanzable.
+    Risk {
+        /// El sujeto al que llega.
         subject: Hrn,
-        /// Si la evidencia estaria verificada.
-        verified: bool,
+        /// La vulnerabilidad.
+        advisory: String,
+        /// Si es critica.
+        critical: bool,
+        /// Si es alcanzable.
+        reachable: bool,
+    },
+    /// Una ventana en la que un constructor no se fia.
+    ///
+    /// Todo lo que se observo dentro de la ventana deja de estar
+    /// verificado: es lo que pasa cuando un constructor esta comprometido
+    /// durante un rato, y las piezas de evidencia de ese rato son
+    /// precisamente las que no valen.
+    UntrustedWindow {
+        /// El principio de la ventana.
+        from: DateTime<Utc>,
+        /// El final de la ventana.
+        to: DateTime<Utc>,
     },
     /// Una politica que estaria en vigor.
     ///
@@ -111,7 +126,8 @@ impl HypotheticalClaim {
                 }
                 subjects
             }
-            Self::Evidence { subject, .. } => vec![subject.clone()],
+            Self::Risk { subject, .. } => vec![subject.clone()],
+            Self::UntrustedWindow { .. } => Vec::new(),
             Self::Policy { .. } => Vec::new(),
         }
     }

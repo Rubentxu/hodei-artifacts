@@ -7,6 +7,10 @@
 //! de escrituras: una simulacion que escribiese algo dejaria la cuenta
 //! en un numero distinto de cero, y se veria.
 
+pub mod evaluator;
+
+pub use evaluator::CapsuleDecisionEvaluator;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -64,6 +68,30 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
         Ok(facts)
     }
 
+    async fn all_relations(&self) -> Result<Vec<RelationFact>, String> {
+        let mut response = self
+            .graph
+            .db()
+            .query(
+                "SELECT from, to, relation_type FROM type::table($table) WHERE tenant_hrn = $tenant",
+            )
+            .bind(("table", self.graph.relation_table_name()))
+            .bind(("tenant", self.tenant.to_string()))
+            .await
+            .map_err(|error| error.to_string())?;
+        let rows: Vec<RelationRow> = response.take(0).map_err(|error| error.to_string())?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let relation =
+                    hodei_evidence::domain::graph::RelationType::parse(&row.relation_type)?;
+                let from = Hrn::from_string(&row.from)?;
+                let to = Hrn::from_string(&row.to)?;
+                Some(RelationFact::new(relation, from, to))
+            })
+            .collect())
+    }
+
     async fn relation_count(&self) -> Result<usize, String> {
         let mut response = self
             .graph
@@ -76,6 +104,17 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
         let rows: Vec<CountRow> = response.take(0).map_err(|error| error.to_string())?;
         Ok(rows.len())
     }
+}
+
+/// La relacion de una fila.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RelationRow {
+    /// El nodo del que parte.
+    from: String,
+    /// El nodo al que llega.
+    to: String,
+    /// El tipo de la relacion.
+    relation_type: String,
 }
 
 /// La fila de la cuenta.
