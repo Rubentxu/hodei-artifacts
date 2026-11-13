@@ -23,7 +23,7 @@ use hodei_reactive::events::{Event, EventKind, PayloadPredicate, Subscription};
 use hodei_reactive::execution::{Budget, ExecutionOutcome};
 use hodei_reactive::reactions::{
     BlastRadiusSource, DecisionRequester, ExceptionExpiryReaction, ImpactedSubject, ReasonCode,
-    SecurityCaseSink, VulnerabilityReaction,
+    Reevaluation, SecurityCaseSink, VulnerabilityReaction,
 };
 use hodei_reactive::runtime::{
     DispatchReport, ExecutionStore, InMemoryExecutionStore, ReactiveRuntime,
@@ -123,17 +123,12 @@ impl RecordingDecisions {
 
 #[async_trait]
 impl DecisionRequester for RecordingDecisions {
-    async fn request_reevaluation(
-        &self,
-        subject: &str,
-        reason: ReasonCode,
-        _now: chrono::DateTime<Utc>,
-    ) -> Result<String, String> {
+    async fn request_reevaluation(&self, request: Reevaluation) -> Result<String, String> {
         self.asked
             .lock()
             .expect("the recorder is not poisoned")
-            .push((subject.to_string(), reason));
-        Ok(format!("dec-{}", subject))
+            .push((request.subject.clone(), request.reason));
+        Ok(format!("dec-{}", request.subject))
     }
 }
 

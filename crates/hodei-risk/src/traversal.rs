@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use hodei_evidence::domain::graph::RelationType;
 use kernel::Hrn;
 
-use crate::case::BlastRadius;
+use crate::case::{BlastRadius, SubjectDepth};
 
 /// One edge of the graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,12 +70,36 @@ pub fn blast_radius(relations: &[Edge], vulnerability: &Hrn) -> BlastRadius {
     let mut affected_subjects: BTreeSet<String> = BTreeSet::new();
     let mut affected_deployments: BTreeSet<String> = BTreeSet::new();
     let mut affected_components: BTreeSet<String> = BTreeSet::new();
+    let mut depths: Vec<SubjectDepth> = Vec::new();
 
     for path in &paths {
-        affected_subjects.insert(path.artifact.to_string());
+        let subject = path.artifact.to_string();
+        affected_subjects.insert(subject.clone());
         affected_components.insert(path.component.to_string());
         for deployment in &path.deployments {
             affected_deployments.insert(deployment.to_string());
+        }
+        // The depth of a subject is the shortest path that reaches it:
+        // the shortest one is the one that says how exposed it is.
+        match depths.iter_mut().find(|entry| entry.subject == subject) {
+            Some(entry) => {
+                entry.depth = entry.depth.min(path.depth);
+                for deployment in &path.deployments {
+                    let deployment = deployment.to_string();
+                    if !entry.deployments.contains(&deployment) {
+                        entry.deployments.push(deployment);
+                    }
+                }
+            }
+            None => depths.push(SubjectDepth {
+                subject,
+                depth: path.depth,
+                deployments: path
+                    .deployments
+                    .iter()
+                    .map(|deployment| deployment.to_string())
+                    .collect(),
+            }),
         }
     }
 
@@ -83,6 +107,7 @@ pub fn blast_radius(relations: &[Edge], vulnerability: &Hrn) -> BlastRadius {
         affected_subjects: affected_subjects.into_iter().collect(),
         affected_deployments: affected_deployments.into_iter().collect(),
         affected_components: affected_components.into_iter().collect(),
+        depths,
     }
 }
 

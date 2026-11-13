@@ -121,6 +121,23 @@ pub struct BlastRadius {
     pub affected_deployments: Vec<String>,
     /// The components the vulnerability is in.
     pub affected_components: Vec<String>,
+    /// How far the dependency is, for each affected subject.
+    ///
+    /// One is a direct dependency: the artefact holds the component
+    /// itself. More than one is a transitive one, and a transitive
+    /// dependency is a different thing to say in a case.
+    pub depths: Vec<SubjectDepth>,
+}
+
+/// How far the dependency is, for one affected subject.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubjectDepth {
+    /// The subject that is affected.
+    pub subject: String,
+    /// How far the dependency is.
+    pub depth: usize,
+    /// The deployments that run it.
+    pub deployments: Vec<String>,
 }
 
 /// The security case.
@@ -351,6 +368,11 @@ mod tests {
                 ],
                 affected_deployments: vec!["prod".to_string()],
                 affected_components: vec!["org.example:lib-b".to_string()],
+                depths: vec![SubjectDepth {
+                    subject: "hrn:hodei:artifacts:eu-west-1:acme:Artifact/web".to_string(),
+                    depth: 1,
+                    deployments: vec!["prod".to_string()],
+                }],
             },
             VerificationCriteria::new(Some("sha256:new".to_string()))
                 .with_deployments_removed(vec!["prod".to_string()]),

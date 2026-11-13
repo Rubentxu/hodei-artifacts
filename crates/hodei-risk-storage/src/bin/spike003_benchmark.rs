@@ -415,14 +415,22 @@ async fn main() {
 
     // The blast radius: the walk of several hops.
     let mut blast = Vec::new();
+    let mut reached = 0usize;
     for _ in 0..ROUNDS {
         let at = Instant::now();
         let radius = hodei_risk_storage::blast_radius(&graph, &account(), &vulnerability)
             .await
             .expect("the blast radius is computed");
-        let _ = radius;
+        reached = radius.affected_subjects.len();
         blast.push(at.elapsed());
     }
+    // The measurement has to be of a walk that reaches something: a walk
+    // that reaches nothing measures the empty, and the empty is fast.
+    assert!(
+        reached > 0,
+        "the blast radius reached nothing: the measurement would be of the empty"
+    );
+    println!("subjects reached by the vulnerability: {reached}");
     let measurement = Measurement::of(&mut blast);
     let (p50, p95, max) = measurement.millis();
 

@@ -19,6 +19,8 @@ use std::sync::Arc;
 use surrealdb::Connection;
 use surrealdb::Surreal;
 
+pub mod reactions;
+
 /// The table the decisions live in.
 pub const DECISION_TABLE: &str = "promotion_decision";
 

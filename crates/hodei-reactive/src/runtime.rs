@@ -226,7 +226,15 @@ impl ReactiveRuntime {
     ) -> Result<DispatchReport, RuntimeError> {
         let mut report = DispatchReport::default();
         let mut state = BudgetState::new(self.budget.clone());
+        // The reactions of THIS step. They are not the reactions of the
+        // chain: keeping them across the steps would put the same events
+        // in the queue once and again, and the chain would grow without
+        // the behaviours doing anything.
         let mut reactions: Vec<Reaction> = Vec::new();
+        // The effects of the whole chain: these are NOT cleared, because
+        // an effect that was produced in the first step is an effect of
+        // the chain.
+        let mut effects: Vec<Effect> = Vec::new();
 
         // The chain: the events that are waiting to be delivered.
         let mut pending: Vec<(Event, Vec<String>)> = vec![(event.clone(), vec![event.id.clone()])];
@@ -288,6 +296,7 @@ impl ReactiveRuntime {
                                 .await;
                             self.store.put(record.clone());
                             report.executions.push(record);
+                            effects.extend(reaction.effects.clone());
                             reactions.push(reaction);
                             continue;
                         }
@@ -320,14 +329,18 @@ impl ReactiveRuntime {
                     .await;
                 self.store.put(record.clone());
                 report.executions.push(record);
+                effects.extend(reaction.effects.clone());
                 reactions.push(reaction);
             }
 
             // And the events the reactions caused.
-            for reaction in &reactions {
-                for caused in &reaction.events {
-                    pending.push((caused.clone(), causation_of(&causation, &caused.id)));
-                }
+            let caused_by_this_step: Vec<Event> = reactions
+                .iter()
+                .flat_map(|reaction| reaction.events.clone())
+                .collect();
+            reactions.clear();
+            for caused in &caused_by_this_step {
+                pending.push((caused.clone(), causation_of(&causation, &caused.id)));
             }
 
             state.deepen();
@@ -339,10 +352,7 @@ impl ReactiveRuntime {
 
         // The effects are applied at the end, once-only each. A replay
         // applies NONE: what happened already happened.
-        for effect in reactions
-            .iter()
-            .flat_map(|reaction| reaction.effects.clone())
-        {
+        for effect in effects {
             if replaying {
                 report.suppressed.push(effect);
                 continue;
