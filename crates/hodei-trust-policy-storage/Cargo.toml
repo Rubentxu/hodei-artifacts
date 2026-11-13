@@ -10,12 +10,12 @@ chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
 hodei-risk-storage = { path = "../hodei-risk-storage" }
 hodei-reactive = { path = "../hodei-reactive" }
-kernel = { path = "../kernel" }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 
 [dependencies]
 async-trait = { workspace = true }
+kernel = { path = "../kernel" }
 chrono = { workspace = true }
 hodei-evidence-storage = { path = "../hodei-evidence-storage" }
 hodei-reactive = { path = "../hodei-reactive" }
