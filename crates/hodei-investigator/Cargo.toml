@@ -1,0 +1,17 @@
+[package]
+name = "hodei-investigator"
+version = "0.1.0"
+edition = "2024"
+description = "El investigador con IA de Hodei, con sus guardias."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+hodei-evidence = { path = "../hodei-evidence" }
+kernel = { path = "../kernel" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
