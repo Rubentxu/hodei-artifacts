@@ -255,6 +255,14 @@ impl<C: Connection> SurrealGraphStore<C> {
         self.db.clone()
     }
 
+    /// La generacion del grafo de una cuenta: la version que su historia
+    /// de deltas ha alcanzado. Es lo que el read-set pregunta para
+    /// comprobar que el mundo contra el que se leyo sigue siendo el
+    /// mundo de ahora.
+    pub async fn generation(&self, tenant: &kernel::Hrn) -> Result<u64, String> {
+        self.deltas.version_of(tenant).await
+    }
+
     fn node_table(&self) -> String {
         format!("{}_node", self.projection)
     }

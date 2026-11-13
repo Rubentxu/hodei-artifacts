@@ -146,6 +146,18 @@ pub struct InvestigationTrace {
     /// incompleto no puede pasar por respuesta exhaustiva.
     #[serde(default)]
     pub coverage: crate::scope::Coverage,
+    /// El manifiesto de lo que se RECUPERO, con sus digests y
+    /// generaciones. No lleva contenido: identificadores y digests.
+    #[serde(default)]
+    pub retrieved: crate::read_set::ReadSet,
+    /// Lo que se le DIO al modelo: los identificadores de los hechos
+    /// que entraron en el prompt.
+    #[serde(default)]
+    pub sent_to_model: Vec<String>,
+    /// Lo que las afirmaciones ACEPTADAS citaron. Un hecho que llego al
+    /// modelo y no se cito no sostiene nada.
+    #[serde(default)]
+    pub cited: Vec<String>,
     /// Cuando se hizo.
     pub at: DateTime<Utc>,
 }
@@ -161,6 +173,9 @@ impl InvestigationTrace {
         prompt_version: impl Into<String>,
         context_evidence: Vec<String>,
         coverage: crate::scope::Coverage,
+        retrieved: crate::read_set::ReadSet,
+        sent_to_model: Vec<String>,
+        cited: Vec<String>,
         at: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -172,6 +187,9 @@ impl InvestigationTrace {
             context_words: context_evidence.len(),
             context_evidence,
             coverage,
+            retrieved,
+            sent_to_model,
+            cited,
             at,
         }
     }

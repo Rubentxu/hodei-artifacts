@@ -19,6 +19,7 @@ use hodei_evidence::domain::graph::NodeKind;
 use hodei_evidence::ports::graph::GraphQuery;
 use hodei_evidence::ports::{ContentStore, EvidenceStore};
 use hodei_investigator::investigator::{EvidenceRetriever, ReachabilityFacts};
+use hodei_investigator::read_set::{ReadSet, ReadStamp};
 use hodei_investigator::scope::{
     Coverage, EvidenceReadAuthorizer, FactStatus, RetrievalError, RetrievalScope, RetrievedContext,
     ScopedFact, TrustLevel,
@@ -84,13 +85,15 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
     /// ninguno de ellos lleva texto inventado.
     async fn the_evidence(
         &self,
-        account: &str,
-        subject: &Hrn,
-        budget: usize,
-        bytes_budget: u64,
+        scope: &RetrievalScope,
         used_bytes: &mut u64,
         omitted: &mut usize,
+        read_set: &mut ReadSet,
     ) -> Result<Vec<ScopedFact>, String> {
+        let account = scope.subject.account_id();
+        let subject = &scope.subject;
+        let budget = scope.budget.max_objects;
+        let bytes_budget = scope.budget.max_bytes;
         let mut records = self
             .evidence
             .evidence_of_subject(account, subject)
@@ -115,6 +118,14 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
                 });
                 continue;
             }
+
+            // El sello de la lectura: el digest del contenido es lo que
+            // permite comprobar el origen, y lo lleva el registro, sin
+            // importar si el contenido llego a leerse.
+            read_set.read(ReadStamp::evidence(
+                record.id().to_string(),
+                record.content().digest.to_string(),
+            ));
 
             let size = self
                 .content
@@ -199,6 +210,7 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
         subject: &Hrn,
         budget: usize,
         omitted: &mut usize,
+        read_set: &mut ReadSet,
     ) -> Result<Vec<ScopedFact>, String> {
         let mut facts = Vec::new();
 
@@ -219,6 +231,12 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
 
         let mut kept = 0usize;
         for relation in relations {
+            // El sello de la relacion: su identidad y la evidencia que
+            // la sostiene, que es lo que permite comprobar el origen.
+            read_set.read(ReadStamp::relation(
+                relation.identity(),
+                relation.evidence_id.to_string(),
+            ));
             let path = if relation.from == *subject {
                 vec![subject.clone(), relation.to.clone()]
             } else {
@@ -270,23 +288,35 @@ impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
                 resource: format!("{} ({reason})", scope.subject),
             })?;
 
+        // La generacion del mundo ANTES de leer: la comprobacion de
+        // consistencia la repite al final, y un mundo que cambio
+        // mientras se leia NO se presenta como snapshot coherente.
+        // La generacion es de la CUENTA (el tenant del grafo), no del
+        // sujeto: es la historia de deltas de la cuenta la que dice si
+        // el mundo avanzo.
+        let generation_before = self
+            .graph
+            .generation(&self.tenant)
+            .await
+            .map_err(RetrievalError::Unavailable)?;
+        let mut read_set = ReadSet::empty();
+        read_set.generation("graph", generation_before);
+
         let mut omitted = 0usize;
         let mut used_bytes = 0u64;
         let mut facts = self
-            .the_evidence(
-                scope.subject.account_id(),
-                &scope.subject,
-                scope.budget.max_objects,
-                scope.budget.max_bytes,
-                &mut used_bytes,
-                &mut omitted,
-            )
+            .the_evidence(scope, &mut used_bytes, &mut omitted, &mut read_set)
             .await
             .map_err(RetrievalError::Unavailable)?;
         facts.extend(
-            self.the_relations(&scope.subject, scope.budget.max_relations, &mut omitted)
-                .await
-                .map_err(RetrievalError::Unavailable)?,
+            self.the_relations(
+                &scope.subject,
+                scope.budget.max_relations,
+                &mut omitted,
+                &mut read_set,
+            )
+            .await
+            .map_err(RetrievalError::Unavailable)?,
         );
         if let Some(reachability) = &self.reachability {
             facts.extend(
@@ -313,6 +343,22 @@ impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
         // comprueba otra vez.
         facts.truncate(scope.max_nodes);
 
+        // La consistencia se comprueba CONTRA EL MUNDO: si la generacion
+        // del grafo cambio mientras se leia, no hay snapshot coherente
+        // que presentar, y la lectura se dice obsoleta.
+        let generation_after = self
+            .graph
+            .generation(&self.tenant)
+            .await
+            .map_err(RetrievalError::Unavailable)?;
+        if generation_after != generation_before {
+            return Err(RetrievalError::Stale {
+                source: "graph".to_string(),
+                expected: generation_before,
+                found: generation_after,
+            });
+        }
+
         // La cobertura se DECLARA: lo que no entro por el presupuesto no
         // se esconde. Un scope conocido pero incompleto no se presenta
         // como respuesta exhaustiva.
@@ -321,7 +367,11 @@ impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
         } else {
             Coverage::Partial { omitted }
         };
-        Ok(RetrievedContext { facts, coverage })
+        Ok(RetrievedContext {
+            facts,
+            coverage,
+            read_set,
+        })
     }
 }
 
