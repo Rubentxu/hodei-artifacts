@@ -21,6 +21,7 @@ members = [
     "crates/hodei-reachability",
     "crates/hodei-reachability-storage",
     "crates/hodei-reactive",
+    "crates/hodei-hub",
     "crates/hodei-investigator",
     "crates/hodei-investigator-storage",
     "crates/hodei-simulation",

@@ -1,0 +1,18 @@
+[package]
+name = "hodei-hub"
+version = "0.1.0"
+edition = "2024"
+description = "El hub de artefactos de confianza de Hodei."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+hodei-evidence = { path = "../hodei-evidence" }
+hodei-trust-policy = { path = "../hodei-trust-policy" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

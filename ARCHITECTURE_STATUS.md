@@ -1118,3 +1118,18 @@ No dice qué viene después en detalle: eso está en el roadmap v3 y en el
 backlog de implementación que lo acompaña. No dice que el repositorio esté
 bien: dice qué está vivo y qué no, que es lo que un revisor necesita para no
 tomarse por bueno un documento heredado.
+
+## 10-docecies — M9: el hub de artefactos de confianza
+
+El hito donde Hodei deja de ser un catalogo y pasa a ser el que guarda y distribuye. Y donde se decide, **antes de invertir**, si Hodei debe hablar OCI/Maven/npm o integrarse con los registros que ya existen (el SPIKE-010).
+
+**La conclusion del SPIKE-010, y el motivo por el que M9 no se reduce ni se cancela:** un registro externo guarda y sirve bytes, y lo hace bien; Hodei no compite como almacen. Lo que Hodei si puede es **imponer**: un registro externo no sabe si un artefacto es de fiar, porque la decision de confianza viene del grafo de evidencia y no existe fuera de Hodei. El hub es, por tanto, un **punto de imposicion**, y el subconjunto de OCI es el minimo verificable.
+
+**Lo que hay en el codigo:**
+
+- `hodei-hub`: el almacen de contenido direccionado por su digest (en disco, con escritura atomica, y en memoria), la cuarentena y el canal de confianza, la promocion gobernada por la decision de confianza con su traza, y el subconjunto de OCI con la lista de lo **no** soportado escrita en el codigo.
+- Las tres reglas del hito: sin decision de confianza no hay promocion; promover no muta los bytes; el mismo contenido no se guarda dos veces.
+- La coexistencia: un artefacto de un registro externo se referencia y se cita sin migrar sus bytes, y sin que Hodei afirme tenerlos.
+- `ADR-015`: la conclusion del SPIKE-010, con sus no-objetivos explicitos (Maven y npm no, hasta que haya demanda, spike de protocolo y UAT nueva).
+
+**La limitacion, escrita:** el subconjunto de OCI es parcial (el manifiesto de imagen, su configuracion y sus capas; el indice multi-plataforma, los referrers y las firmas no), la promocion cambia el canal sin mover bytes porque no hay bytes que muevan entre canales, y laReferences y el GC segura no estanTodavia.
