@@ -460,9 +460,6 @@ async fn m7_uat_02_the_dependency_upgrade_is_in_the_diff() {
 /// simulation/hypothesis marks builds in window untrusted, then diff
 /// enumerates artifacts/deployments whose trust changes.
 #[tokio::test]
-#[ignore = "PENDIENTE: la evidencia admitida no llega a la capsula del evaluador de la \
-simulacion, y sin capsula la dimension de la construccion no cambia y la decision tampoco. \
-El diagnostico esta escrito en la tarea HSP-67."]
 async fn m7_uat_03_the_compromised_builder_window_is_in_the_diff() {
     let result: Result<(), String> = async {
         let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
@@ -485,6 +482,7 @@ async fn m7_uat_03_the_compromised_builder_window_is_in_the_diff() {
             claim: HypotheticalClaim::UntrustedWindow {
                 from: observed_at - Duration::minutes(30),
                 to: observed_at + Duration::minutes(30),
+                subjects: vec![subject()],
             },
         });
 

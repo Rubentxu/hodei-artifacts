@@ -53,10 +53,16 @@ impl CapsuleDecisionEvaluator {
         else {
             return Vec::new();
         };
+        // Las ventanas que alcanzan a ESTE sujeto: una ventana que no
+        // nombra al sujeto no le dice nada.
         let windows: Vec<(DateTime<Utc>, DateTime<Utc>)> = facts
             .iter()
             .filter_map(|fact| match &fact.claim {
-                HypotheticalClaim::UntrustedWindow { from, to } => Some((*from, *to)),
+                HypotheticalClaim::UntrustedWindow { from, to, subjects }
+                    if subjects.contains(subject) =>
+                {
+                    Some((*from, *to))
+                }
                 _ => None,
             })
             .collect();
