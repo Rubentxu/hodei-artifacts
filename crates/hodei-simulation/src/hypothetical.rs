@@ -95,11 +95,18 @@ pub enum HypotheticalClaim {
     /// verificado: es lo que pasa cuando un constructor esta comprometido
     /// durante un rato, y las piezas de evidencia de ese rato son
     /// precisamente las que no valen.
+    ///
+    /// La ventana **nombra a los sujetos** a los que alcanza, porque sin
+    /// ellos la simulacion no sabria a quien mirar: una ventana es un
+    /// rango de tiempo, y un rango de tiempo no dice de quien es la
+    /// culpa.
     UntrustedWindow {
         /// El principio de la ventana.
         from: DateTime<Utc>,
         /// El final de la ventana.
         to: DateTime<Utc>,
+        /// Los sujetos a los que alcanza la ventana.
+        subjects: Vec<Hrn>,
     },
     /// Una politica que estaria en vigor.
     ///
@@ -127,7 +134,7 @@ impl HypotheticalClaim {
                 subjects
             }
             Self::Risk { subject, .. } => vec![subject.clone()],
-            Self::UntrustedWindow { .. } => Vec::new(),
+            Self::UntrustedWindow { subjects, .. } => subjects.clone(),
             Self::Policy { .. } => Vec::new(),
         }
     }
