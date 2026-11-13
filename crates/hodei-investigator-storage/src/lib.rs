@@ -19,32 +19,44 @@ use hodei_evidence::domain::graph::NodeKind;
 use hodei_evidence::ports::graph::GraphQuery;
 use hodei_evidence::ports::{ContentStore, EvidenceStore};
 use hodei_investigator::investigator::{EvidenceRetriever, ReachabilityFacts};
-use hodei_investigator::scope::{RetrievalScope, ScopedFact, TrustLevel};
+use hodei_investigator::scope::{
+    EvidenceReadAuthorizer, RetrievalError, RetrievalScope, ScopedFact, TrustLevel,
+};
 use kernel::Hrn;
+use kernel::application::ports::{EvaluationDecision, EvaluationRequest, IamPolicyEvaluator};
 use surrealdb::Connection;
 
 /// El recuperador sobre el grafo y la evidencia reales.
+///
+/// Es el **borde de autorizacion** de la investigacion: autoriza el
+/// sujeto ANTES de leer nada, y cada recurso que traen los caminos se
+/// autoriza antes de entregarse. Un permiso denegado o un almacen que
+/// no contesta son puertas cerradas, nunca lecturas silenciosas.
 pub struct GraphEvidenceRetriever<C: Connection> {
     evidence: Arc<dyn EvidenceStore>,
     content: Arc<dyn ContentStore>,
     graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
+    authorizer: Arc<dyn EvidenceReadAuthorizer>,
     reachability: Option<Arc<dyn ReachabilityFacts>>,
     tenant: Hrn,
 }
 
 impl<C: Connection> GraphEvidenceRetriever<C> {
     /// El recuperador sobre un almacen de evidencia, un almacen de
-    /// contenido y un grafo.
+    /// contenido, un grafo y el Authorizer compartido. Sin autorizador
+    /// no hay recuperador: sin permiso no se lee.
     pub fn new(
         evidence: Arc<dyn EvidenceStore>,
         content: Arc<dyn ContentStore>,
         graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
+        authorizer: Arc<dyn EvidenceReadAuthorizer>,
         tenant: Hrn,
     ) -> Self {
         Self {
             evidence,
             content,
             graph,
+            authorizer,
             reachability: None,
             tenant,
         }
@@ -129,17 +141,89 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
 
 #[async_trait]
 impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
-    async fn retrieve(&self, scope: &RetrievalScope) -> Result<Vec<ScopedFact>, String> {
-        let mut facts = self.the_evidence(&scope.account, &scope.subject).await?;
-        facts.extend(self.the_relations(&scope.subject).await?);
+    async fn retrieve(&self, scope: &RetrievalScope) -> Result<Vec<ScopedFact>, RetrievalError> {
+        // La autorizacion va ANTES de cualquier lectura: quien pregunta
+        // tiene que poder leer el sujeto, y una denegacion o un error
+        // del Authorizer es una puerta cerrada. La cuenta del sujeto NO
+        // se infiere del texto del alcance: es su componente canonico.
+        self.authorizer
+            .can_read(&scope.actor, &scope.subject)
+            .await
+            .map_err(|reason| RetrievalError::NotAuthorized {
+                actor: scope.actor.to_string(),
+                resource: format!("{} ({reason})", scope.subject),
+            })?;
+
+        let mut facts = self
+            .the_evidence(scope.subject.account_id(), &scope.subject)
+            .await
+            .map_err(RetrievalError::Unavailable)?;
+        facts.extend(
+            self.the_relations(&scope.subject)
+                .await
+                .map_err(RetrievalError::Unavailable)?,
+        );
         if let Some(reachability) = &self.reachability {
-            facts.extend(reachability.facts_of(&scope.subject).await?);
+            facts.extend(
+                reachability
+                    .facts_of(&scope.subject)
+                    .await
+                    .map_err(RetrievalError::Unavailable)?,
+            );
         }
+
+        // Los caminos que tocan un recurso de OTRA cuenta no se
+        // entregan: el que pregunta no los recibe, aunque el grafo los
+        // tenga. La comprobacion del investigador queda como ultima
+        // linea: un hecho que se cuele aqui no pasa.
+        let account = scope.subject.account_id().to_string();
+        facts.retain(|fact| {
+            fact.path
+                .iter()
+                .all(|node| node.account_id() == account.as_str())
+        });
 
         // Y el alcance se respeta aqui tambien: un recuperador que
         // devuelve de mas no puede colar nada, porque el investigador lo
         // comprueba otra vez.
         facts.truncate(scope.max_nodes);
         Ok(facts)
+    }
+}
+
+/// El Authorizer compartido, por su puerto del kernel.
+///
+/// La decision la toma el motor de politicas determinista --el mismo
+/// que autoriza el resto del sistema--, no el texto del alcance y no el
+/// modelo. Un error de evaluacion cierra: si no se pudo comprobar el
+/// permiso, no se lee.
+pub struct EvaluatorReadAuthorizer<E: IamPolicyEvaluator> {
+    evaluator: Arc<E>,
+}
+
+impl<E: IamPolicyEvaluator> EvaluatorReadAuthorizer<E> {
+    /// El autorizador sobre un evaluador de politicas IAM.
+    pub fn new(evaluator: Arc<E>) -> Self {
+        Self { evaluator }
+    }
+}
+
+#[async_trait]
+impl<E: IamPolicyEvaluator> EvidenceReadAuthorizer for EvaluatorReadAuthorizer<E> {
+    async fn can_read(&self, actor: &Hrn, resource: &Hrn) -> Result<(), String> {
+        let decision: EvaluationDecision = self
+            .evaluator
+            .evaluate_iam_policies(EvaluationRequest {
+                principal_hrn: actor.clone(),
+                action_name: "read".to_string(),
+                resource_hrn: resource.clone(),
+            })
+            .await
+            .map_err(|error| format!("the authorization could not be evaluated: {error}"))?;
+        if decision.decision {
+            Ok(())
+        } else {
+            Err(decision.reason)
+        }
     }
 }
