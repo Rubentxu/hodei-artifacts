@@ -2192,6 +2192,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hodei-hub"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hodei-evidence",
+ "hodei-trust-policy",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hodei-iam"
 version = "0.1.0"
 dependencies = [
