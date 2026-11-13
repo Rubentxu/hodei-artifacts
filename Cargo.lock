@@ -2225,6 +2225,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hodei-investigator-storage"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hodei-evidence",
+ "hodei-evidence-storage",
+ "hodei-investigator",
+ "hodei-trust-policy",
+ "kernel",
+ "serde",
+ "serde_json",
+ "surrealdb",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "hodei-policies"
 version = "0.1.0"
 dependencies = [

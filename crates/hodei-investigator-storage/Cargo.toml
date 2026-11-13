@@ -1,0 +1,22 @@
+[package]
+name = "hodei-investigator-storage"
+version = "0.1.0"
+edition = "2024"
+description = "Los adaptadores del investigador de Hodei sobre el grafo y la evidencia reales."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+hodei-evidence = { path = "../hodei-evidence" }
+hodei-evidence-storage = { path = "../hodei-evidence-storage" }
+hodei-investigator = { path = "../hodei-investigator" }
+kernel = { path = "../kernel" }
+surrealdb = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+hodei-trust-policy = { path = "../hodei-trust-policy" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -22,6 +22,7 @@ members = [
     "crates/hodei-reachability-storage",
     "crates/hodei-reactive",
     "crates/hodei-investigator",
+    "crates/hodei-investigator-storage",
     "crates/hodei-simulation",
     "crates/hodei-simulation-storage",
     "crates/hodei-spike-ladybug",
