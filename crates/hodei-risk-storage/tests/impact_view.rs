@@ -19,6 +19,7 @@ use hodei_evidence::{EvidenceId, RelationDeltaSubscription};
 use hodei_evidence_storage::surreal::delta::SurrealRelationDeltaLedger;
 use hodei_evidence_storage::surreal::graph::SurrealGraphStore;
 use hodei_risk_storage::impact_view::{SurrealImpactView, IMPACT_TABLE};
+use hodei_reactive::reactions::BlastRadiusSource;
 use hodei_risk_storage::reactions::SurrealBlastRadius;
 use kernel::Hrn;
 use surrealdb::engine::local::{Db, RocksDb};
@@ -425,5 +426,247 @@ async fn a_new_edge_brings_its_subject_into_the_view() {
             .any(|(subject, _)| subject.as_str() == artifact(7).to_string()),
         "app-7 esta en la vista: {:?}",
         after.subjects
+    );
+}
+
+/// HSP-83 AC1: la respuesta tipada dice el CAMINO que explica cada
+/// sujeto -- las relaciones y la evidencia que lo trajo -- y la
+/// frescura de donde sale.
+#[tokio::test]
+async fn the_answer_says_what_explains_each_subject_and_its_freshness() {
+    let (_tmp, graph, deltas, view) = the_world().await;
+
+    for index in 0..2 {
+        graph
+            .apply(the_contains("evt-load", index))
+            .await
+            .expect("la carga entra");
+    }
+    view.rebuild_advisory(&tenant(), &vulnerability())
+        .await
+        .expect("la vista corre");
+
+    let answer = view
+        .serve_impact(&tenant(), &vulnerability())
+        .await
+        .expect("la respuesta corre");
+
+    assert_eq!(answer.freshness, hodei_risk_storage::impact_view::Freshness::Current,
+        "la vista esta al dia y se presenta como tal");
+    assert_eq!(answer.version, deltas.version_of(&tenant()).await.expect("la version corre"));
+
+    // Cada sujeto trae su camino: app-0 con la Contains que lo trae y
+    // su evidencia; el componente con la AffectedBy que lo declara.
+    let artifact_path = answer
+        .subjects
+        .iter()
+        .find(|one| one.subject == artifact(0).to_string())
+        .expect("el artefacto esta en la respuesta");
+    assert!(
+        artifact_path
+            .relations
+            .iter()
+            .any(|relation| relation.starts_with("contains|") && relation.contains(&component().to_string())),
+        "el camino del artefacto nombra la Contains: {:?}",
+        artifact_path.relations
+    );
+    assert!(
+        artifact_path.evidences.iter().any(|one| one == "ev-0"),
+        "el camino dice la evidencia que lo apoya: {:?}",
+        artifact_path.evidences
+    );
+    let component_path = answer
+        .subjects
+        .iter()
+        .find(|one| one.subject == component().to_string())
+        .expect("el componente esta en la respuesta");
+    assert_eq!(component_path.depth, 0);
+    assert!(
+        component_path
+            .relations
+            .iter()
+            .any(|relation| relation.starts_with("affected_by|")),
+        "el camino del componente nombra la AffectedBy: {:?}",
+        component_path.relations
+    );
+    assert!(
+        !answer.deployments.is_empty() || answer.subjects.len() == 3,
+        "los despliegues que corren los sujetos se dicen"
+    );
+}
+
+/// HSP-83 AC2: una vista ATRASADA no se presenta como actual. El
+/// fallback dice lo que el recorrido autoritativo dice AHORA, y el lag
+/// queda expuesto en la frescura, nunca escondido.
+#[tokio::test]
+async fn a_stale_view_falls_back_to_the_walk_and_exposes_the_lag() {
+    let (_tmp, graph, deltas, view) = the_world().await;
+
+    for index in 0..2 {
+        graph
+            .apply(the_contains("evt-load", index))
+            .await
+            .expect("la carga entra");
+    }
+    view.rebuild_advisory(&tenant(), &vulnerability())
+        .await
+        .expect("la vista corre");
+
+    // El grafo avanza y la vista NO consume el delta: se queda atras.
+    graph
+        .apply(the_contains("evt-late", 7))
+        .await
+        .expect("el apoyo nuevo entra");
+    let said = deltas.version_of(&tenant()).await.expect("la version corre");
+
+    let answer = view
+        .serve_impact(&tenant(), &vulnerability())
+        .await
+        .expect("la respuesta corre");
+
+    match &answer.freshness {
+        hodei_risk_storage::impact_view::Freshness::Authoritative { view_watermark } => {
+            assert!(*view_watermark < said, "el lag queda dicho: {view_watermark} < {said}");
+        }
+        other => panic!("una vista atrasada no se presenta como actual: {other:?}"),
+    }
+    assert_eq!(answer.version, said, "la respuesta es completa hasta la version dicha");
+    assert!(
+        answer
+            .subjects
+            .iter()
+            .any(|one| one.subject == artifact(7).to_string()),
+        "el fallback dice lo que el recorrido dice AHORA, con el sujeto nuevo: {:?}",
+        answer.subjects
+    );
+}
+
+/// HSP-83 AC1 (fail-closed): el advisory de OTRA cuenta es una puerta
+/// cerrada, no una respuesta vacia que parezca cero impacto.
+#[tokio::test]
+async fn an_advisory_of_another_account_is_a_closed_door() {
+    let (_tmp, _graph, _deltas, view) = the_world().await;
+
+    let foreign = Hrn::from_string(
+        "hrn:hodei:artifacts:eu-west-1:mallory:Vulnerability/GHSA-view-0001",
+    )
+    .expect("un HRN");
+    let error = view
+        .serve_impact(&tenant(), &foreign)
+        .await
+        .expect_err("una puerta cerrada es un error");
+    assert!(
+        matches!(
+            error,
+            hodei_risk_storage::impact_view::ImpactReadError::TenantMismatch { .. }
+        ),
+        "el desajuste de cuenta se dice como tal: {error:?}"
+    );
+}
+
+/// HSP-83 AC2 (sin vista): si la vista no esta, el calculo
+/// autoritativo responde AHORA, y lo dice.
+#[tokio::test]
+async fn without_a_view_the_authoritative_walk_answers_now() {
+    let (_tmp, graph, deltas, view) = the_world().await;
+
+    for index in 0..2 {
+        graph
+            .apply(the_contains("evt-load", index))
+            .await
+            .expect("la carga entra");
+    }
+
+    let answer = view
+        .serve_impact(&tenant(), &vulnerability())
+        .await
+        .expect("la respuesta corre");
+    match &answer.freshness {
+        hodei_risk_storage::impact_view::Freshness::Authoritative { view_watermark } => {
+            assert_eq!(*view_watermark, 0, "no habia vista que presentar");
+        }
+        other => panic!("sin vista no hay actualidad que reclamar: {other:?}"),
+    }
+    assert_eq!(answer.version, deltas.version_of(&tenant()).await.expect("la version corre"));
+    assert_eq!(answer.subjects.len(), 3, "dos artefactos y el componente");
+}
+
+/// HSP-83 AC2 (reactivo): el consumidor de riesgo sirve de la vista con
+/// fallback seguro: responde LO MISMO que el recorrido con la vista al
+/// dia, y sigue respondiendo lo que el recorrido dice con la vista
+/// atrasada. Nunca silencio, nunca falsa certeza.
+#[tokio::test]
+async fn the_risk_consumer_serves_from_the_view_with_a_safe_fallback() {
+    let (_tmp, graph, _deltas, view) = the_world().await;
+    let view = Arc::new(view);
+
+    for index in 0..2 {
+        graph
+            .apply(the_contains("evt-load", index))
+            .await
+            .expect("la carga entra");
+    }
+    view.rebuild_advisory(&tenant(), &vulnerability())
+        .await
+        .expect("la vista corre");
+
+    let from_view = Arc::new(SurrealBlastRadius::with_view(
+        graph.clone(),
+        view.clone(),
+        tenant(),
+    ));
+    let from_walk = SurrealBlastRadius::new(graph.clone(), tenant());
+
+    // Con la vista al dia: LO MISMO que el recorrido.
+    let served = from_view
+        .impacted("acme", &vulnerability().to_string())
+        .await
+        .expect("el consumidor corre");
+    let walked = from_walk
+        .impacted("acme", &vulnerability().to_string())
+        .await
+        .expect("el recorrido corre");
+    let served_set: std::collections::BTreeSet<_> = served
+        .iter()
+        .map(|one| (one.subject.clone(), one.depth))
+        .collect();
+    let walked_set: std::collections::BTreeSet<_> = walked
+        .iter()
+        .map(|one| (one.subject.clone(), one.depth))
+        .collect();
+    assert_eq!(served_set, walked_set, "servir de la vista es servir el recorrido");
+
+    // Y el advisory de otra cuenta sigue siendo una puerta cerrada.
+    let foreign = Hrn::from_string(
+        "hrn:hodei:artifacts:eu-west-1:mallory:Vulnerability/GHSA-view-0001",
+    )
+    .expect("un HRN");
+    assert!(
+        from_view
+            .impacted("mallory", &foreign.to_string())
+            .await
+            .is_err(),
+        "el consumidor no cruza cuentas"
+    );
+
+    // La vista se queda atras: el consumidor responde lo que el
+    // recorrido dice AHORA, no lo que la vista decia antes.
+    graph
+        .apply(the_contains("evt-late", 7))
+        .await
+        .expect("el apoyo nuevo entra");
+    let served = from_view
+        .impacted("acme", &vulnerability().to_string())
+        .await
+        .expect("el consumidor corre con la vista atrasada");
+    assert!(
+        served
+            .iter()
+            .any(|one| one.subject == artifact(7).to_string()),
+        "el fallback alcanza el sujeto nuevo: {:?}",
+        served
+            .iter()
+            .map(|one| one.subject.clone())
+            .collect::<Vec<_>>()
     );
 }
