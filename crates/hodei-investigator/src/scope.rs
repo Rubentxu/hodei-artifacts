@@ -1,15 +1,21 @@
 //! El alcance de la recuperacion: lo que se puede mirar y lo que no.
 //!
 //! Una investigacion se hace sobre un subgrafo, y el subgrafo se pide
-//! **expresamente**: la cuenta, el sujeto y los limites. Una consulta que
-//! se salga de lo pedido no es una consulta: es una fuga, y la fuga de una
-//! cuenta a otra es el peor fallo que puede tener este sistema.
+//! **expresamente**: quien pregunta (verificado), el sujeto y los limites.
+//! Una consulta que se salga de lo pedido no es una consulta: es una fuga,
+//! y la fuga de una cuenta a otra es el peor fallo que puede tener este
+//! sistema.
 //!
 //! Por eso el alcance se comprueba **dos veces**: una cuando se recupera
-//! (el que recupera dice que no se sale) y otra cuando se usa (el que
+//! (el que recupera autoriza ANTES de leer) y otra cuando se usa (el que
 //! investiga comprueba lo que le han dado). La segunda comprobacion es la
 //! que importa: un recuperador que se equivoca no puede filtrar nada.
+//!
+//! Y las cuentas NO se comparan con texto: se comparan los **componentes
+//! canonicos del HRN**. Un `contains` o un `split` ad hoc es una
+//! comprobacion que un HRN parecido engana; `account_id()` no.
 
+use async_trait::async_trait;
 use hodei_evidence::domain::graph::NodeKind;
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
@@ -30,10 +36,15 @@ pub enum TrustLevel {
 }
 
 /// El alcance de una recuperacion.
+///
+/// El actor es la identidad **verificada** que pide la investigacion, y
+/// la cuenta NO se dice: se toma del sujeto por su componente canonico.
+/// Un actor de cuenta A y un sujeto de cuenta B no forman un alcance: lo
+/// rechazan las dos comprobaciones.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetrievalScope {
-    /// La cuenta a la que pertenece la investigacion.
-    pub account: String,
+    /// Quien pregunta, verificado.
+    pub actor: Hrn,
     /// El sujeto del que se parte.
     pub subject: Hrn,
     /// Cuantos nodos puede tocar la recuperacion.
@@ -44,13 +55,25 @@ pub struct RetrievalScope {
 
 impl RetrievalScope {
     /// Un alcance con los limites por defecto.
-    pub fn new(account: impl Into<String>, subject: Hrn) -> Self {
+    pub fn new(actor: Hrn, subject: Hrn) -> Self {
         Self {
-            account: account.into(),
+            actor,
             subject,
             max_nodes: 200,
             max_depth: 4,
         }
+    }
+
+    /// La cuenta de la investigacion, por el componente canonico del
+    /// sujeto. Nunca se dice como texto libre.
+    pub fn the_account(&self) -> &str {
+        self.subject.account_id()
+    }
+
+    /// Si el alcance cruza cuentas: el actor y el sujeto de cuentas
+    /// distintas no forman un alcance.
+    pub fn crosses_accounts(&self) -> bool {
+        self.actor.account_id() != self.subject.account_id()
     }
 }
 
@@ -63,7 +86,7 @@ pub struct ScopedFact {
     pub evidence_id: String,
     /// El texto. Es DATO, nunca instruccion.
     pub text: String,
-    /// El camino del grafo por el que se lleg\u00f3 al hecho.
+    /// El camino del grafo por el que se llego al hecho.
     pub path: Vec<Hrn>,
     /// De que clase de nodo es el sujeto del camino.
     pub kind: NodeKind,
@@ -86,6 +109,49 @@ impl ScopedFact {
             trust: TrustLevel::Untrusted,
         }
     }
+}
+
+/// Por que la recuperacion no pudo hacerse.
+///
+/// Un rechazo de autorizacion es EXPLICITO: nunca una respuesta vacia
+/// que parezca cero evidencia, y nunca un texto que haya que adivinar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RetrievalError {
+    /// Quien pregunta no puede leer el recurso. La puerta esta cerrada.
+    NotAuthorized {
+        /// Quien preguntaba.
+        actor: String,
+        /// El recurso que no puede leer.
+        resource: String,
+    },
+    /// El almacen no pudo atender. Negar es cerrar: si no se pudo
+    /// comprobar el permiso, no se lee.
+    Unavailable(String),
+}
+
+impl std::fmt::Display for RetrievalError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAuthorized { actor, resource } => {
+                write!(formatter, "{actor} is not allowed to read {resource}")
+            }
+            Self::Unavailable(reason) => {
+                write!(formatter, "the retrieval is unavailable: {reason}")
+            }
+        }
+    }
+}
+
+/// El permiso de lectura de la evidencia.
+///
+/// El Authorizer compartido llega por este puerto: cada recurso que se
+/// lee se autoriza ANTES de leerse, y una denegacion o un error es una
+/// puerta cerrada, nunca una lectura silenciosa. La IA no es autoridad:
+/// este puerto lo implementa el motor de politicas determinista.
+#[async_trait]
+pub trait EvidenceReadAuthorizer: Send + Sync {
+    /// Ok si el actor puede leer el recurso; Err con el por que si no.
+    async fn can_read(&self, actor: &Hrn, resource: &Hrn) -> Result<(), String>;
 }
 
 /// Por que un hecho no cabe en el alcance.
@@ -133,8 +199,15 @@ impl std::fmt::Display for ScopeViolation {
 ///
 /// Esta es la comprobacion que **no se fia** de quien recupero: el
 /// servicio la hace sobre lo que le dieron, y por eso un recuperador que
-/// se equivoca no puede meter nada.
+/// se equivoca no puede meter nada. Las cuentas se comparan por los
+/// componentes canonicos del HRN, nunca por texto.
 pub fn check_the_scope(scope: &RetrievalScope, facts: &[ScopedFact]) -> Result<(), ScopeViolation> {
+    // Un alcance que ya cruza cuentas no es un alcance: nada de lo que
+    // traiga es de la cuenta del que pregunta.
+    if scope.crosses_accounts() {
+        return Err(ScopeViolation::AnotherAccount);
+    }
+
     if facts.len() > scope.max_nodes {
         return Err(ScopeViolation::TooMany(facts.len()));
     }
@@ -147,12 +220,13 @@ pub fn check_the_scope(scope: &RetrievalScope, facts: &[ScopedFact]) -> Result<(
             return Err(ScopeViolation::TooDeep(fact.path.len() - 1));
         }
         // El camino tiene que empezar por el sujeto de la pregunta y no
-        // puede salirse de la cuenta.
+        // puede salirse de la cuenta: componente canonico contra
+        // componente canonico.
         if fact.path.first() != Some(&scope.subject) {
             return Err(ScopeViolation::AnotherSubject);
         }
         for node in &fact.path {
-            if !node.to_string().contains(&format!(":{}:", scope.account)) {
+            if node.account_id() != scope.subject.account_id() {
                 return Err(ScopeViolation::AnotherAccount);
             }
         }

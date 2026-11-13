@@ -24,7 +24,7 @@ use hodei_investigator::corpus::the_cases;
 use hodei_investigator::guard::{ActionKind, ActionState, CapabilityGuard, ProposedAction};
 use hodei_investigator::investigator::{EvidenceRetriever, InvestigationError, Investigator};
 use hodei_investigator::model::{FixtureProvider, ModelProvider, ModelRequest};
-use hodei_investigator::scope::{RetrievalScope, ScopedFact};
+use hodei_investigator::scope::{RetrievalError, RetrievalScope, ScopedFact, ScopeViolation};
 use hodei_investigator::{AIClaim as TheClaim, PROMPT_VERSION};
 use kernel::Hrn;
 
@@ -38,9 +38,19 @@ fn other_account() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:contoso:Artifact/other").expect("un HRN")
 }
 
+/// Quien pregunta, verificado: una identidad de la cuenta acme.
+fn actor() -> Hrn {
+    Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:User/alice").expect("un HRN")
+}
+
+/// Quien pregunta de OTRA cuenta.
+fn foreign_actor() -> Hrn {
+    Hrn::from_string("hrn:hodei:artifacts:eu-west-1:contoso:User/mallory").expect("un HRN")
+}
+
 /// El alcance de la investigacion.
 fn the_scope() -> RetrievalScope {
-    RetrievalScope::new("acme", subject())
+    RetrievalScope::new(actor(), subject())
 }
 
 /// Un recuperador que devuelve lo que se le dice.
@@ -56,8 +66,24 @@ impl TheRetriever {
 
 #[async_trait]
 impl EvidenceRetriever for TheRetriever {
-    async fn retrieve(&self, _scope: &RetrievalScope) -> Result<Vec<ScopedFact>, String> {
+    async fn retrieve(&self, _scope: &RetrievalScope) -> Result<Vec<ScopedFact>, RetrievalError> {
         Ok(self.facts.clone())
+    }
+}
+
+/// Un recuperador que CUENTA cuantas veces lo llaman y dice no cuando
+/// se le dice.
+struct CountingRetriever {
+    calls: std::sync::atomic::AtomicUsize,
+    answer: Result<Vec<ScopedFact>, RetrievalError>,
+}
+
+#[async_trait]
+impl EvidenceRetriever for CountingRetriever {
+    async fn retrieve(&self, _scope: &RetrievalScope) -> Result<Vec<ScopedFact>, RetrievalError> {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.answer.clone()
     }
 }
 
@@ -515,4 +541,112 @@ fn the_conclusion_of_spike_011_is_written_down() {
 fn a_claim_is_readable() {
     let claim: TheClaim = AIClaim::new("the fact", ClaimKind::Fact, vec!["ev-1".to_string()]);
     assert_eq!(claim.kind, ClaimKind::Fact);
+}
+
+// ───────────────────────── HG-H3-01: el borde autorizado ─────────────────────────
+
+/// AC2: el actor de cuenta A y el sujeto de cuenta B no forman una
+/// investigacion. El rechazo sale ANTES de recuperar nada: el
+/// recuperador no llega a ser llamado.
+#[tokio::test]
+async fn a_scope_that_crosses_accounts_is_rejected_before_anything_is_retrieved() {
+    let scope = RetrievalScope::new(foreign_actor(), subject());
+    let retriever = Arc::new(CountingRetriever {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        answer: Ok(vec![a_fact("ev-1", "the inventory")]),
+    });
+    let investigator = Investigator::new(
+        retriever.clone(),
+        Arc::new(FixtureProvider::answering(a_valid_answer())),
+        CapabilityGuard::empty(),
+    );
+
+    let error = investigator
+        .investigate("inv-1", &scope, "why are we affected?", Utc::now())
+        .await
+        .expect_err("una investigacion que cruza cuentas es una puerta cerrada");
+
+    assert!(
+        matches!(
+            &error,
+            InvestigationError::NotAuthorized { actor, resource }
+                if actor.contains("contoso") && resource.contains("acme")
+        ),
+        "el rechazo es explicito y dice quien y que: {error}"
+    );
+    assert_eq!(
+        retriever.calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "no se recupero nada: la puerta se cerro antes"
+    );
+}
+
+/// AC2 (recuperador defectuoso): un hecho cuyo camino toca un nodo de
+/// OTRA cuenta no se publica, aunque el recuperador lo traiga. La
+/// comparacion es de componentes canonicos: un HRN PARECIDO no pasa.
+#[tokio::test]
+async fn a_faulty_retriever_cannot_leak_another_account() {
+    // El HRN tiene la cuenta "acme-other": parecido a "acme", pero otra
+    // cuenta por sus componentes canonicos.
+    let lookalike = Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme-other:Artifact/sneaky")
+        .expect("un HRN");
+    let sneaky = ScopedFact::untrusted(
+        "ev-sneaky",
+        "the inventory of the lookalike account",
+        vec![subject(), lookalike],
+    );
+    let retriever = TheRetriever::new(vec![a_fact("ev-1", "the inventory"), sneaky]);
+    let investigator = Investigator::new(
+        retriever,
+        Arc::new(FixtureProvider::answering(a_valid_answer())),
+        CapabilityGuard::empty(),
+    );
+
+    let error = investigator
+        .investigate("inv-1", &the_scope(), "why are we affected?", Utc::now())
+        .await
+        .expect_err("un hecho de otra cuenta no se publica");
+
+    let violation = match &error {
+        InvestigationError::OutOfScope(violation) => violation.clone(),
+        other => panic!("se salio del alcance: {other}"),
+    };
+    assert!(
+        matches!(violation, ScopeViolation::AnotherAccount),
+        "y dice que el camino sale de la cuenta: {violation}"
+    );
+}
+
+/// AC1: una denegacion del borde es un rechazo EXPLICITO, no una
+/// respuesta vacia que parezca cero evidencia.
+#[tokio::test]
+async fn a_denied_read_is_an_explicit_rejection() {
+    let scope = the_scope();
+    let retriever = Arc::new(CountingRetriever {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        answer: Err(RetrievalError::NotAuthorized {
+            actor: scope.actor.to_string(),
+            resource: scope.subject.to_string(),
+        }),
+    });
+    let investigator = Investigator::new(
+        retriever.clone(),
+        Arc::new(FixtureProvider::answering(a_valid_answer())),
+        CapabilityGuard::empty(),
+    );
+
+    let error = investigator
+        .investigate("inv-1", &scope, "why are we affected?", Utc::now())
+        .await
+        .expect_err("la denegacion no se disfraza");
+
+    assert!(
+        matches!(&error, InvestigationError::NotAuthorized { .. }),
+        "dice que no hay permiso: {error}"
+    );
+    assert_eq!(
+        retriever.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "y el rechazo sale del borde, que fue llamado una vez"
+    );
 }

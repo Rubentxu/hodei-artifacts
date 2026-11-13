@@ -81,4 +81,7 @@ pub use guard::{
 };
 pub use investigator::{EvidenceRetriever, Investigation, InvestigationError, Investigator};
 pub use model::{FixtureProvider, ModelProvider, ModelRequest, ModelResponse, PROMPT_VERSION};
-pub use scope::{RetrievalScope, ScopeViolation, ScopedFact, TrustLevel, check_the_scope};
+pub use scope::{
+    EvidenceReadAuthorizer, RetrievalError, RetrievalScope, ScopeViolation, ScopedFact, TrustLevel,
+    check_the_scope,
+};

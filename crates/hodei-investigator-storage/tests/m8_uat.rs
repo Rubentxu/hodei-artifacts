@@ -23,10 +23,15 @@ use hodei_evidence_storage::{
 };
 use hodei_investigator::Investigator;
 use hodei_investigator::guard::{ActionKind, CapabilityGuard, ProposedAction};
-use hodei_investigator::investigator::ReachabilityFacts;
+use hodei_investigator::investigator::{EvidenceRetriever, ReachabilityFacts};
 use hodei_investigator::model::FixtureProvider;
-use hodei_investigator::scope::{RetrievalScope, ScopedFact, TrustLevel};
-use hodei_investigator_storage::GraphEvidenceRetriever;
+use hodei_investigator::scope::{
+    EvidenceReadAuthorizer, RetrievalError, RetrievalScope, ScopedFact, TrustLevel,
+};
+use hodei_investigator_storage::{EvaluatorReadAuthorizer, GraphEvidenceRetriever};
+use kernel::application::ports::{
+    AuthorizationError, EvaluationDecision, EvaluationRequest, IamPolicyEvaluator,
+};
 use hodei_trust_policy::decision::Outcome;
 use hodei_trust_policy::{Requirement, RequirementKind, TrustPolicy};
 use kernel::Hrn;
@@ -256,6 +261,7 @@ impl World {
                 self.evidence.clone(),
                 self.content.clone(),
                 self.graph.clone(),
+                Arc::new(EvaluatorReadAuthorizer::new(Arc::new(AllowOwnAccount))),
                 account_hrn(),
             )
             .with_reachability(Arc::new(TheReachability)),
@@ -287,9 +293,22 @@ impl ReachabilityFacts for TheReachability {
     }
 }
 
+/// Quien pregunta, verificado: una identidad de la cuenta de la UAT.
+fn the_actor() -> Hrn {
+    Hrn::from_string(&format!(
+        "hrn:hodei:artifacts:eu-west-1:{ACCOUNT}:User/alice"
+    ))
+    .expect("un HRN")
+}
+
+/// Quien pregunta de OTRA cuenta.
+fn a_foreign_actor() -> Hrn {
+    Hrn::from_string("hrn:hodei:artifacts:eu-west-1:contoso:User/mallory").expect("un HRN")
+}
+
 /// El alcance de la investigacion.
 fn the_scope() -> RetrievalScope {
-    RetrievalScope::new(ACCOUNT, subject())
+    RetrievalScope::new(the_actor(), subject())
 }
 
 /// La respuesta valida del modelo: un hecho con su cita y una inferencia.
@@ -566,11 +585,13 @@ async fn investigator_context(world: &World, subject: &Hrn) -> Result<Vec<Scoped
         world.evidence.clone(),
         world.content.clone(),
         world.graph.clone(),
+        Arc::new(EvaluatorReadAuthorizer::new(Arc::new(AllowOwnAccount))),
         account_hrn(),
     );
     retriever
-        .retrieve(&RetrievalScope::new(ACCOUNT, subject.clone()))
+        .retrieve(&RetrievalScope::new(the_actor(), subject.clone()))
         .await
+        .map_err(|error| error.to_string())
 }
 
 // ───────────────────────────── M8-UAT-04 ─────────────────────────────
@@ -821,4 +842,145 @@ async fn m8_uat_07_the_context_is_minimized() {
     .await;
 
     record("M8-UAT-07", result);
+}
+
+// ───────────────────────── HG-H3-01: el borde autorizado ─────────────────────────
+
+/// El evaluador de politicas de la UAT: permite leer SOLO los recursos
+/// de la cuenta del que pregunta. Es la semantica del Authorizer
+/// compartido en pequeño, por el puerto del kernel.
+struct AllowOwnAccount;
+
+#[async_trait]
+impl IamPolicyEvaluator for AllowOwnAccount {
+    async fn evaluate_iam_policies(
+        &self,
+        request: EvaluationRequest,
+    ) -> Result<EvaluationDecision, AuthorizationError> {
+        let allowed = request.resource_hrn.account_id() == request.principal_hrn.account_id();
+        Ok(EvaluationDecision {
+            principal_hrn: request.principal_hrn,
+            action_name: request.action_name,
+            resource_hrn: request.resource_hrn,
+            decision: allowed,
+            reason: if allowed {
+                "the resource belongs to the principal's account".to_string()
+            } else {
+                "the resource belongs to another account".to_string()
+            },
+        })
+    }
+}
+
+/// Un almacen de evidencia que CUENTA si alguien lo leyó.
+struct CountingEvidenceStore {
+    inner: Arc<dyn hodei_evidence::ports::EvidenceStore>,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl hodei_evidence::ports::EvidenceStore for CountingEvidenceStore {
+    async fn put(
+        &self,
+        evidence: hodei_evidence::domain::evidence::EvidenceRecord,
+    ) -> Result<hodei_evidence::EvidenceId, hodei_evidence::ports::StoreError> {
+        self.inner.put(evidence).await
+    }
+    async fn get(
+        &self,
+        id: &hodei_evidence::EvidenceId,
+    ) -> Result<Option<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+        self.inner.get(id).await
+    }
+    async fn find_by_external_id(
+        &self,
+        producer: &hodei_evidence::domain::evidence::Producer,
+        external_id: &str,
+    ) -> Result<Option<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+        self.inner.find_by_external_id(producer, external_id).await
+    }
+    async fn evidence_of_subject(
+        &self,
+        account: &str,
+        subject: &kernel::Hrn,
+    ) -> Result<Vec<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.evidence_of_subject(account, subject).await
+    }
+}
+
+/// Un autorizador que niega todo: sin permiso no se lee.
+struct DenyAll;
+
+#[async_trait]
+impl EvidenceReadAuthorizer for DenyAll {
+    async fn can_read(&self, _actor: &kernel::Hrn, _resource: &kernel::Hrn) -> Result<(), String> {
+        Err("no read permission was granted".to_string())
+    }
+}
+
+/// AC1: sin permiso de lectura sobre el sujeto hay un rechazo
+/// EXPLICITO y el almacen NO llega a leerse.
+#[tokio::test]
+async fn a_read_without_permission_is_rejected_before_anything_is_read() {
+    let path = tempfile::tempdir().expect("un directorio de usar y tirar");
+    let world = World::build(path.path()).await;
+    let counting = Arc::new(CountingEvidenceStore {
+        inner: world.evidence.clone(),
+        reads: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let retriever = GraphEvidenceRetriever::new(
+        counting.clone() as Arc<dyn hodei_evidence::ports::EvidenceStore>,
+        world.content.clone(),
+        world.graph.clone(),
+        Arc::new(DenyAll),
+        account_hrn(),
+    );
+
+    let error = retriever
+        .retrieve(&the_scope())
+        .await
+        .expect_err("sin permiso no hay lectura");
+
+    assert!(
+        matches!(&error, RetrievalError::NotAuthorized { .. }),
+        "el rechazo dice que no hay permiso: {error}"
+    );
+    assert_eq!(
+        counting.reads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "el almacen no llego a leerse: la puerta se cerro antes"
+    );
+}
+
+/// AC2: el actor de cuenta A no puede RECIBIR nada de la cuenta B,
+/// aunque el evaluador permita lo suyo: pedir el sujeto de B es una
+/// denegacion del propio borde.
+#[tokio::test]
+async fn an_actor_of_another_account_cannot_receive_anything() {
+    let path = tempfile::tempdir().expect("un directorio de usar y tirar");
+    let world = World::build(path.path()).await;
+    let retriever = GraphEvidenceRetriever::new(
+        world.evidence.clone(),
+        world.content.clone(),
+        world.graph.clone(),
+        Arc::new(EvaluatorReadAuthorizer::new(Arc::new(AllowOwnAccount))),
+        account_hrn(),
+    );
+    // El actor es de contoso y el sujeto de acme: el alcance cruza
+    // cuentas, y el evaluador lo niega porque la cuenta del recurso no
+    // es la suya.
+    let scope = RetrievalScope::new(a_foreign_actor(), subject());
+
+    let error = retriever
+        .retrieve(&scope)
+        .await
+        .expect_err("el sujeto de otra cuenta no se entrega");
+
+    assert!(
+        matches!(&error, RetrievalError::NotAuthorized { actor, resource }
+            if actor.contains("contoso") && resource.contains("acme")),
+        "la denegacion dice quien y que: {error}"
+    );
 }

@@ -22,13 +22,19 @@ use kernel::Hrn;
 use crate::claim::{AIClaim, ClaimError, ClaimKind, InvestigationTrace, check_the_claim};
 use crate::guard::{ActionKind, CapabilityGuard, ProposedAction};
 use crate::model::{ModelProvider, PROMPT_VERSION, the_prompt};
-use crate::scope::{RetrievalScope, ScopeViolation, ScopedFact, check_the_scope};
+use crate::scope::{
+    EvidenceReadAuthorizer, RetrievalError, RetrievalScope, ScopeViolation, ScopedFact,
+    check_the_scope,
+};
 
 /// De donde se recupera la evidencia.
+///
+/// El recuperador es el BORDE de autorizacion: autoriza ANTES de leer,
+/// y una denegacion es explicita, no una respuesta vacia.
 #[async_trait::async_trait]
 pub trait EvidenceRetriever: Send + Sync {
     /// El subgrafo del sujeto, dentro del alcance.
-    async fn retrieve(&self, scope: &RetrievalScope) -> Result<Vec<ScopedFact>, String>;
+    async fn retrieve(&self, scope: &RetrievalScope) -> Result<Vec<ScopedFact>, RetrievalError>;
 }
 
 /// De donde salen las afirmaciones de alcanzabilidad.
@@ -46,6 +52,9 @@ pub trait ReachabilityFacts: Send + Sync {
 /// Por que la investigacion no se pudo hacer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvestigationError {
+    /// Quien pregunta no puede leer lo que pide. La puerta esta cerrada
+    /// ANTES de recuperar nada.
+    NotAuthorized { actor: String, resource: String },
     /// La recuperacion se salio del alcance.
     OutOfScope(ScopeViolation),
     /// La respuesta del modelo no se pudo leer.
@@ -59,6 +68,9 @@ pub enum InvestigationError {
 impl std::fmt::Display for InvestigationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NotAuthorized { actor, resource } => {
+                write!(formatter, "{actor} is not allowed to read {resource}")
+            }
             Self::OutOfScope(violation) => {
                 write!(formatter, "the retrieval left the scope: {violation}")
             }
@@ -116,12 +128,27 @@ impl Investigator {
         question: &str,
         now: DateTime<Utc>,
     ) -> Result<Investigation, InvestigationError> {
-        // 1. La recuperacion, y su comprobacion.
-        let facts = self
-            .retriever
-            .retrieve(scope)
-            .await
-            .map_err(InvestigationError::NoAnswer)?;
+        // 0. El alcance que ya cruza cuentas se cierra ANTES de pedir
+        // nada: un actor de cuenta A y un sujeto de cuenta B no forman
+        // una investigacion, y el rechazo sale antes de recuperar.
+        if scope.crosses_accounts() {
+            return Err(InvestigationError::NotAuthorized {
+                actor: scope.actor.to_string(),
+                resource: scope.subject.to_string(),
+            });
+        }
+
+        // 1. La recuperacion, y su comprobacion. La denegacion del
+        // borde es explicita, y un almacen caido cierra, no abre.
+        let facts = match self.retriever.retrieve(scope).await {
+            Ok(facts) => facts,
+            Err(RetrievalError::NotAuthorized { actor, resource }) => {
+                return Err(InvestigationError::NotAuthorized { actor, resource });
+            }
+            Err(RetrievalError::Unavailable(reason)) => {
+                return Err(InvestigationError::NoAnswer(reason));
+            }
+        };
         check_the_scope(scope, &facts).map_err(InvestigationError::OutOfScope)?;
 
         // 2. La pregunta, con el contexto delimitado.
