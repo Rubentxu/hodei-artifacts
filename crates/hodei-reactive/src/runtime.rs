@@ -31,6 +31,7 @@ use crate::behavior::{Behavior, BehaviorOutcome, Effect, Reaction, TraceEntry};
 use crate::events::{Event, EventKind};
 use crate::execution::ExecutionOutcome;
 use crate::execution::{Budget, BudgetState, ExecutionRecord};
+use crate::intent::{IntentExecutor, PlanningBehavior, ReadScope};
 
 /// Why the runtime could not do what it was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +162,16 @@ pub struct ReactiveRuntime {
     behaviors: Vec<Arc<dyn Behavior>>,
     store: Arc<dyn ExecutionStore>,
     budget: Budget,
+    /// The behaviours that PLAN instead of touching. The legacy
+    /// `behaviors` and this registry are both traced: neither is a
+    /// silent path.
+    planners: Vec<Arc<dyn PlanningBehavior>>,
+    /// The one that touches, after the plan is recorded.
+    executor: Option<Arc<dyn IntentExecutor>>,
+    /// The tenant of the runtime: the authority of the planned path. It
+    /// comes from the composition, and NOT from an event payload, because
+    /// an event is a claim and not an identity.
+    planned_tenant: Option<String>,
 }
 
 impl ReactiveRuntime {
@@ -170,12 +181,33 @@ impl ReactiveRuntime {
             behaviors: Vec::new(),
             store,
             budget,
+            planners: Vec::new(),
+            executor: None,
+            planned_tenant: None,
         }
+    }
+
+    /// The tenant of the planned path, from the composition.
+    pub fn with_tenant(mut self, tenant: impl Into<String>) -> Self {
+        self.planned_tenant = Some(tenant.into());
+        self
     }
 
     /// Registers a behaviour.
     pub fn register(&mut self, behavior: Arc<dyn Behavior>) {
         self.behaviors.push(behavior);
+    }
+
+    /// Registers a behaviour that PLANS, and the executor that touches
+    /// for it. Without both, the planned path does not start: un plan sin
+    /// quien lo haga dicho es un plan que nadie cumple.
+    pub fn register_planned(
+        &mut self,
+        planner: Arc<dyn PlanningBehavior>,
+        executor: Arc<dyn IntentExecutor>,
+    ) {
+        self.planners.push(planner);
+        self.executor = Some(executor);
     }
 
     /// The behaviours that are registered.
@@ -215,6 +247,211 @@ impl ReactiveRuntime {
         now: DateTime<Utc>,
     ) -> Result<DispatchReport, RuntimeError> {
         self.dispatch_inner(event, now, true).await
+    }
+
+    /// Delivers an event to the behaviours that PLAN.
+    ///
+    /// The order is the seam: **plan, record, then touch**. The planner
+    /// reads through its authorized scope and returns intents; the intents
+    /// are written down in the execution record BEFORE the executor is
+    /// called, so a crash in between leaves an intent that is said and not
+    /// done -- what the recovery reconciles. The executor is the only one
+    /// that touches, and its once-only guarantee is the same key the
+    /// legacy effects use, so there is ONE idempotency, not two.
+    pub async fn dispatch_planned(
+        &self,
+        event: Event,
+        now: DateTime<Utc>,
+    ) -> Result<DispatchReport, RuntimeError> {
+        let Some(executor) = self.executor.clone() else {
+            return Err(RuntimeError::Unavailable(
+                "no executor of intents is registered".to_string(),
+            ));
+        };
+        let Some(tenant) = self.planned_tenant.clone() else {
+            return Err(RuntimeError::Unavailable(
+                "the planned path needs the tenant of the composition, and there is none"
+                    .to_string(),
+            ));
+        };
+
+        let mut report = DispatchReport::default();
+        let mut state = BudgetState::new(self.budget.clone());
+        let mut pending: Vec<(Event, Vec<String>)> = vec![(event.clone(), vec![event.id.clone()])];
+
+        while let Some((current, causation)) = pending.pop() {
+            // The budget is checked BEFORE anything happens: un corte que
+            // llega tarde ya gasto lo que cortaba.
+            if let Some(reason) = state.is_exhausted(0) {
+                report.cut = Some(reason.clone());
+                let record = ExecutionRecord::new(
+                    format!("cut:{}", current.id),
+                    "runtime",
+                    current.id.clone(),
+                    causation.clone(),
+                    now,
+                )
+                .finished(ExecutionOutcome::Cut {
+                    reason: reason.clone(),
+                }, now);
+                self.store.put(record.clone());
+                report.executions.push(record);
+                break;
+            }
+            state.consume();
+
+            for planner in &self.planners {
+                if !planner.subscription().matches(&current) {
+                    continue;
+                }
+
+                let key = format!("planned:{}:{}", planner.name(), current.id);
+
+                // Once-only: the execution is looked for before anything
+                // is planned.
+                if let Some(previous) = self.store.execution_of(&key) {
+                    match previous.outcome {
+                        ExecutionOutcome::Completed => {
+                            report.duplicates.push(current.id.clone());
+                            let record =
+                                previous.clone().finished(ExecutionOutcome::Duplicate, now);
+                            report.executions.push(record);
+                        }
+                        _ => {
+                            report.duplicates.push(current.id.clone());
+                            report.executions.push(previous);
+                        }
+                    }
+                    continue;
+                }
+
+                // The guard.
+                let mut record = ExecutionRecord::new(
+                    key.clone(),
+                    planner.name(),
+                    current.id.clone(),
+                    causation.clone(),
+                    now,
+                );
+                match planner.guard(&current) {
+                    crate::behavior::GuardOutcome::Skip(reason) => {
+                        record = record.finished(ExecutionOutcome::Skipped { reason }, now);
+                        self.store.put(record.clone());
+                        report.executions.push(record);
+                        continue;
+                    }
+                    crate::behavior::GuardOutcome::Pass => {
+                        record = record.note("the guard passed", now);
+                    }
+                }
+
+                // The plan. This is the phase that MUST NOT touch: what
+                // the planner can do here is read and say, and the spy
+                // tests are the proof of the cut.
+                let scope = ReadScope {
+                    tenant: tenant.clone(),
+                    event_id: current.id.clone(),
+                    causation: causation.clone(),
+                    at: now,
+                };
+                match planner.plan(&current, &scope).await {
+                    Ok(plan) => {
+                        record = record.note(
+                            format!(
+                                "the plan says {} intents and {} events",
+                                plan.intents.len(),
+                                plan.events.len()
+                            ),
+                            now,
+                        );
+                        for intent in &plan.intents {
+                            record = record.note(format!("intent:{}", intent.identity), now);
+                        }
+                        for caused in &plan.events {
+                            record = record.note(format!("caused:{}", caused.id), now);
+                        }
+                        record = record.finished(ExecutionOutcome::Completed, now);
+
+                        // The plan is recorded BEFORE the executor is
+                        // called: said first, done after.
+                        self.store.put(record.clone());
+                        report.executions.push(record);
+
+                        for intent in plan.intents {
+                            let already = self
+                                .store
+                                .applied_effects()
+                                .iter()
+                                .any(|applied| {
+                                    applied.idempotency_key == intent.idempotency_key
+                                });
+                            if already {
+                                report.suppressed.push(intent.as_effect());
+                                continue;
+                            }
+                            match executor.apply(&intent).await {
+                                Ok(()) => {
+                                    self.store.record_effect(intent.as_effect());
+                                    report.applied.push(intent.as_effect());
+                                }
+                                Err(reason) => {
+                                    // The intent is said and not done:
+                                    // the failed apply is in the store,
+                                    // and the recovery reconciles.
+                                    let failed = ExecutionRecord::new(
+                                        format!("apply:{}", intent.identity),
+                                        planner.name(),
+                                        current.id.clone(),
+                                        causation.clone(),
+                                        now,
+                                    )
+                                    .note(format!("intent:{}", intent.identity), now)
+                                    .finished(
+                                        ExecutionOutcome::Failed {
+                                            reason: format!(
+                                                "the intent {} could not be applied: {}",
+                                                intent.identity, reason
+                                            ),
+                                            retryable: true,
+                                        },
+                                        now,
+                                    );
+                                    self.store.put(failed.clone());
+                                    report.executions.push(failed);
+                                }
+                            }
+                        }
+
+                        // And the events the plan causes.
+                        for caused in &plan.events {
+                            pending.push((caused.clone(), causation_of(&causation, &caused.id)));
+                            report.caused.push(caused.clone());
+                        }
+                    }
+                    Err(error) => {
+                        record = record
+                            .note(format!("the planning failed: {}", error.reason), now)
+                            .finished(
+                                ExecutionOutcome::Failed {
+                                    reason: error.reason,
+                                    retryable: error.retryable,
+                                },
+                                now,
+                            );
+                        self.store.put(record.clone());
+                        report.executions.push(record);
+                    }
+                }
+            }
+
+            state.deepen();
+            if pending.is_empty() {
+                break;
+            }
+            state.shallow();
+        }
+
+        Ok(report)
     }
 
     /// Delivers an event and runs what reacts to it.

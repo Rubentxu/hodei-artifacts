@@ -28,6 +28,7 @@
 pub mod behavior;
 pub mod events;
 pub mod execution;
+pub mod intent;
 pub mod reactions;
 pub mod runtime;
 
@@ -36,6 +37,7 @@ pub use behavior::{
 };
 pub use events::{Event, EventKind, PayloadPredicate, Subscription};
 pub use execution::{Budget, BudgetState, ExecutionOutcome, ExecutionRecord};
+pub use intent::{Intent, IntentExecutor, IntentOrigin, Plan, PlanningBehavior, ReadScope};
 pub use reactions::{
     BlastRadiusSource, DecisionRequester, ExceptionExpiryReaction, ImpactedSubject, ReasonCode,
     Reevaluation, SecurityCaseSink, VulnerabilityReaction,
