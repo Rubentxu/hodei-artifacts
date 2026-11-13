@@ -289,6 +289,7 @@ impl ReachabilityFacts for TheReachability {
             path: vec![subject.clone()],
             kind: NodeKind::Evidence,
             trust: TrustLevel::Untrusted,
+            status: hodei_investigator::scope::FactStatus::Loaded,
         }])
     }
 }
@@ -591,6 +592,7 @@ async fn investigator_context(world: &World, subject: &Hrn) -> Result<Vec<Scoped
     retriever
         .retrieve(&RetrievalScope::new(the_actor(), subject.clone()))
         .await
+        .map(|context| context.facts)
         .map_err(|error| error.to_string())
 }
 
@@ -983,4 +985,272 @@ async fn an_actor_of_another_account_cannot_receive_anything() {
             if actor.contains("contoso") && resource.contains("acme")),
         "la denegacion dice quien y que: {error}"
     );
+}
+
+// ───────────────────────── HG-H3-02: presupuestos y completitud ─────────────────────────
+
+/// Un almacen de contenido que CUENTA cuantas veces se lee un blob.
+struct CountingContentStore {
+    inner: InMemoryContentStore,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl CountingContentStore {
+    fn over(inner: InMemoryContentStore) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+}
+
+#[async_trait]
+impl hodei_evidence::ports::ContentStore for CountingContentStore {
+    async fn put(
+        &self,
+        content: Vec<u8>,
+    ) -> Result<hodei_evidence::ContentDigest, hodei_evidence::ports::StoreError> {
+        self.inner.put(content).await
+    }
+    async fn get(
+        &self,
+        digest: &hodei_evidence::ContentDigest,
+    ) -> Result<Option<Vec<u8>>, hodei_evidence::ports::StoreError> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.get(digest).await
+    }
+    async fn size(
+        &self,
+        digest: &hodei_evidence::ContentDigest,
+    ) -> Result<Option<u64>, hodei_evidence::ports::StoreError> {
+        self.inner.size(digest).await
+    }
+}
+
+/// M8-H3-02-01 Un blob que no cabe en el presupuesto NO se carga y NO
+/// se entrega al modelo: la omision se declara con la cobertura parcial,
+/// y el almacen de contenido no llega a leerse por el.
+#[tokio::test]
+async fn a_blob_over_the_budget_is_omitted_without_being_loaded() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        let big = "x".repeat(5_000);
+        world.admit("sbom-big", &big, &subject()).await;
+        let counting = CountingContentStore::over((*world.content).clone());
+
+        let mut scope = the_scope();
+        scope.budget.max_bytes = 8;
+        let retriever = GraphEvidenceRetriever::new(
+            world.evidence.clone(),
+            counting.clone() as Arc<dyn hodei_evidence::ports::ContentStore>,
+            world.graph.clone(),
+            Arc::new(EvaluatorReadAuthorizer::new(Arc::new(AllowOwnAccount))),
+            account_hrn(),
+        );
+        use hodei_investigator::investigator::EvidenceRetriever;
+        let context = retriever.retrieve(&scope).await.map_err(|e| e.to_string())?;
+
+        let fact = context
+            .facts
+            .iter()
+            .find(|fact| fact.evidence_id.contains("sbom-big"))
+            .expect("la evidencia entra en la respuesta, como OMISION");
+        assert!(
+            matches!(
+                fact.status,
+                hodei_investigator::scope::FactStatus::OmittedByBudget
+            ),
+            "la omision es tipada: {:?}",
+            fact.status
+        );
+        assert!(fact.text.is_empty(), "el contenido no se entrega");
+
+        match &context.coverage {
+            hodei_investigator::scope::Coverage::Partial { omitted } => {
+                assert!(*omitted >= 1, "la cobertura declara la omision");
+            }
+            other => panic!("sin cobertura parcial la omision se esconde: {other:?}"),
+        }
+
+        // Y el blob NO se descargo para truncarlo despues: el tamaño se
+        // pregunto antes, y la lectura no llego a pasar.
+        assert_eq!(
+            counting.reads.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "el blob grande no se leyo del almacen"
+        );
+        Ok(())
+    }
+    .await;
+
+    record("M8-H3-02-01", result);
+}
+
+/// M8-H3-02-02 Dos recuperaciones del MISMO snapshot y limites entregan
+/// LA MISMA seleccion: el orden es una clave estable, no el orden del
+/// almacen, y lo que no entra se declara.
+#[tokio::test]
+async fn two_retrievals_of_the_same_snapshot_select_the_same_facts() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        for index in 0..5 {
+            world
+                .admit(&format!("sbom-{index}"), &format!("the inventory {index}"), &subject())
+                .await;
+        }
+        let mut scope = the_scope();
+        scope.budget.max_objects = 3;
+        let retriever = GraphEvidenceRetriever::new(
+            world.evidence.clone(),
+            world.content.clone(),
+            world.graph.clone(),
+            Arc::new(EvaluatorReadAuthorizer::new(Arc::new(AllowOwnAccount))),
+            account_hrn(),
+        );
+        use hodei_investigator::investigator::EvidenceRetriever;
+
+        let first = retriever.retrieve(&scope).await.map_err(|e| e.to_string())?;
+        let second = retriever.retrieve(&scope).await.map_err(|e| e.to_string())?;
+
+        let first_ids: Vec<String> = first
+            .facts
+            .iter()
+            .map(|fact| fact.evidence_id.clone())
+            .collect();
+        let second_ids: Vec<String> = second
+            .facts
+            .iter()
+            .map(|fact| fact.evidence_id.clone())
+            .collect();
+        assert_eq!(first_ids, second_ids, "la misma seleccion, en el mismo orden");
+        let delivered = first
+            .facts
+            .iter()
+            .filter(|fact| fact.status == hodei_investigator::scope::FactStatus::Loaded)
+            .count();
+        assert_eq!(delivered, 3, "el presupuesto es el presupuesto: {first_ids:?}");
+        let mut sorted = first_ids.clone();
+        sorted.sort();
+        assert_eq!(first_ids, sorted, "el orden es la clave estable: {first_ids:?}");
+        match first.coverage {
+            hodei_investigator::scope::Coverage::Partial { omitted } => {
+                assert_eq!(omitted, 2, "lo que no entro se declara: {omitted}");
+            }
+            other => panic!("con 5 piezas y presupuesto 3 no hay cobertura completa: {other:?}"),
+        }
+        Ok(())
+    }
+    .await;
+
+    record("M8-H3-02-02", result);
+}
+
+/// M8-H3-02-03 El contenido que NO esta es Missing, tipado, y NO se
+/// inventa texto de evidencia: la ausencia de contenido no es una
+/// ausencia silenciosa de hechos, ni un hecho fabricado.
+#[tokio::test]
+async fn content_that_is_not_there_is_missing_and_nothing_is_invented() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        world.admit("sbom-empty", "the real inventory", &subject()).await;
+        // El recuperador mira un almacen de contenido VACIO: el registro
+        // de evidencia existe, su contenido no esta ahi.
+        let retriever = GraphEvidenceRetriever::new(
+            world.evidence.clone(),
+            Arc::new(InMemoryContentStore::new()),
+            world.graph.clone(),
+            Arc::new(EvaluatorReadAuthorizer::new(Arc::new(AllowOwnAccount))),
+            account_hrn(),
+        );
+        use hodei_investigator::investigator::EvidenceRetriever;
+
+        let context = retriever
+            .retrieve(&the_scope())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let fact = context
+            .facts
+            .iter()
+            .find(|fact| fact.evidence_id.contains("sbom-empty"))
+            .expect("la evidencia existe, aunque su contenido no");
+        assert!(
+            matches!(fact.status, hodei_investigator::scope::FactStatus::Missing),
+            "el contenido ausente es Missing, tipado: {:?}",
+            fact.status
+        );
+        assert!(
+            fact.text.is_empty(),
+            "no se inventa texto de evidencia: {:?}",
+            fact.text
+        );
+        Ok(())
+    }
+    .await;
+
+    record("M8-H3-02-03", result);
+}
+
+/// M8-H3-02-04 Muchas relaciones: el presupuesto de relaciones corta,
+/// la omision se declara, y las que entran van en su orden estable.
+#[tokio::test]
+async fn many_relations_are_cut_by_the_budget_and_the_omission_is_declared() {
+    let result: Result<(), String> = async {
+        let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+        let path = tmp.keep();
+        let world = World::build(&path).await;
+        world.the_risk_layer().await;
+        // El sujeto toca relaciones desde y hacia el: hay mas de una.
+        let mut scope = the_scope();
+        scope.budget.max_relations = 1;
+        let retriever = GraphEvidenceRetriever::new(
+            world.evidence.clone(),
+            world.content.clone(),
+            world.graph.clone(),
+            Arc::new(EvaluatorReadAuthorizer::new(Arc::new(AllowOwnAccount))),
+            account_hrn(),
+        );
+        use hodei_investigator::investigator::EvidenceRetriever;
+
+        let context = retriever.retrieve(&scope).await.map_err(|e| e.to_string())?;
+
+        let loaded = context
+            .facts
+            .iter()
+            .filter(|fact| {
+                fact.kind == NodeKind::Artifact
+                    && fact.status == hodei_investigator::scope::FactStatus::Loaded
+            })
+            .count();
+        let omitted = context
+            .facts
+            .iter()
+            .filter(|fact| {
+                fact.kind == NodeKind::Artifact
+                    && fact.status == hodei_investigator::scope::FactStatus::OmittedByBudget
+            })
+            .count();
+        assert_eq!(loaded, 1, "el presupuesto de relaciones es el presupuesto");
+        assert!(
+            omitted >= 1,
+            "las relaciones que no entran se declaran omitidas: {omitted}"
+        );
+        match context.coverage {
+            hodei_investigator::scope::Coverage::Partial { omitted } => {
+                assert!(omitted >= 1, "la cobertura dice la omision: {omitted}");
+            }
+            other => panic!("sin cobertura parcial la omision se esconde: {other:?}"),
+        }
+        Ok(())
+    }
+    .await;
+
+    record("M8-H3-02-04", result);
 }

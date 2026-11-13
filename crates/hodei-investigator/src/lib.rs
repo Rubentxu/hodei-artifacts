@@ -73,6 +73,7 @@ pub mod corpus;
 pub mod guard;
 pub mod investigator;
 pub mod model;
+pub mod redact;
 pub mod scope;
 
 pub use claim::{AIClaim, ClaimError, ClaimKind, InvestigationTrace};
@@ -82,6 +83,6 @@ pub use guard::{
 pub use investigator::{EvidenceRetriever, Investigation, InvestigationError, Investigator};
 pub use model::{FixtureProvider, ModelProvider, ModelRequest, ModelResponse, PROMPT_VERSION};
 pub use scope::{
-    EvidenceReadAuthorizer, RetrievalError, RetrievalScope, ScopeViolation, ScopedFact, TrustLevel,
-    check_the_scope,
+    Coverage, EvidenceReadAuthorizer, FactStatus, RetrievalBudget, RetrievalError, RetrievalScope,
+    RetrievedContext, ScopeViolation, ScopedFact, TrustLevel, check_the_scope,
 };

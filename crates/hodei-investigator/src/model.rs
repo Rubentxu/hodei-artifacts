@@ -11,7 +11,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::scope::ScopedFact;
+use crate::scope::{FactStatus, ScopedFact};
 
 /// La version de la plantilla del prompt.
 ///
@@ -123,10 +123,29 @@ pub fn the_system_instruction() -> String {
 pub fn the_prompt(question: &str, facts: &[ScopedFact]) -> ModelRequest {
     let mut context = String::new();
     for fact in facts {
-        context.push_str(&format!(
-            "<<<DATO id={}>>>\n{}\n<<<FIN DATO id={}>>>\n",
-            fact.evidence_id, fact.text, fact.evidence_id
-        ));
+        // Un hecho que no se cargo NO lleva texto: el bloque dice su
+        // estado, y el estado NO es texto de evidencia que se pueda
+        // obedecer ni citar como contenido. Lo que no se leyo no se
+        // disfraza de contenido.
+        match fact.status {
+            FactStatus::Loaded => {
+                context.push_str(&format!(
+                    "<<<DATO id={}>>>\n{}\n<<<FIN DATO id={}>>>\n",
+                    fact.evidence_id, fact.text, fact.evidence_id
+                ));
+            }
+            other => {
+                context.push_str(&format!(
+                    "<<<DATO id={} status={}>>>\n<<<FIN DATO id={}>>>\n",
+                    fact.evidence_id,
+                    serde_json::to_value(other)
+                        .ok()
+                        .and_then(|value| value.as_str().map(str::to_string))
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    fact.evidence_id
+                ));
+            }
+        }
     }
 
     ModelRequest {

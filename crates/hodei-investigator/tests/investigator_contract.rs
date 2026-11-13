@@ -24,7 +24,9 @@ use hodei_investigator::corpus::the_cases;
 use hodei_investigator::guard::{ActionKind, ActionState, CapabilityGuard, ProposedAction};
 use hodei_investigator::investigator::{EvidenceRetriever, InvestigationError, Investigator};
 use hodei_investigator::model::{FixtureProvider, ModelProvider, ModelRequest};
-use hodei_investigator::scope::{RetrievalError, RetrievalScope, ScopedFact, ScopeViolation};
+use hodei_investigator::scope::{
+    Coverage, RetrievalError, RetrievalScope, RetrievedContext, ScopedFact, ScopeViolation,
+};
 use hodei_investigator::{AIClaim as TheClaim, PROMPT_VERSION};
 use kernel::Hrn;
 
@@ -66,8 +68,11 @@ impl TheRetriever {
 
 #[async_trait]
 impl EvidenceRetriever for TheRetriever {
-    async fn retrieve(&self, _scope: &RetrievalScope) -> Result<Vec<ScopedFact>, RetrievalError> {
-        Ok(self.facts.clone())
+    async fn retrieve(&self, _scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
+        Ok(RetrievedContext {
+            facts: self.facts.clone(),
+            coverage: Coverage::Complete,
+        })
     }
 }
 
@@ -80,10 +85,16 @@ struct CountingRetriever {
 
 #[async_trait]
 impl EvidenceRetriever for CountingRetriever {
-    async fn retrieve(&self, _scope: &RetrievalScope) -> Result<Vec<ScopedFact>, RetrievalError> {
+    async fn retrieve(&self, _scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
         self.calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.answer.clone()
+        match self.answer.clone() {
+            Ok(facts) => Ok(RetrievedContext {
+                facts,
+                coverage: Coverage::Complete,
+            }),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -649,4 +660,52 @@ async fn a_denied_read_is_an_explicit_rejection() {
         1,
         "y el rechazo sale del borde, que fue llamado una vez"
     );
+}
+
+// ───────────────────────── HG-H3-02: presupuestos y completitud ─────────────────────────
+
+/// Un recuperador que entrega una parte de lo que hay.
+struct PartialRetriever {
+    facts: Vec<ScopedFact>,
+    omitted: usize,
+}
+
+#[async_trait]
+impl EvidenceRetriever for PartialRetriever {
+    async fn retrieve(&self, _scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
+        Ok(RetrievedContext {
+            facts: self.facts.clone(),
+            coverage: Coverage::Partial {
+                omitted: self.omitted,
+            },
+        })
+    }
+}
+
+/// AC1 (traza): un contexto parcial se DECLARA en la traza. Un scope
+/// conocido pero incompleto no puede presentarse como respuesta
+/// exhaustiva, y la traza es donde queda escrito.
+#[tokio::test]
+async fn the_trace_declares_the_coverage_of_the_context() {
+    let retriever = Arc::new(PartialRetriever {
+        facts: vec![a_fact("ev-1", "the inventory")],
+        omitted: 7,
+    });
+    let investigator = Investigator::new(
+        retriever,
+        Arc::new(FixtureProvider::answering(a_valid_answer())),
+        CapabilityGuard::empty(),
+    );
+
+    let investigation = investigator
+        .investigate("inv-1", &the_scope(), "why are we affected?", Utc::now())
+        .await
+        .expect("la investigacion corre");
+
+    match &investigation.trace.coverage {
+        Coverage::Partial { omitted } => {
+            assert_eq!(*omitted, 7, "la traza dice cuanto se omitio");
+        }
+        other => panic!("una cobertura parcial no se esconde: {other:?}"),
+    }
 }

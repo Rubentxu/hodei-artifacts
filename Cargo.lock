@@ -2234,6 +2234,7 @@ dependencies = [
  "chrono",
  "hodei-evidence",
  "kernel",
+ "regex",
  "serde",
  "serde_json",
  "tokio",

@@ -20,7 +20,8 @@ use hodei_evidence::ports::graph::GraphQuery;
 use hodei_evidence::ports::{ContentStore, EvidenceStore};
 use hodei_investigator::investigator::{EvidenceRetriever, ReachabilityFacts};
 use hodei_investigator::scope::{
-    EvidenceReadAuthorizer, RetrievalError, RetrievalScope, ScopedFact, TrustLevel,
+    Coverage, EvidenceReadAuthorizer, FactStatus, RetrievalError, RetrievalScope, RetrievedContext,
+    ScopedFact, TrustLevel,
 };
 use kernel::Hrn;
 use kernel::application::ports::{EvaluationDecision, EvaluationRequest, IamPolicyEvaluator};
@@ -68,40 +69,137 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
         self
     }
 
-    /// Las piezas de evidencia del sujeto, con su contenido real.
-    async fn the_evidence(&self, account: &str, subject: &Hrn) -> Result<Vec<ScopedFact>, String> {
-        let records = self
+    /// Las piezas de evidencia del sujeto, con su contenido real, dentro
+    /// del presupuesto.
+    ///
+    /// El orden es una CLAVE ESTABLE --el identificador de la evidencia--
+    /// y no el orden del almacen: dos recuperaciones del mismo snapshot
+    /// y los mismos limites entregan la MISMA seleccion. El presupuesto
+    /// se aplica ANTES de leer el contenido: se pregunta el tamaño y un
+    /// blob que no cabe NO se baja para truncarlo despues.
+    ///
+    /// Y las ausencias son tipadas, no inventadas: un contenido que no
+    /// esta es `Missing`, uno que no se puede decodificar es
+    /// `Undecodable`, uno que el almacen no entrego es `Unavailable`, y
+    /// ninguno de ellos lleva texto inventado.
+    async fn the_evidence(
+        &self,
+        account: &str,
+        subject: &Hrn,
+        budget: usize,
+        bytes_budget: u64,
+        used_bytes: &mut u64,
+        omitted: &mut usize,
+    ) -> Result<Vec<ScopedFact>, String> {
+        let mut records = self
             .evidence
             .evidence_of_subject(account, subject)
             .await
             .map_err(|error| error.to_string())?;
+        records.sort_by_key(|record| record.id().to_string());
 
         let mut facts = Vec::new();
+        let mut loaded = 0usize;
         for record in records {
-            // El contenido es el texto del tercero: la descripcion del
-            // SBOM, el README, el mensaje del escaner. Se lee entero, y
-            // se entrega como DATO.
-            let text = match self.content.get(&record.content().digest).await {
-                Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).to_string(),
-                _ => format!(
-                    "the {} of the producer {}",
-                    record.evidence_type(),
-                    record.producer().id
-                ),
+            if loaded >= budget {
+                // El presupuesto de objetos se gasto: la evidencia se
+                // DECLARA como omitida, y su contenido NO se baja.
+                *omitted += 1;
+                facts.push(ScopedFact {
+                    evidence_id: record.id().to_string(),
+                    text: String::new(),
+                    path: vec![subject.clone()],
+                    kind: NodeKind::Evidence,
+                    trust: TrustLevel::Untrusted,
+                    status: FactStatus::OmittedByBudget,
+                });
+                continue;
+            }
+
+            let size = self
+                .content
+                .size(&record.content().digest)
+                .await
+                .map_err(|error| error.to_string())?;
+            let fits = match size {
+                Some(size) => *used_bytes + size <= bytes_budget,
+                None => false,
             };
-            facts.push(ScopedFact {
-                evidence_id: record.id().to_string(),
-                text,
-                path: vec![subject.clone()],
-                kind: NodeKind::Evidence,
-                trust: TrustLevel::Untrusted,
-            });
+            if size.is_some() && !fits {
+                // El blob NO cabe en el presupuesto de bytes: se declara
+                // la omision y el contenido no se baja, porque no se baja
+                // un blob entero para truncarlo despues.
+                *omitted += 1;
+                facts.push(ScopedFact {
+                    evidence_id: record.id().to_string(),
+                    text: String::new(),
+                    path: vec![subject.clone()],
+                    kind: NodeKind::Evidence,
+                    trust: TrustLevel::Untrusted,
+                    status: FactStatus::OmittedByBudget,
+                });
+                continue;
+            }
+
+            let bytes = self.content.get(&record.content().digest).await;
+            let fact = match bytes {
+                Err(_) => ScopedFact {
+                    evidence_id: record.id().to_string(),
+                    text: String::new(),
+                    path: vec![subject.clone()],
+                    kind: NodeKind::Evidence,
+                    trust: TrustLevel::Untrusted,
+                    status: FactStatus::Unavailable,
+                },
+                Ok(None) => ScopedFact {
+                    evidence_id: record.id().to_string(),
+                    text: String::new(),
+                    path: vec![subject.clone()],
+                    kind: NodeKind::Evidence,
+                    trust: TrustLevel::Untrusted,
+                    status: FactStatus::Missing,
+                },
+                Ok(Some(bytes)) => match String::from_utf8(bytes) {
+                    Err(_) => ScopedFact {
+                        evidence_id: record.id().to_string(),
+                        text: String::new(),
+                        path: vec![subject.clone()],
+                        kind: NodeKind::Evidence,
+                        trust: TrustLevel::Untrusted,
+                        status: FactStatus::Undecodable,
+                    },
+                    Ok(text) => {
+                        loaded += 1;
+                        if let Some(size) = size {
+                            *used_bytes += size;
+                        }
+                        ScopedFact {
+                            evidence_id: record.id().to_string(),
+                            text: hodei_investigator::redact::redact(&text),
+                            path: vec![subject.clone()],
+                            kind: NodeKind::Evidence,
+                            trust: TrustLevel::Untrusted,
+                            status: FactStatus::Loaded,
+                        }
+                    }
+                },
+            };
+            facts.push(fact);
         }
         Ok(facts)
     }
 
-    /// Las relaciones del grafo que tocan al sujeto, con su camino.
-    async fn the_relations(&self, subject: &Hrn) -> Result<Vec<ScopedFact>, String> {
+    /// Las relaciones del grafo que tocan al sujeto, con su camino,
+    /// dentro del presupuesto de relaciones.
+    ///
+    /// El orden es la identidad de la relacion, una clave estable: la
+    /// misma vista del mismo grafo da la misma lista.
+    async fn the_relations(
+        &self,
+        subject: &Hrn,
+        budget: usize,
+        omitted: &mut usize,
+    ) -> Result<Vec<ScopedFact>, String> {
         let mut facts = Vec::new();
 
         let mut relations = self
@@ -115,13 +213,30 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
                 .await
                 .map_err(|error| error.to_string())?,
         );
+        // La clave estable: la identidad de la relacion, que no depende
+        // del orden en que el grafo la dio.
+        relations.sort_by_key(|relation| format!("{:?}", relation.identity()));
 
+        let mut kept = 0usize;
         for relation in relations {
             let path = if relation.from == *subject {
                 vec![subject.clone(), relation.to.clone()]
             } else {
                 vec![subject.clone(), relation.from.clone()]
             };
+            if kept >= budget {
+                *omitted += 1;
+                facts.push(ScopedFact {
+                    evidence_id: relation.evidence_id.to_string(),
+                    text: String::new(),
+                    path,
+                    kind: NodeKind::Artifact,
+                    trust: TrustLevel::Untrusted,
+                    status: FactStatus::OmittedByBudget,
+                });
+                continue;
+            }
+            kept += 1;
             facts.push(ScopedFact {
                 evidence_id: relation.evidence_id.to_string(),
                 text: format!(
@@ -133,6 +248,7 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
                 path,
                 kind: NodeKind::Artifact,
                 trust: TrustLevel::Untrusted,
+                status: FactStatus::Loaded,
             });
         }
         Ok(facts)
@@ -141,7 +257,7 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
 
 #[async_trait]
 impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
-    async fn retrieve(&self, scope: &RetrievalScope) -> Result<Vec<ScopedFact>, RetrievalError> {
+    async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
         // La autorizacion va ANTES de cualquier lectura: quien pregunta
         // tiene que poder leer el sujeto, y una denegacion o un error
         // del Authorizer es una puerta cerrada. La cuenta del sujeto NO
@@ -154,12 +270,21 @@ impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
                 resource: format!("{} ({reason})", scope.subject),
             })?;
 
+        let mut omitted = 0usize;
+        let mut used_bytes = 0u64;
         let mut facts = self
-            .the_evidence(scope.subject.account_id(), &scope.subject)
+            .the_evidence(
+                scope.subject.account_id(),
+                &scope.subject,
+                scope.budget.max_objects,
+                scope.budget.max_bytes,
+                &mut used_bytes,
+                &mut omitted,
+            )
             .await
             .map_err(RetrievalError::Unavailable)?;
         facts.extend(
-            self.the_relations(&scope.subject)
+            self.the_relations(&scope.subject, scope.budget.max_relations, &mut omitted)
                 .await
                 .map_err(RetrievalError::Unavailable)?,
         );
@@ -187,7 +312,16 @@ impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
         // devuelve de mas no puede colar nada, porque el investigador lo
         // comprueba otra vez.
         facts.truncate(scope.max_nodes);
-        Ok(facts)
+
+        // La cobertura se DECLARA: lo que no entro por el presupuesto no
+        // se esconde. Un scope conocido pero incompleto no se presenta
+        // como respuesta exhaustiva.
+        let coverage = if omitted == 0 {
+            Coverage::Complete
+        } else {
+            Coverage::Partial { omitted }
+        };
+        Ok(RetrievedContext { facts, coverage })
     }
 }
 

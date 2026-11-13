@@ -20,6 +20,8 @@ use hodei_evidence::domain::graph::NodeKind;
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
 
+use crate::redact::redact;
+
 /// Cuanto se fia de un texto.
 ///
 /// Un texto de evidencia es **dato**, nunca instruccion. Una descripcion
@@ -33,6 +35,33 @@ pub enum TrustLevel {
     Untrusted,
     /// El texto lo escribio el sistema: eso si es instruccion.
     Trusted,
+}
+
+/// El presupuesto de una recuperacion.
+///
+/// Una investigacion es un recurso, y el contexto que se le da al modelo
+/// tiene un coste: cuantas evidencias se cargan, cuantas relaciones
+/// entran y cuantos bytes de contenido se bajan. Los limites son
+/// **declarados**, y lo que no cabe se OMITE, no se trunca: no se baja
+/// un blob entero para cortarlo despues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetrievalBudget {
+    /// Cuantas evidencias se cargan, como maximo.
+    pub max_objects: usize,
+    /// Cuantos hechos de relacion entran, como maximo.
+    pub max_relations: usize,
+    /// Cuantos bytes de contenido se bajan, en total.
+    pub max_bytes: u64,
+}
+
+impl Default for RetrievalBudget {
+    fn default() -> Self {
+        Self {
+            max_objects: 100,
+            max_relations: 400,
+            max_bytes: 256 * 1024,
+        }
+    }
 }
 
 /// El alcance de una recuperacion.
@@ -51,6 +80,9 @@ pub struct RetrievalScope {
     pub max_nodes: usize,
     /// A cuanta profundidad puede bajar.
     pub max_depth: usize,
+    /// Cuanto puede gastar la recuperacion.
+    #[serde(default)]
+    pub budget: RetrievalBudget,
 }
 
 impl RetrievalScope {
@@ -61,6 +93,7 @@ impl RetrievalScope {
             subject,
             max_nodes: 200,
             max_depth: 4,
+            budget: RetrievalBudget::default(),
         }
     }
 
@@ -75,6 +108,52 @@ impl RetrievalScope {
     pub fn crosses_accounts(&self) -> bool {
         self.actor.account_id() != self.subject.account_id()
     }
+}
+
+/// El estado de un hecho recuperado.
+///
+/// Las distinciones SON el contrato: un contenido ausente (Missing), un
+/// almacen que no contesto (Unavailable), un texto que no se pudo
+/// decodificar (Undecodable) y un hecho que el presupuesto dejo fuera
+/// (OmittedByBudget) son cuatro cosas distintas, y ninguna de ellas se
+/// disfraza de texto inventado ni de ausencia silenciosa de hechos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactStatus {
+    /// El contenido se leyo y se entrega.
+    Loaded,
+    /// La evidencia existe y su contenido no esta.
+    Missing,
+    /// El almacen no pudo contestar.
+    Unavailable,
+    /// El contenido existe y no se pudo decodificar como texto.
+    Undecodable,
+    /// El presupuesto lo dejo fuera ANTES de leerse.
+    OmittedByBudget,
+}
+
+impl Default for FactStatus {
+    #[allow(clippy::derivable_impls)]
+    fn default() -> Self {
+        Self::Loaded
+    }
+}
+
+/// Cuanto de lo que hay se entrego.
+///
+/// Una recuperacion parcial se DECLARA: un scope conocido pero
+/// incompleto no puede presentarse como respuesta exhaustiva.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Coverage {
+    /// Se entrego todo lo que hay.
+    #[default]
+    Complete,
+    /// Se entrego una parte, y se dice cuanta se dejo fuera.
+    Partial {
+        /// Cuantos hechos se dejaron fuera por el presupuesto.
+        omitted: usize,
+    },
 }
 
 /// Un hecho recuperado, con su procedencia.
@@ -92,10 +171,16 @@ pub struct ScopedFact {
     pub kind: NodeKind,
     /// Cuanto se fia del texto.
     pub trust: TrustLevel,
+    /// El estado del hecho. Por defecto, cargado: los hechos que venian
+    /// sin estado son hechos leidos.
+    #[serde(default)]
+    pub status: FactStatus,
 }
 
 impl ScopedFact {
-    /// Un hecho de evidencia, que es dato y no instruccion.
+    /// Un hecho de evidencia, que es dato y no instruccion. El texto se
+    /// REDACTA aqui mismo: lo que sale hacia el modelo no lleva
+    /// secretos.
     pub fn untrusted(
         evidence_id: impl Into<String>,
         text: impl Into<String>,
@@ -103,12 +188,22 @@ impl ScopedFact {
     ) -> Self {
         Self {
             evidence_id: evidence_id.into(),
-            text: text.into(),
+            text: redact(&text.into()),
             path,
             kind: NodeKind::Evidence,
             trust: TrustLevel::Untrusted,
+            status: FactStatus::Loaded,
         }
     }
+}
+
+/// Lo que una recuperacion entrega: los hechos y CUANTO de lo que hay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetrievedContext {
+    /// Los hechos, en el orden de su clave estable.
+    pub facts: Vec<ScopedFact>,
+    /// Si la recuperacion fue completa o se omitio algo.
+    pub coverage: Coverage,
 }
 
 /// Por que la recuperacion no pudo hacerse.
