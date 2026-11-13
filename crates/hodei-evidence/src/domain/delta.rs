@@ -186,7 +186,7 @@ impl RelationDeltaLedger for InMemoryRelationDeltaLedger {
             let version = inner
                 .deltas
                 .iter()
-                .filter(|(version, said)| said.tenant == delta.tenant)
+                .filter(|(_version, said)| said.tenant == delta.tenant)
                 .map(|(version, _)| *version)
                 .max()
                 .unwrap_or(0)
