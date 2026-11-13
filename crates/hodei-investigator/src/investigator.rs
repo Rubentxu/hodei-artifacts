@@ -23,8 +23,7 @@ use crate::claim::{AIClaim, ClaimError, ClaimKind, InvestigationTrace, check_the
 use crate::guard::{ActionKind, CapabilityGuard, ProposedAction};
 use crate::model::{ModelProvider, PROMPT_VERSION, the_prompt};
 use crate::scope::{
-    EvidenceReadAuthorizer, RetrievalError, RetrievalScope, ScopeViolation, ScopedFact,
-    check_the_scope,
+    RetrievalError, RetrievalScope, ScopeViolation, ScopedFact, RetrievedContext, check_the_scope,
 };
 
 /// De donde se recupera la evidencia.
@@ -33,8 +32,9 @@ use crate::scope::{
 /// y una denegacion es explicita, no una respuesta vacia.
 #[async_trait::async_trait]
 pub trait EvidenceRetriever: Send + Sync {
-    /// El subgrafo del sujeto, dentro del alcance.
-    async fn retrieve(&self, scope: &RetrievalScope) -> Result<Vec<ScopedFact>, RetrievalError>;
+    /// El subgrafo del sujeto, dentro del alcance y del presupuesto, con
+    /// su cobertura: cuanto de lo que hay se entrego.
+    async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError>;
 }
 
 /// De donde salen las afirmaciones de alcanzabilidad.
@@ -140,8 +140,8 @@ impl Investigator {
 
         // 1. La recuperacion, y su comprobacion. La denegacion del
         // borde es explicita, y un almacen caido cierra, no abre.
-        let facts = match self.retriever.retrieve(scope).await {
-            Ok(facts) => facts,
+        let context = match self.retriever.retrieve(scope).await {
+            Ok(context) => context,
             Err(RetrievalError::NotAuthorized { actor, resource }) => {
                 return Err(InvestigationError::NotAuthorized { actor, resource });
             }
@@ -149,10 +149,11 @@ impl Investigator {
                 return Err(InvestigationError::NoAnswer(reason));
             }
         };
-        check_the_scope(scope, &facts).map_err(InvestigationError::OutOfScope)?;
+        let facts = &context.facts;
+        check_the_scope(scope, facts).map_err(InvestigationError::OutOfScope)?;
 
         // 2. La pregunta, con el contexto delimitado.
-        let request = the_prompt(question, &facts);
+        let request = the_prompt(question, facts);
         let response = self
             .model
             .complete(&request)
@@ -169,7 +170,8 @@ impl Investigator {
                 .map_err(InvestigationError::InvalidClaim)?;
         }
 
-        // 4. La traza.
+        // 4. La traza, con la cobertura: cuanto de lo que hay se le dio
+        // al modelo. Un contexto parcial se declara, nunca se esconde.
         let trace = InvestigationTrace::new(
             investigation,
             response.provider,
@@ -177,6 +179,7 @@ impl Investigator {
             response.model_version,
             PROMPT_VERSION,
             known,
+            context.coverage,
             now,
         );
 

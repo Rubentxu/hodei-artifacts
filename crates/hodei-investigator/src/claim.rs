@@ -140,6 +140,12 @@ pub struct InvestigationTrace {
     pub context_evidence: Vec<String>,
     /// Cuantas palabras teve el contexto.
     pub context_words: usize,
+    /// Cuanto de lo que hay se entrego al modelo.
+    ///
+    /// Una recuperacion parcial se DECLARA en la traza: un contexto
+    /// incompleto no puede pasar por respuesta exhaustiva.
+    #[serde(default)]
+    pub coverage: crate::scope::Coverage,
     /// Cuando se hizo.
     pub at: DateTime<Utc>,
 }
@@ -154,6 +160,7 @@ impl InvestigationTrace {
         model_version: Option<String>,
         prompt_version: impl Into<String>,
         context_evidence: Vec<String>,
+        coverage: crate::scope::Coverage,
         at: DateTime<Utc>,
     ) -> Self {
         Self {
@@ -164,6 +171,7 @@ impl InvestigationTrace {
             prompt_version: prompt_version.into(),
             context_words: context_evidence.len(),
             context_evidence,
+            coverage,
             at,
         }
     }

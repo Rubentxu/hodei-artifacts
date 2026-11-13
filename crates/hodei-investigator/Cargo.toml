@@ -6,6 +6,7 @@ description = "El investigador con IA de Hodei, con sus guardias."
 license = "MIT"
 
 [dependencies]
+regex = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }

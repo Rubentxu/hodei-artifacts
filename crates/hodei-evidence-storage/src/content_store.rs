@@ -62,4 +62,14 @@ impl ContentStore for InMemoryContentStore {
             .get(&digest.to_string())
             .cloned())
     }
+
+    /// The size of a content, in bytes, without reading it.
+    async fn size(&self, digest: &ContentDigest) -> Result<Option<u64>, StoreError> {
+        Ok(self
+            .content
+            .read()
+            .expect("the content lock")
+            .get(&digest.to_string())
+            .map(|content| content.len() as u64))
+    }
 }

@@ -188,6 +188,13 @@ pub trait ContentStore: Send + Sync {
     ///
     /// It returns nothing when there is no such content.
     async fn get(&self, digest: &ContentDigest) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// The size of a content, in bytes, WITHOUT reading it.
+    ///
+    /// Es lo que un presupuesto pregunta antes de cargar: no se baja un
+    /// blob entero para truncarlo despues. None si el contenido no esta:
+    /// la ausencia no es un error, es una respuesta.
+    async fn size(&self, digest: &ContentDigest) -> Result<Option<u64>, StoreError>;
 }
 
 /// The authenticator of the producer of an envelope.
