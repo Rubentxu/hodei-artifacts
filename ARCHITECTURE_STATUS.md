@@ -1011,6 +1011,61 @@ construido: ni motor de workflows generico, ni plugins dinamicos, ni
 planificador distribuido, ni DSL de workflows, ni interfaz de usuario. El
 runtime es un registro, una traza y un presupuesto.
 
+## 10-undecies. M7: la simulacion es una superposicion, no una copia
+
+### La conclusion del SPIKE-008, y su razon
+
+La pregunta era **como** se crea el estado aislado de un "que pasaria si",
+sin que la traza ni el diff dejen de ser deterministas. Se compararon
+cuatro mecanismos:
+
+| Mecanismo | Coste por simulacion | Aislamiento | Determinismo |
+|---|---|---|---|
+| Reproducir en un namespace aislado | 156 s (o 656.6 s reconstruyendo) | Total, y carisimo | Perfecto |
+| **Superposicion sobre la base** | **Lo que cuestan los hechos hipoteticos** | **Total por construccion** | Perfecto |
+| Snapshot o rama nativa del almacen | Una copia del directorio | Depende del motor | Perfecto |
+| Checkpoint mas superposicion | Lo que cuestan los hechos hipoteticos | Total por construccion | Perfecto |
+
+**Se elige la superposicion**, y la razon es una cuenta: una copia cuesta
+lo que cuesta el estado, y el estado a la escala de referencia son 156 s de
+proyeccion y 656.6 s de reconstruccion. Eso es por simulacion, cada vez
+que alguien pregunta. Una superposicion cuesta lo que cuestan los hechos
+hipoteticos, que son pocos.
+
+Y el aislamiento deja de ser una promesa y pasa a ser una **construccion**:
+
+- El puerto del grafo **no tiene un metodo de escritura**. No se puede
+  escribir en el estado real desde una simulacion porque no existe por
+  donde hacerlo.
+- El servicio **comprueba** el numero de relaciones antes y despues de
+  simular, y si no coinciden lo dice.
+- Los hechos hipoteticos llevan una **etiqueta** con el identificador de la
+  simulacion, y por eso las consultas normales del grafo no los ven nunca.
+
+### El diff se parece al diff de git
+
+| Lo que dice | Como |
+|---|---|
+| que relaciones **aparecen** | la identidad de la relacion es el tipo y los dos extremos |
+| que relaciones **desaparecen** | las que el fork sustituye, comparadas por identidad |
+| que **decisiones cambian** | la decision de antes con la politica de antes, y la de despues con la del fork, con **las dos versiones de la politica** |
+
+Y una decision que sigue igual **no es un cambio**: un diff lleno de ruido
+no es un diff.
+
+### Los limites, declarados y comprobados antes de simular
+
+- cuantos hechos hipoteticos: 100 por defecto;
+- cuantos sujetos afectados: 1000 por defecto;
+- cuanto vive la simulacion: 24 horas por defecto.
+
+Una simulacion que no cabe **no se ejecuta**, y una simulacion caducada
+tampoco.
+
+La decision esta escrita en
+`ADR-013-simulation-forks-are-overlays-not-copies.md`, que es el mecanismo
+que acepta el SPIKE-008.
+
 ## 11. El nucleo no depende de mecanismos concretos
 
 El kernel no depende de SurrealDB, ni de Axum, ni de ningun cliente HTTP.

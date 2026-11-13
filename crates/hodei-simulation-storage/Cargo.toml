@@ -1,0 +1,15 @@
+[package]
+name = "hodei-simulation-storage"
+version = "0.1.0"
+edition = "2024"
+description = "Los adaptadores de la simulacion de Hodei sobre el almacen real."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+hodei-evidence = { path = "../hodei-evidence" }
+hodei-evidence-storage = { path = "../hodei-evidence-storage" }
+hodei-simulation = { path = "../hodei-simulation" }
+kernel = { path = "../kernel" }
+serde = { workspace = true }
+surrealdb = { workspace = true }

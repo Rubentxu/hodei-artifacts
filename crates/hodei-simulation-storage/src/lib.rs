@@ -1,0 +1,87 @@
+//! El almacen de la simulacion: los adaptadores que leen el estado real.
+//!
+//! El grafo real se lee y **no se escribe**: el puerto
+//! [`SimulationGraph`] no tiene un metodo de escritura, y por eso no
+//! existe por donde escribir. El adaptador de aqui es la pieza que
+//! cumple esa promesa en el mundo real, y por eso lleva su propia cuenta
+//! de escrituras: una simulacion que escribiese algo dejaria la cuenta
+//! en un numero distinto de cero, y se veria.
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use hodei_evidence::ports::graph::GraphQuery;
+use hodei_simulation::hypothetical::RelationFact;
+use hodei_simulation::ports::SimulationGraph;
+use kernel::Hrn;
+use surrealdb::Connection;
+
+/// El grafo real, leido para simular.
+pub struct SurrealSimulationGraph<C: Connection> {
+    graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
+    tenant: Hrn,
+}
+
+impl<C: Connection> SurrealSimulationGraph<C> {
+    /// El grafo de una cuenta.
+    pub fn new(graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>, tenant: Hrn) -> Self {
+        Self { graph, tenant }
+    }
+}
+
+#[async_trait]
+impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
+    async fn relations_of(&self, subject: &Hrn) -> Result<Vec<RelationFact>, String> {
+        let mut facts = Vec::new();
+
+        // Las relaciones que parten del sujeto.
+        for relation in self
+            .graph
+            .relations_from(&self.tenant, subject)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            facts.push(RelationFact::new(
+                relation.relation,
+                relation.from,
+                relation.to,
+            ));
+        }
+
+        // Y las que llegan a el.
+        for relation in self
+            .graph
+            .relations_to(&self.tenant, subject)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            let fact = RelationFact::new(relation.relation, relation.from, relation.to);
+            if !facts.contains(&fact) {
+                facts.push(fact);
+            }
+        }
+
+        Ok(facts)
+    }
+
+    async fn relation_count(&self) -> Result<usize, String> {
+        let mut response = self
+            .graph
+            .db()
+            .query("SELECT from FROM type::table($table) WHERE tenant_hrn = $tenant")
+            .bind(("table", self.graph.relation_table_name()))
+            .bind(("tenant", self.tenant.to_string()))
+            .await
+            .map_err(|error| error.to_string())?;
+        let rows: Vec<CountRow> = response.take(0).map_err(|error| error.to_string())?;
+        Ok(rows.len())
+    }
+}
+
+/// La fila de la cuenta.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CountRow {
+    /// El nodo del que parte la relacion.
+    #[allow(dead_code)]
+    from: String,
+}
