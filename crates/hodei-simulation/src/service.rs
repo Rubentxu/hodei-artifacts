@@ -32,6 +32,13 @@ pub enum SimulationError {
     Expired(String),
     /// El estado real no se pudo leer.
     Unavailable(String),
+    /// La simulacion pide lo que no puede: sujetos de otra cuenta o un
+    /// alcance vacio que daria una conclusion engañosa.
+    NotAllowed(String),
+    /// Una LECTURA que la decision necesita fallo. No se reemplaza por
+    /// una coleccion vacia ni por un resultado: sin lo que hay que leer,
+    /// la decision no se toma.
+    ReadFailed(String),
 }
 
 impl std::fmt::Display for SimulationError {
@@ -41,6 +48,12 @@ impl std::fmt::Display for SimulationError {
             Self::Expired(message) => write!(formatter, "the simulation expired: {message}"),
             Self::Unavailable(message) => {
                 write!(formatter, "the state could not be read: {message}")
+            }
+            Self::NotAllowed(message) => {
+                write!(formatter, "the simulation is not allowed: {message}")
+            }
+            Self::ReadFailed(message) => {
+                write!(formatter, "a read that the decision needs failed: {message}")
             }
         }
     }
@@ -139,12 +152,12 @@ impl SimulationService {
                 .decisions
                 .decide(subject, &fork.base_policy, &[])
                 .await
-                .map_err(SimulationError::Unavailable)?;
+                .map_err(SimulationError::ReadFailed)?;
             let after = self
                 .decisions
                 .decide(subject, fork.effective_policy(), &fork.facts)
                 .await
-                .map_err(SimulationError::Unavailable)?;
+                .map_err(SimulationError::ReadFailed)?;
             let change = DecisionChange {
                 subject: subject.clone(),
                 before: before.outcome,

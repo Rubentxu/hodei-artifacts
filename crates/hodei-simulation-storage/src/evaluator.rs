@@ -44,15 +44,20 @@ impl CapsuleDecisionEvaluator {
     /// Una ventana en la que no se fia del constructor deja sin verificar
     /// lo que se observo dentro de la ventana: es lo que significa decir
     /// que el constructor estaba comprometido durante ese rato.
-    async fn the_evidence(&self, subject: &Hrn, facts: &[Hypothetical]) -> Vec<EvidenceRecord> {
-        let Ok(evidence) = self
+    async fn the_evidence(
+        &self,
+        subject: &Hrn,
+        facts: &[Hypothetical],
+    ) -> Result<Vec<EvidenceRecord>, String> {
+        // El fallo de lectura NO es una capsula vacia: un error del
+        // almacen llega como error, porque una capsula vacia diria "no
+        // sabemos nada" y el almacen dice "no pudimos mirar". Son cosas
+        // distintas, y la segunda no decide nada.
+        let evidence = self
             .reader
             .evidence_of_subject(&self.account, subject)
             .await
-            .map_err(|error| error.to_string())
-        else {
-            return Vec::new();
-        };
+            .map_err(|error| error.to_string())?;
         // Las ventanas que alcanzan a ESTE sujeto: una ventana que no
         // nombra al sujeto no le dice nada.
         let windows: Vec<(DateTime<Utc>, DateTime<Utc>)> = facts
@@ -68,10 +73,10 @@ impl CapsuleDecisionEvaluator {
             .collect();
 
         if windows.is_empty() {
-            return evidence;
+            return Ok(evidence);
         }
 
-        evidence
+        let evidence: Vec<EvidenceRecord> = evidence
             .into_iter()
             .map(|record| {
                 let observed_at = record.observed_at();
@@ -84,7 +89,8 @@ impl CapsuleDecisionEvaluator {
                     record
                 }
             })
-            .collect()
+            .collect();
+        Ok(evidence)
     }
 
     /// Los hechos de riesgo que los hechos hipoteticos anaden.
@@ -117,7 +123,15 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
         facts: &[Hypothetical],
     ) -> Result<TheDecision, String> {
         let now = Utc::now();
-        let evidence = self.the_evidence(subject, facts).await;
+        let evidence = self
+            .the_evidence(subject, facts)
+            .await
+            .map_err(|reason| {
+                format!("the evidence of {subject} could not be read: {reason}")
+            })?;
+        // Una evidencia REALMENTE vacia no es un error: el sujeto puede
+        // no tener nada dicho, y la decision se toma con lo que hay --
+        // que puede ser Indeterminate, y Indeterminate NO es un ALLOW.
         let capsule = self.assembler.assemble(subject, &evidence, now);
         let context = hodei_trust_policy::TrustContext::builder(&capsule)
             .with_risk(self.the_risk(subject, facts))
