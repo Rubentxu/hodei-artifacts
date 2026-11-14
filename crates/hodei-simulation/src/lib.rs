@@ -45,12 +45,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod base;
 pub mod diff;
 pub mod fork;
 pub mod hypothetical;
 pub mod ports;
 pub mod service;
 
+pub use base::{SimulationBase, the_seal_of};
 pub use diff::{DecisionChange, SimulationDiff, StructuralDiff, TheDecision};
 pub use fork::{Checkpoint, SimulationFork, SimulationLimits};
 pub use hypothetical::{Hypothetical, HypotheticalClaim, RelationFact, SimulationTag};

@@ -110,6 +110,13 @@ pub struct SimulationDiff {
     pub structural: StructuralDiff,
     /// Las decisiones que cambian.
     pub decisions: Vec<DecisionChange>,
+    /// La base sobre la que se calculo: el mundo que el diff describe.
+    ///
+    /// Sin ella el diff es una respuesta sin el mundo al que se refiere:
+    /// no dice sobre que version de la verdad se calculo, y por eso no
+    /// se puede auditar.
+    #[serde(default)]
+    pub base: crate::base::SimulationBase,
 }
 
 impl SimulationDiff {

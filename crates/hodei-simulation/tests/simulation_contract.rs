@@ -42,23 +42,37 @@ fn component_v2() -> Hrn {
 
 /// El grafo real de la simulacion.
 ///
-/// Guarda las relaciones en un contador, y el contador es lo que comprueba
-/// el aislamiento.
+/// Guarda las relaciones y su generacion, y no mas: el cambio del mundo
+/// mientras se simula se prueba en el contrato de la base, que es donde
+/// ese caso vive.
 struct TheGraph {
     relations: Mutex<Vec<RelationFact>>,
-    writes: Arc<Mutex<usize>>,
+    /// La generacion del grafo.
+    generation: Mutex<u64>,
 }
 
 impl TheGraph {
     fn new(relations: Vec<RelationFact>) -> Arc<Self> {
         Arc::new(Self {
             relations: Mutex::new(relations),
-            writes: Arc::new(Mutex::new(0)),
+            generation: Mutex::new(1),
         })
     }
 
-    fn writes(&self) -> usize {
-        *self.writes.lock().expect("el contador no esta envenenado")
+    /// Las relaciones que tiene ahora mismo.
+    fn the_relations(&self) -> Vec<RelationFact> {
+        self.relations
+            .lock()
+            .expect("el grafo no esta envenenado")
+            .clone()
+    }
+
+    /// La generacion que tiene ahora mismo.
+    fn the_generation(&self) -> u64 {
+        *self
+            .generation
+            .lock()
+            .expect("la generacion no esta envenenada")
     }
 }
 
@@ -81,6 +95,14 @@ impl SimulationGraph for TheGraph {
     async fn all_relations(&self) -> Result<Vec<RelationFact>, String> {
         let relations = self.relations.lock().expect("el grafo no esta envenenado");
         Ok(relations.clone())
+    }
+
+    async fn generation(&self) -> Result<u64, String> {
+        Ok(self.the_generation())
+    }
+
+    fn account(&self) -> String {
+        "acme".to_string()
     }
 }
 
@@ -107,6 +129,7 @@ impl DecisionEvaluator for TheEvaluator {
         subject: &Hrn,
         policy: &TrustPolicy,
         facts: &[Hypothetical],
+        _now: chrono::DateTime<chrono::Utc>,
     ) -> Result<TheDecision, String> {
         // El hecho hipotetico que dice que el sujeto esta expuesto.
         let exposed = facts.iter().any(|fact| {
@@ -209,15 +232,19 @@ async fn the_fork_is_isolated() {
     assert_eq!(diff.structural.appeared.len(), 1);
     assert_eq!(diff.structural.disappeared.len(), 1);
 
-    // Y el grafo real esta IGUAL: mismas relaciones, mismas escrituras.
-    let relations = graph.relations.lock().expect("el grafo no esta envenenado");
+    // Y el grafo real esta IGUAL: mismas relaciones, misma generacion.
+    let relations = graph.the_relations();
     assert_eq!(relations.len(), 1, "el grafo real no cambio");
     assert_eq!(
         relations[0].to,
         component_v1(),
         "y la relacion que desaparece sigue en el grafo real"
     );
-    assert_eq!(graph.writes(), 0, "y no hubo ninguna escritura");
+    assert_eq!(
+        graph.the_generation(),
+        1,
+        "y la generacion del grafo no se movio"
+    );
 }
 
 /// Y los hechos hipoteticos llevan su etiqueta, que es lo que los
@@ -451,6 +478,7 @@ impl DecisionEvaluator for PolicyDrivenEvaluator {
         _subject: &Hrn,
         policy: &TrustPolicy,
         _facts: &[Hypothetical],
+        _now: chrono::DateTime<chrono::Utc>,
     ) -> Result<TheDecision, String> {
         let outcome = if policy.version.starts_with('2') {
             Outcome::Deny
@@ -530,8 +558,8 @@ async fn a_subject_of_another_account_is_not_admitted() {
     let graph = TheGraph::new(Vec::new());
     let service = SimulationService::new(graph.clone(), Arc::new(PolicyDrivenEvaluator));
 
-    let foreign = Hrn::from_string("hrn:hodei:artifacts:eu-west-1:contoso:Artifact/private")
-        .expect("un HRN");
+    let foreign =
+        Hrn::from_string("hrn:hodei:artifacts:eu-west-1:contoso:Artifact/private").expect("un HRN");
     let fork = the_fork(the_policy("1.0.0"))
         .with_subjects(vec![subject(), foreign])
         .with_policy(the_strict_policy("2.0.0"));

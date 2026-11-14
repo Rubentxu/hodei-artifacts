@@ -37,6 +37,15 @@ pub struct Checkpoint {
     /// Sirve para comprobar que el grafo real no ha cambiado: un fork no
     /// deja ni una sombra, y el contador lo dice.
     pub ledger_position: Option<u64>,
+    /// La generacion del grafo en ese punto, si se sabe.
+    ///
+    /// Es la version contra la que se PREPARO el fork, y la que se
+    /// comprueba al simular: si el grafo ya no esta en esa generacion,
+    /// el fork se hizo contra un mundo que ya no existe, y la
+    /// simulacion se dice obsoleta en vez de responder por el mundo de
+    /// ahora como si fuera el de entonces.
+    #[serde(default)]
+    pub generation: Option<u64>,
 }
 
 impl Checkpoint {
@@ -52,7 +61,14 @@ impl Checkpoint {
             account: account.into(),
             at,
             ledger_position,
+            generation: None,
         }
+    }
+
+    /// El checkpoint preparado contra una generacion del grafo.
+    pub fn at_generation(mut self, generation: u64) -> Self {
+        self.generation = Some(generation);
+        self
     }
 }
 

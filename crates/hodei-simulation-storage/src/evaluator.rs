@@ -121,14 +121,12 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
         subject: &Hrn,
         policy: &TrustPolicy,
         facts: &[Hypothetical],
+        now: DateTime<Utc>,
     ) -> Result<TheDecision, String> {
-        let now = Utc::now();
         let evidence = self
             .the_evidence(subject, facts)
             .await
-            .map_err(|reason| {
-                format!("the evidence of {subject} could not be read: {reason}")
-            })?;
+            .map_err(|reason| format!("the evidence of {subject} could not be read: {reason}"))?;
         // Una evidencia REALMENTE vacia no es un error: el sujeto puede
         // no tener nada dicho, y la decision se toma con lo que hay --
         // que puede ser Indeterminate, y Indeterminate NO es un ALLOW.
@@ -148,8 +146,14 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
 }
 
 /// La misma pieza de evidencia, con otra verificacion.
+///
+/// La validez desconocida se CONSERVA como desconocida: una evidencia
+/// que no dice cuando deja de ser cierta no se le inventa una fecha de
+/// caducidad, porque esa fecha seria una verdad que nadie dijo. Y la
+/// fecha de caducidad inventada caduca cuando la evidencia no caduca,
+/// y hace desaparecer una afirmacion que sigue en pie.
 fn the_record_with(record: EvidenceRecord, verification: EvidenceVerification) -> EvidenceRecord {
-    EvidenceRecord::builder(record.id().clone(), record.tenant_hrn().clone())
+    let mut builder = EvidenceRecord::builder(record.id().clone(), record.tenant_hrn().clone())
         .subjects(record.subject_refs().to_vec())
         .evidence_type(record.evidence_type().clone())
         .schema(
@@ -160,10 +164,12 @@ fn the_record_with(record: EvidenceRecord, verification: EvidenceVerification) -
         .source(record.source().clone())
         .content(record.content().clone())
         .observed_at(record.observed_at())
-        .valid_to(record.valid_to().unwrap_or_else(Utc::now))
         .recorded_at(record.recorded_at())
         .verification(verification)
         .normalization(record.normalization().clone())
-        .correlation_id(record.correlation_id().unwrap_or_default().to_string())
-        .build()
+        .correlation_id(record.correlation_id().unwrap_or_default().to_string());
+    if let Some(valid_to) = record.valid_to() {
+        builder = builder.valid_to(valid_to);
+    }
+    builder.build()
 }

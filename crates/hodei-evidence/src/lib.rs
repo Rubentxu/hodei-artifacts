@@ -37,11 +37,11 @@ pub mod ports;
 pub mod standards;
 
 pub use application::capsule::{CapsuleAssembler, FreshnessThreshold};
+pub use application::delta::{SupportSnapshot, relation_deltas};
 pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionRequest};
 pub use application::projection::{
     ProjectionCheckpoints, ProjectionError, ProjectionReport, project_stream,
 };
-pub use application::delta::{relation_deltas, SupportSnapshot};
 pub use application::projector::{EvidenceGraphProjector, evidence_hrn};
 pub use application::rebuild::{GraphFingerprint, RebuildError, RebuildReport, rebuild_graph};
 pub use domain::content::{ContentDigest, ContentError, ContentRef, DigestAlgorithm};
@@ -62,6 +62,7 @@ pub use domain::graph::{
 };
 pub use domain::idempotency::{IdempotencyKey, Redelivery};
 pub use domain::ingestion::{IngestionEnvelope, IngestionOutcome, RejectionReason};
+pub use domain::read_set::{ReadKind, ReadSet, ReadStamp};
 pub use domain::version::{SchemaVersion, Upcaster, Upcasters, VersionError};
 pub use ports::graph::{GraphError, GraphProjector, GraphQuery, GraphWriter, Lineage};
 pub use ports::{

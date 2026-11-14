@@ -141,7 +141,7 @@ impl HypotheticalClaim {
 }
 
 /// Una relacion, con la forma que el diff necesita.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelationFact {
     /// De que relacion se trata.
     pub relation: RelationType,
@@ -149,12 +149,42 @@ pub struct RelationFact {
     pub from: Hrn,
     /// El nodo al que llega.
     pub to: Hrn,
+    /// La evidencia que la sostiene, si se conoce.
+    ///
+    /// No es parte de la identidad de la relacion: es el ORIGEN, y lo
+    /// que lo verifica. Una relacion a la que se le anade un apoyo sigue
+    /// siendo la misma relacion, y por eso el diff estructural habla de
+    /// relaciones y no de apoyos. El cambio de apoyo se ve en el sello
+    /// de la base, que si compara la evidencia.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
 }
+
+impl PartialEq for RelationFact {
+    /// Dos relaciones son la MISMA relacion cuando tienen la misma
+    /// identidad: el tipo y los dos extremos.
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for RelationFact {}
 
 impl RelationFact {
     /// La relacion.
     pub fn new(relation: RelationType, from: Hrn, to: Hrn) -> Self {
-        Self { relation, from, to }
+        Self {
+            relation,
+            from,
+            to,
+            evidence: None,
+        }
+    }
+
+    /// La relacion, con la evidencia que la sostiene.
+    pub fn with_evidence(mut self, evidence: impl Into<String>) -> Self {
+        self.evidence = Some(evidence.into());
+        self
     }
 
     /// La identidad de la relacion: la que dice si es la misma o no.
