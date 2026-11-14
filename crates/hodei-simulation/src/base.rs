@@ -62,9 +62,18 @@ pub struct SimulationBase {
     pub evaluated_at: DateTime<Utc>,
     /// El manifiesto de lo que se leyo: las generaciones de las fuentes
     /// y los sellos de cada recurso.
+    ///
+    /// Abarca las relaciones que leyo la SIMULACION, la politica contra
+    /// la que se decide y la evidencia que consume la decision.
     pub read_set: ReadSet,
-    /// El sello del contenido leido: el digest de las relaciones leidas
-    /// con su evidencia.
+    /// El sello del contenido leido: el digest de las relaciones que leyo
+    /// la simulacion, con su evidencia.
+    ///
+    /// Es el sello de lo que la simulacion leyo del GRAFO. Lo que se
+    /// lee para decidir tiene su propia comprobacion --la evidencia se
+    /// compara por sus sellos-- y no entra aqui: un digest que mezclara
+    /// el grafo con la evidencia haria que un cambio de evidencia
+    /// pareciese un cambio de grafo.
     pub seal: String,
     /// La posicion del ledger que declara el punto de partida, si se
     /// sabe.
