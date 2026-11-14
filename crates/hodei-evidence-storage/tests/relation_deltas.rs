@@ -214,12 +214,15 @@ async fn the_ledger_conforms_in_surreal_and_survives_a_restart() {
         .await
         .expect("la lectura tras el reinicio corre");
     assert_eq!(pending.len(), 2, "los deltas sobreviven al reinicio");
+    // La cuenta A lleva TRES cambios al final del escenario de
+    // conformidad: los dos de AffectedBy y el de Contains. La version
+    // que sobrevive al reinicio es la misma que se leyo antes.
     assert_eq!(
         ledger
             .version_of(&tenant_a())
             .await
             .expect("la version corre"),
-        2,
+        3,
         "la version tambien"
     );
 }
