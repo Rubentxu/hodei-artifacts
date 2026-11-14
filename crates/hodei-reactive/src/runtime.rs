@@ -31,7 +31,9 @@ use crate::behavior::{Behavior, BehaviorOutcome, Effect, Reaction, TraceEntry};
 use crate::events::{Event, EventKind};
 use crate::execution::ExecutionOutcome;
 use crate::execution::{Budget, BudgetState, ExecutionRecord};
-use crate::intent::{Intent, IntentExecutor, IntentOutbox, PlanningBehavior, ReadScope, Receipt};
+use crate::intent::{
+    EventOrigin, Intent, IntentExecutor, IntentOutbox, PlanningBehavior, ReadScope, Receipt,
+};
 
 /// Why the runtime could not do what it was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,8 +374,7 @@ impl ReactiveRuntime {
                 // tests are the proof of the cut.
                 let scope = ReadScope {
                     tenant: tenant.clone(),
-                    event_id: current.id.clone(),
-                    causation: causation.clone(),
+                    origin: EventOrigin::new(current.id.clone(), causation.clone()),
                     at: now,
                 };
                 match planner.plan(&current, &scope).await {
@@ -435,8 +436,7 @@ impl ReactiveRuntime {
                                 &outbox,
                                 &executor,
                                 &intent,
-                                &current.id,
-                                &causation,
+                                &scope.origin,
                                 now,
                                 &mut report,
                             )
@@ -509,8 +509,7 @@ impl ReactiveRuntime {
                 &outbox,
                 &executor,
                 &intent,
-                &intent.origin.event_id,
-                &intent.origin.causation,
+                &intent.origin.event,
                 now,
                 &mut report,
             )
@@ -530,8 +529,7 @@ impl ReactiveRuntime {
         outbox: &Arc<dyn IntentOutbox>,
         executor: &Arc<dyn IntentExecutor>,
         intent: &Intent,
-        event_id: &str,
-        causation: &[String],
+        origin: &EventOrigin,
         now: DateTime<Utc>,
         report: &mut DispatchReport,
     ) {
@@ -551,8 +549,8 @@ impl ReactiveRuntime {
                 let record = ExecutionRecord::new(
                     format!("claim:{}", intent.identity),
                     "runtime",
-                    event_id.to_string(),
-                    causation.to_vec(),
+                    origin.event_id.clone(),
+                    origin.causation.clone(),
                     now,
                 )
                 .note(format!("intent:{}", intent.identity), now)
@@ -609,8 +607,8 @@ impl ReactiveRuntime {
                 let mut record = ExecutionRecord::new(
                     format!("apply:{}", intent.identity),
                     "runtime",
-                    event_id.to_string(),
-                    causation.to_vec(),
+                    origin.event_id.clone(),
+                    origin.causation.clone(),
                     now,
                 )
                 .note(format!("intent:{}", intent.identity), now);
@@ -632,8 +630,8 @@ impl ReactiveRuntime {
                 let mut record = ExecutionRecord::new(
                     format!("apply:{}", intent.identity),
                     "runtime",
-                    event_id.to_string(),
-                    causation.to_vec(),
+                    origin.event_id.clone(),
+                    origin.causation.clone(),
                     now,
                 )
                 .note(format!("intent:{}", intent.identity), now);

@@ -17,8 +17,8 @@ use hodei_reactive::behavior::GuardOutcome;
 use hodei_reactive::events::{Event, EventKind, Subscription};
 use hodei_reactive::execution::Budget;
 use hodei_reactive::intent::{
-    InMemoryIntentOutbox, Intent, IntentExecutor, IntentOutbox, Plan, PlanningBehavior, ReadScope,
-    Receipt,
+    InMemoryIntentOutbox, Intent, IntentExecutor, IntentOrigin, IntentOutbox, Plan,
+    PlanningBehavior, ReadScope, Receipt,
 };
 use hodei_reactive::reactions::{
     DecisionRequester, DomainIntentExecutor, ImpactedSubject, Reevaluation, SecurityCaseSink,
@@ -52,13 +52,11 @@ impl PlanningBehavior for OneIntentPlanning {
         scope: &ReadScope,
     ) -> Result<Plan, hodei_reactive::behavior::BehaviorError> {
         let intent = Intent::new(
-            self.name(),
-            event,
-            &scope.causation,
+            IntentOrigin::of(self.name(), event, &scope.origin.causation),
             scope.tenant.clone(),
             "decision_reevaluation",
-            format!("decision:{}", scope.event_id),
-            scope.event_id.clone(),
+            format!("decision:{}", scope.origin.event_id),
+            scope.origin.event_id.clone(),
             serde_json::json!({"subject": SUBJECT, "reason": "vulnerability_impacted", "at": scope.at.to_rfc3339()}),
         );
         Ok(Plan {
@@ -296,9 +294,7 @@ async fn an_executor_of_another_tenant_refuses_to_touch() {
 
     let event = the_event();
     let intent = Intent::new(
-        "one_intent",
-        &event,
-        &[event.id.clone()],
+        IntentOrigin::of("one_intent", &event, &[event.id.clone()]),
         "mallory",
         "decision_reevaluation",
         "decision:mallory",
@@ -343,9 +339,7 @@ async fn the_case_intent_opens_the_case_of_its_tenant() {
 
     let event = the_event();
     let intent = Intent::new(
-        "vulnerability_impact",
-        &event,
-        &[event.id.clone()],
+        IntentOrigin::of("vulnerability_impact", &event, &[event.id.clone()]),
         "acme",
         "security_case",
         "case:GHSA-1",

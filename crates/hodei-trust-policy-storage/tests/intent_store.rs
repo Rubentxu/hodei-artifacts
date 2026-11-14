@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use hodei_reactive::execution::{ExecutionOutcome, ExecutionRecord};
-use hodei_reactive::intent::{Intent, IntentOutbox, Receipt};
+use hodei_reactive::intent::{Intent, IntentOrigin, IntentOutbox, Receipt};
 use hodei_reactive::runtime::{ExecutionStore, InMemoryExecutionStore};
 use hodei_trust_policy_storage::intents::SurrealIntentStore;
 use surrealdb::engine::local::{Db, RocksDb};
@@ -40,14 +40,16 @@ fn a_record(key: &str, event: &str, cause: &str) -> ExecutionRecord {
 /// Un intent con todo lo que lo hace reconciliable.
 fn an_intent(advisory: &str) -> Intent {
     Intent::new(
-        "vulnerability_impact",
-        &hodei_reactive::Event::new(
-            format!("evt-{advisory}"),
-            hodei_reactive::EventKind::VulnerabilityAccepted,
-            serde_json::json!({"advisory": advisory}),
-            Utc::now(),
+        IntentOrigin::of(
+            "vulnerability_impact",
+            &hodei_reactive::Event::new(
+                format!("evt-{advisory}"),
+                hodei_reactive::EventKind::VulnerabilityAccepted,
+                serde_json::json!({"advisory": advisory}),
+                Utc::now(),
+            ),
+            &[format!("evt-{advisory}")],
         ),
-        &[format!("evt-{advisory}")],
         "acme",
         "security_case",
         format!("case:{advisory}:app-1"),
