@@ -610,8 +610,7 @@ impl IntentExecutor for DomainIntentExecutor {
                 }
             }
             "decision_reevaluation" => {
-                let Ok(effect) =
-                    serde_json::from_value::<DecisionEffect>(intent.payload.clone())
+                let Ok(effect) = serde_json::from_value::<DecisionEffect>(intent.payload.clone())
                 else {
                     return Receipt::Failed {
                         reason: format!(
@@ -623,8 +622,7 @@ impl IntentExecutor for DomainIntentExecutor {
                 };
                 if effect.subject.trim().is_empty() {
                     return Receipt::Failed {
-                        reason: "the reevaluation does not say which subject it serves"
-                            .to_string(),
+                        reason: "the reevaluation does not say which subject it serves".to_string(),
                         retryable: false,
                     };
                 }

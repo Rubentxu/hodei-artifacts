@@ -530,8 +530,8 @@ async fn a_subject_of_another_account_is_not_admitted() {
     let graph = TheGraph::new(Vec::new());
     let service = SimulationService::new(graph.clone(), Arc::new(PolicyDrivenEvaluator));
 
-    let foreign = Hrn::from_string("hrn:hodei:artifacts:eu-west-1:contoso:Artifact/private")
-        .expect("un HRN");
+    let foreign =
+        Hrn::from_string("hrn:hodei:artifacts:eu-west-1:contoso:Artifact/private").expect("un HRN");
     let fork = the_fork(the_policy("1.0.0"))
         .with_subjects(vec![subject(), foreign])
         .with_policy(the_strict_policy("2.0.0"));

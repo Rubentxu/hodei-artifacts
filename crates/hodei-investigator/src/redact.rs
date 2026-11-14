@@ -10,15 +10,21 @@
 /// La lista es deliberadamente corta y de senal alta: cada patron que
 /// se anade es un patron que puede redactar de mas, y redactar de mas
 /// tambien es esconder.
-const PATTERNS: &[( &str, &str )] = &[
+const PATTERNS: &[(&str, &str)] = &[
     // Claves de acceso de AWS: AKIA seguido de 16 mayusculas/digitos.
     ("AKIA[0-9A-Z]{16}", "aws-access-key"),
     // Tokens de GitHub: ghp_/gho_/ghs_ seguidos de 36 caracteres.
     ("gh[pos]_[A-Za-z0-9]{36}", "github-token"),
     // Un token Bearer en cabecera.
-    ("(?i)bearer[ \\t]+[A-Za-z0-9\\-\\._~\\+/]+=*", "bearer-token"),
+    (
+        "(?i)bearer[ \\t]+[A-Za-z0-9\\-\\._~\\+/]+=*",
+        "bearer-token",
+    ),
     // Un JWT: tres segmentos base64url separados por punto.
-    ("eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,}", "jwt"),
+    (
+        "eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,}",
+        "jwt",
+    ),
     // Una cadena hexadecimal larga (>= 32): firma, resumen o secreto.
     ("\\b[0-9a-fA-F]{32,}\\b", "hex-secret"),
 ];

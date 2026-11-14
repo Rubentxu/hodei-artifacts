@@ -53,7 +53,10 @@ impl std::fmt::Display for SimulationError {
                 write!(formatter, "the simulation is not allowed: {message}")
             }
             Self::ReadFailed(message) => {
-                write!(formatter, "a read that the decision needs failed: {message}")
+                write!(
+                    formatter,
+                    "a read that the decision needs failed: {message}"
+                )
             }
         }
     }

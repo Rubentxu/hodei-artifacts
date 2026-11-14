@@ -310,9 +310,12 @@ impl ReactiveRuntime {
                     causation.clone(),
                     now,
                 )
-                .finished(ExecutionOutcome::Cut {
-                    reason: reason.clone(),
-                }, now);
+                .finished(
+                    ExecutionOutcome::Cut {
+                        reason: reason.clone(),
+                    },
+                    now,
+                );
                 self.store.put(record.clone()).await;
                 report.executions.push(record);
                 break;
@@ -536,7 +539,12 @@ impl ReactiveRuntime {
         // and the one that loses knows the intent is somebody else's.
         let owner = self.the_owner();
         let claimed = outbox
-            .claim(&intent.identity, &owner, now + chrono::Duration::seconds(60), now)
+            .claim(
+                &intent.identity,
+                &owner,
+                now + chrono::Duration::seconds(60),
+                now,
+            )
             .await;
         match claimed {
             Err(reason) => {
@@ -591,9 +599,7 @@ impl ReactiveRuntime {
 
         // The touch, and the receipt of what became of it.
         let receipt = executor.apply(intent).await;
-        let _ = outbox
-            .record_receipt(&intent.identity, &receipt)
-            .await;
+        let _ = outbox.record_receipt(&intent.identity, &receipt).await;
         match receipt {
             Receipt::Applied => {
                 self.store.record_effect(intent.as_effect()).await;
@@ -798,7 +804,8 @@ impl ReactiveRuntime {
             }
             let already = self
                 .store
-                .applied_effects().await
+                .applied_effects()
+                .await
                 .iter()
                 .any(|applied| applied.idempotency_key == effect.idempotency_key);
             if already {

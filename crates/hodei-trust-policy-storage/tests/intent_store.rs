@@ -68,7 +68,10 @@ async fn the_port_conforms(store: Arc<dyn ExecutionStore>) {
         .expect("el registro queda");
     assert_eq!(read.key, record.key);
     assert_eq!(read.event_id, "evt-1");
-    assert_eq!(read.causation, vec!["evt-0".to_string(), "evt-1".to_string()]);
+    assert_eq!(
+        read.causation,
+        vec!["evt-0".to_string(), "evt-1".to_string()]
+    );
     assert_eq!(read.attempts, record.attempts);
     assert_eq!(read.trace, record.trace, "la traza sobrevive");
     assert_eq!(read.outcome, record.outcome, "el resultado sobrevive");
@@ -83,11 +86,18 @@ async fn the_port_conforms(store: Arc<dyn ExecutionStore>) {
     )
     .finished(ExecutionOutcome::Completed, Utc::now());
     store.put(again).await;
-    let read = store.execution_of("vulnerability_impact:evt-1").await.unwrap();
+    let read = store
+        .execution_of("vulnerability_impact:evt-1")
+        .await
+        .unwrap();
     assert_eq!(read.outcome, ExecutionOutcome::Completed);
 
     // Los efectos se deduplican por su clave.
-    let effect = hodei_reactive::behavior::Effect::new("security_case", "case:1", serde_json::json!({"one": 1}));
+    let effect = hodei_reactive::behavior::Effect::new(
+        "security_case",
+        "case:1",
+        serde_json::json!({"one": 1}),
+    );
     store.record_effect(effect.clone()).await;
     store.record_effect(effect.clone()).await;
     let effects = store.applied_effects().await;
@@ -124,7 +134,10 @@ async fn the_port_conforms_in_surreal() {
             .await
             .expect("la base de datos abre"),
     );
-    db.use_ns("hodei").use_db("evidence").await.expect("el espacio");
+    db.use_ns("hodei")
+        .use_db("evidence")
+        .await
+        .expect("el espacio");
     the_port_conforms(Arc::new(SurrealIntentStore::new(db))).await;
 }
 
@@ -137,9 +150,14 @@ async fn a_restart_recovers_the_records_and_the_effects() {
 
     {
         let db = Arc::new(
-            Surreal::new::<RocksDb>(path.clone()).await.expect("la base abre"),
+            Surreal::new::<RocksDb>(path.clone())
+                .await
+                .expect("la base abre"),
         );
-        db.use_ns("hodei").use_db("evidence").await.expect("el espacio");
+        db.use_ns("hodei")
+            .use_db("evidence")
+            .await
+            .expect("el espacio");
         let store = SurrealIntentStore::new(db.clone());
         store
             .put(a_record("vulnerability_impact:evt-1", "evt-1", "evt-0"))
@@ -160,15 +178,25 @@ async fn a_restart_recovers_the_records_and_the_effects() {
 
     // El proceso vuelve: otro store sobre LA MISMA base.
     let db = Arc::new(Surreal::new::<RocksDb>(path).await.expect("la base vuelve"));
-    db.use_ns("hodei").use_db("evidence").await.expect("el espacio");
+    db.use_ns("hodei")
+        .use_db("evidence")
+        .await
+        .expect("el espacio");
     let store = SurrealIntentStore::new(db);
 
     let record = store
         .execution_of("vulnerability_impact:evt-1")
         .await
         .expect("el registro sobrevive al reinicio");
-    assert_eq!(record.causation, vec!["evt-0".to_string(), "evt-1".to_string()]);
-    assert_eq!(store.applied_effects().await.len(), 1, "el recibo sobrevive");
+    assert_eq!(
+        record.causation,
+        vec!["evt-0".to_string(), "evt-1".to_string()]
+    );
+    assert_eq!(
+        store.applied_effects().await.len(),
+        1,
+        "el recibo sobrevive"
+    );
 }
 
 /// La reclamacion es un compare-and-set: dos workers piden el mismo
@@ -182,14 +210,24 @@ async fn two_workers_do_not_win_the_same_claim() {
 
     let now = Utc::now();
     let winner = store
-        .claim(intent.identity.as_str(), "worker-a", now + Duration::seconds(30), now)
+        .claim(
+            intent.identity.as_str(),
+            "worker-a",
+            now + Duration::seconds(30),
+            now,
+        )
         .await
         .expect("la reclamacion corre")
         .expect("el worker a lo gana");
     assert_eq!(winner.identity, intent.identity);
 
     let loser = store
-        .claim(intent.identity.as_str(), "worker-b", now + Duration::seconds(30), now)
+        .claim(
+            intent.identity.as_str(),
+            "worker-b",
+            now + Duration::seconds(30),
+            now,
+        )
         .await
         .expect("la reclamacion corre");
     assert!(loser.is_none(), "el worker b lo pierde y lo sabe");
@@ -203,14 +241,23 @@ async fn two_workers_do_not_win_the_same_claim() {
     // Y un intent aplicado no vuelve a reclamarse ni se recupera.
     assert!(
         store
-            .claim(intent.identity.as_str(), "worker-a", now + Duration::seconds(30), now)
+            .claim(
+                intent.identity.as_str(),
+                "worker-a",
+                now + Duration::seconds(30),
+                now
+            )
             .await
             .expect("la reclamacion corre")
             .is_none(),
         "un intent aplicado no se reclama"
     );
     assert!(
-        store.recover_pending(now).await.expect("la recuperacion corre").is_empty(),
+        store
+            .recover_pending(now)
+            .await
+            .expect("la recuperacion corre")
+            .is_empty(),
         "un intent aplicado no esta pendiente"
     );
 }
@@ -225,16 +272,31 @@ async fn a_repeated_receipt_changes_nothing() {
     store.put_pending(&intent).await.expect("el intent se dice");
     let now = Utc::now();
     store
-        .claim(intent.identity.as_str(), "worker-a", now + Duration::seconds(30), now)
+        .claim(
+            intent.identity.as_str(),
+            "worker-a",
+            now + Duration::seconds(30),
+            now,
+        )
         .await
         .expect("la reclamacion corre")
         .expect("el worker lo gana");
 
-    store.record_receipt(&intent.identity, &Receipt::Applied).await.expect("el recibo entra");
-    store.record_receipt(&intent.identity, &Receipt::Applied).await.expect("el mismo recibo no rompe");
+    store
+        .record_receipt(&intent.identity, &Receipt::Applied)
+        .await
+        .expect("el recibo entra");
+    store
+        .record_receipt(&intent.identity, &Receipt::Applied)
+        .await
+        .expect("el mismo recibo no rompe");
 
     assert!(
-        store.recover_pending(now).await.expect("la recuperacion corre").is_empty(),
+        store
+            .recover_pending(now)
+            .await
+            .expect("la recuperacion corre")
+            .is_empty(),
         "sigue aplicado, una sola vez"
     );
 }
@@ -251,7 +313,10 @@ async fn a_receipt_without_a_claim_is_refused() {
     let outcome = store
         .record_receipt(&intent.identity, &Receipt::Applied)
         .await;
-    assert!(outcome.is_err(), "no se recibe lo que no se reclamo: {outcome:?}");
+    assert!(
+        outcome.is_err(),
+        "no se recibe lo que no se reclamo: {outcome:?}"
+    );
 }
 
 /// El lease vencido devuelve el intent al mercado: el worker que murio
@@ -267,20 +332,33 @@ async fn an_expired_lease_makes_the_intent_claimable_again() {
     // Un lease que ya nacio vencido: el worker tomo el intent y murio
     // antes de que el lease empezara a valer.
     store
-        .claim(intent.identity.as_str(), "worker-dead", now - Duration::seconds(1), now)
+        .claim(
+            intent.identity.as_str(),
+            "worker-dead",
+            now - Duration::seconds(1),
+            now,
+        )
         .await
         .expect("la reclamacion corre")
         .expect("el worker muerto lo gana en su momento");
 
     // La recuperacion lo vuelve a poner en el mercado.
-    let pending = store.recover_pending(now).await.expect("la recuperacion corre");
+    let pending = store
+        .recover_pending(now)
+        .await
+        .expect("la recuperacion corre");
     assert_eq!(pending.len(), 1, "el intent de un lease vencido vuelve");
     assert_eq!(pending[0].identity, intent.identity);
 
     // Y otro worker lo reclama.
     assert!(
         store
-            .claim(intent.identity.as_str(), "worker-b", now + Duration::seconds(30), now)
+            .claim(
+                intent.identity.as_str(),
+                "worker-b",
+                now + Duration::seconds(30),
+                now
+            )
             .await
             .expect("la reclamacion corre")
             .is_some(),
@@ -297,9 +375,17 @@ async fn the_receipt_says_what_happens_next() {
 
     // El fallo con reintento: vuelve a pending.
     let retryable = an_intent("GHSA-retry");
-    store.put_pending(&retryable).await.expect("el intent se dice");
     store
-        .claim(retryable.identity.as_str(), "worker-a", now + Duration::seconds(30), now)
+        .put_pending(&retryable)
+        .await
+        .expect("el intent se dice");
+    store
+        .claim(
+            retryable.identity.as_str(),
+            "worker-a",
+            now + Duration::seconds(30),
+            now,
+        )
         .await
         .expect("la reclamacion corre")
         .expect("lo gana");
@@ -313,14 +399,25 @@ async fn the_receipt_says_what_happens_next() {
         )
         .await
         .expect("el recibo entra");
-    let pending = store.recover_pending(now).await.expect("la recuperacion corre");
+    let pending = store
+        .recover_pending(now)
+        .await
+        .expect("la recuperacion corre");
     assert_eq!(pending.len(), 1, "el fallo que se puede reintentar vuelve");
 
     // El fallo sin reintento: se queda failed.
     let permanent = an_intent("GHSA-permanent");
-    store.put_pending(&permanent).await.expect("el intent se dice");
     store
-        .claim(permanent.identity.as_str(), "worker-a", now + Duration::seconds(30), now)
+        .put_pending(&permanent)
+        .await
+        .expect("el intent se dice");
+    store
+        .claim(
+            permanent.identity.as_str(),
+            "worker-a",
+            now + Duration::seconds(30),
+            now,
+        )
         .await
         .expect("la reclamacion corre")
         .expect("lo gana");
@@ -334,7 +431,10 @@ async fn the_receipt_says_what_happens_next() {
         )
         .await
         .expect("el recibo entra");
-    let pending = store.recover_pending(now).await.expect("la recuperacion corre");
+    let pending = store
+        .recover_pending(now)
+        .await
+        .expect("la recuperacion corre");
     assert!(
         pending.iter().all(|one| one.identity != permanent.identity),
         "el fallo permanente no vuelve solo"
@@ -342,9 +442,17 @@ async fn the_receipt_says_what_happens_next() {
 
     // Lo desconocido: NO se reejecuta hasta que alguien reconcilia.
     let unknown = an_intent("GHSA-unknown");
-    store.put_pending(&unknown).await.expect("el intent se dice");
     store
-        .claim(unknown.identity.as_str(), "worker-a", now + Duration::seconds(30), now)
+        .put_pending(&unknown)
+        .await
+        .expect("el intent se dice");
+    store
+        .claim(
+            unknown.identity.as_str(),
+            "worker-a",
+            now + Duration::seconds(30),
+            now,
+        )
         .await
         .expect("la reclamacion corre")
         .expect("lo gana");
@@ -357,17 +465,29 @@ async fn the_receipt_says_what_happens_next() {
         )
         .await
         .expect("el recibo entra");
-    let pending = store.recover_pending(now).await.expect("la recuperacion corre");
+    let pending = store
+        .recover_pending(now)
+        .await
+        .expect("la recuperacion corre");
     assert!(
         pending.iter().all(|one| one.identity != unknown.identity),
         "lo desconocido no se reejecuta solo: {pending:?}"
     );
 
     // La reconciliacion, explicita, lo devuelve al mercado.
-    store.reconcile(&unknown.identity).await.expect("la reconciliacion entra");
-    let pending = store.recover_pending(now).await.expect("la recuperacion corre");
+    store
+        .reconcile(&unknown.identity)
+        .await
+        .expect("la reconciliacion entra");
+    let pending = store
+        .recover_pending(now)
+        .await
+        .expect("la recuperacion corre");
     assert_eq!(
-        pending.iter().filter(|one| one.identity == unknown.identity).count(),
+        pending
+            .iter()
+            .filter(|one| one.identity == unknown.identity)
+            .count(),
         1,
         "reconciliado, vuelve a intentarse"
     );
@@ -381,6 +501,9 @@ async fn the_store() -> (tempfile::TempDir, SurrealIntentStore<Db>) {
             .await
             .expect("la base de datos abre"),
     );
-    db.use_ns("hodei").use_db("evidence").await.expect("el espacio");
+    db.use_ns("hodei")
+        .use_db("evidence")
+        .await
+        .expect("el espacio");
     (tmp, SurrealIntentStore::new(db))
 }

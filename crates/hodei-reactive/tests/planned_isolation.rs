@@ -30,7 +30,10 @@ struct SpyExecutor {
 }
 
 impl SpyExecutor {
-    fn over(store: Arc<dyn ExecutionStore>, answer: Receipt) -> (Arc<Self>, Arc<Mutex<Vec<String>>>) {
+    fn over(
+        store: Arc<dyn ExecutionStore>,
+        answer: Receipt,
+    ) -> (Arc<Self>, Arc<Mutex<Vec<String>>>) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         (
             Arc::new(Self {
@@ -53,9 +56,16 @@ impl IntentExecutor for SpyExecutor {
             "planned:{}:{}",
             intent.origin.behavior, intent.origin.event_id
         );
-        let record = self.store.execution_of(&key).await.expect("el plan esta dicho");
+        let record = self
+            .store
+            .execution_of(&key)
+            .await
+            .expect("el plan esta dicho");
         assert!(
-            record.trace.iter().any(|entry| entry.what == format!("intent:{}", intent.identity)),
+            record
+                .trace
+                .iter()
+                .any(|entry| entry.what == format!("intent:{}", intent.identity)),
             "el intent {} esta en la traza del plan antes de tocarse",
             intent.identity
         );
@@ -96,9 +106,9 @@ impl SpyPlanning {
 async fn the_read(mode: Mode) -> Result<&'static str, hodei_reactive::behavior::BehaviorError> {
     match mode {
         Mode::Plans | Mode::InvalidInput => Ok("the facts of the risk"),
-        Mode::CannotRead => {
-            Err(hodei_reactive::behavior::BehaviorError::transient("the read of the facts failed"))
-        }
+        Mode::CannotRead => Err(hodei_reactive::behavior::BehaviorError::transient(
+            "the read of the facts failed",
+        )),
     }
 }
 
@@ -120,7 +130,11 @@ impl PlanningBehavior for SpyPlanning {
         }
     }
 
-    async fn plan(&self, event: &Event, scope: &ReadScope) -> Result<Plan, hodei_reactive::behavior::BehaviorError> {
+    async fn plan(
+        &self,
+        event: &Event,
+        scope: &ReadScope,
+    ) -> Result<Plan, hodei_reactive::behavior::BehaviorError> {
         // The validation failure: the input does not say what it must.
         if self.mode == Mode::InvalidInput {
             return Err(hodei_reactive::behavior::BehaviorError::permanent(
@@ -216,7 +230,8 @@ async fn the_plan_is_recorded_before_the_executor_touches() {
     assert_eq!(report.caused.len(), 1, "el evento causado sale al informe");
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1").await
+        .execution_of("planned:spy_planning:evt-plan-1")
+        .await
         .expect("la ejecucion del plan queda");
     assert!(
         record
@@ -258,11 +273,15 @@ async fn a_validation_failure_touches_nothing() {
     assert!(report.applied.is_empty() && report.caused.is_empty());
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1").await
+        .execution_of("planned:spy_planning:evt-plan-1")
+        .await
         .expect("el fallo queda escrito");
     match record.outcome {
         hodei_reactive::execution::ExecutionOutcome::Failed { retryable, .. } => {
-            assert!(!retryable, "una validacion que falla no mejora con reintentos");
+            assert!(
+                !retryable,
+                "una validacion que falla no mejora con reintentos"
+            );
         }
         other => panic!("el resultado tiene que ser un fallo: {other:?}"),
     }
@@ -292,7 +311,8 @@ async fn a_preparation_failure_touches_nothing() {
     );
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1").await
+        .execution_of("planned:spy_planning:evt-plan-1")
+        .await
         .expect("el fallo queda escrito");
     match record.outcome {
         hodei_reactive::execution::ExecutionOutcome::Failed { retryable, .. } => {
@@ -321,11 +341,17 @@ async fn an_exhausted_budget_touches_nothing() {
         .await
         .expect("el despacho corre y se corta");
 
-    assert!(calls.lock().unwrap().is_empty(), "sin presupuesto no hay toques");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "sin presupuesto no hay toques"
+    );
     assert!(report.applied.is_empty());
     assert!(report.cut.is_some(), "el corte queda en el informe");
 
-    let record = store.execution_of("cut:evt-plan-1").await.expect("el corte queda");
+    let record = store
+        .execution_of("cut:evt-plan-1")
+        .await
+        .expect("el corte queda");
     assert!(
         matches!(
             record.outcome,
@@ -353,8 +379,14 @@ async fn an_intent_is_applied_once_only() {
         .expect("el segundo despacho corre");
 
     assert_eq!(first.applied.len(), 2);
-    assert!(second.applied.is_empty(), "el efecto ya aplicado no se repite");
-    assert!(!second.duplicates.is_empty(), "la segunda entrega es duplicado");
+    assert!(
+        second.applied.is_empty(),
+        "el efecto ya aplicado no se repite"
+    );
+    assert!(
+        !second.duplicates.is_empty(),
+        "la segunda entrega es duplicado"
+    );
     assert_eq!(
         calls.lock().unwrap().len(),
         2,

@@ -67,7 +67,8 @@ impl GraphProjector for EvidenceGraphProjector {
             let Ok(payload) = event.payload_as::<EvidencePayload>() else {
                 return Ok(changes);
             };
-            let (Some(superseded), Some(claim)) = (payload.supersedes.clone(), payload.relation_claim.clone())
+            let (Some(superseded), Some(claim)) =
+                (payload.supersedes.clone(), payload.relation_claim.clone())
             else {
                 return Ok(changes);
             };

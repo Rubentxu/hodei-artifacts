@@ -115,11 +115,7 @@ impl ReadSet {
     /// Registra la generacion de una fuente.
     pub fn generation(&mut self, source: impl Into<String>, version: u64) {
         let source = source.into();
-        if !self
-            .generations
-            .iter()
-            .any(|(known, _)| *known == source)
-        {
+        if !self.generations.iter().any(|(known, _)| *known == source) {
             self.generations.push((source, version));
         }
     }
@@ -133,10 +129,7 @@ impl ReadSet {
         stamps.sort();
         let mut generations = self.generations.clone();
         generations.sort();
-        format!(
-            "readset generations={:?} stamps={:?}",
-            generations, stamps
-        )
+        format!("readset generations={:?} stamps={:?}", generations, stamps)
     }
 
     /// La huella del manifiesto canonico: el digest de lo que se leyo,

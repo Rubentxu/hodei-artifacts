@@ -126,9 +126,7 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
         let evidence = self
             .the_evidence(subject, facts)
             .await
-            .map_err(|reason| {
-                format!("the evidence of {subject} could not be read: {reason}")
-            })?;
+            .map_err(|reason| format!("the evidence of {subject} could not be read: {reason}"))?;
         // Una evidencia REALMENTE vacia no es un error: el sujeto puede
         // no tener nada dicho, y la decision se toma con lo que hay --
         // que puede ser Indeterminate, y Indeterminate NO es un ALLOW.
