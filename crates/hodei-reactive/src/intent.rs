@@ -218,8 +218,7 @@ pub trait IntentOutbox: Send + Sync {
     /// Writes the receipt of a claimed intent. From `claimed`, and only
     /// from `claimed`: a receipt for an intent that nobody claimed is a
     /// receipt nobody can explain. A repeated receipt changes nothing.
-    async fn record_receipt(&self, identity: &str, receipt: &Receipt)
-        -> Result<(), String>;
+    async fn record_receipt(&self, identity: &str, receipt: &Receipt) -> Result<(), String>;
 
     /// The intents that are waiting: `pending`, and the claimed ones
     /// whose lease expired. The ones with an `unknown` receipt are NOT
@@ -321,8 +320,7 @@ impl IntentOutbox for InMemoryIntentOutbox {
         };
         // The compare-and-set: pending, or a lease that died.
         let claimable = row.state == "pending"
-            || (row.state == "claimed"
-                && row.lease_until.is_some_and(|until| until <= now));
+            || (row.state == "claimed" && row.lease_until.is_some_and(|until| until <= now));
         if !claimable {
             return Ok(None);
         }
@@ -332,11 +330,7 @@ impl IntentOutbox for InMemoryIntentOutbox {
         Ok(Some(row.intent.clone()))
     }
 
-    async fn record_receipt(
-        &self,
-        identity: &str,
-        receipt: &Receipt,
-    ) -> Result<(), String> {
+    async fn record_receipt(&self, identity: &str, receipt: &Receipt) -> Result<(), String> {
         let mut inner = self.inner.lock().expect("the outbox is not poisoned");
         let Some(row) = inner.get_mut(identity) else {
             return Err(format!(
@@ -346,7 +340,9 @@ impl IntentOutbox for InMemoryIntentOutbox {
         // The receipt that says what is ALREADY true changes nothing.
         let already_true = match receipt {
             Receipt::Applied => row.state == "applied",
-            Receipt::Failed { retryable: true, .. } => row.state == "pending",
+            Receipt::Failed {
+                retryable: true, ..
+            } => row.state == "pending",
             Receipt::Failed { .. } => row.state == "failed",
             Receipt::Unknown { .. } => row.state == "unknown",
         };
@@ -360,7 +356,9 @@ impl IntentOutbox for InMemoryIntentOutbox {
         }
         let (state, lease) = match receipt {
             Receipt::Applied => ("applied", (None, None)),
-            Receipt::Failed { retryable: true, .. } => ("pending", (None, None)),
+            Receipt::Failed {
+                retryable: true, ..
+            } => ("pending", (None, None)),
             Receipt::Failed { .. } => ("failed", (None, None)),
             Receipt::Unknown { .. } => ("unknown", (None, None)),
         };
@@ -375,9 +373,7 @@ impl IntentOutbox for InMemoryIntentOutbox {
         let mut inner = self.inner.lock().expect("the outbox is not poisoned");
         let mut pending: Vec<Intent> = Vec::new();
         for row in inner.values_mut() {
-            if row.state == "claimed"
-                && row.lease_until.is_some_and(|until| until <= now)
-            {
+            if row.state == "claimed" && row.lease_until.is_some_and(|until| until <= now) {
                 // The lease that died goes back to the market.
                 row.state = "pending".to_string();
                 row.lease_owner = None;

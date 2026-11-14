@@ -25,7 +25,7 @@ use hodei_investigator::guard::{ActionKind, ActionState, CapabilityGuard, Propos
 use hodei_investigator::investigator::{EvidenceRetriever, InvestigationError, Investigator};
 use hodei_investigator::model::{FixtureProvider, ModelProvider, ModelRequest};
 use hodei_investigator::scope::{
-    Coverage, RetrievalError, RetrievalScope, RetrievedContext, ScopedFact, ScopeViolation,
+    Coverage, RetrievalError, RetrievalScope, RetrievedContext, ScopeViolation, ScopedFact,
 };
 use hodei_investigator::{AIClaim as TheClaim, PROMPT_VERSION};
 use kernel::Hrn;
@@ -87,8 +87,7 @@ struct CountingRetriever {
 #[async_trait]
 impl EvidenceRetriever for CountingRetriever {
     async fn retrieve(&self, _scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
-        self.calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         match self.answer.clone() {
             Ok(facts) => Ok(RetrievedContext {
                 facts,

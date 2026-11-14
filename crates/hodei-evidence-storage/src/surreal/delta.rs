@@ -152,9 +152,7 @@ impl<C: Connection> RelationDeltaLedger for SurrealRelationDeltaLedger<C> {
                 continue;
             }
             if seq == 0 {
-                seq = self
-                    .the_max_seq(&delta.tenant.to_string())
-                    .await?;
+                seq = self.the_max_seq(&delta.tenant.to_string()).await?;
             }
             seq += 1;
             fresh.push((seq, delta));

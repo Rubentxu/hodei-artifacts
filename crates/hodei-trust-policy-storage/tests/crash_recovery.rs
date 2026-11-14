@@ -152,7 +152,9 @@ impl World {
     /// Siembra la capa de riesgo: el artefacto, su componente vulnerable,
     /// la vulnerabilidad y el despliegue. Solo la hace el primer proceso.
     async fn seed_risk_layer(&self) {
-        use hodei_evidence::domain::graph::{GraphChangeSet, GraphNode, GraphRelation, NodeKind, RelationType};
+        use hodei_evidence::domain::graph::{
+            GraphChangeSet, GraphNode, GraphRelation, NodeKind, RelationType,
+        };
         use hodei_evidence::ports::graph::GraphWriter;
         use hodei_evidence::EvidenceId;
 
@@ -168,10 +170,30 @@ impl World {
         .expect("un HRN");
 
         let changes = GraphChangeSet::empty()
-            .with_node(GraphNode::new(subject(), account(), NodeKind::Artifact, now))
-            .with_node(GraphNode::new(component.clone(), account(), NodeKind::Component, now))
-            .with_node(GraphNode::new(advisory(), account(), NodeKind::Vulnerability, now))
-            .with_node(GraphNode::new(deployment.clone(), account(), NodeKind::Deployment, now))
+            .with_node(GraphNode::new(
+                subject(),
+                account(),
+                NodeKind::Artifact,
+                now,
+            ))
+            .with_node(GraphNode::new(
+                component.clone(),
+                account(),
+                NodeKind::Component,
+                now,
+            ))
+            .with_node(GraphNode::new(
+                advisory(),
+                account(),
+                NodeKind::Vulnerability,
+                now,
+            ))
+            .with_node(GraphNode::new(
+                deployment.clone(),
+                account(),
+                NodeKind::Deployment,
+                now,
+            ))
             .with_node(GraphNode::new(
                 hodei_evidence::application::projector::evidence_hrn(&account(), &evidence),
                 account(),
@@ -220,8 +242,7 @@ impl World {
         let outbox = outbox.unwrap_or_else(|| self.intents.clone() as Arc<dyn IntentOutbox>);
         let mut runtime = ReactiveRuntime::new(store, Budget::default()).with_tenant(ACCOUNT);
         runtime.with_outbox(outbox);
-        let executor = executor
-            .unwrap_or_else(|| self.executor.clone() as Arc<dyn IntentExecutor>);
+        let executor = executor.unwrap_or_else(|| self.executor.clone() as Arc<dyn IntentExecutor>);
         runtime.register_planned(
             Arc::new(PlannedVulnerabilityReaction::new(self.radius.clone())),
             executor.clone(),
@@ -274,18 +295,11 @@ impl IntentOutbox for AbortOutbox {
         claimed
     }
 
-    async fn record_receipt(
-        &self,
-        identity: &str,
-        receipt: &Receipt,
-    ) -> Result<(), String> {
+    async fn record_receipt(&self, identity: &str, receipt: &Receipt) -> Result<(), String> {
         self.inner.record_receipt(identity, receipt).await
     }
 
-    async fn recover_pending(
-        &self,
-        now: chrono::DateTime<Utc>,
-    ) -> Result<Vec<Intent>, String> {
+    async fn recover_pending(&self, now: chrono::DateTime<Utc>) -> Result<Vec<Intent>, String> {
         self.inner.recover_pending(now).await
     }
 
@@ -402,9 +416,7 @@ async fn kill_and_restart_at(window: &str) -> (std::path::PathBuf, World) {
 }
 
 /// Las cuentas de la ruta, despues de la recuperacion.
-async fn the_counts(
-    world: &World,
-) -> (usize, usize, Vec<IntentDiagnostic>) {
+async fn the_counts(world: &World) -> (usize, usize, Vec<IntentDiagnostic>) {
     let cases = world
         .cases
         .of_trigger(ADVISORY)
@@ -417,7 +429,11 @@ async fn the_counts(
         .await
         .map_err(|error| error.to_string())
         .expect("las decisiones se leen");
-    let diagnostics = world.intents.diagnose(ACCOUNT).await.expect("el diagnostico");
+    let diagnostics = world
+        .intents
+        .diagnose(ACCOUNT)
+        .await
+        .expect("el diagnostico");
     (cases.len(), decisions.len(), diagnostics)
 }
 
@@ -442,7 +458,11 @@ async fn a_kill_before_the_claim_leaves_the_route_ready_to_resume() {
         .resume(now)
         .await
         .expect("la recuperacion en el arranque corre");
-    assert_eq!(report.applied.len(), 2, "el caso y la decision se aplicaron");
+    assert_eq!(
+        report.applied.len(),
+        2,
+        "el caso y la decision se aplicaron"
+    );
 
     let (cases, decisions, diagnostics) = the_counts(&world).await;
     assert_eq!(cases, 1, "un caso");
@@ -550,7 +570,11 @@ async fn a_kill_after_the_effect_and_before_the_receipt_does_not_repeat_it() {
         .resume(now)
         .await
         .expect("la recuperacion corre");
-    assert_eq!(report.applied.len(), 2, "el caso y la decision se aplicaron");
+    assert_eq!(
+        report.applied.len(),
+        2,
+        "el caso y la decision se aplicaron"
+    );
 
     let (cases, decisions, diagnostics) = the_counts(&world).await;
     assert_eq!(cases, 1, "UN caso, aunque el executor toco dos veces");
@@ -585,12 +609,20 @@ async fn an_unknown_result_survives_the_restart_marked_and_reconciliable() {
 
     // El proceso vuelve: lo desconocido esta MARCADO, con su motivo.
     let world = World::open(tmp.path()).await;
-    let diagnostics = world.intents.diagnose(ACCOUNT).await.expect("el diagnostico");
+    let diagnostics = world
+        .intents
+        .diagnose(ACCOUNT)
+        .await
+        .expect("el diagnostico");
     let unknown: Vec<&IntentDiagnostic> = diagnostics
         .iter()
         .filter(|row| row.state == "unknown")
         .collect();
-    assert_eq!(unknown.len(), 1, "la decision quedo desconocida: {diagnostics:?}");
+    assert_eq!(
+        unknown.len(),
+        1,
+        "la decision quedo desconocida: {diagnostics:?}"
+    );
     assert!(
         unknown[0].failure_reason.is_some(),
         "el motivo de lo desconocido esta en la vista"
@@ -624,7 +656,11 @@ async fn an_unknown_result_survives_the_restart_marked_and_reconciliable() {
         .resume(Utc::now() + Duration::seconds(120))
         .await
         .expect("el resume tras reconciliar corre");
-    assert_eq!(report.applied.len(), 1, "reconciliado, la decision se aplica");
+    assert_eq!(
+        report.applied.len(),
+        1,
+        "reconciliado, la decision se aplica"
+    );
 
     let (cases, decisions, diagnostics) = the_counts(&world).await;
     assert_eq!(cases, 1, "un caso");
@@ -668,8 +704,16 @@ async fn the_state_view_is_tenant_scoped_and_carries_no_secrets() {
         .expect("el despacho corre");
 
     // Lo que ve SU tenant: la ruta entera, aplicada.
-    let diagnostics = world.intents.diagnose(ACCOUNT).await.expect("el diagnostico");
-    assert_eq!(diagnostics.len(), 2, "la ruta dijo dos intents: {diagnostics:?}");
+    let diagnostics = world
+        .intents
+        .diagnose(ACCOUNT)
+        .await
+        .expect("el diagnostico");
+    assert_eq!(
+        diagnostics.len(),
+        2,
+        "la ruta dijo dos intents: {diagnostics:?}"
+    );
     for row in &diagnostics {
         assert_eq!(row.tenant, ACCOUNT);
         assert_eq!(row.run, "vulnerability_impact");
@@ -695,9 +739,11 @@ async fn the_state_view_is_tenant_scoped_and_carries_no_secrets() {
 
     // Y la vista sin tenant no contesta.
     let outcome = world.intents.diagnose("").await;
-    assert!(outcome.is_err(), "sin tenant no hay diagnostico: {outcome:?}");
+    assert!(
+        outcome.is_err(),
+        "sin tenant no hay diagnostico: {outcome:?}"
+    );
 }
-
 
 /// El control: el hijo despacha y sale LIMPIO; la base tiene TODO lo
 /// escrito. Aisla la durabilidad al kill de cualquier otro problema.

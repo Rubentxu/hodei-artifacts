@@ -10,20 +10,20 @@
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
+use hodei_evidence::EvidenceId;
 use hodei_evidence::domain::delta::{RelationDelta, RelationDeltaKind, RelationDeltaLedger};
 use hodei_evidence::domain::graph::{
     GraphChangeSet, GraphNode, GraphRelation, GraphRelationWithdrawal, NodeKind, RelationType,
 };
 use hodei_evidence::ports::graph::GraphWriter;
-use hodei_evidence::EvidenceId;
 use hodei_evidence_storage::surreal::delta::SurrealRelationDeltaLedger;
 use hodei_evidence_storage::surreal::graph::SurrealGraphStore;
-use hodei_risk_storage::impact_view::SurrealImpactView;
 use hodei_reactive::reactions::BlastRadiusSource;
+use hodei_risk_storage::impact_view::SurrealImpactView;
 use hodei_risk_storage::reactions::SurrealBlastRadius;
 use kernel::Hrn;
-use surrealdb::engine::local::{Db, RocksDb};
 use surrealdb::Surreal;
+use surrealdb::engine::local::{Db, RocksDb};
 
 fn tenant() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/acme").expect("un HRN")
@@ -50,7 +50,9 @@ fn artifact(index: usize) -> Hrn {
 }
 
 fn moment() -> chrono::DateTime<Utc> {
-    Utc.timestamp_opt(1_767_322_800, 0).single().expect("un momento")
+    Utc.timestamp_opt(1_767_322_800, 0)
+        .single()
+        .expect("un momento")
 }
 
 /// El changeset de un artefacto que contiene el componente vulnerable,
@@ -60,9 +62,24 @@ fn the_contains(cause: &str, index: usize) -> GraphChangeSet {
     let shared = EvidenceId::new("ev-shared");
     GraphChangeSet::empty()
         .with_cause(cause)
-        .with_node(GraphNode::new(component(), tenant(), NodeKind::Component, moment()))
-        .with_node(GraphNode::new(vulnerability(), tenant(), NodeKind::Vulnerability, moment()))
-        .with_node(GraphNode::new(artifact(index), tenant(), NodeKind::Artifact, moment()))
+        .with_node(GraphNode::new(
+            component(),
+            tenant(),
+            NodeKind::Component,
+            moment(),
+        ))
+        .with_node(GraphNode::new(
+            vulnerability(),
+            tenant(),
+            NodeKind::Vulnerability,
+            moment(),
+        ))
+        .with_node(GraphNode::new(
+            artifact(index),
+            tenant(),
+            NodeKind::Artifact,
+            moment(),
+        ))
         .with_node(GraphNode::new(
             hodei_evidence::application::projector::evidence_hrn(&tenant(), &evidence_id),
             tenant(),
@@ -122,7 +139,10 @@ async fn the_world() -> (
             .await
             .expect("la base abre"),
     );
-    db.use_ns("hodei").use_db("evidence").await.expect("el espacio");
+    db.use_ns("hodei")
+        .use_db("evidence")
+        .await
+        .expect("el espacio");
     let graph = Arc::new(SurrealGraphStore::new(db.clone()));
     let deltas = Arc::new(SurrealRelationDeltaLedger::new(db));
     let view = SurrealImpactView::new(graph.clone(), deltas.clone());
@@ -163,7 +183,10 @@ async fn the_view_says_what_the_walk_says_including_522_subjects() {
     };
 
     // La vista, materializada desde el MISMO recorrido.
-    let snapshot = view.rebuild_advisory(&tenant(), &vulnerability()).await.expect("la vista corre");
+    let snapshot = view
+        .rebuild_advisory(&tenant(), &vulnerability())
+        .await
+        .expect("la vista corre");
 
     assert_eq!(
         snapshot.subjects.len(),
@@ -177,7 +200,11 @@ async fn the_view_says_what_the_walk_says_including_522_subjects() {
     );
 
     // Y la lectura de la vista, por su puerta, dice lo mismo.
-    let read = view.read(&tenant(), &vulnerability()).await.expect("la lectura corre").expect("la vista esta");
+    let read = view
+        .read(&tenant(), &vulnerability())
+        .await
+        .expect("la lectura corre")
+        .expect("la vista esta");
     assert_eq!(read.subjects, snapshot.subjects);
     assert_eq!(read.watermark, snapshot.watermark);
 }
@@ -219,7 +246,10 @@ async fn the_deltas_invalidate_only_the_keys_they_touch() {
     let meta_rows: Vec<hodei_risk_storage::impact_view::ImpactRoute> =
         meta.take(0).expect("las filas meta");
     eprintln!("META={meta_rows:?}");
-    let touched = view.apply_delta(&route_delta).await.expect("la invalidacion corre");
+    let touched = view
+        .apply_delta(&route_delta)
+        .await
+        .expect("la invalidacion corre");
     assert_eq!(
         touched,
         vec![vulnerability()],
@@ -238,7 +268,10 @@ async fn the_deltas_invalidate_only_the_keys_they_touch() {
         cause: "evt-mallory".to_string(),
         observed_at: moment(),
     };
-    let untouched = view.apply_delta(&foreign_delta).await.expect("la invalidacion corre");
+    let untouched = view
+        .apply_delta(&foreign_delta)
+        .await
+        .expect("la invalidacion corre");
     assert!(
         untouched.is_empty(),
         "lo de otra cuenta no invalida nada de esta vista: {untouched:?}"
@@ -246,10 +279,23 @@ async fn the_deltas_invalidate_only_the_keys_they_touch() {
 
     // La reentrega: el mismo delta otra vez es el mismo trabajo una vez,
     // y la vista queda IGUAL, no doble.
-    let before = view.read(&tenant(), &vulnerability()).await.expect("la lectura corre");
-    let again = view.apply_delta(&route_delta).await.expect("la reentrega corre");
-    assert_eq!(again, vec![vulnerability()], "la reentrega invalida lo mismo");
-    let after = view.read(&tenant(), &vulnerability()).await.expect("la lectura corre");
+    let before = view
+        .read(&tenant(), &vulnerability())
+        .await
+        .expect("la lectura corre");
+    let again = view
+        .apply_delta(&route_delta)
+        .await
+        .expect("la reentrega corre");
+    assert_eq!(
+        again,
+        vec![vulnerability()],
+        "la reentrega invalida lo mismo"
+    );
+    let after = view
+        .read(&tenant(), &vulnerability())
+        .await
+        .expect("la lectura corre");
     assert_eq!(before, after, "recomputar lo mismo deja lo mismo");
 }
 
@@ -265,32 +311,51 @@ async fn a_withdrawn_support_takes_only_its_subject_out_of_the_view() {
             .await
             .expect("la carga entra");
     }
-    let before = view.rebuild_advisory(&tenant(), &vulnerability()).await.expect("la vista corre");
+    let before = view
+        .rebuild_advisory(&tenant(), &vulnerability())
+        .await
+        .expect("la vista corre");
     assert_eq!(before.subjects.len(), 4, "tres artefactos y el componente");
 
     // La retirada REAL pasa por el grafo: el apoyo de app-2 se retira y
     // el grafo emite SU delta.
-    graph.apply(the_withdrawal("evt-withdraw", 2)).await.expect("la retirada entra");
-    let said = deltas.version_of(&tenant()).await.expect("la version corre");
+    graph
+        .apply(the_withdrawal("evt-withdraw", 2))
+        .await
+        .expect("la retirada entra");
+    let said = deltas
+        .version_of(&tenant())
+        .await
+        .expect("la version corre");
     assert!(said > 0, "la retirada dejo su delta dicho: {said}");
 
     // La vista se invalida con lo que dijo el grafo.
-    let affected = view.apply_delta(&RelationDelta {
-        kind: RelationDeltaKind::Removed,
-        tenant: tenant(),
-        relation: RelationType::Contains,
-        from: artifact(2),
-        to: component(),
-        evidence: EvidenceId::new("ev-2"),
-        cause: "evt-withdraw".to_string(),
-        observed_at: moment(),
-    }).await.expect("la invalidacion corre");
+    let affected = view
+        .apply_delta(&RelationDelta {
+            kind: RelationDeltaKind::Removed,
+            tenant: tenant(),
+            relation: RelationType::Contains,
+            from: artifact(2),
+            to: component(),
+            evidence: EvidenceId::new("ev-2"),
+            cause: "evt-withdraw".to_string(),
+            observed_at: moment(),
+        })
+        .await
+        .expect("la invalidacion corre");
     assert_eq!(affected, vec![vulnerability()]);
 
-    let after = view.read(&tenant(), &vulnerability()).await.expect("la lectura corre").expect("la vista esta");
+    let after = view
+        .read(&tenant(), &vulnerability())
+        .await
+        .expect("la lectura corre")
+        .expect("la vista esta");
     assert_eq!(after.subjects.len(), 3, "app-2 salio de la vista");
     assert!(
-        after.subjects.iter().all(|(subject, _)| subject.as_str() != artifact(2).to_string()),
+        after
+            .subjects
+            .iter()
+            .all(|(subject, _)| subject.as_str() != artifact(2).to_string()),
         "el sujeto retirado no esta: {:?}",
         after.subjects
     );
@@ -302,41 +367,78 @@ async fn a_withdrawn_support_takes_only_its_subject_out_of_the_view() {
 async fn the_watermark_exposes_the_lag_instead_of_hiding_it() {
     let (_tmp, graph, deltas, view) = the_world().await;
 
-    graph.apply(the_contains("evt-1", 0)).await.expect("la carga entra");
-    view.rebuild_advisory(&tenant(), &vulnerability()).await.expect("la vista corre");
+    graph
+        .apply(the_contains("evt-1", 0))
+        .await
+        .expect("la carga entra");
+    view.rebuild_advisory(&tenant(), &vulnerability())
+        .await
+        .expect("la vista corre");
 
     // Al dia: la version de la vista alcanza la del registro.
     assert!(
-        view.is_current(&tenant()).await.expect("la comprobacion corre"),
+        view.is_current(&tenant())
+            .await
+            .expect("la comprobacion corre"),
         "la vista esta al dia"
     );
-    let snapshot = view.read(&tenant(), &vulnerability()).await.expect("la lectura corre").expect("la vista esta");
-    let said = deltas.version_of(&tenant()).await.expect("la version corre");
+    let snapshot = view
+        .read(&tenant(), &vulnerability())
+        .await
+        .expect("la lectura corre")
+        .expect("la vista esta");
+    let said = deltas
+        .version_of(&tenant())
+        .await
+        .expect("la version corre");
     assert_eq!(snapshot.watermark, said, "la vista dice hasta donde llego");
 
     // Cambia el grafo: el registro avanza y la vista se queda atras.
-    graph.apply(the_contains("evt-2", 1)).await.expect("el nuevo apoyo entra");
-    let said = deltas.version_of(&tenant()).await.expect("la version corre");
+    graph
+        .apply(the_contains("evt-2", 1))
+        .await
+        .expect("el nuevo apoyo entra");
+    let said = deltas
+        .version_of(&tenant())
+        .await
+        .expect("la version corre");
     assert!(
-        !view.is_current(&tenant()).await.expect("la comprobacion corre"),
+        !view
+            .is_current(&tenant())
+            .await
+            .expect("la comprobacion corre"),
         "hay lag, y la vista lo dice"
     );
 
     // La reconstruccion cierra el lag, y el watermark dice la version
     // nueva.
-    view.rebuild_advisory(&tenant(), &vulnerability()).await.expect("la vista corre");
+    view.rebuild_advisory(&tenant(), &vulnerability())
+        .await
+        .expect("la vista corre");
     assert!(
-        view.is_current(&tenant()).await.expect("la comprobacion corre"),
+        view.is_current(&tenant())
+            .await
+            .expect("la comprobacion corre"),
         "reconstruida, la vista esta al dia"
     );
-    let snapshot = view.read(&tenant(), &vulnerability()).await.expect("la lectura corre").expect("la vista esta");
-    assert_eq!(snapshot.watermark, said, "el watermark alcanza la version del registro");
+    let snapshot = view
+        .read(&tenant(), &vulnerability())
+        .await
+        .expect("la lectura corre")
+        .expect("la vista esta");
+    assert_eq!(
+        snapshot.watermark, said,
+        "el watermark alcanza la version del registro"
+    );
     assert_eq!(snapshot.subjects.len(), 3, "dos artefactos y el componente");
 
     // Y un tenant sin vista no se presenta como actual: no hay vista
     // que presentar.
     assert!(
-        !view.is_current(&other_tenant()).await.expect("la comprobacion corre"),
+        !view
+            .is_current(&other_tenant())
+            .await
+            .expect("la comprobacion corre"),
         "sin vista no hay actualidad"
     );
     assert!(
@@ -354,10 +456,7 @@ async fn the_watermark_exposes_the_lag_instead_of_hiding_it() {
 #[tokio::test]
 async fn the_view_tables_exist_and_answer_the_truth() {
     let (_tmp, _graph, _deltas, view) = the_world().await;
-    let rows: Vec<serde_json::Value> = view
-        .the_rows()
-        .await
-        .expect("las filas");
+    let rows: Vec<serde_json::Value> = view.the_rows().await.expect("las filas");
     assert!(rows.is_empty(), "una vista sin Advisory no tiene filas");
 }
 
@@ -391,7 +490,10 @@ async fn a_new_edge_brings_its_subject_into_the_view() {
         .apply(the_contains("evt-new-edge", 7))
         .await
         .expect("el edge nuevo entra");
-    let said = deltas.version_of(&tenant()).await.expect("la version corre");
+    let said = deltas
+        .version_of(&tenant())
+        .await
+        .expect("la version corre");
     assert!(said > 0, "el grafo dijo el delta del edge nuevo: {said}");
 
     let affected = view
@@ -418,7 +520,12 @@ async fn a_new_edge_brings_its_subject_into_the_view() {
         .await
         .expect("la lectura corre")
         .expect("la vista esta");
-    assert_eq!(after.subjects.len(), 4, "el sujeto nuevo entro: {:?}", after.subjects);
+    assert_eq!(
+        after.subjects.len(),
+        4,
+        "el sujeto nuevo entro: {:?}",
+        after.subjects
+    );
     assert!(
         after
             .subjects
@@ -451,9 +558,18 @@ async fn the_answer_says_what_explains_each_subject_and_its_freshness() {
         .await
         .expect("la respuesta corre");
 
-    assert_eq!(answer.freshness, hodei_risk_storage::impact_view::Freshness::Current,
-        "la vista esta al dia y se presenta como tal");
-    assert_eq!(answer.version, deltas.version_of(&tenant()).await.expect("la version corre"));
+    assert_eq!(
+        answer.freshness,
+        hodei_risk_storage::impact_view::Freshness::Current,
+        "la vista esta al dia y se presenta como tal"
+    );
+    assert_eq!(
+        answer.version,
+        deltas
+            .version_of(&tenant())
+            .await
+            .expect("la version corre")
+    );
 
     // Cada sujeto trae su camino: app-0 con la Contains que lo trae y
     // su evidencia; el componente con la AffectedBy que lo declara.
@@ -466,7 +582,8 @@ async fn the_answer_says_what_explains_each_subject_and_its_freshness() {
         artifact_path
             .relations
             .iter()
-            .any(|relation| relation.starts_with("contains|") && relation.contains(&component().to_string())),
+            .any(|relation| relation.starts_with("contains|")
+                && relation.contains(&component().to_string())),
         "el camino del artefacto nombra la Contains: {:?}",
         artifact_path.relations
     );
@@ -517,7 +634,10 @@ async fn a_stale_view_falls_back_to_the_walk_and_exposes_the_lag() {
         .apply(the_contains("evt-late", 7))
         .await
         .expect("el apoyo nuevo entra");
-    let said = deltas.version_of(&tenant()).await.expect("la version corre");
+    let said = deltas
+        .version_of(&tenant())
+        .await
+        .expect("la version corre");
 
     let answer = view
         .serve_impact(&tenant(), &vulnerability())
@@ -526,11 +646,17 @@ async fn a_stale_view_falls_back_to_the_walk_and_exposes_the_lag() {
 
     match &answer.freshness {
         hodei_risk_storage::impact_view::Freshness::Authoritative { view_watermark } => {
-            assert!(*view_watermark < said, "el lag queda dicho: {view_watermark} < {said}");
+            assert!(
+                *view_watermark < said,
+                "el lag queda dicho: {view_watermark} < {said}"
+            );
         }
         other => panic!("una vista atrasada no se presenta como actual: {other:?}"),
     }
-    assert_eq!(answer.version, said, "la respuesta es completa hasta la version dicha");
+    assert_eq!(
+        answer.version, said,
+        "la respuesta es completa hasta la version dicha"
+    );
     assert!(
         answer
             .subjects
@@ -547,10 +673,9 @@ async fn a_stale_view_falls_back_to_the_walk_and_exposes_the_lag() {
 async fn an_advisory_of_another_account_is_a_closed_door() {
     let (_tmp, _graph, _deltas, view) = the_world().await;
 
-    let foreign = Hrn::from_string(
-        "hrn:hodei:artifacts:eu-west-1:mallory:Vulnerability/GHSA-view-0001",
-    )
-    .expect("un HRN");
+    let foreign =
+        Hrn::from_string("hrn:hodei:artifacts:eu-west-1:mallory:Vulnerability/GHSA-view-0001")
+            .expect("un HRN");
     let error = view
         .serve_impact(&tenant(), &foreign)
         .await
@@ -587,7 +712,13 @@ async fn without_a_view_the_authoritative_walk_answers_now() {
         }
         other => panic!("sin vista no hay actualidad que reclamar: {other:?}"),
     }
-    assert_eq!(answer.version, deltas.version_of(&tenant()).await.expect("la version corre"));
+    assert_eq!(
+        answer.version,
+        deltas
+            .version_of(&tenant())
+            .await
+            .expect("la version corre")
+    );
     assert_eq!(answer.subjects.len(), 3, "dos artefactos y el componente");
 }
 
@@ -634,13 +765,15 @@ async fn the_risk_consumer_serves_from_the_view_with_a_safe_fallback() {
         .iter()
         .map(|one| (one.subject.clone(), one.depth))
         .collect();
-    assert_eq!(served_set, walked_set, "servir de la vista es servir el recorrido");
+    assert_eq!(
+        served_set, walked_set,
+        "servir de la vista es servir el recorrido"
+    );
 
     // Y el advisory de otra cuenta sigue siendo una puerta cerrada.
-    let foreign = Hrn::from_string(
-        "hrn:hodei:artifacts:eu-west-1:mallory:Vulnerability/GHSA-view-0001",
-    )
-    .expect("un HRN");
+    let foreign =
+        Hrn::from_string("hrn:hodei:artifacts:eu-west-1:mallory:Vulnerability/GHSA-view-0001")
+            .expect("un HRN");
     assert!(
         from_view
             .impacted("mallory", &foreign.to_string())

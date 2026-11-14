@@ -106,13 +106,18 @@ pub struct InvestigationReport {
 /// y una palabra de relacion entre ellos -- y las compara contra los
 /// sellos del read-set. Es una funcion pura: los mismos sellos y el
 /// mismo enunciado dan el mismo veredicto, siempre.
-pub fn verify_statement(statement: &str, citations: &[String], read_set: &ReadSet) -> VerificationStatus {
+pub fn verify_statement(
+    statement: &str,
+    citations: &[String],
+    read_set: &ReadSet,
+) -> VerificationStatus {
     // Las citas tienen que ser evidencias del manifiesto: una cita que
     // no esta en el read-set no se puede comprobar.
     let citations_resolve = citations.iter().all(|citation| {
-        read_set.stamps.iter().any(|stamp| {
-            stamp.kind == ReadKind::Evidence && stamp.resource == *citation
-        })
+        read_set
+            .stamps
+            .iter()
+            .any(|stamp| stamp.kind == ReadKind::Evidence && stamp.resource == *citation)
     });
     if !citations_resolve {
         return VerificationStatus::Unverifiable;
@@ -129,9 +134,10 @@ pub fn verify_statement(statement: &str, citations: &[String], read_set: &ReadSe
     let mut statuses = Vec::new();
     for (relation, from, to) in asserted {
         let identity = format!("{relation}|{from}|{to}");
-        let known = read_set.stamps.iter().any(|stamp| {
-            stamp.kind == ReadKind::Relation && stamp.resource == identity
-        });
+        let known = read_set
+            .stamps
+            .iter()
+            .any(|stamp| stamp.kind == ReadKind::Relation && stamp.resource == identity);
         if known {
             statuses.push(VerificationStatus::Verified);
         } else {
@@ -273,8 +279,7 @@ fn the_basis(kind: ClaimKind, status: VerificationStatus) -> String {
                 .to_string()
         }
         VerificationStatus::Unverifiable => {
-            "the citations do not resolve in the read-set: nothing to check against"
-                .to_string()
+            "the citations do not resolve in the read-set: nothing to check against".to_string()
         }
     }
 }
@@ -320,7 +325,11 @@ mod tests {
     use crate::claim::{AIClaim, ClaimKind};
 
     fn claim(statement: &str, kind: ClaimKind, citations: &[&str]) -> AIClaim {
-        AIClaim::new(statement, kind, citations.iter().map(|one| one.to_string()).collect())
+        AIClaim::new(
+            statement,
+            kind,
+            citations.iter().map(|one| one.to_string()).collect(),
+        )
     }
 
     fn the_world() -> ReadSet {
@@ -397,7 +406,11 @@ mod tests {
     fn the_classes_stay_distinct_with_their_limits() {
         let world = the_world();
         let claims = vec![
-            claim("the deployment is therefore exposed", ClaimKind::Inference, &["evd-1"]),
+            claim(
+                "the deployment is therefore exposed",
+                ClaimKind::Inference,
+                &["evd-1"],
+            ),
             claim("we do not know the reachability", ClaimKind::Unknown, &[]),
             claim("upgrade the component", ClaimKind::Recommendation, &[]),
         ];

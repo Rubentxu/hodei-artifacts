@@ -24,7 +24,7 @@ use crate::guard::{ActionKind, CapabilityGuard, ProposedAction};
 use crate::model::{ModelProvider, PROMPT_VERSION, the_prompt};
 use crate::report::{InvestigationReport, build_report};
 use crate::scope::{
-    RetrievalError, RetrievalScope, ScopeViolation, ScopedFact, RetrievedContext, check_the_scope,
+    RetrievalError, RetrievalScope, RetrievedContext, ScopeViolation, ScopedFact, check_the_scope,
 };
 
 /// De donde se recupera la evidencia.
@@ -190,10 +190,8 @@ impl Investigator {
         // Las tres listas del manifiesto: lo que se leyo, lo que se le
         // dio al modelo y lo que las afirmaciones aceptadas citaron. Son
         // tres cosas distintas y la traza las distingue.
-        let sent_to_model: Vec<String> = facts
-            .iter()
-            .map(|fact| fact.evidence_id.clone())
-            .collect();
+        let sent_to_model: Vec<String> =
+            facts.iter().map(|fact| fact.evidence_id.clone()).collect();
         let mut cited: Vec<String> = claims
             .iter()
             .flat_map(|claim| claim.citations.clone())

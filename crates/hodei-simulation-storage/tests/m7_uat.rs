@@ -674,21 +674,30 @@ impl hodei_evidence::ports::EvidenceStore for FailingEvidenceStore {
     async fn get(
         &self,
         id: &hodei_evidence::EvidenceId,
-    ) -> Result<Option<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+    ) -> Result<
+        Option<hodei_evidence::domain::evidence::EvidenceRecord>,
+        hodei_evidence::ports::StoreError,
+    > {
         self.inner.get(id).await
     }
     async fn find_by_external_id(
         &self,
         producer: &hodei_evidence::domain::evidence::Producer,
         external_id: &str,
-    ) -> Result<Option<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+    ) -> Result<
+        Option<hodei_evidence::domain::evidence::EvidenceRecord>,
+        hodei_evidence::ports::StoreError,
+    > {
         self.inner.find_by_external_id(producer, external_id).await
     }
     async fn evidence_of_subject(
         &self,
         _account: &str,
         _subject: &kernel::Hrn,
-    ) -> Result<Vec<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+    ) -> Result<
+        Vec<hodei_evidence::domain::evidence::EvidenceRecord>,
+        hodei_evidence::ports::StoreError,
+    > {
         Err(hodei_evidence::ports::StoreError::Unavailable(
             "the evidence store is down".to_string(),
         ))

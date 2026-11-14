@@ -20,8 +20,8 @@ use hodei_evidence::{
 };
 use hodei_evidence_storage::surreal::graph::{RelationRow, SurrealGraphStore};
 use kernel::Hrn;
-use surrealdb::engine::local::{Db, RocksDb};
 use surrealdb::Surreal;
+use surrealdb::engine::local::{Db, RocksDb};
 
 fn tenant() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/acme").expect("un HRN")
@@ -37,7 +37,9 @@ fn vulnerability() -> Hrn {
 }
 
 fn moment() -> chrono::DateTime<Utc> {
-    Utc.timestamp_opt(1_767_322_800, 0).single().expect("un momento")
+    Utc.timestamp_opt(1_767_322_800, 0)
+        .single()
+        .expect("un momento")
 }
 
 /// El changeset de una evidencia que afirma que el componente esta
@@ -46,8 +48,18 @@ fn moment() -> chrono::DateTime<Utc> {
 fn the_claim(evidence: &str) -> GraphChangeSet {
     let evidence_id = EvidenceId::new(evidence);
     GraphChangeSet::empty()
-        .with_node(GraphNode::new(component(), tenant(), NodeKind::Component, moment()))
-        .with_node(GraphNode::new(vulnerability(), tenant(), NodeKind::Vulnerability, moment()))
+        .with_node(GraphNode::new(
+            component(),
+            tenant(),
+            NodeKind::Component,
+            moment(),
+        ))
+        .with_node(GraphNode::new(
+            vulnerability(),
+            tenant(),
+            NodeKind::Vulnerability,
+            moment(),
+        ))
         .with_node(GraphNode::new(
             hodei_evidence::application::projector::evidence_hrn(&tenant(), &evidence_id),
             tenant(),
@@ -94,7 +106,10 @@ async fn the_store() -> (tempfile::TempDir, SurrealGraphStore<Db>) {
             .await
             .expect("la base de datos abre"),
     );
-    db.use_ns("hodei").use_db("evidence").await.expect("el espacio");
+    db.use_ns("hodei")
+        .use_db("evidence")
+        .await
+        .expect("el espacio");
     (tmp, SurrealGraphStore::new(db))
 }
 
@@ -104,8 +119,14 @@ async fn the_store() -> (tempfile::TempDir, SurrealGraphStore<Db>) {
 async fn two_evidences_are_two_supports_of_one_relation() {
     let (_tmp, store) = the_store().await;
 
-    store.apply(the_claim("evd-1")).await.expect("el primer apoyo entra");
-    store.apply(the_claim("evd-2")).await.expect("el segundo apoyo entra");
+    store
+        .apply(the_claim("evd-1"))
+        .await
+        .expect("el primer apoyo entra");
+    store
+        .apply(the_claim("evd-2"))
+        .await
+        .expect("el segundo apoyo entra");
 
     // UNA fila de relacion: la identidad de la relacion no se duplica.
     let mut response = store
@@ -119,7 +140,10 @@ async fn two_evidences_are_two_supports_of_one_relation() {
     assert_eq!(rows.len(), 1, "una relacion, no dos: {rows:?}");
 
     // Y DOS apoyos verificables, con su procedencia.
-    let supports = store.supports_of(&the_identity()).await.expect("los apoyos");
+    let supports = store
+        .supports_of(&the_identity())
+        .await
+        .expect("los apoyos");
     let evidence: Vec<&str> = supports.iter().map(|one| one.0.as_str()).collect();
     assert!(
         evidence.contains(&"evd-1") && evidence.contains(&"evd-2"),
@@ -133,13 +157,29 @@ async fn two_evidences_are_two_supports_of_one_relation() {
 async fn a_superseded_evidence_withdraws_only_its_support() {
     let (_tmp, store) = the_store().await;
 
-    store.apply(the_claim("evd-1")).await.expect("el primer apoyo entra");
-    store.apply(the_claim("evd-2")).await.expect("el segundo apoyo entra");
-    store.apply(the_withdrawal("evd-1")).await.expect("la retirada entra");
+    store
+        .apply(the_claim("evd-1"))
+        .await
+        .expect("el primer apoyo entra");
+    store
+        .apply(the_claim("evd-2"))
+        .await
+        .expect("el segundo apoyo entra");
+    store
+        .apply(the_withdrawal("evd-1"))
+        .await
+        .expect("la retirada entra");
 
-    let supports = store.supports_of(&the_identity()).await.expect("los apoyos");
+    let supports = store
+        .supports_of(&the_identity())
+        .await
+        .expect("los apoyos");
     let evidence: Vec<&str> = supports.iter().map(|one| one.0.as_str()).collect();
-    assert_eq!(evidence, vec!["evd-2"], "solo queda el apoyo vigente: {evidence:?}");
+    assert_eq!(
+        evidence,
+        vec!["evd-2"],
+        "solo queda el apoyo vigente: {evidence:?}"
+    );
 
     // La relacion SIGUE siendo una afirmacion valida, y el radio de
     // impacto la sigue viendo.
@@ -161,10 +201,19 @@ async fn a_superseded_evidence_withdraws_only_its_support() {
 async fn losing_the_last_support_exposes_unknown() {
     let (_tmp, store) = the_store().await;
 
-    store.apply(the_claim("evd-1")).await.expect("el apoyo entra");
-    store.apply(the_withdrawal("evd-1")).await.expect("la retirada entra");
+    store
+        .apply(the_claim("evd-1"))
+        .await
+        .expect("el apoyo entra");
+    store
+        .apply(the_withdrawal("evd-1"))
+        .await
+        .expect("la retirada entra");
 
-    let supports = store.supports_of(&the_identity()).await.expect("los apoyos");
+    let supports = store
+        .supports_of(&the_identity())
+        .await
+        .expect("los apoyos");
     assert!(supports.is_empty(), "no queda apoyo alguno: {supports:?}");
 
     // La fila SIGUE en el grafo, con su linaje, y dice UNKNOWN: el
@@ -178,7 +227,10 @@ async fn losing_the_last_support_exposes_unknown() {
         .expect("la lectura corre");
     let rows: Vec<RelationRow> = response.take(0).expect("las filas");
     assert_eq!(rows.len(), 1, "la fila queda, con su linaje");
-    assert_eq!(rows[0].status, "unknown", "lo que queda es UNKNOWN: {rows:?}");
+    assert_eq!(
+        rows[0].status, "unknown",
+        "lo que queda es UNKNOWN: {rows:?}"
+    );
 
     // Y el radio de impacto NO la usa: una relacion sin apoyo no es una
     // afirmacion.
@@ -209,33 +261,41 @@ async fn the_replay_of_the_ledger_rebuilds_the_same_state() {
         to_kind: NodeKind::Vulnerability,
     };
     let accepted = |id: &str, ev: u64| {
-        EventEnvelope::builder(EventId::new(format!("evt-{ev}")), tenant(), EventType::EvidenceAccepted)
-            .stream("tenant-acme", ev)
-            .occurred_at(moment())
-            .recorded_at(moment())
-            .typed_payload(EvidencePayload {
-                evidence_id: EvidenceId::new(id),
-                tenant_hrn: tenant(),
-                content_digest: "sha256:aa".to_string(),
-                supersedes: None,
-                relation_claim: Some(claim.clone()),
-            })
-            .expect("el payload serializa")
-            .build()
-    };
-    let superseded = EventEnvelope::builder(EventId::new("evt-3"), tenant(), EventType::EvidenceSuperseded)
-        .stream("tenant-acme", 3)
+        EventEnvelope::builder(
+            EventId::new(format!("evt-{ev}")),
+            tenant(),
+            EventType::EvidenceAccepted,
+        )
+        .stream("tenant-acme", ev)
         .occurred_at(moment())
         .recorded_at(moment())
         .typed_payload(EvidencePayload {
-            evidence_id: EvidenceId::new("evd-2"),
+            evidence_id: EvidenceId::new(id),
             tenant_hrn: tenant(),
-            content_digest: "sha256:bb".to_string(),
-            supersedes: Some(EvidenceId::new("evd-1")),
+            content_digest: "sha256:aa".to_string(),
+            supersedes: None,
             relation_claim: Some(claim.clone()),
         })
         .expect("el payload serializa")
-        .build();
+        .build()
+    };
+    let superseded = EventEnvelope::builder(
+        EventId::new("evt-3"),
+        tenant(),
+        EventType::EvidenceSuperseded,
+    )
+    .stream("tenant-acme", 3)
+    .occurred_at(moment())
+    .recorded_at(moment())
+    .typed_payload(EvidencePayload {
+        evidence_id: EvidenceId::new("evd-2"),
+        tenant_hrn: tenant(),
+        content_digest: "sha256:bb".to_string(),
+        supersedes: Some(EvidenceId::new("evd-1")),
+        relation_claim: Some(claim.clone()),
+    })
+    .expect("el payload serializa")
+    .build();
 
     // La REPRODUCCION: los eventos del ledger, por el proyector, al grafo.
     let (_tmp, replayed) = the_store().await;
@@ -251,8 +311,14 @@ async fn the_replay_of_the_ledger_rebuilds_the_same_state() {
     direct.apply(the_withdrawal("evd-1")).await.expect("entra");
 
     // El MISMO estado: los mismos apoyos, el mismo linaje.
-    let replayed_supports = replayed.supports_of(&the_identity()).await.expect("los apoyos");
-    let direct_supports = direct.supports_of(&the_identity()).await.expect("los apoyos");
+    let replayed_supports = replayed
+        .supports_of(&the_identity())
+        .await
+        .expect("los apoyos");
+    let direct_supports = direct
+        .supports_of(&the_identity())
+        .await
+        .expect("los apoyos");
     assert_eq!(
         replayed_supports, direct_supports,
         "el replay reconstruye los mismos apoyos"

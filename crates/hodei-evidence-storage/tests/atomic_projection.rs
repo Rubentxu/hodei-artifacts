@@ -16,8 +16,8 @@ use hodei_evidence::domain::graph::{
 use hodei_evidence::{GraphQuery, GraphWriter};
 use hodei_evidence_storage::SurrealGraphStore;
 use kernel::Hrn;
-use surrealdb::engine::local::{Db, RocksDb};
 use surrealdb::Surreal;
+use surrealdb::engine::local::{Db, RocksDb};
 
 /// La cuenta de la UAT.
 fn account() -> Hrn {
@@ -26,8 +26,7 @@ fn account() -> Hrn {
 
 /// Un HRN de la cuenta, del tipo que se pide.
 fn hrn(kind: &str, id: &str) -> Hrn {
-    Hrn::from_string(&format!("hrn:hodei:artifacts:eu-west-1:acme:{kind}/{id}"))
-        .expect("un HRN")
+    Hrn::from_string(&format!("hrn:hodei:artifacts:eu-west-1:acme:{kind}/{id}")).expect("un HRN")
 }
 
 /// El almacén sobre una base desechable.
@@ -58,8 +57,18 @@ fn the_changeset(forged_evidence: bool) -> GraphChangeSet {
     let artifact = hrn("Artifact", "app-1.0.0");
     let component = hrn("Component", "lib-vuln");
     let mut changes = GraphChangeSet::empty()
-        .with_node(GraphNode::new(artifact.clone(), account(), NodeKind::Artifact, now))
-        .with_node(GraphNode::new(component.clone(), account(), NodeKind::Component, now))
+        .with_node(GraphNode::new(
+            artifact.clone(),
+            account(),
+            NodeKind::Artifact,
+            now,
+        ))
+        .with_node(GraphNode::new(
+            component.clone(),
+            account(),
+            NodeKind::Component,
+            now,
+        ))
         .with_relation(GraphRelation::new(
             RelationType::Contains,
             artifact,
@@ -84,13 +93,18 @@ async fn the_nodes(graph: &SurrealGraphStore<Db>) -> Vec<String> {
     let mut seen = Vec::new();
     for kind in [NodeKind::Artifact, NodeKind::Component, NodeKind::Evidence] {
         let name = kind.as_str().to_string();
-        for node in graph.nodes(&account(), kind).await.expect("los nodos se leen") {
+        for node in graph
+            .nodes(&account(), kind)
+            .await
+            .expect("los nodos se leen")
+        {
             seen.push(format!("{}|{}", name, node.id));
         }
     }
     seen.sort();
     seen
-}/// Un changeset rechazado no deja NADA escrito: ni el primer nodo, ni el
+}
+/// Un changeset rechazado no deja NADA escrito: ni el primer nodo, ni el
 /// segundo, ni una parte de lo que venia. Un grafo con la mitad de un
 /// changeset es un grafo que parece valido y no lo es.
 #[tokio::test]
@@ -167,15 +181,18 @@ async fn two_concurrent_applies_never_lose_a_row() {
         let now = Utc::now();
         let component = hrn("Component", "lib-a");
         GraphChangeSet::empty()
-            .with_node(GraphNode::new(component.clone(), account(), NodeKind::Component, now))
-            .with_node(
-                GraphNode::new(
-                    hodei_evidence::evidence_hrn(&account(), &evidence),
-                    account(),
-                    NodeKind::Evidence,
-                    now,
-                ),
-            )
+            .with_node(GraphNode::new(
+                component.clone(),
+                account(),
+                NodeKind::Component,
+                now,
+            ))
+            .with_node(GraphNode::new(
+                hodei_evidence::evidence_hrn(&account(), &evidence),
+                account(),
+                NodeKind::Evidence,
+                now,
+            ))
             .with_relation(GraphRelation::new(
                 RelationType::Contains,
                 hrn("Artifact", "app-1"),
@@ -190,15 +207,18 @@ async fn two_concurrent_applies_never_lose_a_row() {
         let now = Utc::now();
         let component = hrn("Component", "lib-b");
         GraphChangeSet::empty()
-            .with_node(GraphNode::new(component.clone(), account(), NodeKind::Component, now))
-            .with_node(
-                GraphNode::new(
-                    hodei_evidence::evidence_hrn(&account(), &evidence),
-                    account(),
-                    NodeKind::Evidence,
-                    now,
-                ),
-            )
+            .with_node(GraphNode::new(
+                component.clone(),
+                account(),
+                NodeKind::Component,
+                now,
+            ))
+            .with_node(GraphNode::new(
+                hodei_evidence::evidence_hrn(&account(), &evidence),
+                account(),
+                NodeKind::Evidence,
+                now,
+            ))
             .with_relation(GraphRelation::new(
                 RelationType::Contains,
                 hrn("Artifact", "app-2"),
@@ -209,10 +229,7 @@ async fn two_concurrent_applies_never_lose_a_row() {
             ))
     };
 
-    let (left, right) = tokio::join!(
-        graph.apply(first),
-        graph.apply(second),
-    );
+    let (left, right) = tokio::join!(graph.apply(first), graph.apply(second),);
     left.expect("el primero aplica");
     right.expect("el segundo aplica");
 

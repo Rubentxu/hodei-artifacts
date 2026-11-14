@@ -216,8 +216,11 @@ fn p5_a_superseded_event_withdraws_the_support_of_the_superseded_evidence() {
         changes.withdrawals
     );
     let withdrawal = &changes.withdrawals[0];
-    assert_eq!(withdrawal.evidence_id, EvidenceId::new("evd-1"),
-        "the support withdrawn is the SUPERSEDED evidence's, not the new one's");
+    assert_eq!(
+        withdrawal.evidence_id,
+        EvidenceId::new("evd-1"),
+        "the support withdrawn is the SUPERSEDED evidence's, not the new one's"
+    );
     assert_eq!(withdrawal.relation, RelationType::Produced);
     assert_eq!(withdrawal.from, build());
     assert_eq!(withdrawal.to, artifact());

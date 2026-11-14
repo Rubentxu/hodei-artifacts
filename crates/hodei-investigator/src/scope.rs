@@ -228,7 +228,11 @@ pub enum RetrievalError {
     /// empezar la lectura ya no es la del final. No hay snapshot
     /// coherente que presentar, y una lectura obsoleta se dice
     /// obsoleta.
-    Stale { source: String, expected: u64, found: u64 },
+    Stale {
+        source: String,
+        expected: u64,
+        found: u64,
+    },
     /// El almacen no pudo atender. Negar es cerrar: si no se pudo
     /// comprobar el permiso, no se lee.
     Unavailable(String),
