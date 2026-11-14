@@ -205,9 +205,7 @@ impl<C: Connection> SurrealImpactView<C> {
             .bind(("table", IMPACT_TABLE))
             .await
             .map_err(|error| error.to_string())?;
-        response
-            .take(0)
-            .map_err(|error| error.to_string())
+        response.take(0).map_err(|error| error.to_string())
     }
 
     /// The record id of one route.
@@ -252,8 +250,8 @@ impl<C: Connection> SurrealImpactView<C> {
         // supports each, and the path that explains each subject.
         let mut paths: Vec<SubjectPath> = Vec::new();
         for (subject, edges) in &walk.subject_routes {
-            let is_row = walk.artifacts.contains_key(subject)
-                || walk.affected_components.contains(subject);
+            let is_row =
+                walk.artifacts.contains_key(subject) || walk.affected_components.contains(subject);
             if !is_row {
                 continue;
             }
@@ -315,7 +313,10 @@ impl<C: Connection> SurrealImpactView<C> {
             .bind(("table", IMPACT_TABLE))
             .bind(("tenant", tenant.to_string()))
             .bind(("advisory", advisory.to_string()))
-            .bind(("rid", Self::route_id(&tenant.to_string(), &advisory.to_string())))
+            .bind((
+                "rid",
+                Self::route_id(&tenant.to_string(), &advisory.to_string()),
+            ))
             .bind(("route", route));
         let mut index = 0;
         for (subject, depth) in walk.artifacts.iter() {
@@ -394,9 +395,7 @@ impl<C: Connection> SurrealImpactView<C> {
             .bind(("to", delta.to.to_string()))
             .await
             .map_err(|error| error.to_string())?;
-        let routes: Vec<ImpactRoute> = response
-            .take(0)
-            .map_err(|error| error.to_string())?;
+        let routes: Vec<ImpactRoute> = response.take(0).map_err(|error| error.to_string())?;
         let mut advisories: Vec<Hrn> = routes
             .iter()
             .filter_map(|route| Hrn::from_string(&route.advisory))
@@ -465,7 +464,10 @@ impl<C: Connection> SurrealImpactView<C> {
                 .graph
                 .db()
                 .query("SELECT * FROM $id")
-                .bind(("id", Self::route_id(&tenant.to_string(), &advisory.to_string())))
+                .bind((
+                    "id",
+                    Self::route_id(&tenant.to_string(), &advisory.to_string()),
+                ))
                 .await
                 .map_err(|error| ImpactReadError::Unavailable(error.to_string()))?
                 .take(0)
@@ -490,7 +492,9 @@ impl<C: Connection> SurrealImpactView<C> {
                 tenant: tenant.to_string(),
                 advisory: advisory.to_string(),
                 subjects,
-                deployments: route.map(|route| route.deployments.clone()).unwrap_or_default(),
+                deployments: route
+                    .map(|route| route.deployments.clone())
+                    .unwrap_or_default(),
                 version: watermark,
                 freshness: Freshness::Current,
             });
@@ -517,22 +521,26 @@ impl<C: Connection> SurrealImpactView<C> {
     /// The reader that needs the truth of the moment compares the
     /// watermark with the ledger's version: el lag se expone, nunca se
     /// esconde.
-    pub async fn read(&self, tenant: &Hrn, advisory: &Hrn) -> Result<Option<ImpactSnapshot>, String> {
+    pub async fn read(
+        &self,
+        tenant: &Hrn,
+        advisory: &Hrn,
+    ) -> Result<Option<ImpactSnapshot>, String> {
         let Some(watermark) = self.watermark_of(tenant, &advisory.to_string()).await? else {
             return Ok(None);
         };
         let mut response = self
             .graph
             .db()
-            .query("SELECT * FROM type::table($table) WHERE tenant = $tenant AND advisory = $advisory")
+            .query(
+                "SELECT * FROM type::table($table) WHERE tenant = $tenant AND advisory = $advisory",
+            )
             .bind(("table", IMPACT_TABLE))
             .bind(("tenant", tenant.to_string()))
             .bind(("advisory", advisory.to_string()))
             .await
             .map_err(|error| error.to_string())?;
-        let rows: Vec<ImpactRow> = response
-            .take(0)
-            .map_err(|error| error.to_string())?;
+        let rows: Vec<ImpactRow> = response.take(0).map_err(|error| error.to_string())?;
         let mut subjects: Vec<(String, usize)> = rows
             .into_iter()
             .map(|row| (row.subject, row.depth))
@@ -644,7 +652,8 @@ pub async fn walk_impact<C: Connection>(
     vulnerability: &Hrn,
 ) -> Result<ImpactWalk, String> {
     // The components the vulnerability is about, WITH their route step.
-    let affected_rows = relations_to_rows(graph, tenant, vulnerability, RelationType::AffectedBy).await?;
+    let affected_rows =
+        relations_to_rows(graph, tenant, vulnerability, RelationType::AffectedBy).await?;
     let mut walk = ImpactWalk::default();
     let mut affected: Vec<Hrn> = Vec::new();
     for row in &affected_rows {
@@ -806,9 +815,7 @@ async fn relations_to_rows<C: Connection>(
         .bind(("value", node.to_string()))
         .await
         .map_err(|error| error.to_string())?;
-    response
-        .take(0)
-        .map_err(|error| error.to_string())
+    response.take(0).map_err(|error| error.to_string())
 }
 
 /// The relations that end at MANY nodes, of a kind, WITH their step.
@@ -835,9 +842,7 @@ async fn relations_to_many_rows<C: Connection>(
         .bind(("ids", ids))
         .await
         .map_err(|error| error.to_string())?;
-    response
-        .take(0)
-        .map_err(|error| error.to_string())
+    response.take(0).map_err(|error| error.to_string())
 }
 
 /// The relations that start at MANY nodes, of a kind, WITH their step.
@@ -864,9 +869,7 @@ async fn relations_from_many_rows<C: Connection>(
         .bind(("ids", ids))
         .await
         .map_err(|error| error.to_string())?;
-    response
-        .take(0)
-        .map_err(|error| error.to_string())
+    response.take(0).map_err(|error| error.to_string())
 }
 
 /// The subjects of an answer, from a walk: the artifacts with their

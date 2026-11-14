@@ -29,12 +29,12 @@ use hodei_investigator::scope::{
     EvidenceReadAuthorizer, RetrievalError, RetrievalScope, ScopedFact, TrustLevel,
 };
 use hodei_investigator_storage::{EvaluatorReadAuthorizer, GraphEvidenceRetriever};
-use kernel::application::ports::{
-    AuthorizationError, EvaluationDecision, EvaluationRequest, IamPolicyEvaluator,
-};
 use hodei_trust_policy::decision::Outcome;
 use hodei_trust_policy::{Requirement, RequirementKind, TrustPolicy};
 use kernel::Hrn;
+use kernel::application::ports::{
+    AuthorizationError, EvaluationDecision, EvaluationRequest, IamPolicyEvaluator,
+};
 use surrealdb::Surreal;
 use surrealdb::engine::local::{Db, RocksDb};
 
@@ -891,23 +891,31 @@ impl hodei_evidence::ports::EvidenceStore for CountingEvidenceStore {
     async fn get(
         &self,
         id: &hodei_evidence::EvidenceId,
-    ) -> Result<Option<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+    ) -> Result<
+        Option<hodei_evidence::domain::evidence::EvidenceRecord>,
+        hodei_evidence::ports::StoreError,
+    > {
         self.inner.get(id).await
     }
     async fn find_by_external_id(
         &self,
         producer: &hodei_evidence::domain::evidence::Producer,
         external_id: &str,
-    ) -> Result<Option<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
+    ) -> Result<
+        Option<hodei_evidence::domain::evidence::EvidenceRecord>,
+        hodei_evidence::ports::StoreError,
+    > {
         self.inner.find_by_external_id(producer, external_id).await
     }
     async fn evidence_of_subject(
         &self,
         account: &str,
         subject: &kernel::Hrn,
-    ) -> Result<Vec<hodei_evidence::domain::evidence::EvidenceRecord>, hodei_evidence::ports::StoreError> {
-        self.reads
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    ) -> Result<
+        Vec<hodei_evidence::domain::evidence::EvidenceRecord>,
+        hodei_evidence::ports::StoreError,
+    > {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.inner.evidence_of_subject(account, subject).await
     }
 }
@@ -1016,8 +1024,7 @@ impl hodei_evidence::ports::ContentStore for CountingContentStore {
         &self,
         digest: &hodei_evidence::ContentDigest,
     ) -> Result<Option<Vec<u8>>, hodei_evidence::ports::StoreError> {
-        self.reads
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.inner.get(digest).await
     }
     async fn size(
@@ -1051,7 +1058,10 @@ async fn a_blob_over_the_budget_is_omitted_without_being_loaded() {
             account_hrn(),
         );
         use hodei_investigator::investigator::EvidenceRetriever;
-        let context = retriever.retrieve(&scope).await.map_err(|e| e.to_string())?;
+        let context = retriever
+            .retrieve(&scope)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let fact = context
             .facts
@@ -1100,7 +1110,11 @@ async fn two_retrievals_of_the_same_snapshot_select_the_same_facts() {
         let world = World::build(&path).await;
         for index in 0..5 {
             world
-                .admit(&format!("sbom-{index}"), &format!("the inventory {index}"), &subject())
+                .admit(
+                    &format!("sbom-{index}"),
+                    &format!("the inventory {index}"),
+                    &subject(),
+                )
                 .await;
         }
         let mut scope = the_scope();
@@ -1114,8 +1128,14 @@ async fn two_retrievals_of_the_same_snapshot_select_the_same_facts() {
         );
         use hodei_investigator::investigator::EvidenceRetriever;
 
-        let first = retriever.retrieve(&scope).await.map_err(|e| e.to_string())?;
-        let second = retriever.retrieve(&scope).await.map_err(|e| e.to_string())?;
+        let first = retriever
+            .retrieve(&scope)
+            .await
+            .map_err(|e| e.to_string())?;
+        let second = retriever
+            .retrieve(&scope)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let first_ids: Vec<String> = first
             .facts
@@ -1127,16 +1147,25 @@ async fn two_retrievals_of_the_same_snapshot_select_the_same_facts() {
             .iter()
             .map(|fact| fact.evidence_id.clone())
             .collect();
-        assert_eq!(first_ids, second_ids, "la misma seleccion, en el mismo orden");
+        assert_eq!(
+            first_ids, second_ids,
+            "la misma seleccion, en el mismo orden"
+        );
         let delivered = first
             .facts
             .iter()
             .filter(|fact| fact.status == hodei_investigator::scope::FactStatus::Loaded)
             .count();
-        assert_eq!(delivered, 3, "el presupuesto es el presupuesto: {first_ids:?}");
+        assert_eq!(
+            delivered, 3,
+            "el presupuesto es el presupuesto: {first_ids:?}"
+        );
         let mut sorted = first_ids.clone();
         sorted.sort();
-        assert_eq!(first_ids, sorted, "el orden es la clave estable: {first_ids:?}");
+        assert_eq!(
+            first_ids, sorted,
+            "el orden es la clave estable: {first_ids:?}"
+        );
         match first.coverage {
             hodei_investigator::scope::Coverage::Partial { omitted } => {
                 assert_eq!(omitted, 2, "lo que no entro se declara: {omitted}");
@@ -1159,7 +1188,9 @@ async fn content_that_is_not_there_is_missing_and_nothing_is_invented() {
         let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
         let path = tmp.keep();
         let world = World::build(&path).await;
-        world.admit("sbom-empty", "the real inventory", &subject()).await;
+        world
+            .admit("sbom-empty", "the real inventory", &subject())
+            .await;
         // El recuperador mira un almacen de contenido VACIO: el registro
         // de evidencia existe, su contenido no esta ahi.
         let retriever = GraphEvidenceRetriever::new(
@@ -1219,7 +1250,10 @@ async fn many_relations_are_cut_by_the_budget_and_the_omission_is_declared() {
         );
         use hodei_investigator::investigator::EvidenceRetriever;
 
-        let context = retriever.retrieve(&scope).await.map_err(|e| e.to_string())?;
+        let context = retriever
+            .retrieve(&scope)
+            .await
+            .map_err(|e| e.to_string())?;
 
         let loaded = context
             .facts
@@ -1295,7 +1329,8 @@ async fn the_trace_identifies_what_was_read_with_verifiable_metadata() {
 
         // El sello de la evidencia lleva el digest REAL del contenido:
         // el origen se comprueba contra el digest, no contra una cita.
-        let expected_digest = hodei_evidence::ContentDigest::of_bytes(the_content.as_bytes()).to_string();
+        let expected_digest =
+            hodei_evidence::ContentDigest::of_bytes(the_content.as_bytes()).to_string();
         assert!(
             investigation
                 .trace
@@ -1317,8 +1352,7 @@ async fn the_trace_identifies_what_was_read_with_verifiable_metadata() {
         );
 
         // AC4: la traza serializada NO lleva el contenido del blob.
-        let trace_json = serde_json::to_string(&investigation.trace)
-            .map_err(|e| e.to_string())?;
+        let trace_json = serde_json::to_string(&investigation.trace).map_err(|e| e.to_string())?;
         assert!(
             !trace_json.contains(the_content),
             "el contenido no entra en la traza"
@@ -1432,7 +1466,9 @@ async fn the_report_of_a_real_investigation_is_versioned_and_typed() {
         let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
         let path = tmp.keep();
         let world = World::build(&path).await;
-        let evidence_id = world.admit("sbom-report", "the inventory", &subject()).await;
+        let evidence_id = world
+            .admit("sbom-report", "the inventory", &subject())
+            .await;
         world.the_risk_layer().await;
         let investigator = world.the_investigator(&an_answer(&evidence_id));
 
@@ -1451,7 +1487,12 @@ async fn the_report_of_a_real_investigation_is_versioned_and_typed() {
         // El hecho del modelo no afirma ninguna relacion canónica con
         // HRNs: NO es un VerifiedFact, es un EvidenceBackedClaim con su
         // limite dicho.
-        assert_eq!(report.findings.len(), 2, "los dos claims: {:?}", report.findings);
+        assert_eq!(
+            report.findings.len(),
+            2,
+            "los dos claims: {:?}",
+            report.findings
+        );
         let fact_finding = &report.findings[0];
         assert_eq!(
             fact_finding.kind,

@@ -23,11 +23,11 @@ use hodei_evidence::EvidenceId;
 use hodei_evidence_storage::surreal::graph::SurrealGraphStore;
 use hodei_reactive::events::{Event, EventKind};
 use hodei_reactive::execution::Budget;
+use hodei_reactive::intent::IntentOutbox;
 use hodei_reactive::intent::{IntentExecutor, Receipt};
 use hodei_reactive::reactions::{
     DecisionRequester, PlannedExceptionExpiryReaction, PlannedVulnerabilityReaction,
 };
-use hodei_reactive::intent::IntentOutbox;
 use hodei_reactive::runtime::{ExecutionStore, ReactiveRuntime};
 use hodei_risk_storage::reactions::{SurrealBlastRadius, SurrealSecurityCaseStore};
 use hodei_trust_policy::context::TrustContext;
@@ -119,7 +119,6 @@ fn the_cve_event(id: &str) -> Event {
 /// El mundo de la migracion: la base de datos, el grafo, las decisiones,
 /// los casos y el outbox, TODOS sobre la misma base.
 struct World {
-    db: Arc<Surreal<Db>>,
     graph: Arc<SurrealGraphStore<Db>>,
     store: Arc<SurrealDecisionStore<Db>>,
     policies: Arc<PolicyRegistry>,
@@ -155,7 +154,6 @@ impl World {
         );
 
         let world = Self {
-            db,
             graph,
             store,
             policies,
@@ -182,10 +180,30 @@ impl World {
         .expect("un HRN");
 
         let changes = hodei_evidence::domain::graph::GraphChangeSet::empty()
-            .with_node(GraphNode::new(subject(), account(), NodeKind::Artifact, now))
-            .with_node(GraphNode::new(component.clone(), account(), NodeKind::Component, now))
-            .with_node(GraphNode::new(advisory(), account(), NodeKind::Vulnerability, now))
-            .with_node(GraphNode::new(deployment.clone(), account(), NodeKind::Deployment, now))
+            .with_node(GraphNode::new(
+                subject(),
+                account(),
+                NodeKind::Artifact,
+                now,
+            ))
+            .with_node(GraphNode::new(
+                component.clone(),
+                account(),
+                NodeKind::Component,
+                now,
+            ))
+            .with_node(GraphNode::new(
+                advisory(),
+                account(),
+                NodeKind::Vulnerability,
+                now,
+            ))
+            .with_node(GraphNode::new(
+                deployment.clone(),
+                account(),
+                NodeKind::Deployment,
+                now,
+            ))
             .with_node(GraphNode::new(
                 hodei_evidence::application::projector::evidence_hrn(&account(), &evidence),
                 account(),
@@ -284,8 +302,7 @@ impl World {
     async fn the_runtime(&self, executor: Option<Arc<dyn IntentExecutor>>) -> ReactiveRuntime {
         let store: Arc<dyn ExecutionStore> = self.intents.clone();
         let outbox: Arc<dyn IntentOutbox> = self.intents.clone();
-        let mut runtime =
-            ReactiveRuntime::new(store, Budget::default()).with_tenant(ACCOUNT);
+        let mut runtime = ReactiveRuntime::new(store, Budget::default()).with_tenant(ACCOUNT);
         runtime.with_outbox(outbox);
         let executor = executor.unwrap_or_else(|| {
             Arc::new(hodei_reactive::reactions::DomainIntentExecutor::new(
@@ -357,7 +374,11 @@ async fn the_cve_route_runs_through_the_outbox_and_links_the_superseded_decision
         .expect("el despacho planificado corre");
 
     // La ejecucion del plan se completo y no se corto.
-    assert!(report.cut.is_none(), "la cadena no se corto: {:?}", report.cut);
+    assert!(
+        report.cut.is_none(),
+        "la cadena no se corto: {:?}",
+        report.cut
+    );
     let execution = report
         .execution_of("vulnerability_impact")
         .expect("la ejecucion del plan esta");
@@ -376,7 +397,10 @@ async fn the_cve_route_runs_through_the_outbox_and_links_the_superseded_decision
         .expect("los casos se leen");
     assert_eq!(cases.len(), 1, "el caso se abrio UNA vez");
     assert!(
-        cases[0].blast_radius.affected_subjects.contains(&SUBJECT.to_string()),
+        cases[0]
+            .blast_radius
+            .affected_subjects
+            .contains(&SUBJECT.to_string()),
         "el caso nombra al artefacto"
     );
 
@@ -421,10 +445,7 @@ async fn the_cve_route_runs_through_the_outbox_and_links_the_superseded_decision
         .dispatch_planned(the_cve_event("evt-cve-1"), now)
         .await
         .expect("la reentrega corre");
-    assert!(
-        !again.duplicates.is_empty(),
-        "la reentrega es duplicado"
-    );
+    assert!(!again.duplicates.is_empty(), "la reentrega es duplicado");
     let cases = world
         .cases
         .of_trigger(ADVISORY)
@@ -476,7 +497,10 @@ async fn an_irrelevant_cve_and_a_foreign_account_create_nothing_and_the_expiry_r
         .expect("los casos se leen");
     assert!(cases.is_empty(), "no hay caso para la CVE irrelevante");
     let states = world.intents.states().await.expect("los estados se leen");
-    assert!(states.is_empty(), "el plan vacio no dijo intents: {states:?}");
+    assert!(
+        states.is_empty(),
+        "el plan vacio no dijo intents: {states:?}"
+    );
 
     // La cuenta ajena: la lectura del radio la cierra la puerta, y no se
     // escribe nada. Una reclamacion no es una identidad.
@@ -496,7 +520,10 @@ async fn an_irrelevant_cve_and_a_foreign_account_create_nothing_and_the_expiry_r
     assert!(
         matches!(
             execution.outcome,
-            hodei_reactive::execution::ExecutionOutcome::Failed { retryable: true, .. }
+            hodei_reactive::execution::ExecutionOutcome::Failed {
+                retryable: true,
+                ..
+            }
         ),
         "la lectura que falla es un fallo con reintento: {:?}",
         execution.outcome
@@ -639,7 +666,11 @@ async fn the_unknown_decision_waits_for_the_reconcile() {
         .resume(now + chrono::Duration::seconds(2))
         .await
         .expect("el resume tras reconciliar corre");
-    assert_eq!(resumed.applied.len(), 1, "reconciliado, la decision se aplico");
+    assert_eq!(
+        resumed.applied.len(),
+        1,
+        "reconciliado, la decision se aplico"
+    );
     let decisions = world
         .store
         .list_for_subject(ACCOUNT, SUBJECT)
@@ -672,7 +703,10 @@ async fn a_crash_is_resumed_without_duplicates() {
         .dispatch_planned(the_cve_event("evt-crash-1"), now)
         .await
         .expect("el despacho corre");
-    assert!(report.applied.is_empty(), "con el ejecutor caido nada se aplico");
+    assert!(
+        report.applied.is_empty(),
+        "con el ejecutor caido nada se aplico"
+    );
     let states = world.intents.states().await.expect("los estados se leen");
     assert!(
         states.iter().all(|(_identity, state)| state == "pending"),
@@ -686,7 +720,11 @@ async fn a_crash_is_resumed_without_duplicates() {
         .resume(now + chrono::Duration::seconds(1))
         .await
         .expect("la reanudacion corre");
-    assert_eq!(resumed.applied.len(), 2, "el caso y la decision se aplicaron");
+    assert_eq!(
+        resumed.applied.len(),
+        2,
+        "el caso y la decision se aplicaron"
+    );
 
     let cases = world
         .cases
@@ -715,7 +753,10 @@ async fn a_crash_is_resumed_without_duplicates() {
         .dispatch_planned(the_cve_event("evt-crash-1"), now)
         .await
         .expect("la reentrega corre");
-    assert!(!delivered.duplicates.is_empty(), "la reentrega es duplicado");
+    assert!(
+        !delivered.duplicates.is_empty(),
+        "la reentrega es duplicado"
+    );
     let cases = world
         .cases
         .of_trigger(ADVISORY)

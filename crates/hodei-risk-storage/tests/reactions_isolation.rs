@@ -8,17 +8,17 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use hodei_evidence::EvidenceId;
+use hodei_evidence::GraphWriter;
 use hodei_evidence::domain::graph::{
     GraphChangeSet, GraphNode, GraphRelation, NodeKind, RelationType,
 };
-use hodei_evidence::GraphWriter;
-use hodei_evidence::EvidenceId;
 use hodei_evidence_storage::SurrealGraphStore;
 use hodei_reactive::reactions::BlastRadiusSource;
 use hodei_risk_storage::reactions::SurrealBlastRadius;
 use kernel::Hrn;
-use surrealdb::engine::local::{Db, RocksDb};
 use surrealdb::Surreal;
+use surrealdb::engine::local::{Db, RocksDb};
 
 /// La cuenta propia: la del adaptador, la que su tenant lleva.
 const ACCOUNT: &str = "acme";
@@ -81,18 +81,36 @@ async fn seed_the_risk_layer(graph: &SurrealGraphStore<Db>) {
     let advisory = Hrn::from_string(ADVISORY).expect("un HRN");
 
     let changes = GraphChangeSet::empty()
-        .with_node(GraphNode::new(subject.clone(), account.clone(), NodeKind::Artifact, now))
-        .with_node(GraphNode::new(component.clone(), account.clone(), NodeKind::Component, now))
-        .with_node(GraphNode::new(advisory.clone(), account.clone(), NodeKind::Vulnerability, now))
-        .with_node(GraphNode::new(deployment.clone(), account.clone(), NodeKind::Deployment, now))
-        .with_node(
-            GraphNode::new(
-                hodei_evidence::application::projector::evidence_hrn(&account, &evidence),
-                account.clone(),
-                NodeKind::Evidence,
-                now,
-            ),
-        )
+        .with_node(GraphNode::new(
+            subject.clone(),
+            account.clone(),
+            NodeKind::Artifact,
+            now,
+        ))
+        .with_node(GraphNode::new(
+            component.clone(),
+            account.clone(),
+            NodeKind::Component,
+            now,
+        ))
+        .with_node(GraphNode::new(
+            advisory.clone(),
+            account.clone(),
+            NodeKind::Vulnerability,
+            now,
+        ))
+        .with_node(GraphNode::new(
+            deployment.clone(),
+            account.clone(),
+            NodeKind::Deployment,
+            now,
+        ))
+        .with_node(GraphNode::new(
+            hodei_evidence::application::projector::evidence_hrn(&account, &evidence),
+            account.clone(),
+            NodeKind::Evidence,
+            now,
+        ))
         .with_relation(GraphRelation::new(
             RelationType::Contains,
             subject.clone(),
@@ -121,7 +139,10 @@ async fn seed_the_risk_layer(graph: &SurrealGraphStore<Db>) {
             now,
         ));
 
-    graph.apply(changes).await.expect("la capa de riesgo se escribe");
+    graph
+        .apply(changes)
+        .await
+        .expect("la capa de riesgo se escribe");
 }
 
 /// La misma CVE en la cuenta autorizada conserva el resultado: el sujeto
@@ -164,10 +185,7 @@ async fn an_empty_account_is_rejected() {
 
     let outcome = radius.impacted("", ADVISORY).await;
 
-    assert!(
-        outcome.is_err(),
-        "sin cuenta no hay consulta: {outcome:?}"
-    );
+    assert!(outcome.is_err(), "sin cuenta no hay consulta: {outcome:?}");
 }
 
 /// Un advisory malformado es un ERROR, no un impacto cero: un vec vacio

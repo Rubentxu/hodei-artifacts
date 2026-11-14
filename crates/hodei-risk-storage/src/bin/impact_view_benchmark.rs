@@ -60,8 +60,8 @@ use kernel::Hrn;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use surrealdb::engine::local::RocksDb;
 use surrealdb::Surreal;
+use surrealdb::engine::local::RocksDb;
 
 /// How many times each query is measured.
 const ROUNDS: usize = 50;
@@ -128,8 +128,10 @@ impl Measurement {
 
 /// The HRN of a node of the account, the same way the SPIKE-003 says it.
 fn hrn(kind: &str, id: &str) -> Hrn {
-    Hrn::from_string(&format!("hrn:hodei:artifacts:eu-west-1:{ACCOUNT}:{kind}/{id}"))
-        .expect("an HRN")
+    Hrn::from_string(&format!(
+        "hrn:hodei:artifacts:eu-west-1:{ACCOUNT}:{kind}/{id}"
+    ))
+    .expect("an HRN")
 }
 
 /// The account of the measurement.
@@ -339,10 +341,7 @@ fn the_walk_subjects(radius: &hodei_risk::case::BlastRadius) -> BTreeSet<(String
 }
 
 /// The number of rows of a table, said by a count.
-async fn the_row_count<C: surrealdb::Connection>(
-    db: &Surreal<C>,
-    table: &'static str,
-) -> usize {
+async fn the_row_count<C: surrealdb::Connection>(db: &Surreal<C>, table: &'static str) -> usize {
     let mut response = db
         .query("SELECT count() FROM type::table($table) GROUP ALL")
         .bind(("table", table))
@@ -370,7 +369,10 @@ async fn main() {
             .await
             .expect("the database opens"),
     );
-    db.use_ns("hodei").use_db("evidence").await.expect("the namespace");
+    db.use_ns("hodei")
+        .use_db("evidence")
+        .await
+        .expect("the namespace");
     for (table, fields) in GRAPH_INDEXES {
         db.query(declare_index_statement(table, fields))
             .await
@@ -421,7 +423,9 @@ async fn main() {
                 correlation_id: None,
                 signature: String::new(),
             };
-            envelope.signature = authenticator.sign(&envelope).expect("the producer is known");
+            envelope.signature = authenticator
+                .sign(&envelope)
+                .expect("the producer is known");
             ingestion
                 .ingest(IngestionRequest { envelope, content })
                 .await
@@ -459,7 +463,10 @@ async fn main() {
     let started = Instant::now();
     graph
         .apply(risk_layer(
-            &artefacts.iter().map(|node| node.id.clone()).collect::<Vec<_>>(),
+            &artefacts
+                .iter()
+                .map(|node| node.id.clone())
+                .collect::<Vec<_>>(),
         ))
         .await
         .expect("the risk layer is written");
@@ -547,14 +554,25 @@ async fn main() {
     let (r50, r95, rmax) = rebuild.millis();
     let (s50, s95, smax) = serve.millis();
     println!("\n=== The queries, over the same dataset ===");
-    println!("baseline walk:   p50 {b50} ms, p95 {b95} ms, max {bmax} ms, mean {:.1} ms", baseline.mean_ms());
-    println!("view rebuild:    p50 {r50} ms, p95 {r95} ms, max {rmax} ms, mean {:.1} ms", rebuild.mean_ms());
-    println!("view serve:      p50 {s50} ms, p95 {s95} ms, max {smax} ms, mean {:.1} ms", serve.mean_ms());
+    println!(
+        "baseline walk:   p50 {b50} ms, p95 {b95} ms, max {bmax} ms, mean {:.1} ms",
+        baseline.mean_ms()
+    );
+    println!(
+        "view rebuild:    p50 {r50} ms, p95 {r95} ms, max {rmax} ms, mean {:.1} ms",
+        rebuild.mean_ms()
+    );
+    println!(
+        "view serve:      p50 {s50} ms, p95 {s95} ms, max {smax} ms, mean {:.1} ms",
+        serve.mean_ms()
+    );
     println!("subjects reached: {}", snapshot.subjects.len());
     if s95 <= TARGET_P95_MS {
         println!("historical target of the serve: p95 {s95} ms <= {TARGET_P95_MS} ms: MET");
     } else {
-        println!("historical target of the serve: p95 {s95} ms > {TARGET_P95_MS} ms: NOT MET, and said");
+        println!(
+            "historical target of the serve: p95 {s95} ms > {TARGET_P95_MS} ms: NOT MET, and said"
+        );
     }
 
     let after_rebuild = the_resident_memory();
@@ -594,10 +612,7 @@ async fn main() {
         cursor = stopped;
         for (_version, delta) in &pending {
             let at = Instant::now();
-            let touched = view
-                .apply_delta(delta)
-                .await
-                .expect("the delta is applied");
+            let touched = view.apply_delta(delta).await.expect("the delta is applied");
             per_delta.push(at.elapsed());
             handled += 1;
             if delta.relation == RelationType::Contains {
@@ -614,7 +629,10 @@ async fn main() {
     let per_delta = Measurement::of(&per_delta);
     let (d50, d95, dmax) = per_delta.millis();
     println!("deltas handled: {handled} in {deltas_ms:.1} ms");
-    println!("per delta:       p50 {d50} ms, p95 {d95} ms, max {dmax} ms, mean {:.1} ms", per_delta.mean_ms());
+    println!(
+        "per delta:       p50 {d50} ms, p95 {d95} ms, max {dmax} ms, mean {:.1} ms",
+        per_delta.mean_ms()
+    );
 
     // The second advisory was NOT recomputed by the deltas: its rows
     // are the ones it had.
@@ -672,5 +690,7 @@ async fn main() {
     println!("materialized rows: {rows}");
     println!("base on disk: {:.1} MB", base_size as f64 / 1_048_576.0);
 
-    println!("\nThe measurement is verifiable: the view said what the walk said, before and after the deltas.");
+    println!(
+        "\nThe measurement is verifiable: the view said what the walk said, before and after the deltas."
+    );
 }

@@ -15,7 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::behavior::{Behavior, BehaviorError, Effect, GuardOutcome, Reaction};
 use crate::events::{Event, EventKind, PayloadPredicate, Subscription};
-use crate::intent::{Intent, IntentExecutor, Plan, PlanningBehavior, ReadScope, Receipt};
+use crate::intent::{
+    Intent, IntentExecutor, IntentOrigin, Plan, PlanningBehavior, ReadScope, Receipt,
+};
 
 /// The subject that a vulnerability reaches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -393,13 +395,11 @@ impl PlanningBehavior for PlannedVulnerabilityReaction {
 
         // The intent of the case: ONE case per advisory, said once.
         let case_intent = Intent::new(
-            self.name(),
-            event,
-            &scope.causation,
+            IntentOrigin::of(self.name(), event, &scope.origin.causation),
             scope.tenant.clone(),
             "security_case",
             format!("case:{advisory}"),
-            scope.event_id.clone(),
+            scope.origin.event_id.clone(),
             serde_json::json!({
                 "advisory": advisory,
                 "at": scope.at.to_rfc3339(),
@@ -412,13 +412,11 @@ impl PlanningBehavior for PlannedVulnerabilityReaction {
         // reaches.
         for entry in &impacted {
             intents.push(Intent::new(
-                self.name(),
-                event,
-                &scope.causation,
+                IntentOrigin::of(self.name(), event, &scope.origin.causation),
                 scope.tenant.clone(),
                 "decision_reevaluation",
                 format!("decision:{advisory}:{}", entry.subject),
-                scope.event_id.clone(),
+                scope.origin.event_id.clone(),
                 serde_json::json!({
                     "subject": entry.subject,
                     "advisory": advisory,
@@ -486,13 +484,11 @@ impl PlanningBehavior for PlannedExceptionExpiryReaction {
             .to_string();
 
         let intent = Intent::new(
-            self.name(),
-            event,
-            &scope.causation,
+            IntentOrigin::of(self.name(), event, &scope.origin.causation),
             scope.tenant.clone(),
             "decision_reevaluation",
             format!("decision:expired:{subject}"),
-            scope.event_id.clone(),
+            scope.origin.event_id.clone(),
             serde_json::json!({
                 "subject": subject,
                 "reason": ReasonCode::ExceptionExpired,
@@ -610,8 +606,7 @@ impl IntentExecutor for DomainIntentExecutor {
                 }
             }
             "decision_reevaluation" => {
-                let Ok(effect) =
-                    serde_json::from_value::<DecisionEffect>(intent.payload.clone())
+                let Ok(effect) = serde_json::from_value::<DecisionEffect>(intent.payload.clone())
                 else {
                     return Receipt::Failed {
                         reason: format!(
@@ -623,8 +618,7 @@ impl IntentExecutor for DomainIntentExecutor {
                 };
                 if effect.subject.trim().is_empty() {
                     return Receipt::Failed {
-                        reason: "the reevaluation does not say which subject it serves"
-                            .to_string(),
+                        reason: "the reevaluation does not say which subject it serves".to_string(),
                         retryable: false,
                     };
                 }

@@ -180,17 +180,15 @@ impl<C: Connection> SurrealIntentStore<C> {
             let attempts = match self
                 .db
                 .query("SELECT * FROM $id")
-                .bind(("id", Self::record_id(
-                    EXECUTION_TABLE,
-                    &format!("apply:{}", row.intent.identity),
-                )))
+                .bind((
+                    "id",
+                    Self::record_id(EXECUTION_TABLE, &format!("apply:{}", row.intent.identity)),
+                ))
                 .await
             {
                 Ok(mut response) => response
                     .take::<Vec<ExecutionRecord>>(0)
-                    .map(|records| {
-                        records.first().map(|record| record.attempts).unwrap_or(0)
-                    })
+                    .map(|records| records.first().map(|record| record.attempts).unwrap_or(0))
                     .unwrap_or(0),
                 Err(_) => 0,
             };
@@ -199,8 +197,8 @@ impl<C: Connection> SurrealIntentStore<C> {
                 run: row.intent.origin.behavior.clone(),
                 effect: row.intent.idempotency_key.clone(),
                 tenant: row.intent.tenant.clone(),
-                event_id: row.intent.origin.event_id.clone(),
-                cause: row.intent.origin.causation.clone(),
+                event_id: row.intent.origin.event.event_id.clone(),
+                cause: row.intent.origin.event.causation.clone(),
                 attempts,
                 state: row.state,
                 failure_reason,
@@ -239,12 +237,18 @@ impl<C: Connection> ExecutionStore for SurrealIntentStore<C> {
     }
 
     async fn applied_effects(&self) -> Vec<Effect> {
-        self.db
+        // El error de SurrealDB es ENORME, y un cierre que lo devuelve
+        // hace que el error voyage por toda la cadena. Se lee la
+        // respuesta y se decide aqui: lo que no se puede leer, no esta.
+        let Ok(mut response) = self
+            .db
             .query("SELECT * FROM type::table($table)")
             .bind(("table", EFFECT_TABLE))
             .await
-            .and_then(|mut response| response.take(0))
-            .unwrap_or_default()
+        else {
+            return Vec::new();
+        };
+        response.take(0).unwrap_or_default()
     }
 
     async fn record_effect(&self, effect: Effect) {
@@ -257,13 +261,15 @@ impl<C: Connection> ExecutionStore for SurrealIntentStore<C> {
     }
 
     async fn executions(&self) -> Vec<ExecutionRecord> {
-        let mut records: Vec<ExecutionRecord> = self
+        let Ok(mut response) = self
             .db
             .query("SELECT * FROM type::table($table)")
             .bind(("table", EXECUTION_TABLE))
             .await
-            .and_then(|mut response| response.take(0))
-            .unwrap_or_default();
+        else {
+            return Vec::new();
+        };
+        let mut records: Vec<ExecutionRecord> = response.take(0).unwrap_or_default();
         records.sort_by_key(|record| record.started_at);
         records
     }
@@ -333,11 +339,7 @@ impl<C: Connection> IntentOutbox for SurrealIntentStore<C> {
         Ok(moved.into_iter().next().map(|row| row.intent))
     }
 
-    async fn record_receipt(
-        &self,
-        identity: &str,
-        receipt: &Receipt,
-    ) -> Result<(), String> {
+    async fn record_receipt(&self, identity: &str, receipt: &Receipt) -> Result<(), String> {
         // A receipt only answers a claim: el que lo aplico es el que lo
         // reclamo, y un recibo para un intent que nadie reclamo no lo
         // puede explicar nadie. El fallo que se puede reintentar vuelve
@@ -357,7 +359,9 @@ impl<C: Connection> IntentOutbox for SurrealIntentStore<C> {
         if let Some(row) = current.first() {
             let already_true = match receipt {
                 Receipt::Applied => row.state == "applied",
-                Receipt::Failed { retryable: true, .. } => row.state == "pending",
+                Receipt::Failed {
+                    retryable: true, ..
+                } => row.state == "pending",
                 Receipt::Failed { .. } => row.state == "failed",
                 Receipt::Unknown { .. } => row.state == "unknown",
             };
@@ -371,7 +375,9 @@ impl<C: Connection> IntentOutbox for SurrealIntentStore<C> {
                 "UPDATE $id SET state = 'applied', receipt = $receipt \
                  WHERE state = 'claimed'"
             }
-            Receipt::Failed { retryable: true, .. } => {
+            Receipt::Failed {
+                retryable: true, ..
+            } => {
                 "UPDATE $id SET state = 'pending', receipt = $receipt, \
                  lease_owner = NONE, lease_until = NONE \
                  WHERE state = 'claimed'"

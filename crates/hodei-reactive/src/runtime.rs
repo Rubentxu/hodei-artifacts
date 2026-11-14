@@ -31,7 +31,9 @@ use crate::behavior::{Behavior, BehaviorOutcome, Effect, Reaction, TraceEntry};
 use crate::events::{Event, EventKind};
 use crate::execution::ExecutionOutcome;
 use crate::execution::{Budget, BudgetState, ExecutionRecord};
-use crate::intent::{Intent, IntentExecutor, IntentOutbox, PlanningBehavior, ReadScope, Receipt};
+use crate::intent::{
+    EventOrigin, Intent, IntentExecutor, IntentOutbox, PlanningBehavior, ReadScope, Receipt,
+};
 
 /// Why the runtime could not do what it was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -310,9 +312,12 @@ impl ReactiveRuntime {
                     causation.clone(),
                     now,
                 )
-                .finished(ExecutionOutcome::Cut {
-                    reason: reason.clone(),
-                }, now);
+                .finished(
+                    ExecutionOutcome::Cut {
+                        reason: reason.clone(),
+                    },
+                    now,
+                );
                 self.store.put(record.clone()).await;
                 report.executions.push(record);
                 break;
@@ -369,8 +374,7 @@ impl ReactiveRuntime {
                 // tests are the proof of the cut.
                 let scope = ReadScope {
                     tenant: tenant.clone(),
-                    event_id: current.id.clone(),
-                    causation: causation.clone(),
+                    origin: EventOrigin::new(current.id.clone(), causation.clone()),
                     at: now,
                 };
                 match planner.plan(&current, &scope).await {
@@ -432,8 +436,7 @@ impl ReactiveRuntime {
                                 &outbox,
                                 &executor,
                                 &intent,
-                                &current.id,
-                                &causation,
+                                &scope.origin,
                                 now,
                                 &mut report,
                             )
@@ -506,8 +509,7 @@ impl ReactiveRuntime {
                 &outbox,
                 &executor,
                 &intent,
-                &intent.origin.event_id,
-                &intent.origin.causation,
+                &intent.origin.event,
                 now,
                 &mut report,
             )
@@ -527,8 +529,7 @@ impl ReactiveRuntime {
         outbox: &Arc<dyn IntentOutbox>,
         executor: &Arc<dyn IntentExecutor>,
         intent: &Intent,
-        event_id: &str,
-        causation: &[String],
+        origin: &EventOrigin,
         now: DateTime<Utc>,
         report: &mut DispatchReport,
     ) {
@@ -536,15 +537,20 @@ impl ReactiveRuntime {
         // and the one that loses knows the intent is somebody else's.
         let owner = self.the_owner();
         let claimed = outbox
-            .claim(&intent.identity, &owner, now + chrono::Duration::seconds(60), now)
+            .claim(
+                &intent.identity,
+                &owner,
+                now + chrono::Duration::seconds(60),
+                now,
+            )
             .await;
         match claimed {
             Err(reason) => {
                 let record = ExecutionRecord::new(
                     format!("claim:{}", intent.identity),
                     "runtime",
-                    event_id.to_string(),
-                    causation.to_vec(),
+                    origin.event_id.clone(),
+                    origin.causation.clone(),
                     now,
                 )
                 .note(format!("intent:{}", intent.identity), now)
@@ -591,9 +597,7 @@ impl ReactiveRuntime {
 
         // The touch, and the receipt of what became of it.
         let receipt = executor.apply(intent).await;
-        let _ = outbox
-            .record_receipt(&intent.identity, &receipt)
-            .await;
+        let _ = outbox.record_receipt(&intent.identity, &receipt).await;
         match receipt {
             Receipt::Applied => {
                 self.store.record_effect(intent.as_effect()).await;
@@ -603,8 +607,8 @@ impl ReactiveRuntime {
                 let mut record = ExecutionRecord::new(
                     format!("apply:{}", intent.identity),
                     "runtime",
-                    event_id.to_string(),
-                    causation.to_vec(),
+                    origin.event_id.clone(),
+                    origin.causation.clone(),
                     now,
                 )
                 .note(format!("intent:{}", intent.identity), now);
@@ -626,8 +630,8 @@ impl ReactiveRuntime {
                 let mut record = ExecutionRecord::new(
                     format!("apply:{}", intent.identity),
                     "runtime",
-                    event_id.to_string(),
-                    causation.to_vec(),
+                    origin.event_id.clone(),
+                    origin.causation.clone(),
                     now,
                 )
                 .note(format!("intent:{}", intent.identity), now);
@@ -798,7 +802,8 @@ impl ReactiveRuntime {
             }
             let already = self
                 .store
-                .applied_effects().await
+                .applied_effects()
+                .await
                 .iter()
                 .any(|applied| applied.idempotency_key == effect.idempotency_key);
             if already {

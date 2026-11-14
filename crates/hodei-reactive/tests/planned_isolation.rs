@@ -14,7 +14,8 @@ use hodei_reactive::behavior::GuardOutcome;
 use hodei_reactive::events::{Event, EventKind};
 use hodei_reactive::execution::Budget;
 use hodei_reactive::intent::{
-    InMemoryIntentOutbox, Intent, IntentExecutor, Plan, PlanningBehavior, ReadScope, Receipt,
+    InMemoryIntentOutbox, Intent, IntentExecutor, IntentOrigin, Plan, PlanningBehavior, ReadScope,
+    Receipt,
 };
 use hodei_reactive::runtime::{ExecutionStore, InMemoryExecutionStore, ReactiveRuntime};
 
@@ -30,7 +31,10 @@ struct SpyExecutor {
 }
 
 impl SpyExecutor {
-    fn over(store: Arc<dyn ExecutionStore>, answer: Receipt) -> (Arc<Self>, Arc<Mutex<Vec<String>>>) {
+    fn over(
+        store: Arc<dyn ExecutionStore>,
+        answer: Receipt,
+    ) -> (Arc<Self>, Arc<Mutex<Vec<String>>>) {
         let calls = Arc::new(Mutex::new(Vec::new()));
         (
             Arc::new(Self {
@@ -51,11 +55,18 @@ impl IntentExecutor for SpyExecutor {
         // a crash in between would lose the intent.
         let key = format!(
             "planned:{}:{}",
-            intent.origin.behavior, intent.origin.event_id
+            intent.origin.behavior, intent.origin.event.event_id
         );
-        let record = self.store.execution_of(&key).await.expect("el plan esta dicho");
+        let record = self
+            .store
+            .execution_of(&key)
+            .await
+            .expect("el plan esta dicho");
         assert!(
-            record.trace.iter().any(|entry| entry.what == format!("intent:{}", intent.identity)),
+            record
+                .trace
+                .iter()
+                .any(|entry| entry.what == format!("intent:{}", intent.identity)),
             "el intent {} esta en la traza del plan antes de tocarse",
             intent.identity
         );
@@ -96,9 +107,9 @@ impl SpyPlanning {
 async fn the_read(mode: Mode) -> Result<&'static str, hodei_reactive::behavior::BehaviorError> {
     match mode {
         Mode::Plans | Mode::InvalidInput => Ok("the facts of the risk"),
-        Mode::CannotRead => {
-            Err(hodei_reactive::behavior::BehaviorError::transient("the read of the facts failed"))
-        }
+        Mode::CannotRead => Err(hodei_reactive::behavior::BehaviorError::transient(
+            "the read of the facts failed",
+        )),
     }
 }
 
@@ -120,7 +131,11 @@ impl PlanningBehavior for SpyPlanning {
         }
     }
 
-    async fn plan(&self, event: &Event, scope: &ReadScope) -> Result<Plan, hodei_reactive::behavior::BehaviorError> {
+    async fn plan(
+        &self,
+        event: &Event,
+        scope: &ReadScope,
+    ) -> Result<Plan, hodei_reactive::behavior::BehaviorError> {
         // The validation failure: the input does not say what it must.
         if self.mode == Mode::InvalidInput {
             return Err(hodei_reactive::behavior::BehaviorError::permanent(
@@ -133,22 +148,22 @@ impl PlanningBehavior for SpyPlanning {
         let facts = the_read(self.mode).await?;
 
         let first = Intent::new(
-            self.name(),
-            event,
-            &scope.causation,
+            IntentOrigin::of(self.name(), event, &scope.origin.causation),
             scope.tenant.clone(),
             "security_case",
-            format!("case:{}:{}", scope.event_id, event.happened_at.timestamp()),
+            format!(
+                "case:{}:{}",
+                scope.origin.event_id,
+                event.happened_at.timestamp()
+            ),
             facts,
             serde_json::json!({"advisory": event.payload["advisory"]}),
         );
         let second = Intent::new(
-            self.name(),
-            event,
-            &scope.causation,
+            IntentOrigin::of(self.name(), event, &scope.origin.causation),
             scope.tenant.clone(),
             "decision",
-            format!("decision:{}:subject-1", scope.event_id),
+            format!("decision:{}:subject-1", scope.origin.event_id),
             facts,
             serde_json::json!({"subject": "hrn:hodei:artifacts:eu-west-1:acme:Artifact/app"}),
         );
@@ -156,7 +171,7 @@ impl PlanningBehavior for SpyPlanning {
         Ok(Plan {
             intents: vec![first, second],
             events: vec![Event::new(
-                format!("evt-caused:{}", scope.event_id),
+                format!("evt-caused:{}", scope.origin.event_id),
                 EventKind::DecisionTaken,
                 serde_json::json!({"subject": "hrn:hodei:artifacts:eu-west-1:acme:Artifact/app"}),
                 event.happened_at,
@@ -176,19 +191,22 @@ fn the_event() -> Event {
     )
 }
 
-/// A runtime with the spy planning and the spy executor, over the same
-/// store and the SAME outbox: the executor reads the store to check the
-/// order, and the outbox keeps what the intents became.
-fn runtime_with(
-    mode: Mode,
-    budget: Budget,
-    answer: Receipt,
-) -> (
+/// El mundo de la prueba: el runtime, las llamadas que se vieron, el
+/// almacen y el outbox.
+///
+/// Es un tipo con nombre porque una tupla de cuatro no se puede leer: y
+/// lo que no se puede leer no se puede comprobar.
+type TheWorld = (
     ReactiveRuntime,
     Arc<Mutex<Vec<String>>>,
     Arc<InMemoryExecutionStore>,
     Arc<InMemoryIntentOutbox>,
-) {
+);
+
+/// A runtime with the spy planning and the spy executor, over the same
+/// store and the SAME outbox: the executor reads the store to check the
+/// order, and the outbox keeps what the intents became.
+fn runtime_with(mode: Mode, budget: Budget, answer: Receipt) -> TheWorld {
     let store = Arc::new(InMemoryExecutionStore::empty());
     let outbox = Arc::new(InMemoryIntentOutbox::empty());
     let (executor, calls) = SpyExecutor::over(store.clone(), answer);
@@ -216,7 +234,8 @@ async fn the_plan_is_recorded_before_the_executor_touches() {
     assert_eq!(report.caused.len(), 1, "el evento causado sale al informe");
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1").await
+        .execution_of("planned:spy_planning:evt-plan-1")
+        .await
         .expect("la ejecucion del plan queda");
     assert!(
         record
@@ -258,11 +277,15 @@ async fn a_validation_failure_touches_nothing() {
     assert!(report.applied.is_empty() && report.caused.is_empty());
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1").await
+        .execution_of("planned:spy_planning:evt-plan-1")
+        .await
         .expect("el fallo queda escrito");
     match record.outcome {
         hodei_reactive::execution::ExecutionOutcome::Failed { retryable, .. } => {
-            assert!(!retryable, "una validacion que falla no mejora con reintentos");
+            assert!(
+                !retryable,
+                "una validacion que falla no mejora con reintentos"
+            );
         }
         other => panic!("el resultado tiene que ser un fallo: {other:?}"),
     }
@@ -292,7 +315,8 @@ async fn a_preparation_failure_touches_nothing() {
     );
 
     let record = store
-        .execution_of("planned:spy_planning:evt-plan-1").await
+        .execution_of("planned:spy_planning:evt-plan-1")
+        .await
         .expect("el fallo queda escrito");
     match record.outcome {
         hodei_reactive::execution::ExecutionOutcome::Failed { retryable, .. } => {
@@ -321,11 +345,17 @@ async fn an_exhausted_budget_touches_nothing() {
         .await
         .expect("el despacho corre y se corta");
 
-    assert!(calls.lock().unwrap().is_empty(), "sin presupuesto no hay toques");
+    assert!(
+        calls.lock().unwrap().is_empty(),
+        "sin presupuesto no hay toques"
+    );
     assert!(report.applied.is_empty());
     assert!(report.cut.is_some(), "el corte queda en el informe");
 
-    let record = store.execution_of("cut:evt-plan-1").await.expect("el corte queda");
+    let record = store
+        .execution_of("cut:evt-plan-1")
+        .await
+        .expect("el corte queda");
     assert!(
         matches!(
             record.outcome,
@@ -353,8 +383,14 @@ async fn an_intent_is_applied_once_only() {
         .expect("el segundo despacho corre");
 
     assert_eq!(first.applied.len(), 2);
-    assert!(second.applied.is_empty(), "el efecto ya aplicado no se repite");
-    assert!(!second.duplicates.is_empty(), "la segunda entrega es duplicado");
+    assert!(
+        second.applied.is_empty(),
+        "el efecto ya aplicado no se repite"
+    );
+    assert!(
+        !second.duplicates.is_empty(),
+        "la segunda entrega es duplicado"
+    );
     assert_eq!(
         calls.lock().unwrap().len(),
         2,

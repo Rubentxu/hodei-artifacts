@@ -21,8 +21,8 @@
 //! the tables already hold.
 
 use super::delta::SurrealRelationDeltaLedger;
-use hodei_evidence::domain::delta::RelationDeltaLedger;
 use hodei_evidence::GraphChangeSet;
+use hodei_evidence::domain::delta::RelationDeltaLedger;
 use hodei_evidence::domain::graph::{GraphNode, GraphRelation, NodeKind};
 use hodei_evidence::ports::graph::{GraphError, GraphQuery, GraphWriter, Lineage};
 use kernel::Hrn;
@@ -321,7 +321,6 @@ impl<C: Connection> SurrealGraphStore<C> {
         ))
     }
 
-
     /// The supports that each touched relation had BEFORE the change
     /// set, by the identity of the relation. Un changeset sin causa no
     /// va a emitir deltas, y no hace las lecturas.
@@ -352,7 +351,10 @@ impl<C: Connection> SurrealGraphStore<C> {
             let supports = self.supports_of(&identity).await.unwrap_or_default();
             snapshot.insert(
                 identity,
-                supports.into_iter().map(|(evidence, _at)| evidence).collect(),
+                supports
+                    .into_iter()
+                    .map(|(evidence, _at)| evidence)
+                    .collect(),
             );
         }
         snapshot
@@ -375,15 +377,15 @@ impl<C: Connection> SurrealGraphStore<C> {
         let rows: Vec<SupportRow> = response
             .take(0)
             .map_err(|error| GraphError::Unavailable(error.to_string()))?;
-        let mut supports: Vec<(hodei_evidence::EvidenceId, chrono::DateTime<chrono::Utc>)> =
-            rows.into_iter()
-                .map(|row| {
-                    (
-                        hodei_evidence::EvidenceId::new(row.evidence_id),
-                        row.observed_at,
-                    )
-                })
-                .collect();
+        let mut supports: Vec<(hodei_evidence::EvidenceId, chrono::DateTime<chrono::Utc>)> = rows
+            .into_iter()
+            .map(|row| {
+                (
+                    hodei_evidence::EvidenceId::new(row.evidence_id),
+                    row.observed_at,
+                )
+            })
+            .collect();
         supports.sort_by_key(|support| support.1);
         Ok(supports)
     }
@@ -555,7 +557,10 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
             }
             for (index, relation) in changes.relations.iter().enumerate() {
                 statement = statement
-                    .bind((format!("rid{index}"), self.relation_id(&relation.identity())))
+                    .bind((
+                        format!("rid{index}"),
+                        self.relation_id(&relation.identity()),
+                    ))
                     .bind((format!("r{index}"), relation_row(relation)))
                     .bind((
                         format!("sid{index}"),
@@ -571,15 +576,15 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
                         self.support_id(&withdrawal.identity(), withdrawal.evidence_id.as_str()),
                     ))
                     .bind((format!("wtable{index}"), support_table.clone()))
-                    .bind((
-                        format!("wrelid{index}"),
-                        withdrawal.identity(),
-                    ))
+                    .bind((format!("wrelid{index}"), withdrawal.identity()))
                     .bind((
                         format!("wev{index}"),
                         withdrawal.evidence_id.as_str().to_string(),
                     ))
-                    .bind((format!("wrid{index}"), self.relation_id(&withdrawal.identity())));
+                    .bind((
+                        format!("wrid{index}"),
+                        self.relation_id(&withdrawal.identity()),
+                    ));
             }
 
             let written = statement
@@ -623,7 +628,6 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
         }
     }
 
-
     /// Empties the projection.
     ///
     /// The rows are deleted and the table is kept: removing the table
@@ -631,7 +635,11 @@ impl<C: Connection> GraphWriter for SurrealGraphStore<C> {
     /// reading the whole table for every question. The measure of the
     /// scale model showed what that costs.
     async fn clear(&self) -> Result<(), GraphError> {
-        for table in [self.node_table(), self.relation_table(), self.support_table()] {
+        for table in [
+            self.node_table(),
+            self.relation_table(),
+            self.support_table(),
+        ] {
             let table = Self::checked_table(&table)?;
             self.db
                 .query(format!("DELETE {table}"))

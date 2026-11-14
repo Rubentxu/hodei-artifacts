@@ -15,8 +15,8 @@
 use std::collections::BTreeMap;
 
 use crate::domain::delta::{RelationDelta, RelationDeltaKind};
-use crate::domain::graph::GraphChangeSet;
 use crate::domain::evidence::EvidenceId;
+use crate::domain::graph::GraphChangeSet;
 use chrono::{DateTime, Utc};
 
 /// The supports that were there BEFORE the changeset, by the identity of

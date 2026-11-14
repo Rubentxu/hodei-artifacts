@@ -7,18 +7,21 @@
 //! unknown receipt does NOT come back by itself: lo incierto se
 //! reconcilia, y solo entonces vuelve al mercado.
 
-use std::sync::{atomic::{AtomicUsize, Ordering}, Arc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use chrono::{Duration, Utc};
 use hodei_reactive::behavior::GuardOutcome;
 use hodei_reactive::events::{Event, EventKind, Subscription};
 use hodei_reactive::execution::Budget;
 use hodei_reactive::intent::{
-    InMemoryIntentOutbox, Intent, IntentExecutor, IntentOutbox, Plan, PlanningBehavior, ReadScope,
-    Receipt,
+    InMemoryIntentOutbox, Intent, IntentExecutor, IntentOrigin, IntentOutbox, Plan,
+    PlanningBehavior, ReadScope, Receipt,
 };
 use hodei_reactive::reactions::{
-    DomainIntentExecutor, DecisionRequester, ImpactedSubject, Reevaluation, SecurityCaseSink,
+    DecisionRequester, DomainIntentExecutor, ImpactedSubject, Reevaluation, SecurityCaseSink,
 };
 use hodei_reactive::runtime::{InMemoryExecutionStore, ReactiveRuntime};
 
@@ -43,15 +46,17 @@ impl PlanningBehavior for OneIntentPlanning {
         GuardOutcome::Pass
     }
 
-    async fn plan(&self, event: &Event, scope: &ReadScope) -> Result<Plan, hodei_reactive::behavior::BehaviorError> {
+    async fn plan(
+        &self,
+        event: &Event,
+        scope: &ReadScope,
+    ) -> Result<Plan, hodei_reactive::behavior::BehaviorError> {
         let intent = Intent::new(
-            self.name(),
-            event,
-            &scope.causation,
+            IntentOrigin::of(self.name(), event, &scope.origin.causation),
             scope.tenant.clone(),
             "decision_reevaluation",
-            format!("decision:{}", scope.event_id),
-            scope.event_id.clone(),
+            format!("decision:{}", scope.origin.event_id),
+            scope.origin.event_id.clone(),
             serde_json::json!({"subject": SUBJECT, "reason": "vulnerability_impacted", "at": scope.at.to_rfc3339()}),
         );
         Ok(Plan {
@@ -137,11 +142,9 @@ impl IntentExecutor for SpyExecutor {
 fn the_runtime(answer: Answer) -> (ReactiveRuntime, Arc<SpyExecutor>, Arc<InMemoryIntentOutbox>) {
     let outbox = Arc::new(InMemoryIntentOutbox::empty());
     let executor = SpyExecutor::with(answer);
-    let mut runtime = ReactiveRuntime::new(
-        Arc::new(InMemoryExecutionStore::empty()),
-        Budget::default(),
-    )
-    .with_tenant("acme");
+    let mut runtime =
+        ReactiveRuntime::new(Arc::new(InMemoryExecutionStore::empty()), Budget::default())
+            .with_tenant("acme");
     runtime.with_outbox(outbox.clone());
     runtime.register_planned(Arc::new(OneIntentPlanning), executor.clone());
     (runtime, executor, outbox)
@@ -175,7 +178,10 @@ async fn the_intent_crosses_the_outbox_and_lands_once() {
         .await
         .expect("la reentrega corre");
     assert!(!second.duplicates.is_empty(), "la reentrega es duplicado");
-    assert!(second.applied.is_empty(), "el efecto ya aplicado no se repite");
+    assert!(
+        second.applied.is_empty(),
+        "el efecto ya aplicado no se repite"
+    );
     assert_eq!(executor.touches(), 1, "un intent, un toque, ni uno mas");
 }
 
@@ -209,7 +215,11 @@ async fn a_crash_between_saying_and_doing_is_recovered_by_the_resume() {
         Some("applied".to_string()),
         "el recibo de la reanudacion dice aplicado"
     );
-    assert_eq!(executor.touches(), 2, "dos toques: el que fallo y el que no");
+    assert_eq!(
+        executor.touches(),
+        2,
+        "dos toques: el que fallo y el que no"
+    );
     assert_eq!(
         runtime.store().applied_effects().await.len(),
         1,
@@ -284,9 +294,7 @@ async fn an_executor_of_another_tenant_refuses_to_touch() {
 
     let event = the_event();
     let intent = Intent::new(
-        "one_intent",
-        &event,
-        &[event.id.clone()],
+        IntentOrigin::of("one_intent", &event, std::slice::from_ref(&event.id)),
         "mallory",
         "decision_reevaluation",
         "decision:mallory",
@@ -296,11 +304,25 @@ async fn an_executor_of_another_tenant_refuses_to_touch() {
 
     let receipt = executor.apply(&intent).await;
     assert!(
-        matches!(receipt, Receipt::Failed { retryable: false, .. }),
+        matches!(
+            receipt,
+            Receipt::Failed {
+                retryable: false,
+                ..
+            }
+        ),
         "un intent de otro tenant se rechaza sin reintento: {receipt:?}"
     );
-    assert_eq!(decisions.requests.load(Ordering::SeqCst), 0, "no se pidio decision alguna");
-    assert_eq!(cases.opens.load(Ordering::SeqCst), 0, "no se abrio caso alguno");
+    assert_eq!(
+        decisions.requests.load(Ordering::SeqCst),
+        0,
+        "no se pidio decision alguna"
+    );
+    assert_eq!(
+        cases.opens.load(Ordering::SeqCst),
+        0,
+        "no se abrio caso alguno"
+    );
 }
 
 /// El caso de seguridad que el ejecutor toca, con los datos del intent:
@@ -317,9 +339,11 @@ async fn the_case_intent_opens_the_case_of_its_tenant() {
 
     let event = the_event();
     let intent = Intent::new(
-        "vulnerability_impact",
-        &event,
-        &[event.id.clone()],
+        IntentOrigin::of(
+            "vulnerability_impact",
+            &event,
+            std::slice::from_ref(&event.id),
+        ),
         "acme",
         "security_case",
         "case:GHSA-1",

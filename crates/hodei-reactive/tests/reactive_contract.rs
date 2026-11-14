@@ -250,7 +250,8 @@ async fn the_trace_is_durable_and_a_failure_retries() {
 
     // Y el registro es durable: esta en el almacen, no solo en el informe.
     let stored = store
-        .execution_of("failing:ev-1").await
+        .execution_of("failing:ev-1")
+        .await
         .expect("the record is there");
     assert!(stored.is_failure());
     assert!(

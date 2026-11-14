@@ -176,10 +176,7 @@ impl RelationDeltaLedger for InMemoryRelationDeltaLedger {
                 delta.identity(),
                 delta.evidence.as_str()
             );
-            let causes = inner
-                .causes
-                .entry(delta.tenant.to_string())
-                .or_default();
+            let causes = inner.causes.entry(delta.tenant.to_string()).or_default();
             if !causes.insert(key) {
                 continue;
             }
