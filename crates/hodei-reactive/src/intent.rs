@@ -36,12 +36,36 @@ pub struct ReadScope {
     /// NOT the tenant a caller claims: una reclamacion no es una
     /// identidad.
     pub tenant: String,
-    /// The event that triggers the plan.
-    pub event_id: String,
-    /// The causation chain of the event.
-    pub causation: Vec<String>,
+    /// The event the plan is for, and its causation chain.
+    pub origin: EventOrigin,
     /// The moment of the observation.
     pub at: DateTime<Utc>,
+}
+
+/// Where something comes from: the event that set it off and its
+/// causation chain.
+///
+/// The event and the chain always travel TOGETHER --one without the
+/// other does not say where it came from--, so they are said together.
+/// A work that receives the event and the chain as two loose arguments
+/// can be handed the chain of one event and the id of another without
+/// anybody noticing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventOrigin {
+    /// The event that set it off.
+    pub event_id: String,
+    /// The causation chain of the event, oldest first.
+    pub causation: Vec<String>,
+}
+
+impl EventOrigin {
+    /// The origin of an event.
+    pub fn new(event_id: impl Into<String>, causation: Vec<String>) -> Self {
+        Self {
+            event_id: event_id.into(),
+            causation,
+        }
+    }
 }
 
 /// Where an intent comes from.
@@ -49,10 +73,20 @@ pub struct ReadScope {
 pub struct IntentOrigin {
     /// The behaviour that planned it.
     pub behavior: String,
-    /// The event that triggered it.
-    pub event_id: String,
-    /// The causation chain of the event, oldest first.
-    pub causation: Vec<String>,
+    /// The event it comes from.
+    pub event: EventOrigin,
+}
+
+impl IntentOrigin {
+    /// The origin of an intent, said the way the reactions say it: the
+    /// behaviour that planned it, the event it comes from and that
+    /// event's causation chain.
+    pub fn of(behavior: &str, event: &Event, causation: &[String]) -> Self {
+        Self {
+            behavior: behavior.to_string(),
+            event: EventOrigin::new(event.id.clone(), causation.to_vec()),
+        }
+    }
 }
 
 /// An intent: ONE external effect, said before it is done.
@@ -85,25 +119,24 @@ pub struct Intent {
 
 impl Intent {
     /// An intent, with everything that makes it reconcilable.
+    ///
+    /// The origin comes as ONE piece --the behaviour and the event it
+    /// comes from--because that is how it travels: they are the same
+    /// fact, said two ways, and a caller that could give one of them
+    /// from one event and the other from another would be saying a
+    /// thing nobody did.
     pub fn new(
-        behavior: &str,
-        event: &Event,
-        causation: &[String],
+        origin: IntentOrigin,
         tenant: impl Into<String>,
         kind: impl Into<String>,
         idempotency_key: impl Into<String>,
         input_version: impl Into<String>,
         payload: serde_json::Value,
     ) -> Self {
-        let origin = IntentOrigin {
-            behavior: behavior.to_string(),
-            event_id: event.id.clone(),
-            causation: causation.to_vec(),
-        };
         let idempotency_key = idempotency_key.into();
         let identity = format!(
             "intent:{}:{}:{}",
-            origin.behavior, origin.event_id, idempotency_key
+            origin.behavior, origin.event.event_id, idempotency_key
         );
         Self {
             identity,

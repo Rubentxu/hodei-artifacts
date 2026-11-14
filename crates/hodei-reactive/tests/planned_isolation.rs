@@ -14,7 +14,8 @@ use hodei_reactive::behavior::GuardOutcome;
 use hodei_reactive::events::{Event, EventKind};
 use hodei_reactive::execution::Budget;
 use hodei_reactive::intent::{
-    InMemoryIntentOutbox, Intent, IntentExecutor, Plan, PlanningBehavior, ReadScope, Receipt,
+    InMemoryIntentOutbox, Intent, IntentExecutor, IntentOrigin, Plan, PlanningBehavior, ReadScope,
+    Receipt,
 };
 use hodei_reactive::runtime::{ExecutionStore, InMemoryExecutionStore, ReactiveRuntime};
 
@@ -54,7 +55,7 @@ impl IntentExecutor for SpyExecutor {
         // a crash in between would lose the intent.
         let key = format!(
             "planned:{}:{}",
-            intent.origin.behavior, intent.origin.event_id
+            intent.origin.behavior, intent.origin.event.event_id
         );
         let record = self
             .store
@@ -147,22 +148,22 @@ impl PlanningBehavior for SpyPlanning {
         let facts = the_read(self.mode).await?;
 
         let first = Intent::new(
-            self.name(),
-            event,
-            &scope.causation,
+            IntentOrigin::of(self.name(), event, &scope.origin.causation),
             scope.tenant.clone(),
             "security_case",
-            format!("case:{}:{}", scope.event_id, event.happened_at.timestamp()),
+            format!(
+                "case:{}:{}",
+                scope.origin.event_id,
+                event.happened_at.timestamp()
+            ),
             facts,
             serde_json::json!({"advisory": event.payload["advisory"]}),
         );
         let second = Intent::new(
-            self.name(),
-            event,
-            &scope.causation,
+            IntentOrigin::of(self.name(), event, &scope.origin.causation),
             scope.tenant.clone(),
             "decision",
-            format!("decision:{}:subject-1", scope.event_id),
+            format!("decision:{}:subject-1", scope.origin.event_id),
             facts,
             serde_json::json!({"subject": "hrn:hodei:artifacts:eu-west-1:acme:Artifact/app"}),
         );
@@ -170,7 +171,7 @@ impl PlanningBehavior for SpyPlanning {
         Ok(Plan {
             intents: vec![first, second],
             events: vec![Event::new(
-                format!("evt-caused:{}", scope.event_id),
+                format!("evt-caused:{}", scope.origin.event_id),
                 EventKind::DecisionTaken,
                 serde_json::json!({"subject": "hrn:hodei:artifacts:eu-west-1:acme:Artifact/app"}),
                 event.happened_at,
@@ -190,19 +191,22 @@ fn the_event() -> Event {
     )
 }
 
-/// A runtime with the spy planning and the spy executor, over the same
-/// store and the SAME outbox: the executor reads the store to check the
-/// order, and the outbox keeps what the intents became.
-fn runtime_with(
-    mode: Mode,
-    budget: Budget,
-    answer: Receipt,
-) -> (
+/// El mundo de la prueba: el runtime, las llamadas que se vieron, el
+/// almacen y el outbox.
+///
+/// Es un tipo con nombre porque una tupla de cuatro no se puede leer: y
+/// lo que no se puede leer no se puede comprobar.
+type TheWorld = (
     ReactiveRuntime,
     Arc<Mutex<Vec<String>>>,
     Arc<InMemoryExecutionStore>,
     Arc<InMemoryIntentOutbox>,
-) {
+);
+
+/// A runtime with the spy planning and the spy executor, over the same
+/// store and the SAME outbox: the executor reads the store to check the
+/// order, and the outbox keeps what the intents became.
+fn runtime_with(mode: Mode, budget: Budget, answer: Receipt) -> TheWorld {
     let store = Arc::new(InMemoryExecutionStore::empty());
     let outbox = Arc::new(InMemoryIntentOutbox::empty());
     let (executor, calls) = SpyExecutor::over(store.clone(), answer);

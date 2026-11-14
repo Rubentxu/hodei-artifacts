@@ -119,7 +119,6 @@ fn the_cve_event(id: &str) -> Event {
 /// El mundo de la migracion: la base de datos, el grafo, las decisiones,
 /// los casos y el outbox, TODOS sobre la misma base.
 struct World {
-    db: Arc<Surreal<Db>>,
     graph: Arc<SurrealGraphStore<Db>>,
     store: Arc<SurrealDecisionStore<Db>>,
     policies: Arc<PolicyRegistry>,
@@ -155,7 +154,6 @@ impl World {
         );
 
         let world = Self {
-            db,
             graph,
             store,
             policies,
