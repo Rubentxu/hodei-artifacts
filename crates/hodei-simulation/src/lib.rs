@@ -31,6 +31,21 @@
 //! al final que el mundo sobre el que se evaluo sigue siendo el mismo
 //! que se leyo.
 //!
+//! # La base fijada
+//!
+//! Una simulacion que no dice **sobre que mundo** se calculo es una
+//! respuesta sin apellido. Por eso el diff lleva su base: la cuenta, el
+//! reloj, la generacion del grafo, el sello del contenido leido y el
+//! manifiesto de lo que se leyo --las relaciones, la politica y la
+//! evidencia que consume la decision--.
+//!
+//! Y esa base se **comprueba dos veces**: si el mundo se ha movido
+//! mientras se evaluaba, la simulacion se dice obsoleta en vez de
+//! devolver un diff sobre un mundo que ya no existe. El fork tiene que
+//! declarar contra que generacion se preparo, y la simulacion no acepta
+//! una base sin version: una base que no se puede comprobar no sostiene
+//! una respuesta.
+//!
 //! # Lo que el diff dice
 //!
 //! El diff se parece al diff de git: se ve que relaciones **aparecen** y

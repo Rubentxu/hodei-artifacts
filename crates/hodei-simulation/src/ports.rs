@@ -11,6 +11,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hodei_evidence::domain::read_set::ReadSet;
 use hodei_trust_policy::TrustPolicy;
 use kernel::Hrn;
 
@@ -34,6 +35,12 @@ pub trait SimulationGraph: Send + Sync {
     /// no si las relaciones son las mismas. Un cambio que sustituye una
     /// relacion por otra no lo nota, y por eso la simulacion no se
     /// apoya solo en esto.
+    ///
+    /// El recuento es **de la cuenta**, no del sujeto: cuenta todas las
+    /// relaciones de la cuenta. Una escritura que no toca los sujetos
+    /// que la simulacion lee tambien lo mueve, y la simulacion se dice
+    /// obsoleta. Es a proposito --fallar cerrado--, pero conviene saber
+    ///lo antes de usarlo en produccion.
     async fn relation_count(&self) -> Result<usize, String>;
 
     /// Todas las relaciones del grafo.
@@ -49,6 +56,10 @@ pub trait SimulationGraph: Send + Sync {
     /// Es un contador monotono, y lo que se compara antes y despues de
     /// simular para saber si el mundo se ha movido. El numero de
     /// relaciones no sirve para eso: un recuento no es una version.
+    ///
+    /// Y es de la **CUENTA**, no del sujeto: es la historia del grafo
+    /// entero. Una escritura ajena al conjunto que la simulacion lee
+    /// tambien invalida la simulacion.
     async fn generation(&self) -> Result<u64, String>;
 
     /// La cuenta a la que pertenece el grafo.
@@ -72,6 +83,12 @@ pub trait SimulationGraph: Send + Sync {
 #[async_trait]
 pub trait DecisionEvaluator: Send + Sync {
     /// La decision de un sujeto, en el instante que se le indica.
+    ///
+    /// La decision lleva **lo que leyo** para decidir: sin eso, la base
+    /// de la simulacion diria sobre que mundo se calculo sin decir que
+    /// evidencia lo decidio, y una evidencia que entra en mitad de la
+    /// simulacion se atribuiria al hecho hipotetico cuando la causa fue
+    /// otra.
     async fn decide(
         &self,
         subject: &Hrn,
@@ -79,4 +96,13 @@ pub trait DecisionEvaluator: Send + Sync {
         facts: &[Hypothetical],
         now: DateTime<Utc>,
     ) -> Result<TheDecision, String>;
+
+    /// Lo que el evaluador lee DE VERDAD para decidir de un sujeto.
+    ///
+    /// Es la lectura que se repite al final de la simulacion para
+    /// comprobar que la evidencia que consumio la decision sigue siendo
+    /// la misma. Sin ella, una evidencia que entra mientras se evalua
+    /// seria invisible: no toca el grafo, no cambia el numero de
+    /// relaciones y no mueve la generacion.
+    async fn the_reads_of(&self, subject: &Hrn) -> Result<ReadSet, String>;
 }

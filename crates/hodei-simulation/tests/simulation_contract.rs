@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use hodei_evidence::domain::graph::RelationType;
+use hodei_evidence::domain::read_set::ReadSet;
 use hodei_simulation::diff::TheDecision;
 use hodei_simulation::hypothetical::{Hypothetical, HypotheticalClaim, RelationFact};
 use hodei_simulation::ports::{DecisionEvaluator, SimulationGraph};
@@ -160,7 +161,12 @@ impl DecisionEvaluator for TheEvaluator {
         Ok(TheDecision {
             outcome,
             policy: policy.clone(),
+            read_set: ReadSet::empty(),
         })
+    }
+
+    async fn the_reads_of(&self, _subject: &Hrn) -> Result<ReadSet, String> {
+        Ok(ReadSet::empty())
     }
 }
 
@@ -189,7 +195,7 @@ fn the_strict_policy(version: &str) -> TrustPolicy {
 fn the_fork(policy: hodei_trust_policy::TrustPolicy) -> SimulationFork {
     SimulationFork::new(
         "sim-1",
-        Checkpoint::new("checkpoint-1", "acme", Utc::now(), Some(42)),
+        Checkpoint::new("checkpoint-1", "acme", Utc::now(), Some(42), 1),
         policy,
         Utc::now(),
     )
@@ -488,7 +494,12 @@ impl DecisionEvaluator for PolicyDrivenEvaluator {
         Ok(TheDecision {
             outcome,
             policy: policy.clone(),
+            read_set: ReadSet::empty(),
         })
+    }
+
+    async fn the_reads_of(&self, _subject: &Hrn) -> Result<ReadSet, String> {
+        Ok(ReadSet::empty())
     }
 }
 

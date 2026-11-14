@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hodei_evidence::application::capsule::CapsuleAssembler;
 use hodei_evidence::domain::evidence::{EvidenceRecord, EvidenceVerification};
+use hodei_evidence::domain::read_set::{ReadSet, ReadStamp};
 use hodei_evidence::ports::EvidenceStore;
 use hodei_simulation::diff::TheDecision;
 use hodei_simulation::hypothetical::{Hypothetical, HypotheticalClaim};
@@ -141,8 +142,35 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
         Ok(TheDecision {
             outcome: decision.outcome,
             policy: policy.clone(),
+            read_set: the_read_set_of(&evidence),
         })
     }
+
+    async fn the_reads_of(&self, subject: &Hrn) -> Result<ReadSet, String> {
+        let evidence = self
+            .reader
+            .evidence_of_subject(&self.account, subject)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(the_read_set_of(&evidence))
+    }
+}
+
+/// El manifiesto de lo que se leyo: una pieza de evidencia por su id y
+/// el digest de su contenido.
+///
+/// El digest es lo que permite comprobar el origen: si la evidencia
+/// cambia de contenido, cambia el digest, y el digest es lo que se
+/// compara al final de la simulacion.
+fn the_read_set_of(evidence: &[EvidenceRecord]) -> ReadSet {
+    let mut read_set = ReadSet::empty();
+    for record in evidence {
+        read_set.read(ReadStamp::evidence(
+            record.id().to_string(),
+            record.content().digest.to_string(),
+        ));
+    }
+    read_set
 }
 
 /// La misma pieza de evidencia, con otra verificacion.

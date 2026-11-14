@@ -47,28 +47,37 @@ pub struct Checkpoint {
     /// el fork se hizo contra un mundo que ya no existe, y la
     /// simulacion se dice obsoleta en vez de responder por el mundo de
     /// ahora como si fuera el de entonces.
+    ///
+    /// Un checkpoint SIN generacion no se puede simular: una base que no
+    /// dice contra que version se evalua no se puede comprobar.
     #[serde(default)]
     pub generation: Option<u64>,
 }
 
 impl Checkpoint {
-    /// Un checkpoint.
+    /// Un checkpoint, preparado contra una generacion del grafo.
+    ///
+    /// La generacion es OBLIGATORIA: un fork que no dice contra que
+    /// version del mundo se preparo no se puede comprobar, y la
+    /// simulacion lo rechaza en vez de responder por un mundo que nadie
+    /// ha dicho cual era.
     pub fn new(
         id: impl Into<String>,
         account: impl Into<String>,
         at: DateTime<Utc>,
         ledger_position: Option<u64>,
+        generation: u64,
     ) -> Self {
         Self {
             id: id.into(),
             account: account.into(),
             at,
             ledger_position,
-            generation: None,
+            generation: Some(generation),
         }
     }
 
-    /// El checkpoint preparado contra una generacion del grafo.
+    /// El checkpoint preparado contra otra generacion del grafo.
     pub fn at_generation(mut self, generation: u64) -> Self {
         self.generation = Some(generation);
         self

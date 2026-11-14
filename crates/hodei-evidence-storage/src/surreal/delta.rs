@@ -138,7 +138,11 @@ impl<C: Connection> RelationDeltaLedger for SurrealRelationDeltaLedger<C> {
         // dice otra vez, y no consume version alguna. The lookups are
         // reads by record identity, one per candidate.
         let mut fresh: Vec<(u64, &RelationDelta)> = Vec::new();
-        let mut seq = 0;
+        // El contador es POR CUENTA: cada cuenta tiene su propia
+        // historia, y el numero de version de una no se cuenta con el
+        // de la otra. Con un unico contador, un cambio de la cuenta B
+        // tomaba el numero de la cuenta A.
+        let mut seqs: Vec<(String, u64)> = Vec::new();
         for delta in deltas {
             let existing: Vec<DeltaRow> = self
                 .db
@@ -151,10 +155,20 @@ impl<C: Connection> RelationDeltaLedger for SurrealRelationDeltaLedger<C> {
             if !existing.is_empty() {
                 continue;
             }
-            if seq == 0 {
-                seq = self.the_max_seq(&delta.tenant.to_string()).await?;
-            }
-            seq += 1;
+            let tenant = delta.tenant.to_string();
+            let seq = match seqs.iter_mut().find(|(known, _)| *known == tenant) {
+                Some((_, seq)) => {
+                    *seq += 1;
+                    *seq
+                }
+                None => {
+                    // La primera vez que se ve esta cuenta, se pregunta
+                    // por donde va su historia.
+                    let seq = self.the_max_seq(&tenant).await? + 1;
+                    seqs.push((tenant, seq));
+                    seq
+                }
+            };
             fresh.push((seq, delta));
         }
         if fresh.is_empty() {

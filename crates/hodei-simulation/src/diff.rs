@@ -4,6 +4,7 @@
 //! aparecen y que relaciones desaparecen, y que decisiones cambian, sin
 //! tener que desplegar nada para averiguarlo.
 
+use hodei_evidence::domain::read_set::ReadSet;
 use hodei_trust_policy::TrustPolicy;
 use hodei_trust_policy::decision::Outcome;
 use kernel::Hrn;
@@ -40,20 +41,28 @@ impl StructuralDiff {
     /// extremos): dos relaciones con la misma identidad son la misma
     /// relacion, y compararlas por sus campos seria comparar dos veces la
     /// misma fila.
+    ///
+    /// Y el diff sale en ORDEN CANONICO: las relaciones que aparecen y
+    /// las que desaparecen van ordenadas por su identidad, no en el
+    /// orden en que las dio cada lado. Un diff cuyo orden depende del
+    /// orden de entrada no se puede comparar con otro diff, y un diff
+    /// que no se puede comparar no se puede auditar.
     pub fn between(before: &[RelationFact], after: &[RelationFact]) -> Self {
         let before_ids: Vec<String> = before.iter().map(RelationFact::identity).collect();
         let after_ids: Vec<String> = after.iter().map(RelationFact::identity).collect();
 
-        let appeared: Vec<RelationFact> = after
+        let mut appeared: Vec<RelationFact> = after
             .iter()
             .filter(|relation| !before_ids.contains(&relation.identity()))
             .cloned()
             .collect();
-        let disappeared: Vec<RelationFact> = before
+        appeared.sort_by_key(|relation| relation.identity());
+        let mut disappeared: Vec<RelationFact> = before
             .iter()
             .filter(|relation| !after_ids.contains(&relation.identity()))
             .cloned()
             .collect();
+        disappeared.sort_by_key(|relation| relation.identity());
 
         let mut affected: Vec<Hrn> = Vec::new();
         for relation in appeared.iter().chain(disappeared.iter()) {
@@ -63,6 +72,7 @@ impl StructuralDiff {
                 }
             }
         }
+        affected.sort_by_key(|subject| subject.to_string());
 
         Self {
             appeared,
@@ -132,10 +142,17 @@ impl SimulationDiff {
 }
 
 /// La decision de un sujeto, con la politica que la produjo.
+///
+/// Y con lo que se leyo para decidir: una decision sin su manifiesto de
+/// lecturas es una decision que no dice sobre que evidencia se tomo, y
+/// una base de simulacion que no la guarda no puede saber si la
+/// evidencia cambio mientras se evaluaba.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TheDecision {
     /// Lo que se decidio.
     pub outcome: Outcome,
     /// La politica que lo decidio.
     pub policy: TrustPolicy,
+    /// Lo que se leyo para decidir.
+    pub read_set: ReadSet,
 }

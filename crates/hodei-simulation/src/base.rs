@@ -31,6 +31,15 @@
 //! misma base y el mismo reloj dan el mismo resultado. Un nucleo de
 //! decision que lee el reloj de pared no es reproducible, y una
 //! simulacion que no es reproducible no se puede auditar.
+//!
+//! # El alcance de la generacion
+//!
+//! La generacion es **de la cuenta**, no del sujeto: es el contador de
+//! la historia del grafo entero. Una escritura que no toca el conjunto
+//! que la simulacion lee tambien la invalida. Es a proposito --fallar
+//! cerrado antes que devolver una respuesta sobre un mundo que se
+//! movió--, pero conviene saberlo: la simulacion es mas estricta de lo
+//! que parece.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::ContentDigest;
@@ -117,6 +126,20 @@ impl SimulationBase {
         self
     }
 
+    /// Registra lo que se ha leido para DECIDIR.
+    ///
+    /// Es la parte de la base que no es del grafo: la evidencia que el
+    /// nucleo de decision consume. Sin ella la base diria sobre que
+    /// mundo se calculo sin decir que evidencia lo decidio, y un diff
+    /// al que le entra evidencia nueva se atribuiria al hecho
+    /// hipotetico cuando la causa fue otra.
+    pub fn with_reads(mut self, reads: &ReadSet) -> Self {
+        for stamp in &reads.stamps {
+            self.read_set.read(stamp.clone());
+        }
+        self
+    }
+
     /// La huella del manifiesto de lecturas: el digest de lo que se leyo,
     /// sin releerlo entero.
     pub fn fingerprint(&self) -> String {
@@ -147,21 +170,48 @@ impl SimulationBase {
         self.seal != seal
     }
 
-    /// Si la base esta OBSOLETA frente a lo que dice el mundo de ahora.
+    /// Si la EVIDENCIA que se leyo para decidir ya no es la misma.
     ///
-    /// Son las dos cosas que pueden moverse: la generacion y el
-    /// contenido. La generacion se compara con la que declara el mundo
-    /// y el sello con el digest de lo que se acaba de leer.
-    pub fn is_stale_against(&self, generation: u64, seal: &str) -> bool {
-        self.is_the_generation_stale(generation) || self.is_the_content_stale(seal)
+    /// La evidencia no toca el grafo: entra en el almacen de evidencia y
+    /// no cambia ni el numero de relaciones ni la generacion. Por eso
+    /// necesita su propia comprobacion, o una evidencia que entra
+    /// mientras se evalua pasaria desapercibida -- y el cambio de
+    /// decision se atribuiria al hecho hipotetico cuando la causa fue la
+    /// evidencia que entro.
+    pub fn is_the_evidence_stale(&self, reads: &ReadSet) -> bool {
+        the_evidence_of(&self.read_set) != the_evidence_of(reads)
     }
+}
+
+/// Los sellos de la evidencia de un manifiesto, en orden canonico.
+///
+/// Se comparan como CONJUNTOS: la evidencia que se leyo y la que se
+/// acaba de leer son las mismas si sus sellos son los mismos, sin
+/// importar el orden en que se leyeron.
+fn the_evidence_of(read_set: &ReadSet) -> Vec<ReadStamp> {
+    let mut stamps: Vec<ReadStamp> = read_set
+        .stamps
+        .iter()
+        .filter(|stamp| stamp.kind == ReadKind::Evidence)
+        .cloned()
+        .collect();
+    stamps.sort();
+    stamps
+}
+
+/// La huella de la evidencia leida: el digest de sus sellos.
+///
+/// Es lo que dice un `StaleBase` de evidencia: que evidencia se leyo y
+/// que evidencia se ha encontrado, sin volcar los contenidos.
+pub fn the_evidence_fingerprint(read_set: &ReadSet) -> String {
+    ContentDigest::of_bytes(format!("{:?}", the_evidence_of(read_set)).as_bytes()).to_string()
 }
 
 /// El sello del contenido leido: el digest de las relaciones, con su
 /// evidencia.
 ///
-/// El digest se calcula sobre la lista ORDENADA de las relaciones, y
-/// no sobre el orden en que las dio el grafo: dos lecturas del mismo
+/// El digest se calcula sobre la lista ORDENADA de las relaciones, y no
+/// sobre el orden en que las dio el grafo: dos lecturas del mismo
 /// grafo dan el mismo sello, se lean en el orden en que se lean.
 pub fn the_seal_of(relations: &[RelationFact]) -> String {
     let mut read_set = ReadSet::empty();
@@ -180,12 +230,26 @@ pub fn the_seal_of(relations: &[RelationFact]) -> String {
 /// otras fuentes, con su propia verificacion, y meterlas en el mismo
 /// digest haria que un cambio de politica pareciese un cambio de
 /// contenido.
+///
+/// Cada linea lleva la LONGITUD de sus dos partes. Sin longitudes, dos
+///lecturas distintas podrian dar el mismo texto --una relacion cuya
+/// evidencia lleva un salto de linea dentro-- y el digest de dos
+/// mundos distintos seria el mismo. Un sello que no distingue no
+/// comprueba nada.
 fn the_seal_of_the_read_set(read_set: &ReadSet) -> String {
     let mut lines: Vec<String> = read_set
         .stamps
         .iter()
         .filter(|stamp| stamp.kind == ReadKind::Relation)
-        .map(|stamp| format!("{}|{}", stamp.resource, stamp.verified_by))
+        .map(|stamp| {
+            format!(
+                "{}:{}:{}:{}",
+                stamp.resource.len(),
+                stamp.resource,
+                stamp.verified_by.len(),
+                stamp.verified_by
+            )
+        })
         .collect();
     lines.sort();
     ContentDigest::of_bytes(lines.join("\n").as_bytes()).to_string()
@@ -249,6 +313,27 @@ mod tests {
         assert_ne!(the_seal_of(&[before]), the_seal_of(&[after]));
     }
 
+    /// Dos lecturas DISTINTAS no pueden dar el mismo sello: el sello
+    /// codifica con longitudes, y sin longitudes una evidencia con un
+    /// salto de linea dentro podria disfrazarse de dos relaciones.
+    #[test]
+    fn the_seal_tells_two_different_reads_apart() {
+        let relation = RelationFact::new(RelationType::DependsOn, subject(), component())
+            .with_evidence("evd-1");
+
+        // Una relacion con la evidencia "x\n<otra>|y" y dos relaciones
+        // con "x" e "y": sin longitudes, el texto es el mismo.
+        let disguised = RelationFact::new(RelationType::DependsOn, subject(), component())
+            .with_evidence(format!("x\n{}|y", relation.identity()));
+
+        let one = the_seal_of(&[relation.clone(), disguised.clone()]);
+        let other = the_seal_of(std::slice::from_ref(&relation));
+        assert_ne!(
+            one, other,
+            "una lectura con una evidencia disfrazada no es la misma lectura"
+        );
+    }
+
     /// La base esta obsoleta cuando la generacion se movio o cuando el
     /// contenido leido cambio.
     #[test]
@@ -261,15 +346,19 @@ mod tests {
             .with_relations(std::slice::from_ref(&relation));
 
         assert!(
-            !base.is_stale_against(7, &seal),
-            "el mismo mundo no la vuelve obsoleta"
+            !base.is_the_generation_stale(7),
+            "la misma generacion no la vuelve obsoleta"
         );
         assert!(
-            base.is_stale_against(8, &seal),
+            base.is_the_generation_stale(8),
             "una generacion nueva la vuelve obsoleta"
         );
         assert!(
-            base.is_stale_against(7, "otro-sello"),
+            !base.is_the_content_stale(&seal),
+            "el mismo contenido no la vuelve obsoleta"
+        );
+        assert!(
+            base.is_the_content_stale("otro-sello"),
             "un contenido nuevo la vuelve obsoleta"
         );
     }
@@ -296,6 +385,25 @@ mod tests {
         assert!(
             base.is_the_content_stale(&the_seal_of(std::slice::from_ref(&first))),
             "y si se lee solo la primera, el contenido se movio"
+        );
+    }
+
+    /// La base guarda lo que se leyo para DECIDIR: la evidencia que
+    /// consume el nucleo de decision es parte de la base, porque sin
+    /// ella la base no dice sobre que mundo se calculo la respuesta.
+    #[test]
+    fn the_base_keeps_what_the_decision_read() {
+        let mut reads = ReadSet::empty();
+        reads.read(ReadStamp::evidence("evd-1", "sha256:aaa"));
+
+        let base = SimulationBase::new("acme", Utc::now()).with_reads(&reads);
+
+        assert!(
+            base.read_set
+                .stamps
+                .iter()
+                .any(|stamp| stamp.kind == ReadKind::Evidence),
+            "la evidencia leida esta en el manifiesto de la base"
         );
     }
 }

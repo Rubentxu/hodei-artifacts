@@ -110,13 +110,19 @@ impl ReadSet {
         Self::default()
     }
 
-    /// Registra una lectura. La dupla (fuente, version) no se repite.
+    /// Registra una lectura.
+    ///
+    /// La lectura se registra por LO QUE SE VERIFICO, no solo por el
+    /// recurso: el mismo recurso verificado de dos maneras son DOS
+    /// lecturas, y el manifiesto tiene que poder decir las dos. Guardar
+    /// solo la primera haria que un manifiesto pareciera coherente
+    /// mientras el mundo ya habia cambiado, y lo que no se ve no se
+    /// puede comprobar.
+    ///
+    /// La misma lectura dicha dos veces --el mismo recurso con la misma
+    /// verificacion-- sigue siendo una.
     pub fn read(&mut self, stamp: ReadStamp) {
-        if !self
-            .stamps
-            .iter()
-            .any(|one| one.kind == stamp.kind && one.resource == stamp.resource)
-        {
+        if !self.stamps.contains(&stamp) {
             self.stamps.push(stamp);
         }
     }
@@ -190,6 +196,24 @@ mod tests {
         read_set.read(ReadStamp::evidence("evd-1", "sha256:aaa"));
         read_set.read(ReadStamp::evidence("evd-1", "sha256:aaa"));
         assert_eq!(read_set.stamps.len(), 1);
+    }
+
+    /// El MISMO recurso verificado de dos maneras son DOS lecturas: el
+    /// manifiesto tiene que poder decir las dos, porque si se guarda
+    /// solo la primera un manifiesto puede parecer coherente mientras el
+    /// mundo ya habia cambiado.
+    #[test]
+    fn the_same_resource_verified_two_ways_is_two_reads() {
+        let mut read_set = ReadSet::empty();
+        read_set.read(ReadStamp::policy("production", "1.0.0"));
+        read_set.read(ReadStamp::policy("production", "2.0.0"));
+        assert_eq!(
+            read_set.stamps.len(),
+            2,
+            "las dos versiones de la politica estan en el manifiesto"
+        );
+        assert_eq!(read_set.stamps[0].verified_by, "1.0.0");
+        assert_eq!(read_set.stamps[1].verified_by, "2.0.0");
     }
 
     /// AC2: el mundo puede cambiar mientras se lee. Un manifiesto cuya

@@ -8,16 +8,19 @@
 //!   existe.
 //! - El cambio concurrente se detecta por el CONTENIDO, no por el
 //!   recuento: una relacion sustituida por otra deja el numero igual.
+//! - La evidencia que consume la decision tambien se comprueba: no toca
+//!   el grafo, asi que sin su propia comprobacion seria invisible.
 //! - El reloj es el que recibe quien simula, no el del sistema: la
 //!   misma base y los mismos hechos dan el mismo resultado.
-//! - Una base de otra cuenta o preparada contra otra generacion se
-//!   rechaza.
+//! - Una base de otra cuenta, sin version o preparada contra otra
+//!   generacion se rechaza.
 
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use hodei_evidence::domain::graph::RelationType;
+use hodei_evidence::domain::read_set::{ReadSet, ReadStamp};
 use hodei_simulation::diff::TheDecision;
 use hodei_simulation::hypothetical::{Hypothetical, HypotheticalClaim, RelationFact};
 use hodei_simulation::ports::{DecisionEvaluator, SimulationGraph};
@@ -32,6 +35,11 @@ fn subject() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
 }
 
+/// El otro sujeto de la simulacion.
+fn other_subject() -> Hrn {
+    Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/api-2.0.0").expect("un HRN")
+}
+
 /// El componente del que depende.
 fn component_v1() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1").expect("un HRN")
@@ -41,6 +49,9 @@ fn component_v1() -> Hrn {
 fn component_v2() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2").expect("un HRN")
 }
+
+/// La generacion del grafo de mentira.
+const THE_GENERATION: u64 = 7;
 
 /// El grafo real, con la capacidad de moverse mientras se simula.
 struct TheGraph {
@@ -63,7 +74,7 @@ impl TheGraph {
             relations: Mutex::new(relations),
             reads: Mutex::new(0),
             movement: Mutex::new(None),
-            generation: Mutex::new(7),
+            generation: Mutex::new(THE_GENERATION),
         })
     }
 
@@ -149,13 +160,32 @@ impl SimulationGraph for TheGraph {
 /// pared: recibe el instante y decide con el.
 struct TheEvaluator {
     seen: Mutex<Vec<DateTime<Utc>>>,
+    /// Lo que el evaluador ha leido: lo que dice que consume.
+    reads: Mutex<ReadSet>,
+    /// La evidencia que entra mientras se simula.
+    ///
+    /// No toca el grafo: no cambia el numero de relaciones ni mueve la
+    /// generacion. Solo la ven los que leen la evidencia.
+    arrived: Mutex<Option<String>>,
 }
 
 impl TheEvaluator {
     fn new() -> Arc<Self> {
+        let mut reads = ReadSet::empty();
+        reads.read(ReadStamp::evidence("evd-1", "sha256:aaa"));
         Arc::new(Self {
             seen: Mutex::new(Vec::new()),
+            reads: Mutex::new(reads),
+            arrived: Mutex::new(None),
         })
+    }
+
+    /// La evidencia entra DESPUES de que la decision la consumio.
+    fn the_evidence_arrives(&self, id: &str) {
+        *self
+            .arrived
+            .lock()
+            .expect("el evaluador no esta envenenado") = Some(id.to_string());
     }
 
     fn the_instants(&self) -> Vec<DateTime<Utc>> {
@@ -163,6 +193,25 @@ impl TheEvaluator {
             .lock()
             .expect("el evaluador no esta envenenado")
             .clone()
+    }
+
+    /// Lo que el evaluador lee ahora: lo que ya estaba, mas lo que ha
+    /// entrado.
+    fn the_reads_now(&self) -> ReadSet {
+        let mut reads = self
+            .reads
+            .lock()
+            .expect("el evaluador no esta envenenado")
+            .clone();
+        if let Some(arrived) = self
+            .arrived
+            .lock()
+            .expect("el evaluador no esta envenenado")
+            .as_ref()
+        {
+            reads.read(ReadStamp::evidence(arrived.clone(), "sha256:zzz"));
+        }
+        reads
     }
 }
 
@@ -182,7 +231,16 @@ impl DecisionEvaluator for TheEvaluator {
         Ok(TheDecision {
             outcome: Outcome::Allow,
             policy: policy.clone(),
+            read_set: self
+                .reads
+                .lock()
+                .expect("el evaluador no esta envenenado")
+                .clone(),
         })
+    }
+
+    async fn the_reads_of(&self, _subject: &Hrn) -> Result<ReadSet, String> {
+        Ok(self.the_reads_now())
     }
 }
 
@@ -199,7 +257,7 @@ fn the_policy(version: &str) -> TrustPolicy {
 fn the_fork() -> SimulationFork {
     SimulationFork::new(
         "sim-1",
-        Checkpoint::new("checkpoint-1", "acme", Utc::now(), Some(42)),
+        Checkpoint::new("checkpoint-1", "acme", Utc::now(), Some(42), THE_GENERATION),
         the_policy("1.0.0"),
         Utc::now(),
     )
@@ -314,7 +372,7 @@ async fn a_simulation_over_a_still_world_says_which_world_it_was_over() {
     assert!(
         diff.base
             .read_set
-            .is_consistent_with(&[("graph".to_string(), 7)]),
+            .is_consistent_with(&[("graph".to_string(), THE_GENERATION)]),
         "y dice la generacion contra la que se evaluo"
     );
     assert!(
@@ -409,6 +467,106 @@ async fn the_base_seals_the_policy_that_produced_the_decision() {
     );
 }
 
+/// Y cuando la hipotetica es la MISMA politica con OTRA version, las dos
+/// versiones estan en el manifiesto.
+///
+/// Son el mismo recurso verificado de dos maneras, y el manifiesto
+/// guardaba solo la primera: el diff decia "la politica 2.0.0 produjo el
+/// despues" mientras el manifiesto solo hablaba de la 1.0.0. Un
+/// manifiesto que no contiene lo que produjo la decision no verifica
+/// la decision.
+#[tokio::test]
+async fn the_base_keeps_both_versions_of_the_same_policy() {
+    let graph = TheGraph::new(vec![]);
+    let service = SimulationService::new(graph, TheEvaluator::new());
+
+    let fork = the_fork().with_policy(hodei_trust_policy::TrustPolicy::new(
+        "policy-1.0.0",
+        "2.0.0",
+        vec![],
+    ));
+    let diff = service
+        .simulate(&fork, the_moment())
+        .await
+        .expect("la simulacion");
+
+    let versions: Vec<String> = diff
+        .base
+        .read_set
+        .stamps
+        .iter()
+        .filter(|stamp| stamp.kind == hodei_evidence::domain::read_set::ReadKind::Policy)
+        .map(|stamp| stamp.verified_by.clone())
+        .collect();
+
+    assert!(
+        versions.contains(&"1.0.0".to_string()) && versions.contains(&"2.0.0".to_string()),
+        "las dos versiones de la politica estan en el manifiesto: {versions:?}"
+    );
+}
+
+// ───────────────────────────── la evidencia que decide ─────────────────────────────
+
+/// La base guarda la evidencia que CONSUMIO la decision.
+///
+/// Sin esto la base diria sobre que mundo se calculo sin decir que
+/// evidencia lo decidio, y una evidencia que entra en mitad de la
+/// simulacion se atribuiria al hecho hipotetico.
+#[tokio::test]
+async fn the_base_keeps_the_evidence_that_the_decision_consumed() {
+    let graph = TheGraph::new(vec![]);
+    let service = SimulationService::new(graph, TheEvaluator::new());
+
+    let diff = service
+        .simulate(&the_fork(), the_moment())
+        .await
+        .expect("la simulacion");
+
+    let evidence: Vec<String> = diff
+        .base
+        .read_set
+        .stamps
+        .iter()
+        .filter(|stamp| stamp.kind == hodei_evidence::domain::read_set::ReadKind::Evidence)
+        .map(|stamp| stamp.resource.clone())
+        .collect();
+
+    assert!(
+        evidence.contains(&"evd-1".to_string()),
+        "la evidencia que consumo la decision esta en la base: {evidence:?}"
+    );
+}
+
+/// Y una evidencia que ENTRA mientras se simula hace obsoleta la base.
+///
+/// No toca el grafo: no cambia el numero de relaciones ni mueve la
+/// generacion. Los tres guards del grafo no la ven, y sin su propia
+/// comprobacion el cambio de decision se atribuiria al hecho
+/// hipotetico.
+#[tokio::test]
+async fn an_evidence_that_arrives_during_the_simulation_is_a_stale_base() {
+    let graph = TheGraph::new(vec![]);
+    let evaluator = TheEvaluator::new();
+    // La evidencia entra DESPUES de que la decision la consumio.
+    evaluator.the_evidence_arrives("evd-nueva");
+    let service = SimulationService::new(graph, evaluator);
+
+    let error = service
+        .simulate(&the_fork(), the_moment())
+        .await
+        .expect_err("una evidencia que entra hace obsoleta la simulacion");
+
+    match error {
+        hodei_simulation::SimulationError::StaleBase { source, .. } => {
+            assert_eq!(
+                source, "evidence",
+                "y dice que lo que se movio es la evidencia"
+            );
+        }
+        other => panic!("y dice que la base esta obsoleta, no otra cosa: {other}"),
+    }
+}
+
 // ───────────────────────────── AC2 ─────────────────────────────
 
 /// AC2: con la misma base, el mismo reloj y los mismos hechos, dos
@@ -434,6 +592,62 @@ async fn the_same_base_clock_and_facts_give_the_same_diff() {
     assert_eq!(first.decisions, second.decisions);
     assert_eq!(first.base, second.base);
     assert_eq!(first.base.fingerprint(), second.base.fingerprint());
+}
+
+/// Y el diff no depende del ORDEN en que se declaran los sujetos.
+///
+/// El orden de declaracion de un fork es el orden en que a alguien se le
+/// ocurrio declararlos, y un diff que cambia con ese orden no se puede
+/// comparar con otro diff.
+#[tokio::test]
+async fn the_diff_does_not_depend_on_the_order_of_the_declared_subjects() {
+    let graph = TheGraph::new(vec![]);
+
+    let one = SimulationService::new(graph.clone(), TheEvaluator::new())
+        .simulate(
+            &the_fork().with_subjects(vec![subject(), other_subject()]),
+            the_moment(),
+        )
+        .await
+        .expect("la primera simulacion");
+    let other = SimulationService::new(graph.clone(), TheEvaluator::new())
+        .simulate(
+            &the_fork().with_subjects(vec![other_subject(), subject()]),
+            the_moment(),
+        )
+        .await
+        .expect("la segunda simulacion");
+
+    assert_eq!(one.decisions, other.decisions);
+    assert_eq!(one.structural, other.structural);
+}
+
+/// Y el sello del contenido no depende del ORDEN en que el grafo da sus
+/// relaciones.
+///
+/// El grafo puede dar la misma relacion dos veces con distinto apoyo, y
+/// el sello no puede depender de cual de las dos se queda: un sello que
+/// depende del orden del almacen no es un sello del mundo.
+#[tokio::test]
+async fn the_seal_does_not_depend_on_the_order_of_the_store() {
+    let one = RelationFact::new(RelationType::DependsOn, subject(), component_v1())
+        .with_evidence("evd-b");
+    let other = RelationFact::new(RelationType::DependsOn, subject(), component_v1())
+        .with_evidence("evd-a");
+
+    let first = TheGraph::new(vec![one.clone(), other.clone()]);
+    let second = TheGraph::new(vec![other, one]);
+
+    let one = SimulationService::new(first, TheEvaluator::new())
+        .simulate(&the_fork(), the_moment())
+        .await
+        .expect("la primera simulacion");
+    let other = SimulationService::new(second, TheEvaluator::new())
+        .simulate(&the_fork(), the_moment())
+        .await
+        .expect("la segunda simulacion");
+
+    assert_eq!(one.base.seal, other.base.seal);
 }
 
 // ───────────────────────────── AC3 ─────────────────────────────
@@ -493,7 +707,7 @@ async fn a_fork_prepared_against_another_generation_is_rejected() {
     let fork = the_fork();
     let fork = SimulationFork::new(
         fork.id.clone(),
-        fork.base.clone().at_generation(6),
+        fork.base.clone().at_generation(THE_GENERATION - 1),
         fork.base_policy.clone(),
         fork.created_at,
     )
@@ -524,19 +738,42 @@ async fn a_fork_prepared_against_the_current_generation_is_simulated() {
     let graph = TheGraph::new(vec![]);
     let service = SimulationService::new(graph, TheEvaluator::new());
 
+    service
+        .simulate(&the_fork(), the_moment())
+        .await
+        .expect("la base vigente se simula");
+}
+
+/// Y un fork SIN version declarada se rechaza.
+///
+/// Una base que no dice contra que version del mundo se evaluo no se
+/// puede comprobar, y una base que no se puede comprobar no sostiene
+/// una respuesta.
+#[tokio::test]
+async fn a_fork_without_a_declared_version_is_rejected() {
+    let graph = TheGraph::new(vec![]);
+    let service = SimulationService::new(graph, TheEvaluator::new());
+
     let fork = the_fork();
+    let mut checkpoint = fork.base.clone();
+    checkpoint.generation = None;
     let fork = SimulationFork::new(
         fork.id.clone(),
-        fork.base.clone().at_generation(7),
+        checkpoint,
         fork.base_policy.clone(),
         fork.created_at,
     )
     .with_subjects(vec![subject()]);
 
-    service
+    let error = service
         .simulate(&fork, the_moment())
         .await
-        .expect("la base vigente se simula");
+        .expect_err("una base sin version no se simula");
+
+    assert!(
+        matches!(error, hodei_simulation::SimulationError::NoVersion(_)),
+        "y dice que la base no declara version: {error}"
+    );
 }
 
 /// Y una base de OTRA cuenta se rechaza: una base de otra cuenta no es
@@ -548,7 +785,13 @@ async fn a_base_of_another_account_is_rejected() {
 
     let fork = SimulationFork::new(
         "sim-1",
-        Checkpoint::new("checkpoint-1", "contoso", Utc::now(), Some(42)),
+        Checkpoint::new(
+            "checkpoint-1",
+            "contoso",
+            Utc::now(),
+            Some(42),
+            THE_GENERATION,
+        ),
         the_policy("1.0.0"),
         Utc::now(),
     )
