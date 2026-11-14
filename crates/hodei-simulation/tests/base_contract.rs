@@ -257,6 +257,11 @@ async fn a_concurrent_swap_with_the_same_count_is_a_stale_base() {
 
 /// Y un cambio que mueve la GENERACION del grafo tambien hace obsoleta
 /// la simulacion, aunque el contenido leido siga igual.
+///
+/// El mundo se mueve en la PRIMERA lectura de relaciones, que es la
+/// que viene DESPUES de leer la generacion y el recuento: el cambio cae
+/// entre fijar la base y comprobar la base, que es justo la ventana que
+/// la comprobacion final existe para cerrar.
 #[tokio::test]
 async fn a_concurrent_change_that_moves_the_generation_is_a_stale_base() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -265,7 +270,7 @@ async fn a_concurrent_change_that_moves_the_generation_is_a_stale_base() {
         component_v1(),
     )]);
     graph.moving_at(
-        2,
+        1,
         vec![RelationFact::new(
             RelationType::DependsOn,
             subject(),
@@ -321,6 +326,87 @@ async fn a_simulation_over_a_still_world_says_which_world_it_was_over() {
         "y sello la relacion que leyo"
     );
     assert!(!diff.base.seal.is_empty(), "y el sello del contenido leido");
+}
+
+/// AC1, en la variante que el ALMACEN REAL puede producir: la misma
+/// relacion con OTRA evidencia.
+///
+/// Sustituir una relacion por otra de extremos distintos deja el
+/// numero de filas increased en el almacen real (la fila vieja no se
+/// borra), asi que ese caso lo detecta el recuento. Lo que el almacen
+/// real hace con el recuento IGUAL es cambiar el apoyo de una relacion:
+/// misma identidad, misma fila, otra evidencia. Y ese caso solo lo ve
+/// el sello de contenido, porque la generacion no se mueve cuando el
+/// cambio no pasa por el ledger de deltas.
+#[tokio::test]
+async fn a_relation_that_changes_its_evidence_is_a_stale_base() {
+    let graph = TheGraph::new(vec![
+        RelationFact::new(RelationType::DependsOn, subject(), component_v1())
+            .with_evidence("evd-1"),
+    ]);
+    // El cambio ocurre en la segunda lectura: la misma relacion, con otra
+    // evidencia. El numero de relaciones sigue siendo uno.
+    graph.moving_at(
+        2,
+        vec![
+            RelationFact::new(RelationType::DependsOn, subject(), component_v1())
+                .with_evidence("evd-2"),
+        ],
+        false,
+    );
+
+    let service = SimulationService::new(graph.clone(), TheEvaluator::new());
+    let error = service
+        .simulate(&the_fork(), the_moment())
+        .await
+        .expect_err("una relacion con otro apoyo hace obsoleta la simulacion");
+
+    match error {
+        hodei_simulation::SimulationError::StaleBase { source, .. } => {
+            assert_eq!(
+                source, "relations",
+                "y dice que lo que se movio es lo que se leyo"
+            );
+        }
+        other => panic!("y dice que la base esta obsoleta, no otra cosa: {other}"),
+    }
+}
+
+/// Y el manifiesto sella la politica que ESTA en vigor en el fork, que
+/// es la que produce la decision de "despues": un manifiesto a medias de
+/// lo que produjo la decision no verifica la decision.
+#[tokio::test]
+async fn the_base_seals_the_policy_that_produced_the_decision() {
+    let graph = TheGraph::new(vec![]);
+    let service = SimulationService::new(graph, TheEvaluator::new());
+
+    let fork = the_fork().with_policy(hodei_trust_policy::TrustPolicy::new(
+        "policy-2.0.0",
+        "2.0.0",
+        vec![],
+    ));
+    let diff = service
+        .simulate(&fork, the_moment())
+        .await
+        .expect("la simulacion");
+
+    let policies: Vec<String> = diff
+        .base
+        .read_set
+        .stamps
+        .iter()
+        .filter(|stamp| stamp.kind == hodei_evidence::domain::read_set::ReadKind::Policy)
+        .map(|stamp| stamp.resource.clone())
+        .collect();
+
+    assert!(
+        policies.contains(&"policy-1.0.0".to_string()),
+        "y sella la politica de antes: {policies:?}"
+    );
+    assert!(
+        policies.contains(&"policy-2.0.0".to_string()),
+        "y la hipotetica, que es la que decide el despues: {policies:?}"
+    );
 }
 
 // ───────────────────────────── AC2 ─────────────────────────────
@@ -490,10 +576,11 @@ async fn a_world_that_moves_after_the_reads_is_also_stale() {
         subject(),
         component_v1(),
     )]);
-    // El cambio ocurre en la segunda lectura, la de comprobacion: una
+    // El cambio ocurre en la primera lectura de relaciones, que es la
+    // que viene despues de leer la generacion y el recuento: una
     // relacion mas, y el grafo ya no es el que se evaluo.
     graph.moving_at(
-        2,
+        1,
         vec![
             RelationFact::new(RelationType::DependsOn, subject(), component_v1()),
             RelationFact::new(RelationType::Contains, subject(), component_v1()),

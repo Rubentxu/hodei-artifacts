@@ -34,8 +34,11 @@ pub struct Checkpoint {
     pub at: DateTime<Utc>,
     /// El numero de eventos del ledger en ese punto, si se sabe.
     ///
-    /// Sirve para comprobar que el grafo real no ha cambiado: un fork no
-    /// deja ni una sombra, y el contador lo dice.
+    /// Es la posicion DECLARADA de la que parte el fork, y viaja en el
+    /// manifiesto de la base para que la respuesta diga de donde sale.
+    /// No se verifica contra el ledger: la simulacion no tiene un puerto
+    /// de ledger, y una posicion que no se puede comprobar no se
+    /// presenta como comprobada.
     pub ledger_position: Option<u64>,
     /// La generacion del grafo en ese punto, si se sabe.
     ///

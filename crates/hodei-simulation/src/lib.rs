@@ -28,7 +28,8 @@
 //!
 //! Y el aislamiento no es una promesa, es una **construccion**: el puerto
 //! del grafo **no tiene un metodo de escritura**, y el servicio comprueba
-//! el numero de relaciones antes y despues de simular.
+//! al final que el mundo sobre el que se evaluo sigue siendo el mismo
+//! que se leyo.
 //!
 //! # Lo que el diff dice
 //!

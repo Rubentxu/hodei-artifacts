@@ -141,7 +141,7 @@ impl HypotheticalClaim {
 }
 
 /// Una relacion, con la forma que el diff necesita.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationFact {
     /// De que relacion se trata.
     pub relation: RelationType,
@@ -151,24 +151,15 @@ pub struct RelationFact {
     pub to: Hrn,
     /// La evidencia que la sostiene, si se conoce.
     ///
-    /// No es parte de la identidad de la relacion: es el ORIGEN, y lo
-    /// que lo verifica. Una relacion a la que se le anade un apoyo sigue
-    /// siendo la misma relacion, y por eso el diff estructural habla de
-    /// relaciones y no de apoyos. El cambio de apoyo se ve en el sello
-    /// de la base, que si compara la evidencia.
+    /// No es parte de la IDENTIDAD de la relacion, que es el tipo y los
+    /// dos extremos: dos relaciones con la misma identidad son la misma
+    /// relacion, y el diff estructural habla de relaciones y no de
+    /// apoyos. Pero si es parte de su VALOR: una relacion a la que se
+    /// le cambia el apoyo no es la misma relacion que se leyo antes, y
+    /// comparar solo por identidad lo esconderia.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<String>,
 }
-
-impl PartialEq for RelationFact {
-    /// Dos relaciones son la MISMA relacion cuando tienen la misma
-    /// identidad: el tipo y los dos extremos.
-    fn eq(&self, other: &Self) -> bool {
-        self.identity() == other.identity()
-    }
-}
-
-impl Eq for RelationFact {}
 
 impl RelationFact {
     /// La relacion.
@@ -188,8 +179,20 @@ impl RelationFact {
     }
 
     /// La identidad de la relacion: la que dice si es la misma o no.
+    ///
+    /// La identidad NO lleva la evidencia: el tipo y los dos extremos
+    /// dizem que relacion es, y quien la sostiene se compara aparte.
     pub fn identity(&self) -> String {
         format!("{}|{}|{}", self.relation.as_str(), self.from, self.to)
+    }
+
+    /// Si es la MISMA relacion que otra: la que tiene la misma
+    /// identidad.
+    ///
+    /// Es la comparacion que usa el diff, porque el diff habla de
+    /// relaciones y no de apoyos.
+    pub fn is_the_same_as(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
     }
 }
 

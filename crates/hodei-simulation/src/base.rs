@@ -57,6 +57,17 @@ pub struct SimulationBase {
     /// El sello del contenido leido: el digest de las relaciones leidas
     /// con su evidencia.
     pub seal: String,
+    /// La posicion del ledger que declara el punto de partida, si se
+    /// sabe.
+    ///
+    /// Va APARTE de las generaciones del manifiesto a proposito: las
+    /// generaciones son las versiones que se han VERIFICADO contra su
+    /// fuente, y esta posicion no se puede verificar aqui --la
+    /// simulacion no tiene un puerto de ledger contra el que
+    /// comprobarla--. Declararla como generacion la haria pasar por
+    /// comprobada.
+    #[serde(default)]
+    pub declared_ledger_position: Option<u64>,
 }
 
 impl SimulationBase {
@@ -67,6 +78,7 @@ impl SimulationBase {
             evaluated_at,
             read_set: ReadSet::empty(),
             seal: String::new(),
+            declared_ledger_position: None,
         }
     }
 
@@ -113,13 +125,17 @@ impl SimulationBase {
 
     /// Si la GENERACION del mundo ya no es la que se leyo.
     ///
-    /// La generacion se compara con la que declara el mundo de ahora, y
-    /// la comparacion es la del read-set: la generacion registrada tiene
-    /// que seguir siendo la que la fuente dice tener.
+    /// La comparacion es contra la generacion del GRAFO, la unica fuente
+    /// que se puede comprobar aqui. Y una base que no ha registrado
+    /// generacion no dice que el mundo se movio: no dice nada, que no es
+    /// lo mismo.
     pub fn is_the_generation_stale(&self, generation: u64) -> bool {
-        !self
-            .read_set
-            .is_consistent_with(&[("graph".to_string(), generation)])
+        self.read_set
+            .generations
+            .iter()
+            .find(|(source, _)| source == "graph")
+            .map(|(_, expected)| *expected != generation)
+            .unwrap_or(false)
     }
 
     /// Si el CONTENIDO leido ya no es el que se leyo.
@@ -278,7 +294,7 @@ mod tests {
             "el sello cubre las dos tandas"
         );
         assert!(
-            base.is_the_content_stale(&the_seal_of(&[first.clone()])),
+            base.is_the_content_stale(&the_seal_of(std::slice::from_ref(&first))),
             "y si se lee solo la primera, el contenido se movio"
         );
     }

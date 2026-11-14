@@ -60,7 +60,9 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
         {
             let fact = RelationFact::new(relation.relation, relation.from, relation.to)
                 .with_evidence(relation.evidence_id.to_string());
-            if !facts.contains(&fact) {
+            // La deduplicacion es por IDENTIDAD: la misma relacion
+            // aparece una vez por cada extremo por el que se toca.
+            if !facts.iter().any(|one| one.is_the_same_as(&fact)) {
                 facts.push(fact);
             }
         }
@@ -74,7 +76,7 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
             .db()
             .query(
                 "SELECT from, to, relation_type, evidence_id FROM type::table($table) WHERE \
-                 tenant_hrn = $tenant",
+                 tenant_hrn = $tenant AND (status IS NONE OR status = 'asserted')",
             )
             .bind(("table", self.graph.relation_table_name()))
             .bind(("tenant", self.tenant.to_string()))
@@ -101,7 +103,10 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
         let mut response = self
             .graph
             .db()
-            .query("SELECT from FROM type::table($table) WHERE tenant_hrn = $tenant")
+            .query(
+                "SELECT from FROM type::table($table) WHERE tenant_hrn = $tenant AND (status IS \
+                 NONE OR status = 'asserted')",
+            )
             .bind(("table", self.graph.relation_table_name()))
             .bind(("tenant", self.tenant.to_string()))
             .await

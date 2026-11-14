@@ -35,10 +35,16 @@ use surrealdb::engine::local::{Db, RocksDb};
 const ACCOUNT: &str = "acme";
 
 /// El resultado de un escenario, tal como queda registrado.
+///
+/// Un escenario que falla FALLA el test. Antes solo se imprimia, y un
+/// `cargo test` en verde no decia nada del resultado de los escenarios:
+/// el verde de la suite era un verde de mentira. La UAT es una
+/// aceptacion, y una aceptacion que no puede fallar no es una
+/// aceptacion.
 fn record(scenario: &str, outcome: Result<(), String>) {
     match outcome {
         Ok(()) => println!("{scenario}: PASSED"),
-        Err(reason) => println!("{scenario}: FAILED -- {reason}"),
+        Err(reason) => panic!("{scenario}: FAILED -- {reason}"),
     }
 }
 

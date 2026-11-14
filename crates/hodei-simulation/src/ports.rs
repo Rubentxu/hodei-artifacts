@@ -38,8 +38,9 @@ pub trait SimulationGraph: Send + Sync {
 
     /// Todas las relaciones del grafo.
     ///
-    /// Es una lectura cara y por eso existe aparte: el aislamiento se
-    /// comprueba con el **numero**, y el numero es lo que se compara.
+    /// Es una lectura cara y por eso existe aparte: el estado del grafo
+    /// se compara con lo que se leyo, y comparar necesita el estado
+    /// entero, no solo el de los sujetos afectados.
     async fn all_relations(&self) -> Result<Vec<RelationFact>, String>;
 
     /// La generacion del grafo de la cuenta: la version que su historia

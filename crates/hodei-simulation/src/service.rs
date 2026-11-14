@@ -16,8 +16,11 @@
 //!    mundo que ya no existe.
 //!
 //! Y en ningun momento se escribe. El grafo real se comprueba al final:
-//! si el numero de relaciones es el mismo que al principio, el fork no
-//! toco nada, y eso no es una promesa sino una comprobacion.
+//! se vuelve a leer lo que se leyo, se compara con lo que se evaluo y,
+//! si el mundo se movio, se dice con un error que lo dice. Eso no es una
+//! promesa sino una comprobacion, y tiene su limite honesto: lo que se
+//! lee despues del ultimo sello queda fuera, porque una comprobacion
+//! sin transaccion tiene una ventana y no se puede tapar.
 
 use std::sync::Arc;
 
@@ -179,10 +182,20 @@ impl SimulationService {
 
         // Y la base, con lo que se ha leido: el manifiesto de lo leido y
         // el sello de su contenido.
-        let base = SimulationBase::new(account, now)
+        let mut base = SimulationBase::new(account, now)
             .with_generation("graph", generation)
             .with_relations(&real)
             .with_policy(&fork.base_policy);
+        // Y la politica que ESTA en vigor en el fork, que es la que decide
+        // el "despues". Sellar solo la de antes dejaria el manifiesto a
+        // medias de lo que produjo la decision.
+        base = base.with_policy(fork.effective_policy());
+        // Y la posicion del ledger que declara el punto de partida, si
+        // se sabe. Es una posicion DECLARADA, no verificada: la
+        // simulacion no tiene un puerto de ledger contra el que
+        // comprobarla, y una posicion que no se puede verificar no se
+        // presenta como verificada.
+        base.declared_ledger_position = fork.base.ledger_position;
         let seal_before = base.seal.clone();
 
         let forked = fork.relations_with(&real);
@@ -249,14 +262,15 @@ impl SimulationService {
         // hacen falta: el numero de relaciones no los sustituye, porque
         // una relacion sustituida por otra deja el numero igual.
         //
-        // Y el estado de "despues" se toma lo ULTIMO, con las tres
-        // lecturas seguidas: si se leyera la generacion antes que las
-        // relaciones, un cambio que cae entre las dos lecturas pasaria
-        // desapercibido, y el sello se compararia contra un mundo que
-        // ya no es el que se evaluo.
-        let real_after = self.the_relations_of(&subjects).await?;
-        let seal_after = the_seal_of(&real_after);
-
+        // Y el estado de "despues" se toma en orden INVERSO al del
+        // "antes": primero los marcadores gruesos y al final el sello
+        // fino. El sello va el ultimo porque es el que distingue el
+        // cambio mas pequeno --una relacion que cambia de evidencia-- y
+        // porque no depende de que el cambio pase por el ledger de
+        // deltas. Lo que se lee despues del sello queda fuera de la
+        // comprobacion, y es una ventana que no se puede cerrar sin una
+        // lectura transaccional: se dice aqui para que no se prometa mas
+        // de lo que se cumple.
         let generation_after = self
             .graph
             .generation()
@@ -283,6 +297,8 @@ impl SimulationService {
             });
         }
 
+        let real_after = self.the_relations_of(&subjects).await?;
+        let seal_after = the_seal_of(&real_after);
         if base.is_the_content_stale(&seal_after) {
             return Err(SimulationError::StaleBase {
                 source: "relations".to_string(),
@@ -311,7 +327,11 @@ impl SimulationService {
                 .await
                 .map_err(SimulationError::Unavailable)?
             {
-                if !relations.contains(&relation) {
+                // La deduplicacion es por IDENTIDAD: la misma relacion
+                // leida dos veces (una por el extremo del que parte y
+                // otra por el extremo al que llega) es una relacion, y
+                // el grafo la puede dar con distinto apoyo.
+                if !relations.iter().any(|one| one.is_the_same_as(&relation)) {
                     relations.push(relation);
                 }
             }

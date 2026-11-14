@@ -168,6 +168,11 @@ fn the_record_with(record: EvidenceRecord, verification: EvidenceVerification) -
         .verification(verification)
         .normalization(record.normalization().clone())
         .correlation_id(record.correlation_id().unwrap_or_default().to_string());
+    // Las dos validez se copian tal cual, incluidas las que no se
+    // saben: el registro reconstruido es el mismo registro.
+    if let Some(valid_from) = record.valid_from() {
+        builder = builder.valid_from(valid_from);
+    }
     if let Some(valid_to) = record.valid_to() {
         builder = builder.valid_to(valid_to);
     }
