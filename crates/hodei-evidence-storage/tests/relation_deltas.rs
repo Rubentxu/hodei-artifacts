@@ -145,6 +145,28 @@ async fn the_ledger_conforms(ledger: Arc<dyn RelationDeltaLedger>) {
         .expect("la lectura corre");
     assert!(nothing.is_empty(), "sin tipos no hay trabajo: {nothing:?}");
     assert_eq!(stopped, 0);
+
+    // El contador de version es POR CUENTA: el numero de una cuenta no
+    // se cuenta con el de la otra. La cuenta A lleva tres cambios y la
+    // cuenta B uno, y el cambio de B no le quita ni le añade numero a A.
+    // Con un unico contador para todo el lote, el cambio de B tomaba el
+    // numero de A --y el cambio de A se colaba con el numero de otro--.
+    assert_eq!(
+        ledger
+            .version_of(&tenant_a())
+            .await
+            .expect("la version corre"),
+        3,
+        "la cuenta A lleva tres cambios"
+    );
+    assert_eq!(
+        ledger
+            .version_of(&tenant_b())
+            .await
+            .expect("la version corre"),
+        1,
+        "y la cuenta B lleva uno solo"
+    );
 }
 
 /// La conformidad en memoria.

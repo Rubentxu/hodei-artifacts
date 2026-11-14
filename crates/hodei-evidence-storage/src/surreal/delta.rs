@@ -156,10 +156,12 @@ impl<C: Connection> RelationDeltaLedger for SurrealRelationDeltaLedger<C> {
                 continue;
             }
             let tenant = delta.tenant.to_string();
-            let seq = match seqs.iter_mut().find(|(known, _)| *known == tenant) {
-                Some((_, seq)) => {
-                    *seq += 1;
-                    *seq
+            // El contador de ESTA cuenta, si ya se ha visto en este lote.
+            let known = seqs.iter().position(|(other, _)| *other == tenant);
+            let seq = match known {
+                Some(index) => {
+                    seqs[index].1 += 1;
+                    seqs[index].1
                 }
                 None => {
                     // La primera vez que se ve esta cuenta, se pregunta
