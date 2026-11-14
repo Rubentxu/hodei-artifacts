@@ -4,20 +4,31 @@
 //!
 //! 1. Se comprueban los **limites** de la simulacion, antes de hacer
 //!    nada: una simulacion que no cabe no se ejecuta.
-//! 2. Se lee el estado real del grafo, **solo lectura**.
-//! 3. Se calcula el **diff estructural**: las relaciones del estado real
+//! 2. Se **fija la base**: la cuenta, la generacion del grafo, las
+//!    relaciones que se van a leer y la evidencia que consume la
+//!    decision, con sus sellos.
+//! 3. Se lee el estado real del grafo, **solo lectura**.
+//! 4. Se calcula el **diff estructural**: las relaciones del estado real
 //!    contra las del fork.
-//! 4. Se calculan las **decisiones** de antes y de despues, para los
+//! 5. Se calculan las **decisiones** de antes y de despues, para los
 //!    sujetos que la simulacion toca, y se queda solo las que cambian.
+//! 6. Se **comprueba la base otra vez**: si el mundo se ha movido, la
+//!    simulacion se dice obsoleta en vez de devolver un diff sobre un
+//!    mundo que ya no existe.
 //!
 //! Y en ningun momento se escribe. El grafo real se comprueba al final:
-//! si el numero de relaciones es el mismo que al principio, el fork no
-//! toco nada, y eso no es una promesa sino una comprobacion.
+//! se vuelve a leer lo que se leyo, se compara con lo que se evaluo y,
+//! si el mundo se movio, se dice con un error que lo dice. Eso no es una
+//! promesa sino una comprobacion, y tiene su limite honesto: lo que se
+//! lee despues del ultimo sello queda fuera, porque una comprobacion
+//! sin transaccion tiene una ventana y no se puede tapar.
 
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use hodei_evidence::domain::read_set::ReadSet;
 
+use crate::base::{SimulationBase, the_evidence_fingerprint, the_seal_of};
 use crate::diff::{DecisionChange, SimulationDiff, StructuralDiff};
 use crate::fork::SimulationFork;
 use crate::hypothetical::RelationFact;
@@ -39,6 +50,28 @@ pub enum SimulationError {
     /// una coleccion vacia ni por un resultado: sin lo que hay que leer,
     /// la decision no se toma.
     ReadFailed(String),
+    /// La base se movio mientras se evaluaba: el mundo contra el que se
+    /// leyo ya no es el mundo de ahora.
+    ///
+    /// No es un fallo de la simulacion: es su respuesta. Un diff
+    /// calculado sobre un mundo que nadie tiene es un diff que no dice
+    /// la verdad, y se dice antes que devolverlo.
+    StaleBase {
+        /// Que se movio: la generacion del grafo, las relaciones leidas,
+        /// el numero de relaciones o la evidencia.
+        source: String,
+        /// Lo que se esperaba.
+        expected: String,
+        /// Lo que se encontro.
+        found: String,
+    },
+    /// La base no dice contra que version del mundo se evaluo.
+    ///
+    /// Sin version declarada no hay nada que comprobar: una base sin
+    /// version no esta obsoleta, es INCOMPROBABLE, y una base
+    /// incomprobable no puede sostener una respuesta. Se dice en vez de
+    /// simular sobre un mundo que nadie ha dicho cual era.
+    NoVersion(String),
 }
 
 impl std::fmt::Display for SimulationError {
@@ -58,9 +91,23 @@ impl std::fmt::Display for SimulationError {
                     "a read that the decision needs failed: {message}"
                 )
             }
+            Self::StaleBase {
+                source,
+                expected,
+                found,
+            } => write!(
+                formatter,
+                "the base of the simulation is stale: {source} was {expected} and it is now {found}"
+            ),
+            Self::NoVersion(message) => write!(
+                formatter,
+                "the base of the simulation declares no version: {message}"
+            ),
         }
     }
 }
+
+impl std::error::Error for SimulationError {}
 
 /// El servicio de la simulacion.
 pub struct SimulationService {
@@ -90,6 +137,11 @@ impl SimulationService {
     }
 
     /// Simula y devuelve el diff.
+    ///
+    /// El `now` es el reloj de la simulacion: el mismo instante para
+    /// todo el recorrido, y el que llega al nucleo de decision. No se
+    /// lee el reloj de pared en ningun sitio, y por eso la misma base y
+    /// los mismos hechos dan el mismo diff.
     pub async fn simulate(
         &self,
         fork: &SimulationFork,
@@ -102,7 +154,41 @@ impl SimulationService {
             other => other,
         })?;
 
-        // 2. El numero de relaciones de antes: el aislamiento se comprueba
+        // 2. La cuenta: la base de OTRA cuenta no es una base. El grafo
+        // es de una cuenta y el fork declara otra, y una simulacion no
+        // puede ser de las dos a la vez.
+        let account = self.graph.account();
+        if account != fork.base.account {
+            return Err(SimulationError::NotAllowed(format!(
+                "the base is about account {} and the graph is about account {account}",
+                fork.base.account
+            )));
+        }
+
+        // 3. La generacion: el fork tiene que decir contra que version
+        // se preparo, y esa version tiene que ser la de ahora. Un fork
+        // sin version no se puede comprobar, y una base que no se puede
+        // comprobar no sostiene una respuesta.
+        let generation = self
+            .graph
+            .generation()
+            .await
+            .map_err(SimulationError::Unavailable)?;
+        let declared = fork.base.generation.ok_or_else(|| {
+            SimulationError::NoVersion(
+                "the fork does not say which generation of the graph it was prepared against"
+                    .to_string(),
+            )
+        })?;
+        if declared != generation {
+            return Err(SimulationError::StaleBase {
+                source: "graph".to_string(),
+                expected: declared.to_string(),
+                found: generation.to_string(),
+            });
+        }
+
+        // 4. El numero de relaciones de antes: el aislamiento se comprueba
         // contra el.
         let relations_before = self
             .graph
@@ -110,21 +196,38 @@ impl SimulationService {
             .await
             .map_err(SimulationError::Unavailable)?;
 
-        // 3. El diff estructural.
-        let subjects = fork.affected_subjects();
-        let mut real: Vec<RelationFact> = Vec::new();
-        for subject in &subjects {
-            let relations = self
-                .graph
-                .relations_of(subject)
-                .await
-                .map_err(SimulationError::Unavailable)?;
-            for relation in relations {
-                if !real.contains(&relation) {
-                    real.push(relation);
-                }
-            }
-        }
+        // 5. Los sujetos, en orden canonico. El diff de decisiones tiene
+        // que hablar de los mismos sujetos en el mismo orden que el
+        // diff estructural, y el orden de declaracion de un fork no es
+        // un orden: es el orden en que a alguien se le ocurrio
+        // declararlos.
+        let subjects = {
+            let mut subjects = fork.affected_subjects();
+            subjects.sort_by_key(|subject| subject.to_string());
+            subjects
+        };
+
+        // 6. El diff estructural.
+        let real = self.the_relations_of(&subjects).await?;
+
+        // Y la base, con lo que se ha leido: el manifiesto de lo leido y
+        // el sello de su contenido.
+        let mut base = SimulationBase::new(account, now)
+            .with_generation("graph", generation)
+            .with_relations(&real)
+            .with_policy(&fork.base_policy);
+        // Y la politica que ESTA en vigor en el fork, que es la que decide
+        // el "despues". Sellar solo la de antes dejaria el manifiesto a
+        // medias de lo que produjo la decision.
+        base = base.with_policy(fork.effective_policy());
+        // Y la posicion del ledger que declara el punto de partida, si
+        // se sabe. Es una posicion DECLARADA, no verificada: la
+        // simulacion no tiene un puerto de ledger contra el que
+        // comprobarla, y una posicion que no se puede verificar no se
+        // presenta como verificada.
+        base.declared_ledger_position = fork.base.ledger_position;
+        let seal_before = base.seal.clone();
+
         let forked = fork.relations_with(&real);
         let mut structural = StructuralDiff::between(&real, &forked);
 
@@ -136,6 +239,11 @@ impl SimulationService {
                 structural.affected_subjects.push(subject.clone());
             }
         }
+        // El HRN no tiene orden natural, y el orden estable es por su
+        // forma: el diff no depende del orden en que se leyó.
+        structural
+            .affected_subjects
+            .sort_by_key(|subject| subject.to_string());
 
         // Y los despliegues de los sujetos a los que el cambio llega.
         structural.affected_deployments = forked
@@ -146,21 +254,36 @@ impl SimulationService {
             })
             .map(|relation| relation.to.clone())
             .collect();
+        // Sin repetir y en orden canonico: un despliegue que aparece dos
+        // veces no dice mas que uno que aparece una, y el orden no puede
+        // depender del orden en que las relaciones las dio el grafo.
+        structural
+            .affected_deployments
+            .sort_by_key(|deployment| deployment.to_string());
+        structural.affected_deployments.dedup();
 
-        // 4. Las decisiones: las de antes con la politica de antes, y las
-        // de despues con la del fork.
+        // 7. Las decisiones: las de antes con la politica de antes, y las
+        // de despues con la del fork. El instante es el de la
+        // simulacion, no el del reloj de pared.
+        //
+        // Y cada decision trae lo que leyo: esa lectura entra en la
+        // base, porque una base que no dice que evidencia se consumio no
+        // dice sobre que mundo se calculo la respuesta.
         let mut decisions: Vec<DecisionChange> = Vec::new();
         for subject in &subjects {
             let before = self
                 .decisions
-                .decide(subject, &fork.base_policy, &[])
+                .decide(subject, &fork.base_policy, &[], now)
                 .await
                 .map_err(SimulationError::ReadFailed)?;
             let after = self
                 .decisions
-                .decide(subject, fork.effective_policy(), &fork.facts)
+                .decide(subject, fork.effective_policy(), &fork.facts, now)
                 .await
                 .map_err(SimulationError::ReadFailed)?;
+            base = base
+                .with_reads(&before.read_set)
+                .with_reads(&after.read_set);
             let change = DecisionChange {
                 subject: subject.clone(),
                 before: before.outcome,
@@ -173,22 +296,128 @@ impl SimulationService {
             }
         }
 
-        // Y el aislamiento, comprobado y no prometido.
+        // 8. La comprobacion final: el mundo no se ha movido.
+        //
+        // La generacion dice si la historia del grafo ha avanzado, y el
+        // sello de contenido dice si lo que se leyo es lo mismo. Los dos
+        // hacen falta: el numero de relaciones no los sustituye, porque
+        // una relacion sustituida por otra deja el numero igual.
+        //
+        // Y el estado de "despues" se toma en orden INVERSO al del
+        // "antes": primero los marcadores gruesos y al final los finos.
+        // El sello va el ultimo porque es el que distingue el cambio
+        // mas pequeño --una relacion que cambia de evidencia-- y porque
+        // no depende de que el cambio pase por el ledger de deltas. Lo
+        // que se lee despues del sello queda fuera de la comprobacion, y
+        // es una ventana que no se puede cerrar sin una lectura
+        // transaccional: se dice aqui para que no se prometa mas de lo
+        // que se cumple.
+        let generation_after = self
+            .graph
+            .generation()
+            .await
+            .map_err(SimulationError::Unavailable)?;
+        if base.is_the_generation_stale(generation_after) {
+            return Err(SimulationError::StaleBase {
+                source: "graph".to_string(),
+                expected: generation.to_string(),
+                found: generation_after.to_string(),
+            });
+        }
+
         let relations_after = self
             .graph
             .relation_count()
             .await
             .map_err(SimulationError::Unavailable)?;
         if relations_after != relations_before {
-            return Err(SimulationError::Unavailable(format!(
-                "the graph changed while simulating: {relations_before} relations before and \
-                 {relations_after} after"
-            )));
+            return Err(SimulationError::StaleBase {
+                source: "relation count".to_string(),
+                expected: relations_before.to_string(),
+                found: relations_after.to_string(),
+            });
+        }
+
+        let real_after = self.the_relations_of(&subjects).await?;
+        let seal_after = the_seal_of(&real_after);
+        if base.is_the_content_stale(&seal_after) {
+            return Err(SimulationError::StaleBase {
+                source: "relations".to_string(),
+                expected: seal_before,
+                found: seal_after,
+            });
+        }
+
+        // Y la evidencia: la que consume la decision. No toca el grafo,
+        // asi que los tres guards de arriba no la ven, y sin esta
+        // comprobacion una evidencia que entra en mitad de la
+        // simulacion se atribuiria al hecho hipotetico.
+        let mut reads_after = ReadSet::empty();
+        for subject in &subjects {
+            let reads = self
+                .decisions
+                .the_reads_of(subject)
+                .await
+                .map_err(SimulationError::ReadFailed)?;
+            for stamp in &reads.stamps {
+                reads_after.read(stamp.clone());
+            }
+        }
+        if base.is_the_evidence_stale(&reads_after) {
+            return Err(SimulationError::StaleBase {
+                source: "evidence".to_string(),
+                expected: the_evidence_fingerprint(&base.read_set),
+                found: the_evidence_fingerprint(&reads_after),
+            });
         }
 
         Ok(SimulationDiff {
             structural,
             decisions,
+            base,
         })
     }
+
+    /// Las relaciones de los sujetos, en orden canonico.
+    async fn the_relations_of(
+        &self,
+        subjects: &[kernel::Hrn],
+    ) -> Result<Vec<RelationFact>, SimulationError> {
+        let mut relations: Vec<RelationFact> = Vec::new();
+        for subject in subjects {
+            for relation in self
+                .graph
+                .relations_of(subject)
+                .await
+                .map_err(SimulationError::Unavailable)?
+            {
+                match relations
+                    .iter_mut()
+                    .find(|one| one.is_the_same_as(&relation))
+                {
+                    // La misma relacion con distinto apoyo: gana la de la
+                    // evidencia MAS PEQUENA. El resultado no puede
+                    // depender del orden en que el almacen devolvio las
+                    // filas, porque un sello que depende del orden no es
+                    // un sello del mundo.
+                    Some(known) => {
+                        if the_evidence_of(&relation) < the_evidence_of(known) {
+                            *known = relation;
+                        }
+                    }
+                    None => relations.push(relation),
+                }
+            }
+        }
+        relations.sort_by_key(|relation| relation.identity());
+        Ok(relations)
+    }
+}
+
+/// La evidencia que sostiene una relacion, como texto.
+///
+/// Es lo que compara cuando dos relaciones tienen la misma identidad y
+/// distinto apoyo.
+fn the_evidence_of(relation: &RelationFact) -> String {
+    relation.evidence.clone().unwrap_or_default()
 }

@@ -3,9 +3,9 @@
 //! El grafo real se lee y **no se escribe**: el puerto
 //! [`SimulationGraph`] no tiene un metodo de escritura, y por eso no
 //! existe por donde escribir. El adaptador de aqui es la pieza que
-//! cumple esa promesa en el mundo real, y por eso lleva su propia cuenta
-//! de escrituras: una simulacion que escribiese algo dejaria la cuenta
-//! en un numero distinto de cero, y se veria.
+//! cumple esa promesa en el mundo real, y por eso ademas dice la
+//! VERSION del grafo que lee: una simulacion que no dice sobre que
+//! generacion del mundo se calculo no se puede auditar.
 
 pub mod evaluator;
 
@@ -45,11 +45,10 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
             .await
             .map_err(|error| error.to_string())?
         {
-            facts.push(RelationFact::new(
-                relation.relation,
-                relation.from,
-                relation.to,
-            ));
+            facts.push(
+                RelationFact::new(relation.relation, relation.from, relation.to)
+                    .with_evidence(relation.evidence_id.to_string()),
+            );
         }
 
         // Y las que llegan a el.
@@ -59,8 +58,11 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
             .await
             .map_err(|error| error.to_string())?
         {
-            let fact = RelationFact::new(relation.relation, relation.from, relation.to);
-            if !facts.contains(&fact) {
+            let fact = RelationFact::new(relation.relation, relation.from, relation.to)
+                .with_evidence(relation.evidence_id.to_string());
+            // La deduplicacion es por IDENTIDAD: la misma relacion
+            // aparece una vez por cada extremo por el que se toca.
+            if !facts.iter().any(|one| one.is_the_same_as(&fact)) {
                 facts.push(fact);
             }
         }
@@ -73,7 +75,8 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
             .graph
             .db()
             .query(
-                "SELECT from, to, relation_type FROM type::table($table) WHERE tenant_hrn = $tenant",
+                "SELECT from, to, relation_type, evidence_id FROM type::table($table) WHERE \
+                 tenant_hrn = $tenant AND (status IS NONE OR status = 'asserted')",
             )
             .bind(("table", self.graph.relation_table_name()))
             .bind(("tenant", self.tenant.to_string()))
@@ -87,7 +90,11 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
                     hodei_evidence::domain::graph::RelationType::parse(&row.relation_type)?;
                 let from = Hrn::from_string(&row.from)?;
                 let to = Hrn::from_string(&row.to)?;
-                Some(RelationFact::new(relation, from, to))
+                let mut fact = RelationFact::new(relation, from, to);
+                if let Some(evidence) = row.evidence_id {
+                    fact = fact.with_evidence(evidence);
+                }
+                Some(fact)
             })
             .collect())
     }
@@ -96,13 +103,24 @@ impl<C: Connection> SimulationGraph for SurrealSimulationGraph<C> {
         let mut response = self
             .graph
             .db()
-            .query("SELECT from FROM type::table($table) WHERE tenant_hrn = $tenant")
+            .query(
+                "SELECT from FROM type::table($table) WHERE tenant_hrn = $tenant AND (status IS \
+                 NONE OR status = 'asserted')",
+            )
             .bind(("table", self.graph.relation_table_name()))
             .bind(("tenant", self.tenant.to_string()))
             .await
             .map_err(|error| error.to_string())?;
         let rows: Vec<CountRow> = response.take(0).map_err(|error| error.to_string())?;
         Ok(rows.len())
+    }
+
+    async fn generation(&self) -> Result<u64, String> {
+        self.graph.generation(&self.tenant).await
+    }
+
+    fn account(&self) -> String {
+        self.tenant.account_id().to_string()
     }
 }
 
@@ -115,6 +133,9 @@ struct RelationRow {
     to: String,
     /// El tipo de la relacion.
     relation_type: String,
+    /// La evidencia que la sostiene, si la fila la trae.
+    #[serde(default)]
+    evidence_id: Option<String>,
 }
 
 /// La fila de la cuenta.

@@ -149,17 +149,50 @@ pub struct RelationFact {
     pub from: Hrn,
     /// El nodo al que llega.
     pub to: Hrn,
+    /// La evidencia que la sostiene, si se conoce.
+    ///
+    /// No es parte de la IDENTIDAD de la relacion, que es el tipo y los
+    /// dos extremos: dos relaciones con la misma identidad son la misma
+    /// relacion, y el diff estructural habla de relaciones y no de
+    /// apoyos. Pero si es parte de su VALOR: una relacion a la que se
+    /// le cambia el apoyo no es la misma relacion que se leyo antes, y
+    /// comparar solo por identidad lo esconderia.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
 }
 
 impl RelationFact {
     /// La relacion.
     pub fn new(relation: RelationType, from: Hrn, to: Hrn) -> Self {
-        Self { relation, from, to }
+        Self {
+            relation,
+            from,
+            to,
+            evidence: None,
+        }
+    }
+
+    /// La relacion, con la evidencia que la sostiene.
+    pub fn with_evidence(mut self, evidence: impl Into<String>) -> Self {
+        self.evidence = Some(evidence.into());
+        self
     }
 
     /// La identidad de la relacion: la que dice si es la misma o no.
+    ///
+    /// La identidad NO lleva la evidencia: el tipo y los dos extremos
+    /// dizem que relacion es, y quien la sostiene se compara aparte.
     pub fn identity(&self) -> String {
         format!("{}|{}|{}", self.relation.as_str(), self.from, self.to)
+    }
+
+    /// Si es la MISMA relacion que otra: la que tiene la misma
+    /// identidad.
+    ///
+    /// Es la comparacion que usa el diff, porque el diff habla de
+    /// relaciones y no de apoyos.
+    pub fn is_the_same_as(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
     }
 }
 
