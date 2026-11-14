@@ -294,7 +294,7 @@ async fn an_executor_of_another_tenant_refuses_to_touch() {
 
     let event = the_event();
     let intent = Intent::new(
-        IntentOrigin::of("one_intent", &event, &[event.id.clone()]),
+        IntentOrigin::of("one_intent", &event, std::slice::from_ref(&event.id)),
         "mallory",
         "decision_reevaluation",
         "decision:mallory",
@@ -339,7 +339,11 @@ async fn the_case_intent_opens_the_case_of_its_tenant() {
 
     let event = the_event();
     let intent = Intent::new(
-        IntentOrigin::of("vulnerability_impact", &event, &[event.id.clone()]),
+        IntentOrigin::of(
+            "vulnerability_impact",
+            &event,
+            std::slice::from_ref(&event.id),
+        ),
         "acme",
         "security_case",
         "case:GHSA-1",

@@ -191,19 +191,22 @@ fn the_event() -> Event {
     )
 }
 
-/// A runtime with the spy planning and the spy executor, over the same
-/// store and the SAME outbox: the executor reads the store to check the
-/// order, and the outbox keeps what the intents became.
-fn runtime_with(
-    mode: Mode,
-    budget: Budget,
-    answer: Receipt,
-) -> (
+/// El mundo de la prueba: el runtime, las llamadas que se vieron, el
+/// almacen y el outbox.
+///
+/// Es un tipo con nombre porque una tupla de cuatro no se puede leer: y
+/// lo que no se puede leer no se puede comprobar.
+type TheWorld = (
     ReactiveRuntime,
     Arc<Mutex<Vec<String>>>,
     Arc<InMemoryExecutionStore>,
     Arc<InMemoryIntentOutbox>,
-) {
+);
+
+/// A runtime with the spy planning and the spy executor, over the same
+/// store and the SAME outbox: the executor reads the store to check the
+/// order, and the outbox keeps what the intents became.
+fn runtime_with(mode: Mode, budget: Budget, answer: Receipt) -> TheWorld {
     let store = Arc::new(InMemoryExecutionStore::empty());
     let outbox = Arc::new(InMemoryIntentOutbox::empty());
     let (executor, calls) = SpyExecutor::over(store.clone(), answer);

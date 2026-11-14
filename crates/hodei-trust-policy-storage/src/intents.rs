@@ -237,12 +237,18 @@ impl<C: Connection> ExecutionStore for SurrealIntentStore<C> {
     }
 
     async fn applied_effects(&self) -> Vec<Effect> {
-        self.db
+        // El error de SurrealDB es ENORME, y un cierre que lo devuelve
+        // hace que el error voyage por toda la cadena. Se lee la
+        // respuesta y se decide aqui: lo que no se puede leer, no esta.
+        let Ok(mut response) = self
+            .db
             .query("SELECT * FROM type::table($table)")
             .bind(("table", EFFECT_TABLE))
             .await
-            .and_then(|mut response| response.take(0))
-            .unwrap_or_default()
+        else {
+            return Vec::new();
+        };
+        response.take(0).unwrap_or_default()
     }
 
     async fn record_effect(&self, effect: Effect) {
@@ -255,13 +261,15 @@ impl<C: Connection> ExecutionStore for SurrealIntentStore<C> {
     }
 
     async fn executions(&self) -> Vec<ExecutionRecord> {
-        let mut records: Vec<ExecutionRecord> = self
+        let Ok(mut response) = self
             .db
             .query("SELECT * FROM type::table($table)")
             .bind(("table", EXECUTION_TABLE))
             .await
-            .and_then(|mut response| response.take(0))
-            .unwrap_or_default();
+        else {
+            return Vec::new();
+        };
+        let mut records: Vec<ExecutionRecord> = response.take(0).unwrap_or_default();
         records.sort_by_key(|record| record.started_at);
         records
     }
