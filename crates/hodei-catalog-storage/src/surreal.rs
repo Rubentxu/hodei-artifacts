@@ -80,10 +80,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hodei_audit::{AuditContext, AuditEvent, AuditOutbox, AuditResult};
 use hodei_catalog::{
-    AccessDecision, AccessRequest, AssetRecord, BlobIntegrityProbe, BlobLocation, BlobProbeError,
-    BlobReference, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader, CatalogResource,
-    CatalogWriter, DigestScope, MutableTag, PackageCoordinates, PackageVersion, Publication,
-    PublishOutcome, RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode,
+    AccessDecision, AccessRequest, AssetDisposition, AssetRecord, BlobIntegrityProbe, BlobLocation,
+    BlobProbeError, BlobReference, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader,
+    CatalogResource, CatalogWriter, DigestScope, MutableTag, PackageCoordinates, PackageVersion,
+    Precondition, Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor,
+    RepositoryFormat, RepositoryMode,
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use kernel::Hrn;
@@ -139,7 +140,7 @@ DEFINE FIELD IF NOT EXISTS config_version ON catalog_repository TYPE int;
 DEFINE FIELD IF NOT EXISTS digest_scope ON catalog_repository TYPE string;
 -- Los ajustes son un objeto libre. Sin FLEXIBLE, en una tabla SCHEMAFULL
 -- el motor declara que el objeto no tiene campos, y lo que se le da se
--- guarda como un objeto vacio: los ajustes desaparecian en silencio.
+-- guarda como un objeto vacío: los ajustes desaparecian en silencio.
 DEFINE FIELD OVERWRITE config_settings ON catalog_repository TYPE object FLEXIBLE;
 DEFINE FIELD IF NOT EXISTS created_at ON catalog_repository TYPE datetime;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_repository TYPE datetime;
@@ -282,6 +283,15 @@ fn tag_id(account: &str, repository: &str, tag_name: &str) -> Thing {
         "catalog_tag",
         composite_id(&[account, repository, tag_name]).as_str(),
     ))
+}
+
+/// Los valores de los digests.
+///
+/// La fila guarda el **valor** del digest y el algoritmo aparte, y es el
+/// valor lo que se compara: el algoritmo de esta release es uno solo, y
+/// el valor lo identifica sin ambigüedad.
+fn digests_of(digests: &[ContentDigest]) -> Vec<String> {
+    digests.iter().map(|digest| digest.value.clone()).collect()
 }
 
 /// El almacén del catálogo sobre SurrealDB.
@@ -769,9 +779,22 @@ struct PublicationPlan {
     create_version: bool,
     create_asset: bool,
     create_reference: bool,
+    /// Que la fila del asset ya existe y hay que **mover** a otra versión.
+    ///
+    /// Es el caso de la sustitución: la versión anterior no se borra ni
+    /// se reescribe, la ruta pasa a apuntar a la nueva.
+    update_asset: bool,
+    /// Que la referencia viva ya existe y hay que **mover** a otro blob.
+    update_reference: bool,
     create_tags: Vec<String>,
     /// El conflicto que impide la publicación, si lo hay.
     conflict: Option<CatalogError>,
+    /// La precondición del cliente que no se cumple, si no se cumple.
+    ///
+    /// Va aparte del conflicto porque no es lo mismo: el conflicto dice
+    /// que hay algo distinto de lo que se publica, y la precondición dice
+    /// que **lo que hay** no es lo que el cliente esperaba.
+    precondition_failure: Option<CatalogError>,
 }
 
 impl PublicationPlan {
@@ -780,6 +803,8 @@ impl PublicationPlan {
         !self.create_version
             && !self.create_asset
             && !self.create_reference
+            && !self.update_asset
+            && !self.update_reference
             && self.create_tags.is_empty()
     }
 }
@@ -1586,6 +1611,21 @@ impl CatalogWriter for SurrealCatalogStore {
                 .await;
                 return Err(conflict);
             }
+            if let Some(failure) = plan.precondition_failure {
+                // La condición que el cliente exigía no se cumple: la
+                // escritura no se hace. Y tampoco es un fallo del
+                // almacenamiento, así que el rastro lo dice como lo que
+                // es: una petición que no se completó.
+                self.audit_the_publication(
+                    &event_id,
+                    occurred_at,
+                    principal_account,
+                    &publication,
+                    AuditResult::Failed,
+                )
+                .await;
+                return Err(failure);
+            }
             if plan.is_complete() {
                 // No se escribe nada: no hay mutación, y un evento que
                 // dice "publicado" sobre una publicación que ya estaba no
@@ -1602,7 +1642,10 @@ impl CatalogWriter for SurrealCatalogStore {
                 &publication,
                 AuditResult::Allowed,
             );
-            match self.write_the_publication(&plan, &event).await {
+            match self
+                .write_the_publication(&plan, &event, &publication)
+                .await
+            {
                 Ok(()) => return Ok(the_outcome(&plan, true)),
                 Err(failure) => {
                     // Puede que otro escritor publicara lo mismo a la vez.
@@ -1628,6 +1671,17 @@ impl CatalogWriter for SurrealCatalogStore {
             )
             .await;
             return Err(conflict);
+        }
+        if let Some(failure) = plan.precondition_failure {
+            self.audit_the_publication(
+                &event_id,
+                occurred_at,
+                principal_account,
+                &publication,
+                AuditResult::Failed,
+            )
+            .await;
+            return Err(failure);
         }
         if plan.is_complete() {
             return Ok(the_outcome(&plan, false));
@@ -2024,6 +2078,54 @@ impl SurrealCatalogStore {
         let existing_asset = self
             .the_asset_row(principal_account, &repository, &publication.asset_path)
             .await?;
+        // La precondición del cliente se comprueba **aquí**, con lo que
+        // hay, y **también** dentro de la transacción que escribe. Aquí
+        // dice el motivo; allí se cierra la carrera entre esta lectura y
+        // la escritura. Las dos son necesarias: la primera da la
+        // respuesta, y la segunda garantiza que la respuesta sea cierta.
+        let precondition_failure = match &publication.precondition {
+            None => None,
+            Some(Precondition::Present(expected)) => match &existing_asset {
+                None => Some(CatalogError::precondition_failed(
+                    "asset",
+                    format!("{repository}/{}", publication.asset_path),
+                    "there is nothing to compare with",
+                )),
+                Some(row) if !expected.iter().any(|digest| digest.value == row.digest) => {
+                    Some(CatalogError::precondition_failed(
+                        "asset",
+                        format!("{repository}/{}", publication.asset_path),
+                        "the path holds another content",
+                    ))
+                }
+                Some(_) => None,
+            },
+            Some(Precondition::Absent) => existing_asset.as_ref().map(|_| {
+                CatalogError::precondition_failed(
+                    "asset",
+                    format!("{repository}/{}", publication.asset_path),
+                    "the path already holds a content",
+                )
+            }),
+            Some(Precondition::Exists) => match &existing_asset {
+                None => Some(CatalogError::precondition_failed(
+                    "asset",
+                    format!("{repository}/{}", publication.asset_path),
+                    "there is nothing to compare with",
+                )),
+                Some(_) => None,
+            },
+            Some(Precondition::Other(expected)) => match &existing_asset {
+                Some(row) if expected.iter().any(|digest| digest.value == row.digest) => {
+                    Some(CatalogError::precondition_failed(
+                        "asset",
+                        format!("{repository}/{}", publication.asset_path),
+                        "the path already holds that content",
+                    ))
+                }
+                _ => None,
+            },
+        };
         let mut asset = AssetRecord {
             account: account.clone(),
             repository: repository.clone(),
@@ -2034,6 +2136,7 @@ impl SurrealCatalogStore {
             updated_at: now,
         };
         let mut create_asset = true;
+        let mut update_asset = false;
         if let Some(row) = existing_asset {
             let same = row.package_name == coordinates.package_name
                 && row.package_version == coordinates.package_version
@@ -2048,6 +2151,13 @@ impl SurrealCatalogStore {
                 // que dice "actualizado ahora" miente sobre cuando se
                 // publicó el contenido.
                 asset.updated_at = DateTime::<Utc>::from(row.updated_at.clone());
+            } else if publication.overwrite {
+                // La sustitución es una decisión explícita de quién
+                // publica: la ruta pasa a apuntar a la versión nueva y la
+                // versión vieja sigue estando, porque una versión
+                // publicada no se reescribe.
+                create_asset = false;
+                update_asset = true;
             } else if conflict.is_none() {
                 conflict = Some(CatalogError::conflict(
                     "asset",
@@ -2071,6 +2181,7 @@ impl SurrealCatalogStore {
             updated_at: now,
         };
         let mut create_reference = true;
+        let mut update_reference = false;
         if let Some(row) = existing_reference {
             // La identidad del contenido es el digest. El ámbito dice
             // donde viven los bytes, no que bytes son: compararlo aquí
@@ -2084,6 +2195,13 @@ impl SurrealCatalogStore {
                 // Como con el asset: lo que no se escribe no cambia de
                 // fecha, y el resultado dice lo que hay.
                 reference.updated_at = DateTime::<Utc>::from(row.updated_at.clone());
+            } else if publication.overwrite {
+                // La referencia viva pasa a apuntar al blob nuevo, como
+                // la ruta pasa a apuntar a la versión nueva: las dos van
+                // juntas o el asset apunta a una versión cuyo contenido no
+                // es el suyo.
+                create_reference = false;
+                update_reference = true;
             } else if conflict.is_none() {
                 conflict = Some(CatalogError::conflict(
                     "reference",
@@ -2130,8 +2248,11 @@ impl SurrealCatalogStore {
             create_version,
             create_asset,
             create_reference,
+            update_asset,
+            update_reference,
             create_tags,
             conflict,
+            precondition_failure,
         })
     }
 
@@ -2146,8 +2267,54 @@ impl SurrealCatalogStore {
         &self,
         plan: &PublicationPlan,
         event: &AuditEvent,
+        publication: &Publication,
     ) -> Result<(), WriteFailure> {
         let mut sql = String::from("BEGIN TRANSACTION;\n");
+        // La precondición del cliente se comprueba **dentro** de la
+        // transacción y **antes** de escribir nada. El `THROW` aborta la
+        // transacción entera, así que no queda ni una fila escrita: la
+        // carrera entre la comprobación y la escritura no tiene ventana.
+        //
+        // La comprobación del plan, antes de la transacción, dice el
+        // motivo; esta dice que el motivo sigue siendo verdad.
+        let mut guard = None;
+        if let Some(precondition) = &publication.precondition {
+            let id = asset_id(
+                &plan.asset.account,
+                &plan.asset.repository,
+                &plan.asset.asset_path,
+            );
+            match precondition {
+                Precondition::Present(expected) => {
+                    sql.push_str(
+                        "IF (SELECT digest FROM catalog_asset WHERE id = $guard_id)[0].digest \
+                         NOT IN $expected_digests { THROW 'the precondition does not hold' };\n",
+                    );
+                    guard = Some((id, digests_of(expected)));
+                }
+                Precondition::Absent => {
+                    sql.push_str(
+                        "IF (SELECT digest FROM catalog_asset WHERE id = $guard_id)[0] != NONE \
+                         { THROW 'the precondition does not hold' };\n",
+                    );
+                    guard = Some((id, Vec::new()));
+                }
+                Precondition::Exists => {
+                    sql.push_str(
+                        "IF (SELECT digest FROM catalog_asset WHERE id = $guard_id)[0] == NONE \
+                         { THROW 'the precondition does not hold' };\n",
+                    );
+                    guard = Some((id, Vec::new()));
+                }
+                Precondition::Other(expected) => {
+                    sql.push_str(
+                        "IF (SELECT digest FROM catalog_asset WHERE id = $guard_id)[0].digest \
+                         IN $expected_digests { THROW 'the precondition does not hold' };\n",
+                    );
+                    guard = Some((id, digests_of(expected)));
+                }
+            }
+        }
         let mut version = None;
         let mut version_record_id = None;
         let mut asset = None;
@@ -2175,8 +2342,16 @@ impl SurrealCatalogStore {
                 published_at: Datetime::from(plan.version.published_at),
             });
         }
-        if plan.create_asset {
-            sql.push_str("CREATE $asset_id CONTENT $asset;\n");
+        if plan.create_asset || plan.update_asset {
+            // Una fila que se sustituye se **actualiza**: la ruta ya
+            // existe y lo que cambia es a que apunta. Un `CREATE` sobre
+            // una fila que existe no la sustituye, y un `CREATE` que no
+            // falla por eso publicaria dos filas con la misma ruta.
+            if plan.create_asset {
+                sql.push_str("CREATE $asset_id CONTENT $asset;\n");
+            } else {
+                sql.push_str("UPDATE $asset_id CONTENT $asset;\n");
+            }
             asset_record_id = Some(asset_id(
                 &plan.asset.account,
                 &plan.asset.repository,
@@ -2194,8 +2369,13 @@ impl SurrealCatalogStore {
                 updated_at: Datetime::from(plan.asset.updated_at),
             });
         }
-        if plan.create_reference {
-            sql.push_str("CREATE $reference_id CONTENT $reference;\n");
+        if plan.create_reference || plan.update_reference {
+            // Como con el asset: la referencia viva se mueve con la ruta.
+            if plan.create_reference {
+                sql.push_str("CREATE $reference_id CONTENT $reference;\n");
+            } else {
+                sql.push_str("UPDATE $reference_id CONTENT $reference;\n");
+            }
             reference_record_id = Some(reference_id(
                 &plan.reference.account,
                 &plan.reference.repository,
@@ -2255,6 +2435,11 @@ impl SurrealCatalogStore {
                 "audit",
                 AuditRow::of(event, hodei_audit::EntryState::Pending),
             ));
+        if let Some((id, expected)) = guard {
+            statement = statement
+                .bind(("guard_id", id))
+                .bind(("expected_digests", expected));
+        }
 
         match statement.await {
             Err(error) => Err(WriteFailure {
@@ -2313,11 +2498,22 @@ fn same_repository(existing: &RepositoryDescriptor, requested: &RepositoryDescri
 
 /// Lo que la publicación deja, con lo que se ha creado.
 fn the_outcome(plan: &PublicationPlan, created: bool) -> PublishOutcome {
+    // Lo que pasó con la fila del asset. El plan sabe si la fila se
+    // creó, si se movió, o si ya estaba con este contenido: los tres
+    // son hechos distintos, y el cliente los trata distinto.
+    let disposition = if plan.update_asset {
+        AssetDisposition::Replaced
+    } else if plan.create_asset {
+        AssetDisposition::Created
+    } else {
+        AssetDisposition::Unchanged
+    };
     PublishOutcome {
         version: plan.version.clone(),
         asset: plan.asset.clone(),
         reference: plan.reference.clone(),
         created,
+        disposition,
     }
 }
 

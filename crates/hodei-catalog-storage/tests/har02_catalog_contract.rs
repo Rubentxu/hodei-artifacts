@@ -179,6 +179,8 @@ fn publication(
         tags: Vec::new(),
         actor: "hrn:hodei:iam:acme:User/alice".to_string(),
         correlation_id: "corr-har02".to_string(),
+        overwrite: false,
+        precondition: None,
     }
 }
 
@@ -699,6 +701,87 @@ async fn a_second_incompatible_publication_is_a_conflict_and_does_not_overwrite(
         .expect("read asset");
     assert_eq!(asset.digest, ContentDigest::of_bytes(first));
     assert_eq!(asset.coordinates.package_version, "1.0");
+}
+
+#[tokio::test]
+async fn a_publication_that_asks_to_overwrite_repoints_the_path_and_keeps_the_old_version() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let first = b"the first content";
+    let second = b"a different content";
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", first),
+        )
+        .await
+        .expect("publish first");
+
+    // La sustitución es una decisión explícita: sin ella, la publicación
+    // se rechaza.
+    let mut replacing = publication("releases", "app.bin", "pkg", "2.0", second);
+    replacing.overwrite = true;
+    let outcome = store
+        .publish("acme", replacing)
+        .await
+        .expect("the publication replaces what the path pointed at");
+    // La versión nueva se crea; la anterior sigue estando.
+    assert!(outcome.created, "the new version was not created");
+    assert_eq!(outcome.asset.digest, ContentDigest::of_bytes(second));
+
+    // La ruta apunta al contenido nuevo.
+    let asset = store
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect("read asset");
+    assert_eq!(asset.digest, ContentDigest::of_bytes(second));
+    assert_eq!(asset.coordinates.package_version, "2.0");
+    assert_eq!(asset.size_bytes, second.len() as u64);
+
+    // Y la referencia viva también: un asset que apunta a una versión
+    // cuyo contenido no es el suyo es un asset roto.
+    let reference = store
+        .reference("acme", "releases", "app.bin")
+        .await
+        .expect("read reference");
+    assert_eq!(reference.digest, ContentDigest::of_bytes(second));
+
+    // La versión anterior no se borra ni se reescribe: una versión
+    // publicada es un hecho, no un puntero.
+    let old = store
+        .version(
+            "acme",
+            "releases",
+            &PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "1.0".to_string(),
+            },
+        )
+        .await
+        .expect("the old version is still there");
+    assert_eq!(old.digest, ContentDigest::of_bytes(first));
+
+    // Y la cuenta ajena no ve nada de esto.
+    let _ = store
+        .asset("other", "releases", "app.bin")
+        .await
+        .expect_err("another account does not see the asset");
 }
 
 #[tokio::test]
@@ -2194,8 +2277,8 @@ async fn an_idempotent_publication_reports_the_instant_that_is_in_the_store() {
 ///
 /// En una tabla `SCHEMAFULL`, un campo `TYPE object` **sin** `FLEXIBLE`
 /// declara que el objeto no tiene campos: el motor guardaba `{}` y
-/// descartaba lo que se le habia dado. Un `update_config` subia la version
-/// de la configuracion y no cambiaba nada, en silencio.
+/// descartaba lo que se le había dado. Un `update_config` subía la versión
+/// de la configuración y no cambiaba nada, en silencio.
 #[tokio::test]
 async fn the_settings_of_a_repository_survive_its_creation_and_its_update() {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -2230,7 +2313,7 @@ async fn the_settings_of_a_repository_survive_its_creation_and_its_update() {
         "the settings were not stored"
     );
 
-    // Y una configuracion nueva los cambia de verdad.
+    // Y una configuración nueva los cambia de verdad.
     let changed = serde_json::json!({ "raw": { "replace": "deny" } });
     let mut update = RepositoryConfig::new(DigestScope::Global);
     update.config_settings = changed.clone();

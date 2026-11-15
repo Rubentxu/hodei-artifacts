@@ -49,9 +49,9 @@ pub mod ports;
 
 pub use error::CatalogError;
 pub use model::{
-    AssetRecord, BlobLocation, BlobReference, DigestScope, MutableTag, PackageCoordinates,
-    PackageVersion, Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor,
-    RepositoryFormat, RepositoryMode, repository_hrn,
+    AssetDisposition, AssetRecord, BlobLocation, BlobReference, DigestScope, MutableTag,
+    PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome,
+    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
 };
 pub use ports::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
