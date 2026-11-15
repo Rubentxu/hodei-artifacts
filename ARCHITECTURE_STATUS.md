@@ -1133,3 +1133,24 @@ El hito donde Hodei deja de ser un catalogo y pasa a ser el que guarda y distrib
 - `ADR-015`: la conclusion del SPIKE-010, con sus no-objetivos explicitos (Maven y npm no, hasta que haya demanda, spike de protocolo y UAT nueva).
 
 **La limitacion, escrita:** el subconjunto de OCI es parcial (el manifiesto de imagen, su configuracion y sus capas; el indice multi-plataforma, los referrers y las firmas no), la promocion cambia el canal sin mover bytes porque no hay bytes que muevan entre canales, y laReferences y el GC segura no estanTodavia.
+
+## 10-tresdecies — M10: el CAS de produccion
+
+La ampliacion del hub hacia un repository manager real empieza por la base: el almacen de contenido tiene que poder recibir los bytes de un cliente sin que eso sea un problema. El CAS de M9 era correcto en su garantia central — el mismo contenido no se guarda dos veces, y lo que sale por el digest es lo que entro — pero tenia tresyeltones que lo hacian inoperable con artefactos de cliente.
+
+**Lo que faltaba y ahora hay:**
+
+- **El staging era un nombre por digest.** `path.with_extension("tmp")` daba a cada digest **un** temporal, y dos productores concurrentes del mismo contenido escribian en el **mismo** fichero: el renombrado del uno podia publicar los bytes del otro. Ahora cada escritura en curso tiene su **propio** fichero en `<root>/staging/<pid>-<nanos>-<contador>.part`.
+- **El contenido se bufferizaba entero.** `put(&[u8])` recibia el artefacto completo en memoria, y no habia forma de subir uno que no cupiera. Ahora hay `BlobWriteSession`: `append` por trozos, `commit` atomico, `abort`.
+- **El commit no validaba nada.** Publicaba lo que hubiera, y si el cliente declaraba un digest que no era el suyo, se publicaba igual. Ahora el commit valida **algoritmo, longitud y digest** contra lo declarado (`CommitExpectation`); si algo no cuadra, el staging se elimina y **no queda ninguna referencia visible**.
+- **Los fallos se confundian.** Cualquier error de lectura salia como `NotFound`: un disco lleno y una corrupcion eran lo mismo. Ahora `NotFound`, `Corrupted`, `LengthMismatch`, `DigestMismatch`, `UnsupportedAlgorithm` y `Unavailable` son fallos distintos.
+- **No habia limpieza.** Una subida que se caia dejaba su staging en disco para siempre. Ahora el staging caducado se limpia (`clean_expired_staging`) y el vivo no se toca; y una sesion abandonada borra el suyo al soltarse.
+
+**La garantia que no cambia.** El mismo contenido no se guarda dos veces, y lo que sale por el digest es lo que entro. Lo que cambia es **como** se llega ahi: por trozos, con staging propio, y sin publicar nada que no sea exactamente lo declarado.
+
+**Las dos fronteras, escritas:**
+
+- `exists` dice si el contenido **esta**, no si esta **bien**. La integridad se comprueba con `verify` o con una lectura que verifica (`ReadPolicy::Verify` es la politica por defecto; `Trust` existe para contenido ya verificado y no comprueba nada).
+- El commit de un contenido que ya esta **no** revalida el blob entero: comprueba su longitud, que es barato, y deja la verificacion profunda al scrub (HAR-21). Rehashear un artefacto de 1 GiB en cada subida duplicada no es un coste que un registry pueda pagar.
+
+**Lo que sigue sin estar:** las referencias y la garbage collection segura (HAR-10), el servidor OCI (HAR-06), y el resto del protocolo. Esto es solo el suelo sobre el que se construye lo demas.

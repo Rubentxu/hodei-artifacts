@@ -33,6 +33,17 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- El almacen de contenido del hub (`hodei-hub`) acepta **subidas en
+  streaming**: `BlobWriteSession` recibe el contenido a trozos, con un
+  fichero de staging propio por escritura, y el `commit` publica el
+  contenido entero o no publica nada. El commit valida el algoritmo, la
+  longitud y el digest contra lo que el cliente declara, y si no cuadra,
+  el staging se elimina y no queda ninguna referencia visible. La lectura
+  distingue ahora lo que no está (`NotFound`) de lo que está roto
+  (`Corrupted`) de lo que no se pudo leer (`Unavailable`), y el staging
+  caducado se limpia al reiniciar. La garantía central no cambia: el mismo
+  contenido no se guarda dos veces y lo que sale por el digest es lo que
+  entró.
 - `ensure-iam-index`, comando operador que declara el indice `policy_account`
   de las politicas IAM. Viaja en la distribucion, junto al binario del
   servicio, y se ejecuta con el servicio detenido: declarar el indice desde
