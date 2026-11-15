@@ -36,6 +36,10 @@
 //! existencia de lo ajeno; un `Corrupt` es "hay algo ahi y esta roto", y
 //! se detecta comparando el registro con la version que referencia y con
 //! los bytes que el CAS dice que tiene.
+//!
+//! Lo que la sonda comprueba es la **longitud** de los bytes, no su
+//! digest: rehashear un artefacto en cada lectura es un coste que un
+//! registro no puede pagar, y la verificacion profunda es del scrub.
 
 #![forbid(unsafe_code)]
 
@@ -45,11 +49,12 @@ pub mod ports;
 
 pub use error::CatalogError;
 pub use model::{
-    AssetRecord, BlobReference, DigestScope, MutableTag, PackageCoordinates, PackageVersion,
-    Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor, RepositoryFormat,
-    RepositoryMode, repository_hrn,
+    AssetRecord, BlobLocation, BlobReference, DigestScope, MutableTag, PackageCoordinates,
+    PackageVersion, Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor,
+    RepositoryFormat, RepositoryMode, repository_hrn,
 };
 pub use ports::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
-    CatalogAction, CatalogAuthorizer, CatalogReader, CatalogWriter, DenyAllAuthorizer,
+    CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogWriter,
+    DenyAllAuthorizer,
 };

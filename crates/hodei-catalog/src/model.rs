@@ -153,6 +153,39 @@ impl DigestScope {
     }
 }
 
+/// Donde vive un blob concreto.
+///
+/// El digest dice **que** es el contenido; la ubicacion dice **donde**
+/// estan sus bytes. Preguntar al almacen de bytes por el contenido
+/// significa preguntar por las dos cosas: el mismo digest puede estar en
+/// la ranura global o en la particionada de una cuenta, y quien busca solo
+/// una de las dos encuentra un blob que no es el suyo, o no encuentra nada.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobLocation {
+    /// La cuenta a la que pertenece el contenido.
+    pub account: String,
+    /// El ambito en el que vive.
+    pub scope: DigestScope,
+    /// El digest del contenido.
+    pub digest: ContentDigest,
+}
+
+impl BlobLocation {
+    /// La ubicacion de un contenido en un ambito.
+    pub fn new(account: &str, scope: DigestScope, digest: ContentDigest) -> Self {
+        Self {
+            account: account.to_string(),
+            scope,
+            digest,
+        }
+    }
+
+    /// La clave con la que el CAS guarda ese blob.
+    pub fn blob_key(&self) -> String {
+        self.scope.blob_key(&self.account, &self.digest)
+    }
+}
+
 /// La configuracion de un repositorio, con la version que la identifica.
 ///
 /// La version no es decorativa: es lo que permite saber si lo que tiene el
@@ -294,8 +327,16 @@ pub struct AssetRecord {
 
 /// Una referencia viva a un blob del CAS.
 ///
-/// Es lo que impide que el blob se recoja: mientras exista esta fila, el
-/// contenido tiene un dueño.
+/// La referencia dice que blob sirve **una ruta**: es la fila que se
+/// mueve con el asset, para que la descarga y la recoleccion no
+/// apontam a contenidos distintos.
+///
+/// El blob de una version publicada lo protege su fila de version, que es
+/// inmutable y conserva el digest y la longitud. La referencia protege el
+/// contenido que la ruta sirve **mientras lo sirva**: mover el asset
+/// reescribe la referencia al digest nuevo, y la version que se queda
+/// atras sigue declarada, con su digest, en su propia fila. Quien recoja
+/// blobs tiene que tener en cuenta las dos cosas.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlobReference {
     /// La cuenta propietaria.

@@ -13,7 +13,11 @@ hodei-evidence = { path = "../hodei-evidence" }
 kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-surrealdb = { workspace = true }
+# El suelo de este crate es 2.7, no el del workspace: la garantia de que
+# dos escritores concurrentes del mismo registro se arbitran entre si
+# depende del motor persistente, y eso se midio en 2.7. Con un motor
+# anterior, el perdedor no se pierde: el ultimo gana en silencio.
+surrealdb = { version = "2.7.0", features = ["kv-mem", "kv-rocksdb"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 

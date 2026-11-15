@@ -39,16 +39,30 @@
 //! se iba a escribir, otro escritor publico lo mismo y esto no es un
 //! conflicto; si lo que hay es distinto, es un conflicto; y si no hay
 //! nada, se intenta otra vez.
+//!
+//! # Donde acaba el aislamiento de cuentas
+//!
+//! El catalogo no verifica **quien** es el principal: recibe una cuenta ya
+//! verificada por la frontera, que es quien autentico y quien decidio.
+//! Delegar eso es la decision que hace que el catalogo sea un contexto
+//! acotado y no un sistema de identidades.
+//!
+//! Lo que el catalogo si garantiza es no traicionar esa frontera: la
+//! cuenta va en el filtro de cada consulta y en el identificador de cada
+//! registro, la decision se pide **antes** de tocar la base, y un `Denied`
+//! no dice si lo que se pidio existia. El que le pasa una cuenta que no
+//! es la suya no encuentra un fallo en el catalogo: encuentra que el
+//! catalogo no le cree, y para eso esta el puerto de autorizacion.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hodei_catalog::{
-    AccessDecision, AccessRequest, AssetRecord, BlobIntegrityProbe, BlobProbeError, BlobReference,
-    CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader, CatalogWriter, DigestScope,
-    MutableTag, PackageCoordinates, PackageVersion, Publication, PublishOutcome, RepositoryConfig,
-    RepositoryDescriptor, RepositoryFormat, RepositoryMode,
+    AccessDecision, AccessRequest, AssetRecord, BlobIntegrityProbe, BlobLocation, BlobProbeError,
+    BlobReference, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader, CatalogResource,
+    CatalogWriter, DigestScope, MutableTag, PackageCoordinates, PackageVersion, Publication,
+    PublishOutcome, RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode,
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use kernel::Hrn;
@@ -147,40 +161,72 @@ DEFINE INDEX IF NOT EXISTS catalog_tag_unique ON catalog_tag FIELDS account, rep
 /// de escritura sobre el. Un identificador aleatorio haria que cada uno
 /// escribiera una fila distinta, y las dos cabrian sin que ninguna se
 /// enterase.
+///
+/// Para que eso sea cierto, la codificacion tiene que ser **inyectiva**:
+/// dos coordenadas distintas no pueden producir el mismo registro. Por eso
+/// cada parte se escapa por separado y despues se unen con un separador
+/// que ninguna parte puede contener. Escapar la cadena ya unida no
+/// bastaba: el separador era indistinguible de un separador dentro de una
+/// parte, y `("a|b", "c")` y `("a", "b|c")` acababan en el mismo
+/// registro.
 fn escape_id_part(value: &str) -> String {
-    value.replace('~', "~0").replace(':', "~1")
+    value
+        .replace('~', "~0")
+        .replace(':', "~1")
+        .replace('|', "~2")
+}
+
+/// El identificador compuesto de unas coordenadas.
+///
+/// Las partes se escapan una a una y se unen con `|`, que ya no puede
+/// aparecer dentro de una parte: la separacion es reversible y dos
+/// coordenadas distintas nunca producen el mismo identificador.
+fn composite_id(parts: &[&str]) -> String {
+    parts
+        .iter()
+        .map(|part| escape_id_part(part))
+        .collect::<Vec<String>>()
+        .join("|")
 }
 
 /// El identificador del repositorio de una cuenta.
 fn repository_id(account: &str, repo_key: &str) -> Thing {
-    let id = escape_id_part(&format!("{account}|{repo_key}"));
-    Thing::from(("catalog_repository", id.as_str()))
+    Thing::from((
+        "catalog_repository",
+        composite_id(&[account, repo_key]).as_str(),
+    ))
 }
 
 /// El identificador de la version publicada.
 fn version_id(account: &str, repository: &str, package_name: &str, package_version: &str) -> Thing {
-    let id = escape_id_part(&format!(
-        "{account}|{repository}|{package_name}|{package_version}"
-    ));
-    Thing::from(("catalog_version", id.as_str()))
+    Thing::from((
+        "catalog_version",
+        composite_id(&[account, repository, package_name, package_version]).as_str(),
+    ))
 }
 
 /// El identificador del asset de una ruta.
 fn asset_id(account: &str, repository: &str, asset_path: &str) -> Thing {
-    let id = escape_id_part(&format!("{account}|{repository}|{asset_path}"));
-    Thing::from(("catalog_asset", id.as_str()))
+    Thing::from((
+        "catalog_asset",
+        composite_id(&[account, repository, asset_path]).as_str(),
+    ))
 }
 
 /// El identificador de la referencia al blob de una ruta.
 fn reference_id(account: &str, repository: &str, asset_path: &str) -> Thing {
-    let id = escape_id_part(&format!("{account}|{repository}|{asset_path}"));
-    Thing::from(("catalog_reference", id.as_str()))
+    Thing::from((
+        "catalog_reference",
+        composite_id(&[account, repository, asset_path]).as_str(),
+    ))
 }
 
 /// El identificador de una etiqueta.
 fn tag_id(account: &str, repository: &str, tag_name: &str) -> Thing {
-    let id = escape_id_part(&format!("{account}|{repository}|{tag_name}"));
-    Thing::from(("catalog_tag", id.as_str()))
+    Thing::from((
+        "catalog_tag",
+        composite_id(&[account, repository, tag_name]).as_str(),
+    ))
 }
 
 /// El almacen del catalogo sobre SurrealDB.
@@ -234,6 +280,11 @@ impl SurrealCatalogStore {
     ///
     /// Es idempotente: se puede ejecutar en caliente y en frio, y sobre una
     /// base que ya tiene el esquema no cambia nada.
+    ///
+    /// No consulta al autorizador, y no es un olvido: esto no es una
+    /// operacion del plano de datos, es administracion del almacen. No
+    /// habla de cuentas ni de repositorios, y su unico efecto es el
+    /// esquema y el numero de version que dice como esta.
     pub async fn initialize(&self) -> Result<(), CatalogError> {
         self.db
             .query(SCHEMA)
@@ -255,6 +306,10 @@ impl SurrealCatalogStore {
     }
 
     /// La version del esquema que esta aplicada en la base.
+    ///
+    /// Como `initialize`, esto es administracion del almacen y no una
+    /// operacion del plano de datos: no consulta al autorizador porque no
+    /// habla de cuentas ni de repositorios.
     pub async fn applied_schema_version(&self) -> Result<i64, CatalogError> {
         #[derive(Debug, Deserialize)]
         struct Row {
@@ -277,15 +332,30 @@ impl SurrealCatalogStore {
     }
 
     /// Decide si la peticion se atiende, y con que motivo no.
+    ///
+    /// La decision se toma **antes** de tocar la base de datos: si el
+    /// decisor dice que no, no se llega a preguntar si la cosa existe. De
+    /// lo contrario, un `Denied` sobre un objeto de otra cuenta seria una
+    /// forma de filtrar su existencia.
     async fn decide(&self, request: &AccessRequest) -> Result<(), CatalogError> {
         match self.authorizer.authorize(request).await? {
             AccessDecision::Allow => Ok(()),
-            AccessDecision::Deny(reason) => Err(CatalogError::Denied {
-                action: request.action.as_str(),
-                kind: "asset",
-                key: format!("{}/{}", request.repository, request.asset_path),
-                reason,
-            }),
+            AccessDecision::Deny(reason) => {
+                // La clave dice que cosa se pidio, no solo el repositorio:
+                // un `Denied` que dice "asset" cuando lo que se pidio fue
+                // un repositorio hace que el cliente ramifique por una
+                // clase equivocada.
+                let key = match request.resource {
+                    CatalogResource::Repository => request.subject.clone(),
+                    _ => format!("{}/{}", request.repository, request.subject),
+                };
+                Err(CatalogError::Denied {
+                    action: request.action.as_str(),
+                    kind: request.resource.as_str(),
+                    key,
+                    reason,
+                })
+            }
         }
     }
 }
@@ -354,6 +424,12 @@ struct TagRow {
     package_name: String,
     package_version: String,
     updated_at: Datetime,
+}
+
+/// Una fila minima, para las preguntas que solo necesitan un numero.
+#[derive(Debug, Clone, Deserialize)]
+struct CountRow {
+    total: i64,
 }
 
 /// Lo que se escribe de un repositorio.
@@ -637,12 +713,11 @@ impl CatalogReader for SurrealCatalogStore {
         principal_account: &str,
         repo_key: &str,
     ) -> Result<RepositoryDescriptor, CatalogError> {
-        self.decide(&AccessRequest {
-            principal_account: principal_account.to_string(),
-            action: CatalogAction::Read,
-            repository: repo_key.to_string(),
-            asset_path: String::new(),
-        })
+        self.decide(&AccessRequest::repository(
+            principal_account,
+            CatalogAction::Read,
+            repo_key,
+        ))
         .await?;
 
         let mut response = self
@@ -671,8 +746,9 @@ impl CatalogReader for SurrealCatalogStore {
         repository: &str,
         asset_path: &str,
     ) -> Result<AssetRecord, CatalogError> {
-        self.decide(&AccessRequest::read(
+        self.decide(&AccessRequest::asset(
             principal_account,
+            CatalogAction::Read,
             repository,
             asset_path,
         ))
@@ -739,10 +815,22 @@ impl CatalogReader for SurrealCatalogStore {
                 "the asset and its blob reference have different digests",
             ));
         }
+        if reference.size_bytes != asset.size_bytes {
+            return Err(CatalogError::corrupt(
+                "asset",
+                key,
+                "the asset and its blob reference disagree about the size of the content",
+            ));
+        }
 
-        // Y los bytes tienen que ser los que el catalogo dice.
+        // Y los bytes tienen que ser los que el catalogo dice. La pregunta
+        // lleva la ubicacion y no solo el digest: los bytes pueden estar
+        // en la ranura global o en la particionada de la cuenta, y
+        // preguntar por el digest a secas solo encontraria la primera.
         if let Some(probe) = &self.probe {
-            match probe.length_of(&asset.digest).await {
+            let location =
+                BlobLocation::new(principal_account, reference.scope, asset.digest.clone());
+            match probe.length_of(&location).await {
                 Ok(size) if size != asset.size_bytes => {
                     return Err(CatalogError::corrupt(
                         "asset",
@@ -776,12 +864,12 @@ impl CatalogReader for SurrealCatalogStore {
         repository: &str,
         coordinates: &PackageCoordinates,
     ) -> Result<PackageVersion, CatalogError> {
-        self.decide(&AccessRequest {
-            principal_account: principal_account.to_string(),
-            action: CatalogAction::Read,
-            repository: repository.to_string(),
-            asset_path: coordinates.package_name.clone(),
-        })
+        self.decide(&AccessRequest::version(
+            principal_account,
+            CatalogAction::Read,
+            repository,
+            coordinates,
+        ))
         .await?;
 
         let key = format!(
@@ -806,8 +894,9 @@ impl CatalogReader for SurrealCatalogStore {
         repository: &str,
         tag_name: &str,
     ) -> Result<MutableTag, CatalogError> {
-        self.decide(&AccessRequest::read(
+        self.decide(&AccessRequest::tag(
             principal_account,
+            CatalogAction::Read,
             repository,
             tag_name,
         ))
@@ -840,8 +929,9 @@ impl CatalogReader for SurrealCatalogStore {
         repository: &str,
         asset_path: &str,
     ) -> Result<BlobReference, CatalogError> {
-        self.decide(&AccessRequest::read(
+        self.decide(&AccessRequest::asset(
             principal_account,
+            CatalogAction::Read,
             repository,
             asset_path,
         ))
@@ -856,6 +946,47 @@ impl CatalogReader for SurrealCatalogStore {
 }
 
 impl SurrealCatalogStore {
+    /// Si la configuracion del repositorio cambio mientras se actualizaba.
+    ///
+    /// Se relee el repositorio: si su version ya no es la que se leyo, otro
+    /// cambio se colo y esta actualizacion no se puede aplicar encima.
+    async fn the_configuration_moved(
+        &self,
+        principal_account: &str,
+        repo_key: &str,
+        previous: i64,
+    ) -> Result<bool, CatalogError> {
+        Ok(self
+            .the_repository_row(principal_account, repo_key)
+            .await?
+            .is_some_and(|row| row.config_version != previous))
+    }
+
+    /// Si el repositorio tiene alguna version publicada.
+    ///
+    /// No pregunta por cual: solo por si hay contenido, que es lo que
+    /// decide si la politica del repositorio todavia se puede cambiar.
+    async fn the_version_row_any(
+        &self,
+        principal_account: &str,
+        repository: &str,
+    ) -> Result<bool, CatalogError> {
+        let mut response = self
+            .db
+            .query(
+                "SELECT count() AS total FROM catalog_version \
+                 WHERE account = $account AND repository = $repository",
+            )
+            .bind(("account", principal_account.to_string()))
+            .bind(("repository", repository.to_string()))
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let rows: Vec<CountRow> = response
+            .take(0)
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        Ok(rows.first().is_some_and(|row| row.total > 0))
+    }
+
     /// La fila del asset, acotada por la cuenta.
     async fn the_asset_row(
         &self,
@@ -992,12 +1123,11 @@ impl CatalogWriter for SurrealCatalogStore {
         principal_account: &str,
         descriptor: RepositoryDescriptor,
     ) -> Result<RepositoryDescriptor, CatalogError> {
-        self.decide(&AccessRequest {
-            principal_account: principal_account.to_string(),
-            action: CatalogAction::Configure,
-            repository: descriptor.repo_key.clone(),
-            asset_path: String::new(),
-        })
+        self.decide(&AccessRequest::repository(
+            principal_account,
+            CatalogAction::Configure,
+            &descriptor.repo_key,
+        ))
         .await?;
 
         // Un modo que esta release no sirve se dice que no, y no se crea un
@@ -1028,6 +1158,15 @@ impl CatalogWriter for SurrealCatalogStore {
         if descriptor.repo_key.trim().is_empty() {
             return Err(CatalogError::invalid("the key of the repository is empty"));
         }
+        // El nombre canonico tiene que ser un HRN que la plataforma sepa
+        // leer. Un repositorio cuyo nombre canonico no se puede parsear es
+        // un repositorio que el resto de la plataforma no puede nombrar,
+        // y eso se dice ahora y no el dia que una politica lo pregunte.
+        if Hrn::from_string(&descriptor.hrn.to_string()).is_none() {
+            return Err(CatalogError::invalid(
+                "the canonical name of the repository is not a valid HRN v2",
+            ));
+        }
 
         let now = Utc::now();
         let row = RepositoryWrite {
@@ -1043,7 +1182,8 @@ impl CatalogWriter for SurrealCatalogStore {
             updated_at: Datetime::from(now),
         };
 
-        self.db
+        let created = self
+            .db
             .query("CREATE $id CONTENT $row")
             .bind((
                 "id",
@@ -1052,22 +1192,38 @@ impl CatalogWriter for SurrealCatalogStore {
             .bind(("row", row))
             .await
             .map_err(|error| CatalogError::unavailable(error.to_string()))?
-            .check()
-            .map_err(|error| {
-                let message = error.to_string();
-                if message.contains("already contains") || message.contains("already exists") {
-                    CatalogError::conflict(
-                        "repository",
-                        descriptor.repo_key.clone(),
-                        "there is already a repository with that key or that canonical name",
-                    )
-                } else {
-                    CatalogError::unavailable(message)
-                }
-            })?;
+            .check();
 
-        self.repository(principal_account, &descriptor.repo_key)
-            .await
+        if let Err(error) = created {
+            // La escritura no ha pasado. Antes de culpar al almacenamiento
+            // se mira lo que hay: puede que el repositorio ya existiera, y
+            // entonces la pregunta no es "ha fallado" sino "es el mismo".
+            if let Some(existing) = self
+                .the_repository_row(principal_account, &descriptor.repo_key)
+                .await?
+            {
+                let existing = existing.into_descriptor()?;
+                if same_repository(&existing, &descriptor) {
+                    return Ok(existing);
+                }
+                return Err(CatalogError::conflict(
+                    "repository",
+                    descriptor.repo_key.clone(),
+                    "there is already a repository with that key and another configuration",
+                ));
+            }
+            return Err(CatalogError::unavailable(error.to_string()));
+        }
+
+        // La lectura de vuelta no decide otra vez: la escritura ya se
+        // autorizo, y releer por el camino publico exigiria un permiso de
+        // lectura que el que escribe no tiene por que tener.
+        self.the_repository_row(principal_account, &descriptor.repo_key)
+            .await?
+            .ok_or_else(|| {
+                CatalogError::unavailable("the repository was created and then it was not there")
+            })?
+            .into_descriptor()
     }
 
     async fn update_config(
@@ -1076,12 +1232,11 @@ impl CatalogWriter for SurrealCatalogStore {
         repo_key: &str,
         config: RepositoryConfig,
     ) -> Result<RepositoryDescriptor, CatalogError> {
-        self.decide(&AccessRequest {
-            principal_account: principal_account.to_string(),
-            action: CatalogAction::Configure,
-            repository: repo_key.to_string(),
-            asset_path: String::new(),
-        })
+        self.decide(&AccessRequest::repository(
+            principal_account,
+            CatalogAction::Configure,
+            repo_key,
+        ))
         .await?;
 
         if !config.has_readable_settings() {
@@ -1096,34 +1251,81 @@ impl CatalogWriter for SurrealCatalogStore {
             .ok_or_else(|| CatalogError::missing("repository", repo_key.to_string()))?;
         let current = current.into_descriptor()?;
 
-        // La version de la configuracion sube siempre: dos configuraciones
-        // con la misma version tienen que ser la misma configuracion.
-        let version = i64::try_from(current.config.version.saturating_add(1)).unwrap_or(i64::MAX);
+        // Un repositorio que esta release no sirve no se reconfigura: no se
+        // puede prometer el comportamiento de un proxy que no se sabe
+        // resolver.
+        if !current.mode.is_served_by_this_release() {
+            return Err(CatalogError::ModeNotImplemented { mode: current.mode });
+        }
 
-        let mut response = self
+        // El ambito de los digests decide donde viven los bytes, y los
+        // bytes ya publicados viven donde se publicaron. Cambiar el
+        // ambito de un repositorio que ya tiene contenido dejaria sus
+        // blobs en una ranura que el catalogo ya no nombra, y la
+        // recoleccion no sabria que siguen vivos.
+        if config.digest_scope != current.config.digest_scope {
+            let published = self
+                .the_version_row_any(principal_account, repo_key)
+                .await?;
+            if published {
+                return Err(CatalogError::conflict(
+                    "repository",
+                    repo_key.to_string(),
+                    "the scope of the digests cannot change in a repository that already has content",
+                ));
+            }
+        }
+
+        // La version de la configuracion sube siempre: dos configuraciones
+        // con la misma version tienen que ser la misma configuracion. Por
+        // eso la escritura compara con la version que se leyo: si otro
+        // cambio ocurrio entre la lectura y la escritura, esta no se
+        // aplica y se dice que hubo un conflicto, en lugar de dejar dos
+        // configuraciones distintas con el mismo numero.
+        let version = i64::try_from(current.config.version.saturating_add(1)).unwrap_or(i64::MAX);
+        let previous = i64::try_from(current.config.version).unwrap_or(0);
+
+        let outcome = self
             .db
-            .query(
-                "UPDATE $id SET config_version = $version, digest_scope = $scope, \
-                 config_settings = $settings, updated_at = $at \
-                 RETURN account, repo_key, hrn, repo_format, repo_mode, config_version, \
-                 digest_scope, config_settings, created_at, updated_at",
-            )
+            .query(the_configuration_update())
             .bind(("id", repository_id(principal_account, repo_key)))
             .bind(("version", version))
+            .bind(("previous", previous))
             .bind(("scope", scope_name(config.digest_scope)))
             .bind(("settings", config.config_settings.clone()))
             .bind(("at", Datetime::from(Utc::now())))
-            .bind(("account", principal_account.to_string()))
-            .bind(("repo_key", repo_key.to_string()))
-            .await
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        let rows: Vec<RepositoryRow> = response
-            .take(0)
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        rows.into_iter()
-            .next()
-            .ok_or_else(|| CatalogError::missing("repository", repo_key.to_string()))?
-            .into_descriptor()
+            .await;
+
+        let rows: Vec<RepositoryRow> = match outcome {
+            Ok(mut response) => response
+                .take(0)
+                .map_err(|error| CatalogError::unavailable(error.to_string()))?,
+            Err(error) => {
+                // Puede que otro escritor haya cambiado la configuracion
+                // entre la lectura y la escritura. Eso no es un fallo del
+                // almacenamiento: es un conflicto, y se dice como tal.
+                if self
+                    .the_configuration_moved(principal_account, repo_key, previous)
+                    .await?
+                {
+                    return Err(CatalogError::conflict(
+                        "repository",
+                        repo_key.to_string(),
+                        "the configuration changed while it was being updated",
+                    ));
+                }
+                return Err(CatalogError::unavailable(error.to_string()));
+            }
+        };
+
+        let rows = rows.into_iter().next().ok_or_else(|| {
+            CatalogError::conflict(
+                "repository",
+                repo_key.to_string(),
+                "the configuration changed while it was being updated",
+            )
+        })?;
+        rows.into_descriptor()
     }
 
     async fn publish(
@@ -1131,6 +1333,16 @@ impl CatalogWriter for SurrealCatalogStore {
         principal_account: &str,
         publication: Publication,
     ) -> Result<PublishOutcome, CatalogError> {
+        // Se decide **antes** de validar: un principal sin permiso no
+        // llega a saber si lo que pide esta bien formado, y la frontera de
+        // permisos no se cruza por el camino de la validacion.
+        self.decide(&AccessRequest::publish(
+            principal_account,
+            &publication.repository,
+            &publication.asset_path,
+        ))
+        .await?;
+
         if publication.asset_path.trim().is_empty() {
             return Err(CatalogError::invalid("the path of the asset is empty"));
         }
@@ -1143,13 +1355,6 @@ impl CatalogWriter for SurrealCatalogStore {
         if !publication.digest.is_well_formed() {
             return Err(CatalogError::invalid("the digest is not well formed"));
         }
-
-        self.decide(&AccessRequest::publish(
-            principal_account,
-            &publication.repository,
-            &publication.asset_path,
-        ))
-        .await?;
 
         let repository = self
             .the_repository_row(principal_account, &publication.repository)
@@ -1165,6 +1370,35 @@ impl CatalogWriter for SurrealCatalogStore {
         }
 
         let scope = repository.config.digest_scope;
+
+        // El contenido tiene que estar en el almacen de bytes. Publicar
+        // una referencia a un blob que no existe deja un camino que no
+        // lleva a nada, y el catalogo que afirma una integridad que no
+        // verifica es un catalogo que miente.
+        //
+        // Sin sonda no se puede comprobar, y entonces el catalogo guarda
+        // lo que se le declara: el almacen de bytes es quien responde si
+        // los bytes estan, y esa frontera esta escrita en el puerto.
+        if let Some(probe) = &self.probe {
+            let location = BlobLocation::new(principal_account, scope, publication.digest.clone());
+            match probe.length_of(&location).await {
+                Ok(size) if size == publication.size_bytes => {}
+                Ok(size) => {
+                    return Err(CatalogError::invalid(format!(
+                        "the content in the store has {size} bytes and the publication declares {}",
+                        publication.size_bytes
+                    )));
+                }
+                Err(BlobProbeError::Missing) => {
+                    return Err(CatalogError::invalid(
+                        "the content is not in the blob store",
+                    ));
+                }
+                Err(BlobProbeError::Unavailable { detail }) => {
+                    return Err(CatalogError::unavailable(detail));
+                }
+            }
+        }
 
         let mut last_failure = String::new();
         for _attempt in 0..WRITE_ATTEMPTS {
@@ -1211,12 +1445,12 @@ impl CatalogWriter for SurrealCatalogStore {
         tag_name: &str,
         coordinates: PackageCoordinates,
     ) -> Result<MutableTag, CatalogError> {
-        self.decide(&AccessRequest {
-            principal_account: principal_account.to_string(),
-            action: CatalogAction::MoveTag,
-            repository: repository.to_string(),
-            asset_path: tag_name.to_string(),
-        })
+        self.decide(&AccessRequest::tag(
+            principal_account,
+            CatalogAction::MoveTag,
+            repository,
+            tag_name,
+        ))
         .await?;
 
         if tag_name.trim().is_empty() {
@@ -1279,7 +1513,15 @@ impl CatalogWriter for SurrealCatalogStore {
         // La version se lee para dejar constancia de que existe, y para
         // que un tag no pueda apuntar a algo que no esta.
         let _ = version;
-        self.tag(principal_account, repository, tag_name).await
+        // La etiqueta se relee por dentro: la escritura ya se autorizo, y
+        // releer por el camino publico exigiria un permiso de lectura que
+        // el que mueve la etiqueta no tiene por que tener.
+        self.the_tag_row(principal_account, repository, tag_name)
+            .await?
+            .ok_or_else(|| {
+                CatalogError::unavailable("the tag was written and then it was not there")
+            })?
+            .into_tag()
     }
 
     async fn move_asset(
@@ -1289,12 +1531,12 @@ impl CatalogWriter for SurrealCatalogStore {
         asset_path: &str,
         coordinates: PackageCoordinates,
     ) -> Result<AssetRecord, CatalogError> {
-        self.decide(&AccessRequest {
-            principal_account: principal_account.to_string(),
-            action: CatalogAction::MoveAsset,
-            repository: repository.to_string(),
-            asset_path: asset_path.to_string(),
-        })
+        self.decide(&AccessRequest::asset(
+            principal_account,
+            CatalogAction::MoveAsset,
+            repository,
+            asset_path,
+        ))
         .await?;
 
         let descriptor = self
@@ -1351,7 +1593,10 @@ impl CatalogWriter for SurrealCatalogStore {
             })?
             .into_version()?;
 
-        let scope = descriptor.config.digest_scope;
+        // El ambito es el del contenido que ya estaba ahi, no el de la
+        // configuracion vigente: los bytes se publicaron bajo un ambito, y
+        // ese es el ambito en el que siguen viviendo.
+        let scope = reference.scope;
         let now = Datetime::from(Utc::now());
 
         // El asset y su referencia se mueven juntos: si solo se moviera el
@@ -1391,10 +1636,17 @@ impl CatalogWriter for SurrealCatalogStore {
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
 
         // El asset que ha quedado es el que se pidio; y la referencia
-        // tiene que decir lo mismo que el.
+        // tiene que decir lo mismo que el. Las dos filas se releen por
+        // dentro: la escritura ya se autorizo, y releer por el camino
+        // publico exigiria un permiso de lectura que el que mueve el
+        // asset no tiene por que tener.
         let moved = self
-            .asset(principal_account, repository, asset_path)
-            .await?;
+            .the_asset_row(principal_account, repository, asset_path)
+            .await?
+            .ok_or_else(|| {
+                CatalogError::unavailable("the asset was moved and then it was not there")
+            })?
+            .into_asset()?;
         if moved.digest != version.digest {
             return Err(CatalogError::corrupt(
                 "asset",
@@ -1403,8 +1655,12 @@ impl CatalogWriter for SurrealCatalogStore {
             ));
         }
         let moved_reference = self
-            .reference(principal_account, repository, asset_path)
-            .await?;
+            .the_reference_row(principal_account, repository, asset_path)
+            .await?
+            .ok_or_else(|| {
+                CatalogError::unavailable("the reference was moved and then it was not there")
+            })?
+            .into_reference()?;
         if moved_reference.digest != moved.digest {
             return Err(CatalogError::corrupt(
                 "asset",
@@ -1526,9 +1782,12 @@ impl SurrealCatalogStore {
         };
         let mut create_reference = true;
         if let Some(row) = existing_reference {
+            // La identidad del contenido es el digest. El ambito dice
+            // donde viven los bytes, no que bytes son: compararlo aqui
+            // haria que un cambio de politica pareciera un conflicto de
+            // contenido cuando el contenido es el mismo.
             let same = row.digest == digest.value
                 && row.digest_algorithm == algorithm_of(&digest)
-                && row.digest_scope == scope_name(scope)
                 && row.size_bytes == size_bytes;
             if same {
                 create_reference = false;
@@ -1541,11 +1800,15 @@ impl SurrealCatalogStore {
             }
         }
 
-        // Las etiquetas.
-        let mut create_tags = Vec::new();
+        // Las etiquetas. La misma etiqueta dos veces en una publicacion es
+        // la misma etiqueta: se escribe una, no dos.
+        let mut create_tags: Vec<String> = Vec::new();
         for tag_name in &publication.tags {
             if tag_name.trim().is_empty() {
                 return Err(CatalogError::invalid("a tag name is empty"));
+            }
+            if create_tags.iter().any(|seen| seen == tag_name) {
+                continue;
             }
             let existing = self
                 .the_tag_row(principal_account, &repository, tag_name)
@@ -1703,6 +1966,39 @@ fn scope_name(scope: DigestScope) -> String {
     }
 }
 
+/// La escritura de la configuracion de un repositorio.
+///
+/// Es un compare-and-set: dice en que version parte y solo se aplica si la
+/// version que hay en la base es esa. Sin esa condicion, dos
+/// reconfiguraciones simultaneas podrian quedarse las dos con el mismo
+/// numero de version y ajustes distintos, y el numero dejaria de decir
+/// que configuracion es la que hay.
+fn the_configuration_update() -> &'static str {
+    "UPDATE $id SET config_version = $version, digest_scope = $scope, \
+     config_settings = $settings, updated_at = $at \
+     WHERE config_version = $previous \
+     RETURN account, repo_key, hrn, repo_format, repo_mode, config_version, \
+     digest_scope, config_settings, created_at, updated_at"
+}
+
+/// Si dos repositorios son el mismo.
+///
+/// La comparacion es de contenido y no de momento: dos llamadas que piden
+/// el mismo repositorio con la misma configuracion describen la misma
+/// cosa, y la segunda no es un error sino la misma respuesta. Si algo
+/// difiere, entonces si son dos repositorios distintos y la segunda
+/// llamada es un conflicto.
+fn same_repository(existing: &RepositoryDescriptor, requested: &RepositoryDescriptor) -> bool {
+    existing.account == requested.account
+        && existing.repo_key == requested.repo_key
+        && existing.hrn == requested.hrn
+        && existing.format == requested.format
+        && existing.mode == requested.mode
+        && existing.config.version == requested.config.version
+        && existing.config.digest_scope == requested.config.digest_scope
+        && existing.config.config_settings == requested.config.config_settings
+}
+
 /// Lo que la publicacion deja, con lo que se ha creado.
 fn the_outcome(plan: &PublicationPlan, created: bool) -> PublishOutcome {
     PublishOutcome {
@@ -1710,5 +2006,116 @@ fn the_outcome(plan: &PublicationPlan, created: bool) -> PublishOutcome {
         asset: plan.asset.clone(),
         reference: plan.reference.clone(),
         created,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hodei_catalog::{
+        AllowAllAuthorizer, RepositoryConfig, RepositoryDescriptor, RepositoryFormat,
+        RepositoryMode, repository_hrn,
+    };
+    use surrealdb::engine::local::RocksDb;
+
+    /// Un almacen con su base, para las pruebas del propio adaptador.
+    async fn a_store() -> (SurrealCatalogStore, tempfile::TempDir) {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let db = Surreal::new::<RocksDb>(directory.path().join("db"))
+            .await
+            .expect("open the database");
+        db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+        let store = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
+        store.initialize().await.expect("initialize");
+        (store, directory)
+    }
+
+    /// La escritura de la configuracion solo se aplica sobre la version que
+    /// se leyo.
+    ///
+    /// Sin la condicion, dos reconfiguraciones simultaneas podrian quedarse
+    /// las dos con el mismo numero de version y ajustes distintos, y el
+    /// numero dejaria de decir que configuracion es la que hay. Esta
+    /// prueba lo comprueba sobre la escritura de verdad, y no sobre una
+    /// carrera que depende del calendario.
+    #[tokio::test]
+    async fn the_configuration_is_only_written_over_the_version_that_was_read() {
+        let (store, _directory) = a_store().await;
+        store
+            .create_repository(
+                "acme",
+                RepositoryDescriptor {
+                    hrn: repository_hrn("hodei", "artifacts", "eu", "acme", "releases"),
+                    account: "acme".to_string(),
+                    repo_key: "releases".to_string(),
+                    format: RepositoryFormat::Raw,
+                    mode: RepositoryMode::Hosted,
+                    config: RepositoryConfig::new(DigestScope::Global),
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+            )
+            .await
+            .expect("create repository");
+
+        // Una escritura que parte de una version que no es la de ahora no
+        // se aplica: no toca ninguna fila.
+        let mut stale = store
+            .db
+            .query(the_configuration_update())
+            .bind(("id", repository_id("acme", "releases")))
+            .bind(("version", 99))
+            .bind(("previous", 0))
+            .bind(("scope", scope_name(DigestScope::Global)))
+            .bind(("settings", serde_json::json!({ "stale": true })))
+            .bind(("at", Datetime::from(Utc::now())))
+            .await
+            .expect("the query runs");
+        let rows: Vec<RepositoryRow> = stale.take(0).expect("the rows");
+        assert!(
+            rows.is_empty(),
+            "a stale update changed the configuration of the repository"
+        );
+
+        // Y el repositorio sigue como estaba.
+        let repository = store
+            .repository("acme", "releases")
+            .await
+            .expect("read repository");
+        assert_eq!(repository.config.version, 1);
+        assert!(
+            !repository.config.config_settings.get("stale").is_some(),
+            "a stale update changed the settings of the repository"
+        );
+
+        // Una escritura que parte de la version de ahora si se aplica.
+        let mut fresh = store
+            .db
+            .query(the_configuration_update())
+            .bind(("id", repository_id("acme", "releases")))
+            .bind(("version", 2))
+            .bind(("previous", 1))
+            .bind(("scope", scope_name(DigestScope::Global)))
+            .bind(("settings", serde_json::json!({ "fresh": true })))
+            .bind(("at", Datetime::from(Utc::now())))
+            .await
+            .expect("the query runs");
+        let rows: Vec<RepositoryRow> = fresh.take(0).expect("the rows");
+        assert_eq!(rows.len(), 1, "the fresh update did not apply");
+    }
+
+    /// El identificador de un registro no depende de como se parta.
+    ///
+    /// Dos coordenadas que solo se distinguen por el separador tienen que
+    /// dar dos registros distintos, y no uno: un identificador que no sabe
+    /// distinguir dos cosas hace que una pise a la otra.
+    #[test]
+    fn two_coordinates_that_only_differ_in_the_separator_have_two_identifiers() {
+        let first = composite_id(&["acme", "releases", "pkg|1", "0"]);
+        let second = composite_id(&["acme", "releases", "pkg", "1|0"]);
+        assert_ne!(
+            first, second,
+            "two different coordinates share one identifier: {first}"
+        );
     }
 }

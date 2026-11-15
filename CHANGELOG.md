@@ -55,6 +55,24 @@ Cambios que todavia no estan en una release. El formato sigue
   clientes concurrentes escriban el mismo registro y el motor detecte el
   conflicto: el motor persistente lo rechaza y el motor en memoria lo
   aceptaria en silencio.
+- Correcciones del **catalogo de artefactos** que salio de una revision
+  independiente: los identificadores compuestos son ahora **inyectivos**
+  (cada parte se escapa por separado, asi que dos coordenadas que solo se
+  distinguen por el separador ya no acaban en el mismo registro); una
+  escritura **no relee por el camino publico** al terminar, de modo que
+  escribir ya no exige un permiso de lectura y un cambio confirmado ya no
+  se devuelve como `Denied`; la reconfiguracion del repositorio es un
+  **compare-and-set** sobre la version que se leyo, de modo que dos
+  configuraciones simultaneas no pueden compartir numero; el `Denied`
+  nombra **la clase de cosa** que se pidio (`repository`, `version`,
+  `asset`, `tag`) y no siempre "asset"; la sonda de integridad pregunta
+  por la **ubicacion** del contenido (cuenta y ambito) y no solo por su
+  digest, para no dar por roto un blob particionado que esta sano; crear
+  el mismo repositorio dos veces con la misma configuracion es idempotente;
+  publicar contenido que no esta en el almacen de bytes ya no se publica
+  (una referencia a un blob que no existe deja un camino que no lleva a
+  nada); y el HRN de un repositorio tiene que ser uno que la plataforma
+  sepa leer.
 - El almacen de contenido del hub (`hodei-hub`) acepta **subidas en
   streaming**: `BlobWriteSession` recibe el contenido a trozos, con un
   fichero de staging propio por escritura, y el `commit` publica el

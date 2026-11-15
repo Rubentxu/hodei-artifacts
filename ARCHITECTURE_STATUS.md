@@ -35,11 +35,20 @@ no llega a ese listón está etiquetado, y la etiqueta dice en qué estado está
 | `crates/hodei-policies` | Motor Cedar: schema, validación, evaluación, registro. | `implementada` |
 | `crates/hodei-evidence` | Contexto de evidencia y registro de eventos (M1) y los normalizadores de los estandares (M2): los contratos, sin adapter. | `implementada` |
 | `crates/hodei-evidence-storage` | Los adaptadores de la evidencia sobre el almacen que ya existe. | `implementada` |
+| `crates/hodei-hub` | El almacen de contenido direccionado por su digest (HAR-01), con la cuarentena y el canal de confianza. | `implementada` |
+| `crates/hodei-catalog` | El catalogo durable de repositorios, assets, versiones y referencias (HAR-02): los contratos, sin adapter. | `implementada` |
+| `crates/hodei-catalog-storage` | El adaptador del catalogo sobre SurrealDB, con la transaction de publicacion. | `implementada` |
 | `.` (`hodei-artifacts-api`) | API HTTP: composición, arranque, rutas, auditoría. | `implementada` |
+
+Esta tabla no es el inventario completo del workspace: los contextos de M5 a
+M8 (confianza, riesgo, alcance, reactivo, simulacion, investigacion) tienen
+su propia seccion mas abajo, con su motivo.
 
 El kernel no depende de ningún mecanismo concreto: ni SurrealDB, ni Axum, ni
 HTTP. Eso no es una aspiración, lo comprueba una comprobación de forma
-arquitectónica.
+arquitectónica. Lo mismo se comprueba ahora del **dominio del catalogo**:
+`crates/hodei-catalog` no puede nombrar un motor de base de datos, porque no
+es su dependencia.
 
 ### 2.2 Crates en el árbol que **no** son miembros — material heredado
 
@@ -1174,11 +1183,16 @@ datos, porque no es su dependencia) y el adaptador en
   modo (`hosted`/`proxy`/`group`) y configuracion **versionada** (cada
   cambio sube la version; el cliente no la pone). Un modo que esta release
   no sirve se rechaza con un error tipado (`ModeNotImplemented`), no con un
-  repositorio creado que luego no va a funcionar.
+  repositorio creado que luego no va a funcionar. El HRN tiene que ser uno
+  que la plataforma sepa **leer** (se valida contra el contrato canonico
+  `hodei-hrn`): un repositorio con un nombre que no se puede parsear es un
+  repositorio que el resto de la plataforma no puede nombrar.
 - **La politica de ambito del digest** (`DigestScope`): `global` comparte
   el blob entre cuentas; `account_partitioned` da a cada cuenta el suyo.
   Es una decision de la cuenta, guardada con el repositorio, y de ella sale
-  la clave con la que el CAS guarda el blob.
+  la clave con la que el CAS guarda el blob. El ambito **no cambia** en un
+  repositorio que ya tiene contenido: los bytes se publicaron bajo un
+  ambito, y ese es el ambito en el que siguen viviendo.
 - **El asset** (`cuenta` + `repositorio` + `ruta`) apunta a una **version**
   (nombre + version, inmutable) y a su digest. La **referencia** al blob es
   una fila aparte: es lo que impide que el blob se recoja.
@@ -1197,6 +1211,23 @@ ruta ocupada, o cambiar el contenido de una version publicada, recibe un
 (`move_asset`, con su etiqueta `move_tag`), no un efecto colateral. Y la
 republicacion identica es idempotente, no un error.
 
+**Escribir no es leer, y el catalogo no lo confunde.** Una escritura se
+autoriza una vez, con la accion que le corresponde, y **no** se relee por
+el camino publico al terminar: releer por ahi exigiria un permiso de
+lectura que el que escribe no tiene por que tener, y devolveria un
+`Denied` sobre un cambio que ya estaba escrito. Lo que se relee al
+terminar se relee por dentro, y por eso un `Denied` nombra **la clase de
+cosa** que se pidio (`repository`, `version`, `asset`, `tag`) y no siempre
+"asset".
+
+**La configuracion versionada es un compare-and-set.** El cambio de
+configuracion dice en que version parte y solo se aplica si la version que
+hay en la base es esa. Sin esa condicion, dos reconfiguraciones
+simultaneas podrian quedarse las dos con el mismo numero y ajustes
+distintos, y el numero dejaria de decir que configuracion es la que hay.
+Cuando el cambio se queda fuera, se dice que hubo un conflicto y no que el
+almacenamiento no esta disponible.
+
 **Los identificadores no son aleatorios, y esa es la decision que sostiene
 la garantia.** Dos clientes que publican lo mismo en el mismo sitio
 escriben **el mismo registro**, y el motor detecta el conflicto de
@@ -1207,16 +1238,36 @@ ultima gana en silencio. Por eso las pruebas de este catalogo van contra el
 motor que se despliega: una garantia que solo se cumple en un motor no es
 una garantia del catalogo.
 
+**Y los identificadores son inyectivos.** Cada parte de un identificador
+compuesto se escapa por separado y despues se unen con un separador que
+ninguna parte puede contener. Escapar la cadena ya unida no bastaba: el
+separador era indistinguible de un separador dentro de una parte, y
+`("pkg|1", "0")` y `("pkg", "1|0")` acababan en el mismo registro, con una
+publicacion pisando a la otra en silencio.
+
 **Los tres estados de lectura que no se confunden.** `Missing` (no hay
 nada ahi), `Denied` (hay algo ahi y este principal no puede verlo; lo
 decide el puerto de autorizacion **antes** de mirar la base, para no
 filtrar la existencia de lo ajeno) y `Corrupt` (hay algo ahi y no cuadra:
-el asset y la version dicen digests distintos, la referencia no esta, o la
-longitud real del blob no es la que el catalogo guarda). Confundirlos es
-peor que no responder: un `Missing` donde habia un `Denied` hace repetir al
-cliente; un `Corrupt` donde habia un `Missing` hace borrar al cliente.
+el asset y la version dicen digests distintos, la referencia no esta o no
+dice lo mismo, o la longitud real del blob no es la que el catalogo
+guarda). Confundirlos es peor que no responder: un `Missing` donde habia un
+`Denied` hace repetir al cliente; un `Corrupt` donde habia un `Missing` hace
+borrar al cliente.
+
+**La sonda de integridad pregunta por la ubicacion, no por el digest.** El
+mismo digest puede estar en la ranura global o en la particionada de una
+cuenta, y preguntar por el digest a secas solo encontraria la primera: un
+blob particionado sano pareceria roto. La pregunta lleva la cuenta y el
+ambito, y de ahi sale la clave con la que el CAS guarda los bytes. Lo que
+la sonda comprueba es la **longitud**, no el digest: rehashear un
+artefacto en cada lectura es un coste que un registro no puede pagar, y la
+verificacion profunda es del scrub (HAR-21).
 
 **Lo que sigue sin estar:** el servidor HTTP (HAR-04), el commit de
 publicacion con outbox atomico (HAR-03), las referencias persistentes y la
 garbage collection segura (HAR-10), y el resto de formatos. El catalogo
-guarda y dice; todavía no sirve bytes por el cable.
+guarda y dice; todavia no sirve bytes por el cable. Para HAR-10 queda
+dicho: un blob publicado lo protege la fila de su **version** (que es
+inmutable y conserva digest y longitud) y, mientras la ruta lo sirva, la
+**referencia**; la recoleccion tiene que tener en cuenta las dos.

@@ -14,9 +14,10 @@ use async_trait::async_trait;
 
 use hodei_catalog::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, AssetRecord, BlobIntegrityProbe,
-    BlobProbeError, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader, CatalogWriter,
-    DigestScope, MutableTag, PackageCoordinates, PackageVersion, Publication, PublishOutcome,
-    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
+    BlobLocation, BlobProbeError, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader,
+    CatalogWriter, DigestScope, MutableTag, PackageCoordinates, PackageVersion, Publication,
+    PublishOutcome, RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode,
+    repository_hrn,
 };
 use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_evidence::ContentDigest;
@@ -92,15 +93,47 @@ impl CatalogAuthorizer for ListedAccounts {
 }
 
 /// La sonda que dice la longitud que tiene cada blob.
+///
+/// Indexa por la **clave** con la que el CAS guarda los bytes, y no por el
+/// digest: en un ambito particionado el mismo digest vive en otra ranura,
+/// y una sonda que solo conociera el digest daria por roto un blob que
+/// esta sano.
+///
+/// Ademas apunta donde se le pregunto, para que se pueda comprobar que la
+/// pregunta lleva la ubicacion y no solo el digest.
+#[derive(Default)]
 struct KnownLengths {
     lengths: HashMap<String, u64>,
+    asked: std::sync::Mutex<Vec<String>>,
+}
+
+impl KnownLengths {
+    /// Una sonda que solo conoce estos blobs.
+    fn of(lengths: HashMap<String, u64>) -> Self {
+        Self {
+            lengths,
+            asked: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// La clave de la ultima pregunta.
+    fn last_asked(&self) -> Option<String> {
+        self.asked
+            .lock()
+            .ok()
+            .and_then(|asked| asked.last().cloned())
+    }
 }
 
 #[async_trait]
 impl BlobIntegrityProbe for KnownLengths {
-    async fn length_of(&self, digest: &ContentDigest) -> Result<u64, BlobProbeError> {
+    async fn length_of(&self, location: &BlobLocation) -> Result<u64, BlobProbeError> {
+        let key = location.blob_key();
+        if let Ok(mut asked) = self.asked.lock() {
+            asked.push(key.clone());
+        }
         self.lengths
-            .get(&digest.value)
+            .get(&key)
             .copied()
             .ok_or(BlobProbeError::Missing)
     }
@@ -960,13 +993,18 @@ async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
     assert_eq!(idempotent, 1, "the other one found it already there");
 
     // Ahora los dos clientes publican CONTENIDO DISTINTO en la misma ruta.
+    // Las coordenadas son distintas a proposito: asi cada uno tiene su
+    // propia version, y el que pierde se encuentra con que la version se
+    // puede escribir pero el asset de la ruta ya es del otro. Su
+    // transaccion se cae a mitad, y de ahi se ve si el motor deshace lo
+    // que ya habia escrito.
     let conflict_left = left.publish(
         "acme",
         publication("releases", "other.bin", "pkg", "2.0", b"the left content"),
     );
     let conflict_right = right.publish(
         "acme",
-        publication("releases", "other.bin", "pkg", "2.0", b"the right content"),
+        publication("releases", "other.bin", "pkg", "3.0", b"the right content"),
     );
     let (conflict_left, conflict_right) = tokio::join!(conflict_left, conflict_right);
 
@@ -992,6 +1030,35 @@ async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
         digest == ContentDigest::of_bytes(b"the left content")
             || digest == ContentDigest::of_bytes(b"the right content"),
         "the asset holds a digest that nobody published"
+    );
+
+    // La referencia dice lo mismo que el asset, y la version a la que
+    // apunta existe y dice lo mismo. Si la transaccion del perdedor se
+    // hubiera quedado a medias, aqui apareceria una version con un
+    // contenido que no es el del asset.
+    let reference = left
+        .reference("acme", "releases", "other.bin")
+        .await
+        .expect("read reference");
+    assert_eq!(reference.digest, asset.digest);
+    let version = left
+        .version("acme", "releases", &asset.coordinates)
+        .await
+        .expect("read version");
+    assert_eq!(version.digest, asset.digest);
+
+    // Y la version del perdedor no esta: su transaccion se deshizo entera.
+    let loser = PackageCoordinates {
+        package_name: "pkg".to_string(),
+        package_version: if asset.coordinates.package_version == "2.0" {
+            "3.0".to_string()
+        } else {
+            "2.0".to_string()
+        },
+    };
+    assert!(
+        left.version("acme", "releases", &loser).await.is_err(),
+        "the loser of the race left a version behind"
     );
 }
 
@@ -1133,7 +1200,7 @@ async fn the_schema_can_be_declared_twice() {
 
     // Y los indices siguen en su sitio: el indice es lo que decide los
     // conflictos, asi que perderlo seria perder la garantia.
-    store
+    let created = store
         .create_repository(
             "acme",
             descriptor(
@@ -1146,13 +1213,34 @@ async fn the_schema_can_be_declared_twice() {
         )
         .await
         .expect("create repository");
-    let refused = store
+
+    // Pedir el mismo repositorio otra vez no es un error: es la misma
+    // respuesta. Lo que si es un error es pedir OTRO repositorio con la
+    // misma clave, y ahi el indice decide.
+    let again = store
         .create_repository(
             "acme",
             descriptor(
                 "acme",
                 "releases",
                 RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("the same repository is the same repository");
+    assert_eq!(again.repo_key, created.repo_key);
+    assert_eq!(again.hrn, created.hrn);
+    assert_eq!(again.config.version, created.config.version);
+
+    let refused = store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Oci,
                 RepositoryMode::Hosted,
                 DigestScope::Global,
             ),
@@ -1279,9 +1367,10 @@ async fn an_asset_whose_blob_is_not_the_declared_size_is_corrupt() {
 
     // Con la sonda que dice la longitud de verdad, el asset esta sano.
     let healthy = SurrealCatalogStore::with_authorizer(db.clone(), Arc::new(AllowAllAuthorizer))
-        .with_probe(Arc::new(KnownLengths {
-            lengths: HashMap::from([(digest.value.clone(), content.len() as u64)]),
-        }));
+        .with_probe(Arc::new(KnownLengths::of(HashMap::from([(
+            digest.value.clone(),
+            content.len() as u64,
+        )]))));
     healthy
         .asset("acme", "releases", "app.bin")
         .await
@@ -1290,9 +1379,10 @@ async fn an_asset_whose_blob_is_not_the_declared_size_is_corrupt() {
     // Con una sonda que dice otra cosa, el registro no cuadra con los
     // bytes: eso es corrupto, y no "no existe".
     let lying = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer)).with_probe(
-        Arc::new(KnownLengths {
-            lengths: HashMap::from([(digest.value.clone(), 999)]),
-        }),
+        Arc::new(KnownLengths::of(HashMap::from([(
+            digest.value.clone(),
+            999,
+        )]))),
     );
     let corrupt = lying
         .asset("acme", "releases", "app.bin")
@@ -1465,4 +1555,473 @@ async fn the_action_of_the_request_is_what_is_authorized() {
     assert!(seen.contains(&CatalogAction::Configure));
     assert!(seen.contains(&CatalogAction::Publish));
     assert!(seen.contains(&CatalogAction::Read));
+}
+
+// ---------------------------------------------------------------------------
+// Lo que la revision independiente pidio que quedara demostrado.
+// ---------------------------------------------------------------------------
+
+/// El decisor que permite escribir pero no leer.
+///
+/// Es un decisor raro, y por eso sirve: comprueba que una escritura no
+/// depende de un permiso de lectura que el que escribe no tiene por que
+/// tener. Antes, escribir y releer por el camino publico hacia que un
+/// principal con permiso de escritura y sin permiso de lectura perdia su
+/// escritura: el cambio ya estaba en la base y el error decia que no.
+struct WritesOnly;
+
+#[async_trait]
+impl CatalogAuthorizer for WritesOnly {
+    async fn authorize(&self, request: &AccessRequest) -> Result<AccessDecision, CatalogError> {
+        match request.action {
+            CatalogAction::Read => Ok(AccessDecision::Deny(
+                "this principal may write but not read".to_string(),
+            )),
+            _ => Ok(AccessDecision::Allow),
+        }
+    }
+}
+
+/// Dos coordenadas que solo se distinguen por el separador no pueden
+/// terminar en el mismo registro.
+///
+/// El identificador de un registro se construye con un separador. Si el
+/// separador puede aparecer dentro de una parte, "pkg|1" + "0" y "pkg" +
+/// "1|0" producen el mismo identificador, y la segunda publicacion pisa
+/// la primera en silencio.
+#[tokio::test]
+async fn two_names_that_only_differ_in_the_separator_do_not_collide() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    store
+        .publish(
+            "acme",
+            publication("releases", "first.bin", "pkg|1", "0", b"the first one"),
+        )
+        .await
+        .expect("publish the first one");
+    store
+        .publish(
+            "acme",
+            publication("releases", "second.bin", "pkg", "1|0", b"the second one"),
+        )
+        .await
+        .expect("publish the second one");
+
+    let first = store
+        .version(
+            "acme",
+            "releases",
+            &PackageCoordinates {
+                package_name: "pkg|1".to_string(),
+                package_version: "0".to_string(),
+            },
+        )
+        .await
+        .expect("read the first version");
+    let second = store
+        .version(
+            "acme",
+            "releases",
+            &PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "1|0".to_string(),
+            },
+        )
+        .await
+        .expect("read the second version");
+
+    assert_eq!(first.digest, ContentDigest::of_bytes(b"the first one"));
+    assert_eq!(second.digest, ContentDigest::of_bytes(b"the second one"));
+}
+
+/// Escribir no es leer.
+///
+/// Un principal que puede escribir pero no puede leer tiene que poder
+/// escribir: si al terminar de escribir el catalogo vuelve a leer por el
+/// camino publico, la escritura se pierde en un `Denied` cuando el cambio
+/// ya esta en la base.
+#[tokio::test]
+async fn a_write_does_not_need_the_read_permission() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_with(db, Arc::new(WritesOnly));
+    store.initialize().await.expect("initialize");
+
+    let created = store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+    assert_eq!(created.repo_key, "releases");
+
+    let published = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", b"the first one"),
+        )
+        .await
+        .expect("publish");
+    assert_eq!(published.asset.asset_path, "app.bin");
+
+    // Y una segunda version, para tener a donde mover el asset.
+    store
+        .publish(
+            "acme",
+            publication("releases", "other.bin", "pkg", "2.0", b"the second one"),
+        )
+        .await
+        .expect("publish");
+
+    let tag = store
+        .move_tag(
+            "acme",
+            "releases",
+            "latest",
+            PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "2.0".to_string(),
+            },
+        )
+        .await
+        .expect("move tag");
+    assert_eq!(tag.tag_name, "latest");
+
+    let moved = store
+        .move_asset(
+            "acme",
+            "releases",
+            "app.bin",
+            PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "2.0".to_string(),
+            },
+        )
+        .await
+        .expect("move asset");
+    assert_eq!(moved.coordinates.package_version, "2.0");
+}
+
+/// Dos configuraciones distintas no pueden compartir un numero de version.
+///
+/// La version de la configuracion sirve justo para eso: lo que tiene el
+/// cliente delante y lo que tiene el repositorio. Si dos reconfiguraciones
+/// simultaneas se quedan con el mismo numero y ajustes distintos, el
+/// numero ya no dice nada.
+#[tokio::test]
+async fn two_configurations_never_share_a_version() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = Arc::new(store_for(db));
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let mut left = RepositoryConfig::new(DigestScope::Global);
+    left.config_settings = serde_json::json!({ "left": true });
+    let mut right = RepositoryConfig::new(DigestScope::Global);
+    right.config_settings = serde_json::json!({ "right": true });
+
+    let left_store = Arc::clone(&store);
+    let right_store = Arc::clone(&store);
+    let (left_result, right_result) = tokio::join!(
+        async move { left_store.update_config("acme", "releases", left).await },
+        async move { right_store.update_config("acme", "releases", right).await },
+    );
+
+    let mut seen: Vec<(u64, serde_json::Value)> = Vec::new();
+    for result in [&left_result, &right_result] {
+        let descriptor = match result {
+            Ok(descriptor) => descriptor,
+            // Si una de las dos se queda fuera, que sea por conflicto: un
+            // "el almacenamiento no esta disponible" seria untrue.
+            Err(error) => {
+                assert!(
+                    matches!(error, CatalogError::Conflict { .. }),
+                    "unexpected error: {error:?}"
+                );
+                continue;
+            }
+        };
+        let entry = (
+            descriptor.config.version,
+            descriptor.config.config_settings.clone(),
+        );
+        if let Some((_, other)) = seen.iter().find(|(version, _)| *version == entry.0) {
+            assert_eq!(
+                other, &entry.1,
+                "two different configurations share the version {}",
+                entry.0
+            );
+        }
+        seen.push(entry);
+    }
+
+    // Y lo que quedo guardado es una de las dos, con su numero. No puede
+    // haber una tercera configuracion escondida.
+    let stored = store
+        .repository("acme", "releases")
+        .await
+        .expect("read repository");
+    assert!(
+        seen.iter()
+            .any(|(version, settings)| *version == stored.config.version
+                && *settings == stored.config.config_settings),
+        "the stored configuration is one that nobody asked for: {stored:?}"
+    );
+}
+
+/// El ambito de los digests no cambia en un repositorio que ya tiene
+/// contenido.
+///
+/// Los bytes se publicaron bajo un ambito, y ese es el ambito en el que
+/// siguen viviendo. Cambiarlo dejaria la politica diciendo una cosa y los
+/// bytes estando en otra.
+#[tokio::test]
+async fn the_scope_of_a_repository_with_content_cannot_change() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", b"the content"),
+        )
+        .await
+        .expect("publish");
+
+    let refused = store
+        .update_config(
+            "acme",
+            "releases",
+            RepositoryConfig::new(DigestScope::AccountPartitioned),
+        )
+        .await
+        .expect_err("the scope of a repository with content cannot change");
+    assert!(
+        matches!(refused, CatalogError::Conflict { .. }),
+        "unexpected error: {refused:?}"
+    );
+
+    // Y el ambito sigue siendo el de siempre.
+    let repository = store
+        .repository("acme", "releases")
+        .await
+        .expect("read repository");
+    assert_eq!(repository.config.digest_scope, DigestScope::Global);
+}
+
+/// Publicar contenido que no esta en el almacen de bytes no se publica.
+///
+/// Una referencia a un blob que no existe deja un camino que no lleva a
+/// nada. El catalogo que afirma una integridad que no verifica es un
+/// catalogo que miente.
+#[tokio::test]
+async fn the_content_has_to_be_in_the_store_before_it_is_published() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    // Una sonda que no conoce ningun blob.
+    let store = store_with(db, Arc::new(AllowAllAuthorizer))
+        .with_probe(Arc::new(KnownLengths::of(HashMap::new())));
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let refused = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", b"the content"),
+        )
+        .await
+        .expect_err("the content is not in the store");
+    assert!(
+        matches!(refused, CatalogError::InvalidRequest { .. }),
+        "unexpected error: {refused:?}"
+    );
+
+    // Y no queda nada escrito: la publicacion no llego a empezar.
+    assert!(
+        store.asset("acme", "releases", "app.bin").await.is_err(),
+        "the publication left an asset behind"
+    );
+}
+
+/// La sonda se pregunta por la ubicacion del contenido, no por su digest.
+///
+/// El mismo digest puede estar en la ranura global o en la particionada
+/// de una cuenta. Preguntar por el digest a solo encontraria la primera,
+/// y daria por roto un blob particionado que esta sano.
+#[tokio::test]
+async fn the_probe_is_asked_where_the_content_lives() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let content = b"the content";
+    let digest = ContentDigest::of_bytes(content);
+
+    // El repositorio es particionado: sus blobs viven en "cuenta/digest".
+    let probe = Arc::new(KnownLengths::of(HashMap::from([(
+        format!("acme/{}", digest.value),
+        content.len() as u64,
+    )])));
+    let store = store_with(db, Arc::new(AllowAllAuthorizer)).with_probe(probe.clone());
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::AccountPartitioned,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", content),
+        )
+        .await
+        .expect("publish");
+
+    assert_eq!(
+        probe.last_asked(),
+        Some(format!("acme/{}", digest.value)),
+        "the probe was not asked where the content lives"
+    );
+}
+
+/// Un `Denied` dice que clase de cosa no se pudo pedir.
+///
+/// El `kind` del error es parte del contrato: un cliente que ramifica por
+/// el tiene que saber si lo que se le nego fue un repositorio o un asset.
+#[tokio::test]
+async fn a_denied_repository_is_not_reported_as_an_asset() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_with(
+        db,
+        Arc::new(ListedAccounts {
+            allowed: Vec::new(),
+        }),
+    );
+    store.initialize().await.expect("initialize");
+
+    let denied = store
+        .repository("acme", "releases")
+        .await
+        .expect_err("nobody is allowed");
+    match denied {
+        CatalogError::Denied { kind, .. } => assert_eq!(
+            kind, "repository",
+            "a denied repository was reported as another kind"
+        ),
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    let denied = store
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect_err("nobody is allowed");
+    match denied {
+        CatalogError::Denied { kind, .. } => {
+            assert_eq!(kind, "asset", "a denied asset was reported as another kind")
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+/// El nombre canonico de un repositorio tiene que ser un HRN que se pueda
+/// leer.
+///
+/// Un repositorio cuyo nombre canonico no se puede parsear es un
+/// repositorio que el resto de la plataforma no puede nombrar, y eso se
+/// dice cuando se crea y no el dia que una politica lo pregunte.
+#[tokio::test]
+async fn the_canonical_name_of_a_repository_has_to_be_a_valid_hrn() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    let refused = store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "with a space",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect_err("the canonical name cannot be read");
+    assert!(
+        matches!(refused, CatalogError::InvalidRequest { .. }),
+        "unexpected error: {refused:?}"
+    );
 }

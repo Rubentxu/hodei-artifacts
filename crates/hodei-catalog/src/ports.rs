@@ -6,13 +6,12 @@
 //! de datos: ese conocimiento vive en el crate de adaptadores.
 
 use async_trait::async_trait;
-use hodei_evidence::ContentDigest;
 use thiserror::Error;
 
 use crate::error::CatalogError;
 use crate::model::{
-    AssetRecord, BlobReference, MutableTag, PackageCoordinates, PackageVersion, Publication,
-    PublishOutcome, RepositoryConfig, RepositoryDescriptor,
+    AssetRecord, BlobLocation, BlobReference, MutableTag, PackageCoordinates, PackageVersion,
+    Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor,
 };
 
 /// Lo que un principal quiere hacer con el catalogo.
@@ -43,6 +42,36 @@ impl CatalogAction {
     }
 }
 
+/// La clase de recurso sobre la que se pide permiso.
+///
+/// El decisor no solo necesita saber si el principal puede leer: necesita
+/// saber **que** lee. Permitir la lectura de un asset y la de una etiqueta
+/// son dos decisiones distintas, y un decisor que solo ve "read" no puede
+/// distinguirlas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogResource {
+    /// El repositorio.
+    Repository,
+    /// Una version publicada.
+    Version,
+    /// Un asset, identified por su ruta.
+    Asset,
+    /// Una etiqueta mutable.
+    Tag,
+}
+
+impl CatalogResource {
+    /// El nombre de la clase, que es tambien el `kind` del error `Denied`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CatalogResource::Repository => "repository",
+            CatalogResource::Version => "version",
+            CatalogResource::Asset => "asset",
+            CatalogResource::Tag => "tag",
+        }
+    }
+}
+
 /// La peticion que se decide.
 ///
 /// Lleva el principal y las coordenadas de lo que se pide, y nada de lo
@@ -55,32 +84,87 @@ pub struct AccessRequest {
     pub principal_account: String,
     /// Lo que quiere hacer.
     pub action: CatalogAction,
+    /// La clase de recurso sobre la que se decide.
+    pub resource: CatalogResource,
     /// El repositorio.
     pub repository: String,
-    /// La ruta dentro del repositorio. Puede estar vacia en las acciones
-    /// que no van sobre un asset.
-    pub asset_path: String,
+    /// La clave del recurso dentro del repositorio: la clave del
+    /// repositorio, la ruta del asset, las coordenadas del paquete o el
+    /// nombre de la etiqueta, segun la clase del recurso.
+    pub subject: String,
 }
 
 impl AccessRequest {
-    /// La peticion de lectura de un asset.
-    pub fn read(principal_account: &str, repository: &str, asset_path: &str) -> Self {
+    /// La peticion sobre un repositorio.
+    pub fn repository(principal_account: &str, action: CatalogAction, repo_key: &str) -> Self {
         Self {
             principal_account: principal_account.to_string(),
-            action: CatalogAction::Read,
+            action,
+            resource: CatalogResource::Repository,
+            repository: repo_key.to_string(),
+            subject: repo_key.to_string(),
+        }
+    }
+
+    /// La peticion sobre un asset, por su ruta.
+    pub fn asset(
+        principal_account: &str,
+        action: CatalogAction,
+        repository: &str,
+        asset_path: &str,
+    ) -> Self {
+        Self {
+            principal_account: principal_account.to_string(),
+            action,
+            resource: CatalogResource::Asset,
             repository: repository.to_string(),
-            asset_path: asset_path.to_string(),
+            subject: asset_path.to_string(),
+        }
+    }
+
+    /// La peticion sobre una version, por sus coordenadas.
+    pub fn version(
+        principal_account: &str,
+        action: CatalogAction,
+        repository: &str,
+        coordinates: &PackageCoordinates,
+    ) -> Self {
+        Self {
+            principal_account: principal_account.to_string(),
+            action,
+            resource: CatalogResource::Version,
+            repository: repository.to_string(),
+            subject: format!(
+                "{}@{}",
+                coordinates.package_name, coordinates.package_version
+            ),
+        }
+    }
+
+    /// La peticion sobre una etiqueta, por su nombre.
+    pub fn tag(
+        principal_account: &str,
+        action: CatalogAction,
+        repository: &str,
+        tag_name: &str,
+    ) -> Self {
+        Self {
+            principal_account: principal_account.to_string(),
+            action,
+            resource: CatalogResource::Tag,
+            repository: repository.to_string(),
+            subject: tag_name.to_string(),
         }
     }
 
     /// La peticion de publicacion.
     pub fn publish(principal_account: &str, repository: &str, asset_path: &str) -> Self {
-        Self {
-            principal_account: principal_account.to_string(),
-            action: CatalogAction::Publish,
-            repository: repository.to_string(),
-            asset_path: asset_path.to_string(),
-        }
+        Self::asset(
+            principal_account,
+            CatalogAction::Publish,
+            repository,
+            asset_path,
+        )
     }
 }
 
@@ -156,11 +240,21 @@ pub enum BlobProbeError {
 ///
 /// El catalogo guarda la longitud que declaro el cliente. Esta es la
 /// longitud que tiene el contenido de verdad, y compararlas es lo que
-/// separa un registro roto de un registro sano.
+/// separa un registro sano de uno roto.
+///
+/// La pregunta lleva **la ubicacion** del blob y no solo su digest, porque
+/// la clave con la que el CAS guarda los bytes depende del ambito: el
+/// mismo digest vive en una ranura global o en una particionada por
+/// cuenta. Preguntar por el digest a secas solo podria encontrar el
+/// contenido global, y daria por roto un blob particionado que esta
+/// sano.
+///
+/// Lo que la sonda NO hace es recalcular el digest: comprueba la
+/// longitud, que es barato, y deja la verificacion profunda al scrub.
 #[async_trait]
 pub trait BlobIntegrityProbe: Send + Sync {
     /// La longitud del blob, en bytes.
-    async fn length_of(&self, digest: &ContentDigest) -> Result<u64, BlobProbeError>;
+    async fn length_of(&self, location: &BlobLocation) -> Result<u64, BlobProbeError>;
 }
 
 /// La lectura del catalogo.
@@ -247,7 +341,7 @@ pub trait CatalogWriter: Send + Sync {
         coordinates: PackageCoordinates,
     ) -> Result<MutableTag, CatalogError>;
 
-    /// Mover un asset a otra version.
+    /// Mueve un asset a otra version.
     ///
     /// La ruta de un repositorio es un indice: se puede mover, pero moverlo
     /// es una operacion explicita y no un efecto colateral de publicar. Por
