@@ -1473,11 +1473,13 @@ mocks: es el binario de verdad en un puerto de verdad, con `curl` de
 verdad y `sha256sum` de verdad. Lo que mide es lo que un cliente ve —que
 lo publicado vuelve intacto, que un proceso muerto a mitad de una subida
 no deja una ruta publicada a medias y que al reiniciar el servicio
-recoge lo que quedó, que las subidas simultáneas no se mezclan y que dos
-cuentas con tokens reales no se ven entre sí— y lo deja **escrito** en un
-informe con la versión, el comando de cada caso, el resultado real y los
-límites. El informe dice también lo que **no** certifica, porque un
-informe que solo dice lo que sí es propaganda.
+recoge lo caducado y respeta lo vivo, que las subidas simultáneas no se
+mezclan y que dos cuentas con tokens reales no se ven entre sí— y lo
+deja **escrito** en un informe con la versión, el comando real de cada
+caso, el resultado medido y los límites. El informe dice también lo que
+**no** certifica, porque un informe que solo dice lo que sí es
+propaganda, y un caso que falla sale en él como `FALLO`, no como un
+caso que no aparece.
 
 **La recuperación de lo que un proceso muerto deja.** Una subida
 interrumpida deja su fichero de staging en el almacén de contenido: no se

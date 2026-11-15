@@ -43,7 +43,12 @@ pub struct ContentConfig {
     /// never happened -- but it is a file, and files pile up.
     ///
     /// The age is generous on purpose: the staging of a **live** upload
-    /// belongs to another process, and it must not be taken away from it.
+    /// is being written, so its date is recent, and the store does not
+    /// take it away from the process that is writing it.
+    ///
+    /// What the age cannot tell is a live upload that stopped writing
+    /// for longer than the age: its staging is indistinguishable from
+    /// the one a dead process left behind.
     ///
     /// Default: 3600 seconds.
     #[serde(default = "the_default_staging_max_age_secs")]

@@ -225,8 +225,12 @@ staging_max_age_secs = 3600
   la cuenta, sino del despliegue.
 - `staging_max_age_secs` es la edad a partir de la cual una escritura
   interrumpida se considera abandonada. El valor por defecto es
-  generoso a propósito: el staging de una subida **viva** es de otro
-  proceso, y quitárselo de debajo rompe una subida que funciona.
+  generoso a propósito: el staging de una subida **viva** se está
+  escribiendo, así que su fecha es reciente, y el de otro proceso no se
+  toca. Lo que el arranque **no** puede saber es si una subida viva
+  lleva horas sin escribir: si el cliente se para a mitad de camino, su
+  staging es indistinguible del de un proceso muerto, y eso es un
+  timeout, no una limpieza.
 - El catálogo y el almacén de contenido se montan cuando
   `repository.durable = true`.
 
@@ -242,7 +246,8 @@ Lo que queda es un fichero que nadie apunta. Y un fichero que nadie
 apunta es un fichero que se acumula: por eso el servicio, **al
 arrancar**, limpia el staging que encuentra caducado y dice cuántos ha
 quitado. Lo que se queda es el staging vivo, que puede ser de otro
-proceso que está subiendo ahora mismo.
+proceso que está subiendo ahora mismo: la suite lo comprueba, porque un
+staging recién escrito tiene que sobrevivir al arranque.
 
 Lo que **no** se limpia es el blob sin referenciar: el contenido que se
 publicó y luego se sustituyó, o el que se escribió y la transacción del
@@ -294,28 +299,46 @@ CAS de verdad):
 
 1. Lo que se publica vuelve **intacto**: el hash del fichero descargado
    es el hash del fichero subido, y lo dice un programa que no tiene
-   nada que ver con este servicio. El `HEAD` describe sin traer, y el
-   tramo es un `206` con su `Content-Range`.
+   nada que ver con este servicio. El `HEAD` describe sin traer —el
+   `curl` cuenta **cero** bytes de cuerpo— y el tramo es un `206` con su
+   `Content-Range` **y con sus bytes**, que son los del contenido.
 2. Un proceso **muerto a mitad de una subida** no deja una ruta
-   publicada a medias: al reiniciar, la ruta cortada no existe (`404`),
-   el staging caducado está limpio, y el contenido que ya estaba
-   publicado sigue siendo **los mismos bytes**.
-3. Las subidas **simultáneas** no se mezclan: el mismo contenido a la
-   misma ruta es idempotente, las rutas distintas guardan lo suyo, y la
-   ruta que se disputa tiene **un solo ganador** (`201`) y el resto
-   `409`. El hash de lo que se descarga es siempre el hash de lo que se
-   subió.
+   publicada a medias: el arnés espera a que el staging tenga bytes —es
+   decir, a que el cuerpo se esté escribiendo— antes de matar, y al
+   reiniciar la ruta cortada no existe (`404`), **publicarla otra vez da
+   `201`** (un `409` sería un asset colgado que deja la dirección
+   inservible), el staging caducado está limpio, el staging **vivo** de
+   otro proceso sigue ahí, y el contenido que ya estaba publicado sigue
+   siendo **los mismos bytes**.
+3. Las subidas **simultáneas** no se mezclan: el arnés comprueba que
+   hubo más de un staging en curso —es decir, que las peticiones se
+   solaparon de verdad y que cada una tenía su staging— y después
+   comprueba que el mismo contenido a la misma ruta es idempotente, que
+   las rutas distintas guardan lo suyo, y que la ruta que se disputa
+   tiene **un solo ganador** (`201`) y el resto `409`. El hash de lo que
+   se descarga es siempre el hash de lo que se subió.
 4. Dos cuentas con tokens reales **no se ven**: cada una descarga lo
-   suyo de la misma dirección, el repositorio de la otra cuenta es un
-   `404` que no dice si existe, y sin credencial es un `401`. Y la
-   denegación es coherente: en la misma cuenta, con otro principal que el
-   bundle no cubre, la respuesta es un `403` —que sí dice que el
-   repositorio existe— y no un `404` que mentiría.
+   suyo de la misma dirección; el repositorio que solo existe en la
+   primera cuenta —donde la primera **sí publicó**— es un `404` para la
+   segunda, que no dice si existe; el principal que el bundle no cubre,
+   en la misma cuenta, es un `403`; y sin credencial es un `401`. Los
+   tres códigos se distinguen, que es lo que hace que la denegación sea
+   coherente.
 
 La suite escribe un **informe** con la versión del servicio y de las
-herramientas, el comando de cada caso, el resultado real y los límites,
-y dice explícitamente lo que **no** certifica: ni OCI, ni S3, ni
-disponibilidad. El informe se lee en el resumen del job de la CI.
+herramientas, el comando real de cada caso, el resultado **medido** de
+cada caso y los límites, y dice explícitamente lo que **no** certifica:
+ni OCI, ni S3, ni disponibilidad. Un caso que falla sale en el informe
+como `FALLO`, no como un caso que no aparece. El informe se lee en el
+resumen del job de la CI.
+
+Y lo que la suite **no** mide, y conviene que quede escrito: el corte
+se provoca **durante** la subida, antes del commit. Un corte después del
+commit del blob y antes de la escritura del catálogo dejaría un blob sin
+referenciar —que es recolectable, y es `HAR-10`—, y un corte después de
+escribir el catálogo dejaría el asset publicado con un error de red en
+el cliente: la republicación es idempotente, así que un reintento
+funciona.
 
 ## El rastro
 
