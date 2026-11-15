@@ -204,6 +204,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
+            !target/uat
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs', 'crates/**/*.rs') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -211,6 +212,10 @@ jobs:
       - name: Suite infrastructure (boot and processes)
         id: suite-infrastructure
         run: |
+          # The report of a previous run is not evidence of this run: the
+          # cache is restored with a very wide key, and a suite that does
+          # not run would publish the report of another commit.
+          rm -rf target/uat
           started=$(date +%s)
           cargo test --workspace \
             --test binary_contract \
@@ -229,6 +234,14 @@ jobs:
           # exists in a file of a runner is lost as soon as the CI is
           # cleaned, and a conformity that nobody can read is not a
           # conformity.
+          #
+          # And a suite that passed without writing the report is not a
+          # conformity either: the report is the evidence, and its
+          # absence is a failure of the suite, not a detail.
+          if [ "${status:-0}" -eq 0 ] && [ ! -f target/uat/raw-conformity.md ]; then
+            echo "the conformity report is missing: the suite did not write it" >&2
+            status=1
+          fi
           if [ -f target/uat/raw-conformity.md ]; then
             echo "### Informe de la conformidad RAW" >> "$GITHUB_STEP_SUMMARY"
             cat target/uat/raw-conformity.md >> "$GITHUB_STEP_SUMMARY"
