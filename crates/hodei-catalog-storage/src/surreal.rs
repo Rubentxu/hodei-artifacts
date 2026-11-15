@@ -1,78 +1,78 @@
-//! El adaptador SurrealDB del catalogo.
+//! El adaptador SurrealDB del catálogo.
 //!
-//! # Por que `CREATE` y no `UPSERT`
+//! # Por qué `CREATE` y no `UPSERT`
 //!
-//! La regla del catalogo es que una segunda escritura incompatible recibe
+//! La regla del catálogo es que una segunda escritura incompatible recibe
 //! un conflicto y **no** sobrescribe. Si la escritura fuera un `UPSERT`, la
-//! segunda linea ganaria por orden de llegada y el cliente que publico
-//! primero veria cambiar su contenido sin que nadie se lo dijera. Por eso
-//! las filas se crean con `CREATE` y el arbitro lo dan los indices
-//! `UNIQUE` de la base: el indice es el unico que decide, y decide igual
+//! segunda línea ganaría por orden de llegada y el cliente que publicó
+//! primero vería cambiar su contenido sin que nadie se lo dijera. Por eso
+//! las filas se crean con `CREATE` y el árbitro lo dan los índices
+//! `UNIQUE` de la base: el índice es el único que decide, y decide igual
 //! para los dos clientes que llegan a la vez.
 //!
-//! # Por que una transaccion y no cuatro escrituras
+//! # Por qué una transacción y no cuatro escrituras
 //!
-//! Publicar son cuatro cosas: la version, el asset, la referencia al blob
-//! y las etiquetas. Publicar tres y dejar la cuarta para despues deja un
-//! asset que no resuelve. Las cuatro van en una transaccion, y la
-//! transaccion es una sola query con `BEGIN` y `COMMIT`: si una de las
+//! Publicar son cuatro cosas: la versión, el asset, la referencia al blob
+//! y las etiquetas. Publicar tres y dejar la cuarta para después deja un
+//! asset que no resuelve. Las cuatro van en una transacción, y la
+//! transacción es una sola query con `BEGIN` y `COMMIT`: si una de las
 //! cuatro falla, no queda ninguna.
 //!
-//! Que "si una de las cuatro falla, no queda ninguna" no es una promesa
-//! del catalogo sino del motor, y por eso se comprobo en el motor que se
-//! usa. En SurrealDB 2.7 el nucleo ejecuta la transaccion con control
+//! Qué "si una de las cuatro falla, no queda ninguna" no es una promesa
+//! del catálogo sino del motor, y por eso se comprobó en el motor que se
+//! usa. En SurrealDB 2.7 el núcleo ejecuta la transacción con control
 //! optimista y, cuando una sentencia del lote falla, **cancela** la
-//! transaccion y no ejecuta el `COMMIT` que venia detras
+//! transacción y no ejecuta el `COMMIT` que venía detrás
 //! (`surrealdb-core-2.7.0/src/dbs/executor.rs`); y el `check()` de la
-//! respuesta recorre **todos** los resultados del lote, no solo el ultimo
-//! (`surrealdb-2.7.0/src/api/method/query.rs`), asi que el fallo de la
-//! tercera sentencia no se esconde detras del `COMMIT`. El adaptador se
-//! apoya en las dos cosas, y por eso fija la version 2.7 como suelo.
+//! respuesta recorre **todos** los resultados del lote, no solo el último
+//! (`surrealdb-2.7.0/src/api/method/query.rs`), así que el fallo de la
+//! tercera sentencia no se esconde detrás del `COMMIT`. El adaptador se
+//! apoya en las dos cosas, y por eso fija la versión 2.7 como suelo.
 //!
-//! # Que motor necesita esta garantia
+//! # Qué motor necesita esta garantía
 //!
-//! La garantia de que una segunda escritura incompatible recibe un
+//! La garantía de que una segunda escritura incompatible recibe un
 //! conflicto se apoya en que el motor detecte el conflicto de escritura
 //! sobre **el mismo registro**, y eso lo hace el motor persistente: el
-//! perdedor recibe un "read or write conflict" y su transaccion no se
+//! perdedor recibe un "read or write conflict" y su transacción no se
 //! confirma. El motor en memoria no lo hace: acepta las dos escrituras
-//! concurrentes del mismo registro y la ultima gana en silencio.
+//! concurrentes del mismo registro y la última gana en silencio.
 //!
-//! Por eso los identificadores de este catalogo no son aleatorios, y por
+//! Por eso los identificadores de este catálogo no son aleatorios, y por
 //! eso las pruebas van contra el motor que se despliega. Un despliegue con
 //! escritura concurrente no puede apoyarse en el motor en memoria.
 //!
-//! Y una frontera que conviene no disimular: el almacen **no puede
-//! distinguir** los motores embebidos en tiempo de ejecucion. `Mem` y
+//! Y una frontera que conviene no disimular: el almacén **no puede
+//! distinguir** los motores embebidos en tiempo de ejecución. `Mem` y
 //! `RocksDB` se abren los dos como `Surreal<Db>`, y la API no expone que
-//! motor hay debajo. Por eso la garantia no se comprueba con un `if`, sino
-//! con una convencion asumida: quien despliegue esto abre el motor
+//! motor hay debajo. Por eso la garantía no se comprueba con un `if`, sino
+//! con una convención asumida: quien despliegue esto abre el motor
 //! persistente, y las pruebas de este crate se hacen contra ese motor
-//! precisamente para que la convencion no se pueda incumplir sin que se
+//! precisamente para que la convención no se pueda incumplir sin que se
 //! vea.
 //!
-//! # Por que se relee despues de un fallo
+//! # Por qué se relee después de un fallo
 //!
-//! Cuando la transaccion se cae, el almacenamiento no dice que fallo: dice
-//! que la transaccion no se ejecuto. En vez de adivinar, el catalogo vuelve
+//! Cuando la transacción se cae, el almacenamiento no dice que fallo: dice
+//! que la transacción no se ejecutó. En vez de adivinar, el catálogo vuelve
 //! a leer y decide con lo que hay: si lo que hay es lo mismo que lo que
-//! se iba a escribir, otro escritor publico lo mismo y esto no es un
+//! se iba a escribir, otro escritor publicó lo mismo y esto no es un
 //! conflicto; si lo que hay es distinto, es un conflicto; y si no hay
 //! nada, se intenta otra vez.
 //!
 //! # Donde acaba el aislamiento de cuentas
 //!
-//! El catalogo no verifica **quien** es el principal: recibe una cuenta ya
-//! verificada por la frontera, que es quien autentico y quien decidio.
-//! Delegar eso es la decision que hace que el catalogo sea un contexto
+//! El catálogo no verifica **quien** es el principal: recibe una cuenta ya
+//! verificada por la frontera, que es quien autenticó y quien decidió.
+//! Delegar eso es la decision que hace que el catálogo sea un contexto
 //! acotado y no un sistema de identidades.
 //!
-//! Lo que el catalogo si garantiza es no traicionar esa frontera: la
+//! Lo que el catálogo si garantiza es no traicionar esa frontera: la
 //! cuenta va en el filtro de cada consulta y en el identificador de cada
 //! registro, la decision se pide **antes** de tocar la base, y un `Denied`
-//! no dice si lo que se pidio existia. El que le pasa una cuenta que no
-//! es la suya no encuentra un fallo en el catalogo: encuentra que el
-//! catalogo no le cree, y para eso esta el puerto de autorizacion.
+//! no dice si lo que se pidió existía. El que le pasa una cuenta que no
+//! es la suya no encuentra un fallo en el catálogo: encuentra que el
+//! catálogo no le cree, y para eso está el puerto de autorización.
 
 use std::sync::Arc;
 
@@ -91,25 +91,25 @@ use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 use surrealdb::sql::{Datetime, Thing};
 
-/// La version del esquema del catalogo.
+/// La versión del esquema del catálogo.
 ///
-/// Cada cambio del esquema sube este numero, y `initialize` lo deja
-/// escrito en la base: saber que version esta aplicada es parte de saber
-/// que hay ahi.
+/// Cada cambio del esquema sube este número, y `initialize` lo deja
+/// escrito en la base: saber qué versión está aplicada es parte de saber
+/// que hay ahí.
 pub const SCHEMA_VERSION: i64 = 1;
 
-/// Cuantas veces se intenta una escritura que se ha caido por un conflicto
-/// de transaccion.
+/// Cuantas veces se intenta una escritura que se ha caído por un conflicto
+/// de transacción.
 ///
-/// Un conflicto de transaccion no es un fallo de la escritura: es la
+/// Un conflicto de transacción no es un fallo de la escritura: es la
 /// escritura llegando un instante tarde.
 const WRITE_ATTEMPTS: usize = 4;
 
-/// El esquema del catalogo.
+/// El esquema del catálogo.
 ///
 /// Todas las sentencias son `IF NOT EXISTS`: declarar el esquema dos veces
 /// no cambia nada, y declararlo sobre una base que ya lo tiene no la
-/// rompe. Eso es lo que hace que la migracion sea idempotente.
+/// rompe. Eso es lo que hace que la migración sea idempotente.
 pub const SCHEMA: &str = r#"
 DEFINE TABLE IF NOT EXISTS catalog_schema SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS applied_version ON catalog_schema TYPE int;
@@ -176,15 +176,15 @@ DEFINE INDEX IF NOT EXISTS catalog_tag_unique ON catalog_tag FIELDS account, rep
 /// El identificador de un registro, derivado de sus coordenadas.
 ///
 /// El identificador NO es aleatorio, y esa es la decision que sostiene la
-/// garantia de conflicto: dos clientes que publican lo mismo en el mismo
+/// garantía de conflicto: dos clientes que publican lo mismo en el mismo
 /// sitio escriben **el mismo registro**, y el motor detecta el conflicto
-/// de escritura sobre el. Un identificador aleatorio haria que cada uno
-/// escribiera una fila distinta, y las dos cabrian sin que ninguna se
-/// enterase.
+/// de escritura sobre el. Un identificador aleatorio haría que cada uno
+/// escribiera una fila distinta, y las dos cabrían sin que ninguna se
+/// entenderse.
 ///
-/// Para que eso sea cierto, la codificacion tiene que ser **inyectiva**:
+/// Para que eso sea cierto, la codificación tiene que ser **inyectiva**:
 /// dos coordenadas distintas no pueden producir el mismo registro. Por eso
-/// cada parte se escapa por separado y despues se unen con un separador
+/// cada parte se escapa por separado y después se unen con un separador
 /// que ninguna parte puede contener. Escapar la cadena ya unida no
 /// bastaba: el separador era indistinguible de un separador dentro de una
 /// parte, y `("a|b", "c")` y `("a", "b|c")` acababan en el mismo
@@ -199,7 +199,7 @@ fn escape_id_part(value: &str) -> String {
 /// El identificador compuesto de unas coordenadas.
 ///
 /// Las partes se escapan una a una y se unen con `|`, que ya no puede
-/// aparecer dentro de una parte: la separacion es reversible y dos
+/// aparecer dentro de una parte: la separación es reversible y dos
 /// coordenadas distintas nunca producen el mismo identificador.
 fn composite_id(parts: &[&str]) -> String {
     parts
@@ -217,7 +217,7 @@ fn repository_id(account: &str, repo_key: &str) -> Thing {
     ))
 }
 
-/// El identificador de la version publicada.
+/// El identificador de la versión publicada.
 fn version_id(account: &str, repository: &str, package_name: &str, package_version: &str) -> Thing {
     Thing::from((
         "catalog_version",
@@ -249,7 +249,7 @@ fn tag_id(account: &str, repository: &str, tag_name: &str) -> Thing {
     ))
 }
 
-/// El almacen del catalogo sobre SurrealDB.
+/// El almacén del catálogo sobre SurrealDB.
 #[derive(Clone)]
 pub struct SurrealCatalogStore {
     db: Surreal<Db>,
@@ -266,9 +266,9 @@ impl std::fmt::Debug for SurrealCatalogStore {
 }
 
 impl SurrealCatalogStore {
-    /// Un almacen sin decisor de permisos.
+    /// Un almacén sin decisor de permisos.
     ///
-    /// Sin decisor, el catalogo no sirve nada: es el estado cerrado por
+    /// Sin decisor, el catálogo no sirve nada: es el estado cerrado por
     /// defecto, no un atajo.
     pub fn new(db: Surreal<Db>) -> Self {
         Self {
@@ -278,7 +278,7 @@ impl SurrealCatalogStore {
         }
     }
 
-    /// Un almacen con el decisor de permisos que se le inyecta.
+    /// Un almacén con el decisor de permisos que se le inyecta.
     pub fn with_authorizer(db: Surreal<Db>, authorizer: Arc<dyn CatalogAuthorizer>) -> Self {
         Self {
             db,
@@ -287,7 +287,7 @@ impl SurrealCatalogStore {
         }
     }
 
-    /// El almacen, con la sonda de integridad de los blobs.
+    /// El almacén, con la sonda de integridad de los blobs.
     ///
     /// La sonda es la que permite distinguir un registro sano de uno que
     /// apunta a bytes que no son los que dice.
@@ -298,21 +298,21 @@ impl SurrealCatalogStore {
 
     /// Declara el esquema.
     ///
-    /// Es idempotente: se puede ejecutar en caliente y en frio, y sobre una
+    /// Es idempotente: se puede ejecutar en caliente y en frío, y sobre una
     /// base que ya tiene el esquema no cambia nada.
     ///
-    /// No consulta al autorizador, y no es un olvido: esto no es una
-    /// operacion del plano de datos, es administracion del almacen. No
-    /// habla de cuentas ni de repositorios, y su unico efecto es el
-    /// esquema y el numero de version que dice como esta.
+    /// No consulta al autorizador, y no es un olvidó: esto no es una
+    /// operación del plano de datos, es administración del almacén. No
+    /// habla de cuentas ni de repositorios, y su único efecto es el
+    /// esquema y el número de versión que dice como está.
     pub async fn initialize(&self) -> Result<(), CatalogError> {
-        // Antes de declarar nada, se mira que version dice el almacen.
+        // Antes de declarar nada, se mira que versión dice el almacén.
         // Declarar el esquema es idempotente, pero **declarar el de esta
-        // build encima del de una build mas nueva** no deja el almacen en
-        // la version nueva: las definiciones que ya estan no se rehacen,
-        // asi que el almacen se queda con un esquema mixto y el numero de
-        // version que se escribe debajo miente. Un almacen mas nuevo que
-        // esta build es un almacen que esta build no debe tocar.
+        // build encima del de una build más nueva** no deja el almacén en
+        // la versión nueva: las definiciones que ya están no se rehacen,
+        // así que el almacén se queda con un esquema mixto y el número de
+        // versión que se escribe debajo miente. Un almacén más nuevo que
+        // esta build es un almacén que esta build no debe tocar.
         let applied = self.applied_schema_version().await?;
         if applied > SCHEMA_VERSION {
             return Err(CatalogError::SchemaMismatch {
@@ -340,10 +340,10 @@ impl SurrealCatalogStore {
         Ok(())
     }
 
-    /// La version del esquema que esta aplicada en la base.
+    /// La versión del esquema que está aplicada en la base.
     ///
-    /// Como `initialize`, esto es administracion del almacen y no una
-    /// operacion del plano de datos: no consulta al autorizador porque no
+    /// Como `initialize`, esto es administración del almacén y no una
+    /// operación del plano de datos: no consulta al autorizador porque no
     /// habla de cuentas ni de repositorios.
     pub async fn applied_schema_version(&self) -> Result<i64, CatalogError> {
         #[derive(Debug, Deserialize)]
@@ -366,18 +366,18 @@ impl SurrealCatalogStore {
             .unwrap_or(0))
     }
 
-    /// Decide si la peticion se atiende, y con que motivo no.
+    /// Decide si la petición se atiende, y con qué motivo no.
     ///
     /// La decision se toma **antes** de tocar la base de datos: si el
     /// decisor dice que no, no se llega a preguntar si la cosa existe. De
-    /// lo contrario, un `Denied` sobre un objeto de otra cuenta seria una
+    /// lo contrario, un `Denied` sobre un objeto de otra cuenta sería una
     /// forma de filtrar su existencia.
     async fn decide(&self, request: &AccessRequest) -> Result<(), CatalogError> {
         match self.authorizer.authorize(request).await? {
             AccessDecision::Allow => Ok(()),
             AccessDecision::Deny(reason) => {
-                // La clave dice que cosa se pidio, no solo el repositorio:
-                // un `Denied` que dice "asset" cuando lo que se pidio fue
+                // La clave dice que cosa se pidió, no solo el repositorio:
+                // un `Denied` que dice "asset" cuando lo que se pidió fue
                 // un repositorio hace que el cliente ramifique por una
                 // clase equivocada.
                 let key = match request.resource {
@@ -395,7 +395,7 @@ impl SurrealCatalogStore {
     }
 }
 
-/// La fila de un repositorio, como esta en la base.
+/// La fila de un repositorio, como está en la base.
 #[derive(Debug, Clone, Deserialize)]
 struct RepositoryRow {
     account: String,
@@ -410,7 +410,7 @@ struct RepositoryRow {
     updated_at: Datetime,
 }
 
-/// La fila de una version, como esta en la base.
+/// La fila de una versión, como está en la base.
 #[derive(Debug, Clone, Deserialize)]
 struct VersionRow {
     account: String,
@@ -423,7 +423,7 @@ struct VersionRow {
     published_at: Datetime,
 }
 
-/// La fila de un asset, como esta en la base.
+/// La fila de un asset, como está en la base.
 #[derive(Debug, Clone, Deserialize)]
 struct AssetRow {
     account: String,
@@ -437,7 +437,7 @@ struct AssetRow {
     updated_at: Datetime,
 }
 
-/// La fila de una referencia, como esta en la base.
+/// La fila de una referencia, como está en la base.
 #[derive(Debug, Clone, Deserialize)]
 struct ReferenceRow {
     account: String,
@@ -450,7 +450,7 @@ struct ReferenceRow {
     updated_at: Datetime,
 }
 
-/// La fila de una etiqueta, como esta en la base.
+/// La fila de una etiqueta, como está en la base.
 #[derive(Debug, Clone, Deserialize)]
 struct TagRow {
     account: String,
@@ -461,7 +461,7 @@ struct TagRow {
     updated_at: Datetime,
 }
 
-/// Una fila minima, para las preguntas que solo necesitan un numero.
+/// Una fila mínima, para las preguntas que solo necesitan un número.
 #[derive(Debug, Clone, Deserialize)]
 struct CountRow {
     total: i64,
@@ -482,7 +482,7 @@ struct RepositoryWrite {
     updated_at: Datetime,
 }
 
-/// Lo que se escribe de una version.
+/// Lo que se escribe de una versión.
 #[derive(Debug, Clone, Serialize)]
 struct VersionWrite {
     account: String,
@@ -705,7 +705,7 @@ impl TagRow {
 /// Lo que hay que escribir, y lo que ya hay.
 ///
 /// El plan se calcula antes de escribir: se lee lo que hay, se decide que
-/// filas faltan, y se escriben solo esas. Las que ya estan con el mismo
+/// filas faltan, y se escriben solo esas. Las que ya están con el mismo
 /// contenido no se tocan.
 #[derive(Debug)]
 struct PublicationPlan {
@@ -716,7 +716,7 @@ struct PublicationPlan {
     create_asset: bool,
     create_reference: bool,
     create_tags: Vec<String>,
-    /// El conflicto que impide la publicacion, si lo hay.
+    /// El conflicto que impide la publicación, si lo hay.
     conflict: Option<CatalogError>,
 }
 
@@ -732,8 +732,8 @@ impl PublicationPlan {
 
 /// El fallo de una escritura.
 ///
-/// La transaccion no se ha confirmado. El almacenamiento no dice por que,
-/// y no hace falta: lo que decide es lo que hay en la base despues de
+/// La transacción no se ha confirmado. El almacenamiento no dice por que,
+/// y no hace falta: lo que decide es lo que hay en la base después de
 /// releer, no la causa del fallo.
 #[derive(Debug)]
 struct WriteFailure {
@@ -798,8 +798,8 @@ impl CatalogReader for SurrealCatalogStore {
         };
         let asset = asset.into_asset()?;
 
-        // El asset tiene que apuntar a una version que exista y que diga
-        // lo mismo que el asset. Si no, el registro esta roto.
+        // El asset tiene que apuntar a una versión que exista y que diga
+        // lo mismo que el asset. Si no, el registro está roto.
         let version = self
             .the_version_row(
                 principal_account,
@@ -858,10 +858,10 @@ impl CatalogReader for SurrealCatalogStore {
             ));
         }
 
-        // Y los bytes tienen que ser los que el catalogo dice. La pregunta
-        // lleva la ubicacion y no solo el digest: los bytes pueden estar
+        // Y los bytes tienen que ser los que el catálogo dice. La pregunta
+        // lleva la ubicación y no solo el digest: los bytes pueden estar
         // en la ranura global o en la particionada de la cuenta, y
-        // preguntar por el digest a secas solo encontraria la primera.
+        // preguntar por el digest a secas solo encontraría la primera.
         if let Some(probe) = &self.probe {
             let location =
                 BlobLocation::new(principal_account, reference.scope, asset.digest.clone());
@@ -981,10 +981,10 @@ impl CatalogReader for SurrealCatalogStore {
 }
 
 impl SurrealCatalogStore {
-    /// Si la configuracion del repositorio cambio mientras se actualizaba.
+    /// Si la configuración del repositorio cambió mientras se actualizaba.
     ///
-    /// Se relee el repositorio: si su version ya no es la que se leyo, otro
-    /// cambio se colo y esta actualizacion no se puede aplicar encima.
+    /// Se relee el repositorio: si su versión ya no es la que se leyó, otro
+    /// cambio se coló y esta actualización no se puede aplicar encima.
     async fn the_configuration_moved(
         &self,
         principal_account: &str,
@@ -997,10 +997,10 @@ impl SurrealCatalogStore {
             .is_some_and(|row| row.config_version != previous))
     }
 
-    /// Si el repositorio tiene alguna version publicada.
+    /// Si el repositorio tiene alguna versión publicada.
     ///
     /// No pregunta por cual: solo por si hay contenido, que es lo que
-    /// decide si la politica del repositorio todavia se puede cambiar.
+    /// decide si la política del repositorio todavía se puede cambiar.
     async fn the_version_row_any(
         &self,
         principal_account: &str,
@@ -1048,7 +1048,7 @@ impl SurrealCatalogStore {
         Ok(rows.into_iter().next())
     }
 
-    /// La fila de la version, acotada por la cuenta.
+    /// La fila de la versión, acotada por la cuenta.
     async fn the_version_row(
         &self,
         principal_account: &str,
@@ -1193,10 +1193,10 @@ impl CatalogWriter for SurrealCatalogStore {
         if descriptor.repo_key.trim().is_empty() {
             return Err(CatalogError::invalid("the key of the repository is empty"));
         }
-        // El nombre canonico tiene que ser un HRN que la plataforma sepa
-        // leer. Un repositorio cuyo nombre canonico no se puede parsear es
+        // El nombre canónico tiene que ser un HRN que la plataforma sepa
+        // leer. Un repositorio cuyo nombre canónico no se puede parsear es
         // un repositorio que el resto de la plataforma no puede nombrar,
-        // y eso se dice ahora y no el dia que una politica lo pregunte.
+        // y eso se dice ahora y no el día que una política lo pregunte.
         if Hrn::from_string(&descriptor.hrn.to_string()).is_none() {
             return Err(CatalogError::invalid(
                 "the canonical name of the repository is not a valid HRN v2",
@@ -1251,7 +1251,7 @@ impl CatalogWriter for SurrealCatalogStore {
         }
 
         // La lectura de vuelta no decide otra vez: la escritura ya se
-        // autorizo, y releer por el camino publico exigiria un permiso de
+        // autorizó, y releer por el camino público exigiría un permiso de
         // lectura que el que escribe no tiene por que tener.
         self.the_repository_row(principal_account, &descriptor.repo_key)
             .await?
@@ -1293,11 +1293,11 @@ impl CatalogWriter for SurrealCatalogStore {
             return Err(CatalogError::ModeNotImplemented { mode: current.mode });
         }
 
-        // El ambito de los digests decide donde viven los bytes, y los
+        // El ámbito de los digests decide donde viven los bytes, y los
         // bytes ya publicados viven donde se publicaron. Cambiar el
-        // ambito de un repositorio que ya tiene contenido dejaria sus
-        // blobs en una ranura que el catalogo ya no nombra, y la
-        // recoleccion no sabria que siguen vivos.
+        // ámbito de un repositorio que ya tiene contenido dejaría sus
+        // blobs en una ranura que el catálogo ya no nombra, y la
+        // recolección no sabría que siguen vivos.
         if config.digest_scope != current.config.digest_scope {
             let published = self
                 .the_version_row_any(principal_account, repo_key)
@@ -1311,12 +1311,12 @@ impl CatalogWriter for SurrealCatalogStore {
             }
         }
 
-        // La version de la configuracion sube siempre: dos configuraciones
-        // con la misma version tienen que ser la misma configuracion. Por
-        // eso la escritura compara con la version que se leyo: si otro
-        // cambio ocurrio entre la lectura y la escritura, esta no se
+        // La versión de la configuración sube siempre: dos configuraciones
+        // con la misma versión tienen que ser la misma configuración. Por
+        // eso la escritura compara con la versión que se leyó: si otro
+        // cambio ocurrió entre la lectura y la escritura, esta no se
         // aplica y se dice que hubo un conflicto, en lugar de dejar dos
-        // configuraciones distintas con el mismo numero.
+        // configuraciones distintas con el mismo número.
         let version = i64::try_from(current.config.version.saturating_add(1)).unwrap_or(i64::MAX);
         let previous = i64::try_from(current.config.version).unwrap_or(0);
 
@@ -1336,7 +1336,7 @@ impl CatalogWriter for SurrealCatalogStore {
                 .take(0)
                 .map_err(|error| CatalogError::unavailable(error.to_string()))?,
             Err(error) => {
-                // Puede que otro escritor haya cambiado la configuracion
+                // Puede que otro escritor haya cambiado la configuración
                 // entre la lectura y la escritura. Eso no es un fallo del
                 // almacenamiento: es un conflicto, y se dice como tal.
                 if self
@@ -1369,8 +1369,8 @@ impl CatalogWriter for SurrealCatalogStore {
         publication: Publication,
     ) -> Result<PublishOutcome, CatalogError> {
         // Se decide **antes** de validar: un principal sin permiso no
-        // llega a saber si lo que pide esta bien formado, y la frontera de
-        // permisos no se cruza por el camino de la validacion.
+        // llega a saber si lo que pide está bien formado, y la frontera de
+        // permisos no se cruza por el camino de la validación.
         self.decide(&AccessRequest::publish(
             principal_account,
             &publication.repository,
@@ -1409,14 +1409,14 @@ impl CatalogWriter for SurrealCatalogStore {
 
         let scope = repository.config.digest_scope;
 
-        // El contenido tiene que estar en el almacen de bytes. Publicar
+        // El contenido tiene que estar en el almacén de bytes. Publicar
         // una referencia a un blob que no existe deja un camino que no
-        // lleva a nada, y el catalogo que afirma una integridad que no
-        // verifica es un catalogo que miente.
+        // lleva a nada, y el catálogo que afirma una integridad que no
+        // verifica es un catálogo que miente.
         //
-        // Sin sonda no se puede comprobar, y entonces el catalogo guarda
-        // lo que se le declara: el almacen de bytes es quien responde si
-        // los bytes estan, y esa frontera esta escrita en el puerto.
+        // Sin sonda no se puede comprobar, y entonces el catálogo guarda
+        // lo que se le declara: el almacén de bytes es quien responde si
+        // los bytes están, y esa frontera está escrita en el puerto.
         if let Some(probe) = &self.probe {
             let location = BlobLocation::new(principal_account, scope, publication.digest.clone());
             match probe.length_of(&location).await {
@@ -1461,8 +1461,8 @@ impl CatalogWriter for SurrealCatalogStore {
             }
         }
 
-        // El ultimo intento tambien se relee: perder la carrera en el
-        // ultimo intento es un conflicto, no un fallo del almacenamiento.
+        // El último intento también se relee: perder la carrera en el
+        // último intento es un conflicto, no un fallo del almacenamiento.
         let plan = self
             .plan_the_publication(principal_account, &publication, scope)
             .await?;
@@ -1506,8 +1506,8 @@ impl CatalogWriter for SurrealCatalogStore {
             });
         }
 
-        // La etiqueta tiene que apuntar a una version que exista. Las
-        // versiones no se borran, asi que esta comprobacion no se queda
+        // La etiqueta tiene que apuntar a una versión que exista. Las
+        // versiones no se borran, así que esta comprobación no se queda
         // vieja entre la lectura y la escritura.
         let version = self
             .the_version_row(
@@ -1527,7 +1527,7 @@ impl CatalogWriter for SurrealCatalogStore {
                 )
             })?;
 
-        // Mover la etiqueta escribe la etiqueta y nada mas: ni la version
+        // Mover la etiqueta escribe la etiqueta y nada más: ni la versión
         // ni el blob que hay detrás cambian.
         self.db
             .query("UPSERT $id CONTENT $tag")
@@ -1548,11 +1548,11 @@ impl CatalogWriter for SurrealCatalogStore {
             .check()
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
 
-        // La version se lee para dejar constancia de que existe, y para
-        // que un tag no pueda apuntar a algo que no esta.
+        // La versión se lee para dejar constancia de que existe, y para
+        // que un tag no pueda apuntar a algo que no está.
         let _ = version;
-        // La etiqueta se relee por dentro: la escritura ya se autorizo, y
-        // releer por el camino publico exigiria un permiso de lectura que
+        // La etiqueta se relee por dentro: la escritura ya se autorizó, y
+        // releer por el camino público exigiría un permiso de lectura que
         // el que mueve la etiqueta no tiene por que tener.
         self.the_tag_row(principal_account, repository, tag_name)
             .await?
@@ -1588,7 +1588,7 @@ impl CatalogWriter for SurrealCatalogStore {
             });
         }
 
-        // El asset tiene que existir: mover lo que no esta no es mover,
+        // El asset tiene que existir: mover lo que no está no es mover,
         // es inventar.
         let asset = self
             .the_asset_row(principal_account, repository, asset_path)
@@ -1596,7 +1596,7 @@ impl CatalogWriter for SurrealCatalogStore {
             .ok_or_else(|| CatalogError::missing("asset", format!("{repository}/{asset_path}")))?
             .into_asset()?;
 
-        // Y la referencia tambien: un asset sin referencia esta roto, y
+        // Y la referencia también: un asset sin referencia está roto, y
         // mover un asset roto no lo arregla.
         let reference = self
             .the_reference_row(principal_account, repository, asset_path)
@@ -1610,8 +1610,8 @@ impl CatalogWriter for SurrealCatalogStore {
             })?
             .into_reference()?;
 
-        // La version de destino tiene que existir. Las versiones no se
-        // borran, asi que esta comprobacion no se queda vieja.
+        // La versión de destino tiene que existir. Las versiones no se
+        // borran, así que esta comprobación no se queda vieja.
         let version = self
             .the_version_row(
                 principal_account,
@@ -1631,14 +1631,14 @@ impl CatalogWriter for SurrealCatalogStore {
             })?
             .into_version()?;
 
-        // El ambito es el del contenido que ya estaba ahi, no el de la
-        // configuracion vigente: los bytes se publicaron bajo un ambito, y
-        // ese es el ambito en el que siguen viviendo.
+        // El ámbito es el del contenido que ya estaba ahí, no el de la
+        // configuración vigente: los bytes se publicaron bajo un ámbito, y
+        // ese es el ámbito en el que siguen viviendo.
         let scope = reference.scope;
         let now = Datetime::from(Utc::now());
 
         // El asset y su referencia se mueven juntos: si solo se moviera el
-        // asset, la descarga serviria un blob y la recoleccion guardaria
+        // asset, la descarga serviría un blob y la recolección guardaría
         // otro.
         let sql = "BEGIN TRANSACTION;\n\
                    UPDATE $asset_id SET package_name = $package_name, \
@@ -1673,10 +1673,10 @@ impl CatalogWriter for SurrealCatalogStore {
             .check()
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
 
-        // El asset que ha quedado es el que se pidio; y la referencia
+        // El asset que ha quedado es el que se pidió; y la referencia
         // tiene que decir lo mismo que el. Las dos filas se releen por
-        // dentro: la escritura ya se autorizo, y releer por el camino
-        // publico exigiria un permiso de lectura que el que mueve el
+        // dentro: la escritura ya se autorizó, y releer por el camino
+        // público exigiría un permiso de lectura que el que mueve el
         // asset no tiene por que tener.
         let moved = self
             .the_asset_row(principal_account, repository, asset_path)
@@ -1707,17 +1707,17 @@ impl CatalogWriter for SurrealCatalogStore {
             ));
         }
 
-        // Y la version que se queda atras conserva su digest y sus bytes.
+        // Y la versión que se queda atrás conserva su digest y sus bytes.
         let _ = (asset, reference);
         Ok(moved)
     }
 }
 
 impl SurrealCatalogStore {
-    /// Decide que hay que escribir para esta publicacion.
+    /// Decide que hay que escribir para esta publicación.
     ///
     /// Se lee lo que hay y se compara con lo que se quiere publicar. Lo que
-    /// esta con el mismo contenido se reutiliza; lo que esta con otro
+    /// está con el mismo contenido se reutiliza; lo que está con otro
     /// contenido es un conflicto, y no se escribe.
     async fn plan_the_publication(
         &self,
@@ -1734,7 +1734,7 @@ impl SurrealCatalogStore {
             CatalogError::invalid("the size of the content does not fit in the catalog")
         })?;
 
-        // La version.
+        // La versión.
         let existing_version = self
             .the_version_row(
                 principal_account,
@@ -1798,9 +1798,9 @@ impl SurrealCatalogStore {
                 create_asset = false;
                 // Lo que no se escribe no se actualiza. El resultado que
                 // se devuelve dice lo que hay en la base, no un instante
-                // que la base nunca tuvo: una republicacion idempotente
+                // que la base nunca tuvo: una republicación idempotente
                 // que dice "actualizado ahora" miente sobre cuando se
-                // publico el contenido.
+                // publicó el contenido.
                 asset.updated_at = DateTime::<Utc>::from(row.updated_at.clone());
             } else if conflict.is_none() {
                 conflict = Some(CatalogError::conflict(
@@ -1826,9 +1826,9 @@ impl SurrealCatalogStore {
         };
         let mut create_reference = true;
         if let Some(row) = existing_reference {
-            // La identidad del contenido es el digest. El ambito dice
-            // donde viven los bytes, no que bytes son: compararlo aqui
-            // haria que un cambio de politica pareciera un conflicto de
+            // La identidad del contenido es el digest. El ámbito dice
+            // donde viven los bytes, no que bytes son: compararlo aquí
+            // haría que un cambio de política pareciera un conflicto de
             // contenido cuando el contenido es el mismo.
             let same = row.digest == digest.value
                 && row.digest_algorithm == algorithm_of(&digest)
@@ -1847,7 +1847,7 @@ impl SurrealCatalogStore {
             }
         }
 
-        // Las etiquetas. La misma etiqueta dos veces en una publicacion es
+        // Las etiquetas. La misma etiqueta dos veces en una publicación es
         // la misma etiqueta: se escribe una, no dos.
         let mut create_tags: Vec<String> = Vec::new();
         for tag_name in &publication.tags {
@@ -1889,7 +1889,7 @@ impl SurrealCatalogStore {
         })
     }
 
-    /// Escribe lo que falta, en una sola transaccion.
+    /// Escribe lo que falta, en una sola transacción.
     async fn write_the_publication(&self, plan: &PublicationPlan) -> Result<(), WriteFailure> {
         let mut sql = String::from("BEGIN TRANSACTION;\n");
         let mut version = None;
@@ -2005,7 +2005,7 @@ impl SurrealCatalogStore {
     }
 }
 
-/// El nombre con el que se guarda un ambito de digest.
+/// El nombre con el que se guarda un ámbito de digest.
 fn scope_name(scope: DigestScope) -> String {
     match scope {
         DigestScope::Global => "global".to_string(),
@@ -2013,13 +2013,13 @@ fn scope_name(scope: DigestScope) -> String {
     }
 }
 
-/// La escritura de la configuracion de un repositorio.
+/// La escritura de la configuración de un repositorio.
 ///
-/// Es un compare-and-set: dice en que version parte y solo se aplica si la
-/// version que hay en la base es esa. Sin esa condicion, dos
-/// reconfiguraciones simultaneas podrian quedarse las dos con el mismo
-/// numero de version y ajustes distintos, y el numero dejaria de decir
-/// que configuracion es la que hay.
+/// Es un compare-and-set: dice en qué versión parte y solo se aplica si la
+/// versión que hay en la base es esa. Sin esa condición, dos
+/// reconfiguraciones simultáneas podrían quedarse las dos con el mismo
+/// número de versión y ajustes distintos, y el número dejaría de decir
+/// que configuración es la que hay.
 fn the_configuration_update() -> &'static str {
     "UPDATE $id SET config_version = $version, digest_scope = $scope, \
      config_settings = $settings, updated_at = $at \
@@ -2030,8 +2030,8 @@ fn the_configuration_update() -> &'static str {
 
 /// Si dos repositorios son el mismo.
 ///
-/// La comparacion es de contenido y no de momento: dos llamadas que piden
-/// el mismo repositorio con la misma configuracion describen la misma
+/// La comparación es de contenido y no de momento: dos llamadas que piden
+/// el mismo repositorio con la misma configuración describen la misma
 /// cosa, y la segunda no es un error sino la misma respuesta. Si algo
 /// difiere, entonces si son dos repositorios distintos y la segunda
 /// llamada es un conflicto.
@@ -2046,7 +2046,7 @@ fn same_repository(existing: &RepositoryDescriptor, requested: &RepositoryDescri
         && existing.config.config_settings == requested.config.config_settings
 }
 
-/// Lo que la publicacion deja, con lo que se ha creado.
+/// Lo que la publicación deja, con lo que se ha creado.
 fn the_outcome(plan: &PublicationPlan, created: bool) -> PublishOutcome {
     PublishOutcome {
         version: plan.version.clone(),
@@ -2065,7 +2065,7 @@ mod tests {
     };
     use surrealdb::engine::local::RocksDb;
 
-    /// Un almacen con su base, para las pruebas del propio adaptador.
+    /// Un almacén con su base, para las pruebas del propio adaptador.
     async fn a_store() -> (SurrealCatalogStore, tempfile::TempDir) {
         let directory = tempfile::tempdir().expect("temp dir");
         let db = Surreal::new::<RocksDb>(directory.path().join("db"))
@@ -2077,12 +2077,12 @@ mod tests {
         (store, directory)
     }
 
-    /// La escritura de la configuracion solo se aplica sobre la version que
-    /// se leyo.
+    /// La escritura de la configuración solo se aplica sobre la versión que
+    /// se leyó.
     ///
-    /// Sin la condicion, dos reconfiguraciones simultaneas podrian quedarse
-    /// las dos con el mismo numero de version y ajustes distintos, y el
-    /// numero dejaria de decir que configuracion es la que hay. Esta
+    /// Sin la condición, dos reconfiguraciones simultáneas podrían quedarse
+    /// las dos con el mismo número de versión y ajustes distintos, y el
+    /// número dejaría de decir que configuración es la que hay. Esta
     /// prueba lo comprueba sobre la escritura de verdad, y no sobre una
     /// carrera que depende del calendario.
     #[tokio::test]
@@ -2105,7 +2105,7 @@ mod tests {
             .await
             .expect("create repository");
 
-        // Una escritura que parte de una version que no es la de ahora no
+        // Una escritura que parte de una versión que no es la de ahora no
         // se aplica: no toca ninguna fila.
         let mut stale = store
             .db
@@ -2135,7 +2135,7 @@ mod tests {
             "a stale update changed the settings of the repository"
         );
 
-        // Una escritura que parte de la version de ahora si se aplica.
+        // Una escritura que parte de la versión de ahora si se aplica.
         let mut fresh = store
             .db
             .query(the_configuration_update())

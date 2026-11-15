@@ -1,19 +1,19 @@
-//! El modelo del catalogo.
+//! El modelo del catálogo.
 //!
-//! Aqui se separan las cuatro cosas que un repositorio de artefactos
-//! confunde con facilidad, y que este catalogo mantiene separadas:
+//! Aquí se separan las cuatro cosas que un repositorio de artefactos
+//! confunde con facilidad, y que este catálogo mantiene separadas:
 //!
 //! 1. **La identidad del repositorio**: cuenta, clave, formato, modo y
-//!    configuracion versionada.
+//!    configuración versionada.
 //! 2. **La identidad del contenido**: el digest, que no depende de donde
-//!    vive ni de quien lo publico.
-//! 3. **Las coordenadas del paquete**: el nombre y la version, que son
+//!    vive ni de quien lo publicó.
+//! 3. **Las coordenadas del paquete**: el nombre y la versión, que son
 //!    inmutables una vez publicadas.
-//! 4. **La ruta del asset**: la posicion dentro del repositorio, que es lo
-//!    que el cliente pide y lo que puede apuntar a otra version sin tocar
+//! 4. **La ruta del asset**: la posición dentro del repositorio, que es lo
+//!    que el cliente pide y lo que puede apuntar a otra versión sin tocar
 //!    los bytes.
 //!
-//! La separacion no es estetica. Es lo que permite que una etiqueta
+//! La separación no es estética. Es lo que permite que una etiqueta
 //! mutable se mueva sin alterar un blob, y que dos cuentas usen el mismo
 //! camino sin pisarse.
 
@@ -25,16 +25,16 @@ use serde_json::Value;
 
 /// El formato del contenido que guarda un repositorio.
 ///
-/// El catalogo los conoce todos porque tiene que poder describir un
+/// El catálogo los conoce todos porque tiene que poder describir un
 /// repositorio antes de que exista el adaptador que lo sirve. Un formato
-/// que aun no se sirve no es un error: es un repositorio que se declara y
+/// que aún no se sirve no es un error: es un repositorio que se declara y
 /// que espera su turno.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RepositoryFormat {
     /// Contenido opaco, served tal cual. Es el formato de laRaw 1.0.
     Raw,
-    /// Imagenes OCI, con manifests y tags.
+    /// Imágenes OCI, con manifests y tags.
     Oci,
     /// Maven2, con `maven-metadata.xml` y layouts de grupo.
     Maven2,
@@ -42,22 +42,22 @@ pub enum RepositoryFormat {
     Npm,
     /// PyPI, con la Simple API.
     PyPi,
-    /// Cargo, con el indice sparse.
+    /// Cargo, con el índice sparse.
     Cargo,
     /// NuGet v3, con service index y flat container.
     NuGet,
     /// Go Modules, con el protocolo GOPROXY.
     Go,
-    /// Helm, con charts y repositorio de indices.
+    /// Helm, con charts y repositorio de índices.
     Helm,
-    /// APT, con indices y firmas.
+    /// APT, con índices y firmas.
     Apt,
-    /// RPM, con creacion de repositorios.
+    /// RPM, con creación de repositorios.
     Rpm,
 }
 
 impl RepositoryFormat {
-    /// El nombre canonico del formato, el que va al cable y a la base.
+    /// El nombre canónico del formato, el que va al cable y a la base.
     pub fn as_str(&self) -> &'static str {
         match self {
             RepositoryFormat::Raw => "raw",
@@ -94,7 +94,7 @@ impl std::fmt::Display for RepositoryMode {
 }
 
 impl RepositoryMode {
-    /// El nombre canonico del modo, el que va al cable y a la base.
+    /// El nombre canónico del modo, el que va al cable y a la base.
     pub fn as_str(&self) -> &'static str {
         match self {
             RepositoryMode::Hosted => "hosted",
@@ -103,12 +103,12 @@ impl RepositoryMode {
         }
     }
 
-    /// Si esta release sabe comportarse asi.
+    /// Si esta release sabe comportarse así.
     ///
-    /// El catalogo sabe DESCRIBIR los tres modos, porque un repositorio se
+    /// El catálogo sabe DESCRIBIR los tres modos, porque un repositorio se
     /// declara antes de existir. Lo que no puede es SERVIR un proxy sin
     /// resolver contra el upstream, ni un group sin resolver en varios
-    /// repositorios: prometerlo aqui y no cumplirlos seria una promesa
+    /// repositorios: prometerlo aquí y no cumplirlos sería una promesa
     /// falsa, y una promesa falsa en un registro de artefactos se paga
     /// cuando alguien publica en un repositorio que no existe.
     pub fn is_served_by_this_release(&self) -> bool {
@@ -119,15 +119,15 @@ impl RepositoryMode {
 /// Donde vive el blob de un digest.
 ///
 /// El digest identifica el contenido, pero no dice donde se guardan sus
-/// bytes. Esa es una decision de la cuenta, y por eso es politica y no
-/// detalle de implementacion.
+/// bytes. Esa es una decision de la cuenta, y por eso es política y no
+/// detalle de implementación.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DigestScope {
     /// Un solo blob por digest, compartido por todas las cuentas.
     ///
     /// Dos cuentas que publican el mismo contenido comparten los bytes.
-    /// Es lo que hace un registro eficiente, y tambien lo que hace que el
+    /// Es lo que hace un registro eficiente, y también lo que hace que el
     /// borrado de un blob tenga que tener en cuenta a todos.
     Global,
     /// Un blob por digest y cuenta: el mismo contenido en dos cuentas son
@@ -141,9 +141,9 @@ pub enum DigestScope {
 impl DigestScope {
     /// La clave con la que el CAS guarda el blob.
     ///
-    /// El CAS guarda los digests SHA-256 por su valor hexadecimal, asi que
+    /// El CAS guarda los digests SHA-256 por su valor hexadecimal, así que
     /// la clave global es ese valor. La forma particionada antepone la
-    /// cuenta, y por eso las dos politicas no pueden colar el mismo blob
+    /// cuenta, y por eso las dos políticas no pueden colar el mismo blob
     /// en la misma ranura.
     pub fn blob_key(&self, account: &str, digest: &ContentDigest) -> String {
         match self {
@@ -155,8 +155,8 @@ impl DigestScope {
 
 /// Donde vive un blob concreto.
 ///
-/// El digest dice **que** es el contenido; la ubicacion dice **donde**
-/// estan sus bytes. Preguntar al almacen de bytes por el contenido
+/// El digest dice **que** es el contenido; la ubicación dice **donde**
+/// están sus bytes. Preguntar al almacén de bytes por el contenido
 /// significa preguntar por las dos cosas: el mismo digest puede estar en
 /// la ranura global o en la particionada de una cuenta, y quien busca solo
 /// una de las dos encuentra un blob que no es el suyo, o no encuentra nada.
@@ -164,14 +164,14 @@ impl DigestScope {
 pub struct BlobLocation {
     /// La cuenta a la que pertenece el contenido.
     pub account: String,
-    /// El ambito en el que vive.
+    /// El ámbito en el que vive.
     pub scope: DigestScope,
     /// El digest del contenido.
     pub digest: ContentDigest,
 }
 
 impl BlobLocation {
-    /// La ubicacion de un contenido en un ambito.
+    /// La ubicación de un contenido en un ámbito.
     pub fn new(account: &str, scope: DigestScope, digest: ContentDigest) -> Self {
         Self {
             account: account.to_string(),
@@ -186,28 +186,28 @@ impl BlobLocation {
     }
 }
 
-/// La configuracion de un repositorio, con la version que la identifica.
+/// La configuración de un repositorio, con la versión que la identifica.
 ///
-/// La version no es decorativa: es lo que permite saber si lo que tiene el
+/// La versión no es decorativa: es lo que permite saber si lo que tiene el
 /// cliente delante es lo que el repositorio tiene guardado. Un cambio de
-/// configuracion incrementa la version, y dos configuraciones con la misma
-/// version son la misma configuracion.
+/// configuración incrementa la versión, y dos configuraciones con la misma
+/// versión son la misma configuración.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepositoryConfig {
-    /// La version de esta configuracion.
+    /// La versión de esta configuración.
     pub version: u64,
     /// Donde viven los blobs de este repositorio.
     pub digest_scope: DigestScope,
     /// Los ajustes propios del formato.
     ///
-    /// Un objeto vacio es un objeto valido: un repositorio recien creado
+    /// Un objeto vacío es un objeto válido: un repositorio recién creado
     /// no tiene ajustes que aplicar.
     #[serde(default)]
     pub config_settings: Value,
 }
 
 impl RepositoryConfig {
-    /// La configuracion por defecto: version 1, digests compartidos y sin
+    /// La configuración por defecto: versión 1, digests compartidos y sin
     /// ajustes.
     pub fn new(digest_scope: DigestScope) -> Self {
         Self {
@@ -219,8 +219,8 @@ impl RepositoryConfig {
 
     /// Si los ajustes son un objeto y no otra cosa.
     ///
-    /// Un `settings` que no es un objeto no tiene interpretacion posible, y
-    /// aceptarlo seria aceptar una configuracion que nadie puede leer.
+    /// Un `settings` que no es un objeto no tiene interpretación posible, y
+    /// aceptarlo sería aceptar una configuración que nadie puede leer.
     pub fn has_readable_settings(&self) -> bool {
         self.config_settings.is_object()
     }
@@ -228,13 +228,13 @@ impl RepositoryConfig {
 
 /// La identidad de un repositorio.
 ///
-/// El HRN es el nombre canonico del recurso y no se deduce de nada: lo
-/// declara quien crea el repositorio, y el catalogo lo conserva tal cual
-/// para que el mismo HRN siga significando lo mismo despues de un
+/// El HRN es el nombre canónico del recurso y no se deduce de nada: lo
+/// declara quien crea el repositorio, y el catálogo lo conserva tal cual
+/// para que el mismo HRN siga significando lo mismo después de un
 /// reinicio.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepositoryDescriptor {
-    /// El nombre canonico del recurso (HRN v2).
+    /// El nombre canónico del recurso (HRN v2).
     pub hrn: Hrn,
     /// La cuenta propietaria.
     pub account: String,
@@ -244,15 +244,15 @@ pub struct RepositoryDescriptor {
     pub format: RepositoryFormat,
     /// Como se comporta.
     pub mode: RepositoryMode,
-    /// La configuracion versionada.
+    /// La configuración versionada.
     pub config: RepositoryConfig,
-    /// Cuando se creo.
+    /// Cuando se creó.
     pub created_at: DateTime<Utc>,
-    /// Cuando se toco por ultima vez.
+    /// Cuando se tocó por última vez.
     pub updated_at: DateTime<Utc>,
 }
 
-/// El HRN canonico de un repositorio.
+/// El HRN canónico de un repositorio.
 ///
 /// Se construye con la misma forma que cualquier otro recurso HRN v2, con
 /// el tipo `repository` y la clave del repositorio como identificador.
@@ -273,39 +273,39 @@ pub fn repository_hrn(
     )
 }
 
-/// Las coordenadas de una version dentro de un repositorio.
+/// Las coordenadas de una versión dentro de un repositorio.
 ///
-/// Son inmutables: una version publicada no cambia de nombre ni de
-/// contenido. Si el contenido cambia, es otra version.
+/// Son inmutables: una versión publicada no cambia de nombre ni de
+/// contenido. Si el contenido cambia, es otra versión.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PackageCoordinates {
     /// El nombre del paquete.
     pub package_name: String,
-    /// La version del paquete.
+    /// La versión del paquete.
     pub package_version: String,
 }
 
-/// Una version publicada: el contenido con su nombre.
+/// Una versión publicada: el contenido con su nombre.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PackageVersion {
     /// La cuenta propietaria.
     pub account: String,
     /// El repositorio.
     pub repository: String,
-    /// El nombre y la version.
+    /// El nombre y la versión.
     pub coordinates: PackageCoordinates,
     /// El digest del contenido.
     pub digest: ContentDigest,
     /// Los bytes que tiene el contenido.
     pub size_bytes: u64,
-    /// Cuando se publico.
+    /// Cuando se publicó.
     pub published_at: DateTime<Utc>,
 }
 
 /// Un asset: una ruta de un repositorio.
 ///
-/// El asset es la posicion, no el contenido: apunta a una version y a su
-/// digest. Mover el asset a otra version es una operacion del indice, y
+/// El asset es la posición, no el contenido: apunta a una versión y a su
+/// digest. Mover el asset a otra versión es una operación del índice, y
 /// no toca los bytes de ninguna de las dos.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetRecord {
@@ -315,27 +315,27 @@ pub struct AssetRecord {
     pub repository: String,
     /// La ruta dentro del repositorio.
     pub asset_path: String,
-    /// La version a la que apunta.
+    /// La versión a la que apunta.
     pub coordinates: PackageCoordinates,
     /// El digest del contenido al que apunta.
     pub digest: ContentDigest,
     /// Los bytes que tiene ese contenido.
     pub size_bytes: u64,
-    /// Cuando se movio por ultima vez.
+    /// Cuando se movió por última vez.
     pub updated_at: DateTime<Utc>,
 }
 
 /// Una referencia viva a un blob del CAS.
 ///
 /// La referencia dice que blob sirve **una ruta**: es la fila que se
-/// mueve con el asset, para que la descarga y la recoleccion no
+/// mueve con el asset, para que la descarga y la recolección no
 /// apontam a contenidos distintos.
 ///
-/// El blob de una version publicada lo protege su fila de version, que es
+/// El blob de una versión publicada lo protege su fila de versión, que es
 /// inmutable y conserva el digest y la longitud. La referencia protege el
 /// contenido que la ruta sirve **mientras lo sirva**: mover el asset
-/// reescribe la referencia al digest nuevo, y la version que se queda
-/// atras sigue declarada, con su digest, en su propia fila. Quien recoja
+/// reescribe la referencia al digest nuevo, y la versión que se queda
+/// atrás sigue declarada, con su digest, en su propia fila. Quien recoja
 /// blobs tiene que tener en cuenta las dos cosas.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlobReference {
@@ -351,14 +351,14 @@ pub struct BlobReference {
     pub scope: DigestScope,
     /// Los bytes que tiene el blob.
     pub size_bytes: u64,
-    /// Cuando se escribio la referencia.
+    /// Cuando se escribió la referencia.
     pub updated_at: DateTime<Utc>,
 }
 
-/// Una etiqueta mutable: un nombre que apunta a una version.
+/// Una etiqueta mutable: un nombre que apunta a una versión.
 ///
-/// Mover la etiqueta cambia esta fila y nada mas. La version que queda
-/// atras conserva su digest y sus bytes, y sigue siendo alcanzable por
+/// Mover la etiqueta cambia esta fila y nada más. La versión que queda
+/// atrás conserva su digest y sus bytes, y sigue siendo alcanzable por
 /// sus coordenadas.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutableTag {
@@ -368,41 +368,41 @@ pub struct MutableTag {
     pub repository: String,
     /// El nombre de la etiqueta.
     pub tag_name: String,
-    /// La version a la que apunta ahora.
+    /// La versión a la que apunta ahora.
     pub coordinates: PackageCoordinates,
-    /// Cuando se movio.
+    /// Cuando se movió.
     pub updated_at: DateTime<Utc>,
 }
 
-/// Lo que se quiere publicar, en una sola operacion.
+/// Lo que se quiere publicar, en una sola operación.
 ///
-/// Publicar son cuatro cosas a la vez: la version, el asset, la referencia
-/// al blob y las etiquetas. Van juntas porque un asset sin version no
-/// resuelve, y una version sin asset no se puede descargar.
+/// Publicar son cuatro cosas a la vez: la versión, el asset, la referencia
+/// al blob y las etiquetas. Van juntas porque un asset sin versión no
+/// resuelve, y una versión sin asset no se puede descargar.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Publication {
     /// El repositorio donde se publica.
     pub repository: String,
     /// La ruta dentro del repositorio.
     pub asset_path: String,
-    /// El nombre y la version.
+    /// El nombre y la versión.
     pub coordinates: PackageCoordinates,
     /// El digest del contenido.
     pub digest: ContentDigest,
     /// Los bytes que tiene el contenido.
     pub size_bytes: u64,
-    /// Las etiquetas que nacen con esta publicacion.
+    /// Las etiquetas que nacen con esta publicación.
     pub tags: Vec<String>,
 }
 
-/// Lo que la publicacion dejo.
+/// Lo que la publicación dejó.
 ///
-/// `created` dice si las filas se crearon o si ya estaban ahi con el mismo
+/// `created` dice si las filas se crearon o si ya estaban ahí con el mismo
 /// contenido. Republicar lo mismo no es un error ni una escritura: es lo
 /// mismo, dicho dos veces.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishOutcome {
-    /// La version.
+    /// La versión.
     pub version: PackageVersion,
     /// El asset.
     pub asset: AssetRecord,

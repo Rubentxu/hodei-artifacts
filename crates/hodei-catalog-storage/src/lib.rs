@@ -1,13 +1,13 @@
-//! El adaptador del catalogo sobre SurrealDB.
+//! El adaptador del catálogo sobre SurrealDB.
 //!
 //! El dominio vive en `hodei-catalog`, que no sabe que existe una base de
-//! datos. Aqui es donde se sabe: las tablas del catalogo, los indices que
+//! datos. Aquí es donde se sabe: las tablas del catálogo, los índices que
 //! decidan los conflictos, y las transacciones que hacen que publicar sea
 //! una sola cosa y no cuatro.
 //!
-//! La division no es tidiness. Es una garantia que el compilador
+//! La división no es tidiness. Es una garantía que el compilador
 //! comprueba: el crate del dominio **no puede** nombrar un motor de base
-//! de datos, asi que sus contratos no pueden depender de uno por accidente.
+//! de datos, así que sus contratos no pueden depender de uno por accidente.
 
 #![forbid(unsafe_code)]
 

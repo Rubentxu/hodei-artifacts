@@ -1,70 +1,70 @@
-//! Los errores del catalogo.
+//! Los errores del catálogo.
 //!
-//! La distincion que mas importa aqui es la de **Missing**, **Denied** y
+//! La distinción que más importa aquí es la de **Missing**, **Denied** y
 //! **Corrupt**, porque los tres se parecen y no son lo mismo:
 //!
-//! - **Missing**: no hay nada ahi. La peticion es valida y el recurso no
+//! - **Missing**: no hay nada ahí. La petición es válida y el recurso no
 //!   existe.
-//! - **Denied**: hay algo ahi y este principal no puede verlo. La peticion
-//!   es valida y el permiso no.
-//! - **Corrupt**: hay algo ahi y no se puede leer bien. La peticion es
-//!   valida y el dato esta roto.
+//! - **Denied**: hay algo ahí y este principal no puede verlo. La petición
+//!   es válida y el permiso no.
+//! - **Corrupt**: hay algo ahí y no se puede leer bien. La petición es
+//!   válida y el dato está roto.
 //!
-//! Confundirlos es peor que no responder: un `Missing` donde habia un
-//! `Denied` hace que el cliente repita; un `Corrupt` donde habia un
+//! Confundirlos es peor que no responder: un `Missing` donde había un
+//! `Denied` hace que el cliente repita; un `Corrupt` donde había un
 //! `Missing` hace que el cliente borre algo que no era suyo.
 
 use thiserror::Error;
 
 use crate::model::RepositoryMode;
 
-/// Lo que puede fallar en el catalogo.
+/// Lo que puede fallar en el catálogo.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CatalogError {
-    /// No existe lo que se pidio.
+    /// No existe lo que se pidió.
     #[error("there is no {kind} for {key}")]
     Missing {
-        /// Que se pidio.
+        /// Qué se pidió.
         kind: &'static str,
-        /// Con que coordenadas se pidio.
+        /// Con qué coordenadas se pidió.
         key: String,
     },
 
     /// El principal no tiene permiso.
     #[error("the principal is not allowed to {action} the {kind} {key}: {reason}")]
     Denied {
-        /// Que se quiso hacer.
+        /// Qué se quiso hacer.
         action: &'static str,
-        /// Sobre que.
+        /// Sobre qué.
         kind: &'static str,
-        /// Con que coordenadas.
+        /// Con qué coordenadas.
         key: String,
-        /// Por que no.
+        /// Por qué no.
         reason: String,
     },
 
     /// El registro existe pero no se puede leer bien.
     #[error("the {kind} {key} is corrupt: {detail}")]
     Corrupt {
-        /// Que se pidio.
+        /// Qué se pidió.
         kind: &'static str,
-        /// Con que coordenadas.
+        /// Con qué coordenadas.
         key: String,
-        /// Que esta roto.
+        /// Qué está roto.
         detail: String,
     },
 
-    /// Ya hay algo ahi con otro contenido.
+    /// Ya hay algo ahí con otro contenido.
     ///
     /// Es un conflicto y no un fallo: la base de datos se niega a
-    /// sobrescribir, y el catalogo no inventa una regla para hacerlo.
+    /// sobrescribir, y el catálogo no inventa una regla para hacerlo.
     #[error("the {kind} {key} already exists with different content: {detail}")]
     Conflict {
-        /// Que se quiso escribir.
+        /// Qué se quiso escribir.
         kind: &'static str,
-        /// Con que coordenadas.
+        /// Con qué coordenadas.
         key: String,
-        /// En que se diferencia de lo que hay.
+        /// En qué se diferencia de lo que hay.
         detail: String,
     },
 
@@ -75,26 +75,26 @@ pub enum CatalogError {
         mode: RepositoryMode,
     },
 
-    /// La peticion no tiene sentido.
+    /// La petición no tiene sentido.
     #[error("the request is not valid: {detail}")]
     InvalidRequest {
-        /// Por que no.
+        /// Por qué no.
         detail: String,
     },
 
-    /// El almacen tiene un esquema que esta build no entiende.
+    /// El almacén tiene un esquema que esta build no entiende.
     ///
-    /// No es un fallo del almacenamiento: es un almacen que se escribio
-    /// con una version mas nueva que esta. Declarar el esquema encima no
-    /// lo arregla (las definiciones que ya estan no se rehacen), asi que
-    /// la unica respuesta honesta es no seguir y decirlo.
+    /// No es un fallo del almacenamiento: es un almacén que se escribió
+    /// con una versión más nueva que esta. Declarar el esquema encima no
+    /// lo arregla (las definiciones que ya están no se rehacen), así que
+    /// la única respuesta honesta es no seguir y decirlo.
     #[error(
         "the catalog storage has the schema version {found} and this build understands {expected}"
     )]
     SchemaMismatch {
-        /// La version que hay en el almacen.
+        /// La versión que hay en el almacén.
         found: i64,
-        /// La version que entiende esta build.
+        /// La versión que entiende esta build.
         expected: i64,
     },
 
@@ -107,7 +107,7 @@ pub enum CatalogError {
 }
 
 impl CatalogError {
-    /// El error de "no hay nada ahi".
+    /// El error de "no hay nada ahí".
     pub fn missing(kind: &'static str, key: impl Into<String>) -> Self {
         CatalogError::Missing {
             kind,
@@ -115,7 +115,7 @@ impl CatalogError {
         }
     }
 
-    /// El error de "hay algo ahi y esta roto".
+    /// El error de "hay algo ahí y está roto".
     pub fn corrupt(kind: &'static str, key: impl Into<String>, detail: impl Into<String>) -> Self {
         CatalogError::Corrupt {
             kind,
@@ -124,7 +124,7 @@ impl CatalogError {
         }
     }
 
-    /// El error de "ya hay algo ahi con otro contenido".
+    /// El error de "ya hay algo ahí con otro contenido".
     pub fn conflict(kind: &'static str, key: impl Into<String>, detail: impl Into<String>) -> Self {
         CatalogError::Conflict {
             kind,
@@ -133,7 +133,7 @@ impl CatalogError {
         }
     }
 
-    /// El error de "la peticion no tiene sentido".
+    /// El error de "la petición no tiene sentido".
     pub fn invalid(detail: impl Into<String>) -> Self {
         CatalogError::InvalidRequest {
             detail: detail.into(),

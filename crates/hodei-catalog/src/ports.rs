@@ -1,8 +1,8 @@
-//! Los puertos del catalogo.
+//! Los puertos del catálogo.
 //!
-//! El catalogo habla con el mundo por cuatro puertos: leer, escribir,
+//! El catálogo habla con el mundo por cuatro puertos: leer, escribir,
 //! decidir quien puede hacer cada cosa, y preguntar por la integridad de
-//! los bytes que el catalogo referencia. Ninguno de ellos nombra una base
+//! los bytes que el catálogo referencia. Ninguno de ellos nombra una base
 //! de datos: ese conocimiento vive en el crate de adaptadores.
 
 use async_trait::async_trait;
@@ -14,16 +14,16 @@ use crate::model::{
     Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor,
 };
 
-/// Lo que un principal quiere hacer con el catalogo.
+/// Lo que un principal quiere hacer con el catálogo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogAction {
-    /// Leer un asset, una version o una etiqueta.
+    /// Leer un asset, una versión o una etiqueta.
     Read,
     /// Publicar contenido.
     Publish,
     /// Mover una etiqueta.
     MoveTag,
-    /// Mover un asset a otra version.
+    /// Mover un asset a otra versión.
     MoveAsset,
     /// Crear o reconfigurar un repositorio.
     Configure,
@@ -52,7 +52,7 @@ impl CatalogAction {
 pub enum CatalogResource {
     /// El repositorio.
     Repository,
-    /// Una version publicada.
+    /// Una versión publicada.
     Version,
     /// Un asset, identified por su ruta.
     Asset,
@@ -61,7 +61,7 @@ pub enum CatalogResource {
 }
 
 impl CatalogResource {
-    /// El nombre de la clase, que es tambien el `kind` del error `Denied`.
+    /// El nombre de la clase, que es también el `kind` del error `Denied`.
     pub fn as_str(&self) -> &'static str {
         match self {
             CatalogResource::Repository => "repository",
@@ -72,12 +72,12 @@ impl CatalogResource {
     }
 }
 
-/// La peticion que se decide.
+/// La petición que se decide.
 ///
 /// Lleva el principal y las coordenadas de lo que se pide, y nada de lo
 /// que existe. La decision se toma sobre lo que se pide, no sobre lo que
 /// hay: si la decision dependiera de la existencia, responder `Denied` a
-/// un objeto de otra cuenta ya seria filtrar su existencia.
+/// un objeto de otra cuenta ya sería filtrar su existencia.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessRequest {
     /// La cuenta del principal verificado.
@@ -90,12 +90,12 @@ pub struct AccessRequest {
     pub repository: String,
     /// La clave del recurso dentro del repositorio: la clave del
     /// repositorio, la ruta del asset, las coordenadas del paquete o el
-    /// nombre de la etiqueta, segun la clase del recurso.
+    /// nombre de la etiqueta, según la clase del recurso.
     pub subject: String,
 }
 
 impl AccessRequest {
-    /// La peticion sobre un repositorio.
+    /// La petición sobre un repositorio.
     pub fn repository(principal_account: &str, action: CatalogAction, repo_key: &str) -> Self {
         Self {
             principal_account: principal_account.to_string(),
@@ -106,7 +106,7 @@ impl AccessRequest {
         }
     }
 
-    /// La peticion sobre un asset, por su ruta.
+    /// La petición sobre un asset, por su ruta.
     pub fn asset(
         principal_account: &str,
         action: CatalogAction,
@@ -122,7 +122,7 @@ impl AccessRequest {
         }
     }
 
-    /// La peticion sobre una version, por sus coordenadas.
+    /// La petición sobre una versión, por sus coordenadas.
     pub fn version(
         principal_account: &str,
         action: CatalogAction,
@@ -141,7 +141,7 @@ impl AccessRequest {
         }
     }
 
-    /// La peticion sobre una etiqueta, por su nombre.
+    /// La petición sobre una etiqueta, por su nombre.
     pub fn tag(
         principal_account: &str,
         action: CatalogAction,
@@ -157,7 +157,7 @@ impl AccessRequest {
         }
     }
 
-    /// La peticion de publicacion.
+    /// La petición de publicación.
     pub fn publish(principal_account: &str, repository: &str, asset_path: &str) -> Self {
         Self::asset(
             principal_account,
@@ -168,7 +168,7 @@ impl AccessRequest {
     }
 }
 
-/// Lo que se decide sobre una peticion.
+/// Lo que se decide sobre una petición.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccessDecision {
     /// Se permite.
@@ -177,22 +177,22 @@ pub enum AccessDecision {
     Deny(String),
 }
 
-/// Quien decide si una peticion se atiende.
+/// Quien decide si una petición se atiende.
 ///
-/// El catalogo no sabe de Cedar, ni de roles, ni de tokens: solo sabe
+/// El catálogo no sabe de Cedar, ni de roles, ni de tokens: solo sabe
 /// preguntar. Quien decide se inyecta, y el valor por defecto es
-/// denegar: un catalogo al que no se le ha puesto un decisor no publica
+/// denegar: un catálogo al que no se le ha puesto un decisor no publica
 /// nada.
 #[async_trait]
 pub trait CatalogAuthorizer: Send + Sync {
-    /// Decide sobre la peticion.
+    /// Decide sobre la petición.
     async fn authorize(&self, request: &AccessRequest) -> Result<AccessDecision, CatalogError>;
 }
 
 /// El decisor que no permite nada.
 ///
-/// Es el valor por defecto de un catalogo sin decisor, y por eso es
-/// tambien el que se usa para comprobar que el camino sin permisos esta
+/// Es el valor por defecto de un catálogo sin decisor, y por eso es
+/// también el que se usa para comprobar que el camino sin permisos está
 /// cerrado de verdad.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DenyAllAuthorizer;
@@ -209,9 +209,9 @@ impl CatalogAuthorizer for DenyAllAuthorizer {
 
 /// El decisor que permite todo.
 ///
-/// Solo para el servicio interno, que ya autorizo la peticion antes de
-/// llegar aqui. No es un atajo de las pruebas: es la frontera del
-/// catalogo, que no vuelve a decidir lo que la frontera ya decidio.
+/// Solo para el servicio interno, que ya autorizó la petición antes de
+/// llegar aquí. No es un atajo de las pruebas: es la frontera del
+/// catálogo, que no vuelve a decidir lo que la frontera ya decidió.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AllowAllAuthorizer;
 
@@ -225,39 +225,39 @@ impl CatalogAuthorizer for AllowAllAuthorizer {
 /// Lo que puede fallar al preguntar por un blob.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum BlobProbeError {
-    /// El blob no esta en el almacen.
+    /// El blob no está en el almacén.
     #[error("the blob is not in the store")]
     Missing,
-    /// El almacen no pudo responder.
+    /// El almacén no pudo responder.
     #[error("the blob store is unavailable: {detail}")]
     Unavailable {
-        /// Lo que dijo el almacen.
+        /// Lo que dijo el almacén.
         detail: String,
     },
 }
 
 /// La longitud real de un blob en el CAS.
 ///
-/// El catalogo guarda la longitud que declaro el cliente. Esta es la
+/// El catálogo guarda la longitud que declaró el cliente. Esta es la
 /// longitud que tiene el contenido de verdad, y compararlas es lo que
 /// separa un registro sano de uno roto.
 ///
-/// La pregunta lleva **la ubicacion** del blob y no solo su digest, porque
-/// la clave con la que el CAS guarda los bytes depende del ambito: el
+/// La pregunta lleva **la ubicación** del blob y no solo su digest, porque
+/// la clave con la que el CAS guarda los bytes depende del ámbito: el
 /// mismo digest vive en una ranura global o en una particionada por
-/// cuenta. Preguntar por el digest a secas solo podria encontrar el
-/// contenido global, y daria por roto un blob particionado que esta
+/// cuenta. Preguntar por el digest a secas solo podría encontrar el
+/// contenido global, y daría por roto un blob particionado que está
 /// sano.
 ///
 /// Lo que la sonda NO hace es recalcular el digest: comprueba la
-/// longitud, que es barato, y deja la verificacion profunda al scrub.
+/// longitud, que es barato, y deja la verificación profunda al scrub.
 #[async_trait]
 pub trait BlobIntegrityProbe: Send + Sync {
     /// La longitud del blob, en bytes.
     async fn length_of(&self, location: &BlobLocation) -> Result<u64, BlobProbeError>;
 }
 
-/// La lectura del catalogo.
+/// La lectura del catálogo.
 ///
 /// Todas las lecturas llevan la cuenta del principal verificado. La cuenta
 /// no es un filtro que se pueda olvidar: es parte de la consulta, y por
@@ -279,7 +279,7 @@ pub trait CatalogReader: Send + Sync {
         asset_path: &str,
     ) -> Result<AssetRecord, CatalogError>;
 
-    /// La version publicada.
+    /// La versión publicada.
     async fn version(
         &self,
         principal_account: &str,
@@ -287,7 +287,7 @@ pub trait CatalogReader: Send + Sync {
         coordinates: &PackageCoordinates,
     ) -> Result<PackageVersion, CatalogError>;
 
-    /// La etiqueta y la version a la que apunta.
+    /// La etiqueta y la versión a la que apunta.
     async fn tag(
         &self,
         principal_account: &str,
@@ -304,7 +304,7 @@ pub trait CatalogReader: Send + Sync {
     ) -> Result<BlobReference, CatalogError>;
 }
 
-/// La escritura del catalogo.
+/// La escritura del catálogo.
 #[async_trait]
 pub trait CatalogWriter: Send + Sync {
     /// Crea un repositorio.
@@ -314,7 +314,7 @@ pub trait CatalogWriter: Send + Sync {
         descriptor: RepositoryDescriptor,
     ) -> Result<RepositoryDescriptor, CatalogError>;
 
-    /// Cambia la configuracion del repositorio y sube su version.
+    /// Cambia la configuración del repositorio y sube su versión.
     async fn update_config(
         &self,
         principal_account: &str,
@@ -322,15 +322,15 @@ pub trait CatalogWriter: Send + Sync {
         config: RepositoryConfig,
     ) -> Result<RepositoryDescriptor, CatalogError>;
 
-    /// Publica contenido: version, asset, referencia y etiquetas, en una
-    /// sola operacion.
+    /// Publica contenido: versión, asset, referencia y etiquetas, en una
+    /// sola operación.
     async fn publish(
         &self,
         principal_account: &str,
         publication: Publication,
     ) -> Result<PublishOutcome, CatalogError>;
 
-    /// Mueve una etiqueta a otra version.
+    /// Mueve una etiqueta a otra versión.
     ///
     /// Mover la etiqueta no toca el blob de ninguna de las dos versiones.
     async fn move_tag(
@@ -341,16 +341,16 @@ pub trait CatalogWriter: Send + Sync {
         coordinates: PackageCoordinates,
     ) -> Result<MutableTag, CatalogError>;
 
-    /// Mueve un asset a otra version.
+    /// Mueve un asset a otra versión.
     ///
-    /// La ruta de un repositorio es un indice: se puede mover, pero moverlo
-    /// es una operacion explicita y no un efecto colateral de publicar. Por
+    /// La ruta de un repositorio es un índice: se puede mover, pero moverlo
+    /// es una operación explícita y no un efecto colateral de publicar. Por
     /// eso publicar en una ruta ocupada es un conflicto, y esta es la
-    /// operacion que resuelve ese conflicto cuando el cliente lo pide.
+    /// operación que resuelve ese conflicto cuando el cliente lo pide.
     ///
-    /// Mover el asset mueve tambien la referencia al blob: la referencia
+    /// Mover el asset mueve también la referencia al blob: la referencia
     /// tiene que apuntar al contenido al que apunta el asset, o la
-    /// descarga serviria un blob y la recoleccion guardaria otro.
+    /// descarga serviría un blob y la recolección guardaría otro.
     async fn move_asset(
         &self,
         principal_account: &str,

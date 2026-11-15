@@ -1,13 +1,13 @@
-//! El contrato del catalogo durable (HAR-02).
+//! El contrato del catálogo durable (HAR-02).
 //!
 //! Las pruebas van contra SurrealDB de verdad, y contra el motor
-//! **persistente** en todas ellas, porque un catalogo que solo funciona en
-//! memoria no es un catalogo, y porque el motor en memoria no arbitra dos
+//! **persistente** en todas ellas, porque un catálogo que solo funciona en
+//! memoria no es un catálogo, y porque el motor en memoria no arbitra dos
 //! escrituras concurrentes del mismo registro: las dos dicen que han
-//! escrito y la ultima gana en silencio.
+//! escrito y la última gana en silencio.
 //!
 //! Los casos son los de la UAT `CAT-01..CAT-03` y los cinco criterios de
-//! aceptacion de HSP-96.
+//! aceptación de HSP-96.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,10 +30,10 @@ use surrealdb::engine::local::RocksDb;
 ///
 /// Las pruebas van contra el motor **persistente**, y no por casualidad:
 /// el motor en memoria no arbitra dos escrituras concurrentes del mismo
-/// registro (las dos dicen que han escrito y la ultima gana en silencio),
+/// registro (las dos dicen que han escrito y la última gana en silencio),
 /// mientras que el persistente detecta el conflicto de escritura y
-/// rechaza al que pierde. Una garantia que solo se cumple en un motor no
-/// es una garantia del catalogo, es una casualidad del motor, asi que las
+/// rechaza al que pierde. Una garantía que solo se cumple en un motor no
+/// es una garantía del catálogo, es una casualidad del motor, así que las
 /// pruebas se hacen contra el que se despliega.
 async fn open_store(path: &std::path::Path) -> Surreal<surrealdb::engine::local::Db> {
     open_disk(path).await
@@ -42,8 +42,8 @@ async fn open_store(path: &std::path::Path) -> Surreal<surrealdb::engine::local:
 /// Una base en disco, con su namespace y su base de datos.
 ///
 /// RocksDB guarda un bloqueo en el directorio y lo suelta cuando el
-/// proceso que lo abrio se deshace, pero lo suelta despues: el primer
-/// intento de reabrir puede encontrar el bloqueo aun puesto, y eso no es
+/// proceso que lo abrió se deshace, pero lo suelta después: el primer
+/// intento de reabrir puede encontrar el bloqueo aún puesto, y eso no es
 /// un fallo del reinicio sino una carrera del motor.
 async fn open_disk(path: &std::path::Path) -> Surreal<surrealdb::engine::local::Db> {
     let mut last = String::new();
@@ -62,12 +62,12 @@ async fn open_disk(path: &std::path::Path) -> Surreal<surrealdb::engine::local::
     panic!("the database at {path:?} could not be opened: {last}");
 }
 
-/// Un almacen que deja pasar a las cuentas de la lista.
+/// Un almacén que deja pasar a las cuentas de la lista.
 fn store_for(db: Surreal<surrealdb::engine::local::Db>) -> SurrealCatalogStore {
     SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer))
 }
 
-/// Un almacen con un decisor propio.
+/// Un almacén con un decisor propio.
 fn store_with(
     db: Surreal<surrealdb::engine::local::Db>,
     authorizer: Arc<dyn CatalogAuthorizer>,
@@ -97,12 +97,12 @@ impl CatalogAuthorizer for ListedAccounts {
 /// La sonda que dice la longitud que tiene cada blob.
 ///
 /// Indexa por la **clave** con la que el CAS guarda los bytes, y no por el
-/// digest: en un ambito particionado el mismo digest vive en otra ranura,
-/// y una sonda que solo conociera el digest daria por roto un blob que
-/// esta sano.
+/// digest: en un ámbito particionado el mismo digest vive en otra ranura,
+/// y una sonda que solo conociera el digest daría por roto un blob que
+/// está sano.
 ///
-/// Ademas apunta donde se le pregunto, para que se pueda comprobar que la
-/// pregunta lleva la ubicacion y no solo el digest.
+/// Además apunta donde se le preguntó, para que se pueda comprobar que la
+/// pregunta lleva la ubicación y no solo el digest.
 #[derive(Default)]
 struct KnownLengths {
     lengths: HashMap<String, u64>,
@@ -118,7 +118,7 @@ impl KnownLengths {
         }
     }
 
-    /// La clave de la ultima pregunta.
+    /// La clave de la última pregunta.
     fn last_asked(&self) -> Option<String> {
         self.asked
             .lock()
@@ -221,7 +221,7 @@ async fn a_repository_declares_account_key_format_mode_and_versioned_config() {
         "hrn:hodei:artifacts:eu:acme:repository/releases"
     );
 
-    // Y se lee igual que se escribio.
+    // Y se lee igual que se escribió.
     let read = store
         .repository("acme", "releases")
         .await
@@ -255,12 +255,12 @@ async fn a_mode_this_release_does_not_serve_is_refused_clearly() {
             .await
             .expect_err("the mode is not served");
         assert_eq!(refused, CatalogError::ModeNotImplemented { mode });
-        // Y el mensaje dice cual es el modo, para que el que lo pidio sepa
+        // Y el mensaje dice cuál es el modo, para que el que lo pidió sepa
         // que falta.
         assert!(refused.to_string().contains(mode.as_str()));
     }
 
-    // Y no se ha creado ningun repositorio con ese modo.
+    // Y no se ha creado ningún repositorio con ese modo.
     assert!(matches!(
         store.repository("acme", "releases").await,
         Err(CatalogError::Missing { .. })
@@ -294,8 +294,8 @@ async fn the_config_version_rises_when_the_config_changes() {
         .await
         .expect("update config");
 
-    // La version la pone el catalogo, no el cliente: subirla es lo que
-    // significa que la configuracion es otra.
+    // La versión la pone el catálogo, no el cliente: subirla es lo que
+    // significa que la configuración es otra.
     assert_eq!(updated.config.version, 2);
     assert_eq!(updated.config.digest_scope, DigestScope::AccountPartitioned);
 
@@ -305,7 +305,7 @@ async fn the_config_version_rises_when_the_config_changes() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: el ambito del digest, el asset y la etiqueta mutable.
+// AC2: el ámbito del digest, el asset y la etiqueta mutable.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -371,7 +371,7 @@ async fn the_digest_scope_is_the_policy_of_the_repository() {
     assert_eq!(private.scope, DigestScope::AccountPartitioned);
     assert_eq!(shared.digest, private.digest);
 
-    // Y la politica decide donde viven los bytes.
+    // Y la política decide donde viven los bytes.
     assert_eq!(
         shared.scope.blob_key("acme", &shared.digest),
         shared.digest.value
@@ -429,7 +429,7 @@ async fn an_asset_is_an_account_a_repository_and_a_path() {
     assert_eq!(asset.digest, ContentDigest::of_bytes(content));
     assert_eq!(asset.size_bytes, content.len() as u64);
 
-    // Y la version que apunta es la que se publico.
+    // Y la versión que apunta es la que se publicó.
     let version: PackageVersion = store
         .version(
             "acme",
@@ -506,7 +506,7 @@ async fn a_mutable_tag_moves_without_touching_the_blob() {
         .expect("move tag");
     assert_eq!(moved.coordinates.package_version, "2.0");
 
-    // La version que se queda atras conserva su digest y sus bytes.
+    // La versión que se queda atrás conserva su digest y sus bytes.
     let old = store
         .version(
             "acme",
@@ -521,7 +521,7 @@ async fn a_mutable_tag_moves_without_touching_the_blob() {
     assert_eq!(old.digest, ContentDigest::of_bytes(first));
     assert_eq!(old.size_bytes, first.len() as u64);
 
-    // Y el blob de la version que se queda atras sigue intacto y sigue
+    // Y el blob de la versión que se queda atrás sigue intacto y sigue
     // referenciado: la etiqueta no toca el blob.
     let reference = store
         .reference("acme", "releases", "app-1.0.bin")
@@ -581,7 +581,7 @@ async fn moving_an_asset_repoints_the_path_and_its_blob_reference() {
         "unexpected error: {refused:?}"
     );
 
-    // Moverlo es explicito, y mueve el asset y su referencia a la vez.
+    // Moverlo es explícito, y mueve el asset y su referencia a la vez.
     let moved = store
         .move_asset(
             "acme",
@@ -598,7 +598,7 @@ async fn moving_an_asset_repoints_the_path_and_its_blob_reference() {
     assert_eq!(moved.digest, ContentDigest::of_bytes(second));
 
     // La referencia apunta al mismo contenido que el asset: si no, la
-    // descarga serviria un blob y la recoleccion guardaria otro.
+    // descarga serviría un blob y la recolección guardaría otro.
     let reference = store
         .reference("acme", "releases", "app.bin")
         .await
@@ -606,7 +606,7 @@ async fn moving_an_asset_repoints_the_path_and_its_blob_reference() {
     assert_eq!(reference.digest, ContentDigest::of_bytes(second));
     assert_eq!(reference.size_bytes, second.len() as u64);
 
-    // Y la version anterior sigue intacta: mover un indice no reescribe
+    // Y la versión anterior sigue intacta: mover un índice no reescribe
     // un contenido.
     let old = store
         .version(
@@ -656,7 +656,7 @@ async fn a_second_incompatible_publication_is_a_conflict_and_does_not_overwrite(
         .await
         .expect("publish first");
 
-    // La misma version con otro contenido es un conflicto: una version
+    // La misma versión con otro contenido es un conflicto: una versión
     // publicada no cambia.
     let refused = store
         .publish(
@@ -676,7 +676,7 @@ async fn a_second_incompatible_publication_is_a_conflict_and_does_not_overwrite(
         "unexpected error: {refused:?}"
     );
 
-    // Y otra version en la misma ruta tambien es un conflicto: la ruta ya
+    // Y otra versión en la misma ruta también es un conflicto: la ruta ya
     // apunta a algo.
     let refused = store
         .publish(
@@ -690,7 +690,7 @@ async fn a_second_incompatible_publication_is_a_conflict_and_does_not_overwrite(
         "unexpected error: {refused:?}"
     );
 
-    // Y nada de lo que se publico cambio.
+    // Y nada de lo que se publicó cambió.
     let asset = store
         .asset("acme", "releases", "app.bin")
         .await
@@ -764,7 +764,7 @@ async fn a_publication_that_fails_leaves_nothing_behind() {
         .await
         .expect("create repository");
 
-    // La etiqueta `latest` ya apunta a la version 1.0.
+    // La etiqueta `latest` ya apunta a la versión 1.0.
     store
         .publish(
             "acme",
@@ -776,9 +776,9 @@ async fn a_publication_that_fails_leaves_nothing_behind() {
         .await
         .expect("publish first");
 
-    // Ahora se publica otra version en otra ruta, con la misma etiqueta. La
-    // etiqueta ya apunta a otro sitio, asi que la publicacion no puede
-    // hacerse: y al no poder hacerse, no deja ni el asset ni la version.
+    // Ahora se publica otra versión en otra ruta, con la misma etiqueta. La
+    // etiqueta ya apunta a otro sitio, así que la publicación no puede
+    // hacerse: y al no poder hacerse, no deja ni el asset ni la versión.
     let refused = store
         .publish(
             "acme",
@@ -794,7 +794,7 @@ async fn a_publication_that_fails_leaves_nothing_behind() {
         "unexpected error: {refused:?}"
     );
 
-    // Ni el asset ni la version existen: la transaccion se fue entera.
+    // Ni el asset ni la versión existen: la transacción se fue entera.
     assert!(matches!(
         store.asset("acme", "releases", "other.bin").await,
         Err(CatalogError::Missing { .. })
@@ -995,11 +995,11 @@ async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
     assert_eq!(idempotent, 1, "the other one found it already there");
 
     // Ahora los dos clientes publican CONTENIDO DISTINTO en la misma ruta.
-    // Las coordenadas son distintas a proposito: asi cada uno tiene su
-    // propia version, y el que pierde se encuentra con que la version se
+    // Las coordenadas son distintas a propósito: así cada uno tiene su
+    // propia versión, y el que pierde se encuentra con que la versión se
     // puede escribir pero el asset de la ruta ya es del otro. Su
-    // transaccion se cae a mitad, y de ahi se ve si el motor deshace lo
-    // que ya habia escrito.
+    // transacción se cae a mitad, y de ahí se ve si el motor deshace lo
+    // que ya había escrito.
     let conflict_left = left.publish(
         "acme",
         publication("releases", "other.bin", "pkg", "2.0", b"the left content"),
@@ -1022,7 +1022,7 @@ async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
         "the other one got a conflict, not an overwrite"
     );
 
-    // Y lo que quedo es el contenido del que gano, no una mezcla.
+    // Y lo que quedó es el contenido del que ganó, no una mezcla.
     let asset = left
         .asset("acme", "releases", "other.bin")
         .await
@@ -1034,9 +1034,9 @@ async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
         "the asset holds a digest that nobody published"
     );
 
-    // La referencia dice lo mismo que el asset, y la version a la que
-    // apunta existe y dice lo mismo. Si la transaccion del perdedor se
-    // hubiera quedado a medias, aqui apareceria una version con un
+    // La referencia dice lo mismo que el asset, y la versión a la que
+    // apunta existe y dice lo mismo. Si la transacción del perdedor se
+    // hubiera quedado a medias, aquí aparecería una versión con un
     // contenido que no es el del asset.
     let reference = left
         .reference("acme", "releases", "other.bin")
@@ -1049,7 +1049,7 @@ async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
         .expect("read version");
     assert_eq!(version.digest, asset.digest);
 
-    // Y la version del perdedor no esta: su transaccion se deshizo entera.
+    // Y la versión del perdedor no está: su transacción se deshizo entera.
     let loser = PackageCoordinates {
         package_name: "pkg".to_string(),
         package_version: if asset.coordinates.package_version == "2.0" {
@@ -1068,16 +1068,16 @@ async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
 ///
 /// Solo la lee quien escribe. El proceso que lee no la necesita, y por eso
 /// no la mira: si la mirase, una variable de entorno puesta por error en
-/// la shell podria hacer que el proceso que verifica se creyera el que
+/// la shell podría hacer que el proceso que verifica se creyera el que
 /// escribe.
 const RESTART_PATH: &str = "HAR02_CATALOG_RESTART_PATH";
 
-/// Escribe el catalogo y sale.
+/// Escribe el catálogo y sale.
 ///
 /// Vive en un proceso aparte porque el reinicio que se quiere probar es un
 /// reinicio de verdad: el bloqueo de la base lo suelta el sistema operativo
 /// cuando el proceso muere, y abrir la base en el mismo proceso no
-/// probaria eso.
+/// probaría eso.
 async fn write_the_catalog(path: &std::path::Path) {
     let db = open_disk(path).await;
     let store = store_for(db);
@@ -1109,11 +1109,11 @@ async fn write_the_catalog(path: &std::path::Path) {
 
 /// La fase de escritura del reinicio, en su propio proceso.
 ///
-/// Es un test aparte, y no una rama del de reinicio, por una razon que
-/// no es de estilo: si la fase de escritura fuera una rama, bastaria con
+/// Es un test aparte, y no una rama del de reinicio, por una razón que
+/// no es de estilo: si la fase de escritura fuera una rama, bastaría con
 /// que la variable de entorno que la activa estuviera puesta en el
 /// entorno de quien lanza la suite para que el proceso que verifica
-/// escribiera y se saliera **sin comprobar nada**, y el test pasaria en
+/// escribiera y se saliera **sin comprobar nada**, y el test pasaría en
 /// verde sin haber verificado nada. Con dos tests, el que verifica no
 /// tiene rama que lo saltee, y el que escribe falla si se lo lanza sin
 /// la ruta.
@@ -1199,7 +1199,7 @@ async fn the_catalog_survives_a_restart() {
 }
 
 // ---------------------------------------------------------------------------
-// AC5: la migracion es idempotente y los tres estados de lectura se
+// AC5: la migración es idempotente y los tres estados de lectura se
 // distinguen.
 // ---------------------------------------------------------------------------
 
@@ -1212,8 +1212,8 @@ async fn the_schema_can_be_declared_twice() {
     store.initialize().await.expect("second initialize");
     assert_eq!(store.applied_schema_version().await.expect("version"), 1);
 
-    // Y los indices siguen en su sitio: el indice es lo que decide los
-    // conflictos, asi que perderlo seria perder la garantia.
+    // Y los índices siguen en su sitio: el índice es lo que decide los
+    // conflictos, así que perderlo sería perder la garantía.
     let created = store
         .create_repository(
             "acme",
@@ -1230,7 +1230,7 @@ async fn the_schema_can_be_declared_twice() {
 
     // Pedir el mismo repositorio otra vez no es un error: es la misma
     // respuesta. Lo que si es un error es pedir OTRO repositorio con la
-    // misma clave, y ahi el indice decide.
+    // misma clave, y ahí el índice decide.
     let again = store
         .create_repository(
             "acme",
@@ -1297,7 +1297,7 @@ async fn missing_denied_and_corrupt_are_three_different_answers() {
         .await
         .expect("publish");
 
-    // MISSING: no hay nada ahi.
+    // MISSING: no hay nada ahí.
     let missing = store
         .asset("acme", "releases", "nothing-here.bin")
         .await
@@ -1307,8 +1307,8 @@ async fn missing_denied_and_corrupt_are_three_different_answers() {
         "unexpected error: {missing:?}"
     );
 
-    // DENIED: hay algo ahi y este principal no puede verlo. El decisor
-    // decide antes de mirar la base, asi que la respuesta no depende de
+    // DENIED: hay algo ahí y este principal no puede verlo. El decisor
+    // decide antes de mirar la base, así que la respuesta no depende de
     // que el objeto exista o no.
     let denying = store_with(
         db.clone(),
@@ -1326,8 +1326,8 @@ async fn missing_denied_and_corrupt_are_three_different_answers() {
     );
     assert!(denied.to_string().contains("globex"));
 
-    // CORRUPT: hay algo ahi y no cuadra. El asset dice un digest y la
-    // version a la que apunta dice otro.
+    // CORRUPT: hay algo ahí y no cuadra. El asset dice un digest y la
+    // versión a la que apunta dice otro.
     db.query(
         "UPDATE catalog_asset SET digest = $digest \
          WHERE account = 'acme' AND repository = 'releases' AND asset_path = 'app.bin'",
@@ -1379,7 +1379,7 @@ async fn an_asset_whose_blob_is_not_the_declared_size_is_corrupt() {
         .await
         .expect("publish");
 
-    // Con la sonda que dice la longitud de verdad, el asset esta sano.
+    // Con la sonda que dice la longitud de verdad, el asset está sano.
     let healthy = SurrealCatalogStore::with_authorizer(db.clone(), Arc::new(AllowAllAuthorizer))
         .with_probe(Arc::new(KnownLengths::of(HashMap::from([(
             digest.value.clone(),
@@ -1482,7 +1482,7 @@ async fn the_catalog_does_not_publish_what_it_was_not_asked_to_publish() {
         .await
         .expect("create repository");
 
-    // Una publicacion sin etiqueta no crea ninguna etiqueta.
+    // Una publicación sin etiqueta no crea ninguna etiqueta.
     store
         .publish(
             "acme",
@@ -1495,7 +1495,7 @@ async fn the_catalog_does_not_publish_what_it_was_not_asked_to_publish() {
         Err(CatalogError::Missing { .. })
     ));
 
-    // Y una publicacion con etiqueta crea esa etiqueta y solo esa.
+    // Y una publicación con etiqueta crea esa etiqueta y solo esa.
     store
         .publish(
             "acme",
@@ -1519,8 +1519,8 @@ async fn the_catalog_does_not_publish_what_it_was_not_asked_to_publish() {
 
 #[tokio::test]
 async fn the_action_of_the_request_is_what_is_authorized() {
-    // El decisor ve que se pide, no solo quien: una peticion de lectura y
-    // una de publicacion no son la misma peticion.
+    // El decisor ve que se pide, no solo quien: una petición de lectura y
+    // una de publicación no son la misma petición.
     struct Recorder {
         seen: std::sync::Mutex<Vec<CatalogAction>>,
     }
@@ -1572,16 +1572,16 @@ async fn the_action_of_the_request_is_what_is_authorized() {
 }
 
 // ---------------------------------------------------------------------------
-// Lo que la revision independiente pidio que quedara demostrado.
+// Lo que la revisión independiente pidió que quedara demostrado.
 // ---------------------------------------------------------------------------
 
 /// El decisor que permite escribir pero no leer.
 ///
 /// Es un decisor raro, y por eso sirve: comprueba que una escritura no
 /// depende de un permiso de lectura que el que escribe no tiene por que
-/// tener. Antes, escribir y releer por el camino publico hacia que un
-/// principal con permiso de escritura y sin permiso de lectura perdia su
-/// escritura: el cambio ya estaba en la base y el error decia que no.
+/// tener. Antes, escribir y releer por el camino público hacía que un
+/// principal con permiso de escritura y sin permiso de lectura perdía su
+/// escritura: el cambio ya estaba en la base y el error decía que no.
 struct WritesOnly;
 
 #[async_trait]
@@ -1601,7 +1601,7 @@ impl CatalogAuthorizer for WritesOnly {
 ///
 /// El identificador de un registro se construye con un separador. Si el
 /// separador puede aparecer dentro de una parte, "pkg|1" + "0" y "pkg" +
-/// "1|0" producen el mismo identificador, y la segunda publicacion pisa
+/// "1|0" producen el mismo identificador, y la segunda publicación pisa
 /// la primera en silencio.
 #[tokio::test]
 async fn two_names_that_only_differ_in_the_separator_do_not_collide() {
@@ -1668,9 +1668,9 @@ async fn two_names_that_only_differ_in_the_separator_do_not_collide() {
 /// Escribir no es leer.
 ///
 /// Un principal que puede escribir pero no puede leer tiene que poder
-/// escribir: si al terminar de escribir el catalogo vuelve a leer por el
-/// camino publico, la escritura se pierde en un `Denied` cuando el cambio
-/// ya esta en la base.
+/// escribir: si al terminar de escribir el catálogo vuelve a leer por el
+/// camino público, la escritura se pierde en un `Denied` cuando el cambio
+/// ya está en la base.
 #[tokio::test]
 async fn a_write_does_not_need_the_read_permission() {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -1702,7 +1702,7 @@ async fn a_write_does_not_need_the_read_permission() {
         .expect("publish");
     assert_eq!(published.asset.asset_path, "app.bin");
 
-    // Y una segunda version, para tener a donde mover el asset.
+    // Y una segunda versión, para tener a donde mover el asset.
     store
         .publish(
             "acme",
@@ -1740,12 +1740,12 @@ async fn a_write_does_not_need_the_read_permission() {
     assert_eq!(moved.coordinates.package_version, "2.0");
 }
 
-/// Dos configuraciones distintas no pueden compartir un numero de version.
+/// Dos configuraciones distintas no pueden compartir un número de versión.
 ///
-/// La version de la configuracion sirve justo para eso: lo que tiene el
+/// La versión de la configuración sirve justo para eso: lo que tiene el
 /// cliente delante y lo que tiene el repositorio. Si dos reconfiguraciones
-/// simultaneas se quedan con el mismo numero y ajustes distintos, el
-/// numero ya no dice nada.
+/// simultáneas se quedan con el mismo número y ajustes distintos, el
+/// número ya no dice nada.
 #[tokio::test]
 async fn two_configurations_never_share_a_version() {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -1783,7 +1783,7 @@ async fn two_configurations_never_share_a_version() {
         let descriptor = match result {
             Ok(descriptor) => descriptor,
             // Si una de las dos se queda fuera, que sea por conflicto: un
-            // "el almacenamiento no esta disponible" seria untrue.
+            // "el almacenamiento no está disponible" sería untrue.
             Err(error) => {
                 assert!(
                     matches!(error, CatalogError::Conflict { .. }),
@@ -1806,8 +1806,8 @@ async fn two_configurations_never_share_a_version() {
         seen.push(entry);
     }
 
-    // Y lo que quedo guardado es una de las dos, con su numero. No puede
-    // haber una tercera configuracion escondida.
+    // Y lo que quedó guardado es una de las dos, con su número. No puede
+    // haber una tercera configuración escondida.
     let stored = store
         .repository("acme", "releases")
         .await
@@ -1820,11 +1820,11 @@ async fn two_configurations_never_share_a_version() {
     );
 }
 
-/// El ambito de los digests no cambia en un repositorio que ya tiene
+/// El ámbito de los digests no cambia en un repositorio que ya tiene
 /// contenido.
 ///
-/// Los bytes se publicaron bajo un ambito, y ese es el ambito en el que
-/// siguen viviendo. Cambiarlo dejaria la politica diciendo una cosa y los
+/// Los bytes se publicaron bajo un ámbito, y ese es el ámbito en el que
+/// siguen viviendo. Cambiarlo dejaría la política diciendo una cosa y los
 /// bytes estando en otra.
 #[tokio::test]
 async fn the_scope_of_a_repository_with_content_cannot_change() {
@@ -1866,7 +1866,7 @@ async fn the_scope_of_a_repository_with_content_cannot_change() {
         "unexpected error: {refused:?}"
     );
 
-    // Y el ambito sigue siendo el de siempre.
+    // Y el ámbito sigue siendo el de siempre.
     let repository = store
         .repository("acme", "releases")
         .await
@@ -1874,16 +1874,16 @@ async fn the_scope_of_a_repository_with_content_cannot_change() {
     assert_eq!(repository.config.digest_scope, DigestScope::Global);
 }
 
-/// Publicar contenido que no esta en el almacen de bytes no se publica.
+/// Publicar contenido que no está en el almacén de bytes no se publica.
 ///
 /// Una referencia a un blob que no existe deja un camino que no lleva a
-/// nada. El catalogo que afirma una integridad que no verifica es un
-/// catalogo que miente.
+/// nada. El catálogo que afirma una integridad que no verifica es un
+/// catálogo que miente.
 #[tokio::test]
 async fn the_content_has_to_be_in_the_store_before_it_is_published() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let db = open_store(&tmp.path().join("db")).await;
-    // Una sonda que no conoce ningun blob.
+    // Una sonda que no conoce ningún blob.
     let store = store_with(db, Arc::new(AllowAllAuthorizer))
         .with_probe(Arc::new(KnownLengths::of(HashMap::new())));
     store.initialize().await.expect("initialize");
@@ -1913,18 +1913,18 @@ async fn the_content_has_to_be_in_the_store_before_it_is_published() {
         "unexpected error: {refused:?}"
     );
 
-    // Y no queda nada escrito: la publicacion no llego a empezar.
+    // Y no queda nada escrito: la publicación no llegó a empezar.
     assert!(
         store.asset("acme", "releases", "app.bin").await.is_err(),
         "the publication left an asset behind"
     );
 }
 
-/// La sonda se pregunta por la ubicacion del contenido, no por su digest.
+/// La sonda se pregunta por la ubicación del contenido, no por su digest.
 ///
 /// El mismo digest puede estar en la ranura global o en la particionada
-/// de una cuenta. Preguntar por el digest a solo encontraria la primera,
-/// y daria por roto un blob particionado que esta sano.
+/// de una cuenta. Preguntar por el digest a solo encontraría la primera,
+/// y daría por roto un blob particionado que está sano.
 #[tokio::test]
 async fn the_probe_is_asked_where_the_content_lives() {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -2008,12 +2008,12 @@ async fn a_denied_repository_is_not_reported_as_an_asset() {
     }
 }
 
-/// El nombre canonico de un repositorio tiene que ser un HRN que se pueda
+/// El nombre canónico de un repositorio tiene que ser un HRN que se pueda
 /// leer.
 ///
-/// Un repositorio cuyo nombre canonico no se puede parsear es un
+/// Un repositorio cuyo nombre canónico no se puede parsear es un
 /// repositorio que el resto de la plataforma no puede nombrar, y eso se
-/// dice cuando se crea y no el dia que una politica lo pregunte.
+/// dice cuando se crea y no el día que una política lo pregunte.
 #[tokio::test]
 async fn the_canonical_name_of_a_repository_has_to_be_a_valid_hrn() {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -2041,16 +2041,16 @@ async fn the_canonical_name_of_a_repository_has_to_be_a_valid_hrn() {
 }
 
 // ---------------------------------------------------------------------------
-// Lo que la segunda revision encontro.
+// Lo que la segunda revisión encontró.
 // ---------------------------------------------------------------------------
 
-/// Un almacen escrito por una build mas nueva no se toca.
+/// Un almacén escrito por una build más nueva no se toca.
 ///
 /// Declarar el esquema es idempotente, pero declarar el de esta build
-/// encima del de una build mas nueva no deja el almacen en la version
-/// nueva: las definiciones que ya estan no se rehacen. El almacen se
-/// quedaria con un esquema mixto y el numero de version diria una cosa y
-/// la base seria otra. La unica respuesta honesta es no tocarlo y decirlo.
+/// encima del de una build más nueva no deja el almacén en la versión
+/// nueva: las definiciones que ya están no se rehacen. El almacén se
+/// quedaría con un esquema mixto y el número de versión diría una cosa y
+/// la base sería otra. La única respuesta honesta es no tocarlo y decirlo.
 #[tokio::test]
 async fn a_store_written_by_a_newer_schema_is_not_touched() {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -2058,7 +2058,7 @@ async fn a_store_written_by_a_newer_schema_is_not_touched() {
     let store = store_for(db.clone());
     store.initialize().await.expect("initialize");
 
-    // Se dice que el almacen lo escribio una build mas nueva.
+    // Se dice que el almacén lo escribió una build más nueva.
     db.query("UPSERT $id SET applied_version = $version")
         .bind((
             "id",
@@ -2082,8 +2082,8 @@ async fn a_store_written_by_a_newer_schema_is_not_touched() {
         "unexpected error: {refused:?}"
     );
 
-    // Y el numero del almacen sigue siendo el que tenia: esta build no
-    // escribe su version encima de la de otra.
+    // Y el número del almacén sigue siendo el que tenía: esta build no
+    // escribe su versión encima de la de otra.
     assert_eq!(
         store.applied_schema_version().await.expect("the version"),
         SCHEMA_VERSION + 1,
@@ -2093,7 +2093,7 @@ async fn a_store_written_by_a_newer_schema_is_not_touched() {
 
 /// Publicar en un repositorio que no tiene nombre no es que no haya nada.
 ///
-/// Un repositorio vacio es una peticion que no tiene sentido, no un
+/// Un repositorio vacío es una petición que no tiene sentido, no un
 /// recurso que falte: la diferencia importa porque un `Missing` pide
 /// reintentar y un `InvalidRequest` pide corregir.
 #[tokio::test]
@@ -2116,12 +2116,12 @@ async fn publishing_into_an_empty_repository_is_an_invalid_request() {
     );
 }
 
-/// Republicar lo mismo dice cuando se publico, no ahora.
+/// Republicar lo mismo dice cuando se publicó, no ahora.
 ///
-/// Una republicacion idempotente no escribe nada, asi que no cambia la
+/// Una republicación idempotente no escribe nada, así que no cambia la
 /// fecha del asset. Si el resultado dijera "actualizado ahora", el
-/// resultado y la base dirian dos cosas distintas sobre el mismo
-/// registro, y el que se fiara del resultado creeria que el contenido se
+/// resultado y la base dirían dos cosas distintas sobre el mismo
+/// registro, y el que se fijaría del resultado creería que el contenido se
 /// acaba de publicar.
 #[tokio::test]
 async fn an_idempotent_publication_reports_the_instant_that_is_in_the_store() {
