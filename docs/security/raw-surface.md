@@ -225,12 +225,13 @@ staging_max_age_secs = 3600
   la cuenta, sino del despliegue.
 - `staging_max_age_secs` es la edad a partir de la cual una escritura
   interrumpida se considera abandonada. El valor por defecto es
-  generoso a propósito: el staging de una subida **viva** se está
-  escribiendo, así que su fecha es reciente, y el de otro proceso no se
-  toca. Lo que el arranque **no** puede saber es si una subida viva
-  lleva horas sin escribir: si el cliente se para a mitad de camino, su
-  staging es indistinguible del de un proceso muerto, y eso es un
-  timeout, no una limpieza.
+  generoso a propósito —una hora— y tiene un **suelo** de un minuto: por
+  debajo, la edad deja de ser un margen de prudencia y pasa a ser una
+  manera de borrar lo que otros procesos están escribiendo.
+- Lo que decide si una escritura en curso se toca **no es la edad, es el
+  bloqueo**: mientras la escritura vive, su fichero está bloqueado por el
+  proceso que escribe, y un fichero bloqueado no se borra. La edad es el
+  margen de prudencia; el bloqueo es la garantía.
 - El catálogo y el almacén de contenido se montan cuando
   `repository.durable = true`.
 
@@ -245,9 +246,22 @@ publicada** —la publicación del catálogo no llegó a ocurrir—.
 Lo que queda es un fichero que nadie apunta. Y un fichero que nadie
 apunta es un fichero que se acumula: por eso el servicio, **al
 arrancar**, limpia el staging que encuentra caducado y dice cuántos ha
-quitado. Lo que se queda es el staging vivo, que puede ser de otro
-proceso que está subiendo ahora mismo: la suite lo comprueba, porque un
-staging recién escrito tiene que sobrevivir al arranque.
+quitado.
+
+Lo que se queda es el staging **vivo**, que puede ser de otro proceso que
+está subiendo ahora mismo. Y lo que lo protege no es su fecha, sino el
+**bloqueo**: mientras la escritura vive, su fichero está bloqueado por el
+proceso que escribe, y un fichero bloqueado no se borra. Por eso una
+subida que lleva dos horas sin escribir —el cliente se paró a mitad de
+camino— conserva su staging, aunque su fecha sea la de un fichero
+abandonado: eso es un timeout, no una limpieza. La suite lo comprueba
+contra el servicio en pie, y comprueba que el staging vivo sobrevive
+**caducado**, que es la única forma de que se vea que lo protege el
+bloqueo y no la fecha.
+
+Y lo que no se pudo borrar **no impide arrancar**: un staging que no se
+puede eliminar es un problema de disco, y el servicio tiene trabajo que
+hacer. Se avisa y se sigue.
 
 Lo que **no** se limpia es el blob sin referenciar: el contenido que se
 publicó y luego se sustituyó, o el que se escribió y la transacción del
@@ -308,8 +322,9 @@ CAS de verdad):
    reiniciar la ruta cortada no existe (`404`), **publicarla otra vez da
    `201`** (un `409` sería un asset colgado que deja la dirección
    inservible), el staging caducado está limpio, el staging **vivo** de
-   otro proceso sigue ahí, y el contenido que ya estaba publicado sigue
-   siendo **los mismos bytes**.
+   otro proceso sigue ahí —**caducado y bloqueado**, que es lo único que
+   demuestra que lo protege el bloqueo y no su fecha—, y el contenido que
+   ya estaba publicado sigue siendo **los mismos bytes**.
 3. Las subidas **simultáneas** no se mezclan: el arnés comprueba que
    hubo más de un staging en curso —es decir, que las peticiones se
    solaparon de verdad y que cada una tenía su staging— y después

@@ -51,10 +51,15 @@ Cambios que todavia no estan en una release. El formato sigue
   ese fichero no se publica nunca —la transacción del catálogo no llegó
   a ocurrir—, pero era un fichero que se acumulaba sin que nadie lo
   quitara. El arranque limpia el staging caducado
-  (`content.staging_max_age_secs`, una hora por defecto) y dice cuántos
-  ha quitado. Lo que se queda es el staging vivo, que puede ser de otro
-  proceso que está subiendo ahora mismo, y la conformidad comprueba las
-  dos cosas.
+  (`content.staging_max_age_secs`, una hora por defecto, con un suelo de
+  un minuto) y dice cuántos ha quitado. Lo que se queda es el staging
+  **vivo**, y lo que lo protege no es su fecha sino el **bloqueo**:
+  mientras la escritura vive, su fichero está bloqueado por el proceso
+  que escribe, y un fichero bloqueado no se borra, aunque la subida
+  lleve horas sin escribir. Un staging que no se puede borrar no impide
+  arrancar: se avisa y se sigue. La conformidad comprueba las dos cosas,
+  y el staging vivo sobrevive **caducado**, que es la única forma de que
+  se vea que lo protege el bloqueo y no la fecha.
 - La **superficie de contenido crudo** (`/repository/{repositorio}/{ruta…}`,
   fuera de `/api/v1`): `PUT` publica, `GET` descarga y `HEAD` describe, y
   las tres hablarían con un repositorio `raw` en modo `hosted`. La ruta se
