@@ -1,6 +1,6 @@
 # Changelog
 
-Todas las mudanças relevantes de este proyecto se registran en este archivo.
+Todos los cambios relevantes de este proyecto se registran en este archivo.
 
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
 el proyecto adopta [SemVer](https://semver.org/lang/es/).
@@ -33,62 +33,62 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
-- El **catalogo de artefactos** (`hodei-catalog` y `hodei-catalog-storage`):
-  un contexto acotado que dice **que hay donde** y quien puede verlo. El
-  repositorio declara cuenta, clave, HRN canonico, formato, modo y una
-  configuracion **versionada**; un modo que esta release no sirve (`proxy`,
+- El **catálogo de artefactos** (`hodei-catalog` y `hodei-catalog-storage`):
+  un contexto acotado que dice **qué hay dónde** y quién puede verlo. El
+  repositorio declara cuenta, clave, HRN canónico, formato, modo y una
+  configuración **versionada**; un modo que esta release no sirve (`proxy`,
   `group`) se rechaza con un error tipado en vez de crear un repositorio
   que luego no va a funcionar. El asset es cuenta + repositorio + ruta, y
-  apunta a una version inmutable y a su digest; la etiqueta mutable es una
-  fila aparte, de modo que moverla no reescribe el blob que hay detras. La
-  politica de ambito del digest (`global` o `account_partitioned`) es una
-  decision del repositorio, guardada con el, y de ella sale la clave del
-  blob en el CAS. Publicar son cuatro filas (version, asset, referencia y
-  etiquetas) y van en **una sola transaccion**: o estan las cuatro, o no
-  esta ninguna. Una segunda escritura incompatible recibe un conflicto y
-  **no** sobrescribe en silencio; la republicacion identica es idempotente.
+  apunta a una versión inmutable y a su digest; la etiqueta mutable es una
+  fila aparte, de modo que moverla no reescribe el blob que hay detrás. La
+  política de ámbito del digest (`global` o `account_partitioned`) es una
+  decisión del repositorio, guardada con él, y de ella sale la clave del
+  blob en el CAS. Publicar son cuatro filas (versión, asset, referencia y
+  etiquetas) y van en **una sola transacción**: o están las cuatro, o no
+  está ninguna. Una segunda escritura incompatible recibe un conflicto y
+  **no** sobrescribe en silencio; la republicación idéntica es idempotente.
   La lectura distingue tres estados que no son lo mismo: `Missing` (no hay
   nada), `Denied` (lo hay, pero este principal no puede verlo; lo decide el
-  puerto de autorizacion antes de mirar la base, para no filtrar la
+  puerto de autorización antes de mirar la base, para no filtrar la
   existencia de lo ajeno) y `Corrupt` (lo hay y no cuadra). El adaptador
   escribe con identificadores deterministas, porque es lo que hace que dos
   clientes concurrentes escriban el mismo registro y el motor detecte el
   conflicto: el motor persistente lo rechaza y el motor en memoria lo
-  aceptaria en silencio.
-- Correcciones del **catalogo de artefactos** que salio de una revision
+  aceptaría en silencio.
+- Correcciones del **catálogo de artefactos** que salió de una revisión
   independiente: los identificadores compuestos son ahora **inyectivos**
-  (cada parte se escapa por separado, asi que dos coordenadas que solo se
+  (cada parte se escapa por separado, así que dos coordenadas que solo se
   distinguen por el separador ya no acaban en el mismo registro); una
-  escritura **no relee por el camino publico** al terminar, de modo que
+  escritura **no relee por el camino público** al terminar, de modo que
   escribir ya no exige un permiso de lectura y un cambio confirmado ya no
-  se devuelve como `Denied`; la reconfiguracion del repositorio es un
-  **compare-and-set** sobre la version que se leyo, de modo que dos
-  configuraciones simultaneas no pueden compartir numero; el `Denied`
-  nombra **la clase de cosa** que se pidio (`repository`, `version`,
+  se devuelve como `Denied`; la reconfiguración del repositorio es un
+  **compare-and-set** sobre la versión que se leyó, de modo que dos
+  configuraciones simultáneas no pueden compartir número; el `Denied`
+  nombra **la clase de cosa** que se pidió (`repository`, `version`,
   `asset`, `tag`) y no siempre "asset"; la sonda de integridad pregunta
-  por la **ubicacion** del contenido (cuenta y ambito) y no solo por su
-  digest, para no dar por roto un blob particionado que esta sano; crear
-  el mismo repositorio dos veces con la misma configuracion es idempotente;
-  publicar contenido que no esta en el almacen de bytes ya no se publica
+  por la **ubicación** del contenido (cuenta y ámbito) y no solo por su
+  digest, para no dar por roto un blob particionado que está sano; crear
+  el mismo repositorio dos veces con la misma configuración es idempotente;
+  publicar contenido que no está en el almacén de bytes ya no se publica
   (una referencia a un blob que no existe deja un camino que no lleva a
   nada); y el HRN de un repositorio tiene que ser uno que la plataforma
   sepa leer.
-- Segunda ronda de correcciones del **catalogo**, de otra revision
-  independiente: `initialize` **no declara el esquema encima de uno mas
-  nuevo** (si el almacen lo escribio una build mas nueva, se niega a
-  tocarlo con `SchemaMismatch` en vez de escribir su numero encima y
-  dejar que el esquema y el numero no cuadren); publicar en un repositorio
-  **sin nombre** es una peticion invalida y no un recurso que falte; una
-  republicacion idempotente devuelve **el instante que hay en la base** y
+- Segunda ronda de correcciones del **catálogo**, de otra revisión
+  independiente: `initialize` **no declara el esquema encima de uno más
+  nuevo** (si el almacén lo escribió una build más nueva, se niega a
+  tocarlo con `SchemaMismatch` en vez de escribir su número encima y
+  dejar que el esquema y el número no cuadren); publicar en un repositorio
+  **sin nombre** es una petición inválida y no un recurso que falte; una
+  republicación idempotente devuelve **el instante que hay en la base** y
   no "ahora", porque lo que no se escribe no cambia de fecha; y el test de
   reinicio ya no puede pasar en verde **sin comprobar nada** (la fase de
   escritura es un test aparte, ignorado, y el proceso que verifica no
   tiene rama que lo saltee: antes, una variable de entorno puesta por
-  error en la shell hacia que el proceso que verifica escribiera y se
-  saliera sin comprobar una sola cosa). Se verifico tambien en el motor
-  que la transaccion se **cancela** cuando una sentencia del lote falla y
+  error en la shell hacía que el proceso que verifica escribiera y se
+  saliera sin comprobar una sola cosa). Se verificó también en el motor
+  que la transacción se **cancela** cuando una sentencia del lote falla y
   que el `check()` de la respuesta mira todos los resultados, no solo el
-  ultimo.
+  último.
 - El almacen de contenido del hub (`hodei-hub`) acepta **subidas en
   streaming**: `BlobWriteSession` recibe el contenido a trozos, con un
   fichero de staging propio por escritura, y el `commit` publica el
