@@ -220,10 +220,19 @@ jobs:
             --test production_auth \
             --test repository_restart_contract \
             --test har02_catalog_contract \
-            --test raw_hosted_restart_contract || status=$?
+            --test raw_hosted_restart_contract \
+            --test raw_conformity_uat || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
           echo "### Suite infrastructure (boot and processes): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
+          # The report of the conformity is read here: a report that only
+          # exists in a file of a runner is lost as soon as the CI is
+          # cleaned, and a conformity that nobody can read is not a
+          # conformity.
+          if [ -f target/uat/raw-conformity.md ]; then
+            echo "### Informe de la conformidad RAW" >> "$GITHUB_STEP_SUMMARY"
+            cat target/uat/raw-conformity.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           exit ${status:-0}
 
   # nextest is opt-in: it runs the same workspace with per-test isolation, but
