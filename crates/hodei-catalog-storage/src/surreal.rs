@@ -78,6 +78,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hodei_audit::{AuditContext, AuditEvent, AuditOutbox, AuditResult};
 use hodei_catalog::{
     AccessDecision, AccessRequest, AssetRecord, BlobIntegrityProbe, BlobLocation, BlobProbeError,
     BlobReference, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader, CatalogResource,
@@ -86,17 +87,24 @@ use hodei_catalog::{
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use kernel::Hrn;
+use kernel::application::ports::clock::Identity;
 use serde::{Deserialize, Serialize};
 use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
 use surrealdb::sql::{Datetime, Thing};
+
+use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 
 /// La versión del esquema del catálogo.
 ///
 /// Cada cambio del esquema sube este número, y `initialize` lo deja
 /// escrito en la base: saber qué versión está aplicada es parte de saber
 /// que hay ahí.
-pub const SCHEMA_VERSION: i64 = 1;
+///
+/// La versión 2 es la que añade el **outbox de auditoría**: la tabla donde
+/// espera el evento de una publicación, y que se escribe dentro de la
+/// misma transacción que publica.
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -171,6 +179,24 @@ DEFINE FIELD IF NOT EXISTS package_name ON catalog_tag TYPE string;
 DEFINE FIELD IF NOT EXISTS package_version ON catalog_tag TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_tag TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_tag_unique ON catalog_tag FIELDS account, repository, tag_name UNIQUE;
+
+DEFINE TABLE IF NOT EXISTS catalog_audit_outbox SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS event_id ON catalog_audit_outbox TYPE string;
+DEFINE FIELD IF NOT EXISTS tenant ON catalog_audit_outbox TYPE string;
+DEFINE FIELD IF NOT EXISTS actor ON catalog_audit_outbox TYPE string;
+DEFINE FIELD IF NOT EXISTS correlation_id ON catalog_audit_outbox TYPE string;
+DEFINE FIELD IF NOT EXISTS action ON catalog_audit_outbox TYPE string;
+DEFINE FIELD IF NOT EXISTS resource ON catalog_audit_outbox TYPE string;
+DEFINE FIELD IF NOT EXISTS digest ON catalog_audit_outbox TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS result ON catalog_audit_outbox TYPE string;
+DEFINE FIELD IF NOT EXISTS occurred_at ON catalog_audit_outbox TYPE datetime;
+DEFINE FIELD IF NOT EXISTS state ON catalog_audit_outbox TYPE string;
+DEFINE FIELD IF NOT EXISTS attempts ON catalog_audit_outbox TYPE int;
+DEFINE FIELD IF NOT EXISTS lease_owner ON catalog_audit_outbox TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS lease_until ON catalog_audit_outbox TYPE option<datetime>;
+DEFINE FIELD IF NOT EXISTS last_error ON catalog_audit_outbox TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS delivered_at ON catalog_audit_outbox TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS catalog_audit_outbox_state ON catalog_audit_outbox FIELDS state;
 "#;
 
 /// El identificador de un registro, derivado de sus coordenadas.
@@ -255,6 +281,13 @@ pub struct SurrealCatalogStore {
     db: Surreal<Db>,
     authorizer: Arc<dyn CatalogAuthorizer>,
     probe: Option<Arc<dyn BlobIntegrityProbe>>,
+    /// El reloj y los identificadores de la máquina.
+    ///
+    /// El evento de auditoría lleva un identificador y un momento, y los
+    /// dos son **hechos de la máquina**: por eso vienen de una costura y
+    /// no de una llamada al reloj dentro del código. Una prueba puede
+    /// fijarlos y comparar dos ejecuciones de la misma publicación.
+    identity: Identity,
 }
 
 impl std::fmt::Debug for SurrealCatalogStore {
@@ -275,6 +308,7 @@ impl SurrealCatalogStore {
             db,
             authorizer: Arc::new(hodei_catalog::DenyAllAuthorizer),
             probe: None,
+            identity: Identity::system(),
         }
     }
 
@@ -284,6 +318,7 @@ impl SurrealCatalogStore {
             db,
             authorizer,
             probe: None,
+            identity: Identity::system(),
         }
     }
 
@@ -293,6 +328,16 @@ impl SurrealCatalogStore {
     /// apunta a bytes que no son los que dice.
     pub fn with_probe(mut self, probe: Arc<dyn BlobIntegrityProbe>) -> Self {
         self.probe = Some(probe);
+        self
+    }
+
+    /// El almacén, con el reloj y los identificadores que se le inyectan.
+    ///
+    /// El evento de auditoría lleva un identificador y un momento, y los
+    /// dos se toman de aquí: una prueba puede fijarlos y saber de antemano
+    /// qué fila del outbox va a aparecer.
+    pub fn with_identity(mut self, identity: Identity) -> Self {
+        self.identity = identity;
         self
     }
 
@@ -1368,15 +1413,39 @@ impl CatalogWriter for SurrealCatalogStore {
         principal_account: &str,
         publication: Publication,
     ) -> Result<PublishOutcome, CatalogError> {
+        // El evento de auditoría se identifica una vez por operación: el
+        // mismo hecho no se dice dos veces con dos nombres, ni se dice con
+        // dos resultados distintos.
+        let event_id = self.identity.new_id();
+        let occurred_at = self.identity.now();
+
         // Se decide **antes** de validar: un principal sin permiso no
         // llega a saber si lo que pide está bien formado, y la frontera de
         // permisos no se cruza por el camino de la validación.
-        self.decide(&AccessRequest::publish(
-            principal_account,
-            &publication.repository,
-            &publication.asset_path,
-        ))
-        .await?;
+        if let Err(error) = self
+            .decide(&AccessRequest::publish(
+                principal_account,
+                &publication.repository,
+                &publication.asset_path,
+            ))
+            .await
+        {
+            // Un rechazo que no deja rastro es indistinguible de una
+            // petición que nunca ocurrió.
+            let result = match error {
+                CatalogError::Denied { .. } => AuditResult::Denied,
+                _ => AuditResult::Failed,
+            };
+            self.record_the_audit(&self.the_publication_event(
+                &event_id,
+                occurred_at,
+                principal_account,
+                &publication,
+                result,
+            ))
+            .await;
+            return Err(error);
+        }
 
         if publication.repository.trim().is_empty() {
             return Err(CatalogError::invalid("the repository is empty"));
@@ -1444,13 +1513,36 @@ impl CatalogWriter for SurrealCatalogStore {
                 .plan_the_publication(principal_account, &publication, scope)
                 .await?;
             if let Some(conflict) = plan.conflict {
+                // El conflicto se dice: alguien quiso publicar otra cosa en
+                // una ruta que ya tiene contenido, y eso es un hecho que
+                // el rastro tiene que conservar.
+                self.record_the_audit(&self.the_publication_event(
+                    &event_id,
+                    occurred_at,
+                    principal_account,
+                    &publication,
+                    AuditResult::Conflict,
+                ))
+                .await;
                 return Err(conflict);
             }
             if plan.is_complete() {
+                // No se escribe nada: no hay mutación, y un evento que
+                // dice "publicado" sobre una publicación que ya estaba no
+                // añadiría ningún hecho nuevo.
                 return Ok(the_outcome(&plan, false));
             }
 
-            match self.write_the_publication(&plan).await {
+            // El evento va en la MISMA transacción que las filas del
+            // catálogo: o se escriben las cinco, o no se escribe ninguna.
+            let event = self.the_publication_event(
+                &event_id,
+                occurred_at,
+                principal_account,
+                &publication,
+                AuditResult::Allowed,
+            );
+            match self.write_the_publication(&plan, &event).await {
                 Ok(()) => return Ok(the_outcome(&plan, true)),
                 Err(failure) => {
                     // Puede que otro escritor publicara lo mismo a la vez.
@@ -1467,12 +1559,30 @@ impl CatalogWriter for SurrealCatalogStore {
             .plan_the_publication(principal_account, &publication, scope)
             .await?;
         if let Some(conflict) = plan.conflict {
+            self.record_the_audit(&self.the_publication_event(
+                &event_id,
+                occurred_at,
+                principal_account,
+                &publication,
+                AuditResult::Conflict,
+            ))
+            .await;
             return Err(conflict);
         }
         if plan.is_complete() {
             return Ok(the_outcome(&plan, false));
         }
 
+        // La publicación no ocurrió, y eso también es un hecho que el
+        // rastro tiene que conservar.
+        self.record_the_audit(&self.the_publication_event(
+            &event_id,
+            occurred_at,
+            principal_account,
+            &publication,
+            AuditResult::Failed,
+        ))
+        .await;
         Err(CatalogError::unavailable(last_failure))
     }
 
@@ -1714,6 +1824,58 @@ impl CatalogWriter for SurrealCatalogStore {
 }
 
 impl SurrealCatalogStore {
+    /// El evento de auditoría de una publicación.
+    ///
+    /// El **tenant** del evento es la cuenta verificada del principal, no
+    /// la que dice la publicación: una cuenta declarada por el llamante no
+    /// es una cuenta verificada, y el evento tiene que poder decir quién
+    /// actuó y en qué cuenta lo hizo.
+    fn the_publication_event(
+        &self,
+        event_id: &str,
+        occurred_at: DateTime<Utc>,
+        principal_account: &str,
+        publication: &Publication,
+        result: AuditResult,
+    ) -> AuditEvent {
+        AuditEvent::new(
+            event_id.to_string(),
+            AuditContext::new(
+                publication.actor.clone(),
+                principal_account.to_string(),
+                publication.correlation_id.clone(),
+            ),
+            occurred_at,
+            "publish",
+            format!("{}/{}", publication.repository, publication.asset_path),
+            Some(format!(
+                "{}:{}",
+                publication.digest.algorithm, publication.digest.value
+            )),
+            result,
+        )
+    }
+
+    /// Escribe el evento de auditoría en el outbox, fuera de la
+    /// transacción del catálogo.
+    ///
+    /// Se usa para los resultados que **no** publican nada: un rechazo o
+    /// un conflicto no escriben filas del catálogo, y su evento va solo.
+    ///
+    /// Si la escritura falla, se avisa y no se dice nada más: la respuesta
+    /// del cliente no cambia por perder el rastro, pero tampoco se finge
+    /// que el rastro está.
+    async fn record_the_audit(&self, event: &AuditEvent) {
+        let outbox = SurrealAuditOutbox::new(self.db.clone());
+        if let Err(error) = outbox.put_pending(event).await {
+            tracing::warn!(
+                event_id = %event.event_id,
+                error = %error,
+                "the audit event could not be written to the outbox"
+            );
+        }
+    }
+
     /// Decide que hay que escribir para esta publicación.
     ///
     /// Se lee lo que hay y se compara con lo que se quiere publicar. Lo que
@@ -1890,7 +2052,17 @@ impl SurrealCatalogStore {
     }
 
     /// Escribe lo que falta, en una sola transacción.
-    async fn write_the_publication(&self, plan: &PublicationPlan) -> Result<(), WriteFailure> {
+    ///
+    /// La fila del **outbox de auditoría** va en la misma transacción que
+    /// las filas del catálogo. Por eso el asset y su evento tienen una
+    /// sola frontera de commit: si la fila del evento no se puede
+    /// escribir, el asset tampoco se publica, y no queda un hecho sin su
+    /// rastro.
+    async fn write_the_publication(
+        &self,
+        plan: &PublicationPlan,
+        event: &AuditEvent,
+    ) -> Result<(), WriteFailure> {
         let mut sql = String::from("BEGIN TRANSACTION;\n");
         let mut version = None;
         let mut version_record_id = None;
@@ -1971,6 +2143,9 @@ impl SurrealCatalogStore {
                 },
             ));
         }
+        // El evento de auditoría va con las filas del catálogo, en la
+        // misma transacción. Un `CREATE` más, y el mismo `COMMIT`.
+        sql.push_str("CREATE $audit_id CONTENT $audit;\n");
         sql.push_str("COMMIT;\n");
 
         let mut statement = self.db.query(sql);
@@ -1990,6 +2165,12 @@ impl SurrealCatalogStore {
         for (name, id, tag) in tags {
             statement = statement.bind((format!("{name}_id"), id)).bind((name, tag));
         }
+        statement = statement
+            .bind(("audit_id", audit_outbox_id(&event.event_id)))
+            .bind((
+                "audit",
+                AuditRow::of(event, hodei_audit::EntryState::Pending),
+            ));
 
         match statement.await {
             Err(error) => Err(WriteFailure {

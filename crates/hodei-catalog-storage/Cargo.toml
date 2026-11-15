@@ -8,6 +8,11 @@ license = "MIT"
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }
+# El contrato de auditoría: el evento, el sink y el puerto del outbox. El
+# dominio del catálogo no lo necesita, porque no sabe lo que es un evento
+# de auditoría; el adaptador sí, porque escribe la fila del outbox dentro
+# de la transacción que publica.
+hodei-audit = { path = "../hodei-audit" }
 hodei-catalog = { path = "../hodei-catalog" }
 hodei-evidence = { path = "../hodei-evidence" }
 kernel = { path = "../kernel" }
@@ -20,6 +25,10 @@ serde_json = { workspace = true }
 surrealdb = { version = "2.7.0", features = ["kv-mem", "kv-rocksdb"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+# El aviso de que un evento de auditoría no se pudo escribir: perder el
+# rastro no puede cambiar la respuesta del cliente, pero tampoco puede
+# callarse.
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
