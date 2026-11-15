@@ -139,7 +139,16 @@ fn the_check_would_catch_a_downcast() {
 /// The kernel is the shared core: it names the vocabulary everybody uses,
 /// and it must not drag a database engine or an HTTP framework into every
 /// crate that uses it.
-const PROTECTED_CRATES: [&str; 2] = ["crates/kernel", "crates/hodei-evidence"];
+///
+/// The catalog's domain is protected for the same reason and one more: the
+/// seam between what the catalog means and where the catalog is stored is
+/// only a seam while the domain cannot name a database. The adapter lives in
+/// `hodei-catalog-storage`; the domain must stay ignorant of it.
+const PROTECTED_CRATES: [&str; 3] = [
+    "crates/kernel",
+    "crates/hodei-evidence",
+    "crates/hodei-catalog",
+];
 
 /// The mechanisms a protected crate must not depend on.
 ///
