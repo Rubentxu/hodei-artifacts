@@ -410,6 +410,7 @@ fn configure_production_security(
         &schema,
         config.security.admin_api_enabled,
         config.security.raw_api_enabled,
+        config.security.oci_api_enabled,
     )
     .map_err(|error| BootstrapError::Security(format!("invalid authorization bundle: {error}")))?;
 

@@ -412,6 +412,7 @@ impl Deployment {
                 .env("HODEI_CONTENT__CAS_PATH", &self.cas)
                 .env("HODEI_REPOSITORY__DURABLE", "true")
                 .env("HODEI_SECURITY__RAW_API_ENABLED", "true")
+                .env("HODEI_SECURITY__OCI_API_ENABLED", "true")
                 .env(
                     "HODEI_SECURITY__AUTH_JWT_SECRET",
                     String::from_utf8(SECRET.to_vec()).unwrap(),

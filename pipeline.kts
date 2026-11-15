@@ -164,6 +164,7 @@ pipeline {
                         "--test raw_conformity_uat",
                         "--test blob_integrity_contract",
                         "--test doc9_uat",
+                        "--test oci_pull_contract",
                     ).joinToString(" ")
                 )
                 sh(

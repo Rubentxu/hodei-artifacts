@@ -10,6 +10,7 @@
 pub mod capsules;
 pub mod health;
 pub mod iam;
+pub mod oci;
 pub mod playground;
 pub mod policies;
 pub mod raw;

@@ -124,6 +124,7 @@ pub fn check_service_declared(
     schema: &Schema,
     admin_enabled: bool,
     raw_enabled: bool,
+    oci_enabled: bool,
 ) -> Result<(), String> {
     check_declared(schema, &read_repository())?;
     check_declared(schema, &read_capsule())?;
@@ -133,6 +134,12 @@ pub fn check_service_declared(
     }
     if raw_enabled {
         check_declared(schema, &upload_asset())?;
+        check_declared(schema, &download_asset())?;
+    }
+    if oci_enabled {
+        // La superficie OCI **lee**: sin la accion de lectura declarada,
+        // el bundle no puede decidir sobre un pull, y cada peticion
+        // acabaria en un 403 en vez de negarse a arrancar.
         check_declared(schema, &download_asset())?;
     }
     Ok(())

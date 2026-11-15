@@ -54,6 +54,14 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
     } else {
         Router::new()
     };
+    // The OCI distribution pull surface (`/v2`), also a surface of its
+    // own: the distribution protocol and the raw content surface serve
+    // different clients, and neither is under the administrative API.
+    let oci = if config.security.oci_api_enabled {
+        oci_routes(app_state.clone())
+    } else {
+        Router::new()
+    };
 
     Router::new()
         // Health check endpoints
@@ -64,6 +72,8 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
         .nest("/api/v1", api)
         // The raw content surface.
         .merge(raw)
+        // The OCI distribution pull surface.
+        .merge(oci)
         // Swagger UI - serve at /swagger-ui
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", create_api_doc()))
         // Middleware layers (applied in reverse order)
@@ -309,6 +319,24 @@ fn admin_v1_routes(app_state: AppState) -> Router {
         // .route("/users", post(crate::handlers::users::create_user))
         // .route("/users/:id", get(crate::handlers::users::get_user))
         // .route("/groups", post(crate::handlers::groups::create_group))
+        .with_state(app_state)
+}
+
+/// The routes of the OCI distribution pull surface.
+///
+/// The path is read **raw**, from the URI as it arrived: a `%2e%2e` that
+/// has already become `..` cannot be refuted by an extractor that decoded
+/// it. The handler validates the name before it looks anywhere.
+fn oci_routes(app_state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/v2/",
+            axum::routing::get(crate::handlers::oci::version_check),
+        )
+        .route(
+            "/v2/{*target}",
+            axum::routing::get(crate::handlers::oci::content).head(crate::handlers::oci::content),
+        )
         .with_state(app_state)
 }
 

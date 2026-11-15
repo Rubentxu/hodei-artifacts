@@ -172,6 +172,13 @@ pub struct SecurityConfig {
     /// nothing.
     #[serde(default)]
     pub raw_api_enabled: bool,
+    /// Whether the OCI distribution pull surface (`/v2`) is served.
+    ///
+    /// Same shape as `raw_api_enabled`: the surface has its own credential
+    /// and authorization gate, and the default denies before any handler
+    /// runs.
+    #[serde(default)]
+    pub oci_api_enabled: bool,
 
     /// Browser origins allowed by CORS.
     ///
