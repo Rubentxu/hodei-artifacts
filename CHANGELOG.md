@@ -33,6 +33,28 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- El **catalogo de artefactos** (`hodei-catalog` y `hodei-catalog-storage`):
+  un contexto acotado que dice **que hay donde** y quien puede verlo. El
+  repositorio declara cuenta, clave, HRN canonico, formato, modo y una
+  configuracion **versionada**; un modo que esta release no sirve (`proxy`,
+  `group`) se rechaza con un error tipado en vez de crear un repositorio
+  que luego no va a funcionar. El asset es cuenta + repositorio + ruta, y
+  apunta a una version inmutable y a su digest; la etiqueta mutable es una
+  fila aparte, de modo que moverla no reescribe el blob que hay detras. La
+  politica de ambito del digest (`global` o `account_partitioned`) es una
+  decision del repositorio, guardada con el, y de ella sale la clave del
+  blob en el CAS. Publicar son cuatro filas (version, asset, referencia y
+  etiquetas) y van en **una sola transaccion**: o estan las cuatro, o no
+  esta ninguna. Una segunda escritura incompatible recibe un conflicto y
+  **no** sobrescribe en silencio; la republicacion identica es idempotente.
+  La lectura distingue tres estados que no son lo mismo: `Missing` (no hay
+  nada), `Denied` (lo hay, pero este principal no puede verlo; lo decide el
+  puerto de autorizacion antes de mirar la base, para no filtrar la
+  existencia de lo ajeno) y `Corrupt` (lo hay y no cuadra). El adaptador
+  escribe con identificadores deterministas, porque es lo que hace que dos
+  clientes concurrentes escriban el mismo registro y el motor detecte el
+  conflicto: el motor persistente lo rechaza y el motor en memoria lo
+  aceptaria en silencio.
 - El almacen de contenido del hub (`hodei-hub`) acepta **subidas en
   streaming**: `BlobWriteSession` recibe el contenido a trozos, con un
   fichero de staging propio por escritura, y el `commit` publica el

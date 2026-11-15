@@ -1,0 +1,15 @@
+[package]
+name = "hodei-catalog"
+version = "0.1.0"
+edition = "2024"
+description = "El catalogo de artefactos de Hodei: repositorios, assets, versiones y referencias."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+hodei-evidence = { path = "../hodei-evidence" }
+kernel = { path = "../kernel" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

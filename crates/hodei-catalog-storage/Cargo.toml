@@ -1,0 +1,22 @@
+[package]
+name = "hodei-catalog-storage"
+version = "0.1.0"
+edition = "2024"
+description = "El adaptador SurrealDB del catalogo de artefactos de Hodei."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+hodei-catalog = { path = "../hodei-catalog" }
+hodei-evidence = { path = "../hodei-evidence" }
+kernel = { path = "../kernel" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+surrealdb = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

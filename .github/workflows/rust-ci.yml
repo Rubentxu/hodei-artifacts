@@ -215,7 +215,8 @@ jobs:
             --test crash_recovery \
             --test distribution_contract \
             --test production_auth \
-            --test repository_restart_contract || status=$?
+            --test repository_restart_contract \
+            --test har02_catalog_contract || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
           echo "### Suite infrastructure (boot and processes): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"

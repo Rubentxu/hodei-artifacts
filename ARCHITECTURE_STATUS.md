@@ -1154,3 +1154,69 @@ La ampliacion del hub hacia un repository manager real empieza por la base: el a
 - El commit de un contenido que ya esta **no** revalida el blob entero: comprueba su longitud, que es barato, y deja la verificacion profunda al scrub (HAR-21). Rehashear un artefacto de 1 GiB en cada subida duplicada no es un coste que un registry pueda pagar.
 
 **Lo que sigue sin estar:** las referencias y la garbage collection segura (HAR-10), el servidor OCI (HAR-06), y el resto del protocolo. Esto es solo el suelo sobre el que se construye lo demas.
+
+## 10-cuartovieces — M10: el catalogo durable
+
+El CAS de M10 sabe guardar bytes y nombrarlos por su digest. Faltaba
+responder a la pregunta de al lado: **que hay donde**, y quien puede
+verlo. Un registro que no responde a eso no es un registro: es una carpeta
+con bytes.
+
+**El catalogo como contexto acotado, no como un campo mas del hub.** La
+separacion sigue el patron que ya usan la evidencia y la confianza: el
+dominio en `hodei-catalog` (que **no puede** nombrar un motor de base de
+datos, porque no es su dependencia) y el adaptador en
+`hodei-catalog-storage`. El compilador comprueba la frontera.
+
+**Lo que hay en el codigo:**
+
+- **La identidad del repositorio**: cuenta, clave, HRN v2 canonico, formato,
+  modo (`hosted`/`proxy`/`group`) y configuracion **versionada** (cada
+  cambio sube la version; el cliente no la pone). Un modo que esta release
+  no sirve se rechaza con un error tipado (`ModeNotImplemented`), no con un
+  repositorio creado que luego no va a funcionar.
+- **La politica de ambito del digest** (`DigestScope`): `global` comparte
+  el blob entre cuentas; `account_partitioned` da a cada cuenta el suyo.
+  Es una decision de la cuenta, guardada con el repositorio, y de ella sale
+  la clave con la que el CAS guarda el blob.
+- **El asset** (`cuenta` + `repositorio` + `ruta`) apunta a una **version**
+  (nombre + version, inmutable) y a su digest. La **referencia** al blob es
+  una fila aparte: es lo que impide que el blob se recoja.
+- **La etiqueta mutable** es una fila mas. Moverla escribe esa fila y
+  nada mas: la version que queda atras conserva su digest y sus bytes. Por
+  eso el digest sigue siendo la identidad del contenido.
+
+**La transaccionalidad.** Publicar son cuatro cosas —version, asset,
+referencia y etiquetas— y van en una sola transaccion (`BEGIN`..`COMMIT` en
+una sola query), asi que no queda un asset que no resuelve ni una version
+sin asset. Si una de las cuatro falla, no queda ninguna.
+
+**El conflicto, y por que no hay sobrescritura silenciosa.** Publicar en una
+ruta ocupada, o cambiar el contenido de una version publicada, recibe un
+`Conflict`: el camino ya dice algo, y moverlo es una operacion explicita
+(`move_asset`, con su etiqueta `move_tag`), no un efecto colateral. Y la
+republicacion identica es idempotente, no un error.
+
+**Los identificadores no son aleatorios, y esa es la decision que sostiene
+la garantia.** Dos clientes que publican lo mismo en el mismo sitio
+escriben **el mismo registro**, y el motor detecta el conflicto de
+escritura sobre el. Se midio: el motor **persistente** rechaza al que
+pierde con un "read or write conflict", mientras que el motor **en
+memoria** acepta las dos escrituras concurrentes del mismo registro y la
+ultima gana en silencio. Por eso las pruebas de este catalogo van contra el
+motor que se despliega: una garantia que solo se cumple en un motor no es
+una garantia del catalogo.
+
+**Los tres estados de lectura que no se confunden.** `Missing` (no hay
+nada ahi), `Denied` (hay algo ahi y este principal no puede verlo; lo
+decide el puerto de autorizacion **antes** de mirar la base, para no
+filtrar la existencia de lo ajeno) y `Corrupt` (hay algo ahi y no cuadra:
+el asset y la version dicen digests distintos, la referencia no esta, o la
+longitud real del blob no es la que el catalogo guarda). Confundirlos es
+peor que no responder: un `Missing` donde habia un `Denied` hace repetir al
+cliente; un `Corrupt` donde habia un `Missing` hace borrar al cliente.
+
+**Lo que sigue sin estar:** el servidor HTTP (HAR-04), el commit de
+publicacion con outbox atomico (HAR-03), las referencias persistentes y la
+garbage collection segura (HAR-10), y el resto de formatos. El catalogo
+guarda y dice; todavía no sirve bytes por el cable.

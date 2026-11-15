@@ -1,0 +1,1468 @@
+//! El contrato del catalogo durable (HAR-02).
+//!
+//! Las pruebas van contra SurrealDB de verdad: el motor embebido para la
+//! mayoria, y RocksDB para el reinicio, porque un catalogo que solo
+//! funciona en memoria no es un catalogo.
+//!
+//! Los casos son los de la UAT `CAT-01..CAT-03` y los cinco criterios de
+//! aceptacion de HSP-96.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use hodei_catalog::{
+    AccessDecision, AccessRequest, AllowAllAuthorizer, AssetRecord, BlobIntegrityProbe,
+    BlobProbeError, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader, CatalogWriter,
+    DigestScope, MutableTag, PackageCoordinates, PackageVersion, Publication, PublishOutcome,
+    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
+};
+use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_evidence::ContentDigest;
+use surrealdb::Surreal;
+use surrealdb::engine::local::RocksDb;
+
+/// Una base en disco, con su namespace y su base de datos.
+///
+/// Las pruebas van contra el motor **persistente**, y no por casualidad:
+/// el motor en memoria no arbitra dos escrituras concurrentes del mismo
+/// registro (las dos dicen que han escrito y la ultima gana en silencio),
+/// mientras que el persistente detecta el conflicto de escritura y
+/// rechaza al que pierde. Una garantia que solo se cumple en un motor no
+/// es una garantia del catalogo, es una casualidad del motor, asi que las
+/// pruebas se hacen contra el que se despliega.
+async fn open_store(path: &std::path::Path) -> Surreal<surrealdb::engine::local::Db> {
+    open_disk(path).await
+}
+
+/// Una base en disco, con su namespace y su base de datos.
+///
+/// RocksDB guarda un bloqueo en el directorio y lo suelta cuando el
+/// proceso que lo abrio se deshace, pero lo suelta despues: el primer
+/// intento de reabrir puede encontrar el bloqueo aun puesto, y eso no es
+/// un fallo del reinicio sino una carrera del motor.
+async fn open_disk(path: &std::path::Path) -> Surreal<surrealdb::engine::local::Db> {
+    let mut last = String::new();
+    for _attempt in 0..20 {
+        match Surreal::new::<RocksDb>(path).await {
+            Ok(db) => {
+                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+                return db;
+            }
+            Err(error) => {
+                last = error.to_string();
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
+    panic!("the database at {path:?} could not be opened: {last}");
+}
+
+/// Un almacen que deja pasar a las cuentas de la lista.
+fn store_for(db: Surreal<surrealdb::engine::local::Db>) -> SurrealCatalogStore {
+    SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer))
+}
+
+/// Un almacen con un decisor propio.
+fn store_with(
+    db: Surreal<surrealdb::engine::local::Db>,
+    authorizer: Arc<dyn CatalogAuthorizer>,
+) -> SurrealCatalogStore {
+    SurrealCatalogStore::with_authorizer(db, authorizer)
+}
+
+/// El decisor que solo deja pasar a las cuentas de la lista.
+struct ListedAccounts {
+    allowed: Vec<String>,
+}
+
+#[async_trait]
+impl CatalogAuthorizer for ListedAccounts {
+    async fn authorize(&self, request: &AccessRequest) -> Result<AccessDecision, CatalogError> {
+        if self.allowed.contains(&request.principal_account) {
+            Ok(AccessDecision::Allow)
+        } else {
+            Ok(AccessDecision::Deny(format!(
+                "the account {} is not on the list",
+                request.principal_account
+            )))
+        }
+    }
+}
+
+/// La sonda que dice la longitud que tiene cada blob.
+struct KnownLengths {
+    lengths: HashMap<String, u64>,
+}
+
+#[async_trait]
+impl BlobIntegrityProbe for KnownLengths {
+    async fn length_of(&self, digest: &ContentDigest) -> Result<u64, BlobProbeError> {
+        self.lengths
+            .get(&digest.value)
+            .copied()
+            .ok_or(BlobProbeError::Missing)
+    }
+}
+
+fn descriptor(
+    account: &str,
+    repo_key: &str,
+    format: RepositoryFormat,
+    mode: RepositoryMode,
+    scope: DigestScope,
+) -> RepositoryDescriptor {
+    RepositoryDescriptor {
+        hrn: repository_hrn("hodei", "artifacts", "eu", account, repo_key),
+        account: account.to_string(),
+        repo_key: repo_key.to_string(),
+        format,
+        mode,
+        config: RepositoryConfig::new(scope),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    }
+}
+
+fn publication(
+    repository: &str,
+    asset_path: &str,
+    package_name: &str,
+    package_version: &str,
+    content: &[u8],
+) -> Publication {
+    Publication {
+        repository: repository.to_string(),
+        asset_path: asset_path.to_string(),
+        coordinates: PackageCoordinates {
+            package_name: package_name.to_string(),
+            package_version: package_version.to_string(),
+        },
+        digest: ContentDigest::of_bytes(content),
+        size_bytes: content.len() as u64,
+        tags: Vec::new(),
+    }
+}
+
+fn with_tag(mut publication: Publication, tag: &str) -> Publication {
+    publication.tags = vec![tag.to_string()];
+    publication
+}
+
+// ---------------------------------------------------------------------------
+// AC1: la identidad del repositorio.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_repository_declares_account_key_format_mode_and_versioned_config() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    let created = store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    assert_eq!(created.account, "acme");
+    assert_eq!(created.repo_key, "releases");
+    assert_eq!(created.format, RepositoryFormat::Raw);
+    assert_eq!(created.mode, RepositoryMode::Hosted);
+    assert_eq!(created.config.version, 1);
+    assert_eq!(created.config.digest_scope, DigestScope::Global);
+    assert_eq!(
+        created.hrn.to_string(),
+        "hrn:hodei:artifacts:eu:acme:repository/releases"
+    );
+
+    // Y se lee igual que se escribio.
+    let read = store
+        .repository("acme", "releases")
+        .await
+        .expect("read repository");
+    assert_eq!(read.repo_key, created.repo_key);
+    assert_eq!(read.format, created.format);
+    assert_eq!(read.mode, created.mode);
+    assert_eq!(read.config.version, created.config.version);
+    assert_eq!(read.hrn, created.hrn);
+}
+
+#[tokio::test]
+async fn a_mode_this_release_does_not_serve_is_refused_clearly() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    for mode in [RepositoryMode::Proxy, RepositoryMode::Group] {
+        let refused = store
+            .create_repository(
+                "acme",
+                descriptor(
+                    "acme",
+                    "releases",
+                    RepositoryFormat::Raw,
+                    mode,
+                    DigestScope::Global,
+                ),
+            )
+            .await
+            .expect_err("the mode is not served");
+        assert_eq!(refused, CatalogError::ModeNotImplemented { mode });
+        // Y el mensaje dice cual es el modo, para que el que lo pidio sepa
+        // que falta.
+        assert!(refused.to_string().contains(mode.as_str()));
+    }
+
+    // Y no se ha creado ningun repositorio con ese modo.
+    assert!(matches!(
+        store.repository("acme", "releases").await,
+        Err(CatalogError::Missing { .. })
+    ));
+}
+
+#[tokio::test]
+async fn the_config_version_rises_when_the_config_changes() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let mut config = RepositoryConfig::new(DigestScope::AccountPartitioned);
+    config.version = 99;
+    let updated = store
+        .update_config("acme", "releases", config)
+        .await
+        .expect("update config");
+
+    // La version la pone el catalogo, no el cliente: subirla es lo que
+    // significa que la configuracion es otra.
+    assert_eq!(updated.config.version, 2);
+    assert_eq!(updated.config.digest_scope, DigestScope::AccountPartitioned);
+
+    let read = store.repository("acme", "releases").await.expect("read");
+    assert_eq!(read.config.version, 2);
+    assert_eq!(read.config.digest_scope, DigestScope::AccountPartitioned);
+}
+
+// ---------------------------------------------------------------------------
+// AC2: el ambito del digest, el asset y la etiqueta mutable.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_digest_scope_is_the_policy_of_the_repository() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "shared",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create shared");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "private",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::AccountPartitioned,
+            ),
+        )
+        .await
+        .expect("create private");
+
+    let content = b"the same bytes";
+    store
+        .publish(
+            "acme",
+            publication("shared", "a.bin", "pkg", "1.0", content),
+        )
+        .await
+        .expect("publish shared");
+    store
+        .publish(
+            "acme",
+            publication("private", "a.bin", "pkg", "1.0", content),
+        )
+        .await
+        .expect("publish private");
+
+    let shared = store
+        .reference("acme", "shared", "a.bin")
+        .await
+        .expect("shared reference");
+    let private = store
+        .reference("acme", "private", "a.bin")
+        .await
+        .expect("private reference");
+
+    assert_eq!(shared.scope, DigestScope::Global);
+    assert_eq!(private.scope, DigestScope::AccountPartitioned);
+    assert_eq!(shared.digest, private.digest);
+
+    // Y la politica decide donde viven los bytes.
+    assert_eq!(
+        shared.scope.blob_key("acme", &shared.digest),
+        shared.digest.value
+    );
+    assert_eq!(
+        private.scope.blob_key("acme", &private.digest),
+        format!("acme/{}", private.digest.value)
+    );
+    assert_ne!(
+        shared.scope.blob_key("acme", &shared.digest),
+        private.scope.blob_key("acme", &private.digest)
+    );
+}
+
+#[tokio::test]
+async fn an_asset_is_an_account_a_repository_and_a_path() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let content = b"the artifact";
+    let published = store
+        .publish(
+            "acme",
+            publication("releases", "path/to/file.bin", "pkg", "1.2.3", content),
+        )
+        .await
+        .expect("publish");
+    assert!(published.created);
+
+    let asset: AssetRecord = store
+        .asset("acme", "releases", "path/to/file.bin")
+        .await
+        .expect("read asset");
+
+    assert_eq!(asset.account, "acme");
+    assert_eq!(asset.repository, "releases");
+    assert_eq!(asset.asset_path, "path/to/file.bin");
+    assert_eq!(asset.coordinates.package_name, "pkg");
+    assert_eq!(asset.coordinates.package_version, "1.2.3");
+    assert_eq!(asset.digest, ContentDigest::of_bytes(content));
+    assert_eq!(asset.size_bytes, content.len() as u64);
+
+    // Y la version que apunta es la que se publico.
+    let version: PackageVersion = store
+        .version(
+            "acme",
+            "releases",
+            &PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "1.2.3".to_string(),
+            },
+        )
+        .await
+        .expect("read version");
+    assert_eq!(version.digest, asset.digest);
+    assert_eq!(version.size_bytes, asset.size_bytes);
+}
+
+#[tokio::test]
+async fn a_mutable_tag_moves_without_touching_the_blob() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let first = b"the first version";
+    let second = b"the second version";
+    store
+        .publish(
+            "acme",
+            with_tag(
+                publication("releases", "app-1.0.bin", "pkg", "1.0", first),
+                "latest",
+            ),
+        )
+        .await
+        .expect("publish first");
+    store
+        .publish(
+            "acme",
+            publication("releases", "app-2.0.bin", "pkg", "2.0", second),
+        )
+        .await
+        .expect("publish second");
+
+    let tag_before: MutableTag = store
+        .tag("acme", "releases", "latest")
+        .await
+        .expect("read tag");
+    assert_eq!(tag_before.coordinates.package_version, "1.0");
+
+    // Mover la etiqueta.
+    let moved = store
+        .move_tag(
+            "acme",
+            "releases",
+            "latest",
+            PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "2.0".to_string(),
+            },
+        )
+        .await
+        .expect("move tag");
+    assert_eq!(moved.coordinates.package_version, "2.0");
+
+    // La version que se queda atras conserva su digest y sus bytes.
+    let old = store
+        .version(
+            "acme",
+            "releases",
+            &PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "1.0".to_string(),
+            },
+        )
+        .await
+        .expect("read old version");
+    assert_eq!(old.digest, ContentDigest::of_bytes(first));
+    assert_eq!(old.size_bytes, first.len() as u64);
+
+    // Y el blob de la version que se queda atras sigue intacto y sigue
+    // referenciado: la etiqueta no toca el blob.
+    let reference = store
+        .reference("acme", "releases", "app-1.0.bin")
+        .await
+        .expect("read reference");
+    assert_eq!(reference.digest, ContentDigest::of_bytes(first));
+    assert_eq!(reference.size_bytes, first.len() as u64);
+}
+
+#[tokio::test]
+async fn moving_an_asset_repoints_the_path_and_its_blob_reference() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let first = b"the first content";
+    let second = b"the second content";
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", first),
+        )
+        .await
+        .expect("publish first");
+    store
+        .publish(
+            "acme",
+            publication("releases", "other.bin", "pkg", "2.0", second),
+        )
+        .await
+        .expect("publish second");
+
+    // Publicar en una ruta ocupada es un conflicto: el camino ya dice algo.
+    let refused = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "3.0", second),
+        )
+        .await
+        .expect_err("the path is taken");
+    assert!(
+        matches!(refused, CatalogError::Conflict { kind: "asset", .. }),
+        "unexpected error: {refused:?}"
+    );
+
+    // Moverlo es explicito, y mueve el asset y su referencia a la vez.
+    let moved = store
+        .move_asset(
+            "acme",
+            "releases",
+            "app.bin",
+            PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "2.0".to_string(),
+            },
+        )
+        .await
+        .expect("move asset");
+    assert_eq!(moved.coordinates.package_version, "2.0");
+    assert_eq!(moved.digest, ContentDigest::of_bytes(second));
+
+    // La referencia apunta al mismo contenido que el asset: si no, la
+    // descarga serviria un blob y la recoleccion guardaria otro.
+    let reference = store
+        .reference("acme", "releases", "app.bin")
+        .await
+        .expect("read reference");
+    assert_eq!(reference.digest, ContentDigest::of_bytes(second));
+    assert_eq!(reference.size_bytes, second.len() as u64);
+
+    // Y la version anterior sigue intacta: mover un indice no reescribe
+    // un contenido.
+    let old = store
+        .version(
+            "acme",
+            "releases",
+            &PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "1.0".to_string(),
+            },
+        )
+        .await
+        .expect("read old version");
+    assert_eq!(old.digest, ContentDigest::of_bytes(first));
+}
+
+// ---------------------------------------------------------------------------
+// AC3: la escritura es transaccional y no sobrescribe en silencio.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_second_incompatible_publication_is_a_conflict_and_does_not_overwrite() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let first = b"the first content";
+    let second = b"a different content";
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", first),
+        )
+        .await
+        .expect("publish first");
+
+    // La misma version con otro contenido es un conflicto: una version
+    // publicada no cambia.
+    let refused = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", second),
+        )
+        .await
+        .expect_err("the version is immutable");
+    assert!(
+        matches!(
+            refused,
+            CatalogError::Conflict {
+                kind: "version",
+                ..
+            }
+        ),
+        "unexpected error: {refused:?}"
+    );
+
+    // Y otra version en la misma ruta tambien es un conflicto: la ruta ya
+    // apunta a algo.
+    let refused = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "2.0", second),
+        )
+        .await
+        .expect_err("the path already points somewhere");
+    assert!(
+        matches!(refused, CatalogError::Conflict { kind: "asset", .. }),
+        "unexpected error: {refused:?}"
+    );
+
+    // Y nada de lo que se publico cambio.
+    let asset = store
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect("read asset");
+    assert_eq!(asset.digest, ContentDigest::of_bytes(first));
+    assert_eq!(asset.coordinates.package_version, "1.0");
+}
+
+#[tokio::test]
+async fn the_same_publication_twice_is_idempotent() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let content = b"the same content";
+    let first = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", content),
+        )
+        .await
+        .expect("publish");
+    assert!(first.created);
+
+    let second = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", content),
+        )
+        .await
+        .expect("publish again");
+    assert!(
+        !second.created,
+        "the second publication did not create anything"
+    );
+    assert_eq!(first.asset.digest, second.asset.digest);
+    assert_eq!(first.version.digest, second.version.digest);
+}
+
+#[tokio::test]
+async fn a_publication_that_fails_leaves_nothing_behind() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    // La etiqueta `latest` ya apunta a la version 1.0.
+    store
+        .publish(
+            "acme",
+            with_tag(
+                publication("releases", "app.bin", "pkg", "1.0", b"first"),
+                "latest",
+            ),
+        )
+        .await
+        .expect("publish first");
+
+    // Ahora se publica otra version en otra ruta, con la misma etiqueta. La
+    // etiqueta ya apunta a otro sitio, asi que la publicacion no puede
+    // hacerse: y al no poder hacerse, no deja ni el asset ni la version.
+    let refused = store
+        .publish(
+            "acme",
+            with_tag(
+                publication("releases", "other.bin", "pkg", "2.0", b"second"),
+                "latest",
+            ),
+        )
+        .await
+        .expect_err("the tag already points somewhere");
+    assert!(
+        matches!(refused, CatalogError::Conflict { kind: "tag", .. }),
+        "unexpected error: {refused:?}"
+    );
+
+    // Ni el asset ni la version existen: la transaccion se fue entera.
+    assert!(matches!(
+        store.asset("acme", "releases", "other.bin").await,
+        Err(CatalogError::Missing { .. })
+    ));
+    assert!(matches!(
+        store
+            .version(
+                "acme",
+                "releases",
+                &PackageCoordinates {
+                    package_name: "pkg".to_string(),
+                    package_version: "2.0".to_string(),
+                }
+            )
+            .await,
+        Err(CatalogError::Missing { .. })
+    ));
+    assert!(matches!(
+        store.reference("acme", "releases", "other.bin").await,
+        Err(CatalogError::Missing { .. })
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// AC4: aislamiento por cuenta, unicidad, concurrencia y reinicio.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn two_accounts_with_the_same_path_do_not_see_each_other() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db.clone());
+    store.initialize().await.expect("initialize");
+
+    for account in ["acme", "globex"] {
+        store
+            .create_repository(
+                account,
+                descriptor(
+                    account,
+                    "releases",
+                    RepositoryFormat::Raw,
+                    RepositoryMode::Hosted,
+                    DigestScope::Global,
+                ),
+            )
+            .await
+            .expect("create repository");
+    }
+
+    let acme_content = b"the content of acme";
+    let globex_content = b"the content of globex";
+    store
+        .publish(
+            "acme",
+            publication("releases", "shared.bin", "pkg", "1.0", acme_content),
+        )
+        .await
+        .expect("publish acme");
+    store
+        .publish(
+            "globex",
+            publication("releases", "shared.bin", "pkg", "1.0", globex_content),
+        )
+        .await
+        .expect("publish globex");
+
+    // Cada cuenta ve lo suyo y solo lo suyo.
+    let acme = store
+        .asset("acme", "releases", "shared.bin")
+        .await
+        .expect("read acme");
+    let globex = store
+        .asset("globex", "releases", "shared.bin")
+        .await
+        .expect("read globex");
+    assert_eq!(acme.digest, ContentDigest::of_bytes(acme_content));
+    assert_eq!(globex.digest, ContentDigest::of_bytes(globex_content));
+    assert_ne!(acme.digest, globex.digest);
+
+    // Y lo que una cuenta no tiene no existe para ella: no es un
+    // `Denied` que revele que hay algo, ni un `Corrupt`.
+    assert!(matches!(
+        store.asset("acme", "releases", "only-globex.bin").await,
+        Err(CatalogError::Missing { .. })
+    ));
+
+    // Los repositorios de una cuenta no se ven desde la otra, aunque
+    // tengan la misma clave.
+    assert!(store.repository("globex", "releases").await.is_ok());
+    let other = descriptor(
+        "acme",
+        "only-acme",
+        RepositoryFormat::Raw,
+        RepositoryMode::Hosted,
+        DigestScope::Global,
+    );
+    store
+        .create_repository("acme", other)
+        .await
+        .expect("create acme only");
+    assert!(matches!(
+        store.repository("globex", "only-acme").await,
+        Err(CatalogError::Missing { .. })
+    ));
+}
+
+#[tokio::test]
+async fn the_same_repository_key_twice_in_one_account_is_a_conflict() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let refused = store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Oci,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect_err("the key is taken");
+    assert!(
+        matches!(
+            refused,
+            CatalogError::Conflict {
+                kind: "repository",
+                ..
+            }
+        ),
+        "unexpected error: {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let left = Arc::new(store_for(db.clone()));
+    let right = Arc::new(store_for(db));
+    left.initialize().await.expect("initialize");
+    right.initialize().await.expect("initialize");
+
+    left.create_repository(
+        "acme",
+        descriptor(
+            "acme",
+            "releases",
+            RepositoryFormat::Raw,
+            RepositoryMode::Hosted,
+            DigestScope::Global,
+        ),
+    )
+    .await
+    .expect("create repository");
+
+    // Los dos clientes publican el MISMO contenido en la misma ruta.
+    let content = b"the same content";
+    let same_left = left.publish(
+        "acme",
+        publication("releases", "app.bin", "pkg", "1.0", content),
+    );
+    let same_right = right.publish(
+        "acme",
+        publication("releases", "app.bin", "pkg", "1.0", content),
+    );
+    let (same_left, same_right) = tokio::join!(same_left, same_right);
+
+    let outcomes: Vec<Result<PublishOutcome, CatalogError>> = vec![same_left, same_right];
+    let created = outcomes
+        .iter()
+        .filter(|result| matches!(result, Ok(outcome) if outcome.created))
+        .count();
+    let idempotent = outcomes
+        .iter()
+        .filter(|result| matches!(result, Ok(outcome) if !outcome.created))
+        .count();
+    assert_eq!(created, 1, "one client created the asset");
+    assert_eq!(idempotent, 1, "the other one found it already there");
+
+    // Ahora los dos clientes publican CONTENIDO DISTINTO en la misma ruta.
+    let conflict_left = left.publish(
+        "acme",
+        publication("releases", "other.bin", "pkg", "2.0", b"the left content"),
+    );
+    let conflict_right = right.publish(
+        "acme",
+        publication("releases", "other.bin", "pkg", "2.0", b"the right content"),
+    );
+    let (conflict_left, conflict_right) = tokio::join!(conflict_left, conflict_right);
+
+    let results: Vec<Result<PublishOutcome, CatalogError>> = vec![conflict_left, conflict_right];
+    let winners = results.iter().filter(|result| result.is_ok()).count();
+    let conflicts = results
+        .iter()
+        .filter(|result| matches!(result, Err(CatalogError::Conflict { .. })))
+        .count();
+    assert_eq!(winners, 1, "one client won the race");
+    assert_eq!(
+        conflicts, 1,
+        "the other one got a conflict, not an overwrite"
+    );
+
+    // Y lo que quedo es el contenido del que gano, no una mezcla.
+    let asset = left
+        .asset("acme", "releases", "other.bin")
+        .await
+        .expect("read asset");
+    let digest = asset.digest.clone();
+    assert!(
+        digest == ContentDigest::of_bytes(b"the left content")
+            || digest == ContentDigest::of_bytes(b"the right content"),
+        "the asset holds a digest that nobody published"
+    );
+}
+
+/// La fase de escritura del reinicio, en su propio proceso.
+///
+/// La variable de entorno dice en que fase va el proceso: `write` escribe
+/// y se termina, y cualquier otra cosa lee.
+const RESTART_PHASE: &str = "HAR02_CATALOG_RESTART_PHASE";
+
+/// La ruta de la base, que el proceso que escribe recibe del que lo lanza.
+const RESTART_PATH: &str = "HAR02_CATALOG_RESTART_PATH";
+
+/// Escribe el catalogo y sale.
+///
+/// Vive en un proceso aparte porque el reinicio que se quiere probar es un
+/// reinicio de verdad: el bloqueo de la base lo suelta el sistema operativo
+/// cuando el proceso muere, y abrir la base en el mismo proceso no
+/// probaria eso.
+async fn write_the_catalog(path: &std::path::Path) {
+    let db = open_disk(path).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+    store
+        .publish(
+            "acme",
+            with_tag(
+                publication("releases", "app.bin", "pkg", "1.0", b"the durable content"),
+                "latest",
+            ),
+        )
+        .await
+        .expect("publish");
+}
+
+#[tokio::test]
+async fn the_catalog_survives_a_restart() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let path = tmp.path().join("db");
+
+    // En la fase de escritura, este proceso escribe y se termina.
+    if std::env::var(RESTART_PHASE).as_deref() == Ok("write") {
+        let path = std::env::var(RESTART_PATH).expect("the path of the database");
+        write_the_catalog(std::path::Path::new(&path)).await;
+        return;
+    }
+
+    // El proceso que escribe es otro proceso, y se espera a que termine.
+    let binary = std::env::current_exe().expect("the test binary");
+    let status = tokio::process::Command::new(binary)
+        .arg("--exact")
+        .arg("the_catalog_survives_a_restart")
+        .arg("--nocapture")
+        .env(RESTART_PHASE, "write")
+        .env(RESTART_PATH, path.to_string_lossy().as_ref())
+        .status()
+        .await
+        .expect("the writing process");
+    assert!(status.success(), "the writing process failed: {status}");
+
+    // Un proceso nuevo, sobre la misma base, ve lo mismo.
+    let db = open_disk(&path).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    let repository = store
+        .repository("acme", "releases")
+        .await
+        .expect("the repository survives the restart");
+    assert_eq!(repository.repo_key, "releases");
+
+    let asset = store
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect("the asset survives the restart");
+    assert_eq!(
+        asset.digest,
+        ContentDigest::of_bytes(b"the durable content")
+    );
+    assert_eq!(asset.coordinates.package_version, "1.0");
+
+    let version = store
+        .version(
+            "acme",
+            "releases",
+            &PackageCoordinates {
+                package_name: "pkg".to_string(),
+                package_version: "1.0".to_string(),
+            },
+        )
+        .await
+        .expect("the version survives the restart");
+    assert_eq!(
+        version.digest,
+        ContentDigest::of_bytes(b"the durable content")
+    );
+
+    let reference = store
+        .reference("acme", "releases", "app.bin")
+        .await
+        .expect("the reference survives the restart");
+    assert_eq!(
+        reference.digest,
+        ContentDigest::of_bytes(b"the durable content")
+    );
+
+    let tag = store
+        .tag("acme", "releases", "latest")
+        .await
+        .expect("the tag survives the restart");
+    assert_eq!(tag.coordinates.package_version, "1.0");
+}
+
+// ---------------------------------------------------------------------------
+// AC5: la migracion es idempotente y los tres estados de lectura se
+// distinguen.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_schema_can_be_declared_twice() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("first initialize");
+    store.initialize().await.expect("second initialize");
+    assert_eq!(store.applied_schema_version().await.expect("version"), 1);
+
+    // Y los indices siguen en su sitio: el indice es lo que decide los
+    // conflictos, asi que perderlo seria perder la garantia.
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+    let refused = store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect_err("the index is still there");
+    assert!(matches!(
+        refused,
+        CatalogError::Conflict {
+            kind: "repository",
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn missing_denied_and_corrupt_are_three_different_answers() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db.clone());
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", b"the content"),
+        )
+        .await
+        .expect("publish");
+
+    // MISSING: no hay nada ahi.
+    let missing = store
+        .asset("acme", "releases", "nothing-here.bin")
+        .await
+        .expect_err("there is nothing there");
+    assert!(
+        matches!(missing, CatalogError::Missing { kind: "asset", .. }),
+        "unexpected error: {missing:?}"
+    );
+
+    // DENIED: hay algo ahi y este principal no puede verlo. El decisor
+    // decide antes de mirar la base, asi que la respuesta no depende de
+    // que el objeto exista o no.
+    let denying = store_with(
+        db.clone(),
+        Arc::new(ListedAccounts {
+            allowed: vec!["acme".to_string()],
+        }),
+    );
+    let denied = denying
+        .asset("globex", "releases", "app.bin")
+        .await
+        .expect_err("the account is not on the list");
+    assert!(
+        matches!(denied, CatalogError::Denied { .. }),
+        "unexpected error: {denied:?}"
+    );
+    assert!(denied.to_string().contains("globex"));
+
+    // CORRUPT: hay algo ahi y no cuadra. El asset dice un digest y la
+    // version a la que apunta dice otro.
+    db.query(
+        "UPDATE catalog_asset SET digest = $digest \
+         WHERE account = 'acme' AND repository = 'releases' AND asset_path = 'app.bin'",
+    )
+    .bind(("digest", "0".repeat(64)))
+    .await
+    .expect("tamper")
+    .check()
+    .expect("tamper ok");
+
+    let corrupt = store
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect_err("the record does not add up");
+    assert!(
+        matches!(corrupt, CatalogError::Corrupt { kind: "asset", .. }),
+        "unexpected error: {corrupt:?}"
+    );
+    assert!(corrupt.to_string().contains("digest"));
+}
+
+#[tokio::test]
+async fn an_asset_whose_blob_is_not_the_declared_size_is_corrupt() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let content = b"the content";
+    let digest = ContentDigest::of_bytes(content);
+
+    let store = store_for(db.clone());
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", content),
+        )
+        .await
+        .expect("publish");
+
+    // Con la sonda que dice la longitud de verdad, el asset esta sano.
+    let healthy = SurrealCatalogStore::with_authorizer(db.clone(), Arc::new(AllowAllAuthorizer))
+        .with_probe(Arc::new(KnownLengths {
+            lengths: HashMap::from([(digest.value.clone(), content.len() as u64)]),
+        }));
+    healthy
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect("the blob is the size the catalog says");
+
+    // Con una sonda que dice otra cosa, el registro no cuadra con los
+    // bytes: eso es corrupto, y no "no existe".
+    let lying = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer)).with_probe(
+        Arc::new(KnownLengths {
+            lengths: HashMap::from([(digest.value.clone(), 999)]),
+        }),
+    );
+    let corrupt = lying
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect_err("the blob is not the size the catalog says");
+    assert!(
+        matches!(corrupt, CatalogError::Corrupt { kind: "asset", .. }),
+        "unexpected error: {corrupt:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_store_without_an_authorizer_serves_nothing() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = SurrealCatalogStore::new(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect_err("there is no authorizer");
+    let denied = store
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect_err("there is no authorizer");
+    assert!(
+        matches!(denied, CatalogError::Denied { .. }),
+        "unexpected error: {denied:?}"
+    );
+}
+
+#[tokio::test]
+async fn publishing_into_a_repository_that_does_not_exist_is_missing() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    let refused = store
+        .publish(
+            "acme",
+            publication("nowhere", "app.bin", "pkg", "1.0", b"content"),
+        )
+        .await
+        .expect_err("the repository is not there");
+    assert!(
+        matches!(
+            refused,
+            CatalogError::Missing {
+                kind: "repository",
+                ..
+            }
+        ),
+        "unexpected error: {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_catalog_does_not_publish_what_it_was_not_asked_to_publish() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    // Una publicacion sin etiqueta no crea ninguna etiqueta.
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", b"content"),
+        )
+        .await
+        .expect("publish");
+    assert!(matches!(
+        store.tag("acme", "releases", "latest").await,
+        Err(CatalogError::Missing { .. })
+    ));
+
+    // Y una publicacion con etiqueta crea esa etiqueta y solo esa.
+    store
+        .publish(
+            "acme",
+            with_tag(
+                publication("releases", "other.bin", "pkg", "2.0", b"other content"),
+                "latest",
+            ),
+        )
+        .await
+        .expect("publish with tag");
+    let tag = store
+        .tag("acme", "releases", "latest")
+        .await
+        .expect("read tag");
+    assert_eq!(tag.coordinates.package_version, "2.0");
+    assert!(matches!(
+        store.tag("acme", "releases", "stable").await,
+        Err(CatalogError::Missing { .. })
+    ));
+}
+
+#[tokio::test]
+async fn the_action_of_the_request_is_what_is_authorized() {
+    // El decisor ve que se pide, no solo quien: una peticion de lectura y
+    // una de publicacion no son la misma peticion.
+    struct Recorder {
+        seen: std::sync::Mutex<Vec<CatalogAction>>,
+    }
+
+    #[async_trait]
+    impl CatalogAuthorizer for Recorder {
+        async fn authorize(&self, request: &AccessRequest) -> Result<AccessDecision, CatalogError> {
+            self.seen.lock().expect("lock").push(request.action);
+            Ok(AccessDecision::Allow)
+        }
+    }
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let recorder = Arc::new(Recorder {
+        seen: std::sync::Mutex::new(Vec::new()),
+    });
+    let store = store_with(db, recorder.clone());
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+    store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", b"content"),
+        )
+        .await
+        .expect("publish");
+    store
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect("read");
+
+    let seen = recorder.seen.lock().expect("lock").clone();
+    assert!(seen.contains(&CatalogAction::Configure));
+    assert!(seen.contains(&CatalogAction::Publish));
+    assert!(seen.contains(&CatalogAction::Read));
+}
