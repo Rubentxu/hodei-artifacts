@@ -12,7 +12,7 @@
 //!   programa que no tiene nada que ver con este servicio.
 //! - Que un proceso que **se muere a mitad de una subida** no deja una
 //!   ruta publicada a medias, y que al reiniciar el servicio recoge lo
-//!   que quedó.
+//!   que quedó y respeta lo que está vivo.
 //! - Que dos subidas simultáneas **no se mezclan**: lo que se descarga
 //!   tiene el hash de lo que se subió, siempre.
 //! - Que dos cuentas con tokens reales **no se ven** entre sí, y que la
@@ -45,6 +45,15 @@ fn the_content_of(seed: u8) -> Vec<u8> {
         .collect()
 }
 
+/// Un contenido grande, para que las subidas se solapen de verdad.
+///
+/// Un cuerpo de cuatro kilobytes se sube antes de que el siguiente
+/// `curl` conecte, y entonces lo que se mide no es la concurrencia sino
+/// la idempotencia de republicar.
+fn a_big_content(seed: u8) -> Vec<u8> {
+    the_content_of(seed).repeat(512)
+}
+
 /// El seeder del catálogo.
 ///
 /// El motor embebido mantiene el bloqueo del directorio de la base
@@ -69,6 +78,34 @@ fn the_path(repository: &str, path: &str) -> String {
     format!("/repository/{repository}/{path}")
 }
 
+/// El caso del informe, antes de ejecutarlo.
+///
+/// Se anota dos veces: al principio, con lo que se espera, y al final,
+/// con lo que se ha medido. Si la prueba se muere entre medias, el
+/// informe se queda con la primera anotación, que dice `FALLO`. Un
+/// informe que solo sabe decir `PASS` no es un informe.
+fn the_case(id: &str, given: &str, when: &str, command: &str) -> Case {
+    Case {
+        id: id.to_string(),
+        given: given.to_string(),
+        when: when.to_string(),
+        command: command.to_string(),
+        outcome: "en curso".to_string(),
+        passed: false,
+    }
+}
+
+/// El `curl` que hace el arnés, con sus argumentos de verdad.
+///
+/// La columna del informe tiene el comando **real**: lo que se ejecutó,
+/// con sus banderas y su credencial. Un comando resumido es una
+/// paráfrasis, y una paráfrasis es una opinión.
+fn the_command(port: u16, path: &str, token: &str, extra: &str) -> String {
+    format!(
+        "curl {extra} --silent --show-error --path-as-is --dump-header - --write-out '%{{http_code}} %{{size_download}}' --header 'Authorization: Bearer {token}' http://127.0.0.1:{port}{path}"
+    )
+}
+
 // ---------------------------------------------------------------------------
 // RAW-01 y RAW-02 — publicar, descargar, describir y pedir un tramo.
 // ---------------------------------------------------------------------------
@@ -80,20 +117,32 @@ fn the_path(repository: &str, path: &str) -> String {
 #[test]
 fn the_content_that_is_published_comes_back_intact() {
     let deployment = a_deployment();
-    let port = support::free_port();
-    let mut service = deployment.start(port, &[]);
+    let mut service = deployment.start(&[]);
+    let port = service.port;
     let token = support::token(FIRST_ACCOUNT, "alice");
     let source = deployment.directory.path().join("source.bin");
     std::fs::write(&source, the_content()).expect("the source is written");
     let expected = support::sha256_of(&source);
+    let path = the_path(FIRST_REPOSITORY, "dir/file.bin");
 
-    let published = support::curl_upload(
-        port,
-        &the_path(FIRST_REPOSITORY, "dir/file.bin"),
-        &token,
-        &source,
-        None,
+    let mut case = the_case(
+        "RAW-01, RAW-02",
+        "un repositorio hosted limpio y un token válido",
+        "se publica, se descarga, se describe y se pide un tramo con curl",
+        &format!(
+            "{} ; {} ; sha256sum descargado",
+            the_command(
+                port,
+                &path,
+                "<alice>",
+                "--request PUT --data-binary @fuente"
+            ),
+            the_command(port, &path, "<alice>", "--output descargado")
+        ),
     );
+    support::record(case.clone());
+
+    let published = support::curl_upload(port, &path, &token, &source, None);
     assert_eq!(
         published.status,
         201,
@@ -102,65 +151,66 @@ fn the_content_that_is_published_comes_back_intact() {
     );
 
     let downloaded = deployment.directory.path().join("downloaded.bin");
-    let answer = support::curl_download(
-        port,
-        &the_path(FIRST_REPOSITORY, "dir/file.bin"),
-        &token,
-        Some(&downloaded),
-    );
+    let answer = support::curl_download(port, &path, &token, Some(&downloaded));
     assert_eq!(answer.status, 200);
+    let measured = support::sha256_of(&downloaded);
     assert_eq!(
-        support::sha256_of(&downloaded),
-        expected,
+        measured, expected,
         "the bytes that came back are not the bytes that went in"
     );
 
     // Y la cabecera dice lo que el contenido mide, con el digest dentro.
-    let digest = support::sha256_of(&source);
+    let etag = answer.header("etag");
     assert_eq!(
-        answer.header("etag"),
-        Some(format!("\"sha256:{digest}\"")),
+        etag,
+        Some(format!("\"sha256:{expected}\"")),
         "the ETag has to be the digest of the content"
     );
 
-    // El HEAD describe sin traer: mismo estado, mismo tamaño, sin cuerpo.
-    let described =
-        support::curl_describe(port, &the_path(FIRST_REPOSITORY, "dir/file.bin"), &token);
+    // El HEAD describe sin traer: mismo estado, mismo tamaño, y **cero**
+    // bytes de cuerpo. El cero lo cuenta el propio `curl`.
+    let described = support::curl_describe(port, &path, &token);
     assert_eq!(described.status, 200);
     assert_eq!(
         described.header("content-length"),
         Some((the_content().len()).to_string()),
         "the HEAD has to say the size of the content"
     );
-
-    // Y el tramo es un 206 con su Content-Range.
-    let ranged = support::curl_with_header(
-        port,
-        "GET",
-        &the_path(FIRST_REPOSITORY, "dir/file.bin"),
-        &token,
-        ("range", "bytes=0-9"),
+    assert_eq!(
+        described.size, 0,
+        "the HEAD has to come without a body, and the curl counted {} bytes",
+        described.size
     );
+
+    // Y el tramo es un 206 con su Content-Range, y con **sus bytes**: un
+    // 206 con el Content-Range correcto y el contenido de otro asset
+    // sería un tramo que miente.
+    let ranged_file = deployment.directory.path().join("ranged.bin");
+    let ranged =
+        support::curl_get_with_header(port, &path, &token, ("range", "bytes=0-9"), &ranged_file);
     assert_eq!(ranged.status, 206);
     assert_eq!(
         ranged.header("content-range"),
         Some(format!("bytes 0-9/{}", the_content().len()))
     );
+    let ranged_bytes = std::fs::read(&ranged_file).expect("the range is written");
+    assert_eq!(
+        ranged_bytes,
+        &the_content()[0..10],
+        "the bytes of the range are not the bytes of the content"
+    );
+    assert_eq!(ranged.size, 10, "the range is ten bytes long");
 
-    support::record(Case {
-        id: "RAW-01, RAW-02".to_string(),
-        given: "un repositorio hosted limpio y un token válido".to_string(),
-        when: "se publica, se descarga, se describe y se pide un tramo con curl".to_string(),
-        command: format!(
-            "curl -X PUT http://127.0.0.1:{port}{} ; curl -o fichero http://127.0.0.1:{port}{} ; sha256sum fichero",
-            the_path(FIRST_REPOSITORY, "dir/file.bin"),
-            the_path(FIRST_REPOSITORY, "dir/file.bin")
-        ),
-        outcome: format!(
-            "sha256sum idéntico ({expected}), ETag con el digest, HEAD 200 sin cuerpo, Range 206 con Content-Range"
-        ),
-        passed: true,
-    });
+    case.outcome = format!(
+        "sha256sum idéntico ({measured}), ETag {}, HEAD {} con {} bytes de cuerpo, Range {} con {} y sus 10 bytes",
+        etag.clone().unwrap_or_default(),
+        described.status,
+        described.size,
+        ranged.status,
+        ranged.header("content-range").unwrap_or_default()
+    );
+    case.passed = true;
+    support::record(case);
 
     support::stop(&mut service);
 }
@@ -173,13 +223,32 @@ fn the_content_that_is_published_comes_back_intact() {
 /// publicada a medias, y al reiniciar el servicio recoge lo que quedó.
 ///
 /// El `curl` va limitado para que la subida dure lo suficiente como para
-/// poder matar al servicio con el cuerpo a medias.
+/// poder matar al servicio con el cuerpo a medias, y el arnés espera a
+/// que el staging **tenga bytes** antes de matar: un staging vacío
+/// significa que la subida no había empezado a llegar, y matar ahí no es
+/// matar una subida a la mitad.
 #[test]
 fn an_upload_that_is_interrupted_leaves_nothing_published() {
     let deployment = a_deployment();
-    let port = support::free_port();
-    let mut service = deployment.start(port, &[]);
+    let mut service = deployment.start(&[]);
+    let port = service.port;
     let token = support::token(FIRST_ACCOUNT, "alice");
+
+    let mut case = the_case(
+        "RAW-06",
+        "un contenido publicado y una subida en curso",
+        "el proceso se mata a mitad de la subida y se vuelve a arrancar",
+        &format!(
+            "{} ; kill -9 <servicio> ; <servicio> (arranque normal, con la caducidad por defecto)",
+            the_command(
+                port,
+                &the_path(FIRST_REPOSITORY, "cut/file.bin"),
+                "<alice>",
+                "--limit-rate 256K --request PUT --data-binary @grande"
+            )
+        ),
+    );
+    support::record(case.clone());
 
     // Un contenido que sí se publicó, para poder comprobar que sigue
     // intacto después del corte.
@@ -197,7 +266,7 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
 
     // Y ahora una subida que no llega a terminarse.
     let big = deployment.directory.path().join("big.bin");
-    std::fs::write(&big, the_content_of(7).repeat(512)).expect("the source is written");
+    std::fs::write(&big, the_content_of(7).repeat(128)).expect("the source is written");
     let mut upload = support::curl_upload_in_background(
         port,
         &the_path(FIRST_REPOSITORY, "cut/file.bin"),
@@ -206,14 +275,14 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
         Some("256K"),
     );
 
-    // Se espera a que la subida esté **en curso**: el staging existe
-    // cuando el servicio está escribiendo el cuerpo.
+    // Se espera a que la subida esté **en curso**: el staging existe y
+    // tiene bytes, o sea que el servicio está escribiendo el cuerpo.
     let deadline = Instant::now() + Duration::from_secs(30);
-    while deployment.staging_entries().is_empty() && Instant::now() < deadline {
+    while deployment.staging_bytes() == 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert!(
-        !deployment.staging_entries().is_empty(),
+        deployment.staging_bytes() > 0,
         "the upload never reached the store:\n{}",
         deployment.the_log()
     );
@@ -228,13 +297,32 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
         "the staging of the interrupted upload was expected to be there"
     );
 
-    // Al reiniciar, el servicio limpia lo que encuentra caducado.
-    let port = support::free_port();
-    let mut service = deployment.start(port, &[("HODEI_CONTENT__STAGING_MAX_AGE_SECS", "0")]);
+    // Ese staging es un fichero abandonado: lleva dos horas ahí, que es
+    // más que la caducidad por defecto (una hora). Y al lado se deja un
+    // staging **vivo**, como el de una subida de otro proceso, que es lo
+    // que el arranque no tiene que tocar.
+    deployment.age_the_staging(Duration::from_secs(2 * 3600));
+    let live = deployment.a_live_staging();
+
+    // Al reiniciar, el servicio limpia lo que encuentra caducado y
+    // respeta lo que está vivo. Y se reinicia con la configuración de
+    // verdad: la caducidad por defecto, sin tocar nada.
+    let mut service = deployment.start(&[]);
+    let port = service.port;
 
     assert!(
-        deployment.staging_entries().is_empty(),
-        "the staging of the interrupted upload was not cleaned up"
+        deployment.staging_entries().contains(&live),
+        "the staging of a live upload was removed at the boot"
+    );
+    assert!(
+        live.exists(),
+        "the staging of a live upload was removed at the boot"
+    );
+    assert_eq!(
+        deployment.staging_entries().len(),
+        1,
+        "the expired staging was not cleaned up: {:?}",
+        deployment.staging_entries()
     );
 
     // La ruta de la subida cortada no existe: no se publicó a medias.
@@ -247,6 +335,23 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
     assert_eq!(
         missing.status, 404,
         "an interrupted upload must not publish a path"
+    );
+
+    // Y publicarla otra vez **funciona**: un `404` y un `409` juntos
+    // serían un asset colgado, un camino que nadie puede usar. Con el
+    // `409` solo, lo que se comprueba es que la dirección está libre.
+    let again = support::curl_upload(
+        port,
+        &the_path(FIRST_REPOSITORY, "cut/file.bin"),
+        &token,
+        &published,
+        None,
+    );
+    assert_eq!(
+        again.status,
+        201,
+        "the interrupted path is not free:\n{}",
+        deployment.the_log()
     );
 
     // Y el contenido que sí estaba publicado sigue siendo el mismo.
@@ -264,14 +369,12 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
         "the content that was published did not survive the interruption"
     );
 
-    support::record(Case {
-        id: "RAW-06".to_string(),
-        given: "un contenido publicado y una subida en curso".to_string(),
-        when: "el proceso se mata a mitad de la subida y se vuelve a arrancar".to_string(),
-        command: "curl --limit-rate 256K -X PUT ... ; kill -9 <servicio> ; <servicio> --arranque".to_string(),
-        outcome: "la ruta cortada no existe (404), el staging caducado se limpió al arrancar, y el contenido publicado sigue con el mismo sha256".to_string(),
-        passed: true,
-    });
+    case.outcome = format!(
+        "la ruta cortada no existe ({}), republicar en ella da {} (no 409), el staging caducado se limpió al arrancar y el vivo sigue, y el contenido publicado sigue con el mismo sha256 ({expected})",
+        missing.status, again.status
+    );
+    case.passed = true;
+    support::record(case);
 
     support::stop(&mut service);
 }
@@ -295,14 +398,36 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
 #[test]
 fn simultaneous_uploads_do_not_mix_the_content() {
     let deployment = a_deployment();
-    let port = support::free_port();
-    let mut service = deployment.start(port, &[]);
+    let mut service = deployment.start(&[]);
+    let port = service.port;
     let token = support::token(FIRST_ACCOUNT, "alice");
     let directory = deployment.directory.path().to_path_buf();
 
-    // --- El mismo contenido, a la misma ruta, por cinco autores.
+    let mut case = the_case(
+        "CAS-02, CAT-02",
+        "cinco peticiones con el mismo contenido, cuatro con contenidos distintos y cuatro disputando la misma ruta",
+        "se publican todos a la vez y se descarga lo que hay",
+        &format!(
+            "{} & (cinco, cuatro y cuatro en paralelo) ; {} ; sha256sum descargado",
+            the_command(
+                port,
+                &the_path(FIRST_REPOSITORY, "same/file.bin"),
+                "<alice>",
+                "--limit-rate 1M --request PUT --data-binary @contenido"
+            ),
+            the_command(
+                port,
+                &the_path(FIRST_REPOSITORY, "same/file.bin"),
+                "<alice>",
+                "--output descargado"
+            )
+        ),
+    );
+    support::record(case.clone());
+
+    // --- El mismo contenido, a la misma ruta, por cinco peticiones.
     let same = directory.join("same.bin");
-    std::fs::write(&same, the_content()).expect("the source is written");
+    std::fs::write(&same, a_big_content(1)).expect("the source is written");
     let same_digest = support::sha256_of(&same);
     let mut uploads = Vec::new();
     for _ in 0..5 {
@@ -311,18 +436,33 @@ fn simultaneous_uploads_do_not_mix_the_content() {
             &the_path(FIRST_REPOSITORY, "same/file.bin"),
             &token,
             &same,
-            None,
+            Some("1M"),
         ));
     }
-    let mut statuses = Vec::new();
-    for upload in uploads {
-        statuses.push(support::wait_for_the_answer(upload).status);
+
+    // Y las subidas **se solapan**: hay más de un staging en curso, que
+    // es lo que dice que las peticiones estaban en vuelo a la vez y que
+    // cada una tenía su propio staging. Sin esta comprobación, lo que
+    // se mide es una republicar en fila.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while deployment.staging_entries().len() < 2 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
     }
     assert!(
-        statuses
+        deployment.staging_entries().len() >= 2,
+        "the uploads did not overlap: {:?}",
+        deployment.staging_entries()
+    );
+
+    let mut same_statuses = Vec::new();
+    for upload in uploads {
+        same_statuses.push(support::wait_for_the_answer(upload).status);
+    }
+    assert!(
+        same_statuses
             .iter()
             .all(|status| *status == 200 || *status == 201),
-        "the same content published at once has to be idempotent: {statuses:?}\n{}",
+        "the same content published at once has to be idempotent: {same_statuses:?}\n{}",
         deployment.the_log()
     );
 
@@ -345,25 +485,25 @@ fn simultaneous_uploads_do_not_mix_the_content() {
     let mut digests = Vec::new();
     for writer in 0..4u8 {
         let file = directory.join(format!("distinct-{writer}.bin"));
-        std::fs::write(&file, the_content_of(writer)).expect("the source is written");
+        std::fs::write(&file, a_big_content(writer)).expect("the source is written");
         digests.push((writer, support::sha256_of(&file)));
         uploads.push(support::curl_upload_in_background(
             port,
             &the_path(FIRST_REPOSITORY, &format!("distinct/{writer}.bin")),
             &token,
             &file,
-            None,
+            Some("1M"),
         ));
     }
-    let mut statuses = Vec::new();
+    let mut distinct_statuses = Vec::new();
     for upload in uploads {
-        statuses.push(support::wait_for_the_answer(upload).status);
+        distinct_statuses.push(support::wait_for_the_answer(upload).status);
     }
     assert!(
-        statuses
+        distinct_statuses
             .iter()
             .all(|status| *status == 200 || *status == 201),
-        "distinct contents at distinct paths have to be published: {statuses:?}\n{}",
+        "distinct contents at distinct paths have to be published: {distinct_statuses:?}\n{}",
         deployment.the_log()
     );
 
@@ -388,31 +528,37 @@ fn simultaneous_uploads_do_not_mix_the_content() {
     let mut contenders = Vec::new();
     for writer in 0..4u8 {
         let file = directory.join(format!("contested-{writer}.bin"));
-        std::fs::write(&file, the_content_of(100 + writer)).expect("the source is written");
+        std::fs::write(&file, a_big_content(100 + writer)).expect("the source is written");
         contenders.push(support::sha256_of(&file));
         uploads.push(support::curl_upload_in_background(
             port,
             &the_path(FIRST_REPOSITORY, "contested/file.bin"),
             &token,
             &file,
-            None,
+            Some("1M"),
         ));
     }
-    let mut statuses = Vec::new();
+    let mut contested_statuses = Vec::new();
     for upload in uploads {
-        statuses.push(support::wait_for_the_answer(upload).status);
+        contested_statuses.push(support::wait_for_the_answer(upload).status);
     }
-    let created = statuses.iter().filter(|status| **status == 201).count();
-    let refused = statuses.iter().filter(|status| **status == 409).count();
+    let created = contested_statuses
+        .iter()
+        .filter(|status| **status == 201)
+        .count();
+    let refused = contested_statuses
+        .iter()
+        .filter(|status| **status == 409)
+        .count();
     assert_eq!(
         created,
         1,
-        "a path that publishes once has to have exactly one winner: {statuses:?}\n{}",
+        "a path that publishes once has to have exactly one winner: {contested_statuses:?}\n{}",
         deployment.the_log()
     );
     assert_eq!(
         refused, 3,
-        "the publications that lost have to be refused: {statuses:?}"
+        "the publications that lost have to be refused: {contested_statuses:?}"
     );
 
     // Y lo que queda es **uno** de los que se publicaron, entero.
@@ -437,14 +583,11 @@ fn simultaneous_uploads_do_not_mix_the_content() {
         deployment.staging_entries()
     );
 
-    support::record(Case {
-        id: "CAS-02, CAT-02".to_string(),
-        given: "cinco autores con el mismo contenido, cuatro con contenidos distintos y cuatro disputando la misma ruta".to_string(),
-        when: "se publican todos a la vez y se descarga lo que hay".to_string(),
-        command: "curl -X PUT ... & (cinco, cuatro y cuatro en paralelo) ; curl -o fichero ... ; sha256sum fichero".to_string(),
-        outcome: "el mismo contenido es idempotente (5 respuestas 200/201), las rutas distintas guardan lo suyo, la ruta disputada tiene un solo ganador (201) y tres 409, y cada hash descargado es el hash de lo subido".to_string(),
-        passed: true,
-    });
+    case.outcome = format!(
+        "el mismo contenido es idempotente ({same_statuses:?}), las rutas distintas guardan lo suyo ({distinct_statuses:?}), la ruta disputada tiene {created} ganador y {refused} 409 ({contested_statuses:?}), y cada hash descargado es el hash de lo subido"
+    );
+    case.passed = true;
+    support::record(case);
 
     support::stop(&mut service);
 }
@@ -462,11 +605,33 @@ fn simultaneous_uploads_do_not_mix_the_content() {
 #[test]
 fn two_accounts_do_not_see_each_other() {
     let deployment = a_deployment();
-    let port = support::free_port();
-    let mut service = deployment.start(port, &[]);
+    let mut service = deployment.start(&[]);
+    let port = service.port;
     let first = support::token(FIRST_ACCOUNT, "alice");
     let second = support::token(SECOND_ACCOUNT, "bob");
     let directory = deployment.directory.path().to_path_buf();
+
+    let mut case = the_case(
+        "RAW-05, CAT-03",
+        "dos cuentas con tokens reales y repositorios con la misma clave",
+        "las dos publican en la misma dirección y cada una descarga, y la otra busca un repositorio que no tiene",
+        &format!(
+            "{} ; {}",
+            the_command(
+                port,
+                &the_path(FIRST_REPOSITORY, "shared/file.bin"),
+                "<alice>",
+                "--request PUT --data-binary @contenido"
+            ),
+            the_command(
+                port,
+                &the_path(SECOND_REPOSITORY, "shared/file.bin"),
+                "<bob>",
+                "--request PUT --data-binary @otro"
+            )
+        ),
+    );
+    support::record(case.clone());
 
     // Las dos cuentas publican en la misma dirección.
     let first_file = directory.join("first.bin");
@@ -489,6 +654,21 @@ fn two_accounts_do_not_see_each_other() {
         &the_path(SECOND_REPOSITORY, "shared/file.bin"),
         &second,
         &second_file,
+        None,
+    );
+    assert_eq!(answer.status, 201, "{}", deployment.the_log());
+
+    // Y la primera cuenta publica también en un repositorio que la
+    // segunda no tiene. Sin esto, el `404` de la segunda no distinguiría
+    // "no lo ves" de "no hay nada publicado": haría falta que lo hubiera
+    // publicado alguien.
+    let only_first = directory.join("only-first.bin");
+    std::fs::write(&only_first, the_content_of(3)).expect("the source is written");
+    let answer = support::curl_upload(
+        port,
+        &the_path(FIRST_ONLY_REPOSITORY, "secret/file.bin"),
+        &first,
+        &only_first,
         None,
     );
     assert_eq!(answer.status, 201, "{}", deployment.the_log());
@@ -562,18 +742,12 @@ fn two_accounts_do_not_see_each_other() {
     );
     assert_eq!(answer.status, 401);
 
-    support::record(Case {
-        id: "RAW-05, CAT-03".to_string(),
-        given: "dos cuentas con tokens reales y repositorios con la misma clave".to_string(),
-        when: "las dos publican en la misma dirección y cada una descarga, y la otra busca un repositorio que no tiene".to_string(),
-        command: format!(
-            "curl -X PUT -H 'Authorization: Bearer <alice>' http://127.0.0.1:{port}{} ; curl -X PUT -H 'Authorization: Bearer <bob>' http://127.0.0.1:{port}{}",
-            the_path(FIRST_REPOSITORY, "shared/file.bin"),
-            the_path(SECOND_REPOSITORY, "shared/file.bin")
-        ),
-        outcome: "cada cuenta descarga su propio contenido (hash distinto en la misma dirección), el repositorio de la otra cuenta es 404, el principal que el bundle no cubre es 403 y sin credencial es 401".to_string(),
-        passed: true,
-    });
+    case.outcome = format!(
+        "cada cuenta descarga su propio contenido (hash distinto en la misma dirección), el repositorio de la otra cuenta es {}, el principal que el bundle no cubre es {} y sin credencial es {}",
+        404, 403, 401
+    );
+    case.passed = true;
+    support::record(case);
 
     support::stop(&mut service);
 }

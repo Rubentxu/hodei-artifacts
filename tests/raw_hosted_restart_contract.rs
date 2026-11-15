@@ -52,8 +52,8 @@ fn the_content_is_published_downloaded_and_survives_a_real_restart() {
     let expected = support::sha256_of(&source);
 
     // --- The first round: the service publishes and serves the content.
-    let port = support::free_port();
-    let mut service = deployment.start(port, &[]);
+    let mut service = deployment.start(&[]);
+    let port = service.port;
 
     let published = support::curl_upload(port, CONTENT_PATH, &token, &source, None);
     assert_eq!(
@@ -79,8 +79,8 @@ fn the_content_is_published_downloaded_and_survives_a_real_restart() {
     support::stop(&mut service);
 
     // --- The second round: the same storage, the same content.
-    let port = support::free_port();
-    let mut service = deployment.start(port, &[]);
+    let mut service = deployment.start(&[]);
+    let port = service.port;
 
     let after = deployment.directory.path().join("after-restart.bin");
     let answer = support::curl_download(port, CONTENT_PATH, &token, Some(&after));
@@ -114,8 +114,8 @@ fn a_traversal_is_refused_by_the_running_service() {
     let source = deployment.directory.path().join("source.bin");
     std::fs::write(&source, b"content").unwrap();
 
-    let port = support::free_port();
-    let mut service = deployment.start(port, &[]);
+    let mut service = deployment.start(&[]);
+    let port = service.port;
 
     let refused = support::curl_upload(
         port,

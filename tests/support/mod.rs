@@ -17,12 +17,12 @@
 
 #![allow(dead_code)]
 
-use std::fs::File;
+use std::fs::{File, FileTimes};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use hodei_catalog::CatalogWriter;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -147,6 +147,44 @@ pub fn free_port() -> u16 {
         .port()
 }
 
+/// El puerto en el que el servicio **dice** que escucha.
+///
+/// El servicio lo escribe en su log **después** de haber ocupado el
+/// puerto, así que esa línea es la prueba de que el proceso que la
+/// escribió es el dueño del puerto. Un `connect` que funciona no lo
+/// prueba: el otro proceso puede tener el puerto cogido y el nuestro
+/// haber muerto al no poder obtenerlo.
+fn the_bound_port(log: &Path) -> Option<u16> {
+    let content = std::fs::read_to_string(log).ok()?;
+    let line = content
+        .lines()
+        .find(|line| line.contains("Listening on http://"))?;
+    let address = without_the_colors(line.split("Listening on http://").nth(1)?);
+    address.trim().rsplit(':').next()?.trim().parse().ok()
+}
+
+/// Quita las secuencias de escape del log.
+///
+/// El formato del log puede traer códigos de color, y un puerto con un
+/// `\u{1b}[0m` pegado no se puede leer como número.
+fn without_the_colors(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut characters = text.chars();
+    while let Some(character) = characters.next() {
+        if character != '\u{1b}' {
+            plain.push(character);
+            continue;
+        }
+        // Es una secuencia de escape: se come hasta su letra final.
+        for escaped in characters.by_ref() {
+            if escaped.is_ascii_alphabetic() {
+                break;
+            }
+        }
+    }
+    plain
+}
+
 /// Un despliegue limpio: un directorio, una base, un almacén, las
 /// políticas y el esquema.
 ///
@@ -202,6 +240,51 @@ impl Deployment {
         found
     }
 
+    /// Los bytes que hay escritos en el staging.
+    ///
+    /// Es lo que separa "el servicio ha abierto el fichero" de "el
+    /// servicio está escribiendo el cuerpo": un staging vacío significa
+    /// que la subida todavía no ha empezado a llegar, y matar el proceso
+    /// ahí no es matar una subida a la mitad.
+    pub fn staging_bytes(&self) -> u64 {
+        self.staging_entries()
+            .iter()
+            .filter_map(|path| std::fs::metadata(path).ok())
+            .map(|metadata| metadata.len())
+            .sum()
+    }
+
+    /// Envejece los ficheros de staging.
+    ///
+    /// Envejecer un fichero es lo que hace el tiempo, y el arnés no
+    /// puede esperar dos horas: lo que se quiere es un staging
+    /// abandonado, y la caducidad la decide la **fecha de modificación**.
+    pub fn age_the_staging(&self, age: Duration) {
+        let when = SystemTime::now() - age;
+        for path in self.staging_entries() {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .expect("the staging file opens");
+            file.set_times(FileTimes::new().set_modified(when))
+                .expect("the staging file ages");
+        }
+    }
+
+    /// Deja un staging **vivo**, como el de una subida de otro proceso.
+    ///
+    /// Es un fichero recién escrito en el directorio de staging: lo que
+    /// el arranque tiene que respetar, porque pertenece a una subida que
+    /// está en curso.
+    pub fn a_live_staging(&self) -> PathBuf {
+        let path = self
+            .staging
+            .join(format!("live-{}.part", std::process::id()));
+        std::fs::write(&path, b"una subida que esta en curso")
+            .expect("the live staging is written");
+        path
+    }
+
     /// Siembra el catálogo con un repositorio por cuenta.
     ///
     /// La siembra va en un **proceso aparte**, y no por comodidad: el
@@ -224,14 +307,29 @@ impl Deployment {
 
     /// Arranca el servicio y espera a que abra el puerto.
     ///
-    /// El servicio puede morir al arrancar cuando el motor de disco
-    /// todavía tiene el bloqueo del directorio, así que un intento que
-    /// muere antes de abrir el puerto se repite: lo que se prueba es el
-    /// servicio, no la carrera del bloqueo.
-    pub fn start(&self, port: u16, extra_environment: &[(&str, &str)]) -> Child {
+    /// El puerto se elige en cada intento, y no antes: un puerto libre
+    /// puede ser tomado por otro proceso entre que se elige y que el
+    /// servicio lo ocupa, y en ese caso el arnés acabaría hablando con
+    /// el servicio de otro despliegue —una suite en verde que no midió
+    /// lo que dice medir—.
+    ///
+    /// Lo que quita esa duda es el **log**: el servicio dice en qué
+    /// puerto escuchó, y lo dice **después** de haberlo ocupado. Si otro
+    /// proceso tenía el puerto, este servicio no puede escribir esa
+    /// línea, así que el arnés no lo toma por suyo y repite con otro.
+    ///
+    /// El servicio también puede morir al arrancar cuando el motor de
+    /// disco todavía tiene el bloqueo del directorio, así que un intento
+    /// que muere antes de abrir el puerto se repite: lo que se prueba es
+    /// el servicio, no la carrera del bloqueo.
+    pub fn start(&self, extra_environment: &[(&str, &str)]) -> Service {
         let log = self.log_path();
         for _attempt in 0..5 {
+            let port = free_port();
             let stderr = File::create(&log).expect("the log of the service");
+            let stdout = stderr
+                .try_clone()
+                .expect("the log of the service, twice");
             let mut command = Command::new(BIN);
             command
                 .env_remove("RUN_MODE")
@@ -256,9 +354,9 @@ impl Deployment {
                     "HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH",
                     self.schema_path(),
                 )
-                .env("RUST_LOG", "warn")
+                .env("RUST_LOG", "info")
                 .stdin(Stdio::null())
-                .stdout(Stdio::null())
+                .stdout(Stdio::from(stdout))
                 .stderr(Stdio::from(stderr));
             for (name, value) in extra_environment {
                 command.env(name, value);
@@ -267,8 +365,14 @@ impl Deployment {
 
             let deadline = Instant::now() + Duration::from_secs(30);
             while Instant::now() < deadline {
-                if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                    return child;
+                // El puerto lo dice el servicio, y solo lo dice si lo
+                // ha ocupado: esa es la prueba de que el hijo es el
+                // dueño del puerto.
+                if the_bound_port(&log) == Some(port)
+                    && TcpStream::connect(("127.0.0.1", port)).is_ok()
+                    && matches!(child.try_wait(), Ok(None))
+                {
+                    return Service { port, child };
                 }
                 if matches!(child.try_wait(), Ok(Some(_))) {
                     break;
@@ -296,10 +400,31 @@ impl Deployment {
     }
 }
 
+/// El servicio que está en pie.
+pub struct Service {
+    /// El puerto donde escucha.
+    pub port: u16,
+    /// El proceso.
+    pub child: Child,
+}
+
+impl Drop for Service {
+    /// El servicio no se queda vivo si la prueba se cae.
+    ///
+    /// Sin esto, una prueba que falla antes de parar el servicio deja
+    /// un proceso escuchando en su puerto: el siguiente test puede
+    /// hablar con un servicio viejo, y la suite se pone verde sin haber
+    /// probado lo que dice probar.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// Para el servicio.
-pub fn stop(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
+pub fn stop(service: &mut Service) {
+    let _ = service.child.kill();
+    let _ = service.child.wait();
 }
 
 /// Para el servicio, de golpe.
@@ -307,9 +432,9 @@ pub fn stop(child: &mut Child) {
 /// Un `SIGKILL` es lo que pasa cuando una máquina se apaga: no hay
 /// oportunidad de limpiar nada, y por eso es el que reproduce la
 /// interrupción de verdad.
-pub fn kill(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
+pub fn kill(service: &mut Service) {
+    let _ = service.child.kill();
+    let _ = service.child.wait();
 }
 
 /// El digest de un fichero, dicho por `sha256sum`.
@@ -335,8 +460,11 @@ pub fn sha256_of(file: &Path) -> String {
 pub struct Answer {
     /// El código de estado.
     pub status: u16,
-    /// El cuerpo.
-    pub body: Vec<u8>,
+    /// Los bytes del cuerpo que el `curl` escribió.
+    ///
+    /// Lo dice el propio `curl`, que sabe cuántos bytes escribió en el
+    /// destino: es la forma de medir un `HEAD` sin cuerpo sin suponerlo.
+    pub size: u64,
     /// Las cabeceras, en texto.
     pub headers: String,
 }
@@ -358,7 +486,7 @@ impl Answer {
 /// Un `curl` que publica un fichero.
 ///
 /// Con `--limit-rate` el cuerpo llega despacio, que es lo que hace falta
-/// para poder matar al servicio **a mitad de la subida**.
+/// para poder matar el servicio **a mitad de la subida**.
 pub fn curl_upload(
     port: u16,
     path: &str,
@@ -366,12 +494,9 @@ pub fn curl_upload(
     file: &Path,
     limit_rate: Option<&str>,
 ) -> Answer {
-    let mut command = Command::new("curl");
-    command.args(["--silent", "--show-error", "--path-as-is"]);
+    let mut command = a_curl(port, path, token);
     command.arg("--request");
     command.arg("PUT");
-    command.arg("--header");
-    command.arg(format!("Authorization: Bearer {token}"));
     command.arg("--data-binary");
     command.arg(format!("@{}", file.display()));
     if let Some(rate) = limit_rate {
@@ -380,28 +505,12 @@ pub fn curl_upload(
     }
     command.arg("--output");
     command.arg("/dev/null");
-    command.arg("--dump-header");
-    command.arg("-");
-    command.arg("--write-out");
-    command.arg("%{http_code}");
-    command.arg(format!("http://127.0.0.1:{port}{path}"));
-
-    let output = command.output().expect("curl has to be there");
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let (headers, status) = the_answer_of(&stdout);
-    Answer {
-        status,
-        body: Vec::new(),
-        headers,
-    }
+    the_answer(&mut command)
 }
 
 /// Un `curl` que descarga a un fichero, o a la nada.
 pub fn curl_download(port: u16, path: &str, token: &str, into: Option<&Path>) -> Answer {
-    let mut command = Command::new("curl");
-    command.args(["--silent", "--show-error", "--path-as-is"]);
-    command.arg("--header");
-    command.arg(format!("Authorization: Bearer {token}"));
+    let mut command = a_curl(port, path, token);
     match into {
         Some(file) => {
             command.arg("--output");
@@ -412,44 +521,35 @@ pub fn curl_download(port: u16, path: &str, token: &str, into: Option<&Path>) ->
             command.arg("/dev/null");
         }
     }
-    command.arg("--dump-header");
-    command.arg("-");
-    command.arg("--write-out");
-    command.arg("%{http_code}");
-    command.arg(format!("http://127.0.0.1:{port}{path}"));
-
-    let output = command.output().expect("curl has to be there");
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let (headers, status) = the_answer_of(&stdout);
-    Answer {
-        status,
-        body: Vec::new(),
-        headers,
-    }
+    the_answer(&mut command)
 }
 
 /// Un `curl` que solo pide la descripción.
 pub fn curl_describe(port: u16, path: &str, token: &str) -> Answer {
-    let mut command = Command::new("curl");
-    command.args(["--silent", "--show-error", "--path-as-is", "--head"]);
-    command.arg("--header");
-    command.arg(format!("Authorization: Bearer {token}"));
+    let mut command = a_curl(port, path, token);
+    command.arg("--head");
     command.arg("--output");
     command.arg("/dev/null");
-    command.arg("--dump-header");
-    command.arg("-");
-    command.arg("--write-out");
-    command.arg("%{http_code}");
-    command.arg(format!("http://127.0.0.1:{port}{path}"));
+    the_answer(&mut command)
+}
 
-    let output = command.output().expect("curl has to be there");
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let (headers, status) = the_answer_of(&stdout);
-    Answer {
-        status,
-        body: Vec::new(),
-        headers,
-    }
+/// Un `curl` con una cabecera de más, que deja el cuerpo en un fichero.
+///
+/// Es lo que permite comprobar los **bytes** de un tramo, y no solo su
+/// código y su `Content-Range`.
+pub fn curl_get_with_header(
+    port: u16,
+    path: &str,
+    token: &str,
+    header: (&str, &str),
+    into: &Path,
+) -> Answer {
+    let mut command = a_curl(port, path, token);
+    command.arg("--header");
+    command.arg(format!("{}: {}", header.0, header.1));
+    command.arg("--output");
+    command.arg(into.to_string_lossy().into_owned());
+    the_answer(&mut command)
 }
 
 /// Un `curl` que publica un fichero, en segundo plano.
@@ -481,7 +581,7 @@ pub fn curl_upload_in_background(
     command.arg("--dump-header");
     command.arg("-");
     command.arg("--write-out");
-    command.arg("%{http_code}");
+    command.arg("%{http_code} %{size_download}");
     command.arg(format!("http://127.0.0.1:{port}{path}"));
     command.stdin(Stdio::null());
     command.stdout(Stdio::piped());
@@ -496,73 +596,103 @@ pub fn curl_upload_in_background(
 /// inventado.
 pub fn wait_for_the_answer(child: Child) -> Answer {
     let output = child.wait_with_output().expect("the curl finishes");
+    assert!(
+        output.status.success(),
+        "the curl failed: {}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let (headers, status) = the_answer_of(&stdout);
+    let (headers, status, size) = the_answer_of(&stdout);
     Answer {
         status,
-        body: Vec::new(),
+        size,
         headers,
     }
 }
 
-/// Un `curl` con una cabecera de más.
-pub fn curl_with_header(
-    port: u16,
-    method: &str,
-    path: &str,
-    token: &str,
-    header: (&str, &str),
-) -> Answer {
+/// Un `curl` con los argumentos que todas las peticiones comparten.
+///
+/// El camino va tal cual (`--path-as-is`), la credencial va si la hay,
+/// las cabeceras se vuelcan y el `curl` cuenta el código y los bytes que
+/// escribió: el código y el tamaño los dice el `curl`, no el código bajo
+/// prueba.
+fn a_curl(port: u16, path: &str, token: &str) -> Command {
     let mut command = Command::new("curl");
     command.args(["--silent", "--show-error", "--path-as-is"]);
-    if method == "HEAD" {
-        command.arg("--head");
-    } else {
-        command.arg("--request");
-        command.arg(method);
+    if !token.is_empty() {
+        command.arg("--header");
+        command.arg(format!("Authorization: Bearer {token}"));
     }
-    command.arg("--header");
-    command.arg(format!("Authorization: Bearer {token}"));
-    command.arg("--header");
-    command.arg(format!("{}: {}", header.0, header.1));
-    command.arg("--output");
-    command.arg("/dev/null");
     command.arg("--dump-header");
     command.arg("-");
     command.arg("--write-out");
-    command.arg("%{http_code}");
+    command.arg("%{http_code} %{size_download}");
     command.arg(format!("http://127.0.0.1:{port}{path}"));
+    command
+}
 
+/// La salida de un `curl`, comprobando que el `curl` terminó bien.
+///
+/// Un `curl` que falla no tiene respuesta: su código es un error, no un
+/// estado HTTP. Mirar el estado de salida es lo que separa "el servicio
+/// dijo 404" de "no hubo servicio".
+fn the_output(command: &mut Command) -> String {
     let output = command.output().expect("curl has to be there");
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let (headers, status) = the_answer_of(&stdout);
+    assert!(
+        output.status.success(),
+        "the curl failed: {}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// La respuesta de un `curl` que se ha ejecutado.
+fn the_answer(command: &mut Command) -> Answer {
+    let stdout = the_output(command);
+    let (headers, status, size) = the_answer_of(&stdout);
     Answer {
         status,
-        body: Vec::new(),
+        size,
         headers,
     }
 }
 
-/// Las cabeceras y el código de la salida de un `curl`.
+/// Las cabeceras, el código y el tamaño de la salida de un `curl`.
 ///
-/// El `curl` escribe las cabeceras y después el código, así que el
-/// código es lo último de la salida.
-fn the_answer_of(stdout: &str) -> (String, u16) {
+/// El `curl` escribe las cabeceras y después, al final, el código y el
+/// número de bytes que escribió en el destino.
+fn the_answer_of(stdout: &str) -> (String, u16, u64) {
     let mut headers = String::new();
     let mut status = 0;
+    let mut size = 0;
     for line in stdout.lines() {
         let trimmed = line.trim();
-        if trimmed.chars().all(|character| character.is_ascii_digit()) && !trimmed.is_empty() {
-            status = trimmed.parse().unwrap_or(0);
-        } else {
-            headers.push_str(line);
-            headers.push('\n');
-        }
+        let mut parts = trimmed.split_whitespace();
+        let (code, bytes) = match (parts.next(), parts.next()) {
+            (Some(code), Some(bytes))
+                if !code.is_empty()
+                    && !bytes.is_empty()
+                    && code.chars().all(|character| character.is_ascii_digit())
+                    && bytes.chars().all(|character| character.is_ascii_digit()) =>
+            {
+                (code, bytes)
+            }
+            _ => {
+                headers.push_str(line);
+                headers.push('\n');
+                continue;
+            }
+        };
+        status = code.parse().unwrap_or(0);
+        size = bytes.parse().unwrap_or(0);
     }
-    (headers, status)
+    (headers, status, size)
 }
 
 /// Un caso del informe.
+#[derive(Clone)]
 pub struct Case {
     /// El identificador del caso.
     pub id: String,
@@ -594,8 +724,21 @@ impl Report {
     }
 
     /// Anota un caso y escribe el informe.
+    ///
+    /// Un caso con el mismo identificador **reemplaza** al anterior: un
+    /// caso que se anota antes de ejecutarse y se vuelve a anotar con su
+    /// resultado deja en el informe un `FALLO` si la prueba se muere
+    /// antes de terminar, y no un caso que no aparece. Un informe que
+    /// solo sabe decir `PASS` no es un informe: es propaganda.
     pub fn record(&mut self, case: Case) {
-        self.cases.push(case);
+        match self
+            .cases
+            .iter_mut()
+            .find(|existing| existing.id == case.id)
+        {
+            Some(existing) => *existing = case,
+            None => self.cases.push(case),
+        }
         self.write();
     }
 
