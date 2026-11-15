@@ -18,7 +18,7 @@
 use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use hodei_catalog::{CatalogReader, CatalogWriter};
+use hodei_catalog::{CatalogReader, CatalogWriter, RepositoryFormat, RepositoryMode};
 
 use crate::app_state::AppState;
 
@@ -125,12 +125,26 @@ async fn blob(
             hodei_catalog::CatalogError::Missing { .. } => {
                 OciFailure::blob_unknown(format!("the repository does not reference {digest}"))
             }
-            other => OciFailure::unavailable(other.to_string()),
+            _other => OciFailure::unavailable("the catalog is not available"),
         })?;
 
+    // Los bytes que se sirven son los que la **fila** referencia, no los
+    // que dice la URL. El digest de la URL dice **que** se pide; la fila
+    // dice **que** hay. Si se sirvieran los del digest de la URL, una
+    // fila que solo nombra una ruta serviria el contenido de otro blob,
+    // que puede ser de otra cuenta: el CAS es un arbol comun.
+    //
+    // Por eso la respuesta lleva el digest de lo que se sirve, y por eso
+    // un digest pedido que no es el referenciado es un BLOB_UNKNOWN, no
+    // bytes.
+    if asset.digest.value != digest {
+        return Err(OciFailure::blob_unknown(format!(
+            "the repository does not reference {digest}"
+        )));
+    }
     let store = the_content_store(state)?;
     let bytes = store
-        .get(&hodei_evidence::ContentDigest::sha256(digest.clone()))
+        .get(&asset.digest)
         .await
         .map_err(|_| OciFailure::blob_unknown(format!("the blob {digest} is not in the store")))?;
     debug_assert_eq!(
@@ -183,7 +197,7 @@ async fn manifest(
                 hodei_catalog::CatalogError::Missing { .. } => OciFailure::manifest_unknown(
                     format!("the tag {reference:?} does not point at a manifest"),
                 ),
-                other => OciFailure::unavailable(other.to_string()),
+                _other => OciFailure::unavailable("the catalog is not available"),
             })?
             .coordinates
             .package_version;
@@ -201,21 +215,22 @@ async fn manifest(
             hodei_catalog::CatalogError::Missing { .. } => {
                 OciFailure::manifest_unknown(format!("there is no manifest {digest}"))
             }
-            other => OciFailure::unavailable(other.to_string()),
+            _other => OciFailure::unavailable("the catalog is not available"),
         })?;
 
-    // La negociación: si el cliente nombra tipos y ninguno es uno que
-    // este registro sirve, el error es de manifiesto desconocido y no un
-    // 200 engañoso.
-    the_negotiation(headers)?;
+    // Los bytes que se sirven son los que la fila referencia, no los que
+    // dice la URL: como en los blobs, el digest pedido dice **que** se
+    // pide y la fila dice **que** hay.
+    if asset.digest.value != digest {
+        return Err(OciFailure::manifest_unknown(format!(
+            "the repository does not reference {digest}"
+        )));
+    }
 
     let store = the_content_store(state)?;
-    let bytes = store
-        .get(&hodei_evidence::ContentDigest::sha256(digest.clone()))
-        .await
-        .map_err(|_| {
-            OciFailure::manifest_unknown(format!("the manifest {digest} is not in the store"))
-        })?;
+    let bytes = store.get(&asset.digest).await.map_err(|_| {
+        OciFailure::manifest_unknown(format!("the manifest {digest} is not in the store"))
+    })?;
 
     // El tipo de medio lo dice el propio manifiesto, no el cliente: el
     // manifiesto es la verdad de que es, y el cliente lo pide con el
@@ -225,7 +240,12 @@ async fn manifest(
     // solo admite el tipo OCI: un manifiesto Docker schema2 es un
     // manifiesto valido, y el registro lo sirve con el tipo que el
     // manifiesto declara.
-    let media_type = the_declared_media_type(&bytes);
+    let media_type = the_declared_media_type(&bytes)?;
+
+    // La negociacion, con el tipo que este manifiesto declara: si el
+    // cliente no lo acepta, el error es de manifiesto desconocido y no
+    // un 200 con un tipo que no pidio.
+    the_negotiation(headers, &media_type)?;
     debug_assert_eq!(
         bytes.len() as u64,
         asset.size_bytes,
@@ -240,7 +260,7 @@ async fn manifest(
 /// El manifiesto es la verdad de que es: si declara un tipo que este
 /// registro no sirve, la peticion falla con el error OCI de manifiesto
 /// desconocido, y no con un 200 que finge ser lo que el cliente pidio.
-fn the_declared_media_type(bytes: &[u8]) -> String {
+fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure> {
     let declared = serde_json::from_slice::<serde_json::Value>(bytes)
         .ok()
         .and_then(|manifest| {
@@ -250,15 +270,26 @@ fn the_declared_media_type(bytes: &[u8]) -> String {
                 .map(str::to_string)
         });
     match declared {
-        Some(media_type) if SUPPORTED_MANIFESTS.contains(&media_type.as_str()) => media_type,
-        Some(media_type) if hodei_hub::oci::UNSUPPORTED.contains(&media_type.as_str()) => {
-            // Un tipo que este registro no sirve: la negociacion ya lo
-            // ha rechazado antes de llegar aqui, y si se llega, es que el
-            // cliente no ha limitado los tipos.
-            hodei_hub::oci::MANIFEST_MEDIA_TYPE.to_string()
-        }
-        Some(media_type) => media_type,
-        None => hodei_hub::oci::MANIFEST_MEDIA_TYPE.to_string(),
+        Some(media_type) if SUPPORTED_MANIFESTS.contains(&media_type.as_str()) => Ok(media_type),
+        // Un tipo que este registro NO sirve no se reetiqueta con otro:
+        // servirlo con un tipo distinto es un 200 que finge ser lo que el
+        // cliente pidio, y el cliente que lo pidio no lo recibio.
+        Some(media_type) if hodei_hub::oci::UNSUPPORTED.contains(&media_type.as_str()) => Err(
+            OciFailure::manifest_unknown(format!("the registry does not serve {media_type}")),
+        ),
+        // Un tipo que este registro no conoce: tampoco se sirve, por el
+        // mismo motivo. Un `Content-Type` arbitrario en la respuesta es
+        // ademas un problema de seguridad: un navegador que navegue a la
+        // URL interpretaria el manifiesto como lo que declare.
+        Some(media_type) => Err(OciFailure::manifest_unknown(format!(
+            "the registry does not serve {media_type}"
+        ))),
+        // Un manifiesto sin `mediaType` no se sabe que es: el registro
+        // sirve los tipos que conoce, y un manifiesto que no se
+        // identifica no se sirve.
+        None => Err(OciFailure::manifest_unknown(
+            "the manifest does not declare its media type",
+        )),
     }
 }
 
@@ -288,6 +319,12 @@ fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool
     headers.insert(
         "Docker-Content-Digest",
         HeaderValue::from_str(&format!("sha256:{digest}")).expect("the digest is a header value"),
+    );
+    // Un manifiesto es JSON. Sin esto, un navegador que navegue a la
+    // URL interpretaria la respuesta como lo que el manifiesto declare.
+    headers.insert(
+        "X-Content-Type-Options",
+        HeaderValue::from_static("nosniff"),
     );
     response
 }
@@ -358,12 +395,24 @@ async fn the_repository(
 ) -> Result<hodei_catalog::RepositoryDescriptor, OciFailure> {
     let (reader, _) = the_catalog(state)?;
     match reader.repository(context.account().as_str(), name).await {
+        // Un repositorio que no es de un formato o un modo que esta
+        // release sirva, no es un repositorio de esta superficie: se
+        // responde con el mismo NAME_UNKNOWN que uno que no existe, para
+        // no decir que existe un repositorio que no se puede usar.
+        Ok(descriptor)
+            if descriptor.format != RepositoryFormat::Raw
+                || descriptor.mode != RepositoryMode::Hosted =>
+        {
+            Err(OciFailure::name_unknown(format!(
+                "the repository {name:?} is not known to this account"
+            )))
+        }
         Ok(descriptor) => Ok(descriptor),
         Err(hodei_catalog::CatalogError::Missing { .. })
         | Err(hodei_catalog::CatalogError::Denied { .. }) => Err(OciFailure::name_unknown(
             format!("the repository {name:?} is not known to this account"),
         )),
-        Err(other) => Err(OciFailure::unavailable(other.to_string())),
+        Err(_other) => Err(OciFailure::unavailable("the catalog is not available")),
     }
 }
 
@@ -461,17 +510,24 @@ fn the_digest_of_reference(reference: &str) -> Result<String, OciFailure> {
 /// lo que haya. Uno que solo nombra tipos que este registro no sirve
 /// recibe el error OCI de manifiesto desconocido, no una respuesta que
 /// finge ser lo que pidió.
-fn the_negotiation(headers: &HeaderMap) -> Result<(), OciFailure> {
+fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> {
     let Some(accept) = headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
     else {
+        // Sin `Accept` el cliente acepta lo que haya: es lo que dice el
+        // protocolo, y el tipo que se sirve lo declara el manifiesto.
         return Ok(());
     };
     let asked: Vec<&str> = accept.split(',').map(|part| part.trim()).collect();
-    if asked.iter().any(|media| {
-        *media == "*/*" || *media == "application/*" || SUPPORTED_MANIFESTS.contains(media)
-    }) {
+    // El cliente acepta cualquier cosa (`*/*`, `application/*`) o acepta
+    // el tipo que se va a servir. Lo que NO se acepta es un cliente que
+    // solo nombra otros tipos: servirle el nuestro seria responder con
+    // algo que no pidio.
+    let accepts = asked
+        .iter()
+        .any(|media| *media == "*/*" || *media == "application/*" || *media == served);
+    if accepts {
         return Ok(());
     }
     Err(OciFailure::manifest_unknown(format!(
