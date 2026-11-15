@@ -45,7 +45,10 @@ pub mod blob;
 pub mod hub;
 pub mod oci;
 
-pub use blob::{BlobError, BlobStore, FileBlobStore, InMemoryBlobStore};
+pub use blob::{
+    BlobError, BlobStore, BlobWriteSession, CommitExpectation, FileBlobStore, FileBlobWriteSession,
+    InMemoryBlobStore, InMemoryBlobWriteSession, ReadPolicy, StagingEntry,
+};
 pub use hub::{
     ArtifactHub, Availability, HubArtifact, PromotionAudit, PromotionError, TrustVerdict,
 };

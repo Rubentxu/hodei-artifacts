@@ -50,6 +50,12 @@ debug = true
 split-debuginfo = "unpacked"  # Faster linking on Linux
 incremental = true
 
+# El calculo del digest es aritmetica pura: no aporta nada depurar y si
+# compila optimizado aunque el resto del perfil sea de depuracion. Sin
+# esto, hashear un blob de 1 GiB tarda minutos en un build de desarrollo.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.test]
 inherits = "dev"
 opt-level = 0
