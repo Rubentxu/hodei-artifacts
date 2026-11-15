@@ -19,6 +19,7 @@ pub mod app_state;
 pub mod audit;
 pub mod auth;
 pub mod authorization;
+pub mod blob_probe;
 pub mod bootstrap;
 pub mod composition_root;
 pub mod config;

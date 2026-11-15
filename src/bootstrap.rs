@@ -230,20 +230,41 @@ pub async fn bootstrap(
         // the repository is known; the port of the catalog does not carry
         // the region, and a second decision about another resource would
         // not be stronger, it would be another decision.
-        let catalog = Arc::new(SurrealCatalogStore::with_authorizer(
-            schema_storage.db().clone(),
-            Arc::new(hodei_catalog::AllowAllAuthorizer),
-        ));
+        // The content store comes first: the probe over it is what the
+        // catalog needs to be able to tell a healthy record from a
+        // broken one.
+        let content = Arc::new(
+            FileBlobStore::new(&config.content.cas_path)
+                .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
+        );
+        // The catalog does not decide again what the HTTP boundary already
+        // decided with Cedar. Its queries are already scoped to the
+        // verified account, so the isolation between accounts does not
+        // depend on this second check: it depends on the key of each row.
+        // The check that does matter --the permission to publish or to
+        // download-- is asked at the boundary, where the canonical HRN of
+        // the repository is known; the port of the catalog does not carry
+        // the region, and a second decision about another resource would
+        // not be stronger, it would be a second decision.
+        let catalog = Arc::new(
+            SurrealCatalogStore::with_authorizer(
+                schema_storage.db().clone(),
+                Arc::new(hodei_catalog::AllowAllAuthorizer),
+            )
+            // The probe is what makes the catalog able to say that the
+            // bytes are where the record says. Without it, a record whose
+            // content is not in the store is served as healthy, and the
+            // corruption is confused with the absence.
+            .with_probe(Arc::new(crate::blob_probe::BlobStoreProbe::new(
+                content.clone(),
+            ))),
+        );
         catalog
             .initialize()
             .await
             .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
         let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
         let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
-        let content = Arc::new(
-            FileBlobStore::new(&config.content.cas_path)
-                .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
-        );
         // The staging that an interrupted upload leaves behind is cleaned
         // here, at the boot. It is never published -- the catalog write
         // never happened -- but it is a file, and a process that dies

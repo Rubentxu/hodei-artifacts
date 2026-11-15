@@ -150,6 +150,8 @@ pipeline {
                         "--test har02_catalog_contract",
                         "--test raw_hosted_restart_contract",
                         "--test raw_conformity_uat",
+                        "--test blob_integrity_contract",
+                        "--test doc9_uat",
                     ).joinToString(" ")
                 )
                 sh(
@@ -157,11 +159,36 @@ pipeline {
                         "echo 'the conformity report is missing: the suite did not write it' >&2; " +
                         "exit 1; fi"
                 )
+                // La UAT de doc-9 trae sus dieciseis escenarios, cada uno
+                // con su comando y su resultado. La cuenta se comprueba
+                // aqui y no en el test, porque el binario de pruebas no
+                // garantiza el orden: un escenario que no se ejecute se
+                // nota cuando el binario ha terminado.
+                sh(
+                    "if [ ! -f target/uat/doc9.md ]; then " +
+                        "echo 'the doc-9 report is missing: the suite did not write it' >&2; " +
+                        "exit 1; fi"
+                )
+                // La cuenta de escenarios: el informe tiene que traer
+                // los dieciseis, cada uno una vez. La comprobacion
+                // vive en un script porque el DSL de la pipeline no
+                // admite variables de shell en los literales, y una
+                // comprobacion con variables es lo que hace falta.
+                sh("bash scripts/check-doc9-uat.sh target/uat/doc9.md")
                 // El informe se lee en la salida de la ejecución: una
                 // conformidad que nadie puede leer no es una conformidad.
                 sh("cat target/uat/raw-conformity.md")
                 archiveArtifacts(
                     artifacts = "target/uat/raw-conformity.md",
+                    allowEmptyArchive = false,
+                )
+                // Y el de la UAT de doc-9, que es la evidencia de la
+                // puerta del hito: dieciseis escenarios, cada uno con su
+                // comando y su resultado, y la lista de lo que no se ha
+                // podido certificar.
+                sh("cat target/uat/doc9.md")
+                archiveArtifacts(
+                    artifacts = "target/uat/doc9.md",
                     allowEmptyArchive = false,
                 )
             }
