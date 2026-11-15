@@ -2188,3 +2188,68 @@ async fn an_idempotent_publication_reports_the_instant_that_is_in_the_store() {
         "the outcome says a different instant than the store"
     );
 }
+
+/// Los ajustes del repositorio son los que deciden como se publica, y no
+/// pueden perderse.
+///
+/// En una tabla `SCHEMAFULL`, un campo `TYPE object` **sin** `FLEXIBLE`
+/// declara que el objeto no tiene campos: el motor guardaba `{}` y
+/// descartaba lo que se le habia dado. Un `update_config` subia la version
+/// de la configuracion y no cambiaba nada, en silencio.
+#[tokio::test]
+async fn the_settings_of_a_repository_survive_its_creation_and_its_update() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+
+    let settings = serde_json::json!({ "raw": { "replace": "allow" } });
+    let mut created = descriptor(
+        "acme",
+        "releases",
+        RepositoryFormat::Raw,
+        RepositoryMode::Hosted,
+        DigestScope::Global,
+    );
+    created.config.config_settings = settings.clone();
+
+    let written = store
+        .create_repository("acme", created)
+        .await
+        .expect("create repository");
+    assert_eq!(
+        written.config.config_settings, settings,
+        "the settings were lost on the way in"
+    );
+
+    let read = store
+        .repository("acme", "releases")
+        .await
+        .expect("read repository");
+    assert_eq!(
+        read.config.config_settings, settings,
+        "the settings were not stored"
+    );
+
+    // Y una configuracion nueva los cambia de verdad.
+    let changed = serde_json::json!({ "raw": { "replace": "deny" } });
+    let mut update = RepositoryConfig::new(DigestScope::Global);
+    update.config_settings = changed.clone();
+    let updated = store
+        .update_config("acme", "releases", update)
+        .await
+        .expect("update configuration");
+    assert_eq!(
+        updated.config.config_settings, changed,
+        "the settings were lost on the way in"
+    );
+    assert_eq!(updated.config.version, 2, "the version did not go up");
+
+    let read = store
+        .repository("acme", "releases")
+        .await
+        .expect("read repository");
+    assert_eq!(
+        read.config.config_settings, changed,
+        "the new settings were not stored"
+    );
+}

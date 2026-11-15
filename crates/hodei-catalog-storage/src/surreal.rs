@@ -104,7 +104,13 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// La versión 2 es la que añade el **outbox de auditoría**: la tabla donde
 /// espera el evento de una publicación, y que se escribe dentro de la
 /// misma transacción que publica.
-pub const SCHEMA_VERSION: i64 = 2;
+///
+/// La versión 3 es la que corrige los **ajustes del repositorio**: en una
+/// tabla `SCHEMAFULL`, un campo `TYPE object` sin `FLEXIBLE` declara que
+/// el objeto **no tiene campos**, así que el motor guardaba `{}` y
+/// descartaba lo que se le había dado. Un `update_config` subía la versión
+/// de la configuración y no cambiaba nada, en silencio.
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -131,7 +137,10 @@ DEFINE FIELD IF NOT EXISTS repo_format ON catalog_repository TYPE string;
 DEFINE FIELD IF NOT EXISTS repo_mode ON catalog_repository TYPE string;
 DEFINE FIELD IF NOT EXISTS config_version ON catalog_repository TYPE int;
 DEFINE FIELD IF NOT EXISTS digest_scope ON catalog_repository TYPE string;
-DEFINE FIELD IF NOT EXISTS config_settings ON catalog_repository TYPE object;
+-- Los ajustes son un objeto libre. Sin FLEXIBLE, en una tabla SCHEMAFULL
+-- el motor declara que el objeto no tiene campos, y lo que se le da se
+-- guarda como un objeto vacio: los ajustes desaparecian en silencio.
+DEFINE FIELD OVERWRITE config_settings ON catalog_repository TYPE object FLEXIBLE;
 DEFINE FIELD IF NOT EXISTS created_at ON catalog_repository TYPE datetime;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_repository TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_repository_key_unique ON catalog_repository FIELDS account, repo_key UNIQUE;
