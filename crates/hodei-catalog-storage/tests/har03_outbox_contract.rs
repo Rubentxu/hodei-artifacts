@@ -199,10 +199,36 @@ async fn the_event_with_result(
         .find(|event| event.result == result)
 }
 
+/// Un sink que **no** deduplica y se queda con cada entrega.
+///
+/// El sink de referencia deduplica por `event_id`, y con él no se
+/// distingue "una entrega" de "una entrega y otra del mismo evento". Para
+/// mirar lo que el outbox entrega de verdad hace falta este.
+#[derive(Debug, Default)]
+struct CountingSink {
+    delivered: std::sync::Mutex<Vec<String>>,
+}
+
+impl CountingSink {
+    /// Los identificadores entregados, en orden.
+    fn delivered(&self) -> Vec<String> {
+        self.delivered.lock().expect("the sink lock").clone()
+    }
+}
+
+impl AuditSink for CountingSink {
+    fn record(&self, event: &AuditEvent) -> Result<(), hodei_audit::AuditError> {
+        self.delivered
+            .lock()
+            .expect("the sink lock")
+            .push(event.event_id.clone());
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AC1: una sola frontera de commit.
 // ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_asset_and_its_audit_event_are_written_in_the_same_commit() {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -220,6 +246,24 @@ async fn the_asset_and_its_audit_event_are_written_in_the_same_commit() {
         .expect("the asset");
     assert_eq!(asset.asset_path, "app/one.bin");
     assert_eq!(the_events(&db).await, 1);
+
+    // Y el evento es **de este** asset: un evento que contara es el mismo
+    // número que el de otro asset no probaría nada.
+    let event = the_event_with_result(&db, AuditResult::Allowed)
+        .await
+        .expect("the event");
+    assert_eq!(event.resource, "raw/app/one.bin");
+    assert_eq!(
+        event.digest.as_deref(),
+        Some(
+            format!(
+                "{}:{}",
+                ContentDigest::of_bytes(b"one").algorithm,
+                ContentDigest::of_bytes(b"one").value
+            )
+            .as_str()
+        )
+    );
 }
 
 #[tokio::test]
@@ -227,6 +271,10 @@ async fn an_asset_whose_audit_event_cannot_be_written_is_not_published() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let db = open_store(&tmp.path().join("db")).await;
     let store = store_with_identity(db.clone(), counting_identity("event-"));
+    // El esquema se declara: sin él las tablas no existen, y contar filas
+    // en una tabla que no existe da cero siempre. Una prueba que no puede
+    // fallar no es una prueba.
+    store.initialize().await.expect("initialize");
     store
         .create_repository(ACCOUNT, descriptor(ACCOUNT, "raw"))
         .await
@@ -265,17 +313,42 @@ async fn an_asset_whose_audit_event_cannot_be_written_is_not_published() {
 }
 
 #[tokio::test]
-async fn a_publication_of_a_repository_that_does_not_exist_leaves_no_event() {
+async fn a_publication_to_a_repository_that_does_not_exist_leaves_a_failed_event() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let db = open_store(&tmp.path().join("db")).await;
     let store = store_for(db.clone());
+    store.initialize().await.expect("initialize");
 
     let outcome = store
         .publish(ACCOUNT, publication("ghost", "app/one.bin", b"one"))
         .await;
 
-    assert!(outcome.is_err());
+    assert!(matches!(outcome, Err(CatalogError::Missing { .. })));
+
+    // La petición **ocurrió** y el sistema la rechazó: eso se dice. Un
+    // rechazo sin rastro es indistinguible de una petición que nunca
+    // llegó, y una petición bien formada que el sistema se niega a servir
+    // es un hecho, no un ruido.
+    let event = the_event_with_result(&db, AuditResult::Failed)
+        .await
+        .expect("the failed event");
+    assert_eq!(event.resource, "ghost/app/one.bin");
     assert_eq!(the_assets(&db).await, 0);
+    assert_eq!(the_events(&db).await, 1);
+}
+
+#[tokio::test]
+async fn a_malformed_publication_leaves_no_event() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let (db, store) = store_with_repository(&tmp.path().join("db")).await;
+
+    // Una petición mal formada se rechaza antes de la frontera de efecto:
+    // no hubo una operación que auditar.
+    let mut malformed = publication("raw", "app/one.bin", b"one");
+    malformed.asset_path = String::new();
+    let outcome = store.publish(ACCOUNT, malformed).await;
+
+    assert!(outcome.is_err());
     assert_eq!(the_events(&db).await, 0);
 }
 
@@ -374,6 +447,151 @@ async fn a_redelivery_produces_exactly_one_logical_effect() {
         1,
         "a re-delivery is the same event, so it is one logical effect"
     );
+}
+
+#[tokio::test]
+async fn a_redelivery_carries_the_same_event_id() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let (db, store) = store_with_repository(&tmp.path().join("db")).await;
+
+    store
+        .publish(ACCOUNT, publication("raw", "app/one.bin", b"one"))
+        .await
+        .expect("the publication");
+
+    let outbox = Arc::new(SurrealAuditOutbox::new(db.clone()));
+    // Un sink que **no** deduplica: con el sink de referencia no se
+    // distingue "una entrega" de "una entrega y otra del mismo evento", y
+    // lo que hay que mirar aquí es justo eso.
+    let sink = Arc::new(CountingSink::default());
+    let dispatcher = AuditDispatcher::new(outbox.clone(), sink.clone());
+
+    // La caída: el sink recibe el evento y la marca no se escribe.
+    let event = the_event(&db).await.expect("the event");
+    let now = chrono::Utc::now();
+    let claimed = outbox
+        .claim(
+            &event.event_id,
+            "worker-1",
+            now + chrono::Duration::minutes(1),
+            now,
+        )
+        .await
+        .expect("the claim")
+        .expect("the claim");
+    sink.record(&claimed.event).expect("the sink received it");
+
+    // La reentrega: el mismo evento, otro intento de entrega.
+    let future = now + chrono::Duration::minutes(10);
+    dispatcher
+        .dispatch_pending("worker-2", future)
+        .await
+        .expect("the dispatch");
+
+    // El outbox entrega **al menos una vez**: dos entregas, dos veces. Lo
+    // que garantiza es que las dos llevan el **mismo** `event_id`, que es
+    // lo que permite al almacén de auditoría reconocer la segunda y no
+    // contar dos hechos.
+    let delivered = sink.delivered();
+    assert_eq!(
+        delivered.len(),
+        2,
+        "the delivery is at least once, and the crash made it twice"
+    );
+    assert_eq!(
+        delivered[0], delivered[1],
+        "and the re-delivery is the SAME event"
+    );
+    assert_eq!(delivered[0], event.event_id);
+}
+
+#[tokio::test]
+async fn a_contradicting_event_is_not_swallowed() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let outbox = SurrealAuditOutbox::new(db.clone());
+
+    outbox
+        .put_pending(&the_event_with_id("event-0"))
+        .await
+        .expect("the event is said");
+
+    // Decirlo dos veces es decirlo una: el mismo evento, el mismo
+    // identificador, no pasa nada.
+    outbox
+        .put_pending(&the_event_with_id("event-0"))
+        .await
+        .expect("the same event is said twice");
+
+    // Pero un identificador que ya usa OTRO hecho no es el mismo evento
+    // dicho dos veces: es una contradicción. Callarla dejaría el outbox
+    // diciendo algo que no ocurrió.
+    let contradiction = AuditEvent::new(
+        "event-0".to_string(),
+        AuditContext::new(ACTOR, ACCOUNT, CORRELATION),
+        chrono::Utc::now(),
+        "publish",
+        "raw/app/OTHER.bin",
+        Some("sha256:ffff".to_string()),
+        AuditResult::Denied,
+    );
+    assert!(
+        outbox.put_pending(&contradiction).await.is_err(),
+        "a contradicting event must be reported, not swallowed"
+    );
+
+    // Y el outbox sigue diciendo la verdad: lo que había.
+    let entry = outbox
+        .entry("event-0")
+        .await
+        .expect("the entry")
+        .expect("the entry");
+    assert_eq!(entry.event.resource, "raw/app/one.bin");
+    assert_eq!(entry.event.result, AuditResult::Allowed);
+}
+
+#[tokio::test]
+async fn the_text_of_the_event_is_bounded() {
+    // El texto del evento lo pone quien llama, y va a una fila **durable**
+    // y a una línea de log. Sin cota, un principal al que se le deniega una
+    // publicación puede escribir filas arbitrarias, y un salto de línea es
+    // una inyección en el log.
+    let long = "x".repeat(4096);
+    let event = AuditEvent::new(
+        "e-1".to_string(),
+        AuditContext::new(&long, ACCOUNT, &long),
+        chrono::Utc::now(),
+        &long,
+        &long,
+        Some(long.clone()),
+        AuditResult::Allowed,
+    );
+
+    assert!(event.resource.len() <= hodei_audit::event::MAX_FIELD_LENGTH);
+    assert!(event.action.len() <= hodei_audit::event::MAX_FIELD_LENGTH);
+    assert!(event.actor().len() <= hodei_audit::event::MAX_FIELD_LENGTH);
+    assert!(event.correlation_id().len() <= hodei_audit::event::MAX_FIELD_LENGTH);
+    assert!(
+        event
+            .digest
+            .as_ref()
+            .is_some_and(|digest| digest.len() <= hodei_audit::event::MAX_FIELD_LENGTH)
+    );
+
+    // Y los caracteres de control, fuera: un salto de línea en un log es
+    // una inyección.
+    let injected = AuditEvent::new(
+        "e-2".to_string(),
+        AuditContext::new("actor\nactor", ACCOUNT, "corr"),
+        chrono::Utc::now(),
+        "publish",
+        "raw/app/one.bin\r\nInjected: yes",
+        None,
+        AuditResult::Allowed,
+    );
+    assert!(!injected.resource.contains('\n'));
+    assert!(!injected.resource.contains('\r'));
+    assert!(!injected.actor().contains('\n'));
 }
 
 #[tokio::test]
@@ -628,6 +846,8 @@ async fn a_crash_before_the_commit_leaves_no_asset_and_no_event() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let db = open_store(&tmp.path().join("db")).await;
     let store = store_with_identity(db.clone(), counting_identity("event-"));
+    // El esquema se declara, para que contar filas signifique algo.
+    store.initialize().await.expect("initialize");
     store
         .create_repository(ACCOUNT, descriptor(ACCOUNT, "raw"))
         .await
