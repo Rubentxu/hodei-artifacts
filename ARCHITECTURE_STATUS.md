@@ -1326,7 +1326,15 @@ correlación e instante. La cuenta es la del principal verificado, no la
 que declara el llamante: un evento que dice la cuenta que el llamante
 pide no es un evento, es un eco. Y el evento no lleva el bearer ni las
 credenciales: el token se consume al verificar el principal y no llega ni
-al evento ni al sink.
+al evento ni al sink. Del **actor** hay que hablar con precisión: en la
+capa HTTP sale del principal verificado, y en el catálogo lo declara
+quien publica, porque el catálogo verifica la **cuenta** contra el
+autorizador y no el *subject*. Por eso la palabra "verificado" no se le
+pone al actor, y quien publica tiene que poner el actor que de verdad
+actuó. El texto que el que llama controla —actor, cuenta, correlación,
+acción, recurso y digest— pasa por `sanitize_text`, que quita los
+caracteres de control y lo acota: el que llama no decide cuánto ocupa el
+evento.
 
 **El outbox vive en la misma base que el catálogo, y a propósito.** La fila
 del evento se escribe **dentro de la misma transacción** que escribe el
@@ -1353,15 +1361,31 @@ hecho que no se sabe.
 **La reentrega es el mismo evento.** El `event_id` es la clave de
 idempotencia, y el contrato del sink exige tratarlo como tal. Una caída
 entre la entrega y la marca vuelve a entregar el mismo evento, no crea
-otro: una reentrega produce **un solo efecto lógico**. El
+otro. Pero la verdad es más corta que la promesa fácil: el outbox
+entrega **al menos una vez**, y el **efecto lógico de un evento es del
+almacén de auditoría**, que es el que guarda por ese `event_id`. El
+outbox pone la condición para que pueda haber uno solo —la misma clave
+y la misma fila—; el que lo asegura es el que guarda. El
 `InMemoryAuditSink` deduplica por `event_id` precisamente para que eso
-sea comprobable.
+sea comprobable, y el sink por defecto (`tracing`) no deduplica, porque
+un log es append-only.
 
 **Lo que no se dice, no se escribe.** Una publicación idempotente —el
 mismo contenido en el mismo sitio— no escribe un segundo evento: no hubo
 un segundo hecho. Un rechazo (`denied`) y un conflicto (`conflict`) sí
 dejan evento, pero **fuera** de la transacción del catálogo, porque no hay
 mutación que atar: el rechazo no escribió nada que pueda dejar a medias.
+
+**El límite de la auditoría también está escrito.** Una petición **mal
+formada** —un repositorio vacío, una ruta, un nombre o una versión
+vacíos, un digest mal formado— se rechaza antes de la frontera de efecto
+y **no deja evento**: no es un hecho, es ruido. Una petición **bien
+formada a la que el sistema se niega a servir sí deja evento** (`failed`):
+un repositorio que no existe, un error de lectura, un modo no servido o
+una sonda del blob que falla son hechos que ocurrieron. Y si el mismo
+`event_id` llega con un contenido distinto, el outbox no conserva la fila
+vieja en silencio: lo dice, porque una contradicción tragada es una
+mentira que no se puede corregir después.
 
 **El límite que se dice en voz alta.** El outbox es durable; el sink por
 defecto (`tracing`) no: la fila sobrevive al reinicio, el log no. La
@@ -1370,7 +1394,9 @@ auditoría (Audit Trail), que todavía no existe. Y las mutaciones de la
 aplicación HTTP —alta de repositorios, mutaciones de políticas IAM— siguen
 siendo best-effort: su evento se emite en el proceso y un sink caído lo
 pierde sin cambiar la respuesta. La frontera única de commit es, de
-momento, la de la publicación del catálogo.
+momento, la de la publicación del catálogo. Y el outbox entrega **al menos
+una vez**: el que garantiza el efecto lógico único es el almacén de
+auditoría, que es el que guarda por `event_id`.
 
 **Lo que sigue sin estar:** el servidor HTTP del catálogo (HAR-04), las
 referencias persistentes y la garbage collection segura (HAR-10), y el

@@ -57,7 +57,10 @@ El token se consume en `verify_principal` y no se pasa al evento ni a `record_au
 - `AuditSink` es el puerto; `TracingAuditSink` es el sink por defecto y escribe campos estructurados en `tracing`. Es síncrono: un adaptador durable (Audit Trail) debe aportar su propio buffering/async.
 - **El outbox de auditoría** (`catalog_audit_outbox`) es donde espera el evento. La publicación escribe la fila del evento **dentro de la misma transacción** que escribe el asset, así que el asset y su evento tienen **una sola frontera de commit**: si la fila del evento no se puede escribir, el asset no se publica. No queda un hecho sin su rastro.
 - El `AuditDispatcher` reclama un evento pendiente (un compare-and-set: dos workers, uno gana), lo entrega al sink y **solo entonces** lo marca como entregado. **Solo el worker que lo tiene puede marcarlo**: un lease que expiró ya no es un permiso para decir nada de ese evento, y sin esa condición un worker lento podría devolverlo al mercado mientras el otro lo está entregando. Si el sink falla, el evento vuelve a `pending` con su contador de intentos y su último error: lo que no se entregó se puede **mirar**. Nunca se marca entregado lo que no se entregó.
-- **La reentrega es el mismo evento.** El `event_id` es la clave de idempotencia y el contrato del sink exige tratarlo como tal: una caída entre la entrega y la marca vuelve a entregar el mismo evento, no crea otro. Por eso una reentrega produce **un solo efecto lógico**.
+- **La reentrega es el mismo evento.** El `event_id` es la clave de idempotencia y el contrato del sink exige tratarlo como tal: una caída entre la entrega y la marca vuelve a entregar el mismo evento, no crea otro. Lo que el outbox garantiza es **al menos una entrega**, no exactamente una: el **efecto lógico de un evento es del almacén de auditoría**, que es el que guarda por ese `event_id`. El outbox pone la condición para que pueda haber uno solo —la misma clave y la misma fila—; el que lo asegura es el que guarda.
+- **El límite de la auditoría está escrito.** Una petición **mal formada** se rechaza antes de la frontera de efecto y **no deja evento**: un repositorio vacío, una ruta, un nombre o una versión vacíos, o un digest mal formado, no son hechos que registrar. Una petición **bien formada a la que el sistema se niega a servir sí deja evento** (`failed`): un repositorio que no existe, un error de lectura, un modo no servido o una sonda del blob que falla son hechos que ocurrieron.
+- **Un `event_id` con otro contenido es un conflicto, no un silencio.** Si el mismo `event_id` llega con un hecho distinto, el outbox no conserva la fila vieja en silencio: lo dice y lo rechaza.
+- **El texto del evento está acotado.** El actor, la cuenta, la correlación, la acción, el recurso y el digest pasan por `sanitize_text`, que quita los caracteres de control y corta en 256 caracteres: el que llama no decide cuánto ocupa el evento.
 - **Garantía real:** el sink por defecto sigue siendo **best-effort** respecto al proceso: la fila del outbox sobrevive al reinicio, pero el `tracing` no. Si `record` falla, la operación no se revierte; se emite un `warn` con la correlación.
 - Una futura integración con Audit Trail implementa `AuditSink` y se inyecta con `AppState::with_audit_sink`; no cambia reglas de autorización, validación ni creación. La durabilidad/retry es responsabilidad de ese adaptador.
 - `InMemoryAuditSink` es para tests/verificación local, y deduplica por `event_id`: entregar dos veces el mismo evento es un evento. `FailingAuditSink` prueba que un fallo de auditoría no altera la decisión (pero deja el evento sin persistir).
@@ -86,39 +89,47 @@ compare-and-set, un lease que expira vuelve al mercado, un evento que nadie
 reclamó no se puede marcar, un worker que perdió el lease no puede decir
 nada de ese evento, y decirlo dos veces es decirlo una.
 
-`crates/hodei-catalog-storage/tests/har03_outbox_contract.rs` (18 tests)
+`crates/hodei-catalog-storage/tests/har03_outbox_contract.rs` (22 tests)
 cubre la frontera única de commit y la entrega, contra el motor
 persistente:
 
 1. el asset y su evento se escriben en la misma transacción;
 2. un asset cuyo evento no se puede escribir **no** se publica, y su blob
    queda sin referencia (reconciliable);
-3. una publicación en un repositorio que no existe no deja ni asset ni
-   evento;
-4. el evento lleva actor, tenant verificado, acción, digest, resultado y
-   correlación, y no lleva secretos;
-5. una reentrega produce **un** efecto lógico;
-6. un worker que perdió el lease no produce un segundo efecto lógico;
-7. un sink que falla deja el evento pendiente, observable, con su intento
-   contado;
-8. un evento que nadie reclamó no se puede marcar como entregado;
-9. un worker cuyo lease expiró no puede marcar el evento ni devolverlo al
-   mercado;
-10. dos workers reclaman el mismo evento y solo uno lo entrega;
-11. caída antes del commit: no queda asset, ni referencia, ni evento;
-12. caída después del commit: el evento queda pendiente y se entrega una vez;
-13. el replay del outbox no duplica assets ni eventos de auditoría;
-14. un almacén escrito por un esquema más viejo recibe la tabla del outbox al
+3. una publicación en un repositorio que no existe no deja asset y deja un
+   evento `failed`;
+4. una petición mal formada no deja evento;
+5. el evento lleva actor, cuenta verificada, acción, digest, resultado y
+   correlación;
+6. el evento no lleva secretos;
+7. una reentrega produce **un** efecto lógico;
+8. una reentrega lleva el **mismo** `event_id`, medido con un sink que no
+   deduplica, que es la única forma de que la prueba diga algo;
+9. un evento que contradice a otro con el mismo `event_id` no se traga en
+   silencio;
+10. el texto del evento está acotado;
+11. un worker que perdió el lease no produce un segundo efecto lógico;
+12. un sink que falla deja el evento pendiente, observable, con su intento
+    contado;
+13. un evento que nadie reclamó no se puede marcar como entregado;
+14. un worker cuyo lease expiró no puede marcar el evento ni devolverlo al
+    mercado;
+15. dos workers reclaman el mismo evento y solo uno lo entrega;
+16. caída antes del commit: no queda asset, ni referencia, ni evento;
+17. caída después del commit: el evento queda pendiente y se entrega una vez;
+18. el replay del outbox no duplica assets ni eventos de auditoría;
+19. un almacén escrito por un esquema más viejo recibe la tabla del outbox al
     migrar;
-15. una publicación idempotente no escribe un segundo evento;
-16. una publicación en conflicto deja un evento `conflict`, y una denegada
-    deja un `denied`.
+20. una publicación idempotente no escribe un segundo evento;
+21. una publicación en conflicto deja un evento `conflict`;
+22. una publicación denegada deja un evento `denied`.
 
 ## Límites
 
 - **El outbox es durable; el sink por defecto no.** La fila del evento sobrevive al reinicio, pero el `tracing` se pierde con el proceso: la entrega durable necesita un `AuditSink` que escriba en el almacén de auditoría (Audit Trail), que todavía no está.
 - Las mutaciones de la configuración de autorización y la creación de repositorios **siguen siendo best-effort**: su evento se emite en el proceso y un sink caído lo pierde sin cambiar la respuesta. La frontera única de commit es, de momento, la de la **publicación** del catálogo.
-- Un rechazo o un conflicto de una publicación se dice en el outbox, pero **no** comparte transacción con el catálogo: no hay mutación que atar. Por eso su evento va solo.
+- Un rechazo, un conflicto o una negativa de una publicación se dice en el outbox, pero **no** comparte transacción con el catálogo: no hay mutación que atar. Por eso su evento va solo.
+- **El outbox entrega al menos una vez.** El que garantiza un solo efecto lógico es el almacén de auditoría, que guarda por `event_id`; el sink por defecto (`tracing`) no deduplica, porque un log es append-only. La reentrega lleva la misma clave, que es la condición para que el almacén pueda tener un solo efecto, no la garantía en sí misma.
 - Si el almacén no responde, el evento de un `failed` tampoco se puede escribir: es el mismo almacén. Se avisa con un `warn` y no se finge nada.
 - **El outbox es de la plataforma, no de una cuenta.** `pending()` devuelve los eventos de todas las cuentas, porque el almacén de auditoría que los recibe es de la plataforma y el dispatcher tiene que poder verlos todos. Un sink por cuenta tendría que filtrar por `tenant`, y el puerto no lo hace: hoy no hay tal sink.
 - No se envía a Audit Trail remoto; no se implementa E2E de esa plataforma.
