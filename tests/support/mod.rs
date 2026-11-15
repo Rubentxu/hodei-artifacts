@@ -17,6 +17,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::fs::{File, FileTimes};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -119,8 +120,13 @@ struct Claims {
 /// La cuenta del token es la que el servicio verifica: no la que el
 /// llamante dice. Un token de otra cuenta es un token de otra cuenta, y
 /// por eso el `404` del repositorio ajeno no dice si existe.
+///
+/// El token se acuña con un nombre, y ese nombre es el que va al
+/// informe: el token de verdad no se escribe nunca en un fichero que se
+/// archiva. El nombre sale de aquí, de la misma función que acuña el
+/// token, así que los dos no pueden desincronizarse.
 pub fn token(account: &str, user: &str) -> String {
-    encode(
+    let signed = encode(
         &Header::new(Algorithm::HS256),
         &Claims {
             sub: format!("hrn:hodei:iam::{account}:User/{user}"),
@@ -131,7 +137,43 @@ pub fn token(account: &str, user: &str) -> String {
         },
         &EncodingKey::from_secret(SECRET),
     )
-    .expect("the token is signed")
+    .expect("the token is signed");
+    remember_the_name_of(&signed, user);
+    signed
+}
+
+/// Los nombres de las credenciales que el arnés ha acuñado.
+///
+/// El informe dice **quién** actuó, no con qué se autenticó: el token no
+/// viaja al informe, y un token en un fichero archivado es una
+/// credencial en un fichero archivado.
+fn the_names() -> &'static Mutex<HashMap<String, String>> {
+    static NAMES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    NAMES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// El nombre con el que se escribe una credencial.
+///
+/// Una credencial que el arnés no acuñó no tiene nombre conocido, y se
+/// escribe como redactada: el nombre es lo que se puede decir en claro.
+pub fn the_name_of(token: &str) -> String {
+    if token.is_empty() {
+        return "<sin credencial>".to_string();
+    }
+    the_names()
+        .lock()
+        .expect("the names of the credentials")
+        .get(token)
+        .cloned()
+        .unwrap_or_else(|| "<redactada>".to_string())
+}
+
+/// Anota el nombre de una credencial acuñada.
+fn remember_the_name_of(token: &str, user: &str) {
+    the_names()
+        .lock()
+        .expect("the names of the credentials")
+        .insert(token.to_string(), format!("<{user}>"));
 }
 
 /// Un puerto libre del sistema.
@@ -513,6 +555,184 @@ impl Answer {
     }
 }
 
+/// Un `curl` con los argumentos con los que se ejecuta.
+///
+/// El comando que se ejecuta y el comando que se escribe en el informe
+/// salen de la **misma** lista de argumentos. Un comando resumido es una
+/// paráfrasis, y una paráfrasis es una opinión: lo que se ejecutó y lo
+/// que se escribe son lo mismo.
+///
+/// La credencial va **redactada** en lo que se escribe: el informe dice
+/// con quién se habló, no con qué se autenticó. Un informe se archiva y
+/// se comparte, y un token en un fichero es una credencial en un
+/// fichero.
+pub struct Curl {
+    /// Los argumentos, en el orden en que se le pasan al `curl`.
+    args: Vec<String>,
+    /// La credencial real, que se redacta al escribirla.
+    token: String,
+    /// El directorio del despliegue, que se abrevia al escribirlo.
+    ///
+    /// Las rutas del despliegue están en un directorio temporal que
+    /// dentro de seis meses no existe. Escribir la ruta entera es
+    /// escribir ruido; escribir `<despliegue>/fichero` dice lo mismo y
+    /// se puede leer.
+    root: Option<PathBuf>,
+}
+
+impl Curl {
+    /// Los argumentos que todas las peticiones comparten.
+    ///
+    /// El camino va tal cual (`--path-as-is`), la credencial va si la
+    /// hay, las cabeceras se vuelcan y el `curl` cuenta el código y los
+    /// bytes que escribió: el código y el tamaño los dice el `curl`, no
+    /// el código bajo prueba.
+    fn base(port: u16, path: &str, token: &str) -> Self {
+        let mut args = vec![
+            "--silent".to_string(),
+            "--show-error".to_string(),
+            "--path-as-is".to_string(),
+        ];
+        if !token.is_empty() {
+            args.push("--header".to_string());
+            args.push(format!("Authorization: Bearer {token}"));
+        }
+        args.push("--dump-header".to_string());
+        args.push("-".to_string());
+        args.push("--write-out".to_string());
+        args.push("%{http_code} %{size_download}".to_string());
+        args.push(format!("http://127.0.0.1:{port}{path}"));
+        Self {
+            args,
+            token: token.to_string(),
+            root: None,
+        }
+    }
+
+    /// Un `curl` que publica un fichero.
+    ///
+    /// Con `--limit-rate` el cuerpo llega despacio, que es lo que hace
+    /// falta para poder matar el servicio **a mitad de la subida**.
+    pub fn upload(
+        port: u16,
+        path: &str,
+        token: &str,
+        file: &Path,
+        limit_rate: Option<&str>,
+    ) -> Self {
+        let mut curl = Self::base(port, path, token);
+        curl.args.push("--request".to_string());
+        curl.args.push("PUT".to_string());
+        curl.args.push("--data-binary".to_string());
+        curl.args.push(format!("@{}", file.display()));
+        if let Some(rate) = limit_rate {
+            curl.args.push("--limit-rate".to_string());
+            curl.args.push(rate.to_string());
+        }
+        curl.args.push("--output".to_string());
+        curl.args.push("/dev/null".to_string());
+        curl.root = file.parent().map(Path::to_path_buf);
+        curl
+    }
+
+    /// Un `curl` que descarga a un fichero, o a la nada.
+    pub fn download(port: u16, path: &str, token: &str, into: Option<&Path>) -> Self {
+        let mut curl = Self::base(port, path, token);
+        curl.args.push("--output".to_string());
+        curl.args.push(match into {
+            Some(file) => file.display().to_string(),
+            None => "/dev/null".to_string(),
+        });
+        curl.root = into.and_then(|file| file.parent()).map(Path::to_path_buf);
+        curl
+    }
+
+    /// Un `curl` que solo pide la descripción.
+    pub fn describe(port: u16, path: &str, token: &str) -> Self {
+        let mut curl = Self::base(port, path, token);
+        curl.args.push("--head".to_string());
+        curl.args.push("--output".to_string());
+        curl.args.push("/dev/null".to_string());
+        curl
+    }
+
+    /// Un `curl` con una cabecera de más, que deja el cuerpo en un
+    /// fichero.
+    ///
+    /// Es lo que permite comprobar los **bytes** de un tramo, y no solo su
+    /// código y su `Content-Range`.
+    pub fn with_header(
+        port: u16,
+        path: &str,
+        token: &str,
+        header: (&str, &str),
+        into: &Path,
+    ) -> Self {
+        let mut curl = Self::base(port, path, token);
+        curl.args.push("--header".to_string());
+        curl.args.push(format!("{}: {}", header.0, header.1));
+        curl.args.push("--output".to_string());
+        curl.args.push(into.display().to_string());
+        curl.root = into.parent().map(Path::to_path_buf);
+        curl
+    }
+
+    /// El proceso que se ejecuta.
+    fn command(&self) -> Command {
+        let mut command = Command::new("curl");
+        command.args(&self.args);
+        command
+    }
+
+    /// El comando tal y como se escribe en el informe.
+    pub fn shown(&self) -> String {
+        let root = self
+            .root
+            .as_ref()
+            .map(|root| root.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut text = String::from("curl");
+        for argument in &self.args {
+            text.push(' ');
+            let argument = if root.is_empty() {
+                argument.clone()
+            } else {
+                argument.replace(&root, "<despliegue>")
+            };
+            if argument.contains(' ') {
+                text.push('\'');
+                text.push_str(&argument);
+                text.push('\'');
+            } else {
+                text.push_str(&argument);
+            }
+        }
+        if !self.token.is_empty() {
+            text = text.replace(&self.token, &the_name_of(&self.token));
+        }
+        text
+    }
+
+    /// Ejecuta el `curl` y devuelve su respuesta.
+    pub fn run(&self) -> Answer {
+        let mut command = self.command();
+        the_answer(&mut command)
+    }
+
+    /// Lanza el `curl` en segundo plano.
+    ///
+    /// La subida se queda en curso mientras el arnés hace otra cosa: es
+    /// lo que permite matar al servicio **a mitad de una subida**, que
+    /// es la forma de mirar un corte de verdad.
+    pub fn run_in_background(&self) -> Child {
+        let mut command = self.command();
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+        command.spawn().expect("the upload starts")
+    }
+}
+
 /// Un `curl` que publica un fichero.
 ///
 /// Con `--limit-rate` el cuerpo llega despacio, que es lo que hace falta
@@ -524,49 +744,20 @@ pub fn curl_upload(
     file: &Path,
     limit_rate: Option<&str>,
 ) -> Answer {
-    let mut command = a_curl(port, path, token);
-    command.arg("--request");
-    command.arg("PUT");
-    command.arg("--data-binary");
-    command.arg(format!("@{}", file.display()));
-    if let Some(rate) = limit_rate {
-        command.arg("--limit-rate");
-        command.arg(rate);
-    }
-    command.arg("--output");
-    command.arg("/dev/null");
-    the_answer(&mut command)
+    Curl::upload(port, path, token, file, limit_rate).run()
 }
 
 /// Un `curl` que descarga a un fichero, o a la nada.
 pub fn curl_download(port: u16, path: &str, token: &str, into: Option<&Path>) -> Answer {
-    let mut command = a_curl(port, path, token);
-    match into {
-        Some(file) => {
-            command.arg("--output");
-            command.arg(file.to_string_lossy().into_owned());
-        }
-        None => {
-            command.arg("--output");
-            command.arg("/dev/null");
-        }
-    }
-    the_answer(&mut command)
+    Curl::download(port, path, token, into).run()
 }
 
 /// Un `curl` que solo pide la descripción.
 pub fn curl_describe(port: u16, path: &str, token: &str) -> Answer {
-    let mut command = a_curl(port, path, token);
-    command.arg("--head");
-    command.arg("--output");
-    command.arg("/dev/null");
-    the_answer(&mut command)
+    Curl::describe(port, path, token).run()
 }
 
 /// Un `curl` con una cabecera de más, que deja el cuerpo en un fichero.
-///
-/// Es lo que permite comprobar los **bytes** de un tramo, y no solo su
-/// código y su `Content-Range`.
 pub fn curl_get_with_header(
     port: u16,
     path: &str,
@@ -574,19 +765,10 @@ pub fn curl_get_with_header(
     header: (&str, &str),
     into: &Path,
 ) -> Answer {
-    let mut command = a_curl(port, path, token);
-    command.arg("--header");
-    command.arg(format!("{}: {}", header.0, header.1));
-    command.arg("--output");
-    command.arg(into.to_string_lossy().into_owned());
-    the_answer(&mut command)
+    Curl::with_header(port, path, token, header, into).run()
 }
 
 /// Un `curl` que publica un fichero, en segundo plano.
-///
-/// La subida se queda en curso mientras el arnés hace otra cosa: es lo
-/// que permite matar al servicio **a mitad de una subida**, que es la
-/// forma de mirar un corte de verdad.
 pub fn curl_upload_in_background(
     port: u16,
     path: &str,
@@ -594,29 +776,26 @@ pub fn curl_upload_in_background(
     file: &Path,
     limit_rate: Option<&str>,
 ) -> Child {
-    let mut command = Command::new("curl");
-    command.args(["--silent", "--show-error", "--path-as-is"]);
-    command.arg("--request");
-    command.arg("PUT");
-    command.arg("--header");
-    command.arg(format!("Authorization: Bearer {token}"));
-    command.arg("--data-binary");
-    command.arg(format!("@{}", file.display()));
-    if let Some(rate) = limit_rate {
-        command.arg("--limit-rate");
-        command.arg(rate);
-    }
-    command.arg("--output");
-    command.arg("/dev/null");
-    command.arg("--dump-header");
-    command.arg("-");
-    command.arg("--write-out");
-    command.arg("%{http_code} %{size_download}");
-    command.arg(format!("http://127.0.0.1:{port}{path}"));
-    command.stdin(Stdio::null());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-    command.spawn().expect("the upload starts")
+    Curl::upload(port, path, token, file, limit_rate).run_in_background()
+}
+
+/// El comando `sha256sum` que comprueba el digest de un fichero.
+///
+/// El digest lo dice `sha256sum`, que no tiene nada que ver con este
+/// servicio, y el comando se escribe como se ejecutó: el mismo
+/// programa, el mismo fichero.
+pub fn sha256_command(file: &Path) -> String {
+    let root = file
+        .parent()
+        .map(|root| root.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let displayed = file.display().to_string();
+    let name = if root.is_empty() {
+        displayed
+    } else {
+        displayed.replace(&root, "<despliegue>")
+    };
+    format!("sha256sum {name}")
 }
 
 /// La respuesta de un `curl` que se lanzó en segundo plano.
@@ -641,25 +820,50 @@ pub fn wait_for_the_answer(child: Child) -> Answer {
     }
 }
 
-/// Un `curl` con los argumentos que todas las peticiones comparten.
+/// Los recuentos que el arranque dice de los stagings.
 ///
-/// El camino va tal cual (`--path-as-is`), la credencial va si la hay,
-/// las cabeceras se vuelcan y el `curl` cuenta el código y los bytes que
-/// escribió: el código y el tamaño los dice el `curl`, no el código bajo
-/// prueba.
-fn a_curl(port: u16, path: &str, token: &str) -> Command {
-    let mut command = Command::new("curl");
-    command.args(["--silent", "--show-error", "--path-as-is"]);
-    if !token.is_empty() {
-        command.arg("--header");
-        command.arg(format!("Authorization: Bearer {token}"));
+/// El arranque limpia lo caducado y respeta lo vivo, y lo dice: el
+/// número de los dos. Un recuento que solo existe en el código no es
+/// evidencia de nada; el log del servicio sí lo es.
+pub fn the_boot_cleanup(log: &str) -> (Option<u64>, Option<u64>) {
+    let plain = without_the_colors(log);
+    let mut removed = None;
+    let mut alive = None;
+    for line in plain.lines() {
+        let Some((_, fields)) = line.split_once("at the boot") else {
+            continue;
+        };
+        if removed.is_none() {
+            removed = a_number_after(fields, "removed");
+        }
+        if alive.is_none() {
+            alive = a_number_after(fields, "alive");
+        }
     }
-    command.arg("--dump-header");
-    command.arg("-");
-    command.arg("--write-out");
-    command.arg("%{http_code} %{size_download}");
-    command.arg(format!("http://127.0.0.1:{port}{path}"));
-    command
+    (removed, alive)
+}
+
+/// El número que un campo dice en una línea del log.
+///
+/// El formato del log es del servicio, y cambia; lo que no cambia es
+/// que el número va después del nombre del campo.
+fn a_number_after(text: &str, field: &str) -> Option<u64> {
+    let mut rest = text;
+    while let Some(position) = rest.find(field) {
+        let after = &rest[position + field.len()..];
+        let digits: String = after
+            .trim_start()
+            .trim_start_matches(['=', ':'])
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if !digits.is_empty() {
+            return digits.parse().ok();
+        }
+        rest = &rest[position + field.len()..];
+    }
+    None
 }
 
 /// La salida de un `curl`, comprobando que el `curl` terminó bien.
@@ -799,6 +1003,12 @@ impl Report {
         text.push_str(&format!("**Servicio:** {}\n\n", the_version()));
         text.push_str(&format!("**Cuando:** {}\n\n", the_moment()));
         text.push_str(&format!("**Herramientas:** {}\n\n", the_tools()));
+        text.push_str(
+            "\n**Credenciales:** van redactadas. Donde el `curl` llevaba el token, aqui \
+             dice `<alice>` o `<bob>`: el informe dice con quien se hablo, no con que se \
+             autentico. Un informe se archiva y se comparte, y un token en un fichero es \
+             una credencial en un fichero.\n\n",
+        );
         text.push_str("| Caso | Given | When | Comando | Resultado |\n");
         text.push_str("|---|---|---|---|---|\n");
         for case in &self.cases {
