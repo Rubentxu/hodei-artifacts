@@ -50,7 +50,7 @@ La denegación se registra **antes** de responder, y el evento nombra la políti
 
 ## Redacción
 
-El token se consume en `verify_principal` y no se pasa al evento ni a `record_audit`. El evento solo contiene HRNs y el resultado. Los tests serializan el evento y comprueban que no aparece `Bearer` ni el token.
+El token se consume en `verify_principal` y no se pasa al evento ni a `record_audit`. El evento solo contiene identidades, hechos y el resultado: HRNs, la cuenta verificada, la acción, el recurso, el digest y la correlación. Los tests serializan el evento y comprueban que no aparece `Bearer` ni el token.
 
 ## Sink y durabilidad
 

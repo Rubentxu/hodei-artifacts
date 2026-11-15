@@ -92,6 +92,7 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 | Autenticación: secreto compartido y JWKS/RS256 | toda ruta protegida | `tests/production_auth.rs`, `tests/repository_restart_contract.rs` |
 | Autorización Cedar con bundle declarado | superficie de repositorios | `tests/policy_circuits.rs` |
 | Auditoría de seguridad | eventos de las mutaciones | `tests/audit_events.rs`, `tests/iam_audit.rs` |
+| Outbox de auditoría | frontera única de commit y entrega | `crates/hodei-catalog-storage/tests/har03_outbox_contract.rs` |
 | Comando operador del índice de políticas | `ensure-iam-index` | `tests/iam_account_index.rs` |
 
 ### 3.2 Experimentales

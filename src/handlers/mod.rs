@@ -27,7 +27,7 @@ use kernel::application::ports::clock::Identity;
 /// verified account, what they acted on and how it ended. The sink is
 /// best-effort -- a sink that is unavailable is reported and never turns
 /// into a decision, because losing the trail must not change the answer the
-/// caller gets. The durability limit is declared in `docs/security/audit.md`.
+/// caller gets. The durability limit is declared in `docs/security/audit-events.md`.
 pub(crate) fn record_audit(
     state: &AppState,
     actor: &str,
