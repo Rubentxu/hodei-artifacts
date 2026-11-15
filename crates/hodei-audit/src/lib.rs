@@ -37,6 +37,11 @@
 //! Por eso el contrato del sink exige que trate el `event_id` como clave
 //! de idempotencia, y por eso una caída entre la entrega y la marca no
 //! duplica el efecto lógico: duplica el envío, que no es lo mismo.
+//!
+//! La cadena, dicha sin adornos: el outbox entrega **al menos una vez**,
+//! la reentrega lleva **el mismo** `event_id`, y el **almacén de
+//! auditoría** guarda por ese identificador. El efecto lógico es del
+//! almacén; el outbox pone la condición para que pueda haber uno solo.
 
 #![forbid(unsafe_code)]
 
@@ -46,6 +51,6 @@ pub mod outbox;
 pub mod sink;
 
 pub use dispatcher::{AuditDispatcher, DispatchOutcome, DispatchReport};
-pub use event::{AuditContext, AuditEvent, AuditResult};
+pub use event::{AuditContext, AuditEvent, AuditResult, sanitize_text};
 pub use outbox::{AuditEntry, AuditOutbox, EntryState, InMemoryAuditOutbox};
 pub use sink::{AuditError, AuditSink, FailingAuditSink, InMemoryAuditSink, TracingAuditSink};

@@ -14,6 +14,18 @@
 //! como tal: entregar dos veces el mismo evento es un efecto lógico, no
 //! dos. Un sink que no deduplica no cumple el contrato, y el dispatcher
 //! no puede saber si lo cumple.
+//!
+//! Y conviene decir dónde está exactamente el efecto lógico: **en el
+//! almacén de auditoría**, que es donde el evento queda registrado. Un
+//! `tracing` es una proyección de diagnóstico, y un log es append-only:
+//! que una reentrega lo escriba dos veces no es un hecho duplicado, es
+//! una línea de más en un log. El almacén de auditoría, en cambio, tiene
+//! que guardar el evento **por su `event_id`**, y entonces dos entregas
+//! del mismo evento son un registro.
+//!
+//! Lo que el outbox garantiza es la mitad que sí es suya: la reentrega
+//! lleva **el mismo** `event_id`, de modo que un sink conforme la
+//! reconoce.
 
 use std::sync::{Arc, Mutex};
 
@@ -61,6 +73,11 @@ pub trait AuditSink: Send + Sync {
 ///
 /// Es **best effort**: se pierde con el proceso. Quien necesite durabilidad
 /// inyecta otro sink; la frontera es la misma.
+///
+/// **No es el almacén de auditoría**: es una proyección de diagnóstico. No
+/// deduplica, porque un log es append-only y una línea de más no es un
+/// hecho duplicado. El efecto lógico —el registro del evento— es del
+/// almacén de auditoría, que tiene que guardar por `event_id`.
 pub struct TracingAuditSink;
 
 impl AuditSink for TracingAuditSink {

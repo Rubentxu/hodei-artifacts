@@ -209,8 +209,19 @@ impl AuditOutbox for SurrealAuditOutbox {
         // almacenamiento se mira lo que hay: puede que el evento ya
         // estuviera dicho, y entonces la pregunta no es "ha fallado" sino
         // "ya estaba".
-        if self.the_row(&event.event_id).await?.is_some() {
-            return Ok(());
+        if let Some(existing) = self.the_row(&event.event_id).await? {
+            if existing.the_event().same_fact(event) {
+                return Ok(());
+            }
+            // El identificador ya está usado por OTRO hecho. No es el mismo
+            // evento dicho dos veces: es una contradicción, y callarla
+            // dejaría el outbox diciendo algo que no ocurrió.
+            return Err(AuditError::StoreUnavailable {
+                detail: format!(
+                    "the event {} is already said with another content",
+                    event.event_id
+                ),
+            });
         }
         Err(AuditError::StoreUnavailable {
             detail: error.to_string(),
@@ -330,7 +341,10 @@ impl AuditOutbox for SurrealAuditOutbox {
             )
             .bind(("id", audit_outbox_id(event_id)))
             .bind(("owner", worker.to_string()))
-            .bind(("detail", detail.to_string()))
+            // El detalle lo escribe el sink, y va a una fila durable: se
+            // acota y se limpian los caracteres de control, que en una fila
+            // que alguien va a leer son ruido y en un log son inyección.
+            .bind(("detail", hodei_audit::sanitize_text(detail)))
             .await
             .map_err(|error| AuditError::StoreUnavailable {
                 detail: error.to_string(),

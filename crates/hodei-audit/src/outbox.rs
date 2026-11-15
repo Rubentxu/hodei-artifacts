@@ -101,6 +101,29 @@ impl AuditEntry {
 /// - `mark_undelivered` devuelve el evento al mercado con su error y su
 ///   intento contado.
 /// - `pending` deja **ver** lo que está esperando.
+///
+/// # Lo que el puerto promete, y lo que no
+///
+/// La exclusividad la da el `claim`: dos workers piden el mismo evento y
+/// uno gana. Pero el outbox entrega **al menos una vez**, no exactamente
+/// una vez. Entre que el sink recibe el evento y que la marca se escribe
+/// hay una ventana en la que el evento **ya fue entregado** y todavía
+/// parece pendiente: si ahí se cae el proceso, se entrega otra vez.
+///
+/// Por eso el `event_id` es la clave de idempotencia y el `AuditSink` tiene
+/// que tratarlo como tal. **Un efecto lógico es cosa del sink**: lo que el
+/// outbox garantiza es que la reentrega lleva **el mismo** `event_id`, de
+/// modo que un sink conforme la reconoce y no la cuenta dos veces.
+///
+/// # Las marcas son del worker que tiene el reclamo
+///
+/// La condición de las marcas es `lease_owner`, no `lease_until`. Es decir:
+/// quien marca es **el dueño del reclamo**, no el dueño de un lease
+/// vivo. Un worker cuyo lease expiró y al que nadie ha reclaimed todavía
+/// todavía puede marcar, y debe poder: el sink le dijo que la entrega
+/// ocurrió, y mentir sobre un hecho que ocurrió es peor que una
+/// redundancia. En cuanto **otro** worker reclama el evento, el primero
+/// ya no puede escribir: el evento dejó de ser suyo.
 #[async_trait]
 pub trait AuditOutbox: Send + Sync {
     /// Dice el evento: entra como `pending`.
@@ -108,6 +131,11 @@ pub trait AuditOutbox: Send + Sync {
     /// Decirlo dos veces es decirlo una: una entrada que ya está entregada
     /// no vuelve a pendiente, porque el hecho de que la entrega ocurriera
     /// no se deshace por volver a decir el evento.
+    ///
+    /// Pero si el identificador ya está usado por un evento **distinto**,
+    /// eso no es el mismo hecho dicho dos veces: es una contradicción, y
+    /// una contradicción que se calla es un hecho que se pierde. El puerto
+    /// la devuelve como error, para que se vea.
     async fn put_pending(&self, event: &AuditEvent) -> Result<(), AuditError>;
 
     /// Reclama el evento: de `pending`, o de un lease que expiró.
@@ -124,11 +152,10 @@ pub trait AuditOutbox: Send + Sync {
 
     /// Marca el evento como entregado.
     ///
-    /// Solo desde `claimed` **y solo por el worker que lo tiene**: una
-    /// marca de una entrada que nadie reclamó es una marca que nadie
-    /// puede explicar, y una marca de un worker cuyo lease ya expiró (y
-    /// que otro reclamó mientras tanto) es una marca de una entrega que
-    /// puede no ser la que ocurrió.
+    /// Solo desde `claimed` **y solo por el worker que tiene el reclamo**:
+    /// una marca de una entrada que nadie reclamó es una marca que nadie
+    /// puede explicar, y una marca de un worker al que otro le reclamó el
+    /// evento es una marca sobre un evento que ya no es suyo.
     async fn mark_delivered(
         &self,
         event_id: &str,
@@ -191,11 +218,22 @@ impl InMemoryAuditOutbox {
 impl AuditOutbox for InMemoryAuditOutbox {
     async fn put_pending(&self, event: &AuditEvent) -> Result<(), AuditError> {
         let mut inner = self.inner.lock().expect("the audit outbox is not poisoned");
-        // Decirlo dos veces es decirlo una: si ya está, no se toca.
-        inner
-            .entry(event.event_id.clone())
-            .or_insert_with(|| AuditEntry::pending(event.clone()));
-        Ok(())
+        // Decirlo dos veces es decirlo una: si ya está y dice lo mismo, no
+        // se toca. Si ya está y dice otra cosa, no es el mismo hecho: es
+        // una contradicción, y callarla sería perder un hecho.
+        match inner.get(&event.event_id) {
+            Some(entry) if entry.event.same_fact(event) => Ok(()),
+            Some(_) => Err(AuditError::StoreUnavailable {
+                detail: format!(
+                    "the event {} is already said with another content",
+                    event.event_id
+                ),
+            }),
+            None => {
+                inner.insert(event.event_id.clone(), AuditEntry::pending(event.clone()));
+                Ok(())
+            }
+        }
     }
 
     async fn claim(
@@ -244,8 +282,8 @@ impl AuditOutbox for InMemoryAuditOutbox {
                 detail: format!("the event {event_id} is not claimed, so nobody delivered it"),
             });
         }
-        // Y solo el que lo tiene: un lease que expiró ya no es un permiso
-        // para marcar nada.
+        // Y solo el dueño del reclamo: en cuanto otro worker reclamó el
+        // evento, este ya no es suyo.
         if entry.lease_owner.as_deref() != Some(worker) {
             return Err(AuditError::StoreUnavailable {
                 detail: format!(
@@ -284,9 +322,9 @@ impl AuditOutbox for InMemoryAuditOutbox {
                 ),
             });
         }
-        // Y solo el que lo tiene: si su lease expiró y otro worker lo
-        // reclamó, el evento ya no es suyo y devolverlo al mercado sería
-        // sacar de debajo al worker que lo tiene.
+        // Y solo el dueño del reclamo: si su lease expiró y otro worker
+        // reclamó el evento, devolverlo al mercado sería sacarlo de debajo
+        // del worker que lo tiene.
         if entry.lease_owner.as_deref() != Some(worker) {
             return Err(AuditError::StoreUnavailable {
                 detail: format!(

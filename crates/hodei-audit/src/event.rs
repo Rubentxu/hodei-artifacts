@@ -11,6 +11,32 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// La cota de un campo de texto del evento.
+///
+/// Los campos de texto del evento los pone quien llama, y van tanto a una
+/// fila **durable** como a una línea de log. Sin cota, un principal al que
+/// se le deniega una publicación puede escribir filas arbitrarias e
+/// ilimitadas en el outbox, y un salto de línea en el `resource` es una
+/// inyección en el log.
+pub const MAX_FIELD_LENGTH: usize = 256;
+
+/// Limpia un texto que va al evento o al outbox.
+///
+/// Quita los caracteres de control —un salto de línea en un log es una
+/// inyección— y corta lo que se pasa de la cota. La cuenta de caracteres
+/// es de caracteres, no de bytes, así que el texto no queda partido por la
+/// mitad de un UTF-8.
+///
+/// **Esto no es un saneamiento de secretos.** El evento no lleva
+/// credenciales porque el código no las mete, no porque aquí se limpien.
+pub fn sanitize_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_FIELD_LENGTH)
+        .collect()
+}
+
 /// Cómo acabó la operación que el evento describe.
 ///
 /// Los cuatro resultados son cuatro hechos distintos y no se confunden: un
@@ -45,9 +71,15 @@ impl std::fmt::Display for AuditResult {
 /// el **tenant verificado**, y no se deduce de la petición sino del
 /// principal que la máquina ya verificó. Una cuenta que se deduce es una
 /// cuenta que se puede repartir.
+///
+/// El **actor** es el HRN de quien actuó. En la capa HTTP sale del
+/// principal verificado, así que está verificado. En el catálogo lo declara
+/// quien publica, porque el catálogo verifica la **cuenta** contra el
+/// autorizador y no el subject: por eso la palabra "verificado" no se usa
+/// aquí, y quien publique tiene que poner el actor que de verdad actuó.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditContext {
-    /// El actor verificado: el HRN del subject.
+    /// El actor: el HRN del subject.
     pub actor: String,
     /// La cuenta verificada del actor: el tenant.
     pub tenant: String,
@@ -63,9 +95,9 @@ impl AuditContext {
         correlation_id: impl Into<String>,
     ) -> Self {
         Self {
-            actor: actor.into(),
-            tenant: tenant.into(),
-            correlation_id: correlation_id.into(),
+            actor: sanitize_text(&actor.into()),
+            tenant: sanitize_text(&tenant.into()),
+            correlation_id: sanitize_text(&correlation_id.into()),
         }
     }
 }
@@ -106,6 +138,9 @@ impl AuditEvent {
     /// El momento y el identificador son **hechos de la máquina**, no de la
     /// operación: tomarlos de una costura es lo que permite fijarlos en una
     /// prueba y comparar dos ejecuciones de la misma operación.
+    ///
+    /// Los textos van **limitados**: los pone quien llama, y van a una fila
+    /// durable y a una línea de log. Ver [`sanitize_text`].
     pub fn new(
         event_id: impl Into<String>,
         context: AuditContext,
@@ -119,9 +154,9 @@ impl AuditEvent {
             event_id: event_id.into(),
             context,
             timestamp,
-            action: action.into(),
-            resource: resource.into(),
-            digest,
+            action: sanitize_text(&action.into()),
+            resource: sanitize_text(&resource.into()),
+            digest: digest.map(|value| sanitize_text(&value)),
             result,
         }
     }
@@ -139,5 +174,19 @@ impl AuditEvent {
     /// La correlación de la operación.
     pub fn correlation_id(&self) -> &str {
         &self.context.correlation_id
+    }
+
+    /// Si dos eventos dicen el mismo hecho.
+    ///
+    /// El instante **no** se compara: un reloj no conserva necesariamente la
+    /// misma precisión al pasar por un almacén, y dos expresiones del mismo
+    /// hecho dejarían de serlo sólo por eso. Lo que decide es quién, en qué
+    /// cuenta, qué hizo, sobre qué, con qué contenido y cómo acabó.
+    pub fn same_fact(&self, other: &AuditEvent) -> bool {
+        self.context == other.context
+            && self.action == other.action
+            && self.resource == other.resource
+            && self.digest == other.digest
+            && self.result == other.result
     }
 }
