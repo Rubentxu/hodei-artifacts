@@ -73,6 +73,22 @@ Cambios que todavia no estan en una release. El formato sigue
   (una referencia a un blob que no existe deja un camino que no lleva a
   nada); y el HRN de un repositorio tiene que ser uno que la plataforma
   sepa leer.
+- Segunda ronda de correcciones del **catalogo**, de otra revision
+  independiente: `initialize` **no declara el esquema encima de uno mas
+  nuevo** (si el almacen lo escribio una build mas nueva, se niega a
+  tocarlo con `SchemaMismatch` en vez de escribir su numero encima y
+  dejar que el esquema y el numero no cuadren); publicar en un repositorio
+  **sin nombre** es una peticion invalida y no un recurso que falte; una
+  republicacion idempotente devuelve **el instante que hay en la base** y
+  no "ahora", porque lo que no se escribe no cambia de fecha; y el test de
+  reinicio ya no puede pasar en verde **sin comprobar nada** (la fase de
+  escritura es un test aparte, ignorado, y el proceso que verifica no
+  tiene rama que lo saltee: antes, una variable de entorno puesta por
+  error en la shell hacia que el proceso que verifica escribiera y se
+  saliera sin comprobar una sola cosa). Se verifico tambien en el motor
+  que la transaccion se **cancela** cuando una sentencia del lote falla y
+  que el `check()` de la respuesta mira todos los resultados, no solo el
+  ultimo.
 - El almacen de contenido del hub (`hodei-hub`) acepta **subidas en
   streaming**: `BlobWriteSession` recibe el contenido a trozos, con un
   fichero de staging propio por escritura, y el `commit` publica el

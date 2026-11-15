@@ -1203,7 +1203,16 @@ datos, porque no es su dependencia) y el adaptador en
 **La transaccionalidad.** Publicar son cuatro cosas —version, asset,
 referencia y etiquetas— y van en una sola transaccion (`BEGIN`..`COMMIT` en
 una sola query), asi que no queda un asset que no resuelve ni una version
-sin asset. Si una de las cuatro falla, no queda ninguna.
+sin asset. Si una de las cuatro falla, no queda ninguna. Eso no es una
+promesa del catalogo sino del motor, y se comprobo en el motor que se usa:
+en SurrealDB 2.7 el nucleo ejecuta la transaccion con control optimista y,
+cuando una sentencia del lote falla, **cancela** la transaccion y no
+ejecuta el `COMMIT` que venia detras
+(`surrealdb-core-2.7.0/src/dbs/executor.rs`); y el `check()` de la respuesta
+recorre **todos** los resultados del lote, no solo el ultimo
+(`surrealdb-2.7.0/src/api/method/query.rs`), de modo que el fallo de la
+tercera sentencia no se esconde detras del `COMMIT`. El adaptador se
+apoya en las dos cosas, y por eso fija la version 2.7 como suelo.
 
 **El conflicto, y por que no hay sobrescritura silenciosa.** Publicar en una
 ruta ocupada, o cambiar el contenido de una version publicada, recibe un
@@ -1263,6 +1272,23 @@ ambito, y de ahi sale la clave con la que el CAS guarda los bytes. Lo que
 la sonda comprueba es la **longitud**, no el digest: rehashear un
 artefacto en cada lectura es un coste que un registro no puede pagar, y la
 verificacion profunda es del scrub (HAR-21).
+
+**El esquema no se re-declara encima de uno mas nuevo.** Declarar el
+esquema es idempotente, pero **declarar el de esta build encima del de una
+build mas nueva** no devuelve el almacen a la version nueva: las
+definiciones que ya estan no se rehacen, asi que el almacen se queda con
+un esquema mixto. Por eso `initialize` mira primero que version dice el
+almacen, y si es mas nueva que la que entiende esta build se niega a
+tocarlo (`SchemaMismatch`) en vez de escribir su numero encima y dejar que
+el numero mienta. El numero de version solo describe el esquema cuando
+esta build lo escribio.
+
+**Lo que el resultado dice es lo que hay.** Republicar lo mismo no escribe
+nada, y entonces no cambia la fecha del asset ni de la referencia: el
+resultado devuelve el instante que hay en la base, no "ahora". Un
+resultado que dijera "actualizado ahora" sobre un registro que no se toco
+haria que el que se fiara del resultado creyera que el contenido se acaba
+de publicar.
 
 **Lo que sigue sin estar:** el servidor HTTP (HAR-04), el commit de
 publicacion con outbox atomico (HAR-03), las referencias persistentes y la

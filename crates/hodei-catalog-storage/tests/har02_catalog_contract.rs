@@ -1,8 +1,10 @@
 //! El contrato del catalogo durable (HAR-02).
 //!
-//! Las pruebas van contra SurrealDB de verdad: el motor embebido para la
-//! mayoria, y RocksDB para el reinicio, porque un catalogo que solo
-//! funciona en memoria no es un catalogo.
+//! Las pruebas van contra SurrealDB de verdad, y contra el motor
+//! **persistente** en todas ellas, porque un catalogo que solo funciona en
+//! memoria no es un catalogo, y porque el motor en memoria no arbitra dos
+//! escrituras concurrentes del mismo registro: las dos dicen que han
+//! escrito y la ultima gana en silencio.
 //!
 //! Los casos son los de la UAT `CAT-01..CAT-03` y los cinco criterios de
 //! aceptacion de HSP-96.
@@ -19,7 +21,7 @@ use hodei_catalog::{
     PublishOutcome, RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode,
     repository_hrn,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog_storage::{SCHEMA_VERSION, SurrealCatalogStore};
 use hodei_evidence::ContentDigest;
 use surrealdb::Surreal;
 use surrealdb::engine::local::RocksDb;
@@ -1062,13 +1064,12 @@ async fn two_clients_publishing_at_the_same_time_leave_one_winner() {
     );
 }
 
-/// La fase de escritura del reinicio, en su propio proceso.
-///
-/// La variable de entorno dice en que fase va el proceso: `write` escribe
-/// y se termina, y cualquier otra cosa lee.
-const RESTART_PHASE: &str = "HAR02_CATALOG_RESTART_PHASE";
-
 /// La ruta de la base, que el proceso que escribe recibe del que lo lanza.
+///
+/// Solo la lee quien escribe. El proceso que lee no la necesita, y por eso
+/// no la mira: si la mirase, una variable de entorno puesta por error en
+/// la shell podria hacer que el proceso que verifica se creyera el que
+/// escribe.
 const RESTART_PATH: &str = "HAR02_CATALOG_RESTART_PATH";
 
 /// Escribe el catalogo y sale.
@@ -1106,25 +1107,38 @@ async fn write_the_catalog(path: &std::path::Path) {
         .expect("publish");
 }
 
+/// La fase de escritura del reinicio, en su propio proceso.
+///
+/// Es un test aparte, y no una rama del de reinicio, por una razon que
+/// no es de estilo: si la fase de escritura fuera una rama, bastaria con
+/// que la variable de entorno que la activa estuviera puesta en el
+/// entorno de quien lanza la suite para que el proceso que verifica
+/// escribiera y se saliera **sin comprobar nada**, y el test pasaria en
+/// verde sin haber verificado nada. Con dos tests, el que verifica no
+/// tiene rama que lo saltee, y el que escribe falla si se lo lanza sin
+/// la ruta.
+#[tokio::test]
+#[ignore = "solo corre como el proceso hijo del test de reinicio"]
+async fn the_catalog_is_written_for_the_restart() {
+    let path = std::env::var(RESTART_PATH).expect(
+        "this test only runs as the writing process of the restart test, \
+         which passes it the path of the database",
+    );
+    write_the_catalog(std::path::Path::new(&path)).await;
+}
+
 #[tokio::test]
 async fn the_catalog_survives_a_restart() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let path = tmp.path().join("db");
 
-    // En la fase de escritura, este proceso escribe y se termina.
-    if std::env::var(RESTART_PHASE).as_deref() == Ok("write") {
-        let path = std::env::var(RESTART_PATH).expect("the path of the database");
-        write_the_catalog(std::path::Path::new(&path)).await;
-        return;
-    }
-
     // El proceso que escribe es otro proceso, y se espera a que termine.
     let binary = std::env::current_exe().expect("the test binary");
     let status = tokio::process::Command::new(binary)
         .arg("--exact")
-        .arg("the_catalog_survives_a_restart")
+        .arg("the_catalog_is_written_for_the_restart")
+        .arg("--ignored")
         .arg("--nocapture")
-        .env(RESTART_PHASE, "write")
         .env(RESTART_PATH, path.to_string_lossy().as_ref())
         .status()
         .await
@@ -2023,5 +2037,149 @@ async fn the_canonical_name_of_a_repository_has_to_be_a_valid_hrn() {
     assert!(
         matches!(refused, CatalogError::InvalidRequest { .. }),
         "unexpected error: {refused:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Lo que la segunda revision encontro.
+// ---------------------------------------------------------------------------
+
+/// Un almacen escrito por una build mas nueva no se toca.
+///
+/// Declarar el esquema es idempotente, pero declarar el de esta build
+/// encima del de una build mas nueva no deja el almacen en la version
+/// nueva: las definiciones que ya estan no se rehacen. El almacen se
+/// quedaria con un esquema mixto y el numero de version diria una cosa y
+/// la base seria otra. La unica respuesta honesta es no tocarlo y decirlo.
+#[tokio::test]
+async fn a_store_written_by_a_newer_schema_is_not_touched() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db.clone());
+    store.initialize().await.expect("initialize");
+
+    // Se dice que el almacen lo escribio una build mas nueva.
+    db.query("UPSERT $id SET applied_version = $version")
+        .bind((
+            "id",
+            surrealdb::sql::Thing::from(("catalog_schema", "applied")),
+        ))
+        .bind(("version", SCHEMA_VERSION + 1))
+        .await
+        .expect("write the version")
+        .check()
+        .expect("write the version");
+
+    let refused = store.initialize().await;
+    assert!(
+        matches!(
+            refused,
+            Err(CatalogError::SchemaMismatch {
+                found,
+                expected
+            }) if found == SCHEMA_VERSION + 1 && expected == SCHEMA_VERSION
+        ),
+        "unexpected error: {refused:?}"
+    );
+
+    // Y el numero del almacen sigue siendo el que tenia: esta build no
+    // escribe su version encima de la de otra.
+    assert_eq!(
+        store.applied_schema_version().await.expect("the version"),
+        SCHEMA_VERSION + 1,
+        "the version of the store was overwritten"
+    );
+}
+
+/// Publicar en un repositorio que no tiene nombre no es que no haya nada.
+///
+/// Un repositorio vacio es una peticion que no tiene sentido, no un
+/// recurso que falte: la diferencia importa porque un `Missing` pide
+/// reintentar y un `InvalidRequest` pide corregir.
+#[tokio::test]
+async fn publishing_into_an_empty_repository_is_an_invalid_request() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    let refused = store
+        .publish(
+            "acme",
+            publication("", "app.bin", "pkg", "1.0", b"the content"),
+        )
+        .await
+        .expect_err("the repository has no name");
+    assert!(
+        matches!(refused, CatalogError::InvalidRequest { .. }),
+        "unexpected error: {refused:?}"
+    );
+}
+
+/// Republicar lo mismo dice cuando se publico, no ahora.
+///
+/// Una republicacion idempotente no escribe nada, asi que no cambia la
+/// fecha del asset. Si el resultado dijera "actualizado ahora", el
+/// resultado y la base dirian dos cosas distintas sobre el mismo
+/// registro, y el que se fiara del resultado creeria que el contenido se
+/// acaba de publicar.
+#[tokio::test]
+async fn an_idempotent_publication_reports_the_instant_that_is_in_the_store() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("create repository");
+
+    let first = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", b"the content"),
+        )
+        .await
+        .expect("publish");
+
+    let second = store
+        .publish(
+            "acme",
+            publication("releases", "app.bin", "pkg", "1.0", b"the content"),
+        )
+        .await
+        .expect("publish again");
+    assert!(!second.created, "the second publication created something");
+
+    let stored = store
+        .asset("acme", "releases", "app.bin")
+        .await
+        .expect("the asset");
+    assert_eq!(
+        second.asset.updated_at, stored.updated_at,
+        "the outcome says a different instant than the store"
+    );
+    assert_eq!(
+        first.asset.updated_at, stored.updated_at,
+        "the instant of the asset changed without writing it"
+    );
+
+    let stored_reference = store
+        .reference("acme", "releases", "app.bin")
+        .await
+        .expect("the reference");
+    assert_eq!(
+        second.reference.updated_at, stored_reference.updated_at,
+        "the outcome says a different instant than the store"
     );
 }

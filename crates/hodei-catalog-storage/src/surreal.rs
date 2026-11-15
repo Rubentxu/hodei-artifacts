@@ -18,6 +18,17 @@
 //! transaccion es una sola query con `BEGIN` y `COMMIT`: si una de las
 //! cuatro falla, no queda ninguna.
 //!
+//! Que "si una de las cuatro falla, no queda ninguna" no es una promesa
+//! del catalogo sino del motor, y por eso se comprobo en el motor que se
+//! usa. En SurrealDB 2.7 el nucleo ejecuta la transaccion con control
+//! optimista y, cuando una sentencia del lote falla, **cancela** la
+//! transaccion y no ejecuta el `COMMIT` que venia detras
+//! (`surrealdb-core-2.7.0/src/dbs/executor.rs`); y el `check()` de la
+//! respuesta recorre **todos** los resultados del lote, no solo el ultimo
+//! (`surrealdb-2.7.0/src/api/method/query.rs`), asi que el fallo de la
+//! tercera sentencia no se esconde detras del `COMMIT`. El adaptador se
+//! apoya en las dos cosas, y por eso fija la version 2.7 como suelo.
+//!
 //! # Que motor necesita esta garantia
 //!
 //! La garantia de que una segunda escritura incompatible recibe un
@@ -30,6 +41,15 @@
 //! Por eso los identificadores de este catalogo no son aleatorios, y por
 //! eso las pruebas van contra el motor que se despliega. Un despliegue con
 //! escritura concurrente no puede apoyarse en el motor en memoria.
+//!
+//! Y una frontera que conviene no disimular: el almacen **no puede
+//! distinguir** los motores embebidos en tiempo de ejecucion. `Mem` y
+//! `RocksDB` se abren los dos como `Surreal<Db>`, y la API no expone que
+//! motor hay debajo. Por eso la garantia no se comprueba con un `if`, sino
+//! con una convencion asumida: quien despliegue esto abre el motor
+//! persistente, y las pruebas de este crate se hacen contra ese motor
+//! precisamente para que la convencion no se pueda incumplir sin que se
+//! vea.
 //!
 //! # Por que se relee despues de un fallo
 //!
@@ -286,6 +306,21 @@ impl SurrealCatalogStore {
     /// habla de cuentas ni de repositorios, y su unico efecto es el
     /// esquema y el numero de version que dice como esta.
     pub async fn initialize(&self) -> Result<(), CatalogError> {
+        // Antes de declarar nada, se mira que version dice el almacen.
+        // Declarar el esquema es idempotente, pero **declarar el de esta
+        // build encima del de una build mas nueva** no deja el almacen en
+        // la version nueva: las definiciones que ya estan no se rehacen,
+        // asi que el almacen se queda con un esquema mixto y el numero de
+        // version que se escribe debajo miente. Un almacen mas nuevo que
+        // esta build es un almacen que esta build no debe tocar.
+        let applied = self.applied_schema_version().await?;
+        if applied > SCHEMA_VERSION {
+            return Err(CatalogError::SchemaMismatch {
+                found: applied,
+                expected: SCHEMA_VERSION,
+            });
+        }
+
         self.db
             .query(SCHEMA)
             .await
@@ -1343,6 +1378,9 @@ impl CatalogWriter for SurrealCatalogStore {
         ))
         .await?;
 
+        if publication.repository.trim().is_empty() {
+            return Err(CatalogError::invalid("the repository is empty"));
+        }
         if publication.asset_path.trim().is_empty() {
             return Err(CatalogError::invalid("the path of the asset is empty"));
         }
@@ -1740,7 +1778,7 @@ impl SurrealCatalogStore {
         let existing_asset = self
             .the_asset_row(principal_account, &repository, &publication.asset_path)
             .await?;
-        let asset = AssetRecord {
+        let mut asset = AssetRecord {
             account: account.clone(),
             repository: repository.clone(),
             asset_path: publication.asset_path.clone(),
@@ -1758,6 +1796,12 @@ impl SurrealCatalogStore {
                 && row.size_bytes == size_bytes;
             if same {
                 create_asset = false;
+                // Lo que no se escribe no se actualiza. El resultado que
+                // se devuelve dice lo que hay en la base, no un instante
+                // que la base nunca tuvo: una republicacion idempotente
+                // que dice "actualizado ahora" miente sobre cuando se
+                // publico el contenido.
+                asset.updated_at = DateTime::<Utc>::from(row.updated_at.clone());
             } else if conflict.is_none() {
                 conflict = Some(CatalogError::conflict(
                     "asset",
@@ -1771,7 +1815,7 @@ impl SurrealCatalogStore {
         let existing_reference = self
             .the_reference_row(principal_account, &repository, &publication.asset_path)
             .await?;
-        let reference = BlobReference {
+        let mut reference = BlobReference {
             account: account.clone(),
             repository: repository.clone(),
             asset_path: publication.asset_path.clone(),
@@ -1791,6 +1835,9 @@ impl SurrealCatalogStore {
                 && row.size_bytes == size_bytes;
             if same {
                 create_reference = false;
+                // Como con el asset: lo que no se escribe no cambia de
+                // fecha, y el resultado dice lo que hay.
+                reference.updated_at = DateTime::<Utc>::from(row.updated_at.clone());
             } else if conflict.is_none() {
                 conflict = Some(CatalogError::conflict(
                     "reference",

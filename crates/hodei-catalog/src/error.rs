@@ -82,6 +82,22 @@ pub enum CatalogError {
         detail: String,
     },
 
+    /// El almacen tiene un esquema que esta build no entiende.
+    ///
+    /// No es un fallo del almacenamiento: es un almacen que se escribio
+    /// con una version mas nueva que esta. Declarar el esquema encima no
+    /// lo arregla (las definiciones que ya estan no se rehacen), asi que
+    /// la unica respuesta honesta es no seguir y decirlo.
+    #[error(
+        "the catalog storage has the schema version {found} and this build understands {expected}"
+    )]
+    SchemaMismatch {
+        /// La version que hay en el almacen.
+        found: i64,
+        /// La version que entiende esta build.
+        expected: i64,
+    },
+
     /// El almacenamiento no pudo responder.
     #[error("the catalog storage is unavailable: {detail}")]
     Unavailable {
