@@ -374,7 +374,7 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
     );
 
     case.outcome = format!(
-        "la ruta cortada no existe ({}), republicar en ella da {} (no 409), el staging caducado se limpió al arrancar y el vivo sigue, y el contenido publicado sigue con el mismo sha256 ({expected})",
+        "la ruta cortada no existe ({}), republicar en ella da {} (no 409), el staging caducado se limpió al arrancar y el vivo sigue —caducado y bloqueado, que es lo que lo salva—, y el contenido publicado sigue con el mismo sha256 ({expected})",
         missing.status, again.status
     );
     case.passed = true;

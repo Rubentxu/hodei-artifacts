@@ -268,7 +268,7 @@ pub async fn bootstrap(
                     );
                 }
                 if cleanup.alive > 0 {
-                    warn!(
+                    info!(
                         alive = cleanup.alive,
                         "the staging of the uploads in progress was left alone at the boot"
                     );
