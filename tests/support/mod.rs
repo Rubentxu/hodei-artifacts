@@ -509,6 +509,23 @@ pub fn kill(service: &mut Service) {
     let _ = service.child.wait();
 }
 
+/// El comando `sha256sum` que comprueba el digest de un fichero.
+///
+/// Es el mismo programa y el mismo fichero que el arnes ejecuta: lo que
+/// se escribe en el informe es lo que se corrio, no una reconstruccion.
+pub fn sha256_command(file: &Path) -> String {
+    let root = file
+        .parent()
+        .map(|root| root.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let name = if root.is_empty() {
+        file.display().to_string()
+    } else {
+        file.display().to_string().replace(&root, "<despliegue>")
+    };
+    format!("sha256sum {name}")
+}
+
 /// El digest de un fichero, dicho por `sha256sum`.
 ///
 /// La comparación no la hace el código bajo prueba: `sha256sum` es un
@@ -789,25 +806,6 @@ pub fn curl_upload_in_background(
     limit_rate: Option<&str>,
 ) -> Child {
     Curl::upload(port, path, token, file, limit_rate).run_in_background()
-}
-
-/// El comando `sha256sum` que comprueba el digest de un fichero.
-///
-/// El digest lo dice `sha256sum`, que no tiene nada que ver con este
-/// servicio, y el comando se escribe como se ejecutó: el mismo
-/// programa, el mismo fichero.
-pub fn sha256_command(file: &Path) -> String {
-    let root = file
-        .parent()
-        .map(|root| root.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let displayed = file.display().to_string();
-    let name = if root.is_empty() {
-        displayed
-    } else {
-        displayed.replace(&root, "<despliegue>")
-    };
-    format!("sha256sum {name}")
 }
 
 /// La respuesta de un `curl` que se lanzó en segundo plano.
