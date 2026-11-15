@@ -120,6 +120,7 @@ persistente:
 - Las mutaciones de la configuración de autorización y la creación de repositorios **siguen siendo best-effort**: su evento se emite en el proceso y un sink caído lo pierde sin cambiar la respuesta. La frontera única de commit es, de momento, la de la **publicación** del catálogo.
 - Un rechazo o un conflicto de una publicación se dice en el outbox, pero **no** comparte transacción con el catálogo: no hay mutación que atar. Por eso su evento va solo.
 - Si el almacén no responde, el evento de un `failed` tampoco se puede escribir: es el mismo almacén. Se avisa con un `warn` y no se finge nada.
+- **El outbox es de la plataforma, no de una cuenta.** `pending()` devuelve los eventos de todas las cuentas, porque el almacén de auditoría que los recibe es de la plataforma y el dispatcher tiene que poder verlos todos. Un sink por cuenta tendría que filtrar por `tenant`, y el puerto no lo hace: hoy no hay tal sink.
 - No se envía a Audit Trail remoto; no se implementa E2E de esa plataforma.
 - El `x-request-id` es una correlación de traza; se valida y se devuelve en la respuesta para poder unir log/evento. No es una identidad.
 - La UAT `uat/UAT-RAW-FOUNDATION.md` (PUB-01..03) que cita la tarea **no existe todavía** en el repositorio: el contrato entregado son los cuatro criterios de aceptación, y la conformidad es HAR-05 (HSP-99).
