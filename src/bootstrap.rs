@@ -249,17 +249,44 @@ pub async fn bootstrap(
         // never happened -- but it is a file, and a process that dies
         // mid-upload leaves one behind every time.
         //
-        // Only the **expired** ones are removed: the staging of a live
-        // upload belongs to another process, and taking it away would
-        // break an upload that is working.
-        let expired = content
+        // The staging of a write **in progress** is not touched: the file
+        // is locked by the process that is writing it, and a locked file
+        // is not removed. The age is only the margin of prudence, not the
+        // criterion: an old file of an upload that stopped writing is
+        // still a live upload, and taking it away breaks it.
+        //
+        // And a staging that could not be removed is not a reason to not
+        // start: it is a problem of disk, and the service has work to do.
+        match content
             .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs))
-            .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
-        if expired > 0 {
-            warn!(
-                expired,
-                "the staging of interrupted uploads was removed at the boot"
-            );
+        {
+            Ok(cleanup) => {
+                if cleanup.removed > 0 {
+                    warn!(
+                        removed = cleanup.removed,
+                        "the staging of interrupted uploads was removed at the boot"
+                    );
+                }
+                if cleanup.alive > 0 {
+                    warn!(
+                        alive = cleanup.alive,
+                        "the staging of the uploads in progress was left alone at the boot"
+                    );
+                }
+                for (path, reason) in &cleanup.failed {
+                    warn!(
+                        %reason,
+                        path = %path.display(),
+                        "the staging of an interrupted upload could not be removed at the boot"
+                    );
+                }
+            }
+            Err(error) => {
+                warn!(
+                    %error,
+                    "the staging could not be read at the boot; the interrupted uploads stay"
+                );
+            }
         }
         app_state
             .with_catalog(reader, writer)

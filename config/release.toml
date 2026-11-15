@@ -57,6 +57,9 @@ durable = true
 cas_path = "./data/hodei.cas"
 # How old an interrupted upload may be before the store cleans it up. A
 # process that dies mid-upload leaves its staging file behind: that file is
-# never published, but it is a file. The age is generous so that the staging
-# of a live upload is never taken away from the process that is writing it.
+# never published, but it is a file. The age is generous on purpose, and it
+# has a floor of one minute: below that it stops being a margin of prudence.
+# What protects a live upload is not the age but the lock: while the write
+# is in progress its file is locked by the process that writes it, and a
+# locked file is not removed.
 staging_max_age_secs = 3600
