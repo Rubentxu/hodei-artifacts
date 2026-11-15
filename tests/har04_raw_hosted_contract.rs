@@ -137,7 +137,7 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
 struct Contract {
     app: Router,
     writer: Arc<dyn CatalogWriter>,
-    /// El almacén de contenido, para poder mirar lo que queda en el.
+    /// The store of content, so that what is left in it can be looked at.
     content: Arc<FileBlobStore>,
     #[allow(dead_code)]
     tmp: TempDir,
@@ -452,8 +452,8 @@ async fn the_content_survives_the_round_trip_through_the_store() {
     let contract = Contract::new().await;
     publish(&contract.app, "file.bin", CONTENT).await;
 
-    // El contenido se lee del almacén de contenido, no de la memoria de
-    // la petición: lo que se descarga es lo que se publico.
+    // The content is read from the store of content, not from the memory
+    // of the request: what is downloaded is what was published.
     let downloaded = send(
         &contract.app,
         Method::GET,
@@ -498,7 +498,7 @@ async fn the_forms_of_a_range_are_served_as_they_are_written() {
     let contract = Contract::new().await;
     publish(&contract.app, "file.bin", CONTENT).await;
 
-    // Un tramo con sufijo: los últimos bytes.
+    // A range with a suffix: the last bytes.
     let suffix = send(
         &contract.app,
         Method::GET,
@@ -511,7 +511,7 @@ async fn the_forms_of_a_range_are_served_as_they_are_written() {
     assert_eq!(suffix.status, StatusCode::PARTIAL_CONTENT);
     assert_eq!(suffix.body, &CONTENT[CONTENT.len() - 5..]);
 
-    // Un tramo abierto: desde ahí hasta el final.
+    // An open range: from there to the end.
     let open = send(
         &contract.app,
         Method::GET,
@@ -524,9 +524,8 @@ async fn the_forms_of_a_range_are_served_as_they_are_written() {
     assert_eq!(open.status, StatusCode::PARTIAL_CONTENT);
     assert_eq!(open.body, &CONTENT[CONTENT.len() - 3..]);
 
-    // Varios tramos: esta release sirve uno, así que se ignora la
-    // petición y se sirve el contenido entero, que es lo que permite el
-    // RFC.
+    // Several ranges: this release serves one, so the request is ignored
+    // and the whole content is served, which is what the RFC allows.
     let several = send(
         &contract.app,
         Method::GET,
@@ -553,7 +552,7 @@ async fn the_forms_of_a_range_are_served_as_they_are_written() {
     assert_eq!(other.status, StatusCode::OK);
     assert_eq!(other.body, CONTENT);
 
-    // Y la unidad no distingue mayúsculas: `Bytes=0-4` es un tramo.
+    // And the unit does not distinguish case: `Bytes=0-4` is a range.
     let capital = send(
         &contract.app,
         Method::GET,
@@ -630,10 +629,10 @@ async fn a_conditional_read_that_holds_is_not_modified() {
 
 #[tokio::test]
 async fn a_weak_conditional_read_is_not_modified_too() {
-    // RFC 9110: `If-None-Match` se compara con la función **débil**, y
-    // un `W/` delante dice "comparte la representación". Un cliente que
-    // revalida contra una caché manda la etiqueta así, y un 304 es lo
-    // que espera.
+    // RFC 9110: `If-None-Match` is compared with the **weak** function,
+    // and a `W/` in front says "shares the representation". A client
+    // that revalidates against a cache sends the tag that way, and a
+    // 304 is what it expects.
     let contract = Contract::new().await;
     publish(&contract.app, "file.bin", CONTENT).await;
     let etag = format!("W/\"sha256:{}\"", digest_of(CONTENT));
@@ -690,8 +689,8 @@ async fn a_conditional_write_that_does_not_hold_leaves_the_content_alone() {
     .await;
     assert_eq!(answer.status, StatusCode::PRECONDITION_FAILED);
 
-    // El contenido que hay es el de antes: la petición que no se hace no
-    // deja nada escrito.
+    // The content that is there is the one from before: the request that
+    // is not made leaves nothing written.
     let downloaded = send(
         &contract.app,
         Method::GET,
@@ -739,7 +738,7 @@ async fn a_conditional_write_with_a_star_on_an_empty_path_fails() {
     .await;
     assert_eq!(answer.status, StatusCode::PRECONDITION_FAILED);
 
-    // Y no se publicó nada.
+    // And nothing was published.
     let downloaded = send(
         &contract.app,
         Method::GET,
@@ -801,8 +800,8 @@ async fn a_conditional_write_with_an_if_none_match_star_on_an_occupied_path_fail
     .await;
     assert_eq!(answer.status, StatusCode::PRECONDITION_FAILED);
 
-    // Y lo que había sigue siendo lo que había: la condición dice que no
-    // se escriba, no que se sustituya.
+    // And what was there is still what was there: the condition says that
+    // nothing is written, not that it is replaced.
     let downloaded = send(
         &contract.app,
         Method::GET,
@@ -934,7 +933,7 @@ async fn a_refused_path_leaves_nothing_behind() {
     .await;
     assert_eq!(answer.status, StatusCode::BAD_REQUEST);
 
-    // Y en la dirección que el traversal queria alcanzar no hay nada.
+    // And in the address the traversal wanted to reach there is nothing.
     let escaped = send(
         &contract.app,
         Method::GET,
@@ -952,8 +951,8 @@ async fn a_path_that_is_occupied_by_another_content_is_a_conflict() {
     let contract = Contract::new().await;
     publish(&contract.app, "file.bin", CONTENT).await;
 
-    // La dirección publica una vez: el contenido de la dirección no se
-    // sustituye en silencio.
+    // The address publishes once: the content of the address is not
+    // replaced in silence.
     let answer = send(
         &contract.app,
         Method::PUT,
@@ -965,7 +964,7 @@ async fn a_path_that_is_occupied_by_another_content_is_a_conflict() {
     .await;
     assert_eq!(answer.status, StatusCode::CONFLICT);
 
-    // Y lo que hay sigue siendo lo de antes.
+    // And what is there is still what it was.
     let downloaded = send(
         &contract.app,
         Method::GET,
@@ -977,8 +976,8 @@ async fn a_path_that_is_occupied_by_another_content_is_a_conflict() {
     .await;
     assert_eq!(downloaded.body, CONTENT);
 
-    // Y en el almacén de contenido no queda ni un byte del contenido
-    // rechazado: ni el fichero, ni una escritura a medias.
+    // And in the store of content there is not a single byte of the
+    // rejected content: neither the file, nor a half-written one.
     let rejected = ContentDigest::of_bytes(OTHER_CONTENT);
     assert!(!contract.content.the_path_of(&rejected).exists());
     assert!(
@@ -1129,14 +1128,13 @@ async fn the_publication_also_needs_the_permission() {
 
 #[tokio::test]
 async fn the_permission_is_bound_to_the_repository_and_not_to_the_account() {
-    // La misma cuenta, otro repositorio: el bundle de Cedar no lo cubre,
-    // así que el mismo principal que puede en `releases` no puede en
+    // The same account, another repository: the bundle of Cedar does not
+    // cover it, so the same principal that can in `releases` cannot in
     // `private`.
     //
-    // Sin este test, una implementación que autorizara **por cuenta**
-    // pasaría toda la suite: el bundle solo nombra un repositorio, y
-    // hasta ahora no había un segundo repositorio con el que
-    // compararlo.
+    // Without this test, an implementation that authorized **by account**
+    // would pass the whole suite: the bundle names one repository, and
+    // until now there was no second repository to compare it with.
     let contract = Contract::new().await;
     contract
         .create_repository(a_descriptor(
@@ -1159,7 +1157,7 @@ async fn the_permission_is_bound_to_the_repository_and_not_to_the_account() {
     .await;
     assert_eq!(published.status, StatusCode::FORBIDDEN);
 
-    // Y tampoco puede leer de él.
+    // And it cannot read from it either.
     let downloaded = send(
         &contract.app,
         Method::GET,
@@ -1194,9 +1192,9 @@ async fn the_repository_of_another_account_does_not_exist_for_this_one() {
 
 #[tokio::test]
 async fn a_repository_of_another_format_is_not_found() {
-    // El catalogo solo sirve el modo `hosted`, así que los modos que están
-    // release no sirve ni siquiera se pueden crear. Lo que se puede crear
-    // y no es de esta superficie es un 404.
+    // The catalog only serves the `hosted` mode, so the modes that this
+    // release does not serve cannot even be created. What can be created
+    // and is not of this surface is a 404.
     let contract = Contract::without_repository().await;
     contract
         .create_repository(a_descriptor(
@@ -1338,8 +1336,8 @@ async fn a_content_that_is_larger_than_the_limit_is_refused() {
     .await;
     assert_eq!(downloaded.status, StatusCode::NOT_FOUND);
 
-    // Y en el almacén de contenido no queda ni un byte: un contenido que
-    // no se publica no puede quedarse en el disco.
+    // And in the store of content there is not a single byte: content that
+    // is not published cannot stay on the disk.
     let refused = ContentDigest::of_bytes(&[b'x'; 64]);
     assert!(!contract.content.the_path_of(&refused).exists());
     assert!(
@@ -1392,8 +1390,8 @@ async fn a_repository_that_asks_for_a_partitioned_scope_is_not_served_yet() {
     descriptor.config.digest_scope = DigestScope::AccountPartitioned;
     contract.create_repository(descriptor).await;
 
-    // Un 404 aquí sería mentir: el repositorio existe, y lo que no se
-    // sirve es el contenido de un repositorio con el ambito particionado.
+    // A 404 here would be lying: the repository exists, and what is not
+    // served is the content of a repository with the partitioned scope.
     let answer = send(
         &contract.app,
         Method::GET,
@@ -1453,8 +1451,8 @@ async fn a_declared_digest_that_is_the_right_one_goes_on() {
 async fn a_declared_digest_with_the_prefix_goes_on() {
     let contract = Contract::new().await;
 
-    // Con el prefijo del algoritmo, y sin que las mayúsculas cambien el
-    // sentido: `SHA256:` dice lo mismo que `sha256:`.
+    // With the prefix of the algorithm, and without the case changing the
+    // meaning: `SHA256:` says the same as `sha256:`.
     let answer = send(
         &contract.app,
         Method::PUT,

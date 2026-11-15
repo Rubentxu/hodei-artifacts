@@ -155,7 +155,8 @@ fn bob_in(account: &str) -> HrnEntity {
     ))
 }
 
-/// A1 — Dos evaluaciones concurrentes con políticas opuestas no se contaminan.
+/// A1 — Two concurrent evaluations with opposite policies do not contaminate
+/// each other.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a1_concurrent_evaluations_do_not_contaminate_each_other() {
     let port = create_evaluate_policies_use_case(Arc::new(EmptySchemaStorage));
@@ -218,7 +219,7 @@ async fn a1_concurrent_evaluations_do_not_contaminate_each_other() {
     }
 }
 
-/// A2 — Una política que nombra una cuenta no alcanza a su homónimo.
+/// A2 — A policy that names one account does not reach its namesake.
 #[tokio::test]
 async fn a2_a_policy_scoped_to_one_account_does_not_reach_another_account() {
     let port = create_evaluate_policies_use_case(Arc::new(EmptySchemaStorage));
@@ -258,7 +259,7 @@ async fn a2_a_policy_scoped_to_one_account_does_not_reach_another_account() {
     );
 }
 
-/// A3 — Sin políticas, el default es deny.
+/// A3 — Without policies, the default is deny.
 #[tokio::test]
 async fn a3_without_policies_the_default_is_deny() {
     let port = create_evaluate_policies_use_case(Arc::new(EmptySchemaStorage));

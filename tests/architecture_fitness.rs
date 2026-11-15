@@ -489,8 +489,8 @@ fn the_closure_follows_the_edges_inside_the_workspace() {
         "the adapter reaches the catalog domain: {closure:?}"
     );
 
-    // Y el dominio del catálogo no llega al adaptador: esa es la frontera
-    // que el nombre del crate protege.
+    // And the domain of the catalog does not reach the adapter: that is the
+    // frontier the name of the crate protects.
     let domain = the_workspace_closure(&root, "crates/hodei-catalog");
     assert!(
         !domain.contains(&"crates/hodei-catalog-storage".to_string()),
