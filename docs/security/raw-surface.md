@@ -213,6 +213,7 @@ raw_api_enabled = true
 ```toml
 [content]
 cas_path = "./data/hodei.cas"
+staging_max_age_secs = 3600
 ```
 
 - `raw_api_enabled` está **cerrado por defecto**, igual que
@@ -222,8 +223,32 @@ cas_path = "./data/hodei.cas"
   declare lo que autoriza con.
 - `cas_path` es donde viven los bytes, por digest. No es una decisión de
   la cuenta, sino del despliegue.
+- `staging_max_age_secs` es la edad a partir de la cual una escritura
+  interrumpida se considera abandonada. El valor por defecto es
+  generoso a propósito: el staging de una subida **viva** es de otro
+  proceso, y quitárselo de debajo rompe una subida que funciona.
 - El catálogo y el almacén de contenido se montan cuando
   `repository.durable = true`.
+
+## Lo que pasa cuando el proceso se muere
+
+Una subida se escribe en el almacén de contenido **por trozos**, en un
+fichero de staging propio, y solo se publica cuando el commit lo
+comprueba. Un proceso que se muere a mitad de una subida deja ese
+fichero en el disco: no hay commit, no hay asset, y **no hay ruta
+publicada** —la publicación del catálogo no llegó a ocurrir—.
+
+Lo que queda es un fichero que nadie apunta. Y un fichero que nadie
+apunta es un fichero que se acumula: por eso el servicio, **al
+arrancar**, limpia el staging que encuentra caducado y dice cuántos ha
+quitado. Lo que se queda es el staging vivo, que puede ser de otro
+proceso que está subiendo ahora mismo.
+
+Lo que **no** se limpia es el blob sin referenciar: el contenido que se
+publicó y luego se sustituyó, o el que se escribió y la transacción del
+catálogo no llegó a confirmar. Eso es recolectable —es contenido por
+digest, y nadie lo apunta—, pero su recolección es otra historia
+(`HAR-10`).
 
 ## Verificación
 
@@ -263,6 +288,34 @@ CAS de verdad):
    contenido sigue ahí y sigue siendo **los mismos bytes**.
 3. Un traversal enviado con `curl --path-as-is` es `400`, y no publica
    nada.
+
+`tests/raw_conformity_uat.rs` (caja negra: proceso real, `curl` real y
+`sha256sum` real):
+
+1. Lo que se publica vuelve **intacto**: el hash del fichero descargado
+   es el hash del fichero subido, y lo dice un programa que no tiene
+   nada que ver con este servicio. El `HEAD` describe sin traer, y el
+   tramo es un `206` con su `Content-Range`.
+2. Un proceso **muerto a mitad de una subida** no deja una ruta
+   publicada a medias: al reiniciar, la ruta cortada no existe (`404`),
+   el staging caducado está limpio, y el contenido que ya estaba
+   publicado sigue siendo **los mismos bytes**.
+3. Las subidas **simultáneas** no se mezclan: el mismo contenido a la
+   misma ruta es idempotente, las rutas distintas guardan lo suyo, y la
+   ruta que se disputa tiene **un solo ganador** (`201`) y el resto
+   `409`. El hash de lo que se descarga es siempre el hash de lo que se
+   subió.
+4. Dos cuentas con tokens reales **no se ven**: cada una descarga lo
+   suyo de la misma dirección, el repositorio de la otra cuenta es un
+   `404` que no dice si existe, y sin credencial es un `401`. Y la
+   denegación es coherente: en la misma cuenta, con otro principal que el
+   bundle no cubre, la respuesta es un `403` —que sí dice que el
+   repositorio existe— y no un `404` que mentiría.
+
+La suite escribe un **informe** con la versión del servicio y de las
+herramientas, el comando de cada caso, el resultado real y los límites,
+y dice explícitamente lo que **no** certifica: ni OCI, ni S3, ni
+disponibilidad. El informe se lee en el resumen del job de la CI.
 
 ## El rastro
 
