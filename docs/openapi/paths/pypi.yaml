@@ -1,6 +1,7 @@
 simpleIndex:
   get:
     tags: [PyPI Repository]
+    operationId: getSimpleIndex
     summary: Obtener índice simple de paquete Python
     description: |
       Obtiene el índice simple de un paquete Python según PEP 503.
@@ -25,6 +26,7 @@ simpleIndex:
 packageFile:
   get:
     tags: [PyPI Repository]
+    operationId: downloadPackageFile
     summary: Descargar paquete Python
     description: Descarga un archivo de paquete Python (.whl o .tar.gz).
     parameters:
@@ -52,6 +54,7 @@ packageFile:
 upload:
   post:
     tags: [PyPI Repository]
+    operationId: uploadPackageFile
     summary: Subir paquete Python
     description: |
       Sube un paquete Python al repositorio. Compatible con `twine upload` y `poetry publish`.

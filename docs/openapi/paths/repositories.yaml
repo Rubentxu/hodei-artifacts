@@ -17,6 +17,7 @@ repositoriesRoot:
           application/json:
             schema:
               $ref: '../components/schemas/repository.yaml#/RepositoryListResponse'
+      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
       '500': { $ref: '../components/responses.yaml#/InternalError' }
   post:
     tags: [repositories]

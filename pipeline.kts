@@ -46,6 +46,18 @@ pipeline {
             }
         }
 
+        stage("contract (openapi)") {
+            timestamps {
+                // El contrato de la API es producto: quien lo edita y el
+                // gate tienen que ver las mismas reglas (redocly.yaml), y
+                // el bundle versionado tiene que estar en sincronía con
+                // las fuentes modulares. La comprobación vive en un script
+                // porque encadena lint, bundle y deriva con códigos de
+                // salida propios.
+                sh("bash scripts/check-openapi.sh")
+            }
+        }
+
         stage("fast (unit and contract)") {
             timestamps {
                 sh(

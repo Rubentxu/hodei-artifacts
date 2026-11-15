@@ -69,9 +69,6 @@ tags:
 paths:
   $ref: ./paths/index.yaml
 
-webhooks:
-  $ref: ./webhooks.yaml
-
 components:
   securitySchemes:
     $ref: ./components/securitySchemes.yaml

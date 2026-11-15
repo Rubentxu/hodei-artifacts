@@ -1,0 +1,1389 @@
+openapi: 3.0.3
+info:
+  title: Universal Package Repository Manager API
+  description: |
+    API RESTful para gestión de repositorios de artefactos compatible con Maven, npm y PyPI.
+    Soporta descarga de dependencias y subida de artefactos con autenticación y autorización completa.
+
+    ## Características principales:
+    - Compatible con herramientas CLI estándar (mvn, npm, pip, poetry)
+    - Autenticación mediante API Keys y Basic Auth
+    - Autorización basada en roles y permisos granulares
+    - Validación de integridad con checksums
+    - Versionado semántico
+    - Metadatos extendidos
+
+    ## Herramientas CLI soportadas:
+    - Maven: `mvn deploy`, `mvn dependency:resolve`
+    - npm: `npm publish`, `npm install`
+    - pip: `pip install`, `twine upload`
+    - Poetry: `poetry publish`, `poetry add`
+  version: 2.1.0
+  contact:
+    name: Repository Manager API Support
+    email: support@repo-manager.com
+    url: https://docs.repo-manager.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: https://repo-manager.com/terms
+servers:
+  - url: https://api.repo-manager.com/v2
+    description: Servidor de producción
+  - url: https://staging-api.repo-manager.com/v2
+    description: Servidor de staging
+  - url: http://localhost:8080/v2
+    description: Desarrollo local
+security:
+  - ApiKeyAuth: []
+  - BasicAuth: []
+  - BearerAuth: []
+tags:
+  - name: Maven Repository
+    description: Operaciones para repositorio Maven compatible con mvn CLI
+    externalDocs:
+      description: Documentación Maven
+      url: https://maven.apache.org/guides/introduction/introduction-to-repositories.html
+  - name: npm Registry
+    description: Operaciones para registro npm compatible con npm CLI
+    externalDocs:
+      description: Documentación npm registry
+      url: https://docs.npmjs.com/cli/v8/using-npm/registry
+  - name: PyPI Repository
+    description: Operaciones para repositorio Python compatible con pip y poetry
+    externalDocs:
+      description: PEP 503 - Simple Repository API
+      url: https://peps.python.org/pep-0503/
+  - name: Authentication
+    description: Gestión de autenticación y tokens de API
+  - name: Search
+    description: Búsqueda y descubrimiento de paquetes
+  - name: Users
+    description: User management and authorization policies
+  - name: Policies
+    description: Policy management for ABAC
+paths:
+  /v1/repositories:
+    get:
+      tags:
+        - repositories
+      summary: Listar repositorios
+      operationId: listRepositories
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Lista de repositorios
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags:
+        - repositories
+      summary: Crear repositorio
+      operationId: createRepository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRepositoryRequest'
+      responses:
+        '201':
+          description: Repositorio creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/repositories/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - repositories
+      summary: Obtener un repositorio
+      operationId: getRepository
+      responses:
+        '200':
+          description: Detalles del repositorio
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags:
+        - repositories
+      summary: Actualizar un repositorio
+      operationId: updateRepository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRepositoryRequest'
+      responses:
+        '200':
+          description: Repositorio actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+        - repositories
+      summary: Eliminar un repositorio
+      operationId: deleteRepository
+      responses:
+        '204':
+          description: Repositorio eliminado
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/artifacts:
+    post:
+      tags:
+        - artifacts
+      summary: Subir artefacto (multipart)
+      operationId: uploadArtifact
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - metadata
+              properties:
+                file:
+                  type: string
+                  format: binary
+                metadata:
+                  type: string
+                  format: json
+      responses:
+        '202':
+          description: Artefacto aceptado / creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactUploadResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Posible duplicado (idempotencia)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactUploadResponse'
+        '422':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/artifacts/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: presigned
+        in: query
+        schema:
+          type: boolean
+          default: false
+    get:
+      tags:
+        - artifacts
+      summary: Obtener artefacto (stream o URL presignada)
+      operationId: getArtifact
+      responses:
+        '200':
+          description: Binario o JSON URL
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignedUrlResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/search:
+    get:
+      tags:
+        - search
+      summary: Búsqueda básica de artefactos
+      operationId: searchArtifacts
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Substring
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Resultados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResults'
+        '422':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/users:
+    post:
+      tags:
+        - Users
+      summary: Create a new user
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserCommand'
+      responses:
+        '200':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateUserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Conflict, e.g., username already exists
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/users/{id}/attributes:
+    patch:
+      tags:
+        - Users
+      summary: Update user attributes
+      operationId: updateUserAttributes
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The ID of the user to update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserAttributesCommand'
+      responses:
+        '200':
+          description: User attributes updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateUserAttributesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/policies:
+    post:
+      tags:
+        - Policies
+      summary: Create a new policy
+      operationId: createPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePolicyCommand'
+      responses:
+        '200':
+          description: Policy created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatePolicyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /maven2/{groupId}/{artifactId}/{version}/{fileName}:
+    get:
+      tags:
+        - Maven Repository
+      operationId: downloadArtifact
+      summary: Descargar artefacto Maven
+      description: |
+        Descarga un artefacto Maven específico. Compatible con `mvn dependency:resolve`.
+
+        Ejemplo pom.xml:
+        ```xml
+        <repository>
+          <id>custom-repo</id>
+          <url>https://api.repo-manager.com/v2/maven2</url>
+        </repository>
+        ```
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-zA-Z0-9._-]+$
+          example: com.example
+        - name: artifactId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-zA-Z0-9._-]+$
+          example: my-library
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$
+          example: 1.2.3
+        - name: fileName
+          in: path
+          required: true
+          schema:
+            type: string
+          example: my-library-1.2.3.jar
+      responses:
+        '200':
+          description: Artefacto descargado exitosamente
+          headers:
+            Content-Type:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+            X-Checksum-SHA1:
+              schema:
+                type: string
+            X-Checksum-MD5:
+              schema:
+                type: string
+          content:
+            application/java-archive:
+              schema:
+                type: string
+                format: binary
+            application/xml:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - ApiKeyAuth:
+            - read:maven
+        - BasicAuth:
+            - read:maven
+    put:
+      tags:
+        - Maven Repository
+      operationId: deployArtifact
+      summary: Subir artefacto Maven
+      description: |
+        Sube un artefacto Maven al repositorio. Compatible con `mvn deploy`.
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: artifactId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: fileName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/java-archive:
+            schema:
+              type: string
+              format: binary
+          application/xml:
+            schema:
+              type: string
+              format: binary
+          text/plain:
+            schema:
+              type: string
+      responses:
+        '201':
+          description: Artefacto subido exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - ApiKeyAuth:
+            - write:maven
+        - BasicAuth:
+            - write:maven
+  /{packageName}:
+    get:
+      tags:
+        - npm Registry
+      operationId: getPackageMeta
+      summary: Obtener metadatos del paquete npm
+      description: |
+        Obtiene metadatos completos de un paquete npm. Compatible con `npm install`.
+      parameters:
+        - name: packageName
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$
+          example: '@myorg/my-package'
+      responses:
+        '200':
+          description: Metadatos del paquete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NpmPackageMetadata'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - ApiKeyAuth:
+            - read:npm
+        - BearerAuth:
+            - read:npm
+    put:
+      tags:
+        - npm Registry
+      operationId: publishPackage
+      summary: Publicar paquete npm
+      description: |
+        Publica un nuevo paquete npm. Compatible con `npm publish`.
+      parameters:
+        - name: packageName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NpmPublishRequest'
+      responses:
+        '201':
+          description: Paquete publicado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NpmPublishResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - ApiKeyAuth:
+            - write:npm
+        - BearerAuth:
+            - write:npm
+  /{packageName}/-/{fileName}:
+    get:
+      tags:
+        - npm Registry
+      operationId: downloadTarball
+      summary: Descargar tarball npm
+      description: Descarga el tarball de una versión específica del paquete.
+      parameters:
+        - name: packageName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: fileName
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^.+\.tgz$
+          example: my-package-1.0.0.tgz
+      responses:
+        '200':
+          description: Tarball descargado exitosamente
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                enum:
+                  - application/gzip
+            X-Checksum-SHA1:
+              schema:
+                type: string
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - ApiKeyAuth:
+            - read:npm
+        - BearerAuth:
+            - read:npm
+  /simple/{packageName}:
+    get:
+      tags:
+        - PyPI Repository
+      operationId: getSimpleIndex
+      summary: Obtener índice simple de paquete Python
+      description: |
+        Obtiene el índice simple de un paquete Python según PEP 503.
+      parameters:
+        - name: packageName
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$
+          example: requests
+      responses:
+        '200':
+          description: Página de índice simple HTML
+          content:
+            text/html:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - ApiKeyAuth:
+            - read:pypi
+        - BasicAuth:
+            - read:pypi
+  /packages/{fileName}:
+    get:
+      tags:
+        - PyPI Repository
+      operationId: downloadPackageFile
+      summary: Descargar paquete Python
+      description: Descarga un archivo de paquete Python (.whl o .tar.gz).
+      parameters:
+        - name: fileName
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^.+\.(whl|tar\\.gz)$
+          example: requests-2.28.0-py3-none-any.whl
+      responses:
+        '200':
+          description: Paquete descargado exitosamente
+          headers:
+            Content-Type:
+              schema:
+                type: string
+            X-Checksum-SHA256:
+              schema:
+                type: string
+            X-Checksum-MD5:
+              schema:
+                type: string
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - ApiKeyAuth:
+            - read:pypi
+        - BasicAuth:
+            - read:pypi
+  /packages:
+    post:
+      tags:
+        - PyPI Repository
+      operationId: uploadPackageFile
+      summary: Subir paquete Python
+      description: |
+        Sube un paquete Python al repositorio. Compatible con `twine upload` y `poetry publish`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PythonPackageUpload'
+      responses:
+        '201':
+          description: Paquete subido exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      security:
+        - ApiKeyAuth:
+            - write:pypi
+        - BasicAuth:
+            - write:pypi
+  /auth/tokens:
+    post:
+      tags:
+        - Authentication
+      operationId: createToken
+      summary: Generar token de API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '201':
+          description: Token creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+        - BasicAuth: []
+    get:
+      tags:
+        - Authentication
+      operationId: listTokens
+      summary: Listar tokens de API
+      responses:
+        '200':
+          description: Lista de tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TokenInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      security:
+        - BasicAuth: []
+  /auth/tokens/{tokenId}:
+    parameters:
+      - name: tokenId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags:
+        - Authentication
+      summary: Revocar token de API
+      operationId: revokeToken
+      responses:
+        '204':
+          description: Token revocado exitosamente
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      security:
+        - BasicAuth: []
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        Token de API para autenticación. Obténlo desde /auth/tokens.
+        Ejemplo: X-API-Key: repo_abc123def456
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: |
+        Autenticación HTTP Basic con usuario y contraseña.
+        Compatible con herramientas CLI estándar.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token Bearer JWT para integración con sistemas externos.
+        Formato: Authorization: Bearer <token>
+  responses:
+    Unauthorized:
+      description: No autorizado - credenciales inválidas o ausentes
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: Error interno del servidor
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflicto - el recurso ya existe
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BadRequest:
+      description: Solicitud inválida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Prohibido - sin permisos suficientes
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Repository:
+      type: object
+      required:
+        - id
+        - name
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    RepositoryListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Repository'
+    Error:
+      type: object
+      required:
+        - error
+        - message
+        - code
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        code:
+          type: integer
+        details:
+          type: object
+          additionalProperties: true
+    CreateRepositoryRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    UpdateRepositoryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    ArtifactUploadResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - accepted
+            - duplicate
+        repositoryId:
+          type: string
+          format: uuid
+    PresignedUrlResponse:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+    PackageResult:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+            - maven
+            - npm
+            - pypi
+        name:
+          type: string
+        latestVersion:
+          type: string
+        description:
+          type: string
+        downloadUrl:
+          type: string
+          format: uri
+        lastModified:
+          type: string
+          format: date-time
+        downloads:
+          type: integer
+        maintainers:
+          type: array
+          items:
+            type: string
+        keywords:
+          type: array
+          items:
+            type: string
+        license:
+          type: string
+        score:
+          type: number
+          format: float
+    SearchResults:
+      type: object
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PackageResult'
+    CreateUserCommand:
+      type: object
+      required:
+        - username
+        - email
+        - password
+      properties:
+        username:
+          type: string
+          description: Unique username for the user
+          example: john.doe
+        email:
+          type: string
+          format: email
+          description: Email address of the user
+          example: john.doe@example.com
+        password:
+          type: string
+          format: password
+          description: User's password
+          example: StrongPassword123!
+        attributes:
+          type: object
+          description: Flexible attributes for ABAC policies (JSON object)
+          additionalProperties: true
+          example:
+            department: engineering
+            role: developer
+    CreateUserResponse:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique ID of the created user
+          example: a1b2c3d4-e5f6-7890-1234-567890abcdef
+    UpdateUserAttributesCommand:
+      type: object
+      required:
+        - user_id
+        - attributes
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: The ID of the user whose attributes are to be updated
+          example: a1b2c3d4-e5f6-7890-1234-567890abcdef
+        attributes:
+          type: object
+          description: New flexible attributes for ABAC policies (JSON object)
+          additionalProperties: true
+          example:
+            department: qa
+            status: active
+    UpdateUserAttributesResponse:
+      type: object
+      required:
+        - user_id
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: The ID of the user whose attributes were updated
+          example: a1b2c3d4-e5f6-7890-1234-567890abcdef
+    CreatePolicyCommand:
+      type: object
+      required:
+        - name
+        - effect
+        - actions
+        - resources
+      properties:
+        name:
+          type: string
+          description: Unique name of the policy within its scope.
+          example: allow-ci-read-artifacts
+        description:
+          type: string
+          description: Human-readable purpose of the policy.
+          example: Allows the CI principal to read release artifacts
+        effect:
+          type: string
+          description: What the policy decides when its conditions match.
+          enum:
+            - Permit
+            - Deny
+        actions:
+          type: array
+          description: Actions the policy talks about, in the canonical action vocabulary.
+          items:
+            type: string
+          example:
+            - ReadArtifact
+            - DownloadAsset
+        resources:
+          type: array
+          description: Canonical HRNs the policy applies to.
+          items:
+            type: string
+          example:
+            - hrn:hodei:artifacts:eu:acme:repository/releases
+    CreatePolicyResponse:
+      type: object
+      required:
+        - id
+        - name
+        - effect
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Identifier of the created policy.
+        name:
+          type: string
+          description: Name the policy was created with.
+        effect:
+          type: string
+          enum:
+            - Permit
+            - Deny
+        actions:
+          type: array
+          items:
+            type: string
+        resources:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: When the policy was created.
+    UploadResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Artefacto subido exitosamente
+        artifact:
+          type: object
+          properties:
+            name:
+              type: string
+            version:
+              type: string
+            size:
+              type: integer
+              format: int64
+            checksums:
+              type: object
+              properties:
+                sha1:
+                  type: string
+                md5:
+                  type: string
+                sha256:
+                  type: string
+        uploadedAt:
+          type: string
+          format: date-time
+    NpmVersionMetadata:
+      type: object
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        description:
+          type: string
+        main:
+          type: string
+        scripts:
+          type: object
+        dependencies:
+          type: object
+        devDependencies:
+          type: object
+        dist:
+          type: object
+          properties:
+            tarball:
+              type: string
+              format: uri
+            shasum:
+              type: string
+            integrity:
+              type: string
+    NpmMaintainer:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+    NpmPackageMetadata:
+      type: object
+      required:
+        - name
+        - versions
+        - dist-tags
+      properties:
+        _id:
+          type: string
+          example: '@myorg/my-package'
+        name:
+          type: string
+          example: '@myorg/my-package'
+        description:
+          type: string
+        dist-tags:
+          type: object
+          properties:
+            latest:
+              type: string
+              example: 1.0.0
+        versions:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/NpmVersionMetadata'
+        time:
+          type: object
+          additionalProperties:
+            type: string
+            format: date-time
+        maintainers:
+          type: array
+          items:
+            $ref: '#/components/schemas/NpmMaintainer'
+    NpmPublishRequest:
+      type: object
+      required:
+        - _id
+        - name
+        - versions
+        - _attachments
+      properties:
+        _id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        dist-tags:
+          type: object
+        versions:
+          type: object
+        maintainers:
+          type: array
+          items:
+            $ref: '#/components/schemas/NpmMaintainer'
+        _attachments:
+          type: object
+          description: Archivos adjuntos del paquete
+    NpmPublishResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        id:
+          type: string
+        rev:
+          type: string
+    PythonPackageUpload:
+      type: object
+      required:
+        - content
+        - filetype
+        - pyversion
+        - metadata_version
+        - name
+        - version
+      properties:
+        content:
+          type: string
+          format: binary
+        filetype:
+          type: string
+          enum:
+            - bdist_wheel
+            - sdist
+        pyversion:
+          type: string
+          example: py3
+        metadata_version:
+          type: string
+          example: '2.1'
+        name:
+          type: string
+          example: my-python-package
+        version:
+          type: string
+          example: 1.0.0
+        summary:
+          type: string
+        description:
+          type: string
+        author:
+          type: string
+        author_email:
+          type: string
+          format: email
+        license:
+          type: string
+        keywords:
+          type: string
+        classifiers:
+          type: string
+          description: Clasificadores separados por nuevas líneas
+        requires_dist:
+          type: string
+          description: Dependencias en formato PEP 508
+    TokenInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastUsed:
+          type: string
+          format: date-time
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+    TokenRequest:
+      type: object
+      required:
+        - name
+        - permissions
+      properties:
+        name:
+          type: string
+          example: CI/CD Pipeline Token
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+            enum:
+              - read:maven
+              - write:maven
+              - read:npm
+              - write:npm
+              - read:pypi
+              - write:pypi
+              - read
+              - write
+          example:
+            - read:maven
+            - write:maven
+        expiresAt:
+          type: string
+          format: date-time
+    TokenResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        token:
+          type: string
+          description: Token de API (solo se muestra una vez)
+        permissions:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true

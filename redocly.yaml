@@ -1,0 +1,16 @@
+# La configuración del lint del contrato OpenAPI.
+#
+# `npx @redocly/cli lint docs/openapi/openapi.yaml` lee este fichero del
+# directorio de trabajo, así que el gate y quien edita el contrato ven
+# las mismas reglas.
+#
+# La única regla apagada es `no-server-example.com`, y con motivo escrito:
+# la lista de servers documenta a propósito el servidor de desarrollo
+# (`http://localhost:8080/v2`), que es el que quien clona el repo arranca.
+# Quitarlo dejaría el contrato sin la entrada que la gente usa; apagar la
+# regla aquí, a la vista y con el motivo, es lo honesto.
+extends:
+  - recommended
+
+rules:
+  no-server-example.com: off

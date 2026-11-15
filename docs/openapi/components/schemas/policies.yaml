@@ -1,0 +1,63 @@
+CreatePolicyCommand:
+  type: object
+  required:
+    - name
+    - effect
+    - actions
+    - resources
+  properties:
+    name:
+      type: string
+      description: Unique name of the policy within its scope.
+      example: allow-ci-read-artifacts
+    description:
+      type: string
+      description: Human-readable purpose of the policy.
+      example: Allows the CI principal to read release artifacts
+    effect:
+      type: string
+      description: What the policy decides when its conditions match.
+      enum: [Permit, Deny]
+    actions:
+      type: array
+      description: Actions the policy talks about, in the canonical action vocabulary.
+      items:
+        type: string
+      example: ["ReadArtifact", "DownloadAsset"]
+    resources:
+      type: array
+      description: Canonical HRNs the policy applies to.
+      items:
+        type: string
+      example: ["hrn:hodei:artifacts:eu:acme:repository/releases"]
+
+CreatePolicyResponse:
+  type: object
+  required:
+    - id
+    - name
+    - effect
+    - createdAt
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Identifier of the created policy.
+    name:
+      type: string
+      description: Name the policy was created with.
+    effect:
+      type: string
+      enum: [Permit, Deny]
+    actions:
+      type: array
+      items:
+        type: string
+    resources:
+      type: array
+      items:
+        type: string
+    createdAt:
+      type: string
+      format: date-time
+      description: When the policy was created.

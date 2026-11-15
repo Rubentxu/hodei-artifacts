@@ -9,15 +9,15 @@ policiesRoot:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/CreatePolicyCommand'
+            $ref: '../components/schemas/policies.yaml#/CreatePolicyCommand'
     responses:
       '200':
         description: Policy created successfully
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreatePolicyResponse'
+              $ref: '../components/schemas/policies.yaml#/CreatePolicyResponse'
       '400':
-        $ref: '#/components/responses/BadRequest'
+        $ref: '../components/responses.yaml#/BadRequest'
       '500':
-        $ref: '#/components/responses/InternalServerError'
+        $ref: '../components/responses.yaml#/InternalError'
