@@ -539,6 +539,11 @@ pub struct Answer {
     pub size: u64,
     /// Las cabeceras, en texto.
     pub headers: String,
+    /// El cuerpo que el `curl` escribió, si lo escribió en un fichero.
+    ///
+    /// Es lo que dice el servidor, byte a byte: sin esto, un test solo
+    /// puede afirmar el codigo y no **que** bytes sirvio.
+    pub body: Vec<u8>,
 }
 
 impl Answer {
@@ -578,6 +583,11 @@ pub struct Curl {
     /// escribir ruido; escribir `<despliegue>/fichero` dice lo mismo y
     /// se puede leer.
     root: Option<PathBuf>,
+    /// Donde el `curl` escribe el cuerpo, si lo escribe en un fichero.
+    ///
+    /// Sin esto, una respuesta solo dice el codigo: no se puede afirmar
+    /// **que** bytes sirvio el servidor, solo que dijo algo.
+    body: Option<PathBuf>,
 }
 
 impl Curl {
@@ -606,6 +616,7 @@ impl Curl {
             args,
             token: token.to_string(),
             root: None,
+            body: None,
         }
     }
 
@@ -644,6 +655,7 @@ impl Curl {
             None => "/dev/null".to_string(),
         });
         curl.root = into.and_then(|file| file.parent()).map(Path::to_path_buf);
+        curl.body = into.map(Path::to_path_buf);
         curl
     }
 
@@ -716,7 +728,7 @@ impl Curl {
     /// Ejecuta el `curl` y devuelve su respuesta.
     pub fn run(&self) -> Answer {
         let mut command = self.command();
-        the_answer(&mut command)
+        the_answer(&mut command, None)
     }
 
     /// Lanza el `curl` en segundo plano.
@@ -817,6 +829,7 @@ pub fn wait_for_the_answer(child: Child) -> Answer {
         status,
         size,
         headers,
+        body: Vec::new(),
     }
 }
 
@@ -883,13 +896,16 @@ fn the_output(command: &mut Command) -> String {
 }
 
 /// La respuesta de un `curl` que se ha ejecutado.
-fn the_answer(command: &mut Command) -> Answer {
+fn the_answer(command: &mut Command, body: Option<&Path>) -> Answer {
     let stdout = the_output(command);
     let (headers, status, size) = the_answer_of(&stdout);
     Answer {
         status,
         size,
         headers,
+        body: body
+            .and_then(|path| std::fs::read(path).ok())
+            .unwrap_or_default(),
     }
 }
 

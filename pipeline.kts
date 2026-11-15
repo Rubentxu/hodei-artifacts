@@ -150,6 +150,7 @@ pipeline {
                         "--test har02_catalog_contract",
                         "--test raw_hosted_restart_contract",
                         "--test raw_conformity_uat",
+                        "--test blob_integrity_contract",
                     ).joinToString(" ")
                 )
                 sh(
