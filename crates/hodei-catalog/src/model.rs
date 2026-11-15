@@ -400,7 +400,12 @@ pub struct Publication {
     pub size_bytes: u64,
     /// Las etiquetas que nacen con esta publicación.
     pub tags: Vec<String>,
-    /// El actor verificado que publica.
+    /// El actor que publica.
+    ///
+    /// El catálogo verifica la **cuenta** contra el autorizador, no el
+    /// subject: por eso el actor lo declara quien publica, y por eso no se
+    /// llama "verificado". En la capa HTTP el actor sale del principal
+    /// verificado, así que allí sí lo es.
     pub actor: String,
     /// La correlación de la petición.
     pub correlation_id: String,

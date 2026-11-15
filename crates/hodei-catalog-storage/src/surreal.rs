@@ -1436,17 +1436,23 @@ impl CatalogWriter for SurrealCatalogStore {
                 CatalogError::Denied { .. } => AuditResult::Denied,
                 _ => AuditResult::Failed,
             };
-            self.record_the_audit(&self.the_publication_event(
+            self.audit_the_publication(
                 &event_id,
                 occurred_at,
                 principal_account,
                 &publication,
                 result,
-            ))
+            )
             .await;
             return Err(error);
         }
 
+        // Una petición **mal formada** se rechaza antes de la frontera de
+        // efecto y no deja rastro, igual que en el resto de la plataforma:
+        // no hubo una operación que auditar. Una petición **bien formada
+        // que el sistema se niega a servir** sí lo deja, porque ocurrió, y
+        // un rechazo sin rastro es indistinguible de una petición que
+        // nunca llegó.
         if publication.repository.trim().is_empty() {
             return Err(CatalogError::invalid("the repository is empty"));
         }
@@ -1463,14 +1469,50 @@ impl CatalogWriter for SurrealCatalogStore {
             return Err(CatalogError::invalid("the digest is not well formed"));
         }
 
-        let repository = self
+        let repository = match self
             .the_repository_row(principal_account, &publication.repository)
-            .await?
-            .ok_or_else(|| CatalogError::missing("repository", publication.repository.clone()))?
-            .into_descriptor()?;
+            .await
+        {
+            Ok(Some(row)) => row.into_descriptor()?,
+            Ok(None) => {
+                // El repositorio no existe. La petición ocurrió y el
+                // sistema la rechazó.
+                self.audit_the_publication(
+                    &event_id,
+                    occurred_at,
+                    principal_account,
+                    &publication,
+                    AuditResult::Failed,
+                )
+                .await;
+                return Err(CatalogError::missing(
+                    "repository",
+                    publication.repository.clone(),
+                ));
+            }
+            Err(error) => {
+                self.audit_the_publication(
+                    &event_id,
+                    occurred_at,
+                    principal_account,
+                    &publication,
+                    AuditResult::Failed,
+                )
+                .await;
+                return Err(error);
+            }
+        };
 
         // Solo se publica en un repositorio que esta release sirva.
         if !repository.mode.is_served_by_this_release() {
+            self.audit_the_publication(
+                &event_id,
+                occurred_at,
+                principal_account,
+                &publication,
+                AuditResult::Failed,
+            )
+            .await;
             return Err(CatalogError::ModeNotImplemented {
                 mode: repository.mode,
             });
@@ -1488,22 +1530,31 @@ impl CatalogWriter for SurrealCatalogStore {
         // los bytes están, y esa frontera está escrita en el puerto.
         if let Some(probe) = &self.probe {
             let location = BlobLocation::new(principal_account, scope, publication.digest.clone());
-            match probe.length_of(&location).await {
-                Ok(size) if size == publication.size_bytes => {}
-                Ok(size) => {
-                    return Err(CatalogError::invalid(format!(
-                        "the content in the store has {size} bytes and the publication declares {}",
-                        publication.size_bytes
-                    )));
-                }
-                Err(BlobProbeError::Missing) => {
-                    return Err(CatalogError::invalid(
-                        "the content is not in the blob store",
-                    ));
-                }
+            let failure = match probe.length_of(&location).await {
+                Ok(size) if size == publication.size_bytes => None,
+                Ok(size) => Some(CatalogError::invalid(format!(
+                    "the content in the store has {size} bytes and the publication declares {}",
+                    publication.size_bytes
+                ))),
+                Err(BlobProbeError::Missing) => Some(CatalogError::invalid(
+                    "the content is not in the blob store",
+                )),
                 Err(BlobProbeError::Unavailable { detail }) => {
-                    return Err(CatalogError::unavailable(detail));
+                    Some(CatalogError::unavailable(detail))
                 }
+            };
+            if let Some(error) = failure {
+                // El contenido no está, o el almacén de bytes no responde.
+                // La petición ocurrió y no se completó.
+                self.audit_the_publication(
+                    &event_id,
+                    occurred_at,
+                    principal_account,
+                    &publication,
+                    AuditResult::Failed,
+                )
+                .await;
+                return Err(error);
             }
         }
 
@@ -1516,13 +1567,13 @@ impl CatalogWriter for SurrealCatalogStore {
                 // El conflicto se dice: alguien quiso publicar otra cosa en
                 // una ruta que ya tiene contenido, y eso es un hecho que
                 // el rastro tiene que conservar.
-                self.record_the_audit(&self.the_publication_event(
+                self.audit_the_publication(
                     &event_id,
                     occurred_at,
                     principal_account,
                     &publication,
                     AuditResult::Conflict,
-                ))
+                )
                 .await;
                 return Err(conflict);
             }
@@ -1559,13 +1610,13 @@ impl CatalogWriter for SurrealCatalogStore {
             .plan_the_publication(principal_account, &publication, scope)
             .await?;
         if let Some(conflict) = plan.conflict {
-            self.record_the_audit(&self.the_publication_event(
+            self.audit_the_publication(
                 &event_id,
                 occurred_at,
                 principal_account,
                 &publication,
                 AuditResult::Conflict,
-            ))
+            )
             .await;
             return Err(conflict);
         }
@@ -1575,13 +1626,13 @@ impl CatalogWriter for SurrealCatalogStore {
 
         // La publicación no ocurrió, y eso también es un hecho que el
         // rastro tiene que conservar.
-        self.record_the_audit(&self.the_publication_event(
+        self.audit_the_publication(
             &event_id,
             occurred_at,
             principal_account,
             &publication,
             AuditResult::Failed,
-        ))
+        )
         .await;
         Err(CatalogError::unavailable(last_failure))
     }
@@ -1874,6 +1925,30 @@ impl SurrealCatalogStore {
                 "the audit event could not be written to the outbox"
             );
         }
+    }
+
+    /// Dice el evento de una publicación que no llegó a publicarse.
+    ///
+    /// Va **fuera** de la transacción del catálogo: un rechazo o un fallo no
+    /// escriben filas del catálogo, y no hay mutación que atar. Que se
+    /// escriba o no depende de que el outbox responda, y si no responde se
+    /// avisa: el rastro puede faltar, y no se finge que no.
+    async fn audit_the_publication(
+        &self,
+        event_id: &str,
+        occurred_at: DateTime<Utc>,
+        principal_account: &str,
+        publication: &Publication,
+        result: AuditResult,
+    ) {
+        let event = self.the_publication_event(
+            event_id,
+            occurred_at,
+            principal_account,
+            publication,
+            result,
+        );
+        self.record_the_audit(&event).await;
     }
 
     /// Decide que hay que escribir para esta publicación.
