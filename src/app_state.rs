@@ -19,6 +19,8 @@ use crate::repository::{
     DenyAllAuthenticator, InMemoryRepositoryStore, RepositoryReader, RepositoryWriter,
 };
 use hodei_authz::PrincipalAuthenticator;
+use hodei_catalog::{CatalogReader, CatalogWriter};
+use hodei_hub::blob::BlobStore;
 use hodei_iam::register_iam_schema::ports::RegisterIamSchemaPort;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
 use hodei_policies::evaluate_policies::ports::EvaluatePoliciesPort;
@@ -109,6 +111,25 @@ pub struct AppState {
     /// store.
     pub(crate) evidence_reader: Arc<dyn EvidenceReader>,
     pub(crate) audit_sink: Arc<dyn AuditSink>,
+    /// The catalog: repositories, assets, versions and references.
+    ///
+    /// They are optional because a deployment can serve the administrative
+    /// surface without serving content: without a catalog, the raw surface
+    /// answers that it is not available, and not that the content does not
+    /// exist -- a 404 would be a lie.
+    pub(crate) catalog_reader: Option<Arc<dyn CatalogReader>>,
+    pub(crate) catalog_writer: Option<Arc<dyn CatalogWriter>>,
+    /// The store of content by digest.
+    ///
+    /// Optional for the same reason the catalog is: without it there are no
+    /// bytes to serve.
+    pub(crate) content_store: Option<Arc<dyn BlobStore>>,
+    /// The largest content this service accepts, in bytes.
+    ///
+    /// A limit that is not written is a limit that is not enforced, and a
+    /// service that accepts a body of any size is a service whose memory
+    /// use depends on who is calling.
+    pub(crate) max_body_size: usize,
     /// The clock and the identifier generator the security trail uses.
     ///
     /// They are seams: the production wiring reads the machine, and a test
@@ -209,6 +230,10 @@ impl AppState {
             repository_writer,
             evidence_reader: Arc::new(EmptyEvidenceReader),
             audit_sink,
+            catalog_reader: None,
+            catalog_writer: None,
+            content_store: None,
+            max_body_size: 10 * 1024 * 1024,
             identity,
             admin_authenticator_configured: true,
             admin_authorizer_configured: true,
@@ -259,6 +284,10 @@ impl AppState {
             repository_writer,
             evidence_reader: Arc::new(EmptyEvidenceReader),
             audit_sink,
+            catalog_reader: None,
+            catalog_writer: None,
+            content_store: None,
+            max_body_size: 10 * 1024 * 1024,
             identity: Identity::system(),
             admin_authenticator_configured: false,
             admin_authorizer_configured: false,
@@ -315,6 +344,33 @@ impl AppState {
     /// Inject an audit sink (tracing by default).
     pub fn with_audit_sink(mut self, audit_sink: Arc<dyn AuditSink>) -> Self {
         self.audit_sink = audit_sink;
+        self
+    }
+
+    /// Inject the catalog.
+    ///
+    /// The reader and the writer are the same store: the catalog is one
+    /// thing that is read and written, and splitting it into two objects
+    /// that do not share state would invent a catalog that does not exist.
+    pub fn with_catalog(
+        mut self,
+        reader: Arc<dyn CatalogReader>,
+        writer: Arc<dyn CatalogWriter>,
+    ) -> Self {
+        self.catalog_reader = Some(reader);
+        self.catalog_writer = Some(writer);
+        self
+    }
+
+    /// Inject the store of content by digest.
+    pub fn with_content_store(mut self, store: Arc<dyn BlobStore>) -> Self {
+        self.content_store = Some(store);
+        self
+    }
+
+    /// The largest content this service accepts.
+    pub fn with_body_limit(mut self, limit: usize) -> Self {
+        self.max_body_size = limit;
         self
     }
 

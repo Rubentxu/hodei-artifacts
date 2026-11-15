@@ -20,6 +20,7 @@ use hodei_evidence::domain::capsule::TrustCapsule;
 use kernel::Hrn;
 
 use crate::app_state::AppState;
+use crate::handlers::bearer_token;
 
 /// The error of a request for a capsule.
 #[derive(Debug)]
@@ -131,18 +132,6 @@ pub async fn get_capsule(
     let capsule = CapsuleAssembler::new().assemble(&hrn, &evidence, now);
 
     Ok(Json(CapsuleView::from(capsule)))
-}
-
-/// The bearer token of a request.
-fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    let value = headers.get(axum::http::header::AUTHORIZATION)?;
-    let value = value.to_str().ok()?;
-    let (scheme, token) = value.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("bearer") {
-        return None;
-    }
-    let token = token.trim();
-    if token.is_empty() { None } else { Some(token) }
 }
 
 /// The `hrn` of a query string.

@@ -26,6 +26,11 @@ storage_type = "rocksdb"
 # The administrative /api/v1 surface stays closed unless an authenticator and
 # authorizer are injected; every request still needs a bearer and Cedar permit.
 admin_api_enabled = false
+# The raw content surface (/repository/{repository}/{path}) stays closed unless
+# it is explicitly enabled. A bundle that does not declare the UploadAsset
+# and DownloadAsset actions cannot grant them, and the service refuses to
+# start with a bundle that does not declare what it authorizes with.
+raw_api_enabled = false
 # Production bundle: set all five together or bootstrap fails closed.
 # auth_jwt_secret = ""
 # auth_jwks_path = "config/jwks.json"
@@ -45,3 +50,8 @@ include_location = false
 [repository]
 # Production uses the durable SurrealDB repository adapter.
 durable = true
+
+[content]
+# Where the bytes of the artifacts live, addressed by digest. It is a
+# decision of the deployment, not of the account.
+cas_path = "./data/hodei.cas"
