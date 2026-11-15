@@ -24,6 +24,7 @@ members = [
     "crates/hodei-hub",
     "crates/hodei-catalog",
     "crates/hodei-catalog-storage",
+    "crates/hodei-audit",
     "crates/hodei-investigator",
     "crates/hodei-investigator-storage",
     "crates/hodei-simulation",
@@ -170,6 +171,10 @@ hodei-policies = { path = "crates/hodei-policies" }
 # the indexes of the graph needs to know which ones the graph needs.
 hodei-evidence-storage = { path = "crates/hodei-evidence-storage" }
 hodei-evidence = { path = "crates/hodei-evidence" }
+# El contrato de auditoría: el evento, el sink, el outbox y el dispatcher.
+# Lo usan el catálogo y la aplicación, y por eso vive en un crate y no en
+# uno de los dos.
+hodei-audit = { path = "crates/hodei-audit" }
 # Published core; no path/git dependency to a sibling checkout.
 hodei-authz = { workspace = true }
 

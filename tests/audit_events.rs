@@ -129,14 +129,14 @@ async fn allowed_create_emits_correlated_identity_without_token() {
     let events = sink.events();
     assert_eq!(events.len(), 1);
     let event = &events[0];
-    assert_eq!(event.actor, "hrn:hodei:iam::acme:User/alice");
+    assert_eq!(event.actor(), "hrn:hodei:iam::acme:User/alice");
     assert_eq!(event.action, "Artifacts::Action::\"CreateRepository\"");
     assert_eq!(
         event.resource,
         "hrn:hodei:artifacts:global:acme:repository/releases"
     );
     assert_eq!(event.result, AuditResult::Allowed);
-    assert_eq!(event.correlation_id, "corr-1");
+    assert_eq!(event.correlation_id(), "corr-1");
 
     let serialized = serde_json::to_string(event).unwrap();
     assert!(!serialized.contains("Bearer"));
@@ -155,8 +155,8 @@ async fn denied_create_emits_denied_without_writing() {
     let events = sink.events();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].result, AuditResult::Denied);
-    assert_eq!(events[0].actor, "hrn:hodei:iam::acme:User/bob");
-    assert_eq!(events[0].correlation_id, "corr-denied");
+    assert_eq!(events[0].actor(), "hrn:hodei:iam::acme:User/bob");
+    assert_eq!(events[0].correlation_id(), "corr-denied");
 }
 
 #[tokio::test]
@@ -246,7 +246,7 @@ async fn writer_failure_emits_failed() {
     let events = sink.events();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].result, AuditResult::Failed);
-    assert_eq!(events[0].correlation_id, "c-failed");
+    assert_eq!(events[0].correlation_id(), "c-failed");
 }
 
 #[tokio::test]
@@ -269,5 +269,5 @@ async fn correlation_id_is_echoed_and_used_in_the_event() {
 
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(response.headers().get("x-request-id").unwrap(), "c-echo");
-    assert_eq!(sink.events()[0].correlation_id, "c-echo");
+    assert_eq!(sink.events()[0].correlation_id(), "c-echo");
 }

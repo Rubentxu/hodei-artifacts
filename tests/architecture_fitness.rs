@@ -144,10 +144,16 @@ fn the_check_would_catch_a_downcast() {
 /// seam between what the catalog means and where the catalog is stored is
 /// only a seam while the domain cannot name a database. The adapter lives in
 /// `hodei-catalog-storage`; the domain must stay ignorant of it.
-const PROTECTED_CRATES: [&str; 3] = [
+///
+/// The audit contract is protected for the same reason: it is the event, the
+/// sink and the outbox that everybody speaks, and a contract that drags a
+/// database engine into every crate that names it is a contract that stops
+/// being a contract.
+const PROTECTED_CRATES: [&str; 4] = [
     "crates/kernel",
     "crates/hodei-evidence",
     "crates/hodei-catalog",
+    "crates/hodei-audit",
 ];
 
 /// The mechanisms a protected crate must not depend on.
