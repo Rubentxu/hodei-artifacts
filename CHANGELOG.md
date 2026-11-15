@@ -33,6 +33,44 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- La **superficie de contenido crudo** (`/repository/{repositorio}/{ruta…}`,
+  fuera de `/api/v1`): `PUT` publica, `GET` descarga y `HEAD` describe, y
+  las tres hablarían con un repositorio `raw` en modo `hosted`. La ruta se
+  lee del URI **crudo**, no del decodificado, y sus reglas son estrictas:
+  cada segmento se decodifica una vez y tiene que ser un `pchar` de
+  RFC 3986 —ni barras, ni barras invertidas, ni el espacio, ni `#` ni
+  `?`, ni ser `.` ni `..`—, de modo que un doble codificado es una forma
+  que todavía lleva codificación dentro y por eso no es un nombre. Lo
+  que se guarda es siempre un nombre literal. El
+  contenido se escribe **por trozos** en el CAS, con el digest calculado
+  mientras pasa y el commit comprobando que lo publicado es exactamente
+  lo declarado. El `ETag` es el digest del contenido; `Range` es RFC 9110
+  (`206` con `Content-Range`, `416` con `Content-Range: bytes
+  */<longitud>` para lo que no cabe, y un rango en otra unidad se ignora
+  y se sirve el contenido entero); `If-None-Match` que coincide al leer
+  es `304` —con la comparación débil que manda el RFC, para que un
+  cliente que revalida contra una caché reciba el `304` que espera—, y
+  una condición que no se cumple al escribir es `412` **sin dejar nada
+  escrito**. Publicar en una dirección ocupada **no**
+  sustituye en silencio: la política de reponer la decide el
+  **repositorio**, en su configuración versionada (`raw.replace`), y por
+  defecto la dirección publica una vez —republicar el mismo contenido es
+  idempotente y publicar otro es un `409` cuya escritura se aborta, sin
+  que quede ni un byte en el almacén. La autorización es de Cedar, con
+  las acciones `UploadAsset` y `DownloadAsset`, y el recurso de la
+  decisión es el repositorio. Un repositorio de otra cuenta es un `404`,
+  no un `403`: un `403` diría que existe en algún sitio. La superficie
+  está **cerrada por defecto** (`security.raw_api_enabled`), y un
+  despliegue que la abre tiene que declarar las dos acciones en su bundle
+  de Cedar: el servicio no arranca con un bundle que no declare lo que
+  autoriza con.
+- La **condición de una escritura condicional** se comprueba **dentro de
+  la transacción** que escribe, y no solo en la frontera. La condición
+  viaja al catálogo, que la comprueba sobre la fila que va a escribir: si
+  no se cumple, la transacción no se confirma y no queda ni una fila
+  escrita. Sin eso, entre el comprobar y el escribir cabía otra
+  publicación, y un `If-Match` que se había cumplido podía no cumplirse
+  al escribir.
 - El **catálogo de artefactos** (`hodei-catalog` y `hodei-catalog-storage`):
   un contexto acotado que dice **qué hay dónde** y quién puede verlo. El
   repositorio declara cuenta, clave, HRN canónico, formato, modo y una
@@ -116,7 +154,7 @@ Cambios que todavia no estan en una release. El formato sigue
   escribe un segundo evento: no hubo un segundo hecho. El contrato de auditoría vive
   en su propio crate, que el catálogo y la aplicación HTTP usan sin
   duplicarlo.
-- El almacen de contenido del hub (`hodei-hub`) acepta **subidas en
+- El almacén de contenido del hub (`hodei-hub`) acepta **subidas en
   streaming**: `BlobWriteSession` recibe el contenido a trozos, con un
   fichero de staging propio por escritura, y el `commit` publica el
   contenido entero o no publica nada. El commit valida el algoritmo, la
@@ -134,6 +172,16 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Fixed
 
+- Los **ajustes del repositorio** no se perdian en silencio. En una tabla
+  `SCHEMAFULL`, un campo `TYPE object` **sin** `FLEXIBLE` declara que el
+  objeto no tiene campos, así que el motor guardaba `{}` y descartaba lo
+  que se le había dado: un `update_config` subía la versión de la
+  configuración y no cambiaba nada. El campo es ahora `object FLEXIBLE`,
+  con `OVERWRITE` para que un almacén ya declarado migre solo, y el
+  esquema sube a la versión 3.
+- La respuesta a un **rango que no se puede servir** lleva la longitud
+  del contenido en la cabecera `Content-Range`, que es donde RFC 9110 la
+  pone, y no en el cuerpo.
 - El motor de evaluacion aplica el schema que gobierna las peticiones: la
   accion se resuelve contra el schema y la peticion se construye con el. Una
   peticion que no encaja con el schema se deniega con el motivo, en vez de
