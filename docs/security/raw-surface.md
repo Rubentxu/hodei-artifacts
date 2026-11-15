@@ -106,9 +106,9 @@ dicho no se permite.
   manda RFC 9110: un `W/` delante dice "comparte la representación", y un
   cliente que revalida contra una caché manda la etiqueta así.
 - `If-Match` que no coincide al leer, o `If-None-Match` que coincide al
-  **escribir**: `412`, y la petición no se hace. Ni los bytes, ni el asset.
-  La comparación de `If-Match` es **fuerte**: una etiqueta `W/` no es la
-  etiqueta que se generó.
+  **escribir**: `412`, y el asset no se escribe. La comparación de
+  `If-Match` es **fuerte**: una etiqueta `W/` no es la etiqueta que se
+  generó.
 - Un `If-Match` sobre una dirección vacía falla: `*` quiere decir "el
   recurso que hay", y si no hay recurso no hay nada que comparar.
 - `Range` es RFC 9110: `206` con `Content-Range` para un rango válido;
@@ -137,6 +137,23 @@ principio puede no cumplirse al escribir, y el cliente se queda con un
 La comprobación dentro de la transacción no es un adorno: si la
 condición no se cumple, la transacción **no se confirma**, y no queda ni
 una fila escrita.
+
+### Lo que puede quedar cuando se pierde la carrera
+
+Los bytes van al almacén de contenido **antes** que las filas al
+catálogo, porque el almacén es un sistema de ficheros y el catálogo es
+una base de datos: una transacción que toca las dos no es una
+transacción. Cuando la condición se cumple en la frontera, que es lo
+habitual, la escritura se aborta antes de tocar nada y no queda ni un
+byte.
+
+Cuando la condición se cumple en la frontera y se rompe entre la
+frontera y la transacción —otra publicación que se cuela—, el `412` lo
+da el catálogo y el asset no se escribe, pero el blob ya está en el
+almacén: es un contenido **sin referenciar**, y eso es reconciliable.
+No es una fila a medias, que es lo que no se permite: es un fichero que
+nadie apunta y que la recolección de blobs sin referencia eliminará
+cuando exista.
 
 Cuando la condición se cumple, la respuesta es la que sea: `201` si la
 dirección no existía, `200` si ya existía. Y el cuerpo dice lo que pasó
@@ -222,7 +239,9 @@ CAS de verdad):
 3. `If-None-Match` que coincide es `304`, también con la etiqueta débil;
    `If-Match` que no coincide es `412`; una escritura cuya condición no
    se cumple **no deja nada escrito**, ni en el catálogo ni en el
-   almacén de contenido.
+   almacén de contenido. (La condición que se pierde dentro de la
+   transacción es la carrera: el asset tampoco se escribe, pero el blob
+   queda sin referenciar.)
 4. La ruta válida se preserva; el traversal, el doble codificado, los
    caracteres de control y las rutas ambiguas son `400`; una ruta
    rechazada no publica nada.

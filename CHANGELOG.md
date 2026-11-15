@@ -51,7 +51,9 @@ Cambios que todavia no estan en una release. El formato sigue
   es `304` —con la comparación débil que manda el RFC, para que un
   cliente que revalida contra una caché reciba el `304` que espera—, y
   una condición que no se cumple al escribir es `412` **sin dejar nada
-  escrito**. Publicar en una dirección ocupada **no**
+  escrito** —la condición viaja al catálogo, que la comprueba dentro de
+  la transacción que escribe las filas, y no hay ventana entre el
+  comprobar y el escribir—. Publicar en una dirección ocupada **no**
   sustituye en silencio: la política de reponer la decide el
   **repositorio**, en su configuración versionada (`raw.replace`), y por
   defecto la dirección publica una vez —republicar el mismo contenido es
