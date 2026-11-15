@@ -1158,7 +1158,7 @@ La ampliación del hub hacia un repository manager real empieza por la base: el 
 - **El contenido se bufferizaba entero.** `put(&[u8])` recibía el artefacto completo en memoria, y no había forma de subir uno que no cupiera. Ahora hay `BlobWriteSession`: `append` por trozos, `commit` atómico, `abort`.
 - **El commit no validaba nada.** Publicaba lo que hubiera, y si el cliente declaraba un digest que no era el suyo, se publicaba igual. Ahora el commit valida **algoritmo, longitud y digest** contra lo declarado (`CommitExpectation`); si algo no cuadra, el staging se elimina y **no queda ninguna referencia visible**.
 - **Los fallos se confundían.** Cualquier error de lectura salía como `NotFound`: un disco lleno y una corrupción eran lo mismo. Ahora `NotFound`, `Corrupted`, `LengthMismatch`, `DigestMismatch`, `UnsupportedAlgorithm` y `Unavailable` son fallos distintos.
-- **No había limpieza.** Una subida que se caía dejaba su staging en disco para siempre. Ahora el staging caducado se limpia (`clean_expired_staging`) y el vivo no se toca; y una sesión abandonada borra el suyo al soltarse.
+- **No había limpieza.** Una subida que se caía dejaba su staging en disco para siempre. Ahora el staging caducado se limpia (`clean_expired_staging`) y el vivo no se toca —lo que lo protege es el **bloqueo** del fichero mientras se escribe, no su fecha—; y una sesión abandonada borra el suyo al soltarse.
 
 **La garantía que no cambia.** El mismo contenido no se guarda dos veces, y lo que sale por el digest es lo que entró. Lo que cambia es **cómo** se llega ahí: por trozos, con staging propio, y sin publicar nada que no sea exactamente lo declarado.
 
@@ -1467,6 +1467,29 @@ de verdad en un puerto de verdad, un `curl` de verdad publicando y
 descargando, un `sha256sum` de verdad comparando los dos ficheros, el
 proceso parado y vuelto a arrancar sobre el mismo almacén, y el contenido
 sigue ahí y sigue siendo **los mismos bytes**.
+
+**La conformidad, de caja negra.** `tests/raw_conformity_uat.rs` no usa
+mocks: es el binario de verdad en un puerto de verdad, con `curl` de
+verdad y `sha256sum` de verdad. Lo que mide es lo que un cliente ve —que
+lo publicado vuelve intacto, que un proceso muerto a mitad de una subida
+no deja una ruta publicada a medias y que al reiniciar el servicio
+recoge lo caducado y respeta lo vivo, que las subidas simultáneas no se
+mezclan y que dos cuentas con tokens reales no se ven entre sí— y lo
+deja **escrito** en un informe con la versión, el comando real de cada
+caso, el resultado medido y los límites. El informe dice también lo que
+**no** certifica, porque un informe que solo dice lo que sí es
+propaganda, y un caso que falla sale en él como `FALLO`, no como un
+caso que no aparece.
+
+**La recuperación de lo que un proceso muerto deja.** Una subida
+interrumpida deja su fichero de staging en el almacén de contenido: no se
+publica nunca —la transacción del catálogo no llegó a ocurrir—, pero era
+un fichero que se acumulaba sin que nadie lo quitara. El arranque limpia
+el staging caducado y dice cuántos ha quitado; lo vivo se queda, y lo que
+lo protege no es su fecha sino el **bloqueo**: mientras la escritura
+vive, su fichero está bloqueado por el proceso que escribe, y un fichero
+bloqueado no se borra aunque la suba lleve horas sin escribir. Un staging
+que no se puede borrar no impide arrancar.
 
 **Lo que sigue sin estar:** el alta del repositorio en el catálogo por
 HTTP (esta superficie sirve los repositorios que ya están), el ámbito de

@@ -55,3 +55,11 @@ durable = true
 # Where the bytes of the artifacts live, addressed by digest. It is a
 # decision of the deployment, not of the account.
 cas_path = "./data/hodei.cas"
+# How old an interrupted upload may be before the store cleans it up. A
+# process that dies mid-upload leaves its staging file behind: that file is
+# never published, but it is a file. The age is generous on purpose, and it
+# has a floor of one minute: below that it stops being a margin of prudence.
+# What protects a live upload is not the age but the lock: while the write
+# is in progress its file is locked by the process that writes it, and a
+# locked file is not removed.
+staging_max_age_secs = 3600

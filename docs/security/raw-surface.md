@@ -213,6 +213,7 @@ raw_api_enabled = true
 ```toml
 [content]
 cas_path = "./data/hodei.cas"
+staging_max_age_secs = 3600
 ```
 
 - `raw_api_enabled` está **cerrado por defecto**, igual que
@@ -222,8 +223,51 @@ cas_path = "./data/hodei.cas"
   declare lo que autoriza con.
 - `cas_path` es donde viven los bytes, por digest. No es una decisión de
   la cuenta, sino del despliegue.
+- `staging_max_age_secs` es la edad a partir de la cual una escritura
+  interrumpida se considera abandonada. El valor por defecto es
+  generoso a propósito —una hora— y tiene un **suelo** de un minuto: por
+  debajo, la edad deja de ser un margen de prudencia y pasa a ser una
+  manera de borrar lo que otros procesos están escribiendo.
+- Lo que decide si una escritura en curso se toca **no es la edad, es el
+  bloqueo**: mientras la escritura vive, su fichero está bloqueado por el
+  proceso que escribe, y un fichero bloqueado no se borra. La edad es el
+  margen de prudencia; el bloqueo es la garantía.
 - El catálogo y el almacén de contenido se montan cuando
   `repository.durable = true`.
+
+## Lo que pasa cuando el proceso se muere
+
+Una subida se escribe en el almacén de contenido **por trozos**, en un
+fichero de staging propio, y solo se publica cuando el commit lo
+comprueba. Un proceso que se muere a mitad de una subida deja ese
+fichero en el disco: no hay commit, no hay asset, y **no hay ruta
+publicada** —la publicación del catálogo no llegó a ocurrir—.
+
+Lo que queda es un fichero que nadie apunta. Y un fichero que nadie
+apunta es un fichero que se acumula: por eso el servicio, **al
+arrancar**, limpia el staging que encuentra caducado y dice cuántos ha
+quitado.
+
+Lo que se queda es el staging **vivo**, que puede ser de otro proceso que
+está subiendo ahora mismo. Y lo que lo protege no es su fecha, sino el
+**bloqueo**: mientras la escritura vive, su fichero está bloqueado por el
+proceso que escribe, y un fichero bloqueado no se borra. Por eso una
+subida que lleva dos horas sin escribir —el cliente se paró a mitad de
+camino— conserva su staging, aunque su fecha sea la de un fichero
+abandonado: eso es un timeout, no una limpieza. La suite lo comprueba
+contra el servicio en pie, y comprueba que el staging vivo sobrevive
+**caducado**, que es la única forma de que se vea que lo protege el
+bloqueo y no la fecha.
+
+Y lo que no se pudo borrar **no impide arrancar**: un staging que no se
+puede eliminar es un problema de disco, y el servicio tiene trabajo que
+hacer. Se avisa y se sigue.
+
+Lo que **no** se limpia es el blob sin referenciar: el contenido que se
+publicó y luego se sustituyó, o el que se escribió y la transacción del
+catálogo no llegó a confirmar. Eso es recolectable —es contenido por
+digest, y nadie lo apunta—, pero su recolección es otra historia
+(`HAR-10`).
 
 ## Verificación
 
@@ -263,6 +307,53 @@ CAS de verdad):
    contenido sigue ahí y sigue siendo **los mismos bytes**.
 3. Un traversal enviado con `curl --path-as-is` es `400`, y no publica
    nada.
+
+`tests/raw_conformity_uat.rs` (caja negra: proceso real, `curl` real y
+`sha256sum` real):
+
+1. Lo que se publica vuelve **intacto**: el hash del fichero descargado
+   es el hash del fichero subido, y lo dice un programa que no tiene
+   nada que ver con este servicio. El `HEAD` describe sin traer —el
+   `curl` cuenta **cero** bytes de cuerpo— y el tramo es un `206` con su
+   `Content-Range` **y con sus bytes**, que son los del contenido.
+2. Un proceso **muerto a mitad de una subida** no deja una ruta
+   publicada a medias: el arnés espera a que el staging tenga bytes —es
+   decir, a que el cuerpo se esté escribiendo— antes de matar, y al
+   reiniciar la ruta cortada no existe (`404`), **publicarla otra vez da
+   `201`** (un `409` sería un asset colgado que deja la dirección
+   inservible), el staging caducado está limpio, el staging **vivo** de
+   otro proceso sigue ahí —**caducado y bloqueado**, que es lo único que
+   demuestra que lo protege el bloqueo y no su fecha—, y el contenido que
+   ya estaba publicado sigue siendo **los mismos bytes**.
+3. Las subidas **simultáneas** no se mezclan: el arnés comprueba que
+   hubo más de un staging en curso —es decir, que las peticiones se
+   solaparon de verdad y que cada una tenía su staging— y después
+   comprueba que el mismo contenido a la misma ruta es idempotente, que
+   las rutas distintas guardan lo suyo, y que la ruta que se disputa
+   tiene **un solo ganador** (`201`) y el resto `409`. El hash de lo que
+   se descarga es siempre el hash de lo que se subió.
+4. Dos cuentas con tokens reales **no se ven**: cada una descarga lo
+   suyo de la misma dirección; el repositorio que solo existe en la
+   primera cuenta —donde la primera **sí publicó**— es un `404` para la
+   segunda, que no dice si existe; el principal que el bundle no cubre,
+   en la misma cuenta, es un `403`; y sin credencial es un `401`. Los
+   tres códigos se distinguen, que es lo que hace que la denegación sea
+   coherente.
+
+La suite escribe un **informe** con la versión del servicio y de las
+herramientas, el comando real de cada caso, el resultado **medido** de
+cada caso y los límites, y dice explícitamente lo que **no** certifica:
+ni OCI, ni S3, ni disponibilidad. Un caso que falla sale en el informe
+como `FALLO`, no como un caso que no aparece. El informe se lee en el
+resumen del job de la CI.
+
+Y lo que la suite **no** mide, y conviene que quede escrito: el corte
+se provoca **durante** la subida, antes del commit. Un corte después del
+commit del blob y antes de la escritura del catálogo dejaría un blob sin
+referenciar —que es recolectable, y es `HAR-10`—, y un corte después de
+escribir el catálogo dejaría el asset publicado con un error de red en
+el cliente: la republicación es idempotente, así que un reintento
+funciona.
 
 ## El rastro
 

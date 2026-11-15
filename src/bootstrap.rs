@@ -28,6 +28,7 @@ use hodei_policies::build_schema::ports::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Duration;
 use surrealdb::Surreal;
 use surrealdb::engine::local::RocksDb;
 use tracing::{info, warn};
@@ -243,6 +244,50 @@ pub async fn bootstrap(
             FileBlobStore::new(&config.content.cas_path)
                 .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
         );
+        // The staging that an interrupted upload leaves behind is cleaned
+        // here, at the boot. It is never published -- the catalog write
+        // never happened -- but it is a file, and a process that dies
+        // mid-upload leaves one behind every time.
+        //
+        // The staging of a write **in progress** is not touched: the file
+        // is locked by the process that is writing it, and a locked file
+        // is not removed. The age is only the margin of prudence, not the
+        // criterion: an old file of an upload that stopped writing is
+        // still a live upload, and taking it away breaks it.
+        //
+        // And a staging that could not be removed is not a reason to not
+        // start: it is a problem of disk, and the service has work to do.
+        match content
+            .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs))
+        {
+            Ok(cleanup) => {
+                if cleanup.removed > 0 {
+                    warn!(
+                        removed = cleanup.removed,
+                        "the staging of interrupted uploads was removed at the boot"
+                    );
+                }
+                if cleanup.alive > 0 {
+                    info!(
+                        alive = cleanup.alive,
+                        "the staging of the uploads in progress was left alone at the boot"
+                    );
+                }
+                for (path, reason) in &cleanup.failed {
+                    warn!(
+                        %reason,
+                        path = %path.display(),
+                        "the staging of an interrupted upload could not be removed at the boot"
+                    );
+                }
+            }
+            Err(error) => {
+                warn!(
+                    %error,
+                    "the staging could not be read at the boot; the interrupted uploads stay"
+                );
+            }
+        }
         app_state
             .with_catalog(reader, writer)
             .with_content_store(content)

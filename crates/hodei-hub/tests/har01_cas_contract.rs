@@ -517,8 +517,10 @@ async fn har01_ac4_the_read_tells_missing_corrupted_and_unreadable_apart() {
 
 /// AC4 El staging caducado se limpia y el vivo no se toca.
 ///
-/// Given un staging viejo de un proceso que se cae y otro vivo, when el
-/// proceso se reinicia y limpia, then solo desaparece el viejo.
+/// Given un staging viejo de un proceso que se cae, otro vivo que esta
+/// escribiendo ahora mismo y un fichero que no es nuestro, when el
+/// proceso se reinicia y limpia, then solo desaparece el viejo, el vivo
+/// se respeta y lo que no es nuestro no se toca.
 #[tokio::test]
 async fn har01_ac4_the_expired_staging_is_cleaned_and_the_live_one_is_not() {
     let tmp = a_temp_dir("har01-ac4-staging-");
@@ -528,24 +530,64 @@ async fn har01_ac4_the_expired_staging_is_cleaned_and_the_live_one_is_not() {
         .await
         .expect("el contenido se guarda");
 
-    // Un staging viejo, como el que deja un proceso que se cae.
+    // Un staging viejo, como el que deja un proceso que se cae: con el
+    // nombre que pone el almacen y sin nadie escribiendolo.
     let staging_dir = store.the_staging_dir();
     std::fs::create_dir_all(&staging_dir).expect("el staging se crea");
-    let old = staging_dir.join("999-old.part");
+    let old = staging_dir.join(a_staging_name());
     std::fs::write(&old, b"half written").expect("el staging se escribe");
     set_modified(&old, SystemTime::now() - Duration::from_secs(3600));
-    // Y uno vivo, que puede ser de otro proceso que esta subiendo.
-    let fresh = staging_dir.join("999-live.part");
-    std::fs::write(&fresh, b"now").expect("el staging se escribe");
+
+    // Y uno vivo, que puede ser de otro proceso que esta subiendo: con
+    // el nombre que pone el almacen y **bloqueado**, que es lo que dice
+    // que alguien lo esta escribiendo ahora mismo.
+    //
+    // Y **caducado**, a proposito: si solo lo protegiera su fecha, el
+    // arranque se lo llevaria, y lo que lo protege es el bloqueo.
+    let live = staging_dir.join(a_staging_name());
+    let live_file = std::fs::File::create(&live).expect("el staging vivo se escribe");
+    live_file.try_lock().expect("el staging vivo se bloquea");
+    set_modified(&live, SystemTime::now() - Duration::from_secs(3600));
+
+    // Y un fichero que no es nuestro: el directorio del staging es una
+    // convencion, y lo que hay ahi puede ser de otra cosa.
+    let foreign = staging_dir.join("not-ours.txt");
+    std::fs::write(&foreign, b"de otra cosa").expect("el fichero se escribe");
+
+    // Y un directorio con nuestro nombre, que no se puede borrar: un
+    // problema de disco no puede impedir que el almacen siga sirviendo.
+    let stuck = staging_dir.join(a_staging_name());
+    std::fs::create_dir(&stuck).expect("el directorio se crea");
 
     // El proceso se reinicia: un almacen nuevo sobre el mismo directorio.
     let restarted = FileBlobStore::new(tmp.path()).expect("el almacen abre");
-    let removed = restarted
+    let cleanup = restarted
         .clean_expired_staging(Duration::from_secs(60))
         .expect("la limpieza se hace");
-    assert_eq!(removed, 1, "solo se limpia el staging caducado");
+    assert_eq!(cleanup.removed, 1, "solo se limpia el staging caducado");
+    assert_eq!(cleanup.alive, 1, "el staging vivo se cuenta, no se borra");
+    assert!(
+        cleanup.failed.is_empty(),
+        "nada falla todavia: {:?}",
+        cleanup.failed
+    );
     assert!(!old.exists(), "el staging caducado ya no esta");
-    assert!(fresh.exists(), "el staging vivo no se toca");
+    assert!(live.exists(), "el staging vivo no se toca");
+    assert!(foreign.exists(), "un fichero que no es nuestro no se toca");
+
+    // Y lo que no se puede borrar no es un fallo: se cuenta y el almacen
+    // sigue sirviendo.
+    let cleanup = restarted
+        .clean_expired_staging(Duration::ZERO)
+        .expect("la limpieza se hace");
+    assert_eq!(cleanup.removed, 0, "el directorio no se puede borrar");
+    assert_eq!(cleanup.alive, 1, "el staging vivo sigue vivo");
+    assert_eq!(
+        cleanup.failed.len(),
+        1,
+        "el que no se pudo borrar se cuenta"
+    );
+    assert!(stuck.exists(), "el directorio se queda");
 
     // Y lo que estaba publicado sigue ahi: limpiar staging no publica ni
     // borra nada.
@@ -559,6 +601,23 @@ async fn har01_ac4_the_expired_staging_is_cleaned_and_the_live_one_is_not() {
         restarted.get(&digest).await.expect("el contenido se lee"),
         b"the bytes"
     );
+}
+
+/// El nombre que el almacen le pone a una escritura en curso.
+///
+/// `<pid>-<nanos:x>-<counter:x>.part`. El arnés lo copia porque lo que
+/// quiere es un staging de verdad, con el nombre que el almacen
+/// reconoce: un fichero con otro nombre no es una escritura en curso, y
+/// el almacen no lo toca.
+fn a_staging_name() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    std::path::PathBuf::from(format!("{}-{nanos:x}-{counter:x}.part", std::process::id()))
 }
 
 // ───────────────────────────── AC5 ─────────────────────────────
@@ -617,15 +676,18 @@ async fn har01_ac5_the_store_survives_a_disk_error_and_a_dead_process() {
     // queda. El reinicio lo limpia cuando caduca.
     let staging_dir = store.the_staging_dir();
     std::fs::create_dir_all(&staging_dir).expect("el staging se crea");
-    let orphan = staging_dir.join("dead-process.part");
+    let orphan = staging_dir.join(a_staging_name());
     std::fs::write(&orphan, b"half of the content").expect("el staging se escribe");
     set_modified(&orphan, SystemTime::now() - Duration::from_secs(3600));
 
     let restarted = FileBlobStore::new(tmp.path()).expect("el almacen abre");
-    let removed = restarted
+    let cleanup = restarted
         .clean_expired_staging(Duration::from_secs(60))
         .expect("la limpieza se hace");
-    assert_eq!(removed, 1, "el staging del proceso muerto se limpia");
+    assert_eq!(
+        cleanup.removed, 1,
+        "el staging del proceso muerto se limpia"
+    );
     assert!(!orphan.exists(), "y ya no esta");
 }
 

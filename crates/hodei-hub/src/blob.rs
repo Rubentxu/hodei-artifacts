@@ -282,6 +282,12 @@ impl FileBlobStore {
     }
 
     /// Las escrituras en curso que hay ahora mismo.
+    ///
+    /// Solo las que son **de este almacen**: el staging es una convencion
+    /// del directorio, y un fichero con otro nombre ahi no es una
+    /// escritura en curso nuestra. Se listan con la edad que tienen, y un
+    /// fichero cuya fecha no se puede leer **no** se lista: sin fecha no
+    /// hay edad, y lo que no se sabe no se toca.
     pub fn staging_entries(&self) -> Result<Vec<StagingEntry>, BlobError> {
         let mut entries = Vec::new();
         let read = match std::fs::read_dir(self.the_staging_dir()) {
@@ -291,10 +297,17 @@ impl FileBlobStore {
         };
         for entry in read {
             let entry = entry.map_err(|error| BlobError::Unavailable(error.to_string()))?;
+            let name = entry.file_name();
+            if !is_a_staging_file(&name.to_string_lossy()) {
+                continue;
+            }
             let metadata = entry
                 .metadata()
                 .map_err(|error| BlobError::Unavailable(error.to_string()))?;
-            let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            let Some(modified) = metadata.modified().ok() else {
+                // Sin fecha no se puede decidir nada: el fichero se queda.
+                continue;
+            };
             let age = SystemTime::now()
                 .duration_since(modified)
                 .unwrap_or(Duration::ZERO);
@@ -313,23 +326,100 @@ impl FileBlobStore {
     /// una subida deja su staging en disco, y ese staging no se publica
     /// nunca. Con la caducidad, se limpia solo.
     ///
-    /// Devuelve cuantos ficheros se han eliminado. El staging **vivo** no
-    /// se toca: puede ser de otro proceso que esta subiendo ahora mismo.
-    pub fn clean_expired_staging(&self, max_age: Duration) -> Result<usize, BlobError> {
-        let mut removed = 0;
+    /// Lo que decide no es la edad, sino el **bloqueo**: mientras una
+    /// escritura vive, su fichero esta bloqueado por el proceso que
+    /// escribe, y un fichero bloqueado no se borra. Por eso la edad es el
+    /// margen de prudencia y no el criterio: un fichero viejo de una
+    /// subida que lleva horas sin escribir sigue siendo de una subida
+    /// viva, y quitarselo de debajo rompe la subida.
+    ///
+    /// Un fichero que no se pudo borrar **no** es un motivo para que el
+    /// almacen no sirva: se avisa y se sigue. Lo que no puede borrar es un
+    /// problema de disco, no un motivo para no arrancar.
+    pub fn clean_expired_staging(&self, max_age: Duration) -> Result<StagingCleanup, BlobError> {
+        let mut cleanup = StagingCleanup::default();
         for entry in self.staging_entries()? {
-            if entry.age >= max_age {
-                match std::fs::remove_file(&entry.path) {
-                    Ok(()) => removed += 1,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            if entry.age < max_age {
+                continue;
+            }
+            // El bloqueo dice si alguien esta escribiendo este fichero:
+            // si lo esta, es de una subida viva y no se toca.
+            let file = match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&entry.path)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => match std::fs::OpenOptions::new().read(true).open(&entry.path) {
+                    Ok(file) => file,
                     Err(error) => {
-                        return Err(BlobError::Unavailable(error.to_string()));
+                        cleanup.failed.push((entry.path.clone(), error.to_string()));
+                        continue;
                     }
+                },
+            };
+            match file.try_lock() {
+                Ok(()) => {}
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    cleanup.alive += 1;
+                    continue;
+                }
+                Err(std::fs::TryLockError::Error(error)) => {
+                    cleanup.failed.push((entry.path.clone(), error.to_string()));
+                    continue;
+                }
+            }
+            match std::fs::remove_file(&entry.path) {
+                Ok(()) => cleanup.removed += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    cleanup.failed.push((entry.path.clone(), error.to_string()));
                 }
             }
         }
-        Ok(removed)
+        Ok(cleanup)
     }
+}
+
+/// Si el nombre es el de una escritura en curso de este almacen.
+///
+/// El patron lo pone `new_session_id`: `<pid>-<nanos:x>-<counter:x>.part`.
+/// Un fichero con otro nombre en el directorio del staging no es de este
+/// almacen: no se lista, no se borra y no se cuenta.
+fn is_a_staging_file(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".part") else {
+        return false;
+    };
+    let mut parts = stem.split('-');
+    let (Some(pid), Some(nanos), Some(counter), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    !pid.is_empty()
+        && pid.bytes().all(|byte| byte.is_ascii_digit())
+        && !nanos.is_empty()
+        && nanos.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && !counter.is_empty()
+        && counter.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Lo que paso al limpiar el staging.
+///
+/// La limpieza **no** falla: un fichero que no se pudo borrar se cuenta y
+/// se avisa, y el almacen sigue sirviendo. Lo que se necesita para
+/// contarlo es esto.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StagingCleanup {
+    /// Cuantos ficheros se eliminaron.
+    pub removed: usize,
+    /// Cuantos ficheros habia que estan escribiendo ahora mismo.
+    ///
+    /// Son de subidas vivas: no se tocan.
+    pub alive: usize,
+    /// Los ficheros que no se pudieron borrar, con su motivo.
+    pub failed: Vec<(PathBuf, String)>,
 }
 
 /// Una escritura en curso en el almacen de fichero.
@@ -537,6 +627,19 @@ impl BlobStore for FileBlobStore {
         let file = tokio::fs::File::create(&staging_path)
             .await
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        // El fichero se bloquea mientras se escribe: el bloqueo es lo que
+        // dice que esta escritura **viva**, y lo que impide que la
+        // limpieza de otro proceso se lo lleve de debajo. Sin esto, un
+        // arranque que encuentra el fichero viejo se lo lleva y la subida
+        // que llevaba minutos escribiendo falla al publicar.
+        let std_file = match file.try_into_std() {
+            Ok(std_file) => std_file,
+            Err(file) => file.into_std().await,
+        };
+        std_file
+            .try_lock()
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        let file = tokio::fs::File::from_std(std_file);
         Ok(Box::new(FileBlobWriteSession {
             root: self.root.clone(),
             staging_path,

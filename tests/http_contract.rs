@@ -639,8 +639,8 @@ async fn g11_a_malformed_hrn_is_a_bad_request() {
     );
 }
 
-/// El límite de tenant es estructural: una política que nombra al principal de
-/// una cuenta no alcanza al homónimo de otra cuenta.
+/// The tenant boundary is structural: a policy that names the principal of
+/// one account does not reach the namesake of another account.
 #[tokio::test]
 async fn g12_a_policy_scoped_to_one_account_does_not_reach_another_account() {
     let (app, _tmp) = test_app().await;

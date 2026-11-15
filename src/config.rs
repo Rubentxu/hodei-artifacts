@@ -36,12 +36,48 @@ pub struct ContentConfig {
     /// Default: `./data/hodei.cas`.
     #[serde(default = "the_default_cas_path")]
     pub cas_path: String,
+    /// How old an interrupted write may be before the store cleans it up.
+    ///
+    /// A process that dies in the middle of an upload leaves its staging
+    /// file on disk. That file is never published -- the catalog write
+    /// never happened -- but it is a file, and files pile up.
+    ///
+    /// The age is a margin of prudence, **not** the criterion. While a
+    /// write is in progress its file is locked by the process that is
+    /// writing it, and a locked file is not removed: a write that stops
+    /// writing for longer than the age is still a live write, and
+    /// taking its file away from under it breaks it.
+    ///
+    /// Minimum: 60 seconds. Below that the age stops being a margin.
+    ///
+    /// Default: 3600 seconds.
+    #[serde(default = "the_default_staging_max_age_secs")]
+    pub staging_max_age_secs: u64,
+}
+
+impl ContentConfig {
+    /// Check that the values of the content configuration make sense.
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if the configuration is valid, ConfigError with clear message if invalid
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.staging_max_age_secs < the_minimum_staging_max_age_secs() {
+            return Err(ConfigError::Message(format!(
+                "Invalid content configuration: staging_max_age_secs must be at least {} seconds, and {} was given",
+                the_minimum_staging_max_age_secs(),
+                self.staging_max_age_secs
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl Default for ContentConfig {
     fn default() -> Self {
         Self {
             cas_path: the_default_cas_path(),
+            staging_max_age_secs: the_default_staging_max_age_secs(),
         }
     }
 }
@@ -49,6 +85,20 @@ impl Default for ContentConfig {
 /// The default directory of the content.
 fn the_default_cas_path() -> String {
     "./data/hodei.cas".to_string()
+}
+
+/// The default age of an interrupted write that the store cleans up.
+fn the_default_staging_max_age_secs() -> u64 {
+    3600
+}
+
+/// The smallest age that still is a margin of prudence.
+///
+/// Below a minute, the age of a staging file says nothing: the file is
+/// either being written right now or it was left behind a moment ago, and
+/// the two are told apart by the lock, not by the date.
+fn the_minimum_staging_max_age_secs() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -434,6 +484,7 @@ impl AppConfig {
         self.database.validate()?;
         self.rocksdb.validate()?;
         self.logging.validate()?;
+        self.content.validate()?;
         Ok(())
     }
 
@@ -795,6 +846,45 @@ mod tests {
         assert!(!config.schema.register_iam_on_startup);
         assert_eq!(config.logging.level, "info");
         assert_eq!(config.rocksdb.path, "./target/debug/data/hodei.rocksdb");
+    }
+
+    /// The staging of an interrupted upload is cleaned up, but not too soon.
+    ///
+    /// The default has to be generous: the staging of a **live** upload
+    /// belongs to another process, and taking it away breaks an upload
+    /// that is working.
+    #[test]
+    fn the_staging_of_an_interrupted_upload_expires_but_not_at_once() {
+        let config = AppConfig::default();
+        assert_eq!(config.content.staging_max_age_secs, 3600);
+        assert!(config.content.staging_max_age_secs > 0);
+    }
+
+    /// The age of the staging has a floor.
+    ///
+    /// Below a minute the age stops being a margin of prudence and starts
+    /// being a way of deleting what other processes are writing, so a
+    /// configuration that asks for it is rejected instead of obeyed.
+    #[test]
+    fn the_age_of_the_staging_has_a_floor() {
+        let mut config = AppConfig::default();
+        config.content.staging_max_age_secs = 0;
+        let error = config.validate().expect_err("an age of zero is refused");
+        assert!(
+            error.to_string().contains("staging_max_age_secs"),
+            "the error says what is wrong: {error}"
+        );
+
+        let mut config = AppConfig::default();
+        config.content.staging_max_age_secs = 59;
+        assert!(
+            config.validate().is_err(),
+            "an age below the floor is refused"
+        );
+
+        let mut config = AppConfig::default();
+        config.content.staging_max_age_secs = 60;
+        assert!(config.validate().is_ok(), "the floor itself is allowed");
     }
 
     #[test]
