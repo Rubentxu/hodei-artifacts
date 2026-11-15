@@ -189,6 +189,7 @@ pub async fn create_repository(
                 record_audit(
                     &state,
                     context.principal().subject().as_str(),
+                    context.account().as_str(),
                     &action.to_string(),
                     &hrn.to_string(),
                     AuditResult::Failed,
@@ -206,6 +207,7 @@ pub async fn create_repository(
         record_audit(
             &state,
             context.principal().subject().as_str(),
+            context.account().as_str(),
             &action.to_string(),
             &hrn.to_string(),
             result,
@@ -241,6 +243,7 @@ pub async fn create_repository(
             record_audit(
                 &state,
                 context.principal().subject().as_str(),
+                context.account().as_str(),
                 &action.to_string(),
                 &hrn.to_string(),
                 result,
@@ -253,6 +256,7 @@ pub async fn create_repository(
     record_audit(
         &state,
         context.principal().subject().as_str(),
+        context.account().as_str(),
         &action.to_string(),
         &hrn.to_string(),
         AuditResult::Allowed,

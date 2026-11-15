@@ -203,9 +203,9 @@ fn valid_policy_id(policy_id: &str) -> bool {
 
 /// Record a security event for a policy operation.
 ///
-/// The event identifies the principal that acted, the operation, the policy
-/// it was about and how it ended. It never carries the token or the content
-/// of the policy.
+/// The event identifies the principal that acted, the verified account it
+/// acted in, the operation, the policy it was about and how it ended. It
+/// never carries the token or the content of the policy.
 fn audit_policy(
     state: &AppState,
     context: &VerifiedContext,
@@ -217,6 +217,7 @@ fn audit_policy(
     record_audit(
         state,
         context.principal().subject().as_str(),
+        context.account().as_str(),
         action,
         resource,
         result,

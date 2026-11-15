@@ -180,7 +180,7 @@ async fn the_policy_mutations_are_audited() {
         "the three mutations must be in the trail: {events:?}"
     );
     for event in &events {
-        assert_eq!(event.actor, "hrn:hodei:iam::acme:User/alice");
+        assert_eq!(event.actor(), "hrn:hodei:iam::acme:User/alice");
         assert_eq!(
             event.result,
             hodei_artifacts_api::audit::AuditResult::Allowed
@@ -189,7 +189,7 @@ async fn the_policy_mutations_are_audited() {
             event.resource.contains("audited"),
             "the event must name the policy: {event:?}"
         );
-        assert_eq!(event.correlation_id, "correlation-1");
+        assert_eq!(event.correlation_id(), "correlation-1");
     }
 }
 
@@ -228,7 +228,7 @@ async fn a_refused_policy_mutation_is_audited_as_denied() {
         hodei_artifacts_api::audit::AuditResult::Denied,
         "a refusal is a denial, not a failure: {events:?}"
     );
-    assert_eq!(events[0].actor, "hrn:hodei:iam::acme:User/alice");
+    assert_eq!(events[0].actor(), "hrn:hodei:iam::acme:User/alice");
 }
 
 /// The trail never carries the token.

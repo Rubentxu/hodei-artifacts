@@ -18,19 +18,20 @@ pub mod schemas;
 use axum::http::HeaderMap;
 
 use crate::app_state::AppState;
-use crate::audit::{AuditEvent, AuditResult};
+use crate::audit::{AuditContext, AuditEvent, AuditResult};
 use kernel::application::ports::clock::Identity;
 
 /// Record a security event.
 ///
-/// The event never carries a credential: it identifies who acted, what they
-/// acted on and how it ended. The sink is best-effort -- a sink that is
-/// unavailable is reported and never turns into a decision, because losing
-/// the trail must not change the answer the caller gets. The durability limit
-/// is declared in `docs/security/audit.md`.
+/// The event never carries a credential: it identifies who acted, in which
+/// verified account, what they acted on and how it ended. The sink is
+/// best-effort -- a sink that is unavailable is reported and never turns
+/// into a decision, because losing the trail must not change the answer the
+/// caller gets. The durability limit is declared in `docs/security/audit-events.md`.
 pub(crate) fn record_audit(
     state: &AppState,
     actor: &str,
+    tenant: &str,
     action: &str,
     resource: &str,
     result: AuditResult,
@@ -38,12 +39,12 @@ pub(crate) fn record_audit(
 ) {
     let event = AuditEvent::new(
         state.identity.new_id(),
+        AuditContext::new(actor, tenant, correlation_id),
         state.identity.now(),
-        actor,
         action,
         resource,
+        None,
         result,
-        correlation_id,
     );
     if state.audit_sink.record(&event).is_err() {
         tracing::warn!(

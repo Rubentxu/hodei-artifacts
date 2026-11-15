@@ -177,6 +177,8 @@ fn publication(
         digest: ContentDigest::of_bytes(content),
         size_bytes: content.len() as u64,
         tags: Vec::new(),
+        actor: "hrn:hodei:iam:acme:User/alice".to_string(),
+        correlation_id: "corr-har02".to_string(),
     }
 }
 
@@ -1210,7 +1212,10 @@ async fn the_schema_can_be_declared_twice() {
     let store = store_for(db);
     store.initialize().await.expect("first initialize");
     store.initialize().await.expect("second initialize");
-    assert_eq!(store.applied_schema_version().await.expect("version"), 1);
+    assert_eq!(
+        store.applied_schema_version().await.expect("version"),
+        SCHEMA_VERSION
+    );
 
     // Y los índices siguen en su sitio: el índice es lo que decide los
     // conflictos, así que perderlo sería perder la garantía.

@@ -24,12 +24,14 @@ use std::path::{Path, PathBuf};
 /// The roots of the active workspace. The crates that live in the tree but
 /// are not members are a previous generation: they are not built, they are
 /// not deployed, and they do not constrain the active code.
-const ACTIVE_ROOTS: [&str; 5] = [
+const ACTIVE_ROOTS: [&str; 7] = [
     "src",
     "crates/kernel",
     "crates/hodei-iam",
     "crates/hodei-policies",
     "crates/hodei-evidence",
+    "crates/hodei-catalog",
+    "crates/hodei-audit",
 ];
 
 fn repository_root() -> PathBuf {
@@ -144,10 +146,16 @@ fn the_check_would_catch_a_downcast() {
 /// seam between what the catalog means and where the catalog is stored is
 /// only a seam while the domain cannot name a database. The adapter lives in
 /// `hodei-catalog-storage`; the domain must stay ignorant of it.
-const PROTECTED_CRATES: [&str; 3] = [
+///
+/// The audit contract is protected for the same reason: it is the event, the
+/// sink and the outbox that everybody speaks, and a contract that drags a
+/// database engine into every crate that names it is a contract that stops
+/// being a contract.
+const PROTECTED_CRATES: [&str; 4] = [
     "crates/kernel",
     "crates/hodei-evidence",
     "crates/hodei-catalog",
+    "crates/hodei-audit",
 ];
 
 /// The mechanisms a protected crate must not depend on.
@@ -170,29 +178,155 @@ fn names_dependency(dependencies: &str, crate_name: &str) -> bool {
         })
 }
 
+/// The quoted text of a fragment such as `"crates/kernel",`.
+fn quoted(text: &str) -> Option<String> {
+    let start = text.find('"')?;
+    let rest = &text[start + 1..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// The `path = "..."` of a dependency line, when it has one.
+///
+/// A dependency on another crate of this repository is written that way, and
+/// it is the edge by which a crate can drag in a mechanism it does not name
+/// itself.
+fn path_dependency(line: &str) -> Option<String> {
+    let at = line.find("path")?;
+    let rest = line[at + "path".len()..].trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    quoted(rest)
+}
+
+/// The members of the workspace, by their path in the repository.
+///
+/// Only the members: the crates under `exclude` live in the tree but are not
+/// built, so they are not edges that anything can reach.
+fn workspace_members(root: &Path) -> Vec<String> {
+    let Ok(manifest) = fs::read_to_string(root.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    let mut members = Vec::new();
+    let mut inside = false;
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if !inside {
+            if trimmed.starts_with("members") && trimmed.contains('[') {
+                inside = true;
+            }
+            continue;
+        }
+        if trimmed.starts_with(']') {
+            break;
+        }
+        if let Some(path) = quoted(trimmed.trim_end_matches(',')) {
+            members.push(path);
+        }
+    }
+    members
+}
+
+/// A path without its `.` and `..` parts.
+fn normalized(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
+}
+
+/// The crates of this repository that a member depends on.
+fn workspace_dependencies(root: &Path, member: &str) -> Vec<String> {
+    let Ok(manifest) = fs::read_to_string(root.join(member).join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    // The dependencies section, and only that one: the dev-dependencies of
+    // a test may use what the crate itself must not.
+    let dependencies = manifest
+        .split("[dev-dependencies]")
+        .next()
+        .unwrap_or_default();
+    let mut edges = Vec::new();
+    for line in dependencies.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(path) = path_dependency(trimmed) else {
+            continue;
+        };
+        let joined = root.join(member).join(path);
+        let relative = joined.strip_prefix(root).unwrap_or(&joined);
+        let target = normalized(&relative.to_string_lossy());
+        if target != member {
+            edges.push(target);
+        }
+    }
+    edges
+}
+
+/// The crates of this repository that the given member reaches.
+///
+/// The check follows the edges **inside** this repository: a crate can only
+/// drag a mechanism in through another crate of this repository, and those
+/// are the edges a commit introduces. Las aristas que salen del workspace
+/// —las de las crates heredadas, que no se compilan— no se siguen.
+fn the_workspace_closure(root: &Path, member: &str) -> Vec<String> {
+    let members = workspace_members(root);
+    let mut seen: Vec<String> = Vec::new();
+    let mut pending = vec![member.to_string()];
+    while let Some(current) = pending.pop() {
+        if seen.contains(&current) {
+            continue;
+        }
+        seen.push(current.clone());
+        for target in workspace_dependencies(root, &current) {
+            if members.contains(&target) && !seen.contains(&target) {
+                pending.push(target);
+            }
+        }
+    }
+    seen
+}
+
 /// The protected crates do not depend on a concrete mechanism.
+///
+/// The check is not only about the manifest of the protected crate: a crate
+/// that does not name a database engine can still drag one in through
+/// another crate of this repository, and then the boundary it was supposed
+/// to keep is a line in a file. So the check follows the edges inside the
+/// workspace.
 #[test]
 fn a_protected_crate_does_not_depend_on_a_concrete_mechanism() {
     let root = repository_root();
     let mut offences = Vec::new();
 
     for crate_path in PROTECTED_CRATES {
-        let manifest = root.join(crate_path).join("Cargo.toml");
-        let Ok(content) = fs::read_to_string(&manifest) else {
-            continue;
-        };
-        // The dependencies section, and only that one: the dev-dependencies
-        // of a test may use what the crate itself must not.
-        let dependencies = content
-            .split("[dev-dependencies]")
-            .next()
-            .unwrap_or_default();
-        for banned in BANNED_DEPENDENCIES {
-            if names_dependency(dependencies, banned) {
-                offences.push(format!(
-                    "{} depends on {banned}, which the protected core must not name",
-                    manifest.strip_prefix(&root).unwrap_or(&manifest).display()
-                ));
+        for member in the_workspace_closure(&root, crate_path) {
+            let manifest = root.join(&member).join("Cargo.toml");
+            let Ok(content) = fs::read_to_string(&manifest) else {
+                continue;
+            };
+            // The dependencies section, and only that one: the
+            // dev-dependencies of a test may use what the crate itself must
+            // not.
+            let dependencies = content
+                .split("[dev-dependencies]")
+                .next()
+                .unwrap_or_default();
+            for banned in BANNED_DEPENDENCIES {
+                if names_dependency(dependencies, banned) {
+                    offences.push(format!(
+                        "{member} depends on {banned}, and {crate_path} reaches it; the protected \
+                         core must not name a concrete mechanism"
+                    ));
+                }
             }
         }
     }
@@ -302,8 +436,9 @@ fn there_is_no_success_of_filler() {
 /// The checks are able to fail.
 ///
 /// A check that cannot fail is not a check. This proves that the dependency
-/// check recognises a banned dependency when it meets one, and that a
-/// commented line is not one.
+/// check recognises a banned dependency when it meets one, that a
+/// commented line is not one, and that the edge between two crates of this
+/// repository is recognised as an edge.
 #[test]
 fn the_dependency_check_would_catch_a_banned_dependency() {
     let manifest = "[dependencies]\nsurrealdb = { workspace = true }\n";
@@ -318,5 +453,47 @@ fn the_dependency_check_would_catch_a_banned_dependency() {
     assert!(
         !names_dependency("[dependencies]\n# surrealdb = \"1\"\n", "surrealdb"),
         "a commented line is not a dependency"
+    );
+    assert_eq!(
+        path_dependency("hodei-audit = { path = \"../hodei-audit\" }"),
+        Some("../hodei-audit".to_string()),
+        "the check must recognise the edge between two crates of this repository"
+    );
+    assert_eq!(
+        path_dependency("serde = { workspace = true }"),
+        None,
+        "a dependency of the workspace is not an edge inside it"
+    );
+}
+
+/// The closure follows the edges inside the workspace.
+///
+/// A check that walks nothing finds nothing, and then it passes forever.
+/// This proves that the closure of a protected crate reaches the crates
+/// that crate reaches.
+#[test]
+fn the_closure_follows_the_edges_inside_the_workspace() {
+    let root = repository_root();
+
+    let closure = the_workspace_closure(&root, "crates/hodei-catalog-storage");
+    assert!(
+        closure.contains(&"crates/hodei-catalog-storage".to_string()),
+        "a crate reaches itself: {closure:?}"
+    );
+    assert!(
+        closure.contains(&"crates/hodei-audit".to_string()),
+        "the adapter reaches the audit contract: {closure:?}"
+    );
+    assert!(
+        closure.contains(&"crates/hodei-catalog".to_string()),
+        "the adapter reaches the catalog domain: {closure:?}"
+    );
+
+    // Y el dominio del catálogo no llega al adaptador: esa es la frontera
+    // que el nombre del crate protege.
+    let domain = the_workspace_closure(&root, "crates/hodei-catalog");
+    assert!(
+        !domain.contains(&"crates/hodei-catalog-storage".to_string()),
+        "the domain must not reach the adapter: {domain:?}"
     );
 }

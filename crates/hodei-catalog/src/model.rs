@@ -379,6 +379,13 @@ pub struct MutableTag {
 /// Publicar son cuatro cosas a la vez: la versión, el asset, la referencia
 /// al blob y las etiquetas. Van juntas porque un asset sin versión no
 /// resuelve, y una versión sin asset no se puede descargar.
+///
+/// La publicación lleva **quién** publica y con qué correlación, porque
+/// publicar es una operación de alguien: sin eso, el rastro de lo que se
+/// publicó no dice quién lo publicó. Lo que **no** lleva es la cuenta: el
+/// tenant del evento de auditoría es la cuenta **verificada** del
+/// principal, y una cuenta que declara el llamante no es una cuenta
+/// verificada.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Publication {
     /// El repositorio donde se publica.
@@ -393,6 +400,15 @@ pub struct Publication {
     pub size_bytes: u64,
     /// Las etiquetas que nacen con esta publicación.
     pub tags: Vec<String>,
+    /// El actor que publica.
+    ///
+    /// El catálogo verifica la **cuenta** contra el autorizador, no el
+    /// subject: por eso el actor lo declara quien publica, y por eso no se
+    /// llama "verificado". En la capa HTTP el actor sale del principal
+    /// verificado, así que allí sí lo es.
+    pub actor: String,
+    /// La correlación de la petición.
+    pub correlation_id: String,
 }
 
 /// Lo que la publicación dejó.

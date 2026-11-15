@@ -89,6 +89,33 @@ Cambios que todavia no estan en una release. El formato sigue
   que la transacción se **cancela** cuando una sentencia del lote falla y
   que el `check()` de la respuesta mira todos los resultados, no solo el
   último.
+- El **outbox de auditoría** (`hodei-audit` y su adaptador
+  `hodei-catalog-storage`): la publicación del catálogo escribe ahora el
+  evento de auditoría **dentro de la misma transacción** que escribe el
+  asset, de modo que el asset y su evento tienen **una sola frontera de
+  commit**: si el evento no se puede escribir, **el asset no se publica**.
+  El blob al que apunta puede quedar *staged*, y eso es reconciliable; un
+  asset publicado sin evento no lo es. El evento lleva actor, cuenta
+  **verificada** (la del principal, no la que declara el llamante), acción,
+  recurso, digest, resultado (`allowed`, `denied`, `conflict`, `failed`) y
+  correlación, y no lleva el bearer ni las credenciales. El límite de la
+  auditoría está escrito: una publicación **mal formada** no deja evento,
+  y una publicación **bien formada a la que el sistema se niega a servir**
+  deja un evento `failed`, porque ocurrió. La entrega es un
+  problema aparte: el dispatcher reclama el evento pendiente con un
+  compare-and-set, lo entrega y **solo entonces** lo marca como entregado;
+  solo el worker que lo tiene puede marcarlo, así que un lease que expiró
+  no permite decir nada de ese evento (y un worker lento no puede devolverlo
+  al mercado mientras otro lo entrega). Si el
+  sink falla, el evento vuelve a `pending` con su contador de intentos y su
+  último error, de modo que lo que no se entregó se puede mirar y nunca se
+  afirma una entrega que no ocurrió. La reentrega entrega el **mismo**
+  evento (`event_id` es la clave de idempotencia): el outbox entrega al menos
+  una vez, y el efecto lógico de un evento es del almacén de auditoría, que
+  es el que guarda por ese identificador. Una publicación idempotente no
+  escribe un segundo evento: no hubo un segundo hecho. El contrato de auditoría vive
+  en su propio crate, que el catálogo y la aplicación HTTP usan sin
+  duplicarlo.
 - El almacen de contenido del hub (`hodei-hub`) acepta **subidas en
   streaming**: `BlobWriteSession` recibe el contenido a trozos, con un
   fichero de staging propio por escritura, y el `commit` publica el

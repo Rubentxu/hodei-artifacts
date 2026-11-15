@@ -36,8 +36,9 @@ no llega a ese listón está etiquetado, y la etiqueta dice en qué estado está
 | `crates/hodei-evidence` | Contexto de evidencia y registro de eventos (M1) y los normalizadores de los estandares (M2): los contratos, sin adapter. | `implementada` |
 | `crates/hodei-evidence-storage` | Los adaptadores de la evidencia sobre el almacen que ya existe. | `implementada` |
 | `crates/hodei-hub` | El almacen de contenido direccionado por su digest (HAR-01), con la cuarentena y el canal de confianza. | `implementada` |
-| `crates/hodei-catalog` | El catalogo durable de repositorios, assets, versiones y referencias (HAR-02): los contratos, sin adapter. | `implementada` |
-| `crates/hodei-catalog-storage` | El adaptador del catalogo sobre SurrealDB, con la transaction de publicacion. | `implementada` |
+| `crates/hodei-catalog` | El catálogo durable de repositorios, assets, versiones y referencias (HAR-02): los contratos, sin adapter. | `implementada` |
+| `crates/hodei-catalog-storage` | El adaptador del catálogo sobre SurrealDB, con la transacción de publicación. | `implementada` |
+| `crates/hodei-audit` | El contrato de auditoría: el evento, el sink y el outbox (HAR-03). Sin adapter y sin motor de base de datos. | `implementada` |
 | `.` (`hodei-artifacts-api`) | API HTTP: composición, arranque, rutas, auditoría. | `implementada` |
 
 Esta tabla no es el inventario completo del workspace: los contextos de M5 a
@@ -48,7 +49,10 @@ El kernel no depende de ningún mecanismo concreto: ni SurrealDB, ni Axum, ni
 HTTP. Eso no es una aspiración, lo comprueba una comprobación de forma
 arquitectónica. Lo mismo se comprueba ahora del **dominio del catalogo**:
 `crates/hodei-catalog` no puede nombrar un motor de base de datos, porque no
-es su dependencia.
+es su dependencia. Y del **contrato de auditoría**: `crates/hodei-audit`
+define el evento, el sink y el outbox sin nombrar el motor donde se
+guardan, porque es un contrato que usan dos contextos con Stores
+distintos.
 
 ### 2.2 Crates en el árbol que **no** son miembros — material heredado
 
@@ -88,6 +92,7 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 | Autenticación: secreto compartido y JWKS/RS256 | toda ruta protegida | `tests/production_auth.rs`, `tests/repository_restart_contract.rs` |
 | Autorización Cedar con bundle declarado | superficie de repositorios | `tests/policy_circuits.rs` |
 | Auditoría de seguridad | eventos de las mutaciones | `tests/audit_events.rs`, `tests/iam_audit.rs` |
+| Outbox de auditoría | frontera única de commit y entrega | `crates/hodei-catalog-storage/tests/har03_outbox_contract.rs` |
 | Comando operador del índice de políticas | `ensure-iam-index` | `tests/iam_account_index.rs` |
 
 ### 3.2 Experimentales
@@ -1143,157 +1148,256 @@ El hito donde Hodei deja de ser un catalogo y pasa a ser el que guarda y distrib
 
 **La limitacion, escrita:** el subconjunto de OCI es parcial (el manifiesto de imagen, su configuracion y sus capas; el indice multi-plataforma, los referrers y las firmas no), la promocion cambia el canal sin mover bytes porque no hay bytes que muevan entre canales, y laReferences y el GC segura no estanTodavia.
 
-## 10-tresdecies — M10: el CAS de produccion
+## 10-tresdecies — M10: el CAS de producción
 
-La ampliacion del hub hacia un repository manager real empieza por la base: el almacen de contenido tiene que poder recibir los bytes de un cliente sin que eso sea un problema. El CAS de M9 era correcto en su garantia central — el mismo contenido no se guarda dos veces, y lo que sale por el digest es lo que entro — pero tenia tresyeltones que lo hacian inoperable con artefactos de cliente.
+La ampliación del hub hacia un repository manager real empieza por la base: el almacén de contenido tiene que poder recibir los bytes de un cliente sin que eso sea un problema. El CAS de M9 era correcto en su garantía central — el mismo contenido no se guarda dos veces, y lo que sale por el digest es lo que entró — pero tenía tres yeltones que lo hacían inoperable con artefactos de cliente.
 
 **Lo que faltaba y ahora hay:**
 
-- **El staging era un nombre por digest.** `path.with_extension("tmp")` daba a cada digest **un** temporal, y dos productores concurrentes del mismo contenido escribian en el **mismo** fichero: el renombrado del uno podia publicar los bytes del otro. Ahora cada escritura en curso tiene su **propio** fichero en `<root>/staging/<pid>-<nanos>-<contador>.part`.
-- **El contenido se bufferizaba entero.** `put(&[u8])` recibia el artefacto completo en memoria, y no habia forma de subir uno que no cupiera. Ahora hay `BlobWriteSession`: `append` por trozos, `commit` atomico, `abort`.
+- **El staging era un nombre por digest.** `path.with_extension("tmp")` daba a cada digest **un** temporal, y dos productores concurrentes del mismo contenido escribían en el **mismo** fichero: el renombrado del uno podía publicar los bytes del otro. Ahora cada escritura en curso tiene su **propio** fichero en `<root>/staging/<pid>-<nanos>-<contador>.part`.
+- **El contenido se bufferizaba entero.** `put(&[u8])` recibía el artefacto completo en memoria, y no había forma de subir uno que no cupiera. Ahora hay `BlobWriteSession`: `append` por trozos, `commit` atómico, `abort`.
 - **El commit no validaba nada.** Publicaba lo que hubiera, y si el cliente declaraba un digest que no era el suyo, se publicaba igual. Ahora el commit valida **algoritmo, longitud y digest** contra lo declarado (`CommitExpectation`); si algo no cuadra, el staging se elimina y **no queda ninguna referencia visible**.
-- **Los fallos se confundian.** Cualquier error de lectura salia como `NotFound`: un disco lleno y una corrupcion eran lo mismo. Ahora `NotFound`, `Corrupted`, `LengthMismatch`, `DigestMismatch`, `UnsupportedAlgorithm` y `Unavailable` son fallos distintos.
-- **No habia limpieza.** Una subida que se caia dejaba su staging en disco para siempre. Ahora el staging caducado se limpia (`clean_expired_staging`) y el vivo no se toca; y una sesion abandonada borra el suyo al soltarse.
+- **Los fallos se confundían.** Cualquier error de lectura salía como `NotFound`: un disco lleno y una corrupción eran lo mismo. Ahora `NotFound`, `Corrupted`, `LengthMismatch`, `DigestMismatch`, `UnsupportedAlgorithm` y `Unavailable` son fallos distintos.
+- **No había limpieza.** Una subida que se caía dejaba su staging en disco para siempre. Ahora el staging caducado se limpia (`clean_expired_staging`) y el vivo no se toca; y una sesión abandonada borra el suyo al soltarse.
 
-**La garantia que no cambia.** El mismo contenido no se guarda dos veces, y lo que sale por el digest es lo que entro. Lo que cambia es **como** se llega ahi: por trozos, con staging propio, y sin publicar nada que no sea exactamente lo declarado.
+**La garantía que no cambia.** El mismo contenido no se guarda dos veces, y lo que sale por el digest es lo que entró. Lo que cambia es **cómo** se llega ahí: por trozos, con staging propio, y sin publicar nada que no sea exactamente lo declarado.
 
 **Las dos fronteras, escritas:**
 
-- `exists` dice si el contenido **esta**, no si esta **bien**. La integridad se comprueba con `verify` o con una lectura que verifica (`ReadPolicy::Verify` es la politica por defecto; `Trust` existe para contenido ya verificado y no comprueba nada).
-- El commit de un contenido que ya esta **no** revalida el blob entero: comprueba su longitud, que es barato, y deja la verificacion profunda al scrub (HAR-21). Rehashear un artefacto de 1 GiB en cada subida duplicada no es un coste que un registry pueda pagar.
+- `exists` dice si el contenido **está**, no si está **bien**. La integridad se comprueba con `verify` o con una lectura que verifica (`ReadPolicy::Verify` es la política por defecto; `Trust` existe para contenido ya verificado y no comprueba nada).
+- El commit de un contenido que ya está **no** revalida el blob entero: comprueba su longitud, que es barato, y deja la verificación profunda al scrub (HAR-21). Rehashear un artefacto de 1 GiB en cada subida duplicada no es un coste que un registry pueda pagar.
 
-**Lo que sigue sin estar:** las referencias y la garbage collection segura (HAR-10), el servidor OCI (HAR-06), y el resto del protocolo. Esto es solo el suelo sobre el que se construye lo demas.
+**Lo que sigue sin estar:** las referencias y la garbage collection segura (HAR-10), el servidor OCI (HAR-06), y el resto del protocolo. Esto es solo el suelo sobre el que se construye lo demás.
 
-## 10-cuartovieces — M10: el catalogo durable
+## 10-cuartovieces — M10: el catálogo durable
 
 El CAS de M10 sabe guardar bytes y nombrarlos por su digest. Faltaba
-responder a la pregunta de al lado: **que hay donde**, y quien puede
+responder a la pregunta de al lado: **qué hay dónde**, y quién puede
 verlo. Un registro que no responde a eso no es un registro: es una carpeta
 con bytes.
 
-**El catalogo como contexto acotado, no como un campo mas del hub.** La
-separacion sigue el patron que ya usan la evidencia y la confianza: el
+**El catálogo como contexto acotado, no como un campo más del hub.** La
+separación sigue el patrón que ya usan la evidencia y la confianza: el
 dominio en `hodei-catalog` (que **no puede** nombrar un motor de base de
 datos, porque no es su dependencia) y el adaptador en
 `hodei-catalog-storage`. El compilador comprueba la frontera.
 
-**Lo que hay en el codigo:**
+**Lo que hay en el código:**
 
-- **La identidad del repositorio**: cuenta, clave, HRN v2 canonico, formato,
-  modo (`hosted`/`proxy`/`group`) y configuracion **versionada** (cada
-  cambio sube la version; el cliente no la pone). Un modo que esta release
+- **La identidad del repositorio**: cuenta, clave, HRN v2 canónico, formato,
+  modo (`hosted`/`proxy`/`group`) y configuración **versionada** (cada
+  cambio sube la versión; el cliente no la pone). Un modo que esta release
   no sirve se rechaza con un error tipado (`ModeNotImplemented`), no con un
   repositorio creado que luego no va a funcionar. El HRN tiene que ser uno
-  que la plataforma sepa **leer** (se valida contra el contrato canonico
+  que la plataforma sepa **leer** (se valida contra el contrato canónico
   `hodei-hrn`): un repositorio con un nombre que no se puede parsear es un
   repositorio que el resto de la plataforma no puede nombrar.
-- **La politica de ambito del digest** (`DigestScope`): `global` comparte
+- **La política de ámbito del digest** (`DigestScope`): `global` comparte
   el blob entre cuentas; `account_partitioned` da a cada cuenta el suyo.
-  Es una decision de la cuenta, guardada con el repositorio, y de ella sale
-  la clave con la que el CAS guarda el blob. El ambito **no cambia** en un
+  Es una decisión de la cuenta, guardada con el repositorio, y de ella sale
+  la clave con la que el CAS guarda el blob. El ámbito **no cambia** en un
   repositorio que ya tiene contenido: los bytes se publicaron bajo un
-  ambito, y ese es el ambito en el que siguen viviendo.
-- **El asset** (`cuenta` + `repositorio` + `ruta`) apunta a una **version**
-  (nombre + version, inmutable) y a su digest. La **referencia** al blob es
+  ámbito, y ese es el ámbito en el que siguen viviendo.
+- **El asset** (`cuenta` + `repositorio` + `ruta`) apunta a una **versión**
+  (nombre + versión, inmutable) y a su digest. La **referencia** al blob es
   una fila aparte: es lo que impide que el blob se recoja.
-- **La etiqueta mutable** es una fila mas. Moverla escribe esa fila y
-  nada mas: la version que queda atras conserva su digest y sus bytes. Por
+- **La etiqueta mutable** es una fila más. Moverla escribe esa fila y
+  nada más: la versión que queda atrás conserva su digest y sus bytes. Por
   eso el digest sigue siendo la identidad del contenido.
 
-**La transaccionalidad.** Publicar son cuatro cosas —version, asset,
-referencia y etiquetas— y van en una sola transaccion (`BEGIN`..`COMMIT` en
-una sola query), asi que no queda un asset que no resuelve ni una version
+**La transaccionalidad.** Publicar son cuatro cosas —versión, asset,
+referencia y etiquetas— y van en una sola transacción (`BEGIN`..`COMMIT` en
+una sola query), así que no queda un asset que no resuelve ni una versión
 sin asset. Si una de las cuatro falla, no queda ninguna. Eso no es una
-promesa del catalogo sino del motor, y se comprobo en el motor que se usa:
-en SurrealDB 2.7 el nucleo ejecuta la transaccion con control optimista y,
-cuando una sentencia del lote falla, **cancela** la transaccion y no
-ejecuta el `COMMIT` que venia detras
+promesa del catálogo sino del motor, y se comprobó en el motor que se usa:
+en SurrealDB 2.7 el núcleo ejecuta la transacción con control optimista y,
+cuando una sentencia del lote falla, **cancela** la transacción y no
+ejecuta el `COMMIT` que venía detrás
 (`surrealdb-core-2.7.0/src/dbs/executor.rs`); y el `check()` de la respuesta
-recorre **todos** los resultados del lote, no solo el ultimo
+recorre **todos** los resultados del lote, no solo el último
 (`surrealdb-2.7.0/src/api/method/query.rs`), de modo que el fallo de la
-tercera sentencia no se esconde detras del `COMMIT`. El adaptador se
-apoya en las dos cosas, y por eso fija la version 2.7 como suelo.
+tercera sentencia no se esconde detrás del `COMMIT`. El adaptador se
+apoya en las dos cosas, y por eso fija la versión 2.7 como suelo.
 
-**El conflicto, y por que no hay sobrescritura silenciosa.** Publicar en una
-ruta ocupada, o cambiar el contenido de una version publicada, recibe un
-`Conflict`: el camino ya dice algo, y moverlo es una operacion explicita
+**El conflicto, y por qué no hay sobrescritura silenciosa.** Publicar en una
+ruta ocupada, o cambiar el contenido de una versión publicada, recibe un
+`Conflict`: el camino ya dice algo, y moverlo es una operación explícita
 (`move_asset`, con su etiqueta `move_tag`), no un efecto colateral. Y la
-republicacion identica es idempotente, no un error.
+republicación idéntica es idempotente, no un error.
 
-**Escribir no es leer, y el catalogo no lo confunde.** Una escritura se
-autoriza una vez, con la accion que le corresponde, y **no** se relee por
-el camino publico al terminar: releer por ahi exigiria un permiso de
-lectura que el que escribe no tiene por que tener, y devolveria un
+**Escribir no es leer, y el catálogo no lo confunde.** Una escritura se
+autoriza una vez, con la acción que le corresponde, y **no** se relee por
+el camino público al terminar: releer por ahí exigiría un permiso de
+lectura que el que escribe no tiene por qué tener, y devolvería un
 `Denied` sobre un cambio que ya estaba escrito. Lo que se relee al
 terminar se relee por dentro, y por eso un `Denied` nombra **la clase de
-cosa** que se pidio (`repository`, `version`, `asset`, `tag`) y no siempre
+cosa** que se pidió (`repository`, `version`, `asset`, `tag`) y no siempre
 "asset".
 
-**La configuracion versionada es un compare-and-set.** El cambio de
-configuracion dice en que version parte y solo se aplica si la version que
-hay en la base es esa. Sin esa condicion, dos reconfiguraciones
-simultaneas podrian quedarse las dos con el mismo numero y ajustes
-distintos, y el numero dejaria de decir que configuracion es la que hay.
+**La configuración versionada es un compare-and-set.** El cambio de
+configuración dice en qué versión parte y solo se aplica si la versión que
+hay en la base es esa. Sin esa condición, dos reconfiguraciones
+simultáneas podrían quedarse las dos con el mismo número y ajustes
+distintos, y el número dejaría de decir qué configuración es la que hay.
 Cuando el cambio se queda fuera, se dice que hubo un conflicto y no que el
-almacenamiento no esta disponible.
+almacenamiento no está disponible.
 
-**Los identificadores no son aleatorios, y esa es la decision que sostiene
-la garantia.** Dos clientes que publican lo mismo en el mismo sitio
+**Los identificadores no son aleatorios, y esa es la decisión que sostiene
+la garantía.** Dos clientes que publican lo mismo en el mismo sitio
 escriben **el mismo registro**, y el motor detecta el conflicto de
-escritura sobre el. Se midio: el motor **persistente** rechaza al que
+escritura sobre él. Se midió: el motor **persistente** rechaza al que
 pierde con un "read or write conflict", mientras que el motor **en
 memoria** acepta las dos escrituras concurrentes del mismo registro y la
-ultima gana en silencio. Por eso las pruebas de este catalogo van contra el
-motor que se despliega: una garantia que solo se cumple en un motor no es
-una garantia del catalogo.
+última gana en silencio. Por eso las pruebas de este catálogo van contra el
+motor que se despliega: una garantía que solo se cumple en un motor no es
+una garantía del catálogo.
 
 **Y los identificadores son inyectivos.** Cada parte de un identificador
-compuesto se escapa por separado y despues se unen con un separador que
+compuesto se escapa por separado y después se unen con un separador que
 ninguna parte puede contener. Escapar la cadena ya unida no bastaba: el
 separador era indistinguible de un separador dentro de una parte, y
 `("pkg|1", "0")` y `("pkg", "1|0")` acababan en el mismo registro, con una
-publicacion pisando a la otra en silencio.
+publicación pisando a la otra en silencio.
 
 **Los tres estados de lectura que no se confunden.** `Missing` (no hay
-nada ahi), `Denied` (hay algo ahi y este principal no puede verlo; lo
-decide el puerto de autorizacion **antes** de mirar la base, para no
-filtrar la existencia de lo ajeno) y `Corrupt` (hay algo ahi y no cuadra:
-el asset y la version dicen digests distintos, la referencia no esta o no
-dice lo mismo, o la longitud real del blob no es la que el catalogo
-guarda). Confundirlos es peor que no responder: un `Missing` donde habia un
-`Denied` hace repetir al cliente; un `Corrupt` donde habia un `Missing` hace
+nada ahí), `Denied` (hay algo ahí y este principal no puede verlo; lo
+decide el puerto de autorización **antes** de mirar la base, para no
+filtrar la existencia de lo ajeno) y `Corrupt` (hay algo ahí y no cuadra:
+el asset y la versión dicen digests distintos, la referencia no está o no
+dice lo mismo, o la longitud real del blob no es la que el catálogo
+guarda). Confundirlos es peor que no responder: un `Missing` donde había un
+`Denied` hace repetir al cliente; un `Corrupt` donde había un `Missing` hace
 borrar al cliente.
 
-**La sonda de integridad pregunta por la ubicacion, no por el digest.** El
+**La sonda de integridad pregunta por la ubicación, no por el digest.** El
 mismo digest puede estar en la ranura global o en la particionada de una
-cuenta, y preguntar por el digest a secas solo encontraria la primera: un
-blob particionado sano pareceria roto. La pregunta lleva la cuenta y el
-ambito, y de ahi sale la clave con la que el CAS guarda los bytes. Lo que
+cuenta, y preguntar por el digest a secas solo encontraría la primera: un
+blob particionado sano parecería roto. La pregunta lleva la cuenta y el
+ámbito, y de ahí sale la clave con la que el CAS guarda los bytes. Lo que
 la sonda comprueba es la **longitud**, no el digest: rehashear un
 artefacto en cada lectura es un coste que un registro no puede pagar, y la
-verificacion profunda es del scrub (HAR-21).
+verificación profunda es del scrub (HAR-21).
 
-**El esquema no se re-declara encima de uno mas nuevo.** Declarar el
+**El esquema no se re-declara encima de uno más nuevo.** Declarar el
 esquema es idempotente, pero **declarar el de esta build encima del de una
-build mas nueva** no devuelve el almacen a la version nueva: las
-definiciones que ya estan no se rehacen, asi que el almacen se queda con
-un esquema mixto. Por eso `initialize` mira primero que version dice el
-almacen, y si es mas nueva que la que entiende esta build se niega a
-tocarlo (`SchemaMismatch`) en vez de escribir su numero encima y dejar que
-el numero mienta. El numero de version solo describe el esquema cuando
-esta build lo escribio.
+build más nueva** no devuelve el almacén a la versión nueva: las
+definiciones que ya están no se rehacen, así que el almacén se queda con
+un esquema mixto. Por eso `initialize` mira primero qué versión dice el
+almacén, y si es más nueva que la que entiende esta build se niega a
+tocarlo (`SchemaMismatch`) en vez de escribir su número encima y dejar que
+el número mienta. El número de versión solo describe el esquema cuando
+esta build lo escribió.
 
 **Lo que el resultado dice es lo que hay.** Republicar lo mismo no escribe
 nada, y entonces no cambia la fecha del asset ni de la referencia: el
 resultado devuelve el instante que hay en la base, no "ahora". Un
-resultado que dijera "actualizado ahora" sobre un registro que no se toco
-haria que el que se fiara del resultado creyera que el contenido se acaba
+resultado que dijera "actualizado ahora" sobre un registro que no se tocó
+haría que el que se fiara del resultado creyera que el contenido se acaba
 de publicar.
 
-**Lo que sigue sin estar:** el servidor HTTP (HAR-04), el commit de
-publicacion con outbox atomico (HAR-03), las referencias persistentes y la
-garbage collection segura (HAR-10), y el resto de formatos. El catalogo
-guarda y dice; todavia no sirve bytes por el cable. Para HAR-10 queda
-dicho: un blob publicado lo protege la fila de su **version** (que es
-inmutable y conserva digest y longitud) y, mientras la ruta lo sirva, la
-**referencia**; la recoleccion tiene que tener en cuenta las dos.
+**Lo que sigue sin estar:** el servidor HTTP (HAR-04), las referencias
+persistentes y la garbage collection segura (HAR-10), y el resto de
+formatos. El catálogo guarda y dice; todavía no sirve bytes por el cable.
+Para HAR-10 queda dicho: un blob publicado lo protege la fila de su
+**versión** (que es inmutable y conserva digest y longitud) y, mientras la
+ruta lo sirva, la **referencia**; la recolección tiene que tener en cuenta
+las dos. El commit de publicación y su outbox atómico son la sección
+siguiente.
+
+## 10-cinquies — M10: el commit de publicación y su outbox de auditoría
+
+Un catálogo que publica sin dejar rastro es un catálogo que nadie puede
+auditar. Y un rastro que se escribe **después** del commit es un rastro
+que puede no existir: el proceso se cae entre las dos cosas y el asset
+quedó publicado sin que nadie supiera quién lo publicó.
+
+**El contrato de auditoría es un crate, no un tipo repetido.** El evento
+vive en `hodei-audit` (`AuditEvent`, `AuditSink`, `AuditOutbox`), que lo
+usan el catálogo y la aplicación HTTP sin duplicarlo: un evento con dos
+definiciones es un evento que puede tener dos formas. El crate no nombra
+ningún motor de base de datos, así que el dominio y la aplicación siguen
+pudiendo depender de él sin cruzar la frontera que comprueba
+`tests/architecture_fitness.rs`.
+
+**El evento dice lo que pasó y no dice lo que no pasó.** Lleva actor,
+cuenta **verificada**, acción, recurso, digest (cuando la operación trata
+de contenido), resultado (`allowed`, `denied`, `conflict`, `failed`),
+correlación e instante. La cuenta es la del principal verificado, no la
+que declara el llamante: un evento que dice la cuenta que el llamante
+pide no es un evento, es un eco. Y el evento no lleva el bearer ni las
+credenciales: el token se consume al verificar el principal y no llega ni
+al evento ni al sink. Del **actor** hay que hablar con precisión: en la
+capa HTTP sale del principal verificado, y en el catálogo lo declara
+quien publica, porque el catálogo verifica la **cuenta** contra el
+autorizador y no el *subject*. Por eso la palabra "verificado" no se le
+pone al actor, y quien publica tiene que poner el actor que de verdad
+actuó. El texto que el que llama controla —actor, cuenta, correlación,
+acción, recurso y digest— pasa por `sanitize_text`, que quita los
+caracteres de control y lo acota: el que llama no decide cuánto ocupa el
+evento.
+
+**El outbox vive en la misma base que el catálogo, y a propósito.** La fila
+del evento se escribe **dentro de la misma transacción** que escribe el
+asset: una transacción que toca dos bases no es una transacción. Así que el
+asset y su evento tienen **una sola frontera de commit**. Si la fila del
+evento no se puede escribir, la transacción falla y **el asset no se
+publica**: no queda un hecho sin su rastro. El blob al que apunta puede
+quedarse *staged*, y eso es reconciliable; un asset publicado sin evento
+no lo es.
+
+**La entrega es un problema aparte, y se trata como tal.** El
+`AuditDispatcher` reclama un evento pendiente (un compare-and-set: dos
+workers, uno gana), lo entrega al sink y **solo entonces** lo marca como
+entregado. **Solo el worker que lo tiene puede marcarlo**: un lease que
+expiró ya no es un permiso para decir nada de ese evento. Sin esa
+condición, un worker lento podía devolver el evento al mercado mientras el
+otro lo estaba entregando, y un solo evento producía dos efectos lógicos.
+Si el sink falla, el evento vuelve a `pending` con su contador de intentos
+y su último error: lo que no se entregó se puede **mirar**. Nunca se marca
+entregado lo que no se entregó; y si la marca falla después de una entrega
+que sí ocurrió, el resultado es `uncertain`, no `delivered`: no se afirma un
+hecho que no se sabe.
+
+**La reentrega es el mismo evento.** El `event_id` es la clave de
+idempotencia, y el contrato del sink exige tratarlo como tal. Una caída
+entre la entrega y la marca vuelve a entregar el mismo evento, no crea
+otro. Pero la verdad es más corta que la promesa fácil: el outbox
+entrega **al menos una vez**, y el **efecto lógico de un evento es del
+almacén de auditoría**, que es el que guarda por ese `event_id`. El
+outbox pone la condición para que pueda haber uno solo —la misma clave
+y la misma fila—; el que lo asegura es el que guarda. El
+`InMemoryAuditSink` deduplica por `event_id` precisamente para que eso
+sea comprobable, y el sink por defecto (`tracing`) no deduplica, porque
+un log es append-only.
+
+**Lo que no se dice, no se escribe.** Una publicación idempotente —el
+mismo contenido en el mismo sitio— no escribe un segundo evento: no hubo
+un segundo hecho. Un rechazo (`denied`) y un conflicto (`conflict`) sí
+dejan evento, pero **fuera** de la transacción del catálogo, porque no hay
+mutación que atar: el rechazo no escribió nada que pueda dejar a medias.
+
+**El límite de la auditoría también está escrito.** Una petición **mal
+formada** —un repositorio vacío, una ruta, un nombre o una versión
+vacíos, un digest mal formado— se rechaza antes de la frontera de efecto
+y **no deja evento**: no es un hecho, es ruido. Una petición **bien
+formada a la que el sistema se niega a servir sí deja evento** (`failed`):
+un repositorio que no existe, un error de lectura, un modo no servido o
+una sonda del blob que falla son hechos que ocurrieron. Y si el mismo
+`event_id` llega con un contenido distinto, el outbox no conserva la fila
+vieja en silencio: lo dice, porque una contradicción tragada es una
+mentira que no se puede corregir después.
+
+**El límite que se dice en voz alta.** El outbox es durable; el sink por
+defecto (`tracing`) no: la fila sobrevive al reinicio, el log no. La
+entrega durable necesita un `AuditSink` que escriba en el almacén de
+auditoría (Audit Trail), que todavía no existe. Y las mutaciones de la
+aplicación HTTP —alta de repositorios, mutaciones de políticas IAM— siguen
+siendo best-effort: su evento se emite en el proceso y un sink caído lo
+pierde sin cambiar la respuesta. La frontera única de commit es, de
+momento, la de la publicación del catálogo. Y el outbox entrega **al menos
+una vez**: el que garantiza el efecto lógico único es el almacén de
+auditoría, que es el que guarda por `event_id`.
+
+**Lo que sigue sin estar:** el servidor HTTP del catálogo (HAR-04), las
+referencias persistentes y la garbage collection segura (HAR-10), y el
+almacén de auditoría que convertiría el outbox en entrega durable.

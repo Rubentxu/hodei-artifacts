@@ -1,0 +1,16 @@
+[package]
+name = "hodei-audit"
+version = "0.1.0"
+edition = "2024"
+description = "El contrato de auditoría de Hodei: el evento, el sink, el outbox y el dispatcher."
+license = "MIT"
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

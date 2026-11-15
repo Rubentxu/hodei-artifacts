@@ -174,7 +174,8 @@ jobs:
             --test repository_durable \
             --test repository_read \
             --test schema_persistence \
-            --test support_reconciliation || status=$?
+            --test support_reconciliation \
+            --test har03_outbox_contract || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
           echo "### Suite integration (database): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
