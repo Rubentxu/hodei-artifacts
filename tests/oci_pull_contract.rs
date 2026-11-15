@@ -19,7 +19,10 @@ use std::path::Path;
 
 use hodei_catalog::CatalogWriter;
 use hodei_hub::blob::BlobStore;
-use support::{Deployment, FIRST_ACCOUNT, FIRST_ONLY_REPOSITORY, FIRST_REPOSITORY, SECOND_ACCOUNT};
+use support::{
+    Deployment, FIRST_ACCOUNT, FIRST_ONLY_REPOSITORY, FIRST_REPOSITORY, SECOND_ACCOUNT,
+    SECOND_REPOSITORY,
+};
 
 /// El media type de un manifiesto OCI.
 const OCI_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
@@ -632,6 +635,178 @@ async fn a_blob_that_the_repository_does_not_reference_is_not_served() {
         answer.size,
         orphan.len() as u64,
         "the orphan bytes leaked in the response"
+    );
+
+    support::stop(&mut service);
+}
+
+/// Una fila que solo NOMBRA la ruta no autoriza a servir ese digest.
+///
+/// El CAS es un arbol comun: los bytes de una cuenta estan ahi, junto a
+/// los de otra. Si el pull sirviera los bytes del digest **pedido** en
+/// vez de los que la fila **referencia**, una fila que nombra una ruta
+/// serviria el contenido de otro blob, que puede ser de otra cuenta.
+///
+/// Es el reverso del caso del blob huerfano: aqui la fila existe y el
+/// contenido es de otro.
+#[tokio::test]
+async fn a_blob_that_the_repository_only_names_by_path_is_not_served() {
+    let deployment = a_oci_deployment();
+    let mut service = deployment.start(&[]);
+    let acme = support::token(FIRST_ACCOUNT, "alice");
+    let other = support::token(SECOND_ACCOUNT, "bob");
+
+    // El contenido de otra cuenta: vive en el CAS global.
+    let secret = b"the bytes of another account".to_vec();
+    let secret_digest = the_digest(&secret);
+    let secret_file = deployment.directory.path().join("secret.bin");
+    std::fs::write(&secret_file, &secret).expect("the secret is written");
+    let published = support::Curl::upload(
+        service.port,
+        &format!("/repository/{SECOND_REPOSITORY}/secret"),
+        &other,
+        &secret_file,
+        None,
+    )
+    .run();
+    assert_eq!(published.status, 201, "the other account could not publish");
+
+    // La cuenta que lo pide solo NOMBRA la ruta; la fila apunta a otro
+    // contenido. Mismo tamano a proposito: la comprobacion de tamano no
+    // debe tapar el fallo.
+    let filler = vec![b'x'; secret.len()];
+    let filler_file = deployment.directory.path().join("filler.bin");
+    std::fs::write(&filler_file, &filler).expect("the filler is written");
+    let named = support::Curl::upload(
+        service.port,
+        &format!("/repository/{FIRST_REPOSITORY}/blobs/{secret_digest}"),
+        &acme,
+        &filler_file,
+        None,
+    )
+    .run();
+    assert_eq!(named.status, 201, "the naming row could not be published");
+
+    // El pull por ese digest NO devuelve los bytes ajenos.
+    let into = deployment.directory.path().join("stolen.bin");
+    let answer = get_with_accept(
+        &deployment,
+        service.port,
+        &acme,
+        &the_oci_path("blobs", &the_digest_reference(&secret_digest)),
+        None,
+        &into,
+    );
+    assert_eq!(
+        answer.status, 404,
+        "a blob the repository does not reference was served"
+    );
+    assert_ne!(
+        std::fs::read_to_string(&into).unwrap_or_default(),
+        String::from_utf8_lossy(&secret),
+        "the pull returned the bytes of another account"
+    );
+    let body = std::fs::read_to_string(&into).unwrap_or_default();
+    assert!(
+        body.contains("BLOB_UNKNOWN"),
+        "the error does not speak OCI: {body}"
+    );
+
+    support::stop(&mut service);
+}
+
+/// Un manifiesto que declara un tipo que este registro NO sirve recibe
+/// error OCI, no un 200 con otro tipo.
+///
+/// Servirlo con un tipo distinto es un 200 que finge ser lo que el
+/// cliente pidio, y el cliente que lo pidio no lo recibio.
+#[tokio::test]
+async fn a_manifest_that_declares_an_unsupported_media_type_is_not_served_as_another_type() {
+    let deployment = a_oci_deployment();
+    let mut service = deployment.start(&[]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+
+    let index = a_manifest(
+        &the_digest(&a_config()),
+        &the_digest(&a_layer(1)),
+        INDEX_MEDIA_TYPE,
+    );
+    let digest = the_digest(&index);
+    let file = deployment.directory.path().join("index.bin");
+    std::fs::write(&file, &index).expect("the index is written");
+    let published = support::Curl::upload(
+        service.port,
+        &format!("/repository/{FIRST_REPOSITORY}/manifests/{digest}"),
+        &token,
+        &file,
+        None,
+    )
+    .run();
+    assert_eq!(published.status, 201, "the index could not be published");
+
+    // Y con un `Accept` que no lo limita, el registro lo rechaza igual:
+    // el tipo que declara el manifiesto es el que decide.
+    let into = deployment.directory.path().join("index-out.bin");
+    let answer = get_with_accept(
+        &deployment,
+        service.port,
+        &token,
+        &the_oci_path("manifests", &the_digest_reference(&digest)),
+        Some("*/*"),
+        &into,
+    );
+    assert_eq!(
+        answer.status,
+        404,
+        "an unsupported media type was served: {} body={}",
+        answer.header("content-type").unwrap_or_default(),
+        std::fs::read_to_string(&into).unwrap_or_default()
+    );
+    let body = std::fs::read_to_string(&into).unwrap_or_default();
+    assert!(
+        body.contains("MANIFEST_UNKNOWN"),
+        "the error does not speak OCI: {body}"
+    );
+
+    support::stop(&mut service);
+}
+
+/// La negociacion limita el tipo que se sirve.
+///
+/// Un cliente que solo acepta el tipo OCI no recibe un manifiesto Docker
+/// schema2 con un 200: recibe el error OCI. Servirle otro tipo seria
+/// responder con algo que no pidio.
+#[tokio::test]
+async fn a_client_that_only_accepts_one_type_is_not_served_another() {
+    let deployment = a_oci_deployment();
+    let mut service = deployment.start(&[]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+
+    // El manifiesto Docker schema2 esta sembrado en el fixture.
+    let docker_manifest = a_manifest(
+        &the_digest(&a_config()),
+        &the_digest(&a_layer(1)),
+        DOCKER_MANIFEST,
+    );
+    let docker_digest = the_digest(&docker_manifest);
+
+    let into = deployment.directory.path().join("wrong-type.bin");
+    let answer = get_with_accept(
+        &deployment,
+        service.port,
+        &token,
+        &the_oci_path("manifests", &the_digest_reference(&docker_digest)),
+        Some(OCI_MANIFEST),
+        &into,
+    );
+    assert_eq!(
+        answer.status, 404,
+        "a client that only accepts the OCI type was served the Docker one"
+    );
+    let body = std::fs::read_to_string(&into).unwrap_or_default();
+    assert!(
+        body.contains("MANIFEST_UNKNOWN"),
+        "the error does not speak OCI: {body}"
     );
 
     support::stop(&mut service);
