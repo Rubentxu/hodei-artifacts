@@ -36,12 +36,25 @@ pub struct ContentConfig {
     /// Default: `./data/hodei.cas`.
     #[serde(default = "the_default_cas_path")]
     pub cas_path: String,
+    /// How old an interrupted write may be before the store cleans it up.
+    ///
+    /// A process that dies in the middle of an upload leaves its staging
+    /// file on disk. That file is never published -- the catalog write
+    /// never happened -- but it is a file, and files pile up.
+    ///
+    /// The age is generous on purpose: the staging of a **live** upload
+    /// belongs to another process, and it must not be taken away from it.
+    ///
+    /// Default: 3600 seconds.
+    #[serde(default = "the_default_staging_max_age_secs")]
+    pub staging_max_age_secs: u64,
 }
 
 impl Default for ContentConfig {
     fn default() -> Self {
         Self {
             cas_path: the_default_cas_path(),
+            staging_max_age_secs: the_default_staging_max_age_secs(),
         }
     }
 }
@@ -49,6 +62,11 @@ impl Default for ContentConfig {
 /// The default directory of the content.
 fn the_default_cas_path() -> String {
     "./data/hodei.cas".to_string()
+}
+
+/// The default age of an interrupted write that the store cleans up.
+fn the_default_staging_max_age_secs() -> u64 {
+    3600
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -795,6 +813,18 @@ mod tests {
         assert!(!config.schema.register_iam_on_startup);
         assert_eq!(config.logging.level, "info");
         assert_eq!(config.rocksdb.path, "./target/debug/data/hodei.rocksdb");
+    }
+
+    /// The staging of an interrupted upload is cleaned up, but not too soon.
+    ///
+    /// The default has to be generous: the staging of a **live** upload
+    /// belongs to another process, and taking it away breaks an upload
+    /// that is working.
+    #[test]
+    fn the_staging_of_an_interrupted_upload_expires_but_not_at_once() {
+        let config = AppConfig::default();
+        assert_eq!(config.content.staging_max_age_secs, 3600);
+        assert!(config.content.staging_max_age_secs > 0);
     }
 
     #[test]

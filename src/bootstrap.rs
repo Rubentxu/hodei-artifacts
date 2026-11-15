@@ -28,6 +28,7 @@ use hodei_policies::build_schema::ports::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Duration;
 use surrealdb::Surreal;
 use surrealdb::engine::local::RocksDb;
 use tracing::{info, warn};
@@ -243,6 +244,23 @@ pub async fn bootstrap(
             FileBlobStore::new(&config.content.cas_path)
                 .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
         );
+        // The staging that an interrupted upload leaves behind is cleaned
+        // here, at the boot. It is never published -- the catalog write
+        // never happened -- but it is a file, and a process that dies
+        // mid-upload leaves one behind every time.
+        //
+        // Only the **expired** ones are removed: the staging of a live
+        // upload belongs to another process, and taking it away would
+        // break an upload that is working.
+        let expired = content
+            .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs))
+            .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+        if expired > 0 {
+            warn!(
+                expired,
+                "the staging of interrupted uploads was removed at the boot"
+            );
+        }
         app_state
             .with_catalog(reader, writer)
             .with_content_store(content)
