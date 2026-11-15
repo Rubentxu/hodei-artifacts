@@ -301,8 +301,12 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
     // más que la caducidad por defecto (una hora). Y al lado se deja un
     // staging **vivo**, como el de una subida de otro proceso, que es lo
     // que el arranque no tiene que tocar.
-    deployment.age_the_staging(Duration::from_secs(2 * 3600));
+    //
+    // El vivo también lleva dos horas: si lo protegiera solo su fecha,
+    // el arranque se lo llevaría. Lo que lo protege es el **bloqueo**,
+    // que es lo que dice que alguien lo está escribiendo.
     let live = deployment.a_live_staging();
+    deployment.age_the_staging(Duration::from_secs(2 * 3600));
 
     // Al reiniciar, el servicio limpia lo que encuentra caducado y
     // respeta lo que está vivo. Y se reinicia con la configuración de

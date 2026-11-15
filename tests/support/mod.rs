@@ -185,6 +185,24 @@ fn without_the_colors(text: &str) -> String {
     plain
 }
 
+/// El nombre que el almacén le pone a una escritura en curso.
+///
+/// `<pid>-<nanos:x>-<counter:x>.part`: el pid del proceso que escribe, el
+/// instante y un contador. El arnés lo copia porque lo que quiere es un
+/// staging **de verdad**, con el nombre que el almacén reconoce: un
+/// fichero con otro nombre no es una escritura en curso, y el almacén no
+/// lo toca.
+fn a_staging_name() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{nanos:x}-{counter:x}.part", std::process::id())
+}
+
 /// Un despliegue limpio: un directorio, una base, un almacén, las
 /// políticas y el esquema.
 ///
@@ -199,6 +217,12 @@ pub struct Deployment {
     pub cas: String,
     /// El directorio del staging del almacén de contenido.
     pub staging: PathBuf,
+    /// Los ficheros de staging que el arnés tiene **bloqueados**.
+    ///
+    /// El bloqueo es lo que dice que una subida está en curso, y el
+    /// fichero vive mientras el descriptor vive: por eso se guardan
+    /// aquí y no en una variable suelta.
+    lives: Mutex<Vec<std::fs::File>>,
 }
 
 impl Deployment {
@@ -217,6 +241,7 @@ impl Deployment {
             db,
             cas,
             staging,
+            lives: Mutex::new(Vec::new()),
         }
     }
 
@@ -273,15 +298,22 @@ impl Deployment {
 
     /// Deja un staging **vivo**, como el de una subida de otro proceso.
     ///
-    /// Es un fichero recién escrito en el directorio de staging: lo que
-    /// el arranque tiene que respetar, porque pertenece a una subida que
-    /// está en curso.
+    /// Es un fichero recién escrito en el directorio de staging, con el
+    /// nombre que el almacén le pone a una escritura, y **bloqueado**:
+    /// el bloqueo es lo que dice que la subida está en curso, y lo que
+    /// el arranque tiene que respetar. Un fichero sin bloquear sería el
+    /// de un proceso que se quedó sin escribir, y ese sí se limpia.
+    ///
+    /// El descriptor se queda en el despliegue, porque el bloqueo vive en
+    /// el descriptor: si se soltara, el staging dejaría de estar vivo.
     pub fn a_live_staging(&self) -> PathBuf {
-        let path = self
-            .staging
-            .join(format!("live-{}.part", std::process::id()));
-        std::fs::write(&path, b"una subida que esta en curso")
-            .expect("the live staging is written");
+        let path = self.staging.join(a_staging_name());
+        let file = std::fs::File::create(&path).expect("the live staging is written");
+        file.try_lock().expect("the live staging is locked");
+        self.lives
+            .lock()
+            .expect("the lives of the harness")
+            .push(file);
         path
     }
 
