@@ -800,6 +800,20 @@ async fn a_conditional_write_with_an_if_none_match_star_on_an_occupied_path_fail
     )
     .await;
     assert_eq!(answer.status, StatusCode::PRECONDITION_FAILED);
+
+    // Y lo que había sigue siendo lo que había: la condición dice que no
+    // se escriba, no que se sustituya.
+    let downloaded = send(
+        &contract.app,
+        Method::GET,
+        &format!("/repository/{REPOSITORY}/file.bin"),
+        Some(ALLOWED),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(downloaded.status, StatusCode::OK);
+    assert_eq!(downloaded.body, CONTENT);
 }
 
 // ---------------------------------------------------------------------------
