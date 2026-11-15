@@ -1398,6 +1398,77 @@ momento, la de la publicación del catálogo. Y el outbox entrega **al menos
 una vez**: el que garantiza el efecto lógico único es el almacén de
 auditoría, que es el que guarda por `event_id`.
 
-**Lo que sigue sin estar:** el servidor HTTP del catálogo (HAR-04), las
-referencias persistentes y la garbage collection segura (HAR-10), y el
-almacén de auditoría que convertiría el outbox en entrega durable.
+**Lo que sigue sin estar:** las referencias persistentes y la garbage
+collection segura (HAR-10), y el almacén de auditoría que convertiría el
+outbox en entrega durable.
+
+## 10-seisdecies — M10: la superficie de contenido crudo
+
+El catálogo sabe **qué hay dónde**. Faltaba lo de al lado: **servirlo**.
+Un usuario que quiere usar Hodei como servidor binario de verdad no
+quiere un catálogo, quiere publicar un fichero y volver a bajarlo.
+
+**La superficie es pequeña a propósito.** `PUT` publica, `GET` descarga y
+`HEAD` describe, y las tres hablarían con un repositorio `raw` en modo
+`hosted`. Un repositorio crudo no tiene paquetes, ni versiones, ni
+formatos: tiene bytes en una ruta, y por eso no comparte semántica con
+OCI, Maven ni npm. La superficie **no está bajo `/api/v1`**: la API
+administrativa y el endpoint que sirve paquetes son cosas distintas, y un
+cliente que habla con una no tiene por qué creer que habla con la otra.
+
+**El orden de las cosas es el mismo en las tres peticiones**, y por eso
+está escrito en un sitio: autenticar, leer la ruta, buscar el
+repositorio en la cuenta verificada y **después** pedir la decisión de
+Cedar. La ruta se lee del URI **crudo** (`OriginalUri`), no del
+decodificado: un `%2e%2e` que ya ha pasado a ser `..` no se puede ni ver
+ni refutar. Y el recurso de la decisión es el **repositorio**, porque una
+ruta concreta no es un recurso con identidad propia en el catálogo.
+
+**Las reglas de la ruta son estrictas, y se comprueban antes de tocar el
+almacén.** Cada segmento se decodifica una vez y tiene que ser un
+`pchar` de RFC 3986: ni barras, ni barras invertidas, ni el espacio, ni
+los delimitadores que le cambian el sentido a la referencia, y sin ser
+`.` ni `..`. Como el símbolo `%` no es un `pchar`, un doble codificado es
+una forma que todavía lleva codificación dentro, y por eso no es un
+nombre: se rechaza. Eso no es un filtro estricto por gusto: es lo que
+hace que la ruta sea **la misma** para quien la escribe y para quien la
+guarda. Un traversal que se acepta en silencio es un fichero que un día
+está en un sitio y otro en otro.
+
+**La sustitución la decide el repositorio, no el cliente.** Publicar en
+una dirección que ya tiene contenido lo sustituye, y dos clientes que
+publican en la misma dirección se pisan sin que ninguno se entere. Por eso
+la política vive en la configuración **versionada** del repositorio
+(`raw.replace`), y por defecto la dirección publica **una vez**:
+republicar el mismo contenido es idempotente, y publicar otro es un
+`409` cuya escritura se aborta —no queda ni un byte en el almacén. El
+catálogo, que ya tenía el `Conflict` para el caso general, gana aquí la
+opción explícita de reponer (`Publication.overwrite`), que solo se usa
+cuando la política lo permite.
+
+**El `416` lleva la longitud del contenido en la cabecera**, no en el
+cuerpo: RFC 9110 lo dice así, y sin `Content-Range` el cliente no sabe
+ni cuánto tiene.
+
+**La frontera de autorización, y su límite.** La decisión de Cedar se
+toma en la frontera HTTP, con la acción que corresponde
+(`UploadAsset`, `DownloadAsset`) y el HRN canónico del repositorio. El
+catálogo **no vuelve a decidir**: su puerto de autorización no lleva la
+región, y el HRN sí la lleva, así que una segunda decisión caería sobre un
+recurso que puede no ser el mismo que evaluó la primera —y dos decisiones
+sobre recursos distintos no son una decisión más fuerte. Lo que el
+catálogo **sí** garantiza es el aislamiento por cuenta, y no por cortesía:
+lo lleva la clave de cada fila, no el decisor.
+
+**La prueba del proceso real.** El contrato en proceso (`oneshot`) prueba
+el enrutado, las reglas y los códigos; no prueba que los bytes estén en
+disco. Para eso está `tests/raw_hosted_restart_contract.rs`: el binario
+de verdad en un puerto de verdad, un `curl` de verdad publicando y
+descargando, un `sha256sum` de verdad comparando los dos ficheros, el
+proceso parado y vuelto a arrancar sobre el mismo almacén, y el contenido
+sigue ahí y sigue siendo **los mismos bytes**.
+
+**Lo que sigue sin estar:** el alta del repositorio en el catálogo por
+HTTP (esta superficie sirve los repositorios que ya están), el ámbito de
+digest particionado por cuenta (un `501` que lo dice claro), los modos
+`proxy` y `group`, y la recolección de blobs sin referencia.

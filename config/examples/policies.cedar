@@ -19,3 +19,13 @@ permit(
     action == Artifacts::Action::"ReadCapsule",
     resource
 );
+permit(
+    principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+    action == Artifacts::Action::"UploadAsset",
+    resource
+);
+permit(
+    principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+    action == Artifacts::Action::"DownloadAsset",
+    resource
+);

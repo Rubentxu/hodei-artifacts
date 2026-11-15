@@ -409,6 +409,64 @@ pub struct Publication {
     pub actor: String,
     /// La correlación de la petición.
     pub correlation_id: String,
+    /// Si la ruta puede apuntar a OTRA versión cuando ya apunta a una.
+    ///
+    /// El catálogo es, por defecto, **inmutable**: una ruta que ya apunta
+    /// a una versión no se mueve sola, y publicar otro contenido en la
+    /// misma ruta es un conflicto. Eso es lo correcto para un catálogo de
+    /// paquetes, donde una versión publicada es un hecho que no se
+    /// reescribe.
+    ///
+    /// Un servidor de contenido **crudo** es otra cosa: su ruta es la
+    /// dirección del contenido, y reenviar un fichero a la misma
+    /// dirección es reponer lo que hay. Por eso la sustitución es una
+    /// **decisión explícita** y no un efecto secundario: quién publica
+    /// dice si puede, y quién no lo dice, no puede.
+    ///
+    /// Lo que se sustituye es el **puntero**: la versión anterior no se
+    /// borra ni se reescribe, sigue estando, y la ruta pasa a apuntar a
+    /// la nueva.
+    #[serde(default)]
+    pub overwrite: bool,
+    /// La condición que el cliente exige sobre lo que hay ahora.
+    ///
+    /// No es un adorno del llamante: es lo que hace que la escritura sea
+    /// **condicional**, y el catálogo la comprueba **dentro de la misma
+    /// transacción** que escribe las filas. Comprobarla antes, en la
+    /// frontera, deja una ventana entre la comprobación y la escritura en
+    /// la que otra publicación se cuela.
+    ///
+    /// Sin condición, la publicación es lo que es: una escritura.
+    #[serde(default)]
+    pub precondition: Option<Precondition>,
+}
+
+/// Lo que el cliente exige que haya en la ruta antes de escribir.
+///
+/// No es lo mismo que un conflicto: el conflicto dice que hay algo
+/// distinto de lo que se publica, y la precondición dice que **lo que
+/// hay** no es lo que el cliente esperaba. El cliente los trata distinto,
+/// y por eso el catálogo los distingue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Precondition {
+    /// Lo que hay en la ruta tiene que ser uno de estos contenidos.
+    ///
+    /// Es el `If-Match` de RFC 9110: una etiqueta, o una lista de
+    /// etiquetas de las que tiene que coincidir una.
+    Present(Vec<ContentDigest>),
+    /// En la ruta no puede haber nada.
+    ///
+    /// Es el `If-None-Match: *` de RFC 9110.
+    Absent,
+    /// En la ruta tiene que haber algo.
+    ///
+    /// Es el `If-Match: *` de RFC 9110.
+    Exists,
+    /// Lo que hay en la ruta tiene que ser **otro** contenido.
+    ///
+    /// Es el `If-None-Match` con etiquetas sobre una escritura: "escribe,
+    /// pero solo si lo que hay no es ninguno de estos".
+    Other(Vec<ContentDigest>),
 }
 
 /// Lo que la publicación dejó.
@@ -426,4 +484,24 @@ pub struct PublishOutcome {
     pub reference: BlobReference,
     /// Si las filas se crearon.
     pub created: bool,
+    /// Lo que pasó con la fila del asset.
+    ///
+    /// `created` dice si se escribió algo, y no dice **qué**: publicar
+    /// por primera vez y reponer lo que hay escriben filas las dos, y
+    /// para el cliente no es lo mismo. La disposición lo dice.
+    pub disposition: AssetDisposition,
+}
+
+/// Lo que pasó con la fila del asset de una publicación.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssetDisposition {
+    /// La fila no existía, y se ha creado.
+    Created,
+    /// La fila existía, y se ha movido a otro contenido.
+    ///
+    /// La versión anterior no se borra ni se reescribe: lo que se mueve es
+    /// el puntero.
+    Replaced,
+    /// La fila ya estaba con este contenido, y no se ha tocado.
+    Unchanged,
 }

@@ -106,6 +106,8 @@ fn publication(repository: &str, asset_path: &str, content: &[u8]) -> Publicatio
         tags: Vec::new(),
         actor: ACTOR.to_string(),
         correlation_id: CORRELATION.to_string(),
+        overwrite: false,
+        precondition: None,
     }
 }
 

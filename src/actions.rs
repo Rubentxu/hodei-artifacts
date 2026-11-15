@@ -44,6 +44,21 @@ pub fn access_admin_api() -> ActionId {
     ActionId::new("admin", "AccessAdminApi").expect("a valid action")
 }
 
+/// Publishing content in a repository.
+///
+/// Publishing and downloading are two different actions because a
+/// deployment may want one without the other: a principal that only
+/// publishes is a write-only principal, and a principal that only reads
+/// is a mirror. With a single action, a permission cannot be said.
+pub fn upload_asset() -> ActionId {
+    ActionId::new("artifacts", "UploadAsset").expect("a valid action")
+}
+
+/// Downloading content from a repository.
+pub fn download_asset() -> ActionId {
+    ActionId::new("artifacts", "DownloadAsset").expect("a valid action")
+}
+
 /// Every action the service authorizes with.
 pub fn all() -> Vec<ActionId> {
     vec![
@@ -51,6 +66,8 @@ pub fn all() -> Vec<ActionId> {
         create_repository(),
         read_capsule(),
         access_admin_api(),
+        upload_asset(),
+        download_asset(),
     ]
 }
 
@@ -100,13 +117,23 @@ pub fn check_declared(schema: &Schema, action: &ActionId) -> Result<(), String> 
 ///
 /// The administrative action is only checked when the administrative surface
 /// is enabled: a deployment that closes it never builds that action, so it
-/// never needs to declare it.
-pub fn check_service_declared(schema: &Schema, admin_enabled: bool) -> Result<(), String> {
+/// never needs to declare it. The same goes for the two actions of the raw
+/// content surface: an instance that does not mount that surface does not
+/// build those actions, and does not have to declare them.
+pub fn check_service_declared(
+    schema: &Schema,
+    admin_enabled: bool,
+    raw_enabled: bool,
+) -> Result<(), String> {
     check_declared(schema, &read_repository())?;
     check_declared(schema, &read_capsule())?;
     check_declared(schema, &create_repository())?;
     if admin_enabled {
         check_declared(schema, &access_admin_api())?;
+    }
+    if raw_enabled {
+        check_declared(schema, &upload_asset())?;
+        check_declared(schema, &download_asset())?;
     }
     Ok(())
 }

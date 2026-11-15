@@ -175,12 +175,19 @@ hodei-evidence = { path = "crates/hodei-evidence" }
 # Lo usan el catálogo y la aplicación, y por eso vive en un crate y no en
 # uno de los dos.
 hodei-audit = { path = "crates/hodei-audit" }
+# El catálogo: el contrato de repositorios, assets y versiones, y su
+# adaptador sobre el motor. La superficie de contenido crudo los usa.
+hodei-catalog = { path = "crates/hodei-catalog" }
+hodei-catalog-storage = { path = "crates/hodei-catalog-storage" }
+# El almacén de contenido por digest: el CAS donde viven los bytes.
+hodei-hub = { path = "crates/hodei-hub" }
 # Published core; no path/git dependency to a sibling checkout.
 hodei-authz = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }
 async-trait = { workspace = true }
+futures-util = { workspace = true }
 
 # Web framework
 axum = { workspace = true }
@@ -197,6 +204,9 @@ tracing-subscriber = { workspace = true }
 
 # Time utilities
 chrono = { workspace = true }
+# El digest del contenido que se sube: el cliente puede declararlo y hay
+# que poder compararlo con lo que llega.
+sha2 = { workspace = true }
 uuid = { workspace = true }
 jsonwebtoken = { workspace = true }
 

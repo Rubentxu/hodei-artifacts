@@ -43,8 +43,17 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
         (config.security.admin_api_enabled, app_state.clone()),
         admin_gate,
     ));
-    let repositories = repository_v1_routes(app_state);
+    let repositories = repository_v1_routes(app_state.clone());
     let api = admin_api.merge(repositories);
+    // The raw content surface is a surface of its own, and it is **not**
+    // under `/api/v1`: the administrative API and the endpoint that serves
+    // packages are different things, and a client that talks to one has
+    // no reason to believe it is talking to the other.
+    let raw = if config.security.raw_api_enabled {
+        raw_routes(app_state.clone())
+    } else {
+        Router::new()
+    };
 
     Router::new()
         // Health check endpoints
@@ -53,6 +62,8 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
         .route("/health/live", get(health_check))
         // API v1 routes
         .nest("/api/v1", api)
+        // The raw content surface.
+        .merge(raw)
         // Swagger UI - serve at /swagger-ui
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", create_api_doc()))
         // Middleware layers (applied in reverse order)
@@ -113,7 +124,7 @@ async fn admin_gate(
             .into_response();
     }
 
-    let token = match bearer_token(req.headers()) {
+    let token = match crate::handlers::bearer_token(req.headers()) {
         Some(token) => token,
         None => return unauthorized(),
     };
@@ -183,16 +194,6 @@ fn unauthorized() -> Response {
     response
 }
 
-fn bearer_token(headers: &axum::http::HeaderMap) -> Option<String> {
-    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, token) = value.split_once(' ')?;
-    let token = token.trim();
-    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() {
-        return None;
-    }
-    Some(token.to_string())
-}
-
 /// Build the CORS policy from the explicit origin allowlist.
 ///
 /// An empty allowlist means no cross-origin access. `*` is rejected by
@@ -236,11 +237,28 @@ fn cors_layer(config: &AppConfig) -> CorsLayer {
 
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        // `HEAD` goes with `GET`: the raw content surface answers to
+        // `HEAD`, and a browser that asks for a header cannot be met with
+        // a `405` on a method it cannot use.
+        .allow_methods([
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+        ])
         .allow_headers([
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
             header::HeaderName::from_static("x-request-id"),
+            // The headers that the raw content surface needs to do what it
+            // promises: without them, a browser cannot ask for a range,
+            // nor write conditionally, nor declare the digest of what it
+            // publishes.
+            header::RANGE,
+            header::IF_MATCH,
+            header::IF_NONE_MATCH,
+            header::HeaderName::from_static("x-checksum-sha256"),
         ])
 }
 
@@ -291,6 +309,23 @@ fn admin_v1_routes(app_state: AppState) -> Router {
         // .route("/users", post(crate::handlers::users::create_user))
         // .route("/users/:id", get(crate::handlers::users::get_user))
         // .route("/groups", post(crate::handlers::groups::create_group))
+        .with_state(app_state)
+}
+
+/// The routes of the raw content surface.
+///
+/// The path is read **raw**, from the URI as it arrived, and not from the
+/// `Path` extractor: the extractor decodes, and a `%2e%2e` that has
+/// already become `..` cannot be refuted. That is why the path is
+/// declared as a wildcard and read by the rules of `crate::raw::path`.
+fn raw_routes(app_state: AppState) -> Router {
+    Router::new()
+        .route(
+            "/repository/{*target}",
+            axum::routing::put(crate::handlers::raw::publish)
+                .get(crate::handlers::raw::download)
+                .head(crate::handlers::raw::describe),
+        )
         .with_state(app_state)
 }
 

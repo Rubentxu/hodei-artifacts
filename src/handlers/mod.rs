@@ -12,14 +12,32 @@ pub mod health;
 pub mod iam;
 pub mod playground;
 pub mod policies;
+pub mod raw;
 pub mod repositories;
 pub mod schemas;
 
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, header};
 
 use crate::app_state::AppState;
 use crate::audit::{AuditContext, AuditEvent, AuditResult};
 use kernel::application::ports::clock::Identity;
+
+/// The bearer token of a request.
+///
+/// Only `Bearer <token>` is accepted, and the token cannot be empty: a
+/// header with the scheme but without a token is not a credential.
+///
+/// It lives here because three surfaces need it, and three copies of the
+/// same rule are three rules that can stop agreeing.
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    let token = token.trim();
+    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() {
+        return None;
+    }
+    Some(token.to_string())
+}
 
 /// Record a security event.
 ///

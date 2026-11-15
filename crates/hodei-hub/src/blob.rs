@@ -220,6 +220,24 @@ pub trait BlobStore: Send + Sync {
     /// La longitud del contenido, sin leerlo.
     async fn length(&self, digest: &ContentDigest) -> Result<u64, BlobError>;
 
+    /// Lee un **tramo** del contenido.
+    ///
+    /// El tramo empieza en `offset` y tiene `length` bytes. Es la vía
+    /// para servir una parte de un contenido sin traerse el contenido
+    /// entero: un `Range` de HTTP no puede pedir un byte y obligar al
+    /// almacén a leerlo todo.
+    ///
+    /// Si el contenido no llega a cubrir el tramo, el error es
+    /// `LengthMismatch`: el almacén no devuelve un tramo corto como si
+    /// fuera el pedido, porque un cliente que pide 100 bytes y recibe 40
+    /// no puede saber que le faltan 60.
+    async fn read_range(
+        &self,
+        digest: &ContentDigest,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, BlobError>;
+
     /// Comprueba que el contenido sigue siendo el que su digest dice.
     ///
     /// Si el contenido no esta, el error es `NotFound`; si esta pero no
@@ -561,6 +579,75 @@ impl BlobStore for FileBlobStore {
         }
     }
 
+    async fn read_range(
+        &self,
+        digest: &ContentDigest,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, BlobError> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let path = self.the_path_of(digest);
+        let mut file = match tokio::fs::File::open(&path).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(BlobError::NotFound);
+            }
+            Err(error) => return Err(BlobError::Unavailable(error.to_string())),
+        };
+        // El tramo se pide en el sitio: se salta lo que no se quiere y se
+        // leen solo los bytes pedidos. Un almacén que leyera el fichero
+        // entero para devolver 100 bytes de un gigabyte estaria
+        // obedeciendo al cliente a costa de todos los demas.
+        if offset > 0 {
+            file.seek(std::io::SeekFrom::Start(offset))
+                .await
+                .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        }
+        // El buffer se reserva con lo que **hay**, no con lo que pide el
+        // llamante: un tramo que no cabe en el fichero no se reserva,
+        // se dice que no existe. Pedir un tramo de un gigabyte de un
+        // fichero de un kilobyte no puede tumbar el proceso por un
+        // `vec![0; length]`.
+        let size = file
+            .metadata()
+            .await
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?
+            .len();
+        let available = size.saturating_sub(offset);
+        if offset > size || length > available {
+            return Err(BlobError::LengthMismatch {
+                expected: length,
+                found: available,
+            });
+        }
+        let mut bytes = vec![0u8; usize::try_from(length).unwrap_or(0)];
+        // Se lee hasta llenar el buffer o hasta el final del fichero: una
+        // sola lectura puede devolver menos de lo pedido sin que falte
+        // nada, y un tramo a medias sería un tramo que no es el que se
+        // pidió.
+        let mut read = 0usize;
+        while read < bytes.len() {
+            let chunk = file
+                .read(&mut bytes[read..])
+                .await
+                .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+            if chunk == 0 {
+                break;
+            }
+            read += chunk;
+        }
+        if read as u64 != length {
+            // El contenido es más corto de lo pedido: el tramo no existe.
+            // Se dice cuanto se leyó, para que el que pidió sepa que le
+            // faltan bytes.
+            return Err(BlobError::LengthMismatch {
+                expected: length,
+                found: read as u64,
+            });
+        }
+        Ok(bytes)
+    }
+
     async fn verify(&self, digest: &ContentDigest) -> Result<(), BlobError> {
         self.get_with(digest, ReadPolicy::Verify).await.map(|_| ())
     }
@@ -639,7 +726,7 @@ impl BlobWriteSession for InMemoryBlobWriteSession {
         }
         // Y lo que se ha validado se guarda: el mismo contenido, con el
         // mismo digest, guardado una sola vez.
-        let mut blobs = self.blobs.lock().expect("el almacen no esta envenenado");
+        let mut blobs = self.blobs.lock().expect("el almacén no está envenenado");
         blobs.insert(found.value.clone(), std::mem::take(&mut self.bytes));
         Ok(found)
     }
@@ -663,7 +750,7 @@ impl BlobWriteSession for InMemoryBlobWriteSession {
 impl BlobStore for InMemoryBlobStore {
     async fn put(&self, bytes: &[u8]) -> Result<ContentDigest, BlobError> {
         let digest = ContentDigest::of_bytes(bytes);
-        let mut blobs = self.blobs.lock().expect("el almacen no esta envenenado");
+        let mut blobs = self.blobs.lock().expect("el almacén no está envenenado");
         // El mismo contenido no se guarda dos veces: la clave es el
         // digest.
         blobs.insert(digest.value.clone(), bytes.to_vec());
@@ -671,7 +758,7 @@ impl BlobStore for InMemoryBlobStore {
     }
 
     async fn get(&self, digest: &ContentDigest) -> Result<Vec<u8>, BlobError> {
-        let blobs = self.blobs.lock().expect("el almacen no esta envenenado");
+        let blobs = self.blobs.lock().expect("el almacén no está envenenado");
         let bytes = blobs
             .get(&digest.value.clone())
             .ok_or(BlobError::NotFound)?
@@ -687,7 +774,7 @@ impl BlobStore for InMemoryBlobStore {
     }
 
     async fn exists(&self, digest: &ContentDigest) -> Result<bool, BlobError> {
-        let blobs = self.blobs.lock().expect("el almacen no esta envenenado");
+        let blobs = self.blobs.lock().expect("el almacén no está envenenado");
         Ok(blobs.contains_key(&digest.value.clone()))
     }
 
@@ -705,7 +792,7 @@ impl BlobStore for InMemoryBlobStore {
         digest: &ContentDigest,
         policy: ReadPolicy,
     ) -> Result<Vec<u8>, BlobError> {
-        let blobs = self.blobs.lock().expect("el almacen no esta envenenado");
+        let blobs = self.blobs.lock().expect("el almacén no está envenenado");
         let bytes = blobs
             .get(&digest.value.clone())
             .ok_or(BlobError::NotFound)?
@@ -723,11 +810,34 @@ impl BlobStore for InMemoryBlobStore {
     }
 
     async fn length(&self, digest: &ContentDigest) -> Result<u64, BlobError> {
-        let blobs = self.blobs.lock().expect("el almacen no esta envenenado");
+        let blobs = self.blobs.lock().expect("el almacén no está envenenado");
         let bytes = blobs
             .get(&digest.value.clone())
             .ok_or(BlobError::NotFound)?;
         Ok(bytes.len() as u64)
+    }
+
+    async fn read_range(
+        &self,
+        digest: &ContentDigest,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, BlobError> {
+        let blobs = self.blobs.lock().expect("el almacén no está envenenado");
+        let bytes = blobs
+            .get(&digest.value.clone())
+            .ok_or(BlobError::NotFound)?;
+        let start = usize::try_from(offset).unwrap_or(usize::MAX);
+        let end = start.saturating_add(usize::try_from(length).unwrap_or(usize::MAX));
+        if start > bytes.len() || end > bytes.len() {
+            // El contenido es más corto de lo pedido: el tramo no existe.
+            let found = bytes.len().saturating_sub(start) as u64;
+            return Err(BlobError::LengthMismatch {
+                expected: length,
+                found,
+            });
+        }
+        Ok(bytes[start..end].to_vec())
     }
 
     async fn verify(&self, digest: &ContentDigest) -> Result<(), BlobError> {
@@ -775,4 +885,89 @@ fn hex_of(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// El contenido de la prueba: bytes distinguibles, para que un tramo
+    /// equivocado se note.
+    fn the_bytes() -> Vec<u8> {
+        (0u8..=255).collect()
+    }
+
+    #[tokio::test]
+    async fn the_range_read_returns_exactly_the_bytes_asked_for() {
+        let bytes = the_bytes();
+        let digest = ContentDigest::of_bytes(&bytes);
+        let store = InMemoryBlobStore::empty();
+        store.put(&bytes).await.expect("the content is stored");
+
+        let range = store
+            .read_range(&digest, 10, 5)
+            .await
+            .expect("the range is readable");
+        assert_eq!(range, bytes[10..15]);
+    }
+
+    #[tokio::test]
+    async fn the_range_read_says_when_the_content_is_shorter() {
+        let bytes = the_bytes();
+        let digest = ContentDigest::of_bytes(&bytes);
+        let store = InMemoryBlobStore::empty();
+        store.put(&bytes).await.expect("the content is stored");
+
+        // Un tramo que se sale del final no es un tramo corto: es un
+        // tramo que no existe, y el error lo dice.
+        let error = store
+            .read_range(&digest, 250, 10)
+            .await
+            .expect_err("the range does not exist");
+        assert_eq!(
+            error,
+            BlobError::LengthMismatch {
+                expected: 10,
+                found: 6
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn the_range_read_of_a_content_that_is_not_there_is_not_found() {
+        let store = InMemoryBlobStore::empty();
+        let digest = ContentDigest::of_bytes(b"nothing");
+        let error = store
+            .read_range(&digest, 0, 1)
+            .await
+            .expect_err("the content is not there");
+        assert_eq!(error, BlobError::NotFound);
+    }
+
+    #[tokio::test]
+    async fn the_range_read_of_the_file_store_matches_the_memory_one() {
+        let bytes = the_bytes();
+        let digest = ContentDigest::of_bytes(&bytes);
+        let directory = tempfile::tempdir().expect("a temp dir");
+        let store = FileBlobStore::new(directory.path()).expect("the store is usable");
+        store.put(&bytes).await.expect("the content is stored");
+
+        let range = store
+            .read_range(&digest, 10, 5)
+            .await
+            .expect("the range is readable");
+        assert_eq!(range, bytes[10..15]);
+
+        let error = store
+            .read_range(&digest, 250, 10)
+            .await
+            .expect_err("the range does not exist");
+        assert_eq!(
+            error,
+            BlobError::LengthMismatch {
+                expected: 10,
+                found: 6
+            }
+        );
+    }
 }

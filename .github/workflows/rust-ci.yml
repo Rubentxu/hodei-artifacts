@@ -175,7 +175,8 @@ jobs:
             --test repository_read \
             --test schema_persistence \
             --test support_reconciliation \
-            --test har03_outbox_contract || status=$?
+            --test har03_outbox_contract \
+            --test har04_raw_hosted_contract || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
           echo "### Suite integration (database): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -218,7 +219,8 @@ jobs:
             --test distribution_contract \
             --test production_auth \
             --test repository_restart_contract \
-            --test har02_catalog_contract || status=$?
+            --test har02_catalog_contract \
+            --test raw_hosted_restart_contract || status=$?
           elapsed=$(( $(date +%s) - started ))
           echo "duration_seconds=$elapsed" >> "$GITHUB_OUTPUT"
           echo "### Suite infrastructure (boot and processes): ${elapsed}s" | tee -a "$GITHUB_STEP_SUMMARY"

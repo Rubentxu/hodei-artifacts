@@ -24,6 +24,33 @@ pub struct RepositoryConfig {
     pub durable: bool,
 }
 
+/// Where the content of the artifacts lives.
+///
+/// The content is stored **by digest**, not by path: the same content is
+/// the same file, wherever it is. That is why the directory is not a
+/// decision of the account, but of the deployment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentConfig {
+    /// The directory of the store of content.
+    ///
+    /// Default: `./data/hodei.cas`.
+    #[serde(default = "the_default_cas_path")]
+    pub cas_path: String,
+}
+
+impl Default for ContentConfig {
+    fn default() -> Self {
+        Self {
+            cas_path: the_default_cas_path(),
+        }
+    }
+}
+
+/// The default directory of the content.
+fn the_default_cas_path() -> String {
+    "./data/hodei.cas".to_string()
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Server configuration
@@ -34,6 +61,10 @@ pub struct AppConfig {
     pub security: SecurityConfig,
     #[serde(default)]
     pub repository: RepositoryConfig,
+
+    /// Where the content of the artifacts lives.
+    #[serde(default)]
+    pub content: ContentConfig,
 
     /// Database configuration
     pub database: DatabaseConfig,
@@ -80,6 +111,17 @@ pub struct SecurityConfig {
     /// layer and never reaches a handler; unknown routes remain `404`.
     #[serde(default)]
     pub admin_api_enabled: bool,
+
+    /// Whether the raw content surface is reachable.
+    ///
+    /// Default: `false`. The surface is closed by default for the same
+    /// reason the administrative one is: the Cedar bundle has to declare
+    /// the `UploadAsset` and `DownloadAsset` actions, and a bundle that
+    /// does not declare them cannot grant them. Turning this on without a
+    /// bundle that declares them is a deployment that says "yes" to
+    /// nothing.
+    #[serde(default)]
+    pub raw_api_enabled: bool,
 
     /// Browser origins allowed by CORS.
     ///

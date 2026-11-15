@@ -59,6 +59,26 @@
             "Artifacts::Artifact"
           ]
         }
+      },
+      "UploadAsset": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
+      },
+      "DownloadAsset": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
       }
     }
   },

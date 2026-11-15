@@ -19,7 +19,7 @@ use crate::audit::AuditResult;
 use serde::Deserialize;
 
 use crate::app_state::AppState;
-use crate::handlers::{correlation_id, record_audit};
+use crate::handlers::{bearer_token, correlation_id, record_audit};
 use crate::repository::RepositoryView;
 
 #[derive(Debug)]
@@ -336,14 +336,4 @@ fn hex(byte: u8) -> Option<u8> {
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
-}
-
-fn bearer_token(headers: &HeaderMap) -> Option<String> {
-    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, token) = value.split_once(' ')?;
-    let token = token.trim();
-    if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() {
-        return None;
-    }
-    Some(token.to_string())
 }

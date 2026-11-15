@@ -16,6 +16,8 @@ use async_trait::async_trait;
 use cedar_policy::{Entities, Schema};
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
+use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_hub::blob::FileBlobStore;
 use std::fs;
 
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
@@ -213,6 +215,41 @@ pub async fn bootstrap(
     let app_state = app_state.with_evidence_store(crate::evidence_surreal::reader_over(Arc::new(
         schema_storage.db().clone(),
     )));
+    // The catalog and the store of content. The catalog lives in the same
+    // engine as the rest, because a transaction that touches two databases
+    // is not a transaction; and the content lives in a directory, because
+    // the bytes of an artifact are not rows of a database.
+    let app_state = if config.repository.durable {
+        // The catalog does not decide again what the HTTP boundary already
+        // decided with Cedar. Its queries are already scoped to the
+        // verified account, so the isolation between accounts does not
+        // depend on this second check: it depends on the key of each row.
+        // The check that does matter --the permission to publish or to
+        // download-- is asked at the boundary, where the canonical HRN of
+        // the repository is known; the port of the catalog does not carry
+        // the region, and a second decision about another resource would
+        // not be stronger, it would be another decision.
+        let catalog = Arc::new(SurrealCatalogStore::with_authorizer(
+            schema_storage.db().clone(),
+            Arc::new(hodei_catalog::AllowAllAuthorizer),
+        ));
+        catalog
+            .initialize()
+            .await
+            .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+        let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
+        let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
+        let content = Arc::new(
+            FileBlobStore::new(&config.content.cas_path)
+                .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
+        );
+        app_state
+            .with_catalog(reader, writer)
+            .with_content_store(content)
+    } else {
+        app_state
+    };
+    let app_state = app_state.with_body_limit(config.server.max_body_size);
     let app_state = configure_production_security(app_state, config)?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
@@ -303,9 +340,12 @@ fn configure_production_security(
     // persisted evaluator resolved the same verb against the schema and
     // reached a decision. A deployment that does not start is better than
     // one whose two circuits disagree about what an action is.
-    crate::actions::check_service_declared(&schema, config.security.admin_api_enabled).map_err(
-        |error| BootstrapError::Security(format!("invalid authorization bundle: {error}")),
-    )?;
+    crate::actions::check_service_declared(
+        &schema,
+        config.security.admin_api_enabled,
+        config.security.raw_api_enabled,
+    )
+    .map_err(|error| BootstrapError::Security(format!("invalid authorization bundle: {error}")))?;
 
     let cedar = CedarAuthorizer::from_policies(
         &policies,

@@ -68,6 +68,23 @@ pub enum CatalogError {
         detail: String,
     },
 
+    /// La condición que el cliente exigía no se cumple.
+    ///
+    /// No es un conflicto: el conflicto dice que hay algo distinto de lo
+    /// que se publica, y la precondición dice que **lo que hay** no es lo
+    /// que el cliente esperaba. La diferencia importa porque el cliente
+    /// los trata distinto: un conflicto se resuelve cambiando lo que se
+    /// publica, y una precondición releyendo lo que hay.
+    #[error("the precondition for the {kind} {key} does not hold: {detail}")]
+    PreconditionFailed {
+        /// Sobre qué.
+        kind: &'static str,
+        /// Con qué coordenadas.
+        key: String,
+        /// En qué se diferencia de lo que el cliente esperaba.
+        detail: String,
+    },
+
     /// El modo del repositorio no lo sirve esta release.
     #[error("the repository mode {mode} is not served by this release")]
     ModeNotImplemented {
@@ -136,6 +153,19 @@ impl CatalogError {
     /// El error de "la petición no tiene sentido".
     pub fn invalid(detail: impl Into<String>) -> Self {
         CatalogError::InvalidRequest {
+            detail: detail.into(),
+        }
+    }
+
+    /// El error de "la condición que el cliente exigía no se cumple".
+    pub fn precondition_failed(
+        kind: &'static str,
+        key: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        CatalogError::PreconditionFailed {
+            kind,
+            key: key.into(),
             detail: detail.into(),
         }
     }
