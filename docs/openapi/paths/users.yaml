@@ -9,20 +9,20 @@ usersRoot:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/CreateUserCommand'
+            $ref: '../components/schemas/users.yaml#/CreateUserCommand'
     responses:
       '200':
         description: User created successfully
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateUserResponse'
+              $ref: '../components/schemas/users.yaml#/CreateUserResponse'
       '400':
-        $ref: '#/components/responses/BadRequest'
+        $ref: '../components/responses.yaml#/BadRequest'
       '409':
         description: Conflict, e.g., username already exists
       '500':
-        $ref: '#/components/responses/InternalServerError'
+        $ref: '../components/responses.yaml#/InternalError'
 
 usersAttributes:
   patch:
@@ -43,17 +43,17 @@ usersAttributes:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/UpdateUserAttributesCommand'
+            $ref: '../components/schemas/users.yaml#/UpdateUserAttributesCommand'
     responses:
       '200':
         description: User attributes updated successfully
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateUserAttributesResponse'
+              $ref: '../components/schemas/users.yaml#/UpdateUserAttributesResponse'
       '400':
-        $ref: '#/components/responses/BadRequest'
+        $ref: '../components/responses.yaml#/BadRequest'
       '404':
-        $ref: '#/components/responses/NotFound'
+        $ref: '../components/responses.yaml#/NotFound'
       '500':
-        $ref: '#/components/responses/InternalServerError'
+        $ref: '../components/responses.yaml#/InternalError'

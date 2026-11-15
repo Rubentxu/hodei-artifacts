@@ -1,6 +1,7 @@
 download:
   get:
     tags: [Maven Repository]
+    operationId: downloadArtifact
     summary: Descargar artefacto Maven
     description: |
       Descarga un artefacto Maven específico. Compatible con `mvn dependency:resolve`.
@@ -53,6 +54,7 @@ download:
 
   put:
     tags: [Maven Repository]
+    operationId: deployArtifact
     summary: Subir artefacto Maven
     description: |
       Sube un artefacto Maven al repositorio. Compatible con `mvn deploy`.
