@@ -327,9 +327,7 @@ impl Deployment {
         for _attempt in 0..5 {
             let port = free_port();
             let stderr = File::create(&log).expect("the log of the service");
-            let stdout = stderr
-                .try_clone()
-                .expect("the log of the service, twice");
+            let stdout = stderr.try_clone().expect("the log of the service, twice");
             let mut command = Command::new(BIN);
             command
                 .env_remove("RUN_MODE")
