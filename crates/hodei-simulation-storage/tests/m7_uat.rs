@@ -35,10 +35,16 @@ use surrealdb::engine::local::{Db, RocksDb};
 const ACCOUNT: &str = "acme";
 
 /// El resultado de un escenario, tal como queda registrado.
+///
+/// Un escenario que falla FALLA el test. Antes solo se imprimia, y un
+/// `cargo test` en verde no decia nada del resultado de los escenarios:
+/// el verde de la suite era un verde de mentira. La UAT es una
+/// aceptacion, y una aceptacion que no puede fallar no es una
+/// aceptacion.
 fn record(scenario: &str, outcome: Result<(), String>) {
     match outcome {
         Ok(()) => println!("{scenario}: PASSED"),
-        Err(reason) => println!("{scenario}: FAILED -- {reason}"),
+        Err(reason) => panic!("{scenario}: FAILED -- {reason}"),
     }
 }
 
@@ -242,6 +248,14 @@ impl World {
         SimulationService::new(graph, decisions)
     }
 
+    /// La generacion del grafo de ahora.
+    async fn the_generation(&self) -> u64 {
+        self.graph
+            .generation(&account_hrn())
+            .await
+            .expect("la generacion se lee")
+    }
+
     /// Cuantos eventos tiene el ledger.
     async fn the_ledger_count(&self) -> usize {
         let response = self
@@ -301,10 +315,14 @@ fn the_strict_policy() -> TrustPolicy {
 }
 
 /// El fork de la simulacion.
-fn the_fork(policy: TrustPolicy) -> SimulationFork {
+///
+/// El fork se prepara contra la generacion DEL GRAFO DE AHORA: es la
+/// version contra la que se comprueba que el mundo no se ha movido, y
+/// un fork que no dice cual era no se puede comprobar.
+fn the_fork(policy: TrustPolicy, generation: u64) -> SimulationFork {
     SimulationFork::new(
         "sim-m7",
-        Checkpoint::new("checkpoint-m7", ACCOUNT, Utc::now(), Some(0)),
+        Checkpoint::new("checkpoint-m7", ACCOUNT, Utc::now(), Some(0), generation),
         policy,
         Utc::now(),
     )
@@ -334,7 +352,8 @@ async fn m7_uat_01_the_proposed_policy_changes_the_decisions() {
         let service = world.the_service();
 
         // La simulacion: la politica P2 y una vulnerabilidad que llega.
-        let fork = the_fork(the_policy())
+        let generation = world.the_generation().await;
+        let fork = the_fork(the_policy(), generation)
             .with_policy(the_strict_policy())
             .with(Hypothetical {
                 tag: the_tag(),
@@ -412,7 +431,8 @@ async fn m7_uat_02_the_dependency_upgrade_is_in_the_diff() {
         let service = world.the_service();
 
         // La simulacion: la dependencia v1 se sustituye por la v2.
-        let fork = the_fork(the_policy()).with(Hypothetical {
+        let generation = world.the_generation().await;
+        let fork = the_fork(the_policy(), generation).with(Hypothetical {
             tag: the_tag(),
             claim: HypotheticalClaim::Relation {
                 relation: RelationType::DependsOn,
@@ -478,7 +498,8 @@ async fn m7_uat_03_the_compromised_builder_window_is_in_the_diff() {
         let now = Utc::now();
 
         // La simulacion: el constructor no es de fiar entre las dos horas.
-        let fork = the_fork(the_provenance_policy()).with(Hypothetical {
+        let generation = world.the_generation().await;
+        let fork = the_fork(the_provenance_policy(), generation).with(Hypothetical {
             tag: the_tag(),
             claim: HypotheticalClaim::UntrustedWindow {
                 from: observed_at - Duration::minutes(30),
@@ -535,7 +556,8 @@ async fn m7_uat_04_the_production_state_is_untouched() {
             .map_err(|e| e.to_string())?;
 
         let service = world.the_service();
-        let fork = the_fork(the_policy())
+        let generation = world.the_generation().await;
+        let fork = the_fork(the_policy(), generation)
             .with_policy(the_strict_policy())
             .with(Hypothetical {
                 tag: the_tag(),
@@ -617,8 +639,9 @@ async fn m7_uat_05_the_same_inputs_give_the_same_diff() {
         world.admit("sbom-1", EvidenceType::Sbom, Utc::now()).await;
         let service = world.the_service();
 
+        let generation = world.the_generation().await;
         let the_input = || {
-            the_fork(the_policy())
+            the_fork(the_policy(), generation)
                 .with_policy(the_strict_policy())
                 .with(Hypothetical {
                     tag: the_tag(),
@@ -722,7 +745,8 @@ async fn m7_uat_06_the_policy_only_simulation_with_declared_subjects_changes_the
         // trazabilidad verificada de la construccion, que este mundo no
         // tiene: NINGUN hecho de riesgo o relacion adicional.
         let base = TrustPolicy::new("production", "1.0.0", Vec::new());
-        let fork = the_fork(base)
+        let generation = world.the_generation().await;
+        let fork = the_fork(base, generation)
             .with_subjects(vec![subject(), other_subject()])
             .with_policy(the_provenance_policy());
 
@@ -779,7 +803,8 @@ async fn m7_uat_07_a_failed_evidence_read_is_not_an_allow() {
         ));
         let service = SimulationService::new(graph, decisions);
 
-        let fork = the_fork(the_policy())
+        let generation = world.the_generation().await;
+        let fork = the_fork(the_policy(), generation)
             .with_subjects(vec![subject()])
             .with_policy(the_strict_policy());
 

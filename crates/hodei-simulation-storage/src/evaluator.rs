@@ -13,6 +13,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hodei_evidence::application::capsule::CapsuleAssembler;
 use hodei_evidence::domain::evidence::{EvidenceRecord, EvidenceVerification};
+use hodei_evidence::domain::read_set::{ReadSet, ReadStamp};
 use hodei_evidence::ports::EvidenceStore;
 use hodei_simulation::diff::TheDecision;
 use hodei_simulation::hypothetical::{Hypothetical, HypotheticalClaim};
@@ -121,8 +122,8 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
         subject: &Hrn,
         policy: &TrustPolicy,
         facts: &[Hypothetical],
+        now: DateTime<Utc>,
     ) -> Result<TheDecision, String> {
-        let now = Utc::now();
         let evidence = self
             .the_evidence(subject, facts)
             .await
@@ -141,13 +142,46 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
         Ok(TheDecision {
             outcome: decision.outcome,
             policy: policy.clone(),
+            read_set: the_read_set_of(&evidence),
         })
+    }
+
+    async fn the_reads_of(&self, subject: &Hrn) -> Result<ReadSet, String> {
+        let evidence = self
+            .reader
+            .evidence_of_subject(&self.account, subject)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(the_read_set_of(&evidence))
     }
 }
 
+/// El manifiesto de lo que se leyo: una pieza de evidencia por su id y
+/// el digest de su contenido.
+///
+/// El digest es lo que permite comprobar el origen: si la evidencia
+/// cambia de contenido, cambia el digest, y el digest es lo que se
+/// compara al final de la simulacion.
+fn the_read_set_of(evidence: &[EvidenceRecord]) -> ReadSet {
+    let mut read_set = ReadSet::empty();
+    for record in evidence {
+        read_set.read(ReadStamp::evidence(
+            record.id().to_string(),
+            record.content().digest.to_string(),
+        ));
+    }
+    read_set
+}
+
 /// La misma pieza de evidencia, con otra verificacion.
+///
+/// La validez desconocida se CONSERVA como desconocida: una evidencia
+/// que no dice cuando deja de ser cierta no se le inventa una fecha de
+/// caducidad, porque esa fecha seria una verdad que nadie dijo. Y la
+/// fecha de caducidad inventada caduca cuando la evidencia no caduca,
+/// y hace desaparecer una afirmacion que sigue en pie.
 fn the_record_with(record: EvidenceRecord, verification: EvidenceVerification) -> EvidenceRecord {
-    EvidenceRecord::builder(record.id().clone(), record.tenant_hrn().clone())
+    let mut builder = EvidenceRecord::builder(record.id().clone(), record.tenant_hrn().clone())
         .subjects(record.subject_refs().to_vec())
         .evidence_type(record.evidence_type().clone())
         .schema(
@@ -158,10 +192,17 @@ fn the_record_with(record: EvidenceRecord, verification: EvidenceVerification) -
         .source(record.source().clone())
         .content(record.content().clone())
         .observed_at(record.observed_at())
-        .valid_to(record.valid_to().unwrap_or_else(Utc::now))
         .recorded_at(record.recorded_at())
         .verification(verification)
         .normalization(record.normalization().clone())
-        .correlation_id(record.correlation_id().unwrap_or_default().to_string())
-        .build()
+        .correlation_id(record.correlation_id().unwrap_or_default().to_string());
+    // Las dos validez se copian tal cual, incluidas las que no se
+    // saben: el registro reconstruido es el mismo registro.
+    if let Some(valid_from) = record.valid_from() {
+        builder = builder.valid_from(valid_from);
+    }
+    if let Some(valid_to) = record.valid_to() {
+        builder = builder.valid_to(valid_to);
+    }
+    builder.build()
 }

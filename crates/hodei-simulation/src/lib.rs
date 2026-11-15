@@ -28,7 +28,23 @@
 //!
 //! Y el aislamiento no es una promesa, es una **construccion**: el puerto
 //! del grafo **no tiene un metodo de escritura**, y el servicio comprueba
-//! el numero de relaciones antes y despues de simular.
+//! al final que el mundo sobre el que se evaluo sigue siendo el mismo
+//! que se leyo.
+//!
+//! # La base fijada
+//!
+//! Una simulacion que no dice **sobre que mundo** se calculo es una
+//! respuesta sin apellido. Por eso el diff lleva su base: la cuenta, el
+//! reloj, la generacion del grafo, el sello del contenido leido y el
+//! manifiesto de lo que se leyo --las relaciones, la politica y la
+//! evidencia que consume la decision--.
+//!
+//! Y esa base se **comprueba dos veces**: si el mundo se ha movido
+//! mientras se evaluaba, la simulacion se dice obsoleta en vez de
+//! devolver un diff sobre un mundo que ya no existe. El fork tiene que
+//! declarar contra que generacion se preparo, y la simulacion no acepta
+//! una base sin version: una base que no se puede comprobar no sostiene
+//! una respuesta.
 //!
 //! # Lo que el diff dice
 //!
@@ -45,12 +61,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod base;
 pub mod diff;
 pub mod fork;
 pub mod hypothetical;
 pub mod ports;
 pub mod service;
 
+pub use base::{SimulationBase, the_seal_of};
 pub use diff::{DecisionChange, SimulationDiff, StructuralDiff, TheDecision};
 pub use fork::{Checkpoint, SimulationFork, SimulationLimits};
 pub use hypothetical::{Hypothetical, HypotheticalClaim, RelationFact, SimulationTag};

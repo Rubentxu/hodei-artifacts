@@ -34,25 +34,53 @@ pub struct Checkpoint {
     pub at: DateTime<Utc>,
     /// El numero de eventos del ledger en ese punto, si se sabe.
     ///
-    /// Sirve para comprobar que el grafo real no ha cambiado: un fork no
-    /// deja ni una sombra, y el contador lo dice.
+    /// Es la posicion DECLARADA de la que parte el fork, y viaja en el
+    /// manifiesto de la base para que la respuesta diga de donde sale.
+    /// No se verifica contra el ledger: la simulacion no tiene un puerto
+    /// de ledger, y una posicion que no se puede comprobar no se
+    /// presenta como comprobada.
     pub ledger_position: Option<u64>,
+    /// La generacion del grafo en ese punto, si se sabe.
+    ///
+    /// Es la version contra la que se PREPARO el fork, y la que se
+    /// comprueba al simular: si el grafo ya no esta en esa generacion,
+    /// el fork se hizo contra un mundo que ya no existe, y la
+    /// simulacion se dice obsoleta en vez de responder por el mundo de
+    /// ahora como si fuera el de entonces.
+    ///
+    /// Un checkpoint SIN generacion no se puede simular: una base que no
+    /// dice contra que version se evalua no se puede comprobar.
+    #[serde(default)]
+    pub generation: Option<u64>,
 }
 
 impl Checkpoint {
-    /// Un checkpoint.
+    /// Un checkpoint, preparado contra una generacion del grafo.
+    ///
+    /// La generacion es OBLIGATORIA: un fork que no dice contra que
+    /// version del mundo se preparo no se puede comprobar, y la
+    /// simulacion lo rechaza en vez de responder por un mundo que nadie
+    /// ha dicho cual era.
     pub fn new(
         id: impl Into<String>,
         account: impl Into<String>,
         at: DateTime<Utc>,
         ledger_position: Option<u64>,
+        generation: u64,
     ) -> Self {
         Self {
             id: id.into(),
             account: account.into(),
             at,
             ledger_position,
+            generation: Some(generation),
         }
+    }
+
+    /// El checkpoint preparado contra otra generacion del grafo.
+    pub fn at_generation(mut self, generation: u64) -> Self {
+        self.generation = Some(generation);
+        self
     }
 }
 

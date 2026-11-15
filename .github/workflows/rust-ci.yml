@@ -78,6 +78,7 @@ jobs:
             --test reachability_contract \
             --test reactive_contract \
             --test simulation_contract \
+            --test base_contract \
             --test m7_uat \
             --test investigator_contract \
             --test m8_uat \
