@@ -300,7 +300,7 @@ fn the_admission_error(admission: crate::trust::Admission) -> RawApiError {
 }
 
 /// El contenido que hay ahora en esa dirección.
-async fn the_current_asset(
+pub(super) async fn the_current_asset(
     state: &AppState,
     context: &VerifiedContext,
     repository: &str,
@@ -351,7 +351,7 @@ pub async fn publish(
     // cualquier otro repositorio, y no averigua el modo.
     if !repository.mode.accepts_client_writes() {
         return Err(RawApiError::MethodNotAllowed(
-            "a proxy repository does not accept uploads",
+            "this repository does not accept uploads",
         ));
     }
 
@@ -477,7 +477,7 @@ pub async fn publish(
 
 /// Cómo se sirvió un contenido de un proxy. Va en `X-Hodei-Cache`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CacheStatus {
+pub(super) enum CacheStatus {
     /// Estaba en la caché y vigente: no se salió.
     Hit,
     /// No estaba: se trajo del upstream.
@@ -506,12 +506,12 @@ impl CacheStatus {
 }
 
 /// Un contenido de un proxy, listo para pasar por la compuerta de confianza.
-struct ProxyServed {
-    asset: AssetRecord,
-    status: CacheStatus,
+pub(super) struct ProxyServed {
+    pub(super) asset: AssetRecord,
+    pub(super) status: CacheStatus,
     /// El upstream que respalda el contenido y cuándo lo confirmó, cuando
     /// la respuesta no sale de una comprobación reciente (obsoleto, offline).
-    provenance: Option<(String, String)>,
+    pub(super) provenance: Option<(String, String)>,
 }
 
 impl ProxyServed {
@@ -535,7 +535,7 @@ impl ProxyServed {
 /// Lo que se publique pasa después por la misma compuerta de confianza que
 /// cualquier otro contenido, incluido lo servido obsoleto o sin red: una
 /// revocación se respeta siempre.
-async fn the_proxy_asset(
+pub(super) async fn the_proxy_asset(
     state: &AppState,
     context: &VerifiedContext,
     repository: &RepositoryDescriptor,
@@ -947,6 +947,26 @@ fn apply_cache_headers(
     }
 }
 
+/// Que miembro de un grupo sirvio el contenido, y en que version de la
+/// configuracion del grupo. Va en `X-Hodei-Resolved-From` y
+/// `X-Hodei-Group-Version`: quien descarga sabe de que repositorio salio
+/// lo que tiene, y una resolucion distinta tras reconfigurar el grupo es
+/// visible.
+fn apply_group_headers(response: &mut Response, resolved_by: &Option<(String, u64)>) {
+    let Some((member, version)) = resolved_by else {
+        return;
+    };
+    if let Ok(value) = HeaderValue::from_str(member) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("x-hodei-resolved-from"), value);
+    }
+    response.headers_mut().insert(
+        HeaderName::from_static("x-hodei-group-version"),
+        HeaderValue::from(*version),
+    );
+}
+
 /// Lo que pide la lectura de procedencia.
 #[derive(Debug, serde::Deserialize)]
 pub struct ProvenanceQuery {
@@ -1131,7 +1151,46 @@ async fn the_content_of(
     let correlation = correlation.to_string();
     // Un hosted sirve lo que tiene. Un proxy decide cada vez si lo que tiene
     // vale, hay que revalidarlo o hay que traerlo.
-    let (asset, served) = if repository.mode == RepositoryMode::Proxy {
+    // Un grupo recorre sus miembros en orden y sirve la ruta del primero que
+    // la tiene; lo que pasa despues (confianza, condiciones, rango) es del
+    // miembro que gano, no del grupo.
+    let mut resolved_by: Option<(String, u64)> = None;
+    let mut repository = repository;
+    let (asset, served) = if repository.mode == RepositoryMode::Group {
+        let group_key = repository.repo_key.clone();
+        let version = repository.config.version;
+        let resolution = super::raw_group::the_group_asset(
+            state,
+            context,
+            &repository,
+            &target.asset_path,
+            &correlation,
+        )
+        .await;
+        // El rastro de la resolucion: que grupo, en que version de su
+        // configuracion, que miembros se consultaron y quien gano.
+        let result = match &resolution.outcome {
+            Ok(_) => AuditResult::Allowed,
+            Err(_) => AuditResult::Failed,
+        };
+        record_audit(
+            state,
+            context.principal().subject().as_str(),
+            context.account().as_str(),
+            "resolve",
+            &format!(
+                "{group_key}@v{version}/{} [{}]",
+                target.asset_path,
+                resolution.trail_line()
+            ),
+            result,
+            &correlation,
+        );
+        let won = resolution.outcome?;
+        resolved_by = Some((won.member.repo_key.clone(), version));
+        repository = won.member;
+        (won.asset, won.served)
+    } else if repository.mode == RepositoryMode::Proxy {
         let served = the_proxy_asset(
             state,
             context,
@@ -1178,6 +1237,7 @@ async fn the_content_of(
             let mut response = StatusCode::NOT_MODIFIED.into_response();
             apply_common_headers(&mut response, &etag, &correlation);
             apply_cache_headers(&mut response, &served);
+            apply_group_headers(&mut response, &resolved_by);
             return Ok((response, correlation));
         }
         conditional::ReadOutcome::Serve => {}
@@ -1244,6 +1304,7 @@ async fn the_content_of(
     let mut response = (status, body).into_response();
     apply_common_headers(&mut response, &etag, &correlation);
     apply_cache_headers(&mut response, &served);
+    apply_group_headers(&mut response, &resolved_by);
     response
         .headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(CONTENT_TYPE));

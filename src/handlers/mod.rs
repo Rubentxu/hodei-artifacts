@@ -16,6 +16,7 @@ pub mod playground;
 pub mod policies;
 pub mod promotions;
 pub mod raw;
+mod raw_group;
 pub mod repositories;
 pub mod schemas;
 

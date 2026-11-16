@@ -452,6 +452,61 @@ impl Deployment {
         assert!(status.success(), "the repository could not be reconfigured");
     }
 
+    /// Crea repositorios de **grupo** de la primera cuenta, en el orden
+    /// dado (un grupo anidado se declara despues de los suyos). Cada uno es
+    /// una clave y la lista ordenada de sus miembros.
+    ///
+    /// Se siembra en un proceso aparte y con el servicio parado, como el
+    /// resto: la base la bloquea el proceso que la abre.
+    pub fn seed_groups(&self, groups: &[(&str, &[&str])]) {
+        let groups: Vec<serde_json::Value> = groups
+            .iter()
+            .map(|(key, members)| serde_json::json!({ "key": key, "members": members }))
+            .collect();
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env(
+                "HODEI_SEED_GROUPS",
+                serde_json::Value::Array(groups).to_string(),
+            )
+            .status()
+            .expect("the group seeder runs");
+        assert!(status.success(), "the groups could not be seeded");
+    }
+
+    /// Cambia los miembros de un grupo ya sembrado: la version de su
+    /// configuracion sube.
+    pub fn reconfigure_group(&self, key: &str, members: &[&str]) {
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env("HODEI_RECONFIG_GROUP", key)
+            .env(
+                "HODEI_RECONFIG_MEMBERS",
+                serde_json::json!(members).to_string(),
+            )
+            .status()
+            .expect("the group reconfigurer runs");
+        assert!(status.success(), "the group could not be reconfigured");
+    }
+
+    /// Sustituye la politica de Cedar del despliegue. Hay que hacerlo antes
+    /// de arrancar el servicio.
+    pub fn write_policy(&self, policy: &str) {
+        std::fs::write(self.policy_path(), policy).expect("the policy is written");
+    }
+
     /// Arranca el servicio y espera a que abra el puerto.
     ///
     /// El puerto se elige en cada intento, y no antes: un puerto libre
@@ -1652,6 +1707,18 @@ pub fn seed_if_asked() {
     let Some(db) = std::env::var_os("HODEI_SEED_DB") else {
         return;
     };
+    if let Ok(groups) = std::env::var("HODEI_SEED_GROUPS") {
+        let groups: Vec<serde_json::Value> =
+            serde_json::from_str(&groups).expect("the groups parse");
+        seed_the_groups(&db.to_string_lossy(), &groups);
+        return;
+    }
+    if let Ok(key) = std::env::var("HODEI_RECONFIG_GROUP") {
+        let members = std::env::var("HODEI_RECONFIG_MEMBERS").expect("the new members");
+        let members: Vec<String> = serde_json::from_str(&members).expect("the members parse");
+        reconfigure_the_group(&db.to_string_lossy(), &key, &members);
+        return;
+    }
     if let Ok(key) = std::env::var("HODEI_RECONFIG_KEY") {
         let proxy = std::env::var("HODEI_RECONFIG_PROXY").expect("the new proxy settings");
         let proxy = serde_json::from_str(&proxy).expect("the new proxy settings parse");
@@ -1784,6 +1851,90 @@ fn reconfigure_the_proxy(path: &str, key: &str, proxy: serde_json::Value) {
         };
         settings.insert("proxy".into(), proxy);
         config.config_settings = serde_json::Value::Object(settings);
+        store
+            .update_config(FIRST_ACCOUNT, key, config)
+            .await
+            .expect("the configuration is updated");
+        drop(store);
+        drop(db);
+    });
+}
+
+/// Crea grupos de la primera cuenta, en orden.
+fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
+    use hodei_catalog::CatalogWriter;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime");
+    runtime.block_on(async {
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path)
+            .await
+            .expect("rocksdb");
+        db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+        let store = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
+            db.clone(),
+            std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
+        );
+        store.initialize().await.expect("initialize");
+        for group in groups {
+            let key = group["key"].as_str().expect("the key");
+            let mut config =
+                hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
+            config.config_settings =
+                serde_json::json!({ "group": { "members": group["members"] } });
+            store
+                .create_repository(
+                    FIRST_ACCOUNT,
+                    hodei_catalog::RepositoryDescriptor {
+                        hrn: hodei_catalog::repository_hrn(
+                            "hodei",
+                            "artifacts",
+                            "eu",
+                            FIRST_ACCOUNT,
+                            key,
+                        ),
+                        account: FIRST_ACCOUNT.to_string(),
+                        repo_key: key.to_string(),
+                        format: hodei_catalog::RepositoryFormat::Raw,
+                        mode: hodei_catalog::RepositoryMode::Group,
+                        config,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                    },
+                )
+                .await
+                .expect("the group is created");
+        }
+        drop(store);
+        drop(db);
+    });
+}
+
+/// Cambia los miembros de un grupo sembrado: la version de su
+/// configuracion sube.
+fn reconfigure_the_group(path: &str, key: &str, members: &[String]) {
+    use hodei_catalog::{CatalogReader, CatalogWriter};
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime");
+    runtime.block_on(async {
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path)
+            .await
+            .expect("rocksdb");
+        db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+        let store = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
+            db.clone(),
+            std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
+        );
+        store.initialize().await.expect("initialize");
+        let current = store
+            .repository(FIRST_ACCOUNT, key)
+            .await
+            .expect("the group exists");
+        let mut config = current.config;
+        config.config_settings = serde_json::json!({ "group": { "members": members } });
         store
             .update_config(FIRST_ACCOUNT, key, config)
             .await

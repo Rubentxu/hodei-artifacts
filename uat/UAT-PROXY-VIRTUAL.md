@@ -1,6 +1,6 @@
 # Repository proxy remoto — contrato de acceso a upstream
 
-**Tareas:** HSP-106 (HAR-12), HSP-107 (HAR-13) · **Servicio medido:** `hodei-artifacts 0.2.0`
+**Tareas:** HSP-106 (HAR-12), HSP-107 (HAR-13), HSP-108 (HAR-14) · **Servicio medido:** `hodei-artifacts 0.2.0`
 
 ## 1. Qué afirma este contrato
 
@@ -161,6 +161,49 @@ bajado no caduca. Un campo desconocido es un error, como en el upstream.
   coalescidos. La lectura caliente del libro mira solo los 32 recibos más
   recientes de la ruta, porque el libro crece con cada revalidación.
 
+### Repositorios virtuales o de grupo (HSP-108)
+
+Un repositorio `mode = group` no guarda contenido: **resuelve una ruta entre
+sus miembros** (`config_settings.group.members`, una lista ordenada de claves
+de repositorios de la misma cuenta y del mismo formato).
+
+- **Se valida al crear y al reconfigurar.** Lista no vacía, hasta 16 miembros,
+  sin repetidos y sin claves con `/`, espacios o caracteres de control; un
+  campo desconocido es un error. Todos los miembros deben existir, ser del
+  mismo formato y no cerrar un ciclo (ni con el propio grupo). Un grupo puede
+  contener otros grupos hasta una profundidad de 3 y 64 nodos en total; un
+  miembro que aparece por dos caminos (diamante) cuenta una vez. Solo un
+  grupo declara `group` y solo un proxy declara `proxy`.
+- **La precedencia es el orden de los miembros.** Gana el primer miembro que
+  tiene la ruta; los grupos anidados se recorren en profundidad y la hoja que
+  sirve es la que se nombra. La misma petición con el mismo estado da siempre
+  la misma respuesta.
+- **MISS no es ERROR.** Un miembro hosted sin la ruta, o un proxy cuyo
+  upstream contesta `404` (o que no es suya por ámbito o caché negativa), es
+  un MISS y el grupo sigue con el siguiente. Cualquier otro fallo (upstream
+  caído, `502`, `503`, `504`, offline, límite superado) es un ERROR: la
+  resolución se detiene y devuelve ese error. **Nunca salta** a otro miembro
+  tras un error, porque serviría un contenido distinto del que el primero
+  habría dado.
+- **El receipt dice quién ganó.** La respuesta lleva `x-hodei-resolved-from`
+  (la clave del miembro hoja) y `x-hodei-group-version` (la versión de la
+  configuración del grupo con la que se resolvió); el servicio emite un
+  evento de auditoría `resolve` con el recorrido (`miembro:hit|miss|error`) y
+  el proxy ganador deja su recibo de procedencia habitual. Reordenar o
+  cambiar los miembros sube la versión.
+- **Permisos.** Cedar se evalúa sobre el grupo (`DownloadAsset` sobre el
+  endpoint virtual) **y** sobre cada miembro que se recorre. Un miembro que
+  el principal no puede leer se omite, con sus descendientes, como si no
+  existiera. Las rutas directas no heredan: leer el grupo no abre un miembro,
+  ni leer un miembro abre el grupo.
+- **Compuerta de confianza.** Se aplica sobre el miembro que posee la ruta. Si
+  la compuerta lo oculta, la respuesta es `404` y el grupo **no** baja la ruta
+  de otro miembro.
+- **Solo lectura.** `PUT` sobre un grupo responde `405`.
+- **Un grupo no declara `trust`.** La política de confianza es la del miembro que
+  sirve; declararla en el grupo se rechaza al guardar, porque no se ejecutaría
+  nunca.
+
 ## 2. Qué se ha medido
 
 | Prueba | Qué comprueba |
@@ -172,6 +215,9 @@ bajado no caduca. Un campo desconocido es un error, como en el upstream.
 | `crates/hodei-catalog/src/proxy_cache.rs` (unitarias) | La política de caché y la decisión de frescura, pura: TTL, stale, cuarentena, offline, cambio de configuración. |
 | `src/proxy/cache.rs`, `fetch.rs` (unitarias) | Single-flight (relevo del líder, errores compartidos), caché negativa acotada y por versión, contadores; `304`, validadores solo al origen y modo offline del cliente. |
 | `tests/hsp107_proxy_cache_e2e.rs` | El proceso real por HTTP con un upstream controlable (ETag, `Last-Modified`, cuerpo mutable, retardo, caída). |
+| `crates/hodei-catalog/src/group.rs` (unitarias) | La configuración del grupo y el recorrido puro: orden, ciclos, anidamiento, diamantes, límites, formato, miembros ocultos. |
+| `crates/hodei-catalog-storage/tests/hsp108_group_contract.rs` | Crear y reconfigurar grupos sobre el motor real: miembros inexistentes, de otro formato o de otra cuenta, ciclos, versión, `group` y `proxy` solo donde toca. |
+| `tests/hsp108_group_e2e.rs` | El proceso real por HTTP: shadowing hosted/proxy, MISS frente a ERROR, permisos por miembro y por grupo, confianza, anidamiento, reconfiguración. |
 
 ### PROXY-01 — verificar, guardar, dejar recibo
 
@@ -246,18 +292,54 @@ Un digest revocado deja de servirse en las tres vías: en fresco (`404`), con
 el upstream caído con `stale_if_error_secs` (no hay stale) y en offline
 (`404`, sin red), sin que el cambio de canal tenga que esperar al TTL.
 
+### GROUP-01 -- orden y shadowing
+
+Con la misma ruta en un hosted y en el upstream de un proxy, un grupo
+`[hosted, proxy]` sirve el hosted sin molestar al upstream y `[proxy, hosted]`
+sirve el remoto, y ambos lo dicen en `x-hodei-resolved-from`. Repetir la
+petición da el mismo ganador y la misma versión. Una ruta que solo tiene el
+upstream baja por el proxy y queda en su caché.
+
+### GROUP-02 -- MISS continúa, ERROR detiene
+
+Con `[proxy, hosted]` y la ruta solo en el hosted, un `404` del upstream
+continúa y sirve el hosted. Con el upstream caído (`503`) la respuesta es un
+error `5xx` y **no** el hosted, aunque lo tenga; la ruta directa del hosted
+sigue sirviendo y, al volver el upstream, el grupo vuelve a resolver.
+
+### GROUP-03 -- permisos sin herencia
+
+Si el principal lee el grupo y el proxy pero no el hosted, el grupo omite el
+hosted y resuelve el proxy, y la ruta directa del hosted queda cerrada
+(`403`/`404`). Si lee el hosted pero no el grupo, el endpoint virtual queda
+cerrado y el directo sigue abierto.
+
+### GROUP-04 -- confianza sin saltos
+
+Con la compuerta `trusted` en el hosted, que tiene la ruta sin promover, el
+grupo responde `404` y no llega a contactar con el upstream.
+
+### GROUP-05 -- anidamiento, solo lectura y reconfiguración
+
+Un grupo dentro de un grupo resuelve a la hoja que tiene la ruta. `PUT`
+sobre un grupo responde `405` y no escribe nada en los miembros.
+Reordenar los miembros con el servicio parado cambia el ganador y sube
+`x-hodei-group-version`.
+
 ## 3. La superficie
 
 | Ruta | Acción Cedar | Qué hace |
 | --- | --- | --- |
 | `GET`/`HEAD /repository/{repo}/{path}` | `DownloadAsset` | En un proxy, resuelve, sirve o revalida contra el upstream según la política de caché; `x-hodei-cache` dice cuál. |
-| `PUT /repository/{repo}/{path}` | `UploadAsset` | Sobre un proxy responde `405`. |
+| `PUT /repository/{repo}/{path}` | `UploadAsset` | Sobre un proxy o un grupo responde `405`. |
+| `GET`/`HEAD /repository/{grupo}/{path}` | `DownloadAsset` (grupo y cada miembro) | En un grupo, resuelve entre sus miembros en orden; `x-hodei-resolved-from` y `x-hodei-group-version` dicen cuál y con qué configuración. |
 | `GET /api/v1/provenance?repository=&path=` | `DownloadAsset` | Los recibos de la ruta, el más reciente primero. |
 
 ### Cómo se activa
 
-- **Repositorio.** `mode = proxy` con `config_settings.proxy.upstream`. No
-  existe aún una ruta HTTP que cree repositorios del catálogo.
+- **Repositorio.** `mode = proxy` con `config_settings.proxy.upstream`, o
+  `mode = group` con `config_settings.group.members`. No existe aún una
+  ruta HTTP que cree repositorios del catálogo.
 - **Salida del servicio.** `[proxy] allowed_hosts` (o
   `HODEI_PROXY__ALLOWED_HOSTS`, separado por comas) con entradas
   `host[:puerto][;private][;http]` o, en fichero, objetos
@@ -288,7 +370,46 @@ el upstream caído con `stale_if_error_secs` (no hay stale) y en offline
   origen se acepta como confirmación: el origen es quien lo contesta.
 - **El relevo de un líder cancelado** puede duplicar una descarga y su recibo
   en una ventana estrecha.
-- **No hay repositorios virtuales ni de grupo** (HSP-108).
+- **Un miembro que el principal no puede leer se omite en silencio.** El
+  grupo no distingue «no existe» de «no puedes leerlo»: es lo que evita que
+  la resolución filtre su existencia, pero un permiso mal puesto se ve como
+  un miembro que no aporta nada.
+- **El primer miembro que posee la ruta gana aunque la confianza lo oculte.**
+  El `404` es deliberado: caer al siguiente serviría contenido que nadie
+  eligió para esa ruta.
+- **Reconfigurar un grupo interno puede profundizar uno externo.** La
+  validación comprueba ciclos y límites del grupo que se cambia, no los de
+  los grupos que ya lo contienen; si el resultado supera los límites, la
+  resolución del grupo externo responde `503` hasta que se corrija.
+- **El endpoint de procedencia sobre un grupo devuelve recibos vacíos.** Los
+  recibos son del proxy miembro y se leen con permiso directo sobre él.
+- **Un grupo no tiene miembros de otra cuenta ni de otro formato**, y no
+  hay prioridad por ruta ni reglas de enrutado: el orden es el único
+  criterio.
+- **La resolución lee el catálogo y evalúa Cedar en cada petición.** No hay
+  caché de resolución del grupo.
+- **No hay presupuesto por petición.** Una ruta inexistente recorre todos los
+  miembros (hasta 64 nodos, con una lectura y una decisión de Cedar cada
+  uno) y cada proxy miembro puede consultar su upstream; solo la caché
+  negativa por miembro y el límite `max_concurrent` lo acotan.
+- **La auditoría de la resolución** registra el grupo con su versión y el
+  recorrido de miembros consultados; no incluye las versiones de los grupos
+  anidados ni los miembros omitidos por permisos.
+- **Un miembro oculto deja pasar a otro con la misma ruta.** Si un hosted
+  privado queda oculto para el principal y un miembro posterior tiene la
+  misma ruta, se sirve el posterior (el recibo dice cuál). Es la semántica
+  buscada del permiso por miembro; el orden del grupo y los permisos son la
+  defensa contra la confusión de dependencias.
+- **Una caché negativa o un proxy primero caído condicionan el grupo.** Con
+  `negative_secs > 0` un 404 recordado es un MISS aunque el upstream esté
+  caído; un proxy caído situado antes detiene el grupo (ERROR) aunque un
+  hosted posterior tenga la ruta.
+- **Cobertura e2e acotada.** `HEAD`, `Range` y `If-None-Match` sobre un grupo
+  comparten el camino del contenido servido y no tienen test propio; la
+  auditoría `resolve` y los diamantes se prueban solo en unitarias.
+- **La validación del grupo no es transaccional.** Dos reconfiguraciones
+  concurrentes podrían cerrar un ciclo; la lectura lo detecta y responde
+  `503` hasta corregirlo.
 - **`HEAD` baja el contenido.** En un proxy sin el asset, un `HEAD` resuelve
   igual que un `GET`: el coste es la descarga completa.
 - **La lista de salida es del servicio, no de la cuenta.** Cualquier cuenta
@@ -329,4 +450,7 @@ cargo test -p hodei-catalog-storage --test hsp106_provenance_ledger_contract
 cargo test --test hsp106_proxy_e2e -- --test-threads=2
 cargo test -p hodei-catalog --lib proxy_cache
 cargo test --test hsp107_proxy_cache_e2e -- --test-threads=2
+cargo test -p hodei-catalog --lib group
+cargo test -p hodei-catalog-storage --test hsp108_group_contract
+cargo test --test hsp108_group_e2e -- --test-threads=2
 ```

@@ -1219,9 +1219,9 @@ async fn a_repository_of_another_format_is_not_found() {
 }
 
 #[tokio::test]
-async fn a_mode_that_this_release_does_not_serve_cannot_be_created() {
-    // Un proxy no se crea: no se crea un repositorio que luego no va a
-    // funcionar. Y la superficie de contenido crudo no lo serviria.
+async fn a_virtual_repository_that_cannot_work_is_refused_when_it_is_created() {
+    // Un proxy sin upstream no se crea: no se crea un repositorio que
+    // luego no va a funcionar.
     let contract = Contract::without_repository().await;
     let outcome = contract
         .writer
@@ -1239,9 +1239,9 @@ async fn a_mode_that_this_release_does_not_serve_cannot_be_created() {
     assert!(
         matches!(
             outcome,
-            Err(hodei_catalog::CatalogError::ModeNotImplemented { .. })
+            Err(hodei_catalog::CatalogError::InvalidRequest { .. })
         ),
-        "a proxy repository has to be refused clearly"
+        "a proxy repository without an upstream has to be refused clearly"
     );
 }
 

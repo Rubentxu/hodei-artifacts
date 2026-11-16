@@ -1900,7 +1900,32 @@ añade el single-flight por ruta y versión de configuración, la caché negativ
 «bytes nuevos» y «otros bytes para contenido inmutable». Las reglas están en
 [`uat/UAT-PROXY-VIRTUAL.md`](uat/UAT-PROXY-VIRTUAL.md).
 
-**Lo que sigue sin estar.** No hay repositorios virtuales o de grupo
-(HSP-108), ni coordinación entre réplicas (single-flight y caché negativa son
+**Lo que sigue sin estar.** No hay coordinación entre réplicas (single-flight y caché negativa son
 por proceso), ni endpoint de métricas. No existe una ruta HTTP que cree
 repositorios proxy: se siembran o se crean con el catálogo.
+
+## 10-duovicies — M10: los repositorios virtuales o de grupo (HAR-14)
+
+Un repositorio en modo `group` no guarda contenido: resuelve una ruta entre
+sus miembros, en el orden en que se declaran. El contrato, las pruebas y los
+límites están en [`uat/UAT-PROXY-VIRTUAL.md`](uat/UAT-PROXY-VIRTUAL.md).
+
+**Qué hay.** `hodei_catalog::group` es el núcleo puro: la configuración
+(`config_settings.group.members`) y `walk`, un recorrido en profundidad que
+detecta ciclos, acota profundidad (3), miembros (16) y nodos (64), exige el
+mismo formato y devuelve las hojas en orden. `hodei-catalog-storage` valida
+el grupo al crear y al reconfigurar (miembros existentes, de la cuenta, sin
+ciclos) y rechaza `group` fuera de un grupo y `proxy` fuera de un proxy.
+`src/handlers/raw_group.rs` resuelve la lectura y `raw.rs` la conecta a
+`GET`/`HEAD`; `PUT` responde `405`.
+
+**Cómo decide.** El orden de los miembros es la precedencia. Un MISS (hosted
+sin la ruta, proxy que no la tiene) continúa; un ERROR se propaga y detiene
+la resolución sin saltar a otro miembro. Cedar se evalúa sobre el grupo y
+sobre cada miembro, y un miembro ilegible se omite. La respuesta dice quién
+ganó con `x-hodei-resolved-from` y `x-hodei-group-version`, y el servicio
+audita la resolución con su recorrido.
+
+**Lo que sigue sin estar.** No hay caché de resolución, enrutado por ruta ni
+prioridades distintas del orden; los grupos de varios formatos tampoco. Los
+límites aceptados están en la sección 4 del UAT.

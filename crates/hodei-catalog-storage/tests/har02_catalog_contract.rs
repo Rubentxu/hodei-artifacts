@@ -238,40 +238,6 @@ async fn a_repository_declares_account_key_format_mode_and_versioned_config() {
     assert_eq!(read.hrn, created.hrn);
 }
 
-#[tokio::test]
-async fn a_mode_this_release_does_not_serve_is_refused_clearly() {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let db = open_store(&tmp.path().join("db")).await;
-    let store = store_for(db);
-    store.initialize().await.expect("initialize");
-
-    for mode in [RepositoryMode::Group] {
-        let refused = store
-            .create_repository(
-                "acme",
-                descriptor(
-                    "acme",
-                    "releases",
-                    RepositoryFormat::Raw,
-                    mode,
-                    DigestScope::Global,
-                ),
-            )
-            .await
-            .expect_err("the mode is not served");
-        assert_eq!(refused, CatalogError::ModeNotImplemented { mode });
-        // Y el mensaje dice cuál es el modo, para que el que lo pidió sepa
-        // que falta.
-        assert!(refused.to_string().contains(mode.as_str()));
-    }
-
-    // Y no se ha creado ningún repositorio con ese modo.
-    assert!(matches!(
-        store.repository("acme", "releases").await,
-        Err(CatalogError::Missing { .. })
-    ));
-}
-
 fn proxy_config(upstream: Option<serde_json::Value>) -> RepositoryConfig {
     let mut config = RepositoryConfig::new(DigestScope::Global);
     config.config_settings = match upstream {
