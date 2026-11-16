@@ -2099,7 +2099,7 @@ filtros, su paginación, su orden y su validación), el puerto `CatalogSearch`
 hay?" y "¿qué hay en esta ruta?" son preguntas distintas— y su adaptador
 en `hodei-catalog-storage`, que escribe las consultas sobre las filas del
 catálogo. La superficie HTTP son `GET /api/v1/search` y
-`GET /api/v1/packages/{repositorio}/{ruta}`.
+`GET /api/v1/packages/{repository}/{*path}`.
 
 **Cómo decide.** La cuenta sale del principal verificado y Cedar acota los
 repositorios uno por uno: lo que no se puede leer no sale **ni cuenta**, ni

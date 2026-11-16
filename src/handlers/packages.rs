@@ -172,7 +172,7 @@ pub struct DecisionView {
     pub granted_at: DateTime<Utc>,
 }
 
-/// `GET /api/v1/packages/{repository}/{path}`
+/// `GET /api/v1/packages/{repository}/{*path}`
 ///
 /// The path of the asset arrives with the slashes inside it, because the
 /// path is what names the content inside the repository.
