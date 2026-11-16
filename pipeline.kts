@@ -167,6 +167,7 @@ pipeline {
                         "--test hsp105_trust_ledger_contract",
                         "--test hsp106_provenance_ledger_contract",
                         "--test hsp108_group_contract",
+                        "--test hsp109_maven_contract",
                     ).joinToString(" ")
                 )
             }
@@ -199,6 +200,8 @@ pipeline {
                         "--test hsp106_proxy_e2e",
                         "--test hsp107_proxy_cache_e2e",
                         "--test hsp108_group_e2e",
+                        "--test hsp109_maven_e2e",
+                        "--test hsp109_maven_cli",
                     ).joinToString(" ")
                 )
                 sh(

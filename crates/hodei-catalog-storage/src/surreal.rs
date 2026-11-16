@@ -358,6 +358,24 @@ fn the_upstream_of(mode: RepositoryMode, config: &RepositoryConfig) -> Result<()
     }
 }
 
+/// Los ajustes de Maven de un repositorio.
+///
+/// Solo un repositorio Maven 2 los declara, y los que declara tienen que
+/// entenderse: un ajuste que parece activo y no lo esta es peor que un error.
+fn the_maven_of(format: RepositoryFormat, config: &RepositoryConfig) -> Result<(), CatalogError> {
+    if format != RepositoryFormat::Maven2 {
+        if config.config_settings.get("maven").is_some() {
+            return Err(CatalogError::invalid(
+                "only a Maven2 repository can declare config_settings.maven",
+            ));
+        }
+        return Ok(());
+    }
+    hodei_catalog::maven::MavenConfig::of_settings(&config.config_settings)
+        .map(|_| ())
+        .map_err(CatalogError::invalid)
+}
+
 /// El identificador compuesto de unas coordenadas.
 ///
 /// Las partes se escapan una a una y se unen con `|`, que ya no puede
@@ -1057,6 +1075,46 @@ impl CatalogReader for SurrealCatalogStore {
             .into_descriptor()
     }
 
+    async fn assets_under(
+        &self,
+        principal_account: &str,
+        repository: &str,
+        prefix: &str,
+    ) -> Result<Vec<AssetRecord>, CatalogError> {
+        self.decide(&AccessRequest::repository(
+            principal_account,
+            CatalogAction::Read,
+            repository,
+        ))
+        .await?;
+
+        // Un limite mas que el maximo: si llega, la lista no esta completa
+        // y se dice en vez de devolverla.
+        let mut response = self
+            .db
+            .query(
+                "SELECT account, repository, asset_path, package_name, package_version, \
+                 digest_algorithm, digest, size_bytes, subject, updated_at FROM catalog_asset \
+                 WHERE account = $account AND repository = $repository \
+                 AND string::starts_with(asset_path, $prefix) ORDER BY asset_path LIMIT $limit",
+            )
+            .bind(("account", principal_account.to_string()))
+            .bind(("repository", repository.to_string()))
+            .bind(("prefix", prefix.to_string()))
+            .bind(("limit", (hodei_catalog::MAX_ASSETS_UNDER + 1) as i64))
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let rows: Vec<AssetRow> = response
+            .take(0)
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        if rows.len() > hodei_catalog::MAX_ASSETS_UNDER {
+            return Err(CatalogError::invalid(
+                "there are too many assets under that prefix to list them",
+            ));
+        }
+        rows.into_iter().map(AssetRow::into_asset).collect()
+    }
+
     async fn asset(
         &self,
         principal_account: &str,
@@ -1612,6 +1670,7 @@ impl CatalogWriter for SurrealCatalogStore {
             ));
         }
         the_upstream_of(descriptor.mode, &descriptor.config)?;
+        the_maven_of(descriptor.format, &descriptor.config)?;
         if descriptor.account != principal_account {
             return Err(CatalogError::Denied {
                 action: "configure",
@@ -1738,6 +1797,7 @@ impl CatalogWriter for SurrealCatalogStore {
         // Una configuracion nueva tiene que seguir diciendo a donde va un
         // proxy: la version que lo dejara sin upstream no se guarda.
         the_upstream_of(current.mode, &config)?;
+        the_maven_of(current.format, &config)?;
         // Y un grupo sigue siendo un grupo valido: la version que lo dejara
         // con un ciclo o un miembro que no existe no se guarda.
         self.the_group_of(

@@ -11,6 +11,7 @@ pub mod capsules;
 pub mod gc;
 pub mod health;
 pub mod iam;
+mod maven;
 pub mod oci;
 pub mod playground;
 pub mod policies;

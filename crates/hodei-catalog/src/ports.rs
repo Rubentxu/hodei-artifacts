@@ -258,6 +258,9 @@ pub trait BlobIntegrityProbe: Send + Sync {
     async fn length_of(&self, location: &BlobLocation) -> Result<u64, BlobProbeError>;
 }
 
+/// Los assets como maximo que devuelve `assets_under`.
+pub const MAX_ASSETS_UNDER: usize = 20_000;
+
 /// La lectura del catálogo.
 ///
 /// Todas las lecturas llevan la cuenta del principal verificado. La cuenta
@@ -271,6 +274,20 @@ pub trait CatalogReader: Send + Sync {
         principal_account: &str,
         repo_key: &str,
     ) -> Result<RepositoryDescriptor, CatalogError>;
+
+    /// Los assets cuya ruta empieza por el prefijo, ordenados por ruta.
+    ///
+    /// Es la lectura que necesitan los formatos que **derivan** vistas de lo
+    /// publicado (por ejemplo, los metadatos de Maven). No comprueba que cada
+    /// asset apunte a una version que exista: eso lo hace `asset`, que es el
+    /// que sirve contenido. Si hay mas de `MAX_ASSETS_UNDER`, falla en vez de
+    /// devolver una lista que parece completa y no lo es.
+    async fn assets_under(
+        &self,
+        principal_account: &str,
+        repository: &str,
+        prefix: &str,
+    ) -> Result<Vec<AssetRecord>, CatalogError>;
 
     /// El asset en una ruta del repositorio.
     async fn asset(

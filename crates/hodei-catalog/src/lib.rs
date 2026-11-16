@@ -46,6 +46,7 @@
 pub mod error;
 pub mod gc;
 pub mod group;
+pub mod maven;
 pub mod model;
 pub mod ports;
 pub mod proxy;
@@ -69,7 +70,7 @@ pub use model::{
 pub use ports::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
     CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogWriter,
-    DenyAllAuthorizer,
+    DenyAllAuthorizer, MAX_ASSETS_UNDER,
 };
 pub use proxy::{
     ChecksumEvidence, CredentialRef, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
