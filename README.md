@@ -124,6 +124,8 @@ La superficie administrativa (`/api/v1`: IAM, políticas, esquemas y playground)
 
 `GET` y `POST /api/v1/repositories` son rutas de negocio separadas: no las abre `admin_api_enabled`; exigen bearer verificado y responden `401` sin credencial. `POST` emite eventos de auditoría sin credenciales. Ver [repository-read.md](docs/security/repository-read.md) y [audit-events.md](docs/security/audit-events.md).
 
+La búsqueda del catálogo (`GET /api/v1/search`) y la vista de detalle de un paquete (`GET /api/v1/packages/{repository}/{*path}`) son rutas de negocio con la misma exigencia: bearer verificado, cuenta del principal y permiso Cedar repositorio a repositorio. Lo que el principal no puede leer no sale de la respuesta ni se cuenta en el total. La sección SEARCH de [UAT-OPERATIONS.md](uat/UAT-OPERATIONS.md) dice qué promete la búsqueda, qué se midió y qué no se promete.
+
 ```toml
 [security]
 # Solo abre la administración con authenticator + authorizer configurados.
