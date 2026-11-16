@@ -574,6 +574,28 @@ async fn la_concesion_marca_el_contenido_y_la_revocacion_lo_quita() {
         .expect("the search");
     assert_eq!(page.results[0].trust_state, TrustState::Trusted);
 
+    // Y en una pagina con mas de un asset, solo se concede el que lo
+    // esta: la concesion de uno no concede el otro.
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_package_name("labpkg"),
+        )
+        .await
+        .expect("the search");
+    let trusted: Vec<&str> = page
+        .results
+        .iter()
+        .filter(|hit| hit.trust_state == TrustState::Trusted)
+        .map(|hit| hit.asset_path.as_str())
+        .collect();
+    assert_eq!(
+        trusted,
+        vec!["labpkg-1.0-py3-none-any.whl"],
+        "the concession of one asset is not the concession of the other"
+    );
+
     // Y revocado, vuelve a la cuarentena en la peticion siguiente: no hay
     // indice que reescribir.
     store

@@ -276,8 +276,13 @@ impl SurrealCatalogStore {
         let mut conditions = vec!["account = $account".to_string()];
         let mut bindings = Map::new();
         bindings.insert("account".to_string(), json!(principal_account));
+        // Los trios se unen con "o": un asset esta concedido si **alguno**
+        // de los digests de la pagina lo esta. Con "y" la pagina entera
+        // se quedaria sin concesiones en cuanto un asset sin conceder
+        // llegara a la pagina, y el resultado seria que nada es de fiar.
+        let mut triples = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {
-            conditions.push(format!(
+            triples.push(format!(
                 "(repository = $grant_repository_{index} AND digest_algorithm = $grant_algorithm_{index} \
                  AND digest = $grant_digest_{index})"
             ));
@@ -288,6 +293,7 @@ impl SurrealCatalogStore {
             );
             bindings.insert(format!("grant_digest_{index}"), json!(row.digest));
         }
+        conditions.push(format!("({})", triples.join(" OR ")));
         let sql = format!(
             "SELECT repository, digest_algorithm, digest FROM trust_grant \
              WHERE {} AND revoked_at = NONE",
