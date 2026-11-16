@@ -178,6 +178,49 @@ pub enum FetchError {
     /// Hay demasiadas salidas a la vez.
     #[error("too many fetches are in flight")]
     Busy,
+    /// El servicio no sale a la red: se pidio una salida en modo offline.
+    #[error("the service is offline and does not reach any upstream")]
+    Offline,
+}
+
+/// Los validadores con que se pregunta al upstream si un contenido que ya se
+/// tiene sigue valiendo.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Validators {
+    /// Se envia como `If-None-Match`.
+    pub etag: Option<String>,
+    /// Se envia como `If-Modified-Since`.
+    pub last_modified: Option<String>,
+}
+
+impl Validators {
+    /// Si no hay ninguno que enviar.
+    pub fn is_empty(&self) -> bool {
+        self.etag.is_none() && self.last_modified.is_none()
+    }
+}
+
+/// Lo que contesta el upstream a una peticion que puede ser condicional.
+#[derive(Debug)]
+pub enum Fetched {
+    /// El upstream entrega el contenido (`200`).
+    Content(Box<Opened>),
+    /// El upstream confirma que el contenido que se tiene sigue valiendo
+    /// (`304`): no hay cuerpo.
+    NotModified(NotModified),
+}
+
+/// La confirmacion de un `304`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotModified {
+    /// De donde vino la confirmacion, tras las redirecciones, sin consulta.
+    pub source_url: String,
+    /// Las redirecciones que se siguieron.
+    pub redirects: u8,
+    /// El `ETag` que declaro el `304`, si declaro alguno.
+    pub etag: Option<String>,
+    /// El `Last-Modified` que declaro el `304`, si declaro alguno.
+    pub last_modified: Option<String>,
 }
 
 /// El cliente de salida del servicio.
@@ -188,6 +231,7 @@ pub struct ProxyFetcher {
     secrets: Arc<dyn SecretSource>,
     limits: FetchLimits,
     permits: Arc<Semaphore>,
+    offline: bool,
 }
 
 impl std::fmt::Debug for ProxyFetcher {
@@ -195,6 +239,7 @@ impl std::fmt::Debug for ProxyFetcher {
         f.debug_struct("ProxyFetcher")
             .field("policy", &self.policy)
             .field("limits", &self.limits)
+            .field("offline", &self.offline)
             .finish_non_exhaustive()
     }
 }
@@ -208,7 +253,24 @@ impl ProxyFetcher {
             secrets: Arc::new(EnvSecrets::default()),
             limits,
             permits: Arc::new(Semaphore::new(max_concurrent.max(1))),
+            offline: false,
         }
+    }
+
+    /// Un cliente que no sale a la red: toda peticion falla con
+    /// [`FetchError::Offline`] antes de resolver un nombre.
+    ///
+    /// Es la defensa de ultima linea del modo offline: aunque la decision de
+    /// cache se equivocase, ninguna ruta de codigo llega a un upstream.
+    #[must_use]
+    pub fn with_offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
+        self
+    }
+
+    /// Si el cliente esta en modo offline.
+    pub fn is_offline(&self) -> bool {
+        self.offline
     }
 
     /// Con otro resolutor, para probar el rebind.
@@ -246,6 +308,30 @@ impl ProxyFetcher {
         upstream: &UpstreamConfig,
         asset_path: &str,
     ) -> Result<Opened, FetchError> {
+        match self.open_conditional(upstream, asset_path, None).await? {
+            Fetched::Content(opened) => Ok(*opened),
+            // Sin validadores no hay nada que confirmar: un `304` no
+            // solicitado es una respuesta que no es un contenido.
+            Fetched::NotModified(_) => Err(FetchError::Status(304)),
+        }
+    }
+
+    /// Como [`Self::open`], pero preguntando al upstream si el contenido que
+    /// ya se tiene sigue valiendo.
+    ///
+    /// Los validadores se envian **solo al origen del upstream**, no a un
+    /// origen al que una redireccion lleve. Un `304` sin validadores
+    /// enviados no es una respuesta valida.
+    pub async fn open_conditional(
+        &self,
+        upstream: &UpstreamConfig,
+        asset_path: &str,
+        validators: Option<&Validators>,
+    ) -> Result<Fetched, FetchError> {
+        if self.offline {
+            return Err(FetchError::Offline);
+        }
+        let validators = validators.filter(|validators| !validators.is_empty());
         // Lo que no cae en un scope no consume ni un permiso.
         let mut url = upstream.target(asset_path).ok_or(FetchError::OutOfScope)?;
         let permit = self
@@ -263,11 +349,24 @@ impl ProxyFetcher {
         let mut redirects: u8 = 0;
 
         loop {
-            let response = self.hop(upstream, &upstream_origin, &url, deadline).await?;
+            let response = self
+                .hop(upstream, &upstream_origin, &url, deadline, validators)
+                .await?;
             let status = response.status().as_u16();
             match status {
                 200 => {
-                    return Self::accept(response, url, redirects, budget, permit);
+                    return Self::accept(response, url, redirects, budget, permit)
+                        .map(|opened| Fetched::Content(Box::new(opened)));
+                }
+                // Un `304` solo vale de quien recibio los validadores: otro
+                // origen al que llevo un redirect no sabe de que copia habla.
+                304 if validators.is_some() && origin_of(&url) == upstream_origin => {
+                    return Ok(Fetched::NotModified(NotModified {
+                        source_url: format!("{}{}", origin_of(&url), url.path()),
+                        redirects,
+                        etag: header_text(&response, reqwest::header::ETAG, 200),
+                        last_modified: header_text(&response, reqwest::header::LAST_MODIFIED, 100),
+                    }));
                 }
                 301 | 302 | 303 | 307 | 308 => {
                     redirects += 1;
@@ -290,6 +389,7 @@ impl ProxyFetcher {
         upstream_origin: &str,
         url: &Url,
         deadline: tokio::time::Instant,
+        validators: Option<&Validators>,
     ) -> Result<reqwest::Response, FetchError> {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
@@ -348,6 +448,23 @@ impl ProxyFetcher {
                 .map_err(|_| FetchError::Credential)?;
             value.set_sensitive(true);
             request = request.header(AUTHORIZATION, value);
+        }
+        // Los validadores tambien son del upstream: un origen al que lleva
+        // una redireccion no tiene por que ver cual es el estado de la
+        // copia que se tiene.
+        if let Some(validators) = validators
+            && origin_of(url) == upstream_origin
+        {
+            if let Some(etag) = validators.etag.as_deref()
+                && let Ok(value) = HeaderValue::from_str(etag)
+            {
+                request = request.header(reqwest::header::IF_NONE_MATCH, value);
+            }
+            if let Some(since) = validators.last_modified.as_deref()
+                && let Ok(value) = HeaderValue::from_str(since)
+            {
+                request = request.header(reqwest::header::IF_MODIFIED_SINCE, value);
+            }
         }
 
         request.send().await.map_err(|error| {
@@ -425,11 +542,8 @@ impl ProxyFetcher {
                 FetchError::BadResponse("the checksum declared by the upstream is not a sha256"),
             )?),
         };
-        let etag = headers
-            .get(reqwest::header::ETAG)
-            .and_then(|value| value.to_str().ok())
-            .filter(|value| value.len() <= 200)
-            .map(str::to_string);
+        let etag = header_text(&response, reqwest::header::ETAG, 200);
+        let last_modified = header_text(&response, reqwest::header::LAST_MODIFIED, 100);
         Ok(Opened {
             response,
             final_url,
@@ -437,6 +551,7 @@ impl ProxyFetcher {
             content_length,
             declared,
             etag,
+            last_modified,
             budget,
             _permit: permit,
         })
@@ -451,8 +566,23 @@ pub struct Opened {
     content_length: Option<u64>,
     declared: Option<String>,
     etag: Option<String>,
+    last_modified: Option<String>,
     budget: u64,
     _permit: OwnedSemaphorePermit,
+}
+
+/// El texto de una cabecera, si es texto visible y no es desmedida.
+fn header_text(
+    response: &reqwest::Response,
+    name: reqwest::header::HeaderName,
+    max_len: usize,
+) -> Option<String> {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty() && value.len() <= max_len)
+        .map(str::to_string)
 }
 
 impl std::fmt::Debug for Opened {
@@ -503,6 +633,11 @@ impl Opened {
     /// La etiqueta de entidad que declaro el upstream.
     pub fn etag(&self) -> Option<&str> {
         self.etag.as_deref()
+    }
+
+    /// El `Last-Modified` que declaro el upstream.
+    pub fn last_modified(&self) -> Option<&str> {
+        self.last_modified.as_deref()
     }
 }
 
@@ -934,5 +1069,162 @@ mod tests {
 
     fn lab_names() -> Vec<(&'static str, Vec<std::net::IpAddr>)> {
         vec![("lab.test", vec!["127.0.0.1".parse().unwrap()])]
+    }
+
+    // -- Peticiones condicionales y modo offline --------------------------
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::Mutex;
+
+    use super::super::egress::AllowedHost;
+
+    /// Un servidor de un solo uso por conexion: guarda cada peticion
+    /// entera y contesta lo que dice `reply`.
+    fn serve(reply: impl Fn(&str) -> String + Send + 'static) -> (u16, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("binds");
+        let port = listener.local_addr().expect("address").port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 1024];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => request.extend_from_slice(&buffer[..read]),
+                    }
+                }
+                let text = String::from_utf8_lossy(&request).into_owned();
+                let answer = reply(&text);
+                log.lock().expect("log").push(text);
+                let _ = stream.write_all(answer.as_bytes());
+            }
+        });
+        (port, seen)
+    }
+
+    fn fetcher_for(ports: &[u16]) -> ProxyFetcher {
+        let hosts = ports
+            .iter()
+            .map(|port| AllowedHost::from_spec(&format!("127.0.0.1:{port};private;http")))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("hosts");
+        ProxyFetcher::new(
+            EgressPolicy::new(hosts).expect("policy"),
+            FetchLimits::default(),
+            4,
+        )
+    }
+
+    fn upstream_at(port: u16, cross_origin: bool) -> UpstreamConfig {
+        let mut config = hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
+        config.config_settings = serde_json::json!({ "proxy": { "upstream": {
+            "id": "lab",
+            "url": format!("http://127.0.0.1:{port}/"),
+            "scopes": ["/"],
+            "redirects": { "max": 3, "cross_origin": cross_origin },
+        }}});
+        UpstreamConfig::of(&config)
+            .expect("valid")
+            .expect("an upstream")
+    }
+
+    fn validators() -> Validators {
+        Validators {
+            etag: Some("\"v1\"".to_string()),
+            last_modified: Some("Wed, 21 Oct 2015 07:28:00 GMT".to_string()),
+        }
+    }
+
+    const NOT_MODIFIED: &str = "HTTP/1.1 304 Not Modified\r\nETag: \"v1\"\r\nLast-Modified: Wed, 21 Oct 2015 07:28:00 GMT\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    #[tokio::test]
+    async fn a_304_confirms_the_copy_and_the_validators_travel_to_the_upstream() {
+        let (port, seen) = serve(|_| NOT_MODIFIED.to_string());
+        let fetched = fetcher_for(&[port])
+            .open_conditional(&upstream_at(port, false), "a.bin", Some(&validators()))
+            .await
+            .expect("answers");
+        let Fetched::NotModified(confirmation) = fetched else {
+            panic!("a 304 must be a confirmation");
+        };
+        assert_eq!(confirmation.etag.as_deref(), Some("\"v1\""));
+        assert_eq!(
+            confirmation.last_modified.as_deref(),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT")
+        );
+        assert!(!confirmation.source_url.contains('?'));
+        let request = seen.lock().expect("log")[0].to_ascii_lowercase();
+        assert!(request.contains("if-none-match: \"v1\""), "{request}");
+        assert!(
+            request.contains("if-modified-since: wed, 21 oct 2015 07:28:00 gmt"),
+            "{request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_validators_nothing_conditional_is_sent_and_a_304_is_an_error() {
+        let (port, seen) = serve(|_| NOT_MODIFIED.to_string());
+        let outcome = fetcher_for(&[port])
+            .open_conditional(&upstream_at(port, false), "a.bin", None)
+            .await;
+        assert!(matches!(outcome, Err(FetchError::Status(304))));
+        let request = seen.lock().expect("log")[0].to_ascii_lowercase();
+        assert!(!request.contains("if-none-match"), "{request}");
+        assert!(!request.contains("if-modified-since"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn validators_stay_at_the_upstream_origin_and_another_origin_cannot_confirm() {
+        let (stranger, stranger_seen) = serve(|_| NOT_MODIFIED.to_string());
+        let (port, _) = serve(move |_| {
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{stranger}/a.bin\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+        });
+        let outcome = fetcher_for(&[port, stranger])
+            .open_conditional(&upstream_at(port, true), "a.bin", Some(&validators()))
+            .await;
+        // El otro origen no recibio los validadores, y su `304` no vale.
+        assert!(
+            matches!(outcome, Err(FetchError::Status(304))),
+            "{outcome:?}"
+        );
+        let request = stranger_seen.lock().expect("log")[0].to_ascii_lowercase();
+        assert!(!request.contains("if-none-match"), "{request}");
+        assert!(!request.contains("if-modified-since"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn a_200_carries_the_last_modified_it_was_served_with() {
+        let (port, _) = serve(|_| {
+            "HTTP/1.1 200 OK\r\nLast-Modified: Wed, 21 Oct 2015 07:28:00 GMT\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                .to_string()
+        });
+        let fetched = fetcher_for(&[port])
+            .open_conditional(&upstream_at(port, false), "a.bin", Some(&validators()))
+            .await
+            .expect("answers");
+        let Fetched::Content(opened) = fetched else {
+            panic!("a 200 must be content");
+        };
+        assert_eq!(
+            opened.last_modified(),
+            Some("Wed, 21 Oct 2015 07:28:00 GMT")
+        );
+    }
+
+    #[tokio::test]
+    async fn offline_refuses_before_opening_any_connection() {
+        let (port, seen) = serve(|_| NOT_MODIFIED.to_string());
+        let fetcher = fetcher_for(&[port]).with_offline(true);
+        assert!(fetcher.is_offline());
+        let outcome = fetcher
+            .open_conditional(&upstream_at(port, false), "a.bin", None)
+            .await;
+        assert!(matches!(outcome, Err(FetchError::Offline)), "{outcome:?}");
+        assert!(seen.lock().expect("log").is_empty());
     }
 }

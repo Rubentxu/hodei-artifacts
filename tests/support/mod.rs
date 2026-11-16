@@ -431,6 +431,27 @@ impl Deployment {
         assert!(status.success(), "the catalog could not be seeded");
     }
 
+    /// Reconfigura un repositorio proxy ya sembrado: sustituye su
+    /// `config_settings.proxy` y sube la version de su configuracion.
+    ///
+    /// Lo hace un proceso que acaba enseguida y con el servicio parado: la
+    /// base la bloquea el proceso que la abre.
+    pub fn reconfigure_proxy(&self, key: &str, proxy: serde_json::Value) {
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env("HODEI_RECONFIG_KEY", key)
+            .env("HODEI_RECONFIG_PROXY", proxy.to_string())
+            .status()
+            .expect("the reconfigurer runs");
+        assert!(status.success(), "the repository could not be reconfigured");
+    }
+
     /// Arranca el servicio y espera a que abra el puerto.
     ///
     /// El puerto se elige en cada intento, y no antes: un puerto libre
@@ -1631,6 +1652,12 @@ pub fn seed_if_asked() {
     let Some(db) = std::env::var_os("HODEI_SEED_DB") else {
         return;
     };
+    if let Ok(key) = std::env::var("HODEI_RECONFIG_KEY") {
+        let proxy = std::env::var("HODEI_RECONFIG_PROXY").expect("the new proxy settings");
+        let proxy = serde_json::from_str(&proxy).expect("the new proxy settings parse");
+        reconfigure_the_proxy(&db.to_string_lossy(), &key, proxy);
+        return;
+    }
     let extra = std::env::var("HODEI_SEED_EXTRA").unwrap_or_default();
     let extra: Vec<&str> = extra.split(',').filter(|one| !one.is_empty()).collect();
     let trusted = std::env::var("HODEI_SEED_TRUSTED").unwrap_or_default();
@@ -1687,7 +1714,14 @@ pub fn seed_the_catalog_with(
             }
             let mode = match proxies.get(key) {
                 Some(upstream) if account == FIRST_ACCOUNT => {
-                    settings.insert("proxy".into(), serde_json::json!({ "upstream": upstream }));
+                    // Un objeto con `upstream` ya es el `proxy` completo
+                    // (con `cache`); si no, es solo el upstream.
+                    let proxy = if upstream.get("upstream").is_some() {
+                        upstream.clone()
+                    } else {
+                        serde_json::json!({ "upstream": upstream })
+                    };
+                    settings.insert("proxy".into(), proxy);
                     hodei_catalog::RepositoryMode::Proxy
                 }
                 _ => hodei_catalog::RepositoryMode::Hosted,
@@ -1716,6 +1750,44 @@ pub fn seed_the_catalog_with(
                 .await
                 .expect("the repository is created");
         }
+        drop(store);
+        drop(db);
+    });
+}
+
+/// Cambia la configuracion proxy de un repositorio sembrado: la version de
+/// su configuracion sube.
+fn reconfigure_the_proxy(path: &str, key: &str, proxy: serde_json::Value) {
+    use hodei_catalog::{CatalogReader, CatalogWriter};
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime");
+    runtime.block_on(async {
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path)
+            .await
+            .expect("rocksdb");
+        db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+        let store = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
+            db.clone(),
+            std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
+        );
+        store.initialize().await.expect("initialize");
+        let current = store
+            .repository(FIRST_ACCOUNT, key)
+            .await
+            .expect("the repository exists");
+        let mut config = current.config;
+        let mut settings = match config.config_settings {
+            serde_json::Value::Object(settings) => settings,
+            _ => serde_json::Map::new(),
+        };
+        settings.insert("proxy".into(), proxy);
+        config.config_settings = serde_json::Value::Object(settings);
+        store
+            .update_config(FIRST_ACCOUNT, key, config)
+            .await
+            .expect("the configuration is updated");
         drop(store);
         drop(db);
     });

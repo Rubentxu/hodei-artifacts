@@ -48,6 +48,10 @@ use crate::raw::{conditional, path, policy, range};
 /// El catalogo no modela el tipo de contenido de un asset, así que se
 /// sirve como lo que es: bytes. Inventar un tipo de contenido aquí
 /// sería mentir sobre lo que el catalogo sabe.
+/// Cuantos recibos recientes se leen para decidir una lectura: el libro de
+/// una ruta crece con cada revalidacion y la decision solo mira los ultimos.
+const RECEIPTS_READ_ON_THE_HOT_PATH: usize = 32;
+
 const CONTENT_TYPE: &str = "application/octet-stream";
 
 /// La cabecera donde el cliente declara el digest del contenido.
@@ -95,6 +99,9 @@ pub enum RawApiError {
     BadGateway(&'static str),
     /// El upstream de un proxy no respondió a tiempo.
     GatewayTimeout,
+    /// El proxy no sale a la red y lo pedido no está en su caché (o no se
+    /// puede demostrar íntegro): un 503 explícito, no un 404.
+    Offline(&'static str),
     /// Algo fallo por dentro.
     Internal,
 }
@@ -137,6 +144,7 @@ impl IntoResponse for RawApiError {
                 StatusCode::GATEWAY_TIMEOUT,
                 "the upstream did not answer in time".to_string(),
             ),
+            Self::Offline(reason) => (StatusCode::SERVICE_UNAVAILABLE, reason.to_string()),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error".to_string(),
@@ -467,25 +475,76 @@ pub async fn publish(
     Ok(response)
 }
 
-/// Trae de su upstream un contenido que el proxy aún no tiene, lo verifica
-/// y lo publica en el catálogo como un asset más.
+/// Cómo se sirvió un contenido de un proxy. Va en `X-Hodei-Cache`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CacheStatus {
+    /// Estaba en la caché y vigente: no se salió.
+    Hit,
+    /// No estaba: se trajo del upstream.
+    Miss,
+    /// Estaba caducado y el upstream confirmó los mismos bytes.
+    Revalidated,
+    /// Estaba caducado y el upstream entregó bytes nuevos.
+    Refreshed,
+    /// El upstream falló y se sirvió lo que había, dentro de la ventana.
+    Stale,
+    /// El servicio no sale a la red: se sirvió lo que había con recibo.
+    Offline,
+}
+
+impl CacheStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Hit => "hit",
+            Self::Miss => "miss",
+            Self::Revalidated => "revalidated",
+            Self::Refreshed => "refreshed",
+            Self::Stale => "stale",
+            Self::Offline => "offline",
+        }
+    }
+}
+
+/// Un contenido de un proxy, listo para pasar por la compuerta de confianza.
+struct ProxyServed {
+    asset: AssetRecord,
+    status: CacheStatus,
+    /// El upstream que respalda el contenido y cuándo lo confirmó, cuando
+    /// la respuesta no sale de una comprobación reciente (obsoleto, offline).
+    provenance: Option<(String, String)>,
+}
+
+impl ProxyServed {
+    fn new(asset: AssetRecord, status: CacheStatus) -> Self {
+        Self {
+            asset,
+            status,
+            provenance: None,
+        }
+    }
+}
+
+/// El contenido de una ruta de un proxy: de la caché, revalidado o traído.
 ///
-/// Es la **primera resolución**: el contenido queda en el almacén con su
-/// recibo de procedencia, y desde entonces el proxy lo sirve sin volver a
-/// salir. No hay caducidad todavía: lo presente se sirve.
+/// La decisión (¿está vigente? ¿hay que preguntar? ¿se puede salir?) es
+/// pura y vive en `hodei_catalog::proxy_cache`; aquí se junta con lo que
+/// necesita efectos: el catálogo, el libro de recibos, el almacén, el
+/// cliente de salida y el estado de proceso (una sola descarga por ruta, las
+/// ausencias recordadas y los contadores).
 ///
-/// El contenido que se publica pasa después por la misma compuerta de
-/// confianza que cualquier otro: un repositorio `trusted` lo deja en
-/// cuarentena hasta que alguien lo promueva.
-async fn resolve_from_upstream(
+/// Lo que se publique pasa después por la misma compuerta de confianza que
+/// cualquier otro contenido, incluido lo servido obsoleto o sin red: una
+/// revocación se respeta siempre.
+async fn the_proxy_asset(
     state: &AppState,
     context: &VerifiedContext,
     repository: &RepositoryDescriptor,
     asset_path: &str,
     correlation: &str,
-) -> Result<AssetRecord, RawApiError> {
-    use crate::proxy::fetch::FetchError;
-    use crate::proxy::resolution::{self, ResolveError};
+) -> Result<ProxyServed, RawApiError> {
+    use hodei_catalog::proxy_cache::{CacheDecision, CacheEntry, Context, decide, stale_allowed};
+
+    use crate::proxy::cache::PathKey;
 
     let plane = state
         .proxy_plane
@@ -494,29 +553,250 @@ async fn resolve_from_upstream(
             "this service has no egress for remote proxies",
         ))?;
     let store = the_content_store(state)?;
-    let (_, writer) = the_catalog(state)?;
-    // La configuración se valida al crear el repositorio; si aun asi no
-    // se entiende, el proxy no sale: falla cerrado.
+    let account = context.account().as_str();
+    let current = the_current_asset(state, context, &repository.repo_key, asset_path).await?;
+
+    // La configuración se valida al crear el repositorio. Si aun así no se
+    // entiende, el proxy no sale: lo que ya tiene se sirve como antes y lo
+    // que no, falla cerrado.
     let upstream = match hodei_catalog::UpstreamConfig::of(&repository.config) {
         Ok(Some(upstream)) => upstream,
-        _ => return Err(RawApiError::BadGateway("the proxy is not configured")),
+        _ => {
+            return match current {
+                Some(asset) => Ok(ProxyServed::new(asset, CacheStatus::Hit)),
+                None => Err(RawApiError::BadGateway("the proxy is not configured")),
+            };
+        }
     };
-    let actor = context.principal().subject().as_str();
-    let account = context.account().as_str();
 
-    let resolved = resolution::resolve(
+    let receipts = match &current {
+        Some(_) => plane
+            .ledger
+            .latest_receipts(
+                account,
+                &repository.repo_key,
+                asset_path,
+                RECEIPTS_READ_ON_THE_HOT_PATH,
+            )
+            .await
+            .map_err(|error| the_publication_error(&error))?,
+        None => Vec::new(),
+    };
+    let entry = current
+        .as_ref()
+        .map(|asset| CacheEntry::of(&asset.digest, asset.size_bytes, &receipts));
+    let config_version = repository.config.version;
+    let decision_context = Context {
+        policy: &upstream.cache,
+        asset_path,
+        upstream_id: &upstream.id,
+        in_scope: upstream.in_scope(asset_path),
+        config_version,
+        offline: upstream.cache.offline || plane.is_offline(),
+        now: chrono::Utc::now(),
+    };
+    let decision = decide(&decision_context, entry.as_ref());
+    tracing::debug!(
+        target: "hodei_artifacts::proxy",
+        repository = %repository.repo_key,
+        path = asset_path,
+        decision = ?std::mem::discriminant(&decision),
+        "the proxy decided what to do with the path"
+    );
+    let confirmed = |entry: Option<&CacheEntry>| {
+        entry
+            .and_then(|entry| entry.confirmation.as_ref())
+            .map(|confirmation| {
+                (
+                    confirmation.upstream_id.clone(),
+                    confirmation.at.to_rfc3339(),
+                )
+            })
+    };
+
+    let known = match decision {
+        CacheDecision::OutOfScope => return Err(RawApiError::NotFound),
+        CacheDecision::Fresh => {
+            plane.metrics.record_hit();
+            let asset = current.ok_or(RawApiError::Internal)?;
+            return Ok(ProxyServed::new(asset, CacheStatus::Hit));
+        }
+        CacheDecision::OfflineServe => {
+            let asset = current.ok_or(RawApiError::Internal)?;
+            // Sin red no hay quien corrija un blob dañado: se comprueba
+            // antes de servirlo.
+            if let Err(error) = store.verify(&asset.digest).await {
+                tracing::error!(
+                    target: "hodei_artifacts::proxy",
+                    repository = %repository.repo_key,
+                    error = %error,
+                    "the cached content failed its integrity check"
+                );
+                plane.metrics.record_offline_miss();
+                return Err(RawApiError::Offline(
+                    "the cached content failed its integrity check",
+                ));
+            }
+            plane.metrics.record_offline_hit();
+            return Ok(ProxyServed {
+                provenance: confirmed(entry.as_ref()),
+                ..ProxyServed::new(asset, CacheStatus::Offline)
+            });
+        }
+        CacheDecision::OfflineMiss => {
+            plane.metrics.record_offline_miss();
+            return Err(RawApiError::Offline(
+                "the proxy is offline and does not hold a verified copy of that content",
+            ));
+        }
+        CacheDecision::Quarantined => {
+            plane.metrics.record_quarantined();
+            return Err(RawApiError::BadGateway(
+                "the upstream content is withheld pending review",
+            ));
+        }
+        CacheDecision::Fetch => None,
+        CacheDecision::Revalidate(known) => Some(known),
+    };
+
+    let key = PathKey::of(account, &repository.repo_key, asset_path);
+    if current.is_none()
+        && plane
+            .negatives
+            .contains(&key, config_version, std::time::Instant::now())
+    {
+        plane.metrics.record_negative_hit();
+        return Err(RawApiError::NotFound);
+    }
+
+    let (_, writer) = the_catalog(state)?;
+    let actor = context.principal().subject().as_str();
+    let overwrite = current.is_some();
+    let flight = plane
+        .flights
+        .run((key.clone(), config_version), || {
+            fetch_and_publish(
+                plane,
+                store.as_ref(),
+                writer.as_ref(),
+                &upstream,
+                repository,
+                asset_path,
+                account,
+                actor,
+                correlation,
+                known.as_ref(),
+                overwrite,
+            )
+        })
+        .await;
+    if flight.is_followed() {
+        plane.metrics.record_coalesced();
+    }
+
+    use crate::proxy::resolution::Outcome;
+    let status = match flight.into_inner() {
+        Ok(Outcome::Stored(_)) if known.is_none() => {
+            plane.metrics.record_miss();
+            plane.negatives.forget(&key);
+            CacheStatus::Miss
+        }
+        Ok(Outcome::Stored(_)) => {
+            plane.metrics.record_refreshed();
+            CacheStatus::Refreshed
+        }
+        Ok(Outcome::Unchanged(_)) => {
+            plane.metrics.record_revalidated();
+            CacheStatus::Revalidated
+        }
+        Ok(Outcome::Quarantined(receipt)) => {
+            plane.metrics.record_quarantined();
+            tracing::warn!(
+                target: "hodei_artifacts::proxy",
+                repository = %repository.repo_key,
+                path = asset_path,
+                receipt = %receipt.id,
+                "the upstream offered other bytes for immutable content: withheld"
+            );
+            return Err(RawApiError::BadGateway(
+                "the upstream content is withheld pending review",
+            ));
+        }
+        Err(failure) => {
+            if failure == crate::proxy::cache::ProxyFailure::NotFound && current.is_none() {
+                plane.negatives.remember(
+                    &key,
+                    config_version,
+                    std::time::Duration::from_secs(upstream.cache.negative_secs),
+                    std::time::Instant::now(),
+                );
+            }
+            // El contenido caducado se sirve solo ante un fallo del
+            // upstream y dentro de la ventana que la política declara.
+            if failure.is_upstream_error()
+                && let Some(asset) = current
+                && entry
+                    .as_ref()
+                    .is_some_and(|entry| stale_allowed(&decision_context, entry))
+            {
+                plane.metrics.record_stale();
+                tracing::warn!(
+                    target: "hodei_artifacts::proxy",
+                    repository = %repository.repo_key,
+                    path = asset_path,
+                    error = %failure,
+                    "the upstream failed: serving the stale content"
+                );
+                return Ok(ProxyServed {
+                    provenance: confirmed(entry.as_ref()),
+                    ..ProxyServed::new(asset, CacheStatus::Stale)
+                });
+            }
+            return Err(the_proxy_error(&failure));
+        }
+    };
+
+    let asset = the_current_asset(state, context, &repository.repo_key, asset_path)
+        .await?
+        .ok_or(RawApiError::Unavailable)?;
+    Ok(ProxyServed::new(asset, status))
+}
+
+/// El trabajo de la descarga compartida: sale, verifica, guarda y publica.
+///
+/// Lo ejecuta una sola petición por ruta (la líder); las demás reciben su
+/// resultado. El recibo queda a nombre de quien lideró.
+#[allow(clippy::too_many_arguments)]
+async fn fetch_and_publish(
+    plane: &crate::proxy::ProxyPlane,
+    store: &dyn BlobStore,
+    writer: &dyn CatalogWriter,
+    upstream: &hodei_catalog::UpstreamConfig,
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+    account: &str,
+    actor: &str,
+    correlation: &str,
+    known: Option<&hodei_catalog::proxy_cache::Known>,
+    overwrite: bool,
+) -> crate::proxy::FlightResult {
+    use crate::proxy::resolution::{self, Outcome};
+
+    plane.metrics.record_upstream_request();
+    let outcome = resolution::resolve(
         &plane.fetcher,
-        store.as_ref(),
+        store,
         plane.ledger.as_ref(),
         &resolution::Resolution {
             account,
             repository: &repository.repo_key,
             asset_path,
-            upstream: &upstream,
+            upstream,
             config_version: repository.config.version,
             actor,
             correlation_id: correlation,
         },
+        known,
     )
     .await
     .map_err(|error| {
@@ -527,52 +807,144 @@ async fn resolve_from_upstream(
             error = %error,
             "the proxy could not resolve the content"
         );
-        match error {
-            ResolveError::Fetch(FetchError::NotFound) => RawApiError::NotFound,
-            ResolveError::Fetch(FetchError::Busy) => RawApiError::Unavailable,
-            ResolveError::Fetch(FetchError::Timeout) => RawApiError::GatewayTimeout,
-            ResolveError::Fetch(FetchError::OutOfScope) => RawApiError::NotFound,
-            ResolveError::Fetch(FetchError::Egress(_)) => {
-                RawApiError::BadGateway("the upstream is not reachable from this service")
-            }
-            ResolveError::Fetch(FetchError::ChecksumMismatch | FetchError::ChecksumMissing) => {
-                RawApiError::BadGateway("the upstream content could not be verified")
-            }
-            ResolveError::Fetch(FetchError::Truncated | FetchError::TooLarge) => {
-                RawApiError::BadGateway("the upstream content is incomplete or too large")
-            }
-            ResolveError::Fetch(_) => RawApiError::BadGateway("the upstream did not deliver"),
-            ResolveError::Blob(error) => the_blob_error(&error),
-            ResolveError::Ledger(error) => the_publication_error(&error),
+        let failure = the_proxy_failure(error);
+        if failure.is_upstream_error() {
+            plane.metrics.record_upstream_error();
         }
+        failure
     })?;
 
-    let publication = Publication {
-        repository: repository.repo_key.clone(),
-        asset_path: asset_path.to_string(),
-        coordinates: PackageCoordinates {
-            package_name: asset_path.to_string(),
-            package_version: resolved.digest.value.clone(),
-        },
-        digest: resolved.digest.clone(),
-        size_bytes: resolved.size_bytes,
-        tags: Vec::new(),
-        actor: actor.to_string(),
-        correlation_id: correlation.to_string(),
-        overwrite: false,
-        precondition: None,
-        subject: None,
-    };
-    match writer.publish(account, publication).await {
-        Ok(_) => {}
-        // Otra petición resolvió la misma ruta antes: lo que hay es lo que
-        // se sirve, y se lee abajo. La coalescencia es de HSP-107.
-        Err(CatalogError::Conflict { .. }) => {}
-        Err(error) => return Err(the_publication_error(&error)),
+    if let Outcome::Stored(resolved) = &outcome {
+        let publication = Publication {
+            repository: repository.repo_key.clone(),
+            asset_path: asset_path.to_string(),
+            coordinates: PackageCoordinates {
+                package_name: asset_path.to_string(),
+                package_version: resolved.digest.value.clone(),
+            },
+            digest: resolved.digest.clone(),
+            size_bytes: resolved.size_bytes,
+            tags: Vec::new(),
+            actor: actor.to_string(),
+            correlation_id: correlation.to_string(),
+            // Una actualización de metadata mueve el puntero de la ruta al
+            // digest nuevo; la primera resolución no pisa nada.
+            overwrite,
+            precondition: None,
+            subject: None,
+        };
+        match writer.publish(account, publication).await {
+            Ok(_) => {}
+            // Otra instancia resolvió la misma ruta antes: lo que hay es lo
+            // que se sirve, y se relee.
+            Err(CatalogError::Conflict { .. }) if !overwrite => {}
+            Err(error) => {
+                return Err(crate::proxy::cache::ProxyFailure::Local(the_local_failure(
+                    &the_publication_error(&error),
+                )));
+            }
+        }
     }
-    the_current_asset(state, context, &repository.repo_key, asset_path)
-        .await?
-        .ok_or(RawApiError::Unavailable)
+    Ok(outcome)
+}
+
+/// Un fallo de resolución, en la forma que comparten las peticiones.
+fn the_proxy_failure(
+    error: crate::proxy::resolution::ResolveError,
+) -> crate::proxy::cache::ProxyFailure {
+    use crate::proxy::cache::ProxyFailure;
+    use crate::proxy::fetch::FetchError;
+    use crate::proxy::resolution::ResolveError;
+
+    match error {
+        ResolveError::Fetch(FetchError::NotFound) => ProxyFailure::NotFound,
+        ResolveError::Fetch(FetchError::Busy) => ProxyFailure::Busy,
+        ResolveError::Fetch(FetchError::Timeout) => ProxyFailure::Timeout,
+        ResolveError::Fetch(FetchError::OutOfScope) => ProxyFailure::OutOfScope,
+        ResolveError::Fetch(FetchError::Offline) => ProxyFailure::Offline,
+        ResolveError::Fetch(FetchError::Egress(_)) => ProxyFailure::NotReachable,
+        ResolveError::Fetch(FetchError::ChecksumMismatch | FetchError::ChecksumMissing) => {
+            ProxyFailure::Unverified
+        }
+        ResolveError::Fetch(FetchError::Truncated | FetchError::TooLarge) => {
+            ProxyFailure::Incomplete
+        }
+        ResolveError::Fetch(_) => ProxyFailure::UpstreamFailed,
+        ResolveError::Blob(error) => {
+            ProxyFailure::Local(the_local_failure(&the_blob_error(&error)))
+        }
+        ResolveError::Ledger(error) => {
+            ProxyFailure::Local(the_local_failure(&the_publication_error(&error)))
+        }
+    }
+}
+
+/// Un error HTTP propio, sin el detalle, para compartirlo entre peticiones.
+fn the_local_failure(error: &RawApiError) -> crate::proxy::cache::LocalFailure {
+    use crate::proxy::cache::LocalFailure;
+    match error {
+        RawApiError::Unavailable => LocalFailure::Unavailable,
+        RawApiError::Conflict(_)
+        | RawApiError::PreconditionFailed
+        | RawApiError::Forbidden
+        | RawApiError::BadRequest(_) => LocalFailure::Rejected,
+        _ => LocalFailure::Internal,
+    }
+}
+
+/// Un fallo de resolución, traducido a HTTP.
+fn the_proxy_error(failure: &crate::proxy::cache::ProxyFailure) -> RawApiError {
+    use crate::proxy::cache::{LocalFailure, ProxyFailure};
+    match failure {
+        ProxyFailure::NotFound | ProxyFailure::OutOfScope => RawApiError::NotFound,
+        ProxyFailure::Busy => RawApiError::Unavailable,
+        ProxyFailure::Timeout => RawApiError::GatewayTimeout,
+        ProxyFailure::NotReachable => {
+            RawApiError::BadGateway("the upstream is not reachable from this service")
+        }
+        ProxyFailure::Unverified => {
+            RawApiError::BadGateway("the upstream content could not be verified")
+        }
+        ProxyFailure::Incomplete => {
+            RawApiError::BadGateway("the upstream content is incomplete or too large")
+        }
+        ProxyFailure::UpstreamFailed => RawApiError::BadGateway("the upstream did not deliver"),
+        ProxyFailure::Offline => RawApiError::Offline(
+            "the proxy is offline and does not hold a verified copy of that content",
+        ),
+        ProxyFailure::Local(LocalFailure::Unavailable) => RawApiError::Unavailable,
+        ProxyFailure::Local(LocalFailure::Internal) => RawApiError::Internal,
+        ProxyFailure::Local(LocalFailure::Rejected) => {
+            RawApiError::Conflict("the publication of the upstream content was rejected")
+        }
+    }
+}
+
+/// Pone en la respuesta cómo se sirvió el contenido de un proxy.
+fn apply_cache_headers(
+    response: &mut Response,
+    served: &Option<(CacheStatus, Option<(String, String)>)>,
+) {
+    let Some((status, provenance)) = served else {
+        return;
+    };
+    response.headers_mut().insert(
+        header::HeaderName::from_static("x-hodei-cache"),
+        HeaderValue::from_static(status.as_str()),
+    );
+    if let Some((upstream, confirmed_at)) = provenance {
+        if let Ok(value) = HeaderValue::from_str(upstream) {
+            response
+                .headers_mut()
+                .insert(header::HeaderName::from_static("x-hodei-upstream"), value);
+        }
+        if let Ok(value) = HeaderValue::from_str(confirmed_at) {
+            response.headers_mut().insert(
+                header::HeaderName::from_static("x-hodei-confirmed-at"),
+                value,
+            );
+        }
+    }
 }
 
 /// Lo que pide la lectura de procedencia.
@@ -656,6 +1028,8 @@ pub async fn provenance(
                 "status": receipt.status,
                 "redirects": receipt.redirects,
                 "etag": receipt.etag,
+                "last_modified": receipt.last_modified,
+                "outcome": receipt.outcome.as_str(),
                 "actor": receipt.actor,
                 "correlation_id": receipt.correlation_id,
                 "fetched_at": receipt.fetched_at,
@@ -755,23 +1129,27 @@ async fn the_content_of(
     )?;
 
     let correlation = correlation.to_string();
-    let asset =
-        match the_current_asset(state, context, &target.repository, &target.asset_path).await? {
+    // Un hosted sirve lo que tiene. Un proxy decide cada vez si lo que tiene
+    // vale, hay que revalidarlo o hay que traerlo.
+    let (asset, served) = if repository.mode == RepositoryMode::Proxy {
+        let served = the_proxy_asset(
+            state,
+            context,
+            &repository,
+            &target.asset_path,
+            &correlation,
+        )
+        .await?;
+        (served.asset, Some((served.status, served.provenance)))
+    } else {
+        let asset = match the_current_asset(state, context, &target.repository, &target.asset_path)
+            .await?
+        {
             Some(asset) => asset,
-            // Un hosted sin el contenido no lo tiene. Un proxy lo trae del
-            // upstream la primera vez y desde entonces lo sirve como propio.
-            None if repository.mode == RepositoryMode::Proxy => {
-                resolve_from_upstream(
-                    state,
-                    context,
-                    &repository,
-                    &target.asset_path,
-                    &correlation,
-                )
-                .await?
-            }
             None => return Err(RawApiError::NotFound),
         };
+        (asset, None)
+    };
 
     // La compuerta de confianza: Cedar ya dijo que esta persona puede
     // leer el repositorio; falta decir si este **digest** puede servirse
@@ -799,6 +1177,7 @@ async fn the_content_of(
             // para que sepa cuál tiene.
             let mut response = StatusCode::NOT_MODIFIED.into_response();
             apply_common_headers(&mut response, &etag, &correlation);
+            apply_cache_headers(&mut response, &served);
             return Ok((response, correlation));
         }
         conditional::ReadOutcome::Serve => {}
@@ -864,6 +1243,7 @@ async fn the_content_of(
 
     let mut response = (status, body).into_response();
     apply_common_headers(&mut response, &etag, &correlation);
+    apply_cache_headers(&mut response, &served);
     response
         .headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(CONTENT_TYPE));

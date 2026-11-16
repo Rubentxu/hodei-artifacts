@@ -6,7 +6,9 @@
 //! se escribio.
 
 use async_trait::async_trait;
-use hodei_catalog::{CatalogError, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt};
+use hodei_catalog::{
+    CatalogError, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
+};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::{Datetime, Thing};
 
@@ -34,6 +36,8 @@ struct NewRow {
     status: i64,
     redirects: i64,
     etag: Option<String>,
+    last_modified: Option<String>,
+    outcome: String,
     actor: String,
     correlation_id: String,
     fetched_at: Datetime,
@@ -65,6 +69,8 @@ impl NewRow {
             status: i64::from(receipt.status),
             redirects: i64::from(receipt.redirects),
             etag: receipt.etag.clone(),
+            last_modified: receipt.last_modified.clone(),
+            outcome: receipt.outcome.as_str().to_string(),
             actor: receipt.actor.clone(),
             correlation_id: receipt.correlation_id.clone(),
             fetched_at: Datetime::from(receipt.fetched_at),
@@ -89,6 +95,11 @@ struct Row {
     status: i64,
     redirects: i64,
     etag: Option<String>,
+    // Los recibos de antes de la version 8 no llevan estos dos campos.
+    #[serde(default)]
+    last_modified: Option<String>,
+    #[serde(default)]
+    outcome: Option<String>,
     actor: String,
     correlation_id: String,
     fetched_at: Datetime,
@@ -107,6 +118,16 @@ impl Row {
                 ));
             }
         };
+        // Sin desenlace es un recibo de antes de la cache: se trajo. Un
+        // desenlace que esta build no conoce no se reinterpreta.
+        let outcome = match self.outcome.as_deref() {
+            None => ReceiptOutcome::Fetched,
+            Some(raw) => ReceiptOutcome::parse(raw).ok_or_else(|| {
+                CatalogError::unavailable(
+                    "a provenance receipt carries an outcome this release cannot read",
+                )
+            })?,
+        };
         Ok(ProvenanceReceipt {
             digest: digest_of(&self.digest_algorithm, &self.digest)?,
             id: self.receipt_id,
@@ -121,6 +142,8 @@ impl Row {
             status: u16::try_from(self.status).unwrap_or_default(),
             redirects: u8::try_from(self.redirects).unwrap_or_default(),
             etag: self.etag,
+            last_modified: self.last_modified,
+            outcome,
             actor: self.actor,
             correlation_id: self.correlation_id,
             fetched_at: self.fetched_at.0,
@@ -130,7 +153,8 @@ impl Row {
 
 const COLUMNS: &str = "receipt_id, account, repository, asset_path, upstream_id, source_url, \
                        config_version, digest_algorithm, digest, size_bytes, checksum_kind, \
-                       checksum_header, status, redirects, etag, actor, correlation_id, fetched_at";
+                       checksum_header, status, redirects, etag, last_modified, outcome, actor, \
+                       correlation_id, fetched_at";
 
 #[async_trait]
 impl ProvenanceLedger for SurrealCatalogStore {
@@ -162,6 +186,31 @@ impl ProvenanceLedger for SurrealCatalogStore {
             .bind(("account", account.to_string()))
             .bind(("repository", repository.to_string()))
             .bind(("path", asset_path.to_string()))
+            .await
+            .map_err(unavailable)?;
+        let rows: Vec<Row> = response.take(0).map_err(unavailable)?;
+        rows.into_iter().map(Row::the_receipt).collect()
+    }
+
+    async fn latest_receipts(
+        &self,
+        account: &str,
+        repository: &str,
+        asset_path: &str,
+        limit: usize,
+    ) -> Result<Vec<ProvenanceReceipt>, CatalogError> {
+        let mut response = self
+            .db
+            .query(format!(
+                "SELECT {COLUMNS} FROM provenance_receipt \
+                 WHERE account = $account AND repository = $repository \
+                 AND asset_path = $path ORDER BY fetched_at DESC, receipt_id DESC \
+                 LIMIT $limit"
+            ))
+            .bind(("account", account.to_string()))
+            .bind(("repository", repository.to_string()))
+            .bind(("path", asset_path.to_string()))
+            .bind(("limit", i64::try_from(limit).unwrap_or(i64::MAX)))
             .await
             .map_err(unavailable)?;
         let rows: Vec<Row> = response.take(0).map_err(unavailable)?;

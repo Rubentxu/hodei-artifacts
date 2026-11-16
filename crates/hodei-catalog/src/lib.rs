@@ -48,6 +48,7 @@ pub mod gc;
 pub mod model;
 pub mod ports;
 pub mod proxy;
+pub mod proxy_cache;
 pub mod trust;
 
 pub use error::CatalogError;
@@ -67,7 +68,7 @@ pub use ports::{
     DenyAllAuthorizer,
 };
 pub use proxy::{
-    ChecksumEvidence, CredentialRef, ProvenanceLedger, ProvenanceReceipt, UpstreamConfig,
-    UpstreamConfigError, origin_of,
+    ChecksumEvidence, CredentialRef, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
+    UpstreamConfig, UpstreamConfigError, origin_of,
 };
 pub use trust::{ServeChannel, TrustGrant, TrustLedger};
