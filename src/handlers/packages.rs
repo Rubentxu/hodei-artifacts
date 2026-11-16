@@ -15,6 +15,13 @@
 //! And the decision that is shown is the **live** one: if the grant has
 //! been revoked, the view says the content is quarantined, because that
 //! is what it is now.
+//!
+//! # The channel of the repository
+//!
+//! A repository served on the `trusted` channel serves only what has a
+//! live grant, and the view follows the same rule: what is not served
+//! answers that it does not exist. A view that showed it would say that
+//! the content exists where the download answers that it does not.
 
 use axum::{
     Json,
@@ -113,9 +120,9 @@ pub struct BlobView {
 
 /// What was published.
 ///
-/// It is the version as it was published: the coordinates, the digest and
-/// the moment. The asset may have moved afterwards to another version,
-/// and this is the version it points at now.
+/// It is the version the asset points at now: the coordinates, the digest
+/// and the moment. An asset may have moved to another version after it
+/// was published, and this is the version it points at.
 #[derive(Debug, serde::Serialize)]
 pub struct PublishedView {
     /// The package name.
@@ -202,11 +209,11 @@ pub async fn get_package(
         .await
         .map_err(the_catalog_error)?;
 
-    let action = crate::actions::read_repository();
+    let action = crate::actions::download_asset();
     let outcome = state
         .authorize_resource
         .execute_canonical(context.clone(), action.clone(), &descriptor.hrn)
-        .map_err(|_| PackageApiError::BadRequest)?;
+        .map_err(|_| PackageApiError::Internal)?;
     if !outcome.allows_access() {
         return Err(PackageApiError::Forbidden);
     }
@@ -228,10 +235,19 @@ pub async fn get_package(
         .await
         .map_err(the_catalog_error)?;
 
+    // The channel of the repository decides what is served: a repository
+    // served on the trusted channel serves only what has a live grant,
+    // and what is not served does not exist for whoever reads. That is
+    // the same gate the content surfaces go through, and the same answer:
+    // a 404 for what is hidden, and a 503 when the ledger cannot say.
+    crate::trust::admit(&state, account, &descriptor, &asset.digest)
+        .await
+        .map_err(the_admission_error)?;
+
     // The decision: the live grant of the ledger. What is not
     // granted is quarantined, and it is not deduced from the evidence.
     let decision = the_decision(&state, account, &repository, &asset.digest).await?;
-    let state_of_trust = if decision.is_some() {
+    let state_of_trust = if decision.as_ref().is_some_and(|grant| grant.is_active()) {
         TrustState::Trusted
     } else {
         TrustState::Quarantined
@@ -332,5 +348,18 @@ fn the_catalog_error(error: CatalogError) -> PackageApiError {
         CatalogError::InvalidRequest { .. } => PackageApiError::BadRequest,
         CatalogError::Unavailable { .. } => PackageApiError::Unavailable,
         _ => PackageApiError::Internal,
+    }
+}
+
+/// What the channel says about the content, translated into what the
+/// client sees.
+///
+/// What is hidden answers that it does not exist: a 403 would say that
+/// the content exists. What cannot be known answers that the service
+/// cannot answer right now.
+fn the_admission_error(admission: crate::trust::Admission) -> PackageApiError {
+    match admission {
+        crate::trust::Admission::Hidden => PackageApiError::NotFound,
+        crate::trust::Admission::Unavailable => PackageApiError::Unavailable,
     }
 }

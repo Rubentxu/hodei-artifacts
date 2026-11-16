@@ -188,7 +188,7 @@ pub async fn get_search(
         .repositories(account)
         .await
         .map_err(the_catalog_error)?;
-    let permitted = the_permitted(&state, &context, repositories);
+    let permitted = the_permitted(&state, &context, repositories)?;
 
     let page = searcher
         .search(account, &permitted, &query)
@@ -203,22 +203,34 @@ pub async fn get_search(
 /// Cedar decides one by one, and what cannot be read neither comes out
 /// nor is counted. A repository with a name that cannot be interpreted
 /// does not come out either: what cannot be evaluated cannot be read.
+///
+/// But a decision that **could not be taken** is not a decision: if the
+/// authorizer fails, the search says that it cannot answer. An empty
+/// page would say that there is nothing there, and that is not what
+/// happened.
+///
+/// The action is the one of the content, and not the one of the
+/// repository: a listing says what is inside, and the other listings of
+/// the service ask for the same permission. A deployment that wants a
+/// principal to know that a repository exists without knowing what is
+/// inside does not give this one.
 fn the_permitted(
     state: &AppState,
     context: &VerifiedContext,
     repositories: Vec<RepositoryDescriptor>,
-) -> Vec<RepositoryDescriptor> {
-    let action = crate::actions::read_repository();
-    repositories
-        .into_iter()
-        .filter(|repository| {
-            state
-                .authorize_resource
-                .execute_canonical(context.clone(), action.clone(), &repository.hrn)
-                .map(|outcome| outcome.allows_access())
-                .unwrap_or(false)
-        })
-        .collect()
+) -> Result<Vec<RepositoryDescriptor>, SearchApiError> {
+    let action = crate::actions::download_asset();
+    let mut permitted = Vec::with_capacity(repositories.len());
+    for repository in repositories {
+        let outcome = state
+            .authorize_resource
+            .execute_canonical(context.clone(), action.clone(), &repository.hrn)
+            .map_err(|_| SearchApiError::Internal)?;
+        if outcome.allows_access() {
+            permitted.push(repository);
+        }
+    }
+    Ok(permitted)
 }
 
 /// The query, as the client writes it.

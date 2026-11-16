@@ -46,6 +46,8 @@ const READABLE: &str = "libs";
 const UNREADABLE: &str = "private";
 /// The repository of the second account.
 const THEIRS: &str = "secrets";
+/// The repository served on the trusted channel.
+const TOOLS: &str = "tools";
 
 /// The credential verifier of the test.
 ///
@@ -77,23 +79,31 @@ impl PrincipalAuthenticator for TestAuthenticator {
 
 /// The policy of the test.
 ///
-/// Alice may read two repositories of her account and not the third:
-/// what Cedar does not grant, the search neither names nor counts. Carol
-/// may only read hers.
+/// Alice may read the content of two repositories of her account and not
+/// the third: what Cedar does not grant, the search neither names nor
+/// counts. Carol may only read hers.
+///
+/// The action is `DownloadAsset`, the one of the content: a listing says
+/// what is inside, and that is what the search says.
 fn cedar() -> Arc<dyn AuthorizerPort> {
     let policy = r#"permit(
         principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
-        action == Artifacts::Action::"ReadRepository",
+        action == Artifacts::Action::"DownloadAsset",
         resource == Artifacts::Repository::"hrn:hodei:artifacts:eu:acme:repository/libs"
     );
     permit(
         principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
-        action == Artifacts::Action::"ReadRepository",
+        action == Artifacts::Action::"DownloadAsset",
         resource == Artifacts::Repository::"hrn:hodei:artifacts:eu:acme:repository/apps"
     );
     permit(
+        principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+        action == Artifacts::Action::"DownloadAsset",
+        resource == Artifacts::Repository::"hrn:hodei:artifacts:eu:acme:repository/tools"
+    );
+    permit(
         principal == Iam::User::"hrn:hodei:iam::other:User/carol",
-        action == Artifacts::Action::"ReadRepository",
+        action == Artifacts::Action::"DownloadAsset",
         resource == Artifacts::Repository::"hrn:hodei:artifacts:eu:other:repository/secrets"
     );"#;
     Arc::new(SharedAuthorizer::new(Arc::new(
@@ -108,13 +118,25 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
 
 /// A repository of the catalog.
 fn descriptor(account: &str, key: &str, format: RepositoryFormat) -> RepositoryDescriptor {
+    descriptor_with(account, key, format, serde_json::json!({}))
+}
+
+/// A repository of the catalog, with its settings.
+fn descriptor_with(
+    account: &str,
+    key: &str,
+    format: RepositoryFormat,
+    settings: serde_json::Value,
+) -> RepositoryDescriptor {
+    let mut config = RepositoryConfig::new(DigestScope::Global);
+    config.config_settings = settings;
     RepositoryDescriptor {
         hrn: repository_hrn("hodei", "artifacts", "eu", account, key),
         account: account.to_string(),
         repo_key: key.to_string(),
         format,
         mode: RepositoryMode::Hosted,
-        config: RepositoryConfig::new(DigestScope::Global),
+        config,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     }
@@ -214,6 +236,20 @@ async fn a_catalog(store: &SurrealCatalogStore) {
             .await
             .expect("the repository is created");
     }
+    // The repository served on the trusted channel: what is not granted
+    // there does not come out.
+    store
+        .create_repository(
+            ACCOUNT,
+            descriptor_with(
+                ACCOUNT,
+                TOOLS,
+                RepositoryFormat::Npm,
+                serde_json::json!({ "trust": { "serve": "trusted" } }),
+            ),
+        )
+        .await
+        .expect("the repository is created");
 
     publish(
         store,
@@ -266,6 +302,21 @@ async fn a_catalog(store: &SurrealCatalogStore) {
         None,
     )
     .await;
+}
+
+/// An asset seeded by hand, for the cases that need many.
+#[derive(Debug, serde::Serialize)]
+struct SeededAsset {
+    account: String,
+    repository: String,
+    asset_path: String,
+    package_name: String,
+    package_version: String,
+    digest_algorithm: String,
+    digest: String,
+    size_bytes: i64,
+    subject: Option<String>,
+    updated_at: surrealdb::sql::Datetime,
 }
 
 /// A search request.
@@ -630,4 +681,243 @@ async fn the_detail_needs_a_credential() {
         .expect("a request");
     let response = app.oneshot(request).await.expect("the request");
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The paths of the results of a page.
+fn the_paths(body: &serde_json::Value) -> Vec<String> {
+    body["results"]
+        .as_array()
+        .expect("the results")
+        .iter()
+        .map(|result| result["asset_path"].as_str().expect("a path").to_string())
+        .collect()
+}
+
+/// The search pages, and says whether there is more behind the page.
+#[tokio::test]
+async fn the_search_pages_and_says_whether_there_is_more() {
+    let (app, store, _tmp) = app().await;
+    a_catalog(&store).await;
+
+    let first = app
+        .clone()
+        .oneshot(search_request("alice", "?limit=2"))
+        .await
+        .expect("the request");
+    assert_eq!(first.status(), StatusCode::OK);
+    let body = the_body(first).await;
+    assert_eq!(body["total"], json!(3), "the three assets she can read");
+    assert_eq!(body["more"], json!(true), "and there is one behind");
+    assert_eq!(body["limit"], json!(2));
+    assert_eq!(body["offset"], json!(0));
+    let first_paths = the_paths(&body);
+
+    let last = app
+        .clone()
+        .oneshot(search_request("alice", "?limit=2&offset=2"))
+        .await
+        .expect("the request");
+    assert_eq!(last.status(), StatusCode::OK);
+    let body = the_body(last).await;
+    assert_eq!(body["more"], json!(false), "the last page is the last page");
+    assert_eq!(body["offset"], json!(2));
+    let last_paths = the_paths(&body);
+
+    // No asset is repeated and none is lost.
+    let mut all: Vec<String> = first_paths
+        .iter()
+        .chain(last_paths.iter())
+        .cloned()
+        .collect();
+    let seen = all.len();
+    all.sort();
+    all.dedup();
+    assert_eq!(all.len(), seen, "no asset is repeated");
+    assert_eq!(seen, 3, "and none is lost");
+}
+
+/// A total that does not fit is not said, and the page says there is
+/// more.
+#[tokio::test]
+async fn a_total_that_does_not_fit_is_not_said() {
+    let (app, store, _tmp) = app().await;
+    a_catalog(&store).await;
+
+    // More assets than are counted: the total does not fit, and a number
+    // that was not counted is not said.
+    let now = surrealdb::sql::Datetime::from(chrono::Utc::now());
+    let rows: Vec<SeededAsset> = (0..300)
+        .map(|index| SeededAsset {
+            account: ACCOUNT.to_string(),
+            repository: READABLE.to_string(),
+            asset_path: format!("cargado-{index:05}.whl"),
+            package_name: format!("cargado-{index:05}"),
+            package_version: "1.0".to_string(),
+            digest_algorithm: "sha256".to_string(),
+            digest: format!("{index:064x}"),
+            size_bytes: 10,
+            subject: None,
+            updated_at: now.clone(),
+        })
+        .collect();
+    store
+        .db()
+        .query("INSERT INTO catalog_asset $rows")
+        .bind(("rows", rows))
+        .await
+        .expect("the assets are seeded")
+        .check()
+        .expect("the assets are seeded");
+
+    let response = app
+        .clone()
+        .oneshot(search_request("alice", "?limit=10"))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = the_body(response).await;
+
+    assert_eq!(
+        body["total"],
+        serde_json::Value::Null,
+        "the total is not said"
+    );
+    assert_eq!(body["more"], json!(true), "and there is more");
+    assert_eq!(body["results"].as_array().expect("the results").len(), 10);
+}
+
+/// The filters of the search are the ones the client writes.
+#[tokio::test]
+async fn the_filters_of_the_search_are_the_ones_the_client_writes() {
+    let (app, store, _tmp) = app().await;
+    a_catalog(&store).await;
+
+    // The attribute of the repository.
+    let response = app
+        .clone()
+        .oneshot(search_request("alice", "?attribute=format%3Dpypi"))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = the_body(response).await;
+    assert_eq!(
+        body["total"],
+        json!(2),
+        "the two assets of the PyPI repository"
+    );
+
+    // The digest of the content.
+    let digest = ContentDigest::of_bytes(b"labpkg-1.0.whl");
+    let response = app
+        .clone()
+        .oneshot(search_request(
+            "alice",
+            &format!("?digest=sha256:{}", digest.value),
+        ))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = the_body(response).await;
+    assert_eq!(body["total"], json!(1), "the asset of that digest");
+    assert_eq!(body["results"][0]["asset_path"], "labpkg-1.0.whl");
+
+    // And the tag, which narrows by its coordinates.
+    store
+        .move_tag(
+            ACCOUNT,
+            READABLE,
+            "latest",
+            PackageCoordinates {
+                package_name: "labpkg".to_string(),
+                package_version: "1.1".to_string(),
+            },
+        )
+        .await
+        .expect("the tag moves");
+    let response = app
+        .clone()
+        .oneshot(search_request("alice", "?tag=latest"))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = the_body(response).await;
+    assert_eq!(body["total"], json!(1), "the tag points at one version");
+    assert_eq!(body["results"][0]["package_version"], "1.1");
+}
+
+/// A repository served on the trusted channel does not show what has no
+/// grant, and its detail answers that it does not exist.
+#[tokio::test]
+async fn the_trusted_channel_does_not_show_what_has_no_grant() {
+    let (app, store, _tmp) = app().await;
+    a_catalog(&store).await;
+    let digest = publish(
+        &store,
+        ACCOUNT,
+        TOOLS,
+        "toolpkg",
+        "1.0.0",
+        "toolpkg-1.0.0.tgz",
+        None,
+    )
+    .await;
+
+    // The search does not name it.
+    let response = app
+        .clone()
+        .oneshot(search_request("alice", "?repository=tools"))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = the_body(response).await;
+    assert_eq!(
+        body["total"],
+        json!(0),
+        "what is not granted is not counted"
+    );
+    assert!(body["results"].as_array().expect("the results").is_empty());
+
+    // And the detail answers that it does not exist: a 403 would say
+    // that the content exists.
+    let response = app
+        .clone()
+        .oneshot(package_request("alice", TOOLS, "toolpkg-1.0.0.tgz"))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Granted, it comes out and its detail comes with it.
+    store
+        .grant(&[TrustGrant {
+            account: ACCOUNT.to_string(),
+            repository: TOOLS.to_string(),
+            digest: digest.clone(),
+            decision_id: "dec-hsp113-e2e".to_string(),
+            actor: "hrn:hodei:iam:acme:User/alice".to_string(),
+            granted_at: chrono::Utc::now(),
+            revoked_at: None,
+            revoked_by: None,
+            revoke_reason: None,
+        }])
+        .await
+        .expect("the grant");
+    let response = app
+        .clone()
+        .oneshot(search_request("alice", "?repository=tools"))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = the_body(response).await;
+    assert_eq!(body["total"], json!(1), "the granted asset comes out");
+    assert_eq!(body["results"][0]["trust_state"], "trusted");
+
+    let response = app
+        .clone()
+        .oneshot(package_request("alice", TOOLS, "toolpkg-1.0.0.tgz"))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = the_body(response).await;
+    assert_eq!(body["trust"]["state"], "trusted");
+    assert_eq!(body["trust"]["decision"]["decision_id"], "dec-hsp113-e2e");
 }

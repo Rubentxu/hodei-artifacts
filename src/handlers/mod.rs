@@ -71,8 +71,10 @@ pub(crate) enum Authentication {
 /// not get to look at what it asks for, and so it cannot turn into a 400
 /// that says something about a path the caller may not know about.
 ///
-/// It lives here because four surfaces need it, and four copies of the
-/// same rule are four rules that can stop agreeing.
+/// It lives here because the surfaces that read the catalog need it, and
+/// copies of the same rule are rules that can stop agreeing. The raw
+/// and the OCI surfaces still have their own: they answer the challenge
+/// with a header of their own, and that is their business.
 pub(crate) async fn the_context(
     state: &AppState,
     headers: &HeaderMap,
