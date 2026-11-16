@@ -381,6 +381,25 @@ async fn append_chunk(
     session.touch();
     let written = session.bytes_written();
 
+    // Un rango que no se puede leer no se comprueba: se rechaza.
+    if the_range_is_malformed(&headers) {
+        return Err(OciFailure::blob_upload_range_mismatch(
+            "the chunk declares a range that cannot be read",
+        )
+        .with_range(the_range_header(written)));
+    }
+
+    // El rango que declara el cliente y la longitud de su cuerpo tienen
+    // que cuadrar: el protocolo dice que el `Content-Range` es el rango
+    // del trozo, y un trozo que dice una cosa y mide otra es un cliente
+    // que no sabe donde esta.
+    if let Some((start, end)) = the_range_does_not_match_the_length(&headers) {
+        return Err(OciFailure::blob_upload_range_mismatch(format!(
+            "the chunk declares the range {start}-{end} and a body of another length"
+        ))
+        .with_range(the_range_header(written)));
+    }
+
     // El rango, si el cliente lo manda. El protocolo dice que los trozos
     // van en orden y que un trozo que no encaja recibe un 416: el
     // cliente recupera el offset con un `GET` y sigue.
@@ -557,6 +576,39 @@ async fn close_upload(
     // cuerpo (es lo que hacen los clientes que suben por trozos), y lo
     // que se declara es el **blob entero**, no el ultimo trozo.
     let already = session.bytes_written();
+
+    // Un rango que no se puede leer no se comprueba: se rechaza.
+    if the_range_is_malformed(&headers) {
+        return Err(OciFailure::blob_upload_range_mismatch(
+            "the chunk declares a range that cannot be read",
+        )
+        .with_range(the_range_header(already)));
+    }
+
+    // El rango que declara el cliente y la longitud de su cuerpo tienen
+    // que cuadrar, por la misma razon que en el `PATCH`.
+    if let Some((start, end)) = the_range_does_not_match_the_length(&headers) {
+        return Err(OciFailure::blob_upload_range_mismatch(format!(
+            "the chunk declares the range {start}-{end} and a body of another length"
+        ))
+        .with_range(the_range_header(already)));
+    }
+
+    // El rango, si el cliente lo manda. El protocolo dice que los trozos
+    // van en orden: un `PUT` que cierra con un trozo que no encaja recibe
+    // el mismo `416` que recibe un `PATCH` que no encaja, con el `Range`
+    // que dice por donde seguir. Un `400` aqui diria "algo va mal" sin
+    // decir donde esta el desfase.
+    if let Some(range) = the_content_range(&headers)
+        && range.0 != already
+    {
+        return Err(OciFailure::blob_upload_range_mismatch(format!(
+            "the chunk starts at {} and the upload is at {already}",
+            range.0
+        ))
+        .with_range(the_range_header(already)));
+    }
+
     // El ultimo trozo puede venir en el `PUT` que cierra.
     let last = write_the_body(
         session.the_writer().as_mut(),
@@ -876,6 +928,18 @@ fn the_required_digests(
                     if the_empty_descriptor(Some(layer)) {
                         continue;
                     }
+                    // Una capa **extranjera**--la que declara sus `urls`--
+                    // no esta en el almacen: el cliente la baja de donde
+                    // el manifiesto dice. Exigirla seria rechazar un
+                    // manifiesto que el protocolo dice que es valido.
+                    if the_foreign_descriptor(Some(layer)) {
+                        if !the_foreign_urls_are_admisible(layer) {
+                            return Err(OciFailure::manifest_invalid(
+                                "the urls of a non-distributable layer must be https",
+                            ));
+                        }
+                        continue;
+                    }
                     required.push((the_hexadecimal_digest(digest)?, TheClass::Blob));
                 }
             }
@@ -921,6 +985,19 @@ fn the_required_digests(
                             "a blob of the artifact does not name a digest",
                         ));
                     };
+                    // La capa extranjera--la no distribuible-- tampoco se
+                    // exige en el almacen: el criterio es el mismo que en
+                    // las capas de una imagen, y una exencion que depende
+                    // de la forma del manifiesto es una exencion que se
+                    // olvida.
+                    if the_foreign_descriptor(Some(blob)) {
+                        if !the_foreign_urls_are_admisible(blob) {
+                            return Err(OciFailure::manifest_invalid(
+                                "the urls of a non-distributable blob must be https",
+                            ));
+                        }
+                        continue;
+                    }
                     required.push((the_hexadecimal_digest(digest)?, TheClass::Blob));
                 }
             }
@@ -950,6 +1027,65 @@ fn the_empty_descriptor(descriptor: Option<&serde_json::Value>) -> bool {
         .unwrap_or_default();
     hodei_hub::oci::is_the_empty_descriptor(media_type, digest)
 }
+
+/// Si un descriptor es el de una capa **extranjera**.
+///
+/// La capa extranjera es la **no distribuible**: su tipo de medio lo dice
+/// (`application/vnd.oci.image.layer.nondistributable.v1.tar`, con o sin
+/// `+gzip`), y sus `urls` dicen de donde se baja. El registro no la tiene
+/// ni la tiene que tener, y un manifiesto que la nombra es un manifiesto
+/// valido: exigir la capa seria rechazar un manifiesto que el protocolo
+/// dice que es valido.
+///
+/// La exencion es **exactamente** la de la capa no distribuible, y no la
+/// de cualquier descriptor con `urls`: un descriptor que declara `urls` y
+/// un tipo de medio cualquiera es una capa normal con una pista, y
+/// eximirla seria dejar de exigir en el almacen un contenido que el
+/// manifiesto nombra. El tipo de medio es lo que la distingue.
+fn the_foreign_descriptor(descriptor: Option<&serde_json::Value>) -> bool {
+    let Some(descriptor) = descriptor else {
+        return false;
+    };
+    let Some(media_type) = descriptor.get("mediaType").and_then(|media| media.as_str()) else {
+        return false;
+    };
+    if !THE_FOREIGN_MEDIA_TYPES.contains(&media_type) {
+        return false;
+    }
+    descriptor
+        .get("urls")
+        .and_then(|urls| urls.as_array())
+        .is_some_and(|urls| !urls.is_empty())
+}
+
+/// Si las `urls` de una capa no distribuible son admisibles.
+///
+/// La capa se baja de donde el manifiesto dice, y ese "donde" lo decide
+/// quien publica: un `http` a una direccion interna--la de las
+/// credenciales de la nube-- es un cliente que va a pedir las
+/// credenciales de la maquina que tira de la imagen. Por eso solo se
+/// admiten `https`: el protocolo permite cualquier URI, y una plataforma
+/// de cadena de suministro no puede ir publicando direcciones que el
+/// cliente va a seguir.
+///
+/// La exencion de la capa es necesaria--el protocolo la tiene--, pero la
+/// exencion no tiene por que ser una puerta abierta.
+fn the_foreign_urls_are_admisible(descriptor: &serde_json::Value) -> bool {
+    let Some(urls) = descriptor.get("urls").and_then(|urls| urls.as_array()) else {
+        return false;
+    };
+    urls.iter()
+        .all(|url| url.as_str().is_some_and(|url| url.starts_with("https://")))
+}
+
+/// Los tipos de medio de una capa **no distribuible**.
+///
+/// Son los que define la especificacion de imagen, y son los unicos que
+/// se eximen de estar en el almacen.
+const THE_FOREIGN_MEDIA_TYPES: [&str; 2] = [
+    "application/vnd.oci.image.layer.nondistributable.v1.tar",
+    "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
+];
 
 /// La clase de lo que un manifiesto nombra.
 ///
@@ -1089,8 +1225,49 @@ fn the_content_range(headers: &HeaderMap) -> Option<(u64, u64)> {
         .get("content-range")
         .and_then(|value| value.to_str().ok())?
         .trim();
+    // HTTP escribe el rango con unidad y con total (`bytes 0-99/200`), y
+    // el protocolo de OCI lo escribe desnudo (`0-99`). Las dos se leen.
+    let value = value.strip_prefix("bytes ").unwrap_or(value).trim();
+    // El total no dice donde va el trozo: se ignora.
+    let value = value.split('/').next().unwrap_or(value).trim();
     let (start, end) = value.split_once('-')?;
     Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
+}
+
+/// Si el rango que declara el cliente esta **mal formado**.
+///
+/// El protocolo dice que el rango tiene que estar bien formado, y un
+/// cliente que lo manda mal no puede escribir donde quiere: un rango que
+/// no se entiende es un rango que no se puede satisfacer. Sin esta
+/// comprobacion, un `Content-Range` que no se sabe leer se pasa por alto y
+/// el trozo se acepta sin comprobar nada.
+fn the_range_is_malformed(headers: &HeaderMap) -> bool {
+    headers.get("content-range").is_some() && the_content_range(headers).is_none()
+}
+
+/// Si el rango que declara el cliente no cuadra con la longitud de su
+/// cuerpo.
+///
+/// El protocolo dice que el `Content-Range` es el rango del trozo y que el
+/// `Content-Length` es la longitud del trozo: los dos dicen lo mismo. Un
+/// cliente que declara una cosa y manda otra no sabe donde esta, y la
+/// respuesta es la misma que recibe el trozo fuera de orden: un `416` con
+/// el `Range` que dice por donde seguir.
+///
+/// Sin `Content-Range` no hay nada que comparar: el rango es opcional.
+fn the_range_does_not_match_the_length(headers: &HeaderMap) -> Option<(u64, u64)> {
+    let (start, end) = the_content_range(headers)?;
+    let length: u64 = headers
+        .get(axum::http::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    if end < start || end - start + 1 != length {
+        return Some((start, end));
+    }
+    None
 }
 
 /// El `Range` que dice cuanto lleva la subida.
@@ -1236,6 +1413,120 @@ mod tests {
 
         headers.insert("content-range", "not-a-range".parse().expect("a header"));
         assert_eq!(the_content_range(&headers), None);
+    }
+
+    /// El rango declarado y la longitud del cuerpo tienen que cuadrar.
+    ///
+    /// El protocolo dice que el `Content-Range` es el rango del trozo y
+    /// que el `Content-Length` es su longitud: los dos dicen lo mismo.
+    #[test]
+    fn a_range_that_does_not_match_the_length_is_a_mismatch() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", "0-99".parse().expect("a header"));
+        headers.insert("content-length", "100".parse().expect("a header"));
+        assert_eq!(the_range_does_not_match_the_length(&headers), None);
+
+        // El mismo rango con un cuerpo de otra longitud.
+        headers.insert("content-length", "3".parse().expect("a header"));
+        assert_eq!(the_range_does_not_match_the_length(&headers), Some((0, 99)));
+
+        // Un rango al reves: el final es anterior al inicio.
+        headers.insert("content-range", "99-0".parse().expect("a header"));
+        headers.insert("content-length", "100".parse().expect("a header"));
+        assert_eq!(the_range_does_not_match_the_length(&headers), Some((99, 0)));
+    }
+
+    /// Sin `Content-Range` no hay nada que comparar: el rango es
+    /// opcional, y el `Content-Length` solo no dice nada.
+    #[test]
+    fn without_a_range_there_is_nothing_to_compare() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", "100".parse().expect("a header"));
+        assert_eq!(the_range_does_not_match_the_length(&headers), None);
+    }
+
+    /// La capa **no distribuible** es la que se exime de estar en el
+    /// almacen: su tipo de medio lo dice, y sus `urls` dicen de donde se
+    /// baja.
+    #[test]
+    fn a_foreign_layer_is_the_one_that_is_not_distributed() {
+        let layer = serde_json::json!({
+            "mediaType": "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
+            "digest": A_DIGEST,
+            "urls": ["https://example.invalid/layer"],
+        });
+        assert!(the_foreign_descriptor(Some(&layer)));
+
+        let layer = serde_json::json!({
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": A_DIGEST,
+            "urls": ["https://example.invalid/layer"],
+        });
+        assert!(!the_foreign_descriptor(Some(&layer)));
+    }
+
+    /// Una capa normal sin `urls` no es extranjera: se exige en el
+    /// almacen, como cualquier otra.
+    #[test]
+    fn a_normal_layer_is_not_foreign() {
+        let layer = serde_json::json!({
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": A_DIGEST,
+        });
+        assert!(!the_foreign_descriptor(Some(&layer)));
+    }
+
+    /// El rango se lee en las dos grafias: la del protocolo (`0-99`) y la
+    /// de HTTP (`bytes 0-99/200`).
+    #[test]
+    fn the_content_range_is_read_in_both_spellings() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", "bytes 0-99/200".parse().expect("a header"));
+        assert_eq!(the_content_range(&headers), Some((0, 99)));
+
+        headers.insert("content-range", "bytes 100-199".parse().expect("a header"));
+        assert_eq!(the_content_range(&headers), Some((100, 199)));
+    }
+
+    /// Un rango que esta y no se puede leer es un rango mal formado: no
+    /// se pasa por alto.
+    #[test]
+    fn a_range_that_cannot_be_read_is_malformed() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-range", "not-a-range".parse().expect("a header"));
+        assert!(the_range_is_malformed(&headers));
+
+        headers.insert("content-range", "0-99".parse().expect("a header"));
+        assert!(!the_range_is_malformed(&headers));
+
+        // Sin cabecera no hay nada mal formado: el rango es opcional.
+        assert!(!the_range_is_malformed(&HeaderMap::new()));
+    }
+
+    /// Las `urls` de la capa no distribuible tienen que ser `https`: el
+    /// cliente va a seguirlas, y quien publica decide a donde va.
+    #[test]
+    fn the_urls_of_a_foreign_layer_have_to_be_https() {
+        let layer = serde_json::json!({
+            "mediaType": "application/vnd.oci.image.layer.nondistributable.v1.tar",
+            "digest": A_DIGEST,
+            "urls": ["https://store.example.com/blobs/sha256/x"],
+        });
+        assert!(the_foreign_urls_are_admisible(&layer));
+
+        let layer = serde_json::json!({
+            "mediaType": "application/vnd.oci.image.layer.nondistributable.v1.tar",
+            "digest": A_DIGEST,
+            "urls": ["http://169.254.169.254/latest/meta-data/"],
+        });
+        assert!(!the_foreign_urls_are_admisible(&layer));
+
+        let layer = serde_json::json!({
+            "mediaType": "application/vnd.oci.image.layer.nondistributable.v1.tar",
+            "digest": A_DIGEST,
+            "urls": ["file:///etc/passwd"],
+        });
+        assert!(!the_foreign_urls_are_admisible(&layer));
     }
 
     /// El rango que dice la subida es `0-<ultimo byte>`.

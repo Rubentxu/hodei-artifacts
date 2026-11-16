@@ -48,6 +48,9 @@ target/
 
 # Local agent tooling state
 .atl/
+# The inventory of the tooling: it describes the machine, not the product,
+# and it goes stale on its own. It is state, not source.
+PROJECT.json
 
 
 # WASM / Trunk outputs

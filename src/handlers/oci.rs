@@ -371,16 +371,53 @@ fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool
 /// lo que haya. Uno que solo nombra tipos que este registro no sirve
 /// recibe el error OCI de manifiesto desconocido, no una respuesta que
 /// finge ser lo que pidió.
+///
+/// El `Accept` se lee **entero**: un cliente puede mandar el tipo que
+/// acepta en **varias cabeceras**, y cada cabecera puede traer una lista
+/// separada por comas. Leer solo la primera cabecera--que es lo que hace
+/// un `get`--deja fuera los tipos que el cliente sí acepta, y un cliente
+/// de verdad (la CLI de Docker manda dos: la de indice y la de imagen)
+/// se queda sin manifiesto.
+///
+/// Y el peso se respeta: un `q=0` dice que el tipo **no** se acepta
+/// (RFC 9110, seccion 12.5.1), y un tipo rechazado es un tipo que no se
+/// puede servir. Sin esto, un `Accept: */*;q=0`--que es un "no acepto
+/// nada"--serviria cualquier manifiesto.
 fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> {
-    let Some(accept) = headers
-        .get(header::ACCEPT)
-        .and_then(|value| value.to_str().ok())
-    else {
+    let mut there_is_an_accept = false;
+    let mut asked: Vec<&str> = Vec::new();
+    for value in headers.get_all(header::ACCEPT).iter() {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        there_is_an_accept = true;
+        for part in value.split(',') {
+            let mut pieces = part.split(';');
+            let media = pieces.next().unwrap_or("").trim();
+            if media.is_empty() {
+                continue;
+            }
+            // El peso `q=0` es un rechazo: el tipo esta en la lista, pero
+            // el cliente dice que no lo quiere.
+            if pieces.any(the_weight_is_zero) {
+                continue;
+            }
+            asked.push(media);
+        }
+    }
+    if !there_is_an_accept {
         // Sin `Accept` el cliente acepta lo que haya: es lo que dice el
         // protocolo, y el tipo que se sirve lo declara el manifiesto.
         return Ok(());
-    };
-    let asked: Vec<&str> = accept.split(',').map(|part| part.trim()).collect();
+    }
+    if asked.is_empty() {
+        // El cliente ha nombrado tipos y los ha rechazado **todos**: no
+        // acepta ninguno. Servirle lo nuestro seria responder con algo
+        // que ha dicho que no quiere.
+        return Err(OciFailure::manifest_unknown(format!(
+            "the client accepts none of the media types this registry serves: {served}"
+        )));
+    }
     // El cliente acepta cualquier cosa (`*/*`, `application/*`) o acepta
     // el tipo que se va a servir. Lo que NO se acepta es un cliente que
     // solo nombra otros tipos: servirle el nuestro seria responder con
@@ -392,6 +429,113 @@ fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> 
         return Ok(());
     }
     Err(OciFailure::manifest_unknown(format!(
-        "the registry does not serve any of the media types the client accepts: {accept}"
+        "the registry does not serve any of the media types the client accepts: {}",
+        asked.join(", ")
     )))
+}
+
+/// Si un parametro del `Accept` es un peso `q=0`.
+///
+/// El peso se escribe `q=0` o `q=0.0`: las dos formas dicen lo mismo, y
+/// un peso que no se puede leer no es un rechazo.
+fn the_weight_is_zero(parameter: &str) -> bool {
+    let parameter = parameter.trim();
+    let Some(weight) = parameter.strip_prefix("q=") else {
+        return false;
+    };
+    weight
+        .trim()
+        .parse::<f64>()
+        .is_ok_and(|weight| weight <= 0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const THE_SERVED: &str = "application/vnd.oci.image.manifest.v1+json";
+
+    /// Las cabeceras de una peticion con un `Accept`.
+    fn with_accept(values: &[&str]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for value in values {
+            headers.append(
+                header::ACCEPT,
+                HeaderValue::from_str(value).expect("a header value"),
+            );
+        }
+        headers
+    }
+
+    /// Sin `Accept` se sirve lo que haya.
+    #[test]
+    fn without_accept_the_registry_serves_what_it_has() {
+        assert!(the_negotiation(&HeaderMap::new(), THE_SERVED).is_ok());
+    }
+
+    /// El cliente que acepta cualquier cosa recibe lo que haya.
+    #[test]
+    fn a_client_that_accepts_anything_is_served() {
+        assert!(the_negotiation(&with_accept(&["*/*"]), THE_SERVED).is_ok());
+        assert!(the_negotiation(&with_accept(&["application/*"]), THE_SERVED).is_ok());
+    }
+
+    /// El cliente que nombra el tipo que se sirve recibe el manifiesto.
+    #[test]
+    fn a_client_that_accepts_the_served_type_is_served() {
+        assert!(the_negotiation(&with_accept(&[THE_SERVED]), THE_SERVED).is_ok());
+    }
+
+    /// Un cliente que solo nombra otros tipos recibe el error del
+    /// protocolo, no un manifiesto que no pidio.
+    #[test]
+    fn a_client_that_accepts_another_type_is_refused() {
+        let headers = with_accept(&["application/vnd.oci.image.index.v1+json"]);
+        assert!(the_negotiation(&headers, THE_SERVED).is_err());
+    }
+
+    /// La lista separada por comas se lee entera.
+    #[test]
+    fn a_comma_separated_list_is_read_whole() {
+        let headers = with_accept(&["application/vnd.oci.image.index.v1+json, image/png"]);
+        assert!(the_negotiation(&headers, "image/png").is_ok());
+    }
+
+    /// **Varias** cabeceras se leen enteras: la CLI de Docker manda la del
+    /// indice y la de la imagen, y con una sola cabecera el cliente se
+    /// queda sin manifiesto.
+    #[test]
+    fn several_accept_headers_are_read_whole() {
+        let headers = with_accept(&["application/vnd.oci.image.index.v1+json", THE_SERVED]);
+        assert!(the_negotiation(&headers, THE_SERVED).is_ok());
+    }
+
+    /// Un peso `q=0` es un rechazo: el tipo no se acepta.
+    #[test]
+    fn a_zero_weight_is_a_rejection() {
+        let headers = with_accept(&["application/vnd.oci.image.index.v1+json;q=0"]);
+        assert!(the_negotiation(&headers, THE_SERVED).is_err());
+    }
+
+    /// Y un `*/*` con peso cero no acepta cualquier cosa.
+    #[test]
+    fn a_zero_weight_on_everything_refuses_everything() {
+        let headers = with_accept(&["*/*;q=0"]);
+        assert!(the_negotiation(&headers, THE_SERVED).is_err());
+    }
+
+    /// Un peso que no es cero es una preferencia, no un rechazo.
+    #[test]
+    fn a_positive_weight_is_a_preference() {
+        let headers = with_accept(&["application/vnd.oci.image.index.v1+json;q=0.8", THE_SERVED]);
+        assert!(the_negotiation(&headers, THE_SERVED).is_ok());
+    }
+
+    /// Los parametros que no son el peso no pesan: el tipo sigue siendo el
+    /// que se compara.
+    #[test]
+    fn a_parameter_is_not_a_weight() {
+        let headers = with_accept(&["application/vnd.oci.image.manifest.v1+json;charset=utf-8"]);
+        assert!(the_negotiation(&headers, THE_SERVED).is_ok());
+    }
 }

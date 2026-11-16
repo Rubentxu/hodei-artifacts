@@ -29,7 +29,58 @@ Repository::"hrn:hodei:repository:us-east-1:org_123:repo/my-repo"
 Artifact::"hrn:hodei:artifact:us-east-1:org_123:package_version/react/18.2.0"
 ```
 
-### 2.2. Atributos de Entidades
+### 2.2. Los ancestros de un repositorio
+
+Un repositorio con niveles--`team/demo`, `team/demo/app`-- tiene
+**ancestros**, y el mapeo de HRN a Cedar los declara: el padre de
+`team/demo` es `team`, y el padre de `team/demo/app` es `team/demo`. La
+relación es la **cadena de prefijos del nombre**, dentro de la misma
+cuenta: los ancestros se sintetizan a partir del nombre, existan o no en
+el catálogo.
+
+Para que el esquema acepte esa relación, el tipo de entidad declara el
+tipo de ancestro:
+
+```json
+{
+  "Artifacts": {
+    "entityTypes": {
+      "Repository": {
+        "memberOfTypes": ["Artifacts::Repository"],
+        "shape": { "type": "Record", "attributes": {} }
+      }
+    }
+  }
+}
+```
+
+**Sin esa declaración, el motor falla cerrado.** Un repositorio con
+niveles recibe un `403 DENIED` aunque la política lo autorice, porque el
+esquema no permite que un `Repository` sea miembro de otro `Repository`.
+Y el esquema es **del operador**: lo elige quien despliega
+(`HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH`), así que una instalación con
+el esquema anterior sigue con el `403`.
+
+**Lo que la regla concede y lo que no.** Con el tipo de ancestro
+declarado, una política que use el operador `in` concede al repositorio
+lo que concede a sus descendientes:
+
+```cedar
+// Lo que se puede hacer en `team/demo` se puede hacer en
+// `team/demo/app`, y en cualquier otro repositorio que esté debajo.
+permit(
+    principal == User::"hrn:hodei:iam:global:org_123:user/user_456",
+    action == Action::"upload_asset",
+    resource in Repository::"hrn:hodei:repository:us-east-1:org_123:repo/team"
+);
+```
+
+Lo que la regla **no** hace es cruzar de cuenta: el ancestro se
+sintetiza con la misma partición, servicio, región y cuenta, y una
+petición de otra cuenta se rechaza antes de llegar al motor de
+autorización.
+
+### 2.3. Atributos de Entidades
 
 Cada entidad Hodei expone atributos para uso en políticas:
 
