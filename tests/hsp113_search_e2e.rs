@@ -365,7 +365,11 @@ async fn a_repository_without_permission_neither_appears_nor_is_counted() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = the_body(response).await;
 
-    assert_eq!(body["total"], json!(0), "the unreadable repository is counted");
+    assert_eq!(
+        body["total"],
+        json!(0),
+        "the unreadable repository is counted"
+    );
     assert!(body["results"].as_array().expect("the results").is_empty());
 }
 
@@ -423,7 +427,11 @@ async fn a_request_without_filters_is_the_walk_of_what_there_is() {
     let body = the_body(response).await;
 
     // The two repositories that Cedar grants, and not the third.
-    assert_eq!(body["total"], json!(3), "the assets of the readable repositories");
+    assert_eq!(
+        body["total"],
+        json!(3),
+        "the assets of the readable repositories"
+    );
     let repositories: Vec<&str> = body["results"]
         .as_array()
         .expect("the results")

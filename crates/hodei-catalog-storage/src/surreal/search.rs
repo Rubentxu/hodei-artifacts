@@ -81,9 +81,7 @@
 use std::collections::HashSet;
 
 use async_trait::async_trait;
-use hodei_catalog::search::{
-    MAX_COUNTED, RepositoryAttribute, SearchHit, SearchPage, SearchQuery,
-};
+use hodei_catalog::search::{MAX_COUNTED, RepositoryAttribute, SearchHit, SearchPage, SearchQuery};
 use hodei_catalog::{
     CatalogError, CatalogSearch, RepositoryDescriptor, RepositoryFormat, ServeChannel, TrustState,
 };
@@ -428,10 +426,7 @@ impl SurrealCatalogStore {
 }
 
 /// The format of the repository an asset belongs to.
-fn repository_format(
-    candidates: &[&RepositoryDescriptor],
-    repository: &str,
-) -> RepositoryFormat {
+fn repository_format(candidates: &[&RepositoryDescriptor], repository: &str) -> RepositoryFormat {
     candidates
         .iter()
         .find(|candidate| candidate.repo_key == repository)
@@ -530,8 +525,6 @@ fn the_attribute_matches(
     match attribute {
         RepositoryAttribute::Format(format) => repository.format == *format,
         RepositoryAttribute::Mode(mode) => repository.mode == *mode,
-        RepositoryAttribute::Channel(channel) => {
-            ServeChannel::of(&repository.config) == *channel
-        }
+        RepositoryAttribute::Channel(channel) => ServeChannel::of(&repository.config) == *channel,
     }
 }

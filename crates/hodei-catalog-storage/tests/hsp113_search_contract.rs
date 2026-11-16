@@ -227,7 +227,11 @@ async fn the_search_is_scoped_to_the_account() {
         .expect("the search");
 
     // The other account has an asset with the same name and the same path.
-    assert_eq!(page.total, Some(2), "the account of the other is not counted");
+    assert_eq!(
+        page.total,
+        Some(2),
+        "the account of the other is not counted"
+    );
     assert!(
         page.results.iter().all(|hit| hit.repository != "secrets"),
         "the repository of the other account does not appear"
@@ -254,7 +258,11 @@ async fn the_search_does_not_see_a_repository_the_principal_cannot_read() {
         .await
         .expect("the search");
 
-    assert_eq!(page.total, Some(2), "only what the principal can read is counted");
+    assert_eq!(
+        page.total,
+        Some(2),
+        "only what the principal can read is counted"
+    );
     assert!(
         page.results.iter().all(|hit| hit.repository == "libs"),
         "the unreadable repository does not appear"
@@ -272,7 +280,8 @@ async fn the_search_does_not_see_a_repository_the_principal_cannot_read() {
         .await
         .expect("the search");
     assert_eq!(
-        everything.total, Some(2),
+        everything.total,
+        Some(2),
         "the count is the same in both accounts"
     );
 }
@@ -418,7 +427,11 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         )
         .await
         .expect("the search");
-    assert_eq!(by_format.total, Some(2), "the two assets of the PyPI repository");
+    assert_eq!(
+        by_format.total,
+        Some(2),
+        "the two assets of the PyPI repository"
+    );
 
     let by_mode = store
         .search(
@@ -429,7 +442,8 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         .await
         .expect("the search");
     assert_eq!(
-        by_mode.total, Some(3),
+        by_mode.total,
+        Some(3),
         "every repository of the account is hosted"
     );
 
@@ -444,7 +458,8 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         .await
         .expect("the search");
     assert_eq!(
-        by_channel.total, Some(2),
+        by_channel.total,
+        Some(2),
         "the repository with the trusted channel is not open"
     );
 
@@ -459,7 +474,8 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         .await
         .expect("the search");
     assert_eq!(
-        trusted.total, Some(1),
+        trusted.total,
+        Some(1),
         "only the repository with the trusted channel"
     );
 }
@@ -726,7 +742,10 @@ async fn a_total_that_does_not_fit_is_not_counted() {
         .await
         .expect("the search");
 
-    assert_eq!(page.total, None, "the total does not fit and is not counted");
+    assert_eq!(
+        page.total, None,
+        "the total does not fit and is not counted"
+    );
     assert!(page.more, "there are more than the page brings");
     assert_eq!(page.results.len(), 10, "the page is still a page");
 }

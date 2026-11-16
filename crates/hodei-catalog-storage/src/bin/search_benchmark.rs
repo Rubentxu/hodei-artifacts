@@ -374,7 +374,10 @@ async fn main() {
             .await
             .expect("the database opens"),
     );
-    db.use_ns("hodei").use_db("artifacts").await.expect("the namespace");
+    db.use_ns("hodei")
+        .use_db("artifacts")
+        .await
+        .expect("the namespace");
 
     let store = SurrealCatalogStore::with_authorizer((*db).clone(), Arc::new(AllowAllAuthorizer));
     store.initialize().await.expect("the schema is applied");
@@ -432,7 +435,9 @@ async fn main() {
 
     let removed = without_the_indexes(&store).await;
     if removed {
-        println!("\n=== Sin los indices de la busqueda ({ROUNDS_WITHOUT_INDEXES} rondas cada una) ===");
+        println!(
+            "\n=== Sin los indices de la busqueda ({ROUNDS_WITHOUT_INDEXES} rondas cada una) ==="
+        );
         for ((label, query, walks), with_index) in queries.iter().zip(with_indexes.iter()) {
             if *walks {
                 // The text search does not use an index with or without
