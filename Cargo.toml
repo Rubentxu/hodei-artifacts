@@ -239,6 +239,11 @@ dotenvy = { workspace = true }
 url = { workspace = true }
 # The basic credentials of the Docker token endpoint, decoded.
 base64 = { workspace = true }
+# The egress of the remote proxy. TLS goes through the system trust store
+# (native-tls), so a private CA is trusted the way the operator already
+# trusts it for the rest of the host.
+reqwest = { workspace = true }
+bytes = { workspace = true }
 
 # Testing utilities
 tempfile = { workspace = true }

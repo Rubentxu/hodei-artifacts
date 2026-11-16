@@ -245,7 +245,7 @@ async fn a_mode_this_release_does_not_serve_is_refused_clearly() {
     let store = store_for(db);
     store.initialize().await.expect("initialize");
 
-    for mode in [RepositoryMode::Proxy, RepositoryMode::Group] {
+    for mode in [RepositoryMode::Group] {
         let refused = store
             .create_repository(
                 "acme",
@@ -270,6 +270,98 @@ async fn a_mode_this_release_does_not_serve_is_refused_clearly() {
         store.repository("acme", "releases").await,
         Err(CatalogError::Missing { .. })
     ));
+}
+
+fn proxy_config(upstream: Option<serde_json::Value>) -> RepositoryConfig {
+    let mut config = RepositoryConfig::new(DigestScope::Global);
+    config.config_settings = match upstream {
+        Some(upstream) => serde_json::json!({ "proxy": { "upstream": upstream } }),
+        None => serde_json::json!({}),
+    };
+    config
+}
+
+fn proxy_descriptor(config: RepositoryConfig) -> RepositoryDescriptor {
+    let mut descriptor = descriptor(
+        "acme",
+        "mirror",
+        RepositoryFormat::Raw,
+        RepositoryMode::Proxy,
+        DigestScope::Global,
+    );
+    descriptor.config = config;
+    descriptor
+}
+
+#[tokio::test]
+async fn a_proxy_repository_is_created_only_with_a_valid_upstream() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+
+    // Sin upstream no sabe a donde ir: no se crea.
+    let refused = store
+        .create_repository("acme", proxy_descriptor(proxy_config(None)))
+        .await
+        .expect_err("a proxy without upstream");
+    assert!(matches!(refused, CatalogError::InvalidRequest { .. }));
+
+    // Con un upstream ilegible tampoco: la configuracion falla cerrada.
+    let refused = store
+        .create_repository(
+            "acme",
+            proxy_descriptor(proxy_config(Some(serde_json::json!({
+                "id": "up", "url": "https://user:pw@example.org/", "scopes": ["/"]
+            })))),
+        )
+        .await
+        .expect_err("credentials in the url");
+    assert!(matches!(refused, CatalogError::InvalidRequest { .. }));
+    assert!(
+        !refused.to_string().contains("pw"),
+        "el error no repite lo que se escribio mal"
+    );
+
+    // Con un upstream valido se crea, y es un repositorio servido.
+    let created = store
+        .create_repository(
+            "acme",
+            proxy_descriptor(proxy_config(Some(serde_json::json!({
+                "id": "up", "url": "https://example.org/raw/", "scopes": ["/"]
+            })))),
+        )
+        .await
+        .expect("a valid proxy");
+    assert_eq!(created.mode, RepositoryMode::Proxy);
+
+    // Reconfigurarlo sin upstream tampoco se admite.
+    let refused = store
+        .update_config("acme", "mirror", proxy_config(None))
+        .await
+        .expect_err("the upstream cannot be removed");
+    assert!(matches!(refused, CatalogError::InvalidRequest { .. }));
+}
+
+#[tokio::test]
+async fn a_hosted_repository_does_not_need_an_upstream() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let db = open_store(&tmp.path().join("db")).await;
+    let store = store_for(db);
+    store.initialize().await.expect("initialize");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "releases",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                DigestScope::Global,
+            ),
+        )
+        .await
+        .expect("hosted without upstream");
 }
 
 #[tokio::test]

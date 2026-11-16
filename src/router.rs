@@ -396,6 +396,8 @@ fn repository_v1_routes(app_state: AppState) -> Router {
         // Promotion to the trusted channel and its revocation. They are
         // tenant operations, not platform administration: each one
         // authenticates, and Cedar decides on the repository.
+        // The provenance of what a proxy brought from its upstream.
+        .route("/provenance", get(crate::handlers::raw::provenance))
         .route("/promotions", post(crate::handlers::promotions::promote))
         .route(
             "/promotions/revoke",

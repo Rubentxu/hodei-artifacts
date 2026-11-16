@@ -30,6 +30,7 @@ pub mod handlers;
 pub mod iam_backfill;
 pub mod oci;
 pub mod openapi;
+pub mod proxy;
 pub mod raw;
 pub mod repository;
 pub mod repository_surreal;

@@ -73,3 +73,23 @@ cas_path = "./data/hodei.cas"
 # is in progress its file is locked by the process that writes it, and a
 # locked file is not removed.
 staging_max_age_secs = 3600
+
+[proxy]
+# The hosts the service may reach on behalf of a proxy repository. Empty means
+# the service reaches nothing: a proxy repository cannot resolve until an
+# operator allows its upstream here. An entry is a host (and optionally a
+# port), written as "host[:port][;private][;http]" or, in a file, as
+# { host = "repo.example.com", port = 443 }. "private" opens loopback and
+# private networks for that entry; "http" admits plain http. Link-local
+# (cloud metadata), multicast and reserved ranges are never reachable.
+allowed_hosts = []
+# The environment variables a repository may name in credential_ref
+# ("env:NAME"). Empty means no credential is ever sent to an upstream.
+allowed_credentials = []
+connect_timeout_secs = 5
+# The whole resolution, redirects and body included.
+total_timeout_secs = 300
+# The most bytes one upstream response may carry. A repository can narrow it.
+max_bytes = 1073741824
+# The upstream fetches in flight at once; the next one answers 503.
+max_concurrent = 8

@@ -136,6 +136,11 @@ pub struct AppState {
     /// Optional, and fail-closed: a repository with the trusted channel
     /// and no ledger serves nothing.
     pub(crate) trust_ledger: Option<Arc<dyn hodei_catalog::TrustLedger>>,
+    /// The egress and the provenance ledger of the remote proxy.
+    ///
+    /// Optional, and fail-closed: a proxy repository with no plane answers
+    /// `501` and the service makes no outbound request.
+    pub(crate) proxy_plane: Option<Arc<crate::proxy::ProxyPlane>>,
     /// The promotion service and the policy it decides with.
     ///
     /// Optional: without it the promotion routes answer `501` and nothing
@@ -260,6 +265,7 @@ impl AppState {
             content_store: None,
             gc: None,
             trust_ledger: None,
+            proxy_plane: None,
             trust_plane: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             max_body_size: 10 * 1024 * 1024,
@@ -318,6 +324,7 @@ impl AppState {
             content_store: None,
             gc: None,
             trust_ledger: None,
+            proxy_plane: None,
             trust_plane: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             max_body_size: 10 * 1024 * 1024,
@@ -404,6 +411,12 @@ impl AppState {
     /// Inject the ledger of trust grants.
     pub fn with_trust_ledger(mut self, ledger: Arc<dyn hodei_catalog::TrustLedger>) -> Self {
         self.trust_ledger = Some(ledger);
+        self
+    }
+
+    /// Inject the egress and provenance ledger of the remote proxy.
+    pub fn with_proxy_plane(mut self, plane: Arc<crate::proxy::ProxyPlane>) -> Self {
+        self.proxy_plane = Some(plane);
         self
     }
 

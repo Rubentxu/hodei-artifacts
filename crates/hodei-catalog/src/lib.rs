@@ -47,6 +47,7 @@ pub mod error;
 pub mod gc;
 pub mod model;
 pub mod ports;
+pub mod proxy;
 pub mod trust;
 
 pub use error::CatalogError;
@@ -64,5 +65,9 @@ pub use ports::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
     CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogWriter,
     DenyAllAuthorizer,
+};
+pub use proxy::{
+    ChecksumEvidence, CredentialRef, ProvenanceLedger, ProvenanceReceipt, UpstreamConfig,
+    UpstreamConfigError, origin_of,
 };
 pub use trust::{ServeChannel, TrustGrant, TrustLedger};

@@ -1866,3 +1866,31 @@ No hay una ruta HTTP que cree repositorios del catálogo, así que el canal
 trusted se fija al sembrar o con `update_config`. Un despliegue con
 catálogo duradero tiene que declarar las dos acciones nuevas en su esquema
 Cedar.
+
+## 10-unvicies — M10: el repository proxy remoto (HAR-12)
+
+Un repositorio en modo `proxy` resuelve contra su upstream la primera vez que
+se le pide una ruta. El contrato, las pruebas y los límites están en
+[`uat/UAT-PROXY-VIRTUAL.md`](uat/UAT-PROXY-VIRTUAL.md); aquí se dice qué hay y
+dónde vive.
+
+**Qué hay.** `hodei_catalog::proxy` define la configuración versionada del
+upstream (`config_settings.proxy.upstream`), la referencia de credencial
+(`env:NOMBRE`) y el recibo de procedencia con su libro (`ProvenanceLedger`),
+que `hodei-catalog-storage` guarda en el motor (esquema 7). `src/proxy/` es el
+plano de salida: `egress` (la política de hosts y la clasificación de
+direcciones), `fetch` (un cliente por salto con la IP fijada, redirects
+manuales y presupuesto de bytes) y `resolution` (sesión de escritura no
+visible, verificación, `commit` y recibo). `src/handlers/raw.rs` lo conecta a
+`GET`/`HEAD` y a `GET /api/v1/provenance`; `PUT` a un proxy responde `405`.
+
+**Cómo decide.** El repositorio dice a qué upstream habla; `[proxy]
+allowed_hosts` dice a qué hosts puede llegar el servicio, y por defecto es
+ninguno. El loopback y las redes privadas solo se abren con `private` en la
+entrada. Lo que se baja pasa por la misma admisión de confianza que lo que se
+sube.
+
+**Lo que sigue sin estar.** No hay TTL, revalidación ni modo offline
+(HSP-107), ni single-flight, ni repositorios virtuales o de grupo (HSP-108).
+No existe una ruta HTTP que cree repositorios proxy: se siembran o se crean
+con el catálogo.

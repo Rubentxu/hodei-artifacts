@@ -266,6 +266,7 @@ pub async fn bootstrap(
         let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
         let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
         let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> = catalog.clone();
+        let provenance_ledger: Arc<dyn hodei_catalog::ProvenanceLedger> = catalog.clone();
         let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
         // The staging that an interrupted upload leaves behind is cleaned
         // here, at the boot. It is never published -- the catalog write
@@ -337,9 +338,34 @@ pub async fn bootstrap(
             policies,
             config.trust.policy_id.clone(),
         ));
+        // The egress policy comes from the service configuration, never
+        // from a repository: an empty list means no outbound request.
+        let egress = crate::proxy::egress::EgressPolicy::new(config.proxy.allowed_hosts.clone())
+            .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+        // A credential name that a repository could never reference is a
+        // configuration mistake: it is refused at start, not silently kept.
+        for name in &config.proxy.allowed_credentials {
+            hodei_catalog::CredentialRef::parse(&format!("env:{name}"))
+                .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+        }
+        let fetcher = crate::proxy::fetch::ProxyFetcher::new(
+            egress,
+            crate::proxy::fetch::FetchLimits {
+                connect_timeout: Duration::from_secs(config.proxy.connect_timeout_secs),
+                total_timeout: Duration::from_secs(config.proxy.total_timeout_secs),
+                max_bytes: config.proxy.max_bytes,
+            },
+            config.proxy.max_concurrent,
+        )
+        .with_allowed_credentials(config.proxy.allowed_credentials.iter().cloned());
+        let proxy_plane = Arc::new(crate::proxy::ProxyPlane {
+            fetcher,
+            ledger: provenance_ledger,
+        });
         let app_state = app_state
             .with_catalog(reader, writer)
             .with_trust_ledger(trust_ledger)
+            .with_proxy_plane(proxy_plane)
             .with_trust_plane(plane)
             .with_content_store(content);
         match gc {
