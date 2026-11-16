@@ -2064,6 +2064,15 @@ instantánea del documento. En el proxy, el índice del upstream se pide en JSON
 y **se vuelve a pintar aquí**: el HTML que sale de este servicio lo escribe
 este servicio, con los valores escapados.
 
+**El límite de la subida tiene dos capas.** El límite del transporte
+(`DefaultBodyLimit::max`) topa el cuerpo entero, con el sobre `multipart`
+incluido, y el manejador topa los bytes del fichero. Sin el tope del
+transporte, el `multipart` acumula las cabeceras de las partes en memoria sin
+tope: el límite de `axum` por defecto (2 MiB) no servía, porque una
+distribución no cabe en 2 MiB, y desactivar el límite no servía tampoco. Con
+las dos capas, un sobre con una cabecera gigante es un `413` y el límite del
+servicio se respeta sin excepciones.
+
 **Lo que decide el canal de confianza.** La superficie PyPI no se salta la
 compuerta de `trust::admit`: la distribución se admite tanto si viene del
 catálogo como si la trae el upstream, y el índice solo anuncia los digests

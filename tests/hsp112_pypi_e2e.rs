@@ -824,6 +824,207 @@ fn a_range_asks_for_a_part_of_the_distribution() {
         None,
     );
     assert_eq!(impossible.status, 416);
+    // Y se dice cuanto hay: RFC 9110 pide que el `Content-Range` de un
+    // tramo que no cabe diga la longitud de lo que hay.
+    assert_eq!(
+        impossible.header("content-range").as_deref(),
+        Some(format!("bytes */{}", wheel.len()).as_str())
+    );
+}
+
+/// Una subida que pasa del limite se dice que no.
+///
+/// El limite se aplica en dos capas: el transporte topa el cuerpo entero
+/// --el sobre `multipart` incluido-- y el manejador topa los bytes del
+/// fichero. Las dos responden `413`.
+#[test]
+fn an_upload_bigger_than_the_limit_is_refused() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    // El limite configurado es de 64 KiB.
+    let service = deployment.start(&[("HODEI_SERVER__MAX_BODY_SIZE", "65536")]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    // Un fichero que pasa del limite: lo dice el manejador, que es quien
+    // cuenta los bytes del fichero.
+    let wheel = support::a_big_wheel("bigpkg", "1.0", None, 128 * 1024);
+    let hash = the_sha256(&wheel);
+    let refused = upload(
+        dir,
+        port,
+        "pypi-hosted",
+        &token,
+        the_upload(
+            "bigpkg",
+            "1.0",
+            "bigpkg-1.0-py3-none-any.whl",
+            &wheel,
+            &hash,
+        ),
+    );
+    assert_eq!(refused.status, 413, "{}", text_of(&refused));
+
+    // Un sobre con una cabecera gigante no lo cuenta el manejador--que
+    // solo cuenta los bytes de los campos--: lo corta el transporte. Sin
+    // ese tope, la subida se publicaria: el `413` es la prueba de que el
+    // cuerpo entero tiene un limite.
+    let wheel = support::a_wheel("hugepkg", "1.0", None);
+    let hash = the_sha256(&wheel);
+    let cut = upload(
+        dir,
+        port,
+        "pypi-hosted",
+        &token,
+        the_upload_with_a_giant_header(
+            "hugepkg",
+            "1.0",
+            "hugepkg-1.0-py3-none-any.whl",
+            &wheel,
+            &hash,
+        ),
+    );
+    assert_eq!(cut.status, 413, "{}", text_of(&cut));
+
+    // Y nada se publico.
+    let index = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-hosted/simple/",
+        &token,
+        &[],
+        None,
+    );
+    assert_eq!(index.status, 200);
+    assert!(!text_of(&index).contains("bigpkg"), "{}", text_of(&index));
+    assert!(!text_of(&index).contains("hugepkg"), "{}", text_of(&index));
+}
+
+/// Una subida cuyo sobre lleva una cabecera gigante.
+///
+/// La cabecera de la parte no es un campo: el manejador no la cuenta, y
+/// sin un tope en el transporte se acumularia en memoria sin limite.
+fn the_upload_with_a_giant_header(
+    name: &str,
+    version: &str,
+    filename: &str,
+    file: &[u8],
+    sha256: &str,
+) -> Vec<u8> {
+    let body = the_upload(name, version, filename, file, sha256);
+    // Se antepone una parte con una cabecera enorme: el sobre tiene que
+    // pesar mas que el limite del transporte.
+    let giant = format!(
+        "--{BOUNDARY}\r\n\
+         Content-Disposition: form-data; name=\"{}\"\r\n\r\nx\r\n",
+        "x".repeat(1024 * 1024)
+    );
+    let mut with_giant = Vec::new();
+    with_giant.extend_from_slice(giant.as_bytes());
+    with_giant.extend_from_slice(&body);
+    with_giant
+}
+
+/// Un nombre de wheel que el `pip` instala se publica.
+///
+/// La etiqueta de compilacion de un wheel es un digito y, detras, lo que
+/// sea: `1.5` es una etiqueta valida y el `pip` la instala. Un nombre que
+/// el `pip` instalaria no se rechaza en la puerta.
+#[test]
+fn a_wheel_with_a_build_tag_is_published() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let service = deployment.start(&[]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    let wheel = support::a_wheel("labpkg", "1.0", None);
+    let hash = the_sha256(&wheel);
+    let published = upload(
+        dir,
+        port,
+        "pypi-hosted",
+        &token,
+        the_upload(
+            "labpkg",
+            "1.0",
+            "labpkg-1.0-1.5-py3-none-any.whl",
+            &wheel,
+            &hash,
+        ),
+    );
+    assert_eq!(published.status, 200, "{}", text_of(&published));
+
+    // Y el indice lo anuncia con ese nombre.
+    let index = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-hosted/simple/labpkg/",
+        &token,
+        &[],
+        None,
+    );
+    assert_eq!(index.status, 200);
+    assert!(
+        text_of(&index).contains("labpkg-1.0-1.5-py3-none-any.whl"),
+        "{}",
+        text_of(&index)
+    );
+}
+
+/// Una version local se canoniza como dice la PEP.
+///
+/// `1.0+01` y `1.0+1` son la misma version: el cliente puede escribir la
+/// primera y el nombre del fichero llevar la segunda.
+#[test]
+fn a_local_version_is_canonicalized() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let service = deployment.start(&[]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    let wheel = support::a_wheel("labpkg", "1.0", None);
+    let hash = the_sha256(&wheel);
+    let published = upload(
+        dir,
+        port,
+        "pypi-hosted",
+        &token,
+        the_upload(
+            "labpkg",
+            "1.0+01",
+            "labpkg-1.0+1-py3-none-any.whl",
+            &wheel,
+            &hash,
+        ),
+    );
+    assert_eq!(published.status, 200, "{}", text_of(&published));
+
+    // El indice anuncia la version canonica.
+    let index = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-hosted/simple/labpkg/",
+        &token,
+        &[("accept", "application/vnd.pypi.simple.v1+json")],
+        None,
+    );
+    assert_eq!(index.status, 200);
+    let document = json_of(&index);
+    let versions = document["versions"].as_array().expect("the versions");
+    assert_eq!(
+        versions,
+        &vec![json!("1.0+1")],
+        "{}",
+        String::from_utf8_lossy(&index.body)
+    );
 }
 
 /// El canal de confianza no anuncia lo que no deja servir.

@@ -298,14 +298,22 @@ verdad, no un simulacro.
   que han llegado: si no, un `400` y no se publica nada. El nombre y la
   versión tienen que ser los del nombre del fichero, y la versión se compara
   en su forma canónica (PEP 440): `1.0-2`, `1.0.rc1` y `v1.0` son la misma
-  versión que `1.0.post2`, `1.0rc1` y `1.0`. El nombre del fichero tiene que
-  ser uno que el `pip` acepte: un wheel al que le falte una parte no se
-  publica, porque un enlace que el cliente no puede instalar es un enlace
-  roto. Una subida firmada (`twine upload --sign`) se publica como las
-  demás: la firma no se guarda.
-- **El límite de la subida es el configurado.** Una distribución de más de dos
-  megas —que es lo normal— se publica; lo que no cabe en el límite del
-  servicio es un `413`, y se dice antes de publicar nada.
+  versión que `1.0.post2`, `1.0rc1` y `1.0`. La gramática de la PEP no
+  distingue mayúsculas (`1.0RC1` es `1.0rc1`) y un segmento numérico de la
+  versión local no lleva ceros (`1.0+01` es `1.0+1`). El nombre del fichero
+  tiene que ser uno que el `pip` acepte: un wheel al que le falte una parte no
+  se publica, porque un enlace que el cliente no puede instalar es un enlace
+  roto; y un wheel que el `pip` instalaría —con etiqueta de compilación
+  (`1.5`) o con una plataforma local (`any+mips`)— no se rechaza. Una subida
+  firmada (`twine upload --sign`) se publica como las demás: la firma no se
+  guarda.
+- **El límite de la subida es el configurado, y se aplica en dos capas.** Una
+  distribución de más de dos megas —que es lo normal— se publica; lo que no
+  cabe en el límite del servicio es un `413`, y se dice antes de publicar
+  nada. El tope lo ponen las dos capas: el transporte topa el cuerpo entero,
+  con el sobre `multipart` incluido, y el manejador topa los bytes del
+  fichero. Un sobre con una cabecera gigante no pasa: el `413` es la prueba
+  de que el cuerpo entero tiene un límite.
 - **Nombres normalizados (PEP 503).** `Lab.Pkg`, `lab_pkg`, `lab-pkg` y
   `LAB--PKG` son el mismo proyecto, y el índice lo publica con el nombre
   normalizado (`lab-pkg`). Un proyecto que no existe es un `404`: no se
@@ -326,7 +334,8 @@ verdad, no un simulacro.
   las distribuciones que no se pueden descargar, y pedir una que no está
   admitida es un `404`, como lo que no existe.
 - **Las distribuciones admiten `Range`.** Un tramo se sirve con un `206` y su
-  `Content-Range`, y un tramo que no cabe es un `416`.
+  `Content-Range`, y un tramo que no cabe es un `416` que dice en su
+  `Content-Range` cuánto hay (`bytes */<longitud>`).
 - **El índice es una instantánea.** El documento de un proyecto se escribe
   entero cuando se publica o se retira, direccionado por su digest, con una
   precondición sobre el documento anterior y reintentos acotados. Las
@@ -359,8 +368,8 @@ verdad, no un simulacro.
 
 | Prueba | Qué mide |
 | --- | --- |
-| `crates/hodei-catalog/src/pypi.rs` (unitarias) | Normalización de nombres (PEP 503), nombres de fichero de wheel y sdist —incluido el wheel que el `pip` rechazaría—, versiones de PEP 440 y su forma canónica, el documento de un proyecto, la negociación de la representación, el escapado del HTML, las rutas de la superficie y la comprobación de una subida contra sus bytes, como funciones puras. |
-| `tests/hsp112_pypi_e2e.rs` | El protocolo con `curl` contra el servicio real: la subida multipart que habla `twine` (con y sin firma), el índice en JSON y en HTML con el mismo hash, el `ETag` y el `304`, los cuatro nombres del mismo proyecto y el `404` del que no existe, el hash que no es el de los bytes (`400`, y no se publica), la distribución de tres megas, el `Range` de una distribución (`206` y `416`), la versión que no es canónica, el canal `trusted` que no anuncia lo que no sirve, el `yanked` de una versión y su descarga, el group que une los proyectos de sus miembros, el proxy que vuelve a pintar el índice del upstream sin su HTML y con los valores escapados, y los `401` y `405`. |
+| `crates/hodei-catalog/src/pypi.rs` (unitarias) | Normalización de nombres (PEP 503), nombres de fichero de wheel y sdist —incluido el wheel que el `pip` rechazaría y el que el `pip` instalaría—, versiones de PEP 440 y su forma canónica, el documento de un proyecto, la negociación de la representación, el escapado del HTML, las rutas de la superficie y la comprobación de una subida contra sus bytes, como funciones puras. |
+| `tests/hsp112_pypi_e2e.rs` | El protocolo con `curl` contra el servicio real: la subida multipart que habla `twine` (con y sin firma), el índice en JSON y en HTML con el mismo hash, el `ETag` y el `304`, los cuatro nombres del mismo proyecto y el `404` del que no existe, el hash que no es el de los bytes (`400`, y no se publica), la distribución de tres megas, el `Range` de una distribución (`206` y `416` con su `Content-Range`), el límite de la subida (`413` del manejador y `413` del transporte, y nada publicado), la versión que no es canónica, la versión local con ceros, el wheel con etiqueta de compilación, el canal `trusted` que no anuncia lo que no sirve, el `yanked` de una versión y su descarga, el group que une los proyectos de sus miembros, el proxy que vuelve a pintar el índice del upstream sin su HTML y con los valores escapados, y los `401` y `405`. |
 | `tests/hsp112_pypi_cli.rs` | Los clientes **reales** (`twine` y `pip`) con `HOME` y `netrc` temporales: publicar un wheel y un sdist, comprobar el índice que ve el `pip`, instalar el wheel y comprobar el módulo instalado, instalar el sdist construyéndolo, y el `401` de una credencial que no vale. La credencial viaja en las variables de entorno de `twine` y en el `netrc` temporal, nunca en argv. |
 
 Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
@@ -377,6 +386,10 @@ Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
   índice.
 - **Sin firmas ni atestaciones.** La superficie no guarda ni verifica firmas
   (PEP 740): una subida firmada se publica, y su firma se ignora.
+- **Los números de la versión no son infinitos.** La release y el número de
+  una pre release se guardan en 64 bits: una versión cuyo número no cabe ahí
+  (`99999999999999999999999.0`) no es una versión de este servicio, aunque la
+  PEP la admita.
 - **El retiro es una extensión propia.** PyPI no tiene API para retirar una
   versión, y `pip` no la invoca: se retira con `POST /pypi/{repo}/yank`.
 - **Una publicación son dos escrituras.** La distribución y después el

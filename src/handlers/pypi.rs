@@ -182,6 +182,18 @@ impl Failure {
             Self::Plain(status, reason) => (*status, reason.clone()),
         }
     }
+
+    /// La longitud del contenido cuando la respuesta es un `416`.
+    ///
+    /// RFC 9110 pide que la respuesta a un rango que no se puede servir
+    /// diga en `Content-Range` cual es la longitud de lo que hay: sin esa
+    /// cabecera el cliente no sabe ni cuanto tiene.
+    fn unsatisfiable_length(&self) -> Option<u64> {
+        match self {
+            Self::Raw(RawApiError::RangeNotSatisfiable(length)) => Some(*length),
+            _ => None,
+        }
+    }
 }
 
 impl IntoResponse for Failure {
@@ -197,6 +209,12 @@ impl IntoResponse for Failure {
                 header::WWW_AUTHENTICATE,
                 HeaderValue::from_static("Basic realm=\"hodei\", Bearer"),
             );
+        }
+        if let Some(length) = self.unsatisfiable_length()
+            && let Ok(value) =
+                HeaderValue::from_str(&crate::raw::range::the_unsatisfiable_range(length))
+        {
+            response.headers_mut().insert(header::CONTENT_RANGE, value);
         }
         response
     }
@@ -1274,7 +1292,7 @@ async fn the_multipart(
     while let Some(mut field) = multipart
         .next_field()
         .await
-        .map_err(|_| Failure::plain(StatusCode::BAD_REQUEST, "the upload cannot be read"))?
+        .map_err(|error| the_upload_error(error.status()))?
     {
         parts += 1;
         if parts > MAX_PARTS {
@@ -1289,7 +1307,7 @@ async fn the_multipart(
         while let Some(chunk) = field
             .chunk()
             .await
-            .map_err(|_| Failure::plain(StatusCode::BAD_REQUEST, "the upload cannot be read"))?
+            .map_err(|error| the_upload_error(error.status()))?
         {
             total += chunk.len();
             if total > limit {
@@ -1320,6 +1338,20 @@ async fn the_multipart(
         }
     }
     Ok((fields, file))
+}
+
+/// El error de una subida que no se puede leer.
+///
+/// Un cuerpo que pasa del tope no es un formulario malo: es un cuerpo
+/// demasiado grande, y el `413` lo dice el propio `axum`. Es el mismo
+/// `413` que dice el manejador cuando lo que se pasa del tope son los
+/// bytes del fichero: lo que el cliente necesita saber es que no cabe, y
+/// no de que capa viene el rechazo.
+fn the_upload_error(status: StatusCode) -> Failure {
+    if status == StatusCode::PAYLOAD_TOO_LARGE {
+        return RawApiError::PayloadTooLarge.into();
+    }
+    Failure::plain(StatusCode::BAD_REQUEST, "the upload cannot be read")
 }
 
 /// `POST /pypi/{repositorio}/yank`: retira una version.

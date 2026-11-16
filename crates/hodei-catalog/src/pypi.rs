@@ -275,31 +275,27 @@ impl Distribution {
 /// La etiqueta de compilacion de un wheel: un numero y, detras, lo que
 /// sea.
 ///
-/// PEP 427 dice que tiene que empezar por un digito, y el `pip` tambien.
+/// PEP 427 dice que tiene que empezar por un digito, y el `pip` tambien:
+/// su regla es un digito y, detras, cualquier cosa que no sea un guion.
+/// Por eso `1.5` y `1abc` son etiquetas de compilacion validas.
 fn valid_build(build: &str) -> bool {
     let Some(first) = build.as_bytes().first() else {
         return false;
     };
-    first.is_ascii_digit()
-        && build
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    first.is_ascii_digit() && !build.contains('-')
 }
 
 /// Una etiqueta de un wheel: version de Python, ABI o plataforma.
 ///
 /// Cada etiqueta es un conjunto de etiquetas sueltas separadas por un
 /// punto: `py2.py3`, `cp39.cp310`, `manylinux_2_17_x86_64`.
+///
+/// Lo que se acepta es lo que acepta el `pip`: la etiqueta es una lista de
+/// etiquetas sueltas separadas por puntos, y el `pip` no mira los
+/// caracteres de cada una. Esta superficie tampoco los mira: lo que se
+/// anuncia tiene que poder instalarse, no parecerse a lo que se parece.
 fn valid_tag(tag: &str) -> bool {
-    if tag.is_empty() {
-        return false;
-    }
-    tag.split('.').all(|part| {
-        !part.is_empty()
-            && part
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    })
+    !tag.is_empty() && !tag.contains('-')
 }
 
 /// La clase de una *pre release*.
@@ -357,10 +353,14 @@ impl Version {
         }
         // El prefijo `v` es de la PEP: `v1.0` es `1.0`.
         let text = text.strip_prefix(['v', 'V']).unwrap_or(text);
+        // La gramatica de la PEP no distingue mayusculas: `1.0RC1` es
+        // `1.0rc1`. Las minusculas son ademas la forma canonica, asi que
+        // se normaliza una vez y se trabaja siempre en minusculas.
+        let lowered = text.to_ascii_lowercase();
         // La version local va al final y separated por un `+`.
-        let (text, local) = match text.split_once('+') {
+        let (text, local) = match lowered.split_once('+') {
             Some((head, local)) => (head, Some(normalize_local(local)?)),
-            None => (text, None),
+            None => (lowered.as_str(), None),
         };
         // La epoca: `1!2.0`.
         let (epoch, text) = match text.split_once('!') {
@@ -402,11 +402,11 @@ impl Version {
         if let Some((number, tail)) = take_implicit_post(rest) {
             post = Some(number);
             rest = tail;
-        } else if let Some((_, number, tail)) = take_marker(rest, POST_MARKERS) {
+        } else if let Some((number, tail)) = take_named_marker(rest, POST_MARKERS) {
             post = Some(number);
             rest = tail;
         }
-        if let Some((_, number, tail)) = take_marker(rest, DEV_MARKERS) {
+        if let Some((number, tail)) = take_named_marker(rest, DEV_MARKERS) {
             dev = Some(number);
             rest = tail;
         }
@@ -523,14 +523,10 @@ const PRE_MARKERS: &[(&str, PreKind)] = &[
 ];
 
 /// Las marcas de un *post release*, de la mas larga a la mas corta.
-const POST_MARKERS: &[(&str, PreKind)] = &[
-    ("post", PreKind::Rc),
-    ("rev", PreKind::Rc),
-    ("r", PreKind::Rc),
-];
+const POST_MARKERS: &[&str] = &["post", "rev", "r"];
 
 /// Las marcas de una *development release*.
-const DEV_MARKERS: &[(&str, PreKind)] = &[("dev", PreKind::Rc)];
+const DEV_MARKERS: &[&str] = &["dev"];
 
 /// La forma canonica de una version.
 ///
@@ -551,6 +547,10 @@ pub fn valid_version(version: &str) -> bool {
 ///
 /// Los segmentos se separan por `.`, `-` o `_` y se escriben en
 /// minusculas: `1.0+Ubuntu-1` es `1.0+ubuntu.1`.
+///
+/// Un segmento numerico se escribe sin ceros a la izquierda: `01` es `1` y
+/// `00` es `0`. La PEP lo dice asi, y por eso `1.0+01` y `1.0+1` son la
+/// misma version y el mismo fichero.
 fn normalize_local(local: &str) -> Option<String> {
     if local.is_empty() {
         return None;
@@ -560,7 +560,18 @@ fn normalize_local(local: &str) -> Option<String> {
         if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
             return None;
         }
-        segments.push(part.to_ascii_lowercase());
+        let segment = part.to_ascii_lowercase();
+        let segment = if segment.bytes().all(|byte| byte.is_ascii_digit()) {
+            let trimmed = segment.trim_start_matches('0');
+            if trimmed.is_empty() {
+                "0".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        } else {
+            segment
+        };
+        segments.push(segment);
     }
     Some(segments.join("."))
 }
@@ -628,6 +639,31 @@ fn take_marker<'a>(
         if let Some(tail) = text.strip_prefix(name) {
             let (number, tail) = take_optional_number(tail);
             return Some((*kind, number, tail));
+        }
+    }
+    None
+}
+
+/// Una marca que no tiene clase: la del *post release* y la de la
+/// *development release*.
+///
+/// Es la misma regla que [`take_marker`], sin la clase: el *post release*
+/// y la *development release* no se distinguen por su letra.
+fn take_named_marker<'a>(text: &'a str, names: &[&'static str]) -> Option<(u64, &'a str)> {
+    let separated = take_separator(text);
+    if separated.len() != text.len() {
+        for name in names {
+            if let Some(tail) = separated.strip_prefix(name) {
+                let (number, tail) = take_optional_number(tail);
+                return Some((number, tail));
+            }
+        }
+        return None;
+    }
+    for name in names {
+        if let Some(tail) = text.strip_prefix(name) {
+            let (number, tail) = take_optional_number(tail);
+            return Some((number, tail));
         }
     }
     None
@@ -1566,6 +1602,17 @@ mod tests {
             ("1.0+ubuntu-1", "1.0+ubuntu.1"),
             ("01.0", "1.0"),
             ("1.0.dev", "1.0.dev0"),
+            // La gramatica de la PEP no distingue mayusculas.
+            ("1.0RC1", "1.0rc1"),
+            ("1.0A1", "1.0a1"),
+            ("1.0B1", "1.0b1"),
+            ("1.0POST1", "1.0.post1"),
+            ("1.0DEV1", "1.0.dev1"),
+            ("1.0+ABC", "1.0+abc"),
+            // Y un segmento numerico de la version local no lleva ceros.
+            ("1.0+01", "1.0+1"),
+            ("1.0+abc.01", "1.0+abc.1"),
+            ("1.0+00", "1.0+0"),
         ] {
             assert_eq!(
                 canonical_version(raw).as_deref(),
@@ -1621,6 +1668,18 @@ mod tests {
         assert!(Distribution::parse("labpkg-1.0-1-2-py3-none-any.whl").is_err());
         assert!(Distribution::parse("labpkg-1.0-x-py3-none-any.whl").is_err());
         assert!(Distribution::parse("labpkg-1.0-py3-none.whl").is_err());
+    }
+
+    #[test]
+    fn a_wheel_that_the_client_would_install_is_a_distribution() {
+        // La regla es la del `pip`: la etiqueta de compilacion empieza por
+        // un digito y detras va lo que sea, y las tres etiquetas son las
+        // que son. Un nombre que el `pip` instala no se rechaza aqui.
+        assert!(Distribution::parse("labpkg-1.0-1.5-py3-none-any.whl").is_ok());
+        assert!(Distribution::parse("labpkg-1.0-1abc-py3-none-any.whl").is_ok());
+        assert!(Distribution::parse("labpkg-1.0-py3-none-any+mips.whl").is_ok());
+        assert!(Distribution::parse("labpkg-1.0-py2.py3-none-any.whl").is_ok());
+        assert!(Distribution::parse("labpkg-1.0-cp39-cp39-manylinux_2_17_x86_64.whl").is_ok());
     }
 
     #[test]
