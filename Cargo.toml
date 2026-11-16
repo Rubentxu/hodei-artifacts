@@ -49,7 +49,10 @@ resolver = "2"
 # Optimización de profiles para tests rápidos
 [profile.dev]
 opt-level = 0
-debug = true
+# Solo tablas de lineas: da trazas con numero de linea y evita la
+# informacion de depuracion completa, que se paga en memoria y tiempo en
+# cada uno de los muchos binarios de test que se enlazan.
+debug = "line-tables-only"
 split-debuginfo = "unpacked"  # Faster linking on Linux
 incremental = true
 

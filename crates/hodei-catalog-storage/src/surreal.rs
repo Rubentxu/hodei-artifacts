@@ -117,7 +117,11 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// al que un manifiesto cuelga. Es lo que permite responder "qué cuelga
 /// de este manifiesto" sin recorrer los bytes de todos los manifiestos
 /// del repositorio.
-pub const SCHEMA_VERSION: i64 = 4;
+///
+/// La versión 5 añade el **libro de la recolección**: las retenciones
+/// (`gc_hold`), las pasadas marcadas del recolector (`gc_run`) y el
+/// rastro de cada blob borrado (`gc_tombstone`).
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -216,7 +220,43 @@ DEFINE FIELD IF NOT EXISTS lease_until ON catalog_audit_outbox TYPE option<datet
 DEFINE FIELD IF NOT EXISTS last_error ON catalog_audit_outbox TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS delivered_at ON catalog_audit_outbox TYPE option<datetime>;
 DEFINE INDEX IF NOT EXISTS catalog_audit_outbox_state ON catalog_audit_outbox FIELDS state;
+
+DEFINE TABLE IF NOT EXISTS gc_hold SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS hold_id ON gc_hold TYPE string;
+DEFINE FIELD IF NOT EXISTS scope_kind ON gc_hold TYPE string;
+DEFINE FIELD IF NOT EXISTS account ON gc_hold TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS repository ON gc_hold TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS digest_algorithm ON gc_hold TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS digest ON gc_hold TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS reason ON gc_hold TYPE string;
+DEFINE FIELD IF NOT EXISTS actor ON gc_hold TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON gc_hold TYPE datetime;
+DEFINE FIELD IF NOT EXISTS expires_at ON gc_hold TYPE option<datetime>;
+
+DEFINE TABLE IF NOT EXISTS gc_run SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS run_id ON gc_run TYPE string;
+DEFINE FIELD IF NOT EXISTS state ON gc_run TYPE string;
+DEFINE FIELD IF NOT EXISTS grace_secs ON gc_run TYPE int;
+DEFINE FIELD IF NOT EXISTS actor ON gc_run TYPE string;
+DEFINE FIELD IF NOT EXISTS candidates ON gc_run TYPE array<string>;
+DEFINE FIELD IF NOT EXISTS marked_at ON gc_run TYPE datetime;
+DEFINE FIELD IF NOT EXISTS deleted ON gc_run TYPE int;
+DEFINE FIELD IF NOT EXISTS bytes_freed ON gc_run TYPE int;
+DEFINE FIELD IF NOT EXISTS swept_at ON gc_run TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS gc_run_state ON gc_run FIELDS state;
+
+DEFINE TABLE IF NOT EXISTS gc_tombstone SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS digest_algorithm ON gc_tombstone TYPE string;
+DEFINE FIELD IF NOT EXISTS digest ON gc_tombstone TYPE string;
+DEFINE FIELD IF NOT EXISTS length ON gc_tombstone TYPE int;
+DEFINE FIELD IF NOT EXISTS run_id ON gc_tombstone TYPE string;
+DEFINE FIELD IF NOT EXISTS actor ON gc_tombstone TYPE string;
+DEFINE FIELD IF NOT EXISTS account ON gc_tombstone TYPE string;
+DEFINE FIELD IF NOT EXISTS state ON gc_tombstone TYPE string;
+DEFINE FIELD IF NOT EXISTS at ON gc_tombstone TYPE datetime;
 "#;
+
+mod gc_ledger;
 
 /// El identificador de un registro, derivado de sus coordenadas.
 ///

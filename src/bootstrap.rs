@@ -264,6 +264,7 @@ pub async fn bootstrap(
             .await
             .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
         let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
+        let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
         let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
         // The staging that an interrupted upload leaves behind is cleaned
         // here, at the boot. It is never published -- the catalog write
@@ -309,9 +310,24 @@ pub async fn bootstrap(
                 );
             }
         }
-        app_state
+        // The garbage collection reads the roots from the same catalog and
+        // reclaims from the same store; it is the only thing that deletes
+        // bytes. If the store cannot reclaim, the surface stays closed.
+        let gc = crate::gc::GcService::new(
+            ledger,
+            content.clone() as Arc<dyn hodei_hub::BlobStore>,
+            Duration::from_secs(config.content.gc_grace_secs),
+        );
+        let app_state = app_state
             .with_catalog(reader, writer)
-            .with_content_store(content)
+            .with_content_store(content);
+        match gc {
+            Ok(gc) => app_state.with_gc(Arc::new(gc)),
+            Err(error) => {
+                warn!(%error, "the garbage collection is not available");
+                app_state
+            }
+        }
     } else {
         app_state
     };

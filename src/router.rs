@@ -310,6 +310,15 @@ fn admin_v1_routes(app_state: AppState) -> Router {
             "/iam/evaluate",
             post(crate::handlers::iam::evaluate_iam_policies),
         )
+        // Garbage collection of the store of content. Each route is its own
+        // resource for the gate: the plan can be granted without the sweep.
+        .route("/gc/plan", get(crate::handlers::gc::plan))
+        .route("/gc/sweep", post(crate::handlers::gc::sweep))
+        .route(
+            "/gc/holds",
+            get(crate::handlers::gc::list_holds).post(crate::handlers::gc::place_hold),
+        )
+        .route("/gc/holds/release", post(crate::handlers::gc::release_hold))
         // Playground routes
         .route(
             "/playground/evaluate",

@@ -46,6 +46,8 @@ use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
+use crate::reclaim::{BlobReclaim, Reclaimed, StoredBlob};
+
 /// El directorio, dentro de la raiz del almacen, donde viven las
 /// escrituras en curso.
 const STAGING_DIR: &str = "staging";
@@ -252,6 +254,14 @@ pub trait BlobStore: Send + Sync {
     /// corresponde a su digest, el error es `Corrupted`. Son fallos
     /// distintos y no se confunden.
     async fn verify(&self, digest: &ContentDigest) -> Result<(), BlobError>;
+
+    /// La vista de recuperacion de bytes, si el almacen la tiene.
+    ///
+    /// Un almacen que no sabe listar ni borrar con barrera no se puede
+    /// recolectar: el recolector se niega en vez de adivinar.
+    fn reclaimer(&self) -> Option<&dyn BlobReclaim> {
+        None
+    }
 }
 
 /// El almacen de contenido en un directorio.
@@ -266,6 +276,11 @@ pub trait BlobStore: Send + Sync {
 /// escritura: dos producers del mismo contenido nunca comparten fichero.
 pub struct FileBlobStore {
     root: PathBuf,
+    /// La barrera entre publicar un blob y recolectarlo.
+    ///
+    /// Los commits que publican o reutilizan un blob, y el borrado del
+    /// recolector, pasan por aqui: ninguno ve a medias lo del otro.
+    gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl FileBlobStore {
@@ -276,7 +291,10 @@ impl FileBlobStore {
         let root = root.as_ref().to_path_buf();
         std::fs::create_dir_all(&root)
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            gate: Arc::new(tokio::sync::Mutex::new(())),
+        })
     }
 
     /// Donde vive un blob.
@@ -437,6 +455,7 @@ pub struct StagingCleanup {
 /// basura en disco.
 pub struct FileBlobWriteSession {
     root: PathBuf,
+    gate: Arc<tokio::sync::Mutex<()>>,
     staging_path: PathBuf,
     file: Option<tokio::fs::File>,
     hasher: Sha256,
@@ -531,9 +550,17 @@ impl BlobWriteSession for FileBlobWriteSession {
                 .map_err(|error| BlobError::Unavailable(error.to_string()))?;
         }
 
+        // Desde aqui hasta publicar, el recolector no puede borrar nada:
+        // lo que se mira (el blob esta) sigue siendo cierto al actuar.
+        let gate = Arc::clone(&self.gate);
+        let _barrier = gate.lock().await;
+
         // El mismo contenido no se guarda dos veces: si el blob ya esta,
-        // el staging se tira y se devuelve el mismo digest.
+        // el staging se tira y se devuelve el mismo digest. Y se renueva
+        // su fecha: reutilizar un blob es lo que le dice al recolector
+        // que no es huerfano aunque el catalogo todavia no lo vea.
         if target.exists() {
+            touch(&target)?;
             self.discard();
             return Ok(found);
         }
@@ -543,6 +570,10 @@ impl BlobWriteSession for FileBlobWriteSession {
         tokio::fs::rename(&self.staging_path, &target)
             .await
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        // El fichero conserva la fecha de su ultimo trozo, que puede ser
+        // anterior a la gracia si la sesion estuvo parada: la fecha de
+        // publicacion es la de ahora.
+        touch(&target)?;
         // Y el directorio se sincroniza, para que el renombrado sobreviva
         // a un corte de luz.
         if let Some(parent) = target.parent()
@@ -596,9 +627,14 @@ impl BlobStore for FileBlobStore {
         // se comprueba al menos que no sea un resto truncado: la
         // verificacion completa del contenido guardado es tarea del
         // scrub, no de cada escritura.
+        let gate = Arc::clone(&self.gate);
+        let barrier = gate.lock().await;
         if self.exists(&digest).await.unwrap_or(false) {
             match self.length(&digest).await {
-                Ok(stored) if stored == length => return Ok(digest),
+                Ok(stored) if stored == length => {
+                    touch(&self.the_path_of(&digest))?;
+                    return Ok(digest);
+                }
                 Ok(stored) => {
                     return Err(BlobError::LengthMismatch {
                         expected: length,
@@ -609,6 +645,9 @@ impl BlobStore for FileBlobStore {
             }
         }
 
+        // La barrera se suelta antes de escribir: el commit la toma por
+        // su cuenta, y escribir los bytes no necesita excluir a nadie.
+        drop(barrier);
         let mut session = self.begin().await?;
         session.append(bytes).await?;
         session
@@ -621,6 +660,10 @@ impl BlobStore for FileBlobStore {
 
     async fn get(&self, digest: &ContentDigest) -> Result<Vec<u8>, BlobError> {
         self.get_with(digest, ReadPolicy::Verify).await
+    }
+
+    fn reclaimer(&self) -> Option<&dyn BlobReclaim> {
+        Some(self)
     }
 
     async fn exists(&self, digest: &ContentDigest) -> Result<bool, BlobError> {
@@ -657,6 +700,7 @@ impl BlobStore for FileBlobStore {
         let file = tokio::fs::File::from_std(std_file);
         Ok(Box::new(FileBlobWriteSession {
             root: self.root.clone(),
+            gate: Arc::clone(&self.gate),
             staging_path,
             file: Some(file),
             hasher: Sha256::new(),
@@ -1007,6 +1051,138 @@ fn hex_of(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+/// Renueva la fecha de un blob: "se uso ahora".
+///
+/// Es la marca que lee el recolector. Si no se puede escribir, el error
+/// sube: reutilizar un blob sin dejar la marca es dejar al recolector
+/// libre para borrarlo.
+fn touch(path: &Path) -> Result<(), BlobError> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+    file.set_modified(SystemTime::now())
+        .map_err(|error| BlobError::Unavailable(error.to_string()))
+}
+
+/// El digest que dice la ruta de un blob, si la ruta es la de uno.
+///
+/// Un blob es `<root>/<ab>/<cd>/<64 hex>`, con `ab` y `cd` los dos pares
+/// de caracteres iniciales del nombre. Cualquier otra cosa no es de este
+/// almacen y no se lista.
+fn digest_of_blob_file(prefix_a: &str, prefix_b: &str, name: &str) -> Option<ContentDigest> {
+    let valid = name.len() == 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !valid || &name[..2] != prefix_a || &name[2..4] != prefix_b {
+        return None;
+    }
+    Some(ContentDigest::sha256(name))
+}
+
+#[async_trait::async_trait]
+impl BlobReclaim for FileBlobStore {
+    async fn list_blobs(&self) -> Result<Vec<StoredBlob>, BlobError> {
+        let root = self.root.clone();
+        tokio::task::spawn_blocking(move || {
+            let unavailable = |error: std::io::Error| BlobError::Unavailable(error.to_string());
+            let mut blobs = Vec::new();
+            for first in std::fs::read_dir(&root).map_err(unavailable)? {
+                let first = first.map_err(unavailable)?;
+                let first_name = first.file_name().to_string_lossy().into_owned();
+                if first_name.len() != 2 || !first.file_type().map_err(unavailable)?.is_dir() {
+                    continue;
+                }
+                for second in std::fs::read_dir(first.path()).map_err(unavailable)? {
+                    let second = second.map_err(unavailable)?;
+                    let second_name = second.file_name().to_string_lossy().into_owned();
+                    if second_name.len() != 2 || !second.file_type().map_err(unavailable)?.is_dir()
+                    {
+                        continue;
+                    }
+                    for file in std::fs::read_dir(second.path()).map_err(unavailable)? {
+                        let file = file.map_err(unavailable)?;
+                        let name = file.file_name().to_string_lossy().into_owned();
+                        let Some(digest) = digest_of_blob_file(&first_name, &second_name, &name)
+                        else {
+                            continue;
+                        };
+                        let metadata = match file.metadata() {
+                            Ok(metadata) if metadata.is_file() => metadata,
+                            Ok(_) => continue,
+                            // Se borro mientras se listaba: ya no esta.
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                continue;
+                            }
+                            Err(error) => return Err(unavailable(error)),
+                        };
+                        // Sin fecha no hay edad, y sin edad no se puede
+                        // decidir nada: es un fallo, no un blob joven.
+                        let modified = metadata.modified().map_err(unavailable)?;
+                        blobs.push(StoredBlob {
+                            digest,
+                            length: metadata.len(),
+                            age: SystemTime::now()
+                                .duration_since(modified)
+                                .unwrap_or(Duration::ZERO),
+                        });
+                    }
+                }
+            }
+            Ok(blobs)
+        })
+        .await
+        .map_err(|error| BlobError::Unavailable(error.to_string()))?
+    }
+
+    async fn delete_if_older_than(
+        &self,
+        digest: &ContentDigest,
+        grace: Duration,
+    ) -> Result<Reclaimed, BlobError> {
+        if digest.algorithm != DigestAlgorithm::Sha256 || digest.value.len() != 64 {
+            return Err(BlobError::UnsupportedAlgorithm(
+                digest.algorithm.to_string(),
+            ));
+        }
+        let path = self.the_path_of(digest);
+        let _barrier = self.gate.lock().await;
+        let metadata = match tokio::fs::metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Reclaimed::Gone);
+            }
+            Err(error) => return Err(BlobError::Unavailable(error.to_string())),
+        };
+        let modified = metadata
+            .modified()
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        let age = SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or(Duration::ZERO);
+        if age < grace {
+            return Ok(Reclaimed::Fresh);
+        }
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => {
+                // El borrado se sincroniza con el directorio: un corte de
+                // luz no resucita un blob que ya se dio por borrado.
+                if let Some(parent) = path.parent()
+                    && let Ok(directory) = tokio::fs::File::open(parent).await
+                {
+                    let _ = directory.sync_all().await;
+                }
+                Ok(Reclaimed::Deleted {
+                    length: metadata.len(),
+                })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Reclaimed::Gone),
+            Err(error) => Err(BlobError::Unavailable(error.to_string())),
+        }
+    }
 }
 
 #[cfg(test)]

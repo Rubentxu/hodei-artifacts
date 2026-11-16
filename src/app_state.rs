@@ -124,6 +124,12 @@ pub struct AppState {
     /// Optional for the same reason the catalog is: without it there are no
     /// bytes to serve.
     pub(crate) content_store: Option<Arc<dyn BlobStore>>,
+    /// The garbage collection of the store of content.
+    ///
+    /// Optional: it needs the durable catalog (the roots) and a store that
+    /// can reclaim. Without it the surface answers 501 and nothing is
+    /// deleted.
+    pub(crate) gc: Option<Arc<crate::gc::GcService>>,
     /// The registry of the upload sessions.
     ///
     /// It lives here because it is state that **survives a request**: the
@@ -241,6 +247,7 @@ impl AppState {
             catalog_reader: None,
             catalog_writer: None,
             content_store: None,
+            gc: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             max_body_size: 10 * 1024 * 1024,
             identity,
@@ -296,6 +303,7 @@ impl AppState {
             catalog_reader: None,
             catalog_writer: None,
             content_store: None,
+            gc: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             max_body_size: 10 * 1024 * 1024,
             identity: Identity::system(),
@@ -369,6 +377,12 @@ impl AppState {
     ) -> Self {
         self.catalog_reader = Some(reader);
         self.catalog_writer = Some(writer);
+        self
+    }
+
+    /// Inject the garbage collection of the store of content.
+    pub fn with_gc(mut self, gc: Arc<crate::gc::GcService>) -> Self {
+        self.gc = Some(gc);
         self
     }
 

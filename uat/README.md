@@ -12,6 +12,7 @@ prueba que lo comprueba y una lista de lo que deja fuera.
 | Documento | Superficie | Qué promete |
 | --- | --- | --- |
 | [`UAT-OCI.md`](UAT-OCI.md) | OCI Distribution | Que el registro habla la Distribution Spec 1.1 con los clientes y con las categorías que el documento nombra, con la versión de cada cliente. |
+| [`UAT-OPERATIONS.md`](UAT-OPERATIONS.md) | Recolección del almacén de contenido | Que el servicio borra solo los bytes que nadie nombra, solo tras la gracia y con permiso explícito, que explica cada veredicto en una simulación y que no pierde ni repite nada tras un corte. |
 
 Los informes de cada ejecución--que son lo que se archiva-- no viven aquí:
 se escriben en `target/uat/` en el momento de correr la suite, y la
