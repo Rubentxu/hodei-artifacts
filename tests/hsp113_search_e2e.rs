@@ -21,8 +21,8 @@ use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_r
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
 use hodei_authz::{
-    AccountId, AuthenticationError, Credentials, PrincipalAuthenticator, PrincipalClaims,
-    PrincipalId,
+    AccountId, AuthenticationError, AuthorizationOutcome, AuthorizationRequest, Credentials,
+    IndeterminateReason, PrincipalAuthenticator, PrincipalClaims, PrincipalId,
 };
 use hodei_catalog::{
     AllowAllAuthorizer, CatalogWriter, DigestScope, PackageCoordinates, Publication,
@@ -116,6 +116,19 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
+/// An authorizer that cannot decide.
+///
+/// The evaluation failed: it is not a denial, and it is not a permit
+/// either. The surface must not answer as if it were a denial, because
+/// an empty page says that there is nothing there, and nobody asked.
+struct IndeterminateAuthorizer;
+
+impl AuthorizerPort for IndeterminateAuthorizer {
+    fn authorize(&self, _request: &AuthorizationRequest) -> AuthorizationOutcome {
+        AuthorizationOutcome::indeterminate(IndeterminateReason::EvaluationError)
+    }
+}
+
 /// A repository of the catalog.
 fn descriptor(account: &str, key: &str, format: RepositoryFormat) -> RepositoryDescriptor {
     descriptor_with(account, key, format, serde_json::json!({}))
@@ -144,6 +157,13 @@ fn descriptor_with(
 
 /// The application with a real catalog behind it.
 async fn app() -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
+    app_with(cedar()).await
+}
+
+/// The application with the authorizer that is given.
+async fn app_with(
+    authorizer: Arc<dyn AuthorizerPort>,
+) -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let db = Surreal::new::<RocksDb>(tmp.path().join("db"))
         .await
@@ -174,7 +194,7 @@ async fn app() -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
     .await
     .expect("bootstrap");
     let state = state
-        .with_authorization(cedar())
+        .with_authorization(authorizer)
         .with_repository_auth(
             Arc::new(TestAuthenticator),
             Arc::new(hodei_artifacts_api::repository::InMemoryRepositoryReader::empty()),
@@ -920,4 +940,37 @@ async fn the_trusted_channel_does_not_show_what_has_no_grant() {
     let body = the_body(response).await;
     assert_eq!(body["trust"]["state"], "trusted");
     assert_eq!(body["trust"]["decision"]["decision_id"], "dec-hsp113-e2e");
+}
+
+/// An authorizer that cannot decide answers that it cannot answer.
+///
+/// A denial is a decision and the page leaves the repository out. An
+/// authorizer that could not decide did not deny anything: an empty
+/// page would say that there is nothing there, and nobody asked.
+#[tokio::test]
+async fn an_authorizer_that_cannot_decide_is_not_an_empty_page() {
+    let (app, store, _tmp) = app_with(Arc::new(IndeterminateAuthorizer)).await;
+    a_catalog(&store).await;
+
+    let response = app
+        .clone()
+        .oneshot(search_request("alice", ""))
+        .await
+        .expect("the request");
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "the search says that it cannot answer"
+    );
+
+    let response = app
+        .clone()
+        .oneshot(package_request("alice", READABLE, "labpkg-1.0.whl"))
+        .await
+        .expect("the request");
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "and so does the detail"
+    );
 }

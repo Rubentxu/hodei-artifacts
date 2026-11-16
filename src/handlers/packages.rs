@@ -30,6 +30,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
+use hodei_authz::AuthorizationOutcome;
 use hodei_catalog::{CatalogError, DigestScope, TrustGrant, TrustState};
 use hodei_evidence::ContentDigest;
 use hodei_evidence::application::capsule::CapsuleAssembler;
@@ -214,8 +215,15 @@ pub async fn get_package(
         .authorize_resource
         .execute_canonical(context.clone(), action.clone(), &descriptor.hrn)
         .map_err(|_| PackageApiError::Internal)?;
-    if !outcome.allows_access() {
-        return Err(PackageApiError::Forbidden);
+    match outcome {
+        AuthorizationOutcome::Permit => {}
+        // A denial is a decision: the principal may not read this
+        // repository.
+        AuthorizationOutcome::Deny(_) => return Err(PackageApiError::Forbidden),
+        // An authorizer that could not decide did not say no. The view
+        // does not fill the silence with a "forbidden" that would say
+        // that the content exists and that the principal cannot have it.
+        AuthorizationOutcome::Indeterminate(_) => return Err(PackageApiError::Internal),
     }
 
     let asset = reader

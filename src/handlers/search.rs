@@ -39,9 +39,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Utc};
-use hodei_authz::VerifiedContext;
+use hodei_authz::{AuthorizationOutcome, VerifiedContext};
 use hodei_catalog::search::{RepositoryAttribute, SearchPage, SearchQuery};
-use hodei_catalog::{CatalogError, RepositoryDescriptor, RepositoryFormat, TrustState};
+use hodei_catalog::{
+    CatalogError, RepositoryDescriptor, RepositoryFormat, ServeChannel, TrustState,
+};
 use hodei_evidence::ContentDigest;
 
 use crate::app_state::AppState;
@@ -190,6 +192,18 @@ pub async fn get_search(
         .map_err(the_catalog_error)?;
     let permitted = the_permitted(&state, &context, repositories)?;
 
+    // A repository served on the trusted channel without a ledger of the
+    // grants is a repository whose concessions cannot be known. The
+    // search says that it cannot answer: an empty page would say that
+    // there is nothing there, and not knowing is not nothing.
+    if state.trust_ledger.is_none()
+        && permitted
+            .iter()
+            .any(|repository| ServeChannel::of(&repository.config) == ServeChannel::TrustedOnly)
+    {
+        return Err(SearchApiError::Unavailable);
+    }
+
     let page = searcher
         .search(account, &permitted, &query)
         .await
@@ -205,9 +219,9 @@ pub async fn get_search(
 /// does not come out either: what cannot be evaluated cannot be read.
 ///
 /// But a decision that **could not be taken** is not a decision: if the
-/// authorizer fails, the search says that it cannot answer. An empty
-/// page would say that there is nothing there, and that is not what
-/// happened.
+/// authorizer fails, or if it cannot reach a verdict, the search says
+/// that it cannot answer. An empty page would say that there is nothing
+/// there, and that is not what happened.
 ///
 /// The action is the one of the content, and not the one of the
 /// repository: a listing says what is inside, and the other listings of
@@ -226,8 +240,15 @@ fn the_permitted(
             .authorize_resource
             .execute_canonical(context.clone(), action.clone(), &repository.hrn)
             .map_err(|_| SearchApiError::Internal)?;
-        if outcome.allows_access() {
-            permitted.push(repository);
+        match outcome {
+            AuthorizationOutcome::Permit => permitted.push(repository),
+            // A denial is a decision: what is not permitted does not come
+            // out, and it is not counted either.
+            AuthorizationOutcome::Deny(_) => {}
+            // An authorizer that could not decide did not say no: it did
+            // not say anything, and the search does not fill the silence
+            // with an empty page.
+            AuthorizationOutcome::Indeterminate(_) => return Err(SearchApiError::Internal),
         }
     }
     Ok(permitted)

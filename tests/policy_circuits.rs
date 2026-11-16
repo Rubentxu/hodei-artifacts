@@ -109,6 +109,12 @@ const SHARED_SCHEMA_JSON: &str = r#"{
           "principalTypes": ["Iam::User"],
           "resourceTypes": ["Artifacts::Artifact"]
         }
+      },
+      "DownloadAsset": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Repository"]
+        }
       }
     }
   }
