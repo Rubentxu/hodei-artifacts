@@ -333,6 +333,40 @@ fn an_upload_whose_hash_is_not_the_one_of_its_content_is_refused() {
 }
 
 #[test]
+fn an_upload_that_carries_two_distributions_is_refused() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let service = deployment.start(&[]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    let wheel = support::a_wheel("labpkg", "1.0", None);
+    let hash = the_sha256(&wheel);
+    // Dos partes de fichero: no se elige una, se dice que no.
+    let mut body = the_upload(
+        "labpkg",
+        "1.0",
+        "labpkg-1.0-py3-none-any.whl",
+        &wheel,
+        &hash,
+    );
+    let second = format!(
+        "--{BOUNDARY}\r\n\
+         Content-Disposition: form-data; name=\"content\"; filename=\"labpkg-2.0-py3-none-any.whl\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n"
+    );
+    let end = body.len() - format!("\r\n--{BOUNDARY}--\r\n").len();
+    body.truncate(end);
+    body.extend_from_slice(second.as_bytes());
+    body.extend_from_slice(&wheel);
+    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+
+    let published = upload(dir, port, "pypi-hosted", &token, body);
+    assert_eq!(published.status, 400, "{}", text_of(&published));
+}
+
+#[test]
 fn a_yanked_version_is_marked_and_still_downloadable() {
     let deployment = Deployment::new();
     deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);

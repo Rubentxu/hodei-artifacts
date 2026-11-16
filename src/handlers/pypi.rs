@@ -1117,6 +1117,14 @@ async fn the_multipart(
                         "the upload carries more than one distribution",
                     ));
                 }
+                if file.is_some() {
+                    // Dos distribuciones en una subida: no se elige una, se
+                    // dice que no.
+                    return Err(Failure::plain(
+                        StatusCode::BAD_REQUEST,
+                        "the upload carries more than one distribution",
+                    ));
+                }
                 file = Some((filename, bytes));
             }
             None => fields.push((name, String::from_utf8_lossy(&bytes).into_owned())),
