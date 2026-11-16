@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use hodei_reactive::events::{Event, EventKind};
 use hodei_reactive::execution::Budget;
 use hodei_reactive::intent::{Intent, IntentExecutor, IntentOutbox, Receipt};
@@ -340,7 +340,14 @@ async fn the_child_dies_at_its_window() {
     std::env::set_var("SURREAL_SYNC_DATA", "true");
     let db_path = std::env::var("HODEI_CRASH_DB").expect("la ruta de la base");
     let world = World::open(std::path::Path::new(&db_path)).await;
-    let now = Utc::now();
+    // El instante es el del padre: el lease que el hijo toma nace de
+    // aqui, y las dos ventanas de la prueba se miden contra el.
+    let now = match std::env::var("HODEI_CRASH_NOW") {
+        Ok(moment) => DateTime::parse_from_rfc3339(&moment)
+            .expect("el instante del padre")
+            .with_timezone(&Utc),
+        Err(_) => Utc::now(),
+    };
 
     match window.as_str() {
         "before-claim" | "after-claim" => {
@@ -377,8 +384,16 @@ async fn the_child_dies_at_its_window() {
 
 /// Invoca al hijo en su ventana, espera su muerte y reabre la base: el
 /// proceso vuelve.
-async fn kill_and_restart_at(window: &str) -> (std::path::PathBuf, World) {
+async fn kill_and_restart_at(window: &str) -> (std::path::PathBuf, World, DateTime<Utc>) {
     let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+
+    // El instante que el hijo usa. El padre lo fija y se lo pasa, y las
+    // dos ventanas del lease se comparan **con el**, no con el reloj de
+    // la pared: un lease son 60 segundos, y si el arranque del hijo se
+    // lleva mas de 60 (una maquina cargada, un disco lento) el lease ya
+    // ha vencido cuando el padre "vuelve", y la prueba midio el reloj
+    // en vez de medir el contrato.
+    let now = Utc::now();
 
     // El primer proceso: siembra el mundo y muere de viejo, dejando la
     // base libre para el hijo.
@@ -395,6 +410,7 @@ async fn kill_and_restart_at(window: &str) -> (std::path::PathBuf, World) {
         .arg("--nocapture")
         .env("HODEI_CRASH_CHILD", "1")
         .env("HODEI_CRASH_WINDOW", window)
+        .env("HODEI_CRASH_NOW", now.to_rfc3339())
         .env("HODEI_CRASH_DB", tmp.path().to_string_lossy().to_string())
         .spawn()
         .expect("el hijo arranca");
@@ -412,7 +428,7 @@ async fn kill_and_restart_at(window: &str) -> (std::path::PathBuf, World) {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     // El proceso vuelve: otra World sobre la MISMA base.
     let root = tmp.path().to_path_buf();
-    (root, World::open(tmp.path()).await)
+    (root, World::open(tmp.path()).await, now)
 }
 
 /// Las cuentas de la ruta, despues de la recuperacion.
@@ -448,11 +464,11 @@ impl World {
 /// arranque lo recupera y la ruta entera se aplica una vez.
 #[tokio::test]
 async fn a_kill_before_the_claim_leaves_the_route_ready_to_resume() {
-    let (_tmp, world) = kill_and_restart_at("before-claim").await;
+    let (_tmp, world, child_now) = kill_and_restart_at("before-claim").await;
 
     // La recuperacion en el arranque, con un momento despues de
     // cualquier lease que el hijo pudiera tomar.
-    let now = Utc::now() + Duration::seconds(120);
+    let now = child_now + Duration::seconds(120);
     let report = world
         .the_runtime(None, None)
         .resume(now)
@@ -492,14 +508,18 @@ async fn a_kill_before_the_claim_leaves_the_route_ready_to_resume() {
 /// intent, y no hay doble efecto.
 #[tokio::test]
 async fn a_kill_after_the_claim_is_recovered_when_the_lease_dies() {
-    let (_tmp, world) = kill_and_restart_at("after-claim").await;
+    let (_tmp, world, child_now) = kill_and_restart_at("after-claim").await;
 
     // ANTES del lease: lo PENDIENTE se aplica (las decisiones de la
     // ruta dijeron y no trabajaron), pero el intent que el hijo murio
     // RECLAMANDO sigue bajo su lease y NO se toca.
+    //
+    // El momento es el del hijo, no el de ahora: el lease nace del
+    // instante con el que el hijo reclamo, y medirlo con el reloj de
+    // la pared es medir la velocidad de la maquina.
     let too_early = world
         .the_runtime(None, None)
-        .resume(Utc::now())
+        .resume(child_now)
         .await
         .expect("el primer resume corre");
     assert_eq!(
@@ -522,7 +542,7 @@ async fn a_kill_after_the_claim_is_recovered_when_the_lease_dies() {
     // DESPUES del lease: el intent reclamado vuelve al mercado y se
     // aplica; la decision ya estaba aplicada de la primera reanudacion,
     // y no se repite.
-    let now = Utc::now() + Duration::seconds(120);
+    let now = child_now + Duration::seconds(120);
     let report = world
         .the_runtime(None, None)
         .resume(now)
@@ -550,7 +570,7 @@ async fn a_kill_after_the_claim_is_recovered_when_the_lease_dies() {
 /// efecto confirmado no se repite.
 #[tokio::test]
 async fn a_kill_after_the_effect_and_before_the_receipt_does_not_repeat_it() {
-    let (_tmp, world) = kill_and_restart_at("after-effect").await;
+    let (_tmp, world, child_now) = kill_and_restart_at("after-effect").await;
 
     // El efecto AFUERA ya ocurrio: el caso existe ANTES de la
     // recuperacion.
@@ -564,7 +584,7 @@ async fn a_kill_after_the_effect_and_before_the_receipt_does_not_repeat_it() {
 
     // La recuperacion: el intent reclamado vuelve al mercado y se
     // re-aplica; el sumidero idempotente NO abre otro caso.
-    let now = Utc::now() + Duration::seconds(120);
+    let now = child_now + Duration::seconds(120);
     let report = world
         .the_runtime(None, None)
         .resume(now)
@@ -749,7 +769,7 @@ async fn the_state_view_is_tenant_scoped_and_carries_no_secrets() {
 /// escrito. Aisla la durabilidad al kill de cualquier otro problema.
 #[tokio::test]
 async fn the_control_child_that_exits_cleanly_leaves_everything() {
-    let (_root, world) = kill_and_restart_at("graceful").await;
+    let (_root, world, _child_now) = kill_and_restart_at("graceful").await;
     let states = world.intents.states().await.expect("los estados");
     assert_eq!(states.len(), 2, "el hijo limpio dejo dos intents");
 }

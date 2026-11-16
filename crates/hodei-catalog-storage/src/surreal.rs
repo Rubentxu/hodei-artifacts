@@ -84,7 +84,7 @@ use hodei_catalog::{
     BlobProbeError, BlobReference, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader,
     CatalogResource, CatalogWriter, DigestScope, MutableTag, PackageCoordinates, PackageVersion,
     Precondition, Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor,
-    RepositoryFormat, RepositoryMode,
+    RepositoryFormat, RepositoryMode, TrustState,
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use kernel::Hrn;
@@ -177,6 +177,7 @@ DEFINE FIELD IF NOT EXISTS asset_path ON catalog_reference TYPE string;
 DEFINE FIELD IF NOT EXISTS digest_algorithm ON catalog_reference TYPE string;
 DEFINE FIELD IF NOT EXISTS digest ON catalog_reference TYPE string;
 DEFINE FIELD IF NOT EXISTS digest_scope ON catalog_reference TYPE string;
+DEFINE FIELD IF NOT EXISTS trust_state ON catalog_reference TYPE string;
 DEFINE FIELD IF NOT EXISTS size_bytes ON catalog_reference TYPE int;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_reference TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_reference_unique ON catalog_reference FIELDS account, repository, asset_path UNIQUE;
@@ -510,6 +511,10 @@ struct ReferenceRow {
     digest_algorithm: String,
     digest: String,
     digest_scope: String,
+    /// El canal del contenido. Una fila que no lo tiene --una fila
+    /// escrita antes de que el canal existiera-- esta en cuarentena: lo
+    /// que no se sabe no es un permiso.
+    trust_state: Option<String>,
     size_bytes: i64,
     updated_at: Datetime,
 }
@@ -582,6 +587,7 @@ struct ReferenceWrite {
     digest_algorithm: String,
     digest: String,
     digest_scope: String,
+    trust_state: String,
     size_bytes: i64,
     updated_at: Datetime,
 }
@@ -746,6 +752,11 @@ impl ReferenceRow {
             digest: digest_of(&self.digest_algorithm, &self.digest)?,
             scope: scope_of(&self.digest_scope)?,
             size_bytes: size_of(self.size_bytes)?,
+            trust_state: self
+                .trust_state
+                .as_deref()
+                .map(TrustState::of)
+                .unwrap_or(TrustState::Quarantined),
             updated_at: DateTime::<Utc>::from(self.updated_at),
         })
     }
@@ -1166,7 +1177,7 @@ impl SurrealCatalogStore {
             .db
             .query(
                 "SELECT account, repository, asset_path, digest_algorithm, digest, digest_scope, \
-                 size_bytes, updated_at FROM catalog_reference \
+                 trust_state, size_bytes, updated_at FROM catalog_reference \
                  WHERE account = $account AND repository = $repository AND asset_path = $asset_path \
                  LIMIT 1",
             )
@@ -2178,6 +2189,12 @@ impl SurrealCatalogStore {
             digest: digest.clone(),
             scope,
             size_bytes: publication.size_bytes,
+            // La **admisión** escribe el canal, y lo escribe en
+            // cuarentena: un artefacto recién admitido no ha sido
+            // promovido por nadie. Salir de la cuarentena exige una
+            // decision de confianza, y esa decision no es de la
+            // publicación.
+            trust_state: TrustState::Quarantined,
             updated_at: now,
         };
         let mut create_reference = true;
@@ -2388,6 +2405,7 @@ impl SurrealCatalogStore {
                 digest_algorithm: algorithm_of(&plan.reference.digest),
                 digest: plan.reference.digest.value.clone(),
                 digest_scope: scope_name(plan.reference.scope),
+                trust_state: plan.reference.trust_state.as_str().to_string(),
                 size_bytes: i64::try_from(plan.reference.size_bytes).unwrap_or(0),
                 updated_at: Datetime::from(plan.reference.updated_at),
             });

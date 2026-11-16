@@ -228,6 +228,11 @@ utoipa-swagger-ui = { workspace = true }
 config = { workspace = true }
 dotenvy = { workspace = true }
 
+# The query of the distribution protocol, decoded.
+url = { workspace = true }
+# The basic credentials of the Docker token endpoint, decoded.
+base64 = { workspace = true }
+
 # Testing utilities
 tempfile = { workspace = true }
 

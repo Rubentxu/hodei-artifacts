@@ -322,11 +322,16 @@ fn admin_v1_routes(app_state: AppState) -> Router {
         .with_state(app_state)
 }
 
-/// The routes of the OCI distribution pull surface.
+/// The routes of the OCI distribution surface.
 ///
 /// The path is read **raw**, from the URI as it arrived: a `%2e%2e` that
 /// has already become `..` cannot be refuted by an extractor that decoded
 /// it. The handler validates the name before it looks anywhere.
+///
+/// The pull and el push comparten el mismo camino porque el protocolo
+/// los comparte: `GET /v2/<name>/blobs/<digest>` lee y
+/// `POST /v2/<name>/blobs/uploads/` escribe. El dispatcher decide por el
+/// metodo y por el path, y el pull nunca se confunde con el push.
 fn oci_routes(app_state: AppState) -> Router {
     Router::new()
         .route(
@@ -335,7 +340,19 @@ fn oci_routes(app_state: AppState) -> Router {
         )
         .route(
             "/v2/{*target}",
-            axum::routing::get(crate::handlers::oci::content).head(crate::handlers::oci::content),
+            axum::routing::get(crate::handlers::oci::dispatch)
+                .head(crate::handlers::oci::dispatch)
+                .post(crate::handlers::oci::dispatch)
+                .patch(crate::handlers::oci::dispatch)
+                .put(crate::handlers::oci::dispatch)
+                .delete(crate::handlers::oci::dispatch),
+        )
+        // El endpoint de token: donde va el cliente de Docker a por su
+        // credencial. Vive con la superficie de distribucion porque es
+        // parte de su protocolo, y se abre y se cierra con ella.
+        .route(
+            crate::oci::token::TOKEN_PATH,
+            axum::routing::get(crate::oci::token::token).post(crate::oci::token::token),
         )
         .with_state(app_state)
 }

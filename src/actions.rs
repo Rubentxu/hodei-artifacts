@@ -137,10 +137,12 @@ pub fn check_service_declared(
         check_declared(schema, &download_asset())?;
     }
     if oci_enabled {
-        // La superficie OCI **lee**: sin la accion de lectura declarada,
-        // el bundle no puede decidir sobre un pull, y cada peticion
-        // acabaria en un 403 en vez de negarse a arrancar.
+        // La superficie OCI **lee y escribe**: sin las dos acciones
+        // declaradas, el bundle no puede decidir sobre un pull ni sobre
+        // un push, y cada peticion acabaria en un 403 en vez de negarse
+        // a arrancar.
         check_declared(schema, &download_asset())?;
+        check_declared(schema, &upload_asset())?;
     }
     Ok(())
 }

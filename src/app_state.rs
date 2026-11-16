@@ -124,6 +124,14 @@ pub struct AppState {
     /// Optional for the same reason the catalog is: without it there are no
     /// bytes to serve.
     pub(crate) content_store: Option<Arc<dyn BlobStore>>,
+    /// The registry of the upload sessions.
+    ///
+    /// It lives here because it is state that **survives a request**: the
+    /// protocol of push is by chunks, and between one request and the next
+    /// there is a session that has to be remembered. Its identifier is
+    /// opaque and its scope is the verified account, so a session of
+    /// another account is a session that does not exist.
+    pub(crate) uploads: Arc<crate::oci::uploads::UploadRegistry>,
     /// The largest content this service accepts, in bytes.
     ///
     /// A limit that is not written is a limit that is not enforced, and a
@@ -233,6 +241,7 @@ impl AppState {
             catalog_reader: None,
             catalog_writer: None,
             content_store: None,
+            uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             max_body_size: 10 * 1024 * 1024,
             identity,
             admin_authenticator_configured: true,
@@ -287,6 +296,7 @@ impl AppState {
             catalog_reader: None,
             catalog_writer: None,
             content_store: None,
+            uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             max_body_size: 10 * 1024 * 1024,
             identity: Identity::system(),
             admin_authenticator_configured: false,
@@ -365,6 +375,16 @@ impl AppState {
     /// Inject the store of content by digest.
     pub fn with_content_store(mut self, store: Arc<dyn BlobStore>) -> Self {
         self.content_store = Some(store);
+        self
+    }
+
+    /// Replace the registry of the upload sessions.
+    ///
+    /// The registry is what remembers a chunked upload between requests,
+    /// and its limits --how long a session lives and how many can be
+    /// alive at once-- are a decision of the deployment, not of the code.
+    pub fn with_uploads(mut self, uploads: Arc<crate::oci::uploads::UploadRegistry>) -> Self {
+        self.uploads = uploads;
         self
     }
 

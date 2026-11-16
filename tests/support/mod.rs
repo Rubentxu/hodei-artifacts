@@ -707,6 +707,78 @@ impl Curl {
         curl
     }
 
+    /// Un `curl` con el metodo, el cuerpo y el tipo de contenido que
+    /// hagan falta.
+    ///
+    /// El protocolo de push es el que mas metodos usa: `POST` abre la
+    /// sesion, `PATCH` mete el trozo, `PUT` la cierra y `DELETE` la
+    /// cancela. Cada uno con su propio cuerpo, y el manifiesto con su
+    /// propio tipo de contenido.
+    pub fn call(
+        port: u16,
+        method: &str,
+        path: &str,
+        token: &str,
+        body: Option<&Path>,
+        content_type: Option<&str>,
+        into: Option<&Path>,
+    ) -> Self {
+        match content_type {
+            Some(content_type) => Self::call_with_headers(
+                port,
+                method,
+                path,
+                token,
+                body,
+                &[("content-type", content_type)],
+                into,
+            ),
+            None => Self::call_with_headers(port, method, path, token, body, &[], into),
+        }
+    }
+
+    /// Un `curl` con el metodo, el cuerpo y las cabeceras de mas que
+    /// hagan falta.
+    ///
+    /// El `Content-Range` del protocolo de push es una cabecera mas, y
+    /// sin ella no se puede probar que un trozo que no encaja recibe el
+    /// error que dice el protocolo. El tipo de contenido tambien es una
+    /// cabecera, y por eso viaja en la misma lista.
+    pub fn call_with_headers(
+        port: u16,
+        method: &str,
+        path: &str,
+        token: &str,
+        body: Option<&Path>,
+        extra: &[(&str, &str)],
+        into: Option<&Path>,
+    ) -> Self {
+        let mut curl = Self::base(port, path, token);
+        if method != "GET" {
+            curl.args.push("--request".to_string());
+            curl.args.push(method.to_string());
+        }
+        if let Some(file) = body {
+            curl.args.push("--data-binary".to_string());
+            curl.args.push(format!("@{}", file.display()));
+        }
+        for (name, value) in extra {
+            curl.args.push("--header".to_string());
+            curl.args.push(format!("{name}: {value}"));
+        }
+        curl.args.push("--output".to_string());
+        curl.args.push(match into {
+            Some(file) => file.display().to_string(),
+            None => "/dev/null".to_string(),
+        });
+        curl.root = into
+            .or(body)
+            .and_then(|file| file.parent())
+            .map(Path::to_path_buf);
+        curl.body = into.map(Path::to_path_buf);
+        curl
+    }
+
     /// El proceso que se ejecuta.
     fn command(&self) -> Command {
         let mut command = Command::new("curl");
@@ -962,14 +1034,71 @@ pub struct Case {
 /// Los casos se escriben en un fichero, no solo en el log: un informe que
 /// solo existe en la salida de una CI se pierde en cuanto la CI se
 /// limpia.
+///
+/// Cada superficie tiene **su** informe, con su titulo y su aviso de lo
+/// que no certifica: un informe que se titula "conformidad RAW" y
+/// certify casos de OCI es un informe que no dice la verdad, y el que lo
+/// lee no puede saber que mide.
 pub struct Report {
+    /// El titulo del informe.
+    title: &'static str,
+    /// El aviso de lo que este informe **no** certifica.
+    disclaimer: &'static str,
+    /// Donde se escribe el informe.
+    path: PathBuf,
+    /// Las herramientas que han hablado con el servicio.
+    tools: String,
     cases: Vec<Case>,
 }
 
+/// Lo que el informe de la superficie cruda **no** certifica.
+const RAW_DISCLAIMER: &str = "\
+- **Ni compatibilidad OCI.** Nada de lo que se ha ejecutado habla el protocolo de OCI Distribution: no hay manifiestos, ni `HEAD` de tags, ni `GET` de blobs por digest con la semántica de OCI. La superficie es `raw`.\n\
+- **Ni compatibilidad S3.** No hay `ListBuckets`, ni `PutObject` con firma AWS, ni nada que se parezca a la API de S3.\n\
+- **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea: lo que se ha medido es que los bytes vuelven intactos.\n\
+- **Ni la recolección de blobs sin referencia.** Un blob sin referenciar se puede quedar en el almacén; lo que se ha comprobado es que no se publica solo.";
+
+/// Lo que el informe del push OCI **no** certifica.
+const OCI_PUSH_DISCLAIMER: &str = "\
+- **Ni compatibilidad OCI completa.** Lo que se ha ejecutado es el corte de **push**: las sesiones de subida y el manifiesto. El indice multi-plataforma, los referrers y las firmas son de otras tareas, y no se pueden certificar con lo que aqui se ha medido.\n\
+- **Ni `oras` ni el `docker` de la CLI.** Los clientes reales que han hablado con el registro son `skopeo` y `podman`: son los que estan instalados en este entorno.\n\
+- **Ni la promoción del canal de confianza.** Lo que se ha comprobado es que el artefacto admitido queda en **cuarentena**; promoverlo es de otra tarea.\n\
+- **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea: lo que se ha medido es que los bytes vuelven intactos.\n\
+- **Ni la recolección de blobs sin referencia.** Un blob sin referenciar se puede quedar en el almacén; lo que se ha comprobado es que no se publica solo.";
+
 impl Report {
-    /// Un informe vacío.
+    /// Un informe vacío, el de la superficie cruda.
     pub fn new() -> Self {
-        Self { cases: Vec::new() }
+        Self {
+            title: "Conformidad RAW — informe",
+            disclaimer: RAW_DISCLAIMER,
+            path: Self::the_path(),
+            tools: the_tools(),
+            cases: Vec::new(),
+        }
+    }
+
+    /// Un informe vacío, el del push OCI.
+    ///
+    /// Es un informe aparte, con su titulo y su aviso: el informe de la
+    /// superficie cruda lo leen los gates de la conformacion RAW, y un
+    /// caso de OCI en el no dice nada de lo que el gate cree.
+    pub fn for_oci_push() -> Self {
+        Self {
+            title: "Conformidad OCI push — informe",
+            disclaimer: OCI_PUSH_DISCLAIMER,
+            path: Self::the_oci_push_path(),
+            // Las versiones de los clientes van en el informe: un cliente
+            // sin version es un cliente del que no se puede decir que
+            // habla el protocolo.
+            tools: format!(
+                "{}; `{}`; `{}`",
+                the_tools(),
+                the_first_line_of(&["skopeo", "--version"]),
+                the_first_line_of(&["podman", "--version"])
+            ),
+            cases: Vec::new(),
+        }
     }
 
     /// Anota un caso y escribe el informe.
@@ -1002,22 +1131,32 @@ impl Report {
         })
     }
 
+    /// La ruta del fichero del informe del push OCI.
+    ///
+    /// La del informe de la superficie cruda la decide la pipeline, y no
+    /// se mezcla con la de otra superficie.
+    pub fn the_oci_push_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("uat")
+            .join("oci-push-conformity.md")
+    }
+
     /// Escribe el informe.
     pub fn write(&self) {
-        let path = Self::the_path();
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).expect("the directory of the report");
         }
-        std::fs::write(&path, self.as_markdown()).expect("the report is written");
+        std::fs::write(&self.path, self.as_markdown()).expect("the report is written");
     }
 
     /// El informe, en Markdown.
     pub fn as_markdown(&self) -> String {
         let mut text = String::new();
-        text.push_str("# Conformidad RAW — informe\n\n");
+        text.push_str(&format!("# {}\n\n", self.title));
         text.push_str(&format!("**Servicio:** {}\n\n", the_version()));
         text.push_str(&format!("**Cuando:** {}\n\n", the_moment()));
-        text.push_str(&format!("**Herramientas:** {}\n\n", the_tools()));
+        text.push_str(&format!("**Herramientas:** {}\n\n", self.tools));
         text.push_str(
             "\n**Credenciales:** van redactadas. Donde el `curl` llevaba el token, aqui \
              dice `<alice>` o `<bob>`: el informe dice con quien se hablo, no con que se \
@@ -1037,13 +1176,10 @@ impl Report {
                 case.outcome
             ));
         }
-        text.push_str(
-            "\n## Lo que este informe **no** certifica\n\n\
-             - **Ni compatibilidad OCI.** Nada de lo que se ha ejecutado habla el protocolo de OCI Distribution: no hay manifiestos, ni `HEAD` de tags, ni `GET` de blobs por digest con la semántica de OCI. La superficie es `raw`.\n\
-             - **Ni compatibilidad S3.** No hay `ListBuckets`, ni `PutObject` con firma AWS, ni nada que se parezca a la API de S3.\n\
-             - **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea: lo que se ha medido es que los bytes vuelven intactos.\n\
-             - **Ni la recolección de blobs sin referencia.** Un blob sin referenciar se puede quedar en el almacén; lo que se ha comprobado es que no se publica solo.\n",
-        );
+        text.push_str(&format!(
+            "\n## Lo que este informe **no** certifica\n\n{}\n",
+            self.disclaimer
+        ));
         text
     }
 }
@@ -1059,6 +1195,22 @@ pub fn the_report() -> &'static Mutex<Report> {
 /// Anota un caso en el informe compartido.
 pub fn record(case: Case) {
     let mut report = the_report().lock().expect("the report is not poisoned");
+    report.record(case);
+}
+
+/// El informe del push OCI, compartido por los casos de su binario.
+static OCI_PUSH_REPORT: OnceLock<Mutex<Report>> = OnceLock::new();
+
+/// El informe del push OCI.
+pub fn the_oci_push_report() -> &'static Mutex<Report> {
+    OCI_PUSH_REPORT.get_or_init(|| Mutex::new(Report::for_oci_push()))
+}
+
+/// Anota un caso en el informe del push OCI.
+pub fn record_oci_push(case: Case) {
+    let mut report = the_oci_push_report()
+        .lock()
+        .expect("the report is not poisoned");
     report.record(case);
 }
 

@@ -351,8 +351,59 @@ pub struct BlobReference {
     pub scope: DigestScope,
     /// Los bytes que tiene el blob.
     pub size_bytes: u64,
+    /// En que canal vive el contenido en este repositorio.
+    ///
+    /// Lo escribe la **admisión**: un artefacto recién admitido esta en
+    /// cuarentena, y salir de ella exige una decision de confianza. Y no
+    /// es del blob: el blob es inmutable y lo que decide es la relación
+    /// entre el repositorio y lo que guarda.
+    pub trust_state: TrustState,
     /// Cuando se escribió la referencia.
     pub updated_at: DateTime<Utc>,
+}
+
+/// En que canal vive un artefacto dentro de un repositorio.
+///
+/// El estado **no** es del blob: el blob es inmutable y su digest es su
+/// identidad, y el mismo contenido puede estar en cuarentena en una
+/// cuenta y promovido en otra. El estado es de la **relación** entre el
+/// repositorio y el contenido, que es lo que la referencia del catálogo
+/// escribe.
+///
+/// Y el estado por defecto de un artefacto recién admitido es la
+/// **cuarentena**: sin decision de confianza no hay promocion, y un
+/// artefacto sin decision no ha dicho nada todavia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustState {
+    /// El artefacto esta admitido, pero no promovido: esta en
+    /// cuarentena.
+    Quarantined,
+    /// El artefacto ha sido promovido con una decision de confianza
+    /// vigente.
+    Trusted,
+}
+
+impl TrustState {
+    /// El nombre canonico, tal y como va en la base.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Quarantined => "quarantined",
+            Self::Trusted => "trusted",
+        }
+    }
+
+    /// El estado que dice el nombre.
+    ///
+    /// Lo que no se conoce es cuarentena: un estado que no se puede
+    /// leer no es un permiso, y un artefacto cuyo canal no se sabe no
+    /// puede estar en el canal de confianza.
+    pub fn of(name: &str) -> Self {
+        match name {
+            "trusted" => Self::Trusted,
+            _ => Self::Quarantined,
+        }
+    }
 }
 
 /// Una etiqueta mutable: un nombre que apunta a una versión.

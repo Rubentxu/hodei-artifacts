@@ -27,6 +27,7 @@ pub mod evidence;
 pub mod evidence_surreal;
 pub mod handlers;
 pub mod iam_backfill;
+pub mod oci;
 pub mod openapi;
 pub mod raw;
 pub mod repository;

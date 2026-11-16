@@ -1,26 +1,38 @@
-//! The OCI Distribution pull surface (HSP-100 / HAR-06), on the wire.
+//! La superficie OCI Distribution de Hodei, en el wire.
 //!
-//! `hodei-hub::oci` reads manifests as **types**; this is the **wire**:
-//! the endpoints `/v2` of the distribution spec, served from the catalog
-//! and the blob store that already exist. There is no image storage of
-//! its own: a manifest is an asset of the repository, a blob is an asset
-//! the repository references, and a tag is the mutable reference the
-//! catalog resolves. The slice is **pull**: `GET /v2/`, blobs and
-//! manifests by digest and by tag. The push is not announced yet.
+//! `hodei-hub::oci` lee manifiestos como **tipos**; esto es el
+//! **protocolo**: los endpoints `/v2` de la distribucion, servidos desde
+//! el catalogo y el almacen de bytes que ya existen. No hay un
+//! almacenamiento de imagen propio: un manifiesto es un asset del
+//! repositorio, un blob es un asset que el repositorio referencia, y una
+//! etiqueta es la referencia mutable que el catalogo resuelve.
 //!
-//! The identity rules are the raw surface's: the account comes from the
-//! verified principal, and a repository of another account does not
-//! exist for this one. The errors speak **OCI**: an envelope of codes
-//! (BLOB_UNKNOWN, MANIFEST_UNKNOWN, NAME_UNKNOWN, DIGEST_INVALID,
-//! NAME_INVALID), never a bare 404 that confuses "you cannot see it"
-//! with "it is not there".
+//! El corte de **pull** son las lecturas: `GET /v2/`, blobs y manifiestos
+//! por digest y por etiqueta, con la negociacion de tipos. El corte de
+//! **push** --las sesiones de subida y el manifiesto-- esta en
+//! [`crate::oci::push`], y lo que los dos comparten --el dialecto del
+//! error, el nombre, el digest, el reparto del path-- esta en
+//! [`crate::oci`].
+//!
+//! La identidad del contenido es el digest, y la etiqueta nunca se
+//! convierte en contenido: se resuelve y se olvida, y la respuesta dice
+//! el digest resuelto, para que un cliente que pidio por etiqueta sepa
+//! que lo que hay detras es inmutable.
+//!
+//! Los errores hablan **OCI**: un envelope con `code` y `message`, y los
+//! codigos son los del dialecto (BLOB_UNKNOWN, MANIFEST_UNKNOWN,
+//! NAME_UNKNOWN, NAME_INVALID, DIGEST_INVALID). Un repositorio de otra
+//! cuenta es `NAME_UNKNOWN`, que no dice si existe en otro sitio.
 
+use axum::body::Body;
 use axum::extract::{OriginalUri, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use hodei_catalog::{CatalogReader, CatalogWriter, RepositoryFormat, RepositoryMode};
 
 use crate::app_state::AppState;
+use crate::oci::failure::OciFailure;
+use crate::oci::target::{Target, the_digest_of_reference, the_target};
+use crate::oci::{the_catalog, the_content_store, the_context, the_decision, the_repository};
 
 /// Los media types de manifiesto que este registro sirve.
 const SUPPORTED_MANIFESTS: &[&str] = &[
@@ -28,7 +40,7 @@ const SUPPORTED_MANIFESTS: &[&str] = &[
     "application/vnd.docker.distribution.manifest.v2+json",
 ];
 
-/// La cabecera que anuncia la versión de la API de distribución.
+/// La cabecera que anuncia la version de la API de distribucion.
 const API_VERSION_HEADER: &str = "Docker-Distribution-API-Version";
 
 /// El ping del protocolo: `GET /v2/`.
@@ -46,50 +58,57 @@ pub async fn version_check(
     Ok(response)
 }
 
-/// El contenido de la distribución: blobs y manifests.
+/// El punto de entrada de la superficie.
+///
+/// El metodo y el path dicen que operacion es. El `GET` de una sesion de
+/// subida es el **estado** de la subida, no la lectura de un blob, y por
+/// eso se decide antes de leer.
+pub async fn dispatch(
+    State(state): State<AppState>,
+    uri: OriginalUri,
+    method: Method,
+    headers: HeaderMap,
+    request: axum::http::Request<Body>,
+) -> Result<Response, OciFailure> {
+    match method {
+        Method::GET | Method::HEAD => {
+            if let Ok(Target::UploadSession { .. }) = the_target(uri.path()) {
+                return crate::oci::push::upload_status(state, uri, headers).await;
+            }
+            content(state, uri, headers, method).await
+        }
+        _ => crate::oci::push::mutate(state, uri, method, headers, request).await,
+    }
+}
+
+/// El contenido de la distribucion: blobs y manifests.
 ///
 /// El GET y el HEAD comparten handler: el HEAD dice las mismas cabeceras
 /// y no trae cuerpo, que es lo que el spec pide y lo que un cliente de
-/// pull necesita para saber el tamaño sin descargarlo.
+/// pull necesita para saber el tamano sin descargarlo.
 pub async fn content(
-    State(state): State<AppState>,
+    state: AppState,
     uri: OriginalUri,
     headers: HeaderMap,
-    method: axum::http::Method,
+    method: Method,
 ) -> Result<Response, OciFailure> {
     let context = the_context(&state, &headers).await?;
-    let head = method == axum::http::Method::HEAD;
+    let head = method == Method::HEAD;
 
     // El nombre, la clase de recurso y la referencia salen del path en
     // crudo: `/<name>/blobs/<digest>` o `/<name>/manifests/<reference>`,
     // donde `<name>` puede tener niveles (`team/demo`).
-    // El prefijo `/v2` se quita del principio: lo que queda es
-    // `<name>/<kind>/<reference>`, y el nombre es lo que va antes de la
-    // clase de recurso.
-    let target = uri
-        .path()
-        .strip_prefix("/v2/")
-        .ok_or_else(|| OciFailure::name_invalid("the path is not an OCI resource path"))?;
-    let mut segments: Vec<&str> = target.split('/').collect();
-    if segments.len() < 3 {
-        return Err(OciFailure::name_invalid(
-            "the path does not name a repository, a kind and a reference",
-        ));
-    }
-    let reference = segments.pop().expect("the reference is there");
-    let kind = segments.pop().expect("the kind is there");
-    let name = segments.join("/");
-
-    // El nombre se valida ANTES de mirar el catálogo: un `..` no llega a
-    // ser una consulta, y un nombre mal formado es un error del cliente.
-    the_name(&name)?;
-
-    match kind {
-        "blobs" => blob(&state, &context, &name, reference, head).await,
-        "manifests" => manifest(&state, &context, &name, reference, &headers, head).await,
-        other => Err(OciFailure::unsupported(format!(
-            "the resource kind {other:?} is not part of the distribution API"
-        ))),
+    let target = the_target(uri.path())?;
+    match target {
+        Target::Blob { name, reference } => blob(&state, &context, &name, &reference, head).await,
+        Target::Manifest { name, reference } => {
+            manifest(&state, &context, &name, &reference, &headers, head).await
+        }
+        // El inicio de una subida y su sesion no son contenido: son el
+        // estado de una subida, y se dicen en la superficie de push.
+        Target::UploadStart { .. } | Target::UploadSession { .. } => Err(OciFailure::unsupported(
+            "an upload is not content of the repository",
+        )),
     }
 }
 
@@ -130,7 +149,7 @@ async fn blob(
 
     // Los bytes que se sirven son los que la **fila** referencia, no los
     // que dice la URL. El digest de la URL dice **que** se pide; la fila
-    // dice **que** hay. Si se sirvieran los del digest de la URL, una
+    // dice **que** hay. Si se sirieran los del digest de la URL, una
     // fila que solo nombra una ruta serviria el contenido de otro blob,
     // que puede ser de otra cuenta: el CAS es un arbol comun.
     //
@@ -329,182 +348,7 @@ fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool
     response
 }
 
-/// El principal verificado de la petición.
-///
-/// La autenticación es la primera puerta, igual que en la superficie
-/// cruda: una petición sin credencial no llega a mirar la ruta.
-async fn the_context(
-    state: &AppState,
-    headers: &HeaderMap,
-) -> Result<hodei_authz::VerifiedContext, OciFailure> {
-    let token = crate::handlers::bearer_token(headers).ok_or_else(OciFailure::unauthorized)?;
-    let principal = match hodei_authz::verify_principal(
-        state.authenticator.as_ref(),
-        &hodei_authz::Credentials::bearer(token),
-    )
-    .await
-    {
-        Ok(principal) => principal,
-        Err(hodei_authz::AuthenticationError::ProviderUnavailable(_)) => {
-            return Err(OciFailure::unavailable(
-                "the authentication provider is not available",
-            ));
-        }
-        Err(_) => return Err(OciFailure::unauthorized()),
-    };
-    Ok(hodei_authz::VerifiedContext::from_principal(principal))
-}
-
-/// El catálogo, con lo que el necesita para leer.
-type TheCatalog<'a> = (
-    &'a std::sync::Arc<dyn CatalogReader>,
-    &'a std::sync::Arc<dyn CatalogWriter>,
-);
-
-/// El catálogo.
-fn the_catalog(state: &AppState) -> Result<TheCatalog<'_>, OciFailure> {
-    let reader = state
-        .catalog_reader
-        .as_ref()
-        .ok_or_else(|| OciFailure::unavailable("the catalog is not wired"))?;
-    let writer = state
-        .catalog_writer
-        .as_ref()
-        .ok_or_else(|| OciFailure::unavailable("the catalog is not wired"))?;
-    Ok((reader, writer))
-}
-
-/// El almacén de contenido.
-fn the_content_store(
-    state: &AppState,
-) -> Result<&std::sync::Arc<dyn hodei_hub::blob::BlobStore>, OciFailure> {
-    state
-        .content_store
-        .as_ref()
-        .ok_or_else(|| OciFailure::unavailable("the content store is not wired"))
-}
-
-/// El repositorio, en la cuenta verificada.
-///
-/// Un repositorio de otra cuenta no existe para esta, y se responde con
-/// el `NAME_UNKNOWN` de la distribución: no dice si existe en otro sitio.
-async fn the_repository(
-    state: &AppState,
-    context: &hodei_authz::VerifiedContext,
-    name: &str,
-) -> Result<hodei_catalog::RepositoryDescriptor, OciFailure> {
-    let (reader, _) = the_catalog(state)?;
-    match reader.repository(context.account().as_str(), name).await {
-        // Un repositorio que no es de un formato o un modo que esta
-        // release sirva, no es un repositorio de esta superficie: se
-        // responde con el mismo NAME_UNKNOWN que uno que no existe, para
-        // no decir que existe un repositorio que no se puede usar.
-        Ok(descriptor)
-            if descriptor.format != RepositoryFormat::Raw
-                || descriptor.mode != RepositoryMode::Hosted =>
-        {
-            Err(OciFailure::name_unknown(format!(
-                "the repository {name:?} is not known to this account"
-            )))
-        }
-        Ok(descriptor) => Ok(descriptor),
-        Err(hodei_catalog::CatalogError::Missing { .. })
-        | Err(hodei_catalog::CatalogError::Denied { .. }) => Err(OciFailure::name_unknown(
-            format!("the repository {name:?} is not known to this account"),
-        )),
-        Err(_other) => Err(OciFailure::unavailable("the catalog is not available")),
-    }
-}
-
-/// La decisión de Cedar sobre el repositorio.
-///
-/// El recurso es el repositorio, igual que en la superficie cruda: una
-/// acción sobre un recurso que no existe no se puede evaluar, y la
-/// decisión la lleva el gate con el recurso a la vista.
-fn the_decision(
-    state: &AppState,
-    context: &hodei_authz::VerifiedContext,
-    action: hodei_authz::model::ActionId,
-    repository: &hodei_catalog::RepositoryDescriptor,
-) -> Result<(), OciFailure> {
-    let outcome = state
-        .authorize_resource
-        .execute_canonical(context.clone(), action, &repository.hrn)
-        .map_err(|_| OciFailure::unavailable("the authorization engine is not available"))?;
-    if !outcome.allows_access() {
-        return Err(OciFailure::denied(
-            "the principal is not allowed to pull from this repository",
-        ));
-    }
-    Ok(())
-}
-
-/// El nombre del repositorio, con sus reglas.
-///
-/// Un nombre OCI es minúsculas, dígitos y separadores, con niveles
-/// separados por barra. Un `..` no es un nivel: es un traversal, y se
-/// rechaza antes de mirar el catálogo.
-fn the_name(name: &str) -> Result<(), OciFailure> {
-    if name.is_empty() || name.len() > 255 {
-        return Err(OciFailure::name_invalid(
-            "the repository name is empty or too long",
-        ));
-    }
-    if name.starts_with('/') || name.ends_with('/') {
-        return Err(OciFailure::name_invalid(
-            "the repository name does not start or end with a separator",
-        ));
-    }
-    for segment in name.split('/') {
-        if segment.is_empty() {
-            return Err(OciFailure::name_invalid(
-                "the repository name has an empty level",
-            ));
-        }
-        if segment == "." || segment == ".." {
-            return Err(OciFailure::name_invalid(
-                "the repository name does not carry navigation levels",
-            ));
-        }
-        if !segment
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
-        {
-            return Err(OciFailure::name_invalid(
-                "the repository name only admits lowercase letters, digits, '.', '_' and '-'",
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// El digest que la referencia nombra.
-///
-/// Una referencia de blob o de manifest por digest lleva el algoritmo y
-/// el hexadecimal (`sha256:<64 hex>`). Sin el prefijo, la referencia es
-/// una **etiqueta**, que es mutable: el digest pelado no se acepta como
-/// digest, porque un cliente que cree que pide por digest y recibe
-/// contenido mutable se lleva un manifiesto que puede haber cambiado
-/// entre la peticion y el uso.
-///
-/// Lo que no cuadre es un error del cliente, y el codigo OCI lo dice.
-fn the_digest_of_reference(reference: &str) -> Result<String, OciFailure> {
-    if !reference.starts_with("sha256:") {
-        return Err(OciFailure::digest_invalid(format!(
-            "{reference:?} does not name a digest: a digest carries its algorithm"
-        )));
-    }
-    let digest = hodei_hub::oci::the_digest_of(reference)
-        .ok_or_else(|| {
-            OciFailure::digest_invalid(format!(
-                "{reference:?} is not a content digest the registry understands"
-            ))
-        })?
-        .value;
-    Ok(digest)
-}
-
-/// La negociación del `Accept`.
+/// La negociacion del `Accept`.
 ///
 /// Un cliente que no nombra tipos (`*/*`, `application/*` o nada) acepta
 /// lo que haya. Uno que solo nombra tipos que este registro no sirve
@@ -533,99 +377,4 @@ fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> 
     Err(OciFailure::manifest_unknown(format!(
         "the registry does not serve any of the media types the client accepts: {accept}"
     )))
-}
-
-/// Por qué una petición OCI no se puede servir, con su código OCI.
-#[derive(Debug, Clone)]
-pub struct OciFailure {
-    /// El código del error en el dialecto de la distribución.
-    code: &'static str,
-    /// Lo que pasó, dicho sin credenciales ni rutas de disco.
-    message: String,
-    /// El estado HTTP que el código OCI lleva.
-    status: StatusCode,
-}
-
-impl OciFailure {
-    fn blob_unknown(message: impl Into<String>) -> Self {
-        Self {
-            code: "BLOB_UNKNOWN",
-            message: message.into(),
-            status: StatusCode::NOT_FOUND,
-        }
-    }
-    fn manifest_unknown(message: impl Into<String>) -> Self {
-        Self {
-            code: "MANIFEST_UNKNOWN",
-            message: message.into(),
-            status: StatusCode::NOT_FOUND,
-        }
-    }
-    fn name_unknown(message: impl Into<String>) -> Self {
-        Self {
-            code: "NAME_UNKNOWN",
-            message: message.into(),
-            status: StatusCode::NOT_FOUND,
-        }
-    }
-    fn name_invalid(message: impl Into<String>) -> Self {
-        Self {
-            code: "NAME_INVALID",
-            message: message.into(),
-            status: StatusCode::BAD_REQUEST,
-        }
-    }
-    fn digest_invalid(message: impl Into<String>) -> Self {
-        Self {
-            code: "DIGEST_INVALID",
-            message: message.into(),
-            status: StatusCode::BAD_REQUEST,
-        }
-    }
-    fn unsupported(message: impl Into<String>) -> Self {
-        Self {
-            code: "UNSUPPORTED",
-            message: message.into(),
-            status: StatusCode::BAD_REQUEST,
-        }
-    }
-    fn denied(message: impl Into<String>) -> Self {
-        Self {
-            code: "DENIED",
-            message: message.into(),
-            status: StatusCode::FORBIDDEN,
-        }
-    }
-    fn unauthorized() -> Self {
-        Self {
-            code: "UNAUTHORIZED",
-            message: "authentication required".into(),
-            status: StatusCode::UNAUTHORIZED,
-        }
-    }
-    fn unavailable(message: impl Into<String>) -> Self {
-        Self {
-            code: "UNAVAILABLE",
-            message: message.into(),
-            status: StatusCode::SERVICE_UNAVAILABLE,
-        }
-    }
-}
-
-/// La respuesta de error, en el dialecto de la distribución.
-impl IntoResponse for OciFailure {
-    fn into_response(self) -> Response {
-        let body = serde_json::json!({
-            "errors": [{
-                "code": self.code,
-                "message": self.message,
-            }]
-        });
-        (
-            self.status,
-            [(header::CONTENT_TYPE, "application/json")],
-            body.to_string(),
-        )
-            .into_response()
-    }
 }

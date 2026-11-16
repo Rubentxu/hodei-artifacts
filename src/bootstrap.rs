@@ -316,6 +316,12 @@ pub async fn bootstrap(
         app_state
     };
     let app_state = app_state.with_body_limit(config.server.max_body_size);
+    // El registro de las sesiones de subida: el estado que vive entre
+    // peticiones, con los limites que dice la configuracion.
+    let app_state = app_state.with_uploads(Arc::new(crate::oci::uploads::UploadRegistry::new(
+        std::time::Duration::from_secs(config.security.oci_upload_ttl_secs),
+        config.security.oci_max_concurrent_uploads,
+    )));
     let app_state = configure_production_security(app_state, config)?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
