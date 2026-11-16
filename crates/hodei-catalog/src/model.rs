@@ -106,14 +106,27 @@ impl RepositoryMode {
     /// Si esta release sabe comportarse así.
     ///
     /// El catálogo sabe DESCRIBIR los tres modos, porque un repositorio se
-    /// declara antes de existir. Lo que no puede es SERVIR un group sin
-    /// resolver en varios repositorios: prometerlo aquí y no cumplirlo sería
-    /// una promesa falsa, y una promesa falsa en un registro de artefactos
-    /// se paga cuando alguien publica en un repositorio que no existe.
+    /// declara antes de existir; la release solo los SIRVE si sabe
+    /// resolverlos. El `match` es exhaustivo a propósito: un modo nuevo
+    /// obliga a decidir aquí si ya se sirve, y prometerlo sin cumplirlo sería
+    /// una promesa falsa que se paga cuando alguien publica donde no hay
+    /// nada.
     ///
-    /// Un proxy se sirve: resuelve contra el upstream que declara su
-    /// configuración, y lo que baja lo guarda como cualquier otro contenido.
+    /// Un proxy resuelve contra el upstream que declara su configuración y
+    /// lo que baja lo guarda como cualquier otro contenido. Un grupo resuelve
+    /// en sus miembros, en orden, y no guarda nada propio.
     pub fn is_served_by_this_release(&self) -> bool {
+        match self {
+            RepositoryMode::Hosted | RepositoryMode::Proxy | RepositoryMode::Group => true,
+        }
+    }
+
+    /// Si el repositorio guarda contenido propio (assets, versiones, blobs).
+    ///
+    /// Un grupo solo contiene una lista de miembros: lo que lee sale de
+    /// ellos, nunca de filas suyas. Por eso ninguna escritura de contenido
+    /// -- ni la de un cliente ni la caché de un proxy -- puede llegar a él.
+    pub fn stores_content(&self) -> bool {
         matches!(self, RepositoryMode::Hosted | RepositoryMode::Proxy)
     }
 

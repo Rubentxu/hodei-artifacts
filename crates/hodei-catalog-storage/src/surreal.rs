@@ -340,6 +340,13 @@ fn escape_id_part(value: &str) -> String {
 /// nada que validar aqui.
 fn the_upstream_of(mode: RepositoryMode, config: &RepositoryConfig) -> Result<(), CatalogError> {
     if mode != RepositoryMode::Proxy {
+        // Un `proxy` en otro modo no se ejecuta nunca: declararlo es un
+        // error, no un ajuste que parece activo y no lo esta.
+        if config.config_settings.get("proxy").is_some() {
+            return Err(CatalogError::invalid(
+                "only a proxy repository can declare config_settings.proxy",
+            ));
+        }
         return Ok(());
     }
     match hodei_catalog::UpstreamConfig::of(config) {
@@ -1493,6 +1500,89 @@ impl SurrealCatalogStore {
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
         Ok(rows.into_iter().next())
     }
+
+    /// La configuracion de un repositorio, vista como grupo.
+    ///
+    /// Un grupo sin miembros validos no se crea ni se reconfigura: lo que
+    /// no dice donde buscar no sabe resolver. Se leen los repositorios que
+    /// alcanza (acotados por `MAX_NODES`) y se recorren en puro: un miembro
+    /// que no existe, de otro formato, o un ciclo, impiden guardar la
+    /// configuracion. Un repositorio que no es grupo no puede declarar
+    /// `group`: no se ejecutaria nunca.
+    async fn the_group_of(
+        &self,
+        account: &str,
+        repo_key: &str,
+        format: RepositoryFormat,
+        mode: RepositoryMode,
+        config: &RepositoryConfig,
+    ) -> Result<(), CatalogError> {
+        let declared = hodei_catalog::GroupConfig::of(config)
+            .map_err(|error| CatalogError::invalid(error.to_string()))?;
+        if mode != RepositoryMode::Group {
+            if declared.is_some() {
+                return Err(CatalogError::invalid(
+                    "only a group repository can declare config_settings.group",
+                ));
+            }
+            return Ok(());
+        }
+        let group = declared.ok_or_else(|| {
+            CatalogError::invalid(
+                "a group repository has to declare its members in config_settings.group.members",
+            )
+        })?;
+        // La confianza se aplica sobre el miembro que sirve; un `trust` en
+        // el grupo no se ejecutaria nunca y parece un ajuste activo.
+        if config.config_settings.get("trust").is_some() {
+            return Err(CatalogError::invalid(
+                "a group repository cannot declare config_settings.trust: the trust policy of the member that serves applies",
+            ));
+        }
+
+        let mut known: std::collections::HashMap<String, hodei_catalog::Lookup> =
+            std::collections::HashMap::new();
+        let mut pending: Vec<String> = group.members.clone();
+        while let Some(key) = pending.pop() {
+            if key == repo_key || known.contains_key(&key) {
+                continue;
+            }
+            if known.len() >= hodei_catalog::group::MAX_NODES {
+                return Err(CatalogError::invalid(
+                    hodei_catalog::GroupError::TooManyNodes.to_string(),
+                ));
+            }
+            let lookup = match self.the_repository_row(account, &key).await? {
+                None => hodei_catalog::Lookup::Missing,
+                Some(row) => {
+                    let found = row.into_descriptor()?;
+                    let members = if found.mode == RepositoryMode::Group {
+                        hodei_catalog::GroupConfig::of(&found.config)
+                            .map_err(|error| CatalogError::invalid(error.to_string()))?
+                            .map(|nested| nested.members)
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    pending.extend(members.iter().cloned());
+                    hodei_catalog::Lookup::Found(hodei_catalog::Node {
+                        format: found.format,
+                        mode: found.mode,
+                        members,
+                    })
+                }
+            };
+            known.insert(key, lookup);
+        }
+        hodei_catalog::walk_group(repo_key, format, &group.members, &|key| {
+            known
+                .get(key)
+                .cloned()
+                .unwrap_or(hodei_catalog::Lookup::Missing)
+        })
+        .map(|_| ())
+        .map_err(|error| CatalogError::invalid(error.to_string()))
+    }
 }
 
 #[async_trait]
@@ -1530,6 +1620,14 @@ impl CatalogWriter for SurrealCatalogStore {
                 reason: "the repository belongs to another account".to_string(),
             });
         }
+        self.the_group_of(
+            principal_account,
+            &descriptor.repo_key,
+            descriptor.format,
+            descriptor.mode,
+            &descriptor.config,
+        )
+        .await?;
         if descriptor.hrn.account_id() != descriptor.account {
             return Err(CatalogError::invalid(
                 "the canonical name of the repository names another account",
@@ -1640,6 +1738,16 @@ impl CatalogWriter for SurrealCatalogStore {
         // Una configuracion nueva tiene que seguir diciendo a donde va un
         // proxy: la version que lo dejara sin upstream no se guarda.
         the_upstream_of(current.mode, &config)?;
+        // Y un grupo sigue siendo un grupo valido: la version que lo dejara
+        // con un ciclo o un miembro que no existe no se guarda.
+        self.the_group_of(
+            principal_account,
+            repo_key,
+            current.format,
+            current.mode,
+            &config,
+        )
+        .await?;
 
         // El ámbito de los digests decide donde viven los bytes, y los
         // bytes ya publicados viven donde se publicaron. Cambiar el
@@ -1806,8 +1914,9 @@ impl CatalogWriter for SurrealCatalogStore {
             }
         };
 
-        // Solo se publica en un repositorio que esta release sirva.
-        if !repository.mode.is_served_by_this_release() {
+        // Solo se publica en un repositorio que guarda contenido: un grupo
+        // lee de sus miembros y no tiene nada propio donde escribir.
+        if !repository.mode.stores_content() {
             self.audit_the_publication(
                 &event_id,
                 occurred_at,
@@ -2000,7 +2109,7 @@ impl CatalogWriter for SurrealCatalogStore {
         }
         if !descriptor.mode.accepts_client_writes() {
             return Err(CatalogError::invalid(
-                "a proxy repository does not accept tags from a client",
+                "this repository does not accept tags from a client",
             ));
         }
 
@@ -2117,7 +2226,7 @@ impl CatalogWriter for SurrealCatalogStore {
         }
         if !descriptor.mode.accepts_client_writes() {
             return Err(CatalogError::invalid(
-                "a proxy repository does not accept aliases from a client",
+                "this repository does not accept aliases from a client",
             ));
         }
 

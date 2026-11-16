@@ -45,6 +45,7 @@
 
 pub mod error;
 pub mod gc;
+pub mod group;
 pub mod model;
 pub mod ports;
 pub mod proxy;
@@ -55,6 +56,9 @@ pub use error::CatalogError;
 pub use gc::{
     ContentHold, ContentLedger, ContentRoot, DeletionState, GcDeletion, GcRun, HoldScope, RootKind,
     RunCandidate, RunState,
+};
+pub use group::{
+    GroupConfig, GroupConfigError, GroupError, Lookup, Node, Walk, walk as walk_group,
 };
 pub use model::{
     AssetDisposition, AssetRecord, BlobLocation, BlobReference, DigestScope, MutableTag,
