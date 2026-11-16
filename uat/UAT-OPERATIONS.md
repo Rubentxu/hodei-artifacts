@@ -352,20 +352,32 @@ reglas, una por una:
 - **El permiso va por delante.** Cedar decide repositorio por repositorio
   cuáles puede leer el principal, y lo que no puede leer **no sale ni
   cuenta**: un total que contara lo que no se puede leer diría que hay
-  algo donde no hay nada que ver.
-- **El orden es total.** La página viene en el orden `(repositorio, ruta)`,
-  que es único dentro de la cuenta. La página no repite ni pierde un
-  resultado entre páginas.
+  algo donde no hay nada que ver. La acción que se pide es
+  `DownloadAsset`, la misma que los otros listados.
+- **El orden es el del índice que sirve la consulta, y es total.** El
+  recorrido y el filtro por repositorio salen en el orden de la ruta; un
+  filtro con índice propio —el paquete, la versión, el digest, la
+  etiqueta— sale en el orden de ese índice, que es el orden que pidió el
+  cliente. Todos esos índices acaban en la ruta, y dentro de un
+  repositorio no hay dos assets con la misma ruta: el orden es total y la
+  página no repite ni pierde un resultado entre páginas.
 - **El total se cuenta hasta un tope, o no se cuenta.** El motor
   materializa cada fila que cuenta, así que contar una cuenta grande
   cuesta lo que cuesta recorrerla. El total es exacto mientras quepa en
-  256 coincidencias; cuando no cabe, la respuesta **no dice total** y
-  dice `more: true`. Un total que no se ha contado no se inventa.
+  256 coincidencias —256 caben, 257 no—; cuando no cabe, la respuesta
+  **no dice total** y dice `more: true`. Un total que no se ha contado no
+  se inventa. El tope se respeta también cuando la página empieza lejos:
+  un total por encima del tope no se cuenta.
 - **La confianza sale de la concesión, no de la referencia.** El estado que
   la búsqueda muestra se lee de `trust_grant`, que es donde vive la
   decisión y su revocación. Una promoción o una revocación se ven en la
   petición siguiente, sin reescribir nada: no hay un índice que
   actualizar porque no hay un segundo estado.
+- **El canal de confianza también es una frontera.** Un repositorio
+  servido por el canal `trusted` sólo muestra lo que tiene concesión
+  viva, y lo que no la tiene no sale ni se cuenta. Un listado que lo
+  mostrara diría que el contenido existe donde la descarga responde que
+  no existe.
 - **La ausencia de hallazgos no es una confianza.** Un contenido del que
   nadie ha escrito nada está en cuarentena, no es de fiar. Lo que no se
   conoce no se concede, y lo que no se concede no se sirve por el canal de
@@ -376,8 +388,8 @@ reglas, una por una:
 | Prueba | Qué comprueba |
 | --- | --- |
 | `crates/hodei-catalog/src/search.rs` (unitarias) | La consulta pura: filtros, paginación, orden, validación del límite y del desplazamiento, y la lectura del digest y del atributo. |
-| `crates/hodei-catalog-storage/tests/hsp113_search_contract.rs` | El puerto contra SurrealDB **real**: por coordenadas, acotada a la cuenta, sin ver un repositorio que el principal no puede leer, página ordenada que no repite ni pierde, la misma búsqueda 25 veces con la misma página, los filtros de atributo, el de etiqueta, el de texto, que la página diga si hay más, que un total que no cabe **no** se cuente, y que la concesión marca el contenido y la revocación lo quita. |
-| `tests/hsp113_search_e2e.rs` | La superficie HTTP contra el router de verdad, con dos cuentas: la búsqueda de una cuenta no devuelve ni el nombre ni el total de la otra, un repositorio sin permiso no sale ni cuenta, la vista de detalle enlaza blob, metadatos, lineage, cápsula y decisión, y la concesión es lo que dice que un contenido es de fiar. |
+| `crates/hodei-catalog-storage/tests/hsp113_search_contract.rs` | El puerto contra SurrealDB **real**: por coordenadas, acotada a la cuenta, sin ver un repositorio que el principal no puede leer, página ordenada que no repite ni pierde (también cuando el repositorio es más grande que la ventana, y también cuando el filtro del paquete es el que manda en el orden), la misma búsqueda 25 veces con la misma página, los filtros de atributo, el de etiqueta, el de texto, el de versión sin paquete, que la página diga si hay más, que el total sea exacto en la frontera del tope (255, 256 y 257) y que no se cuente por encima, que el tope se respete con una página que empieza lejos, un repositorio vacío, un texto que no existe, una página del tamaño máximo, y que el canal `trusted` sólo muestre lo que tiene concesión y la revocación lo vuelva a quitar. |
+| `tests/hsp113_search_e2e.rs` | La superficie HTTP contra el router de verdad, con dos cuentas: la búsqueda de una cuenta no devuelve ni el nombre ni el total de la otra, un repositorio sin permiso no sale ni cuenta, la paginación y el `more` en la superficie, los filtros de atributo, digest y etiqueta, que un total que no cabe **no** se diga, la vista de detalle enlaza blob, metadatos, lineage, cápsula y decisión, la concesión es lo que dice que un contenido es de fiar, y el canal `trusted` no muestra lo que no tiene concesión ni responde con su detalle. |
 
 ### Lo que se midió del motor antes de escribir el adaptador
 
@@ -389,13 +401,21 @@ son las que decidieron cómo está escrito el adaptador.
 | --- | --- | --- |
 | `campo IN <array>` en el filtro exterior | Devuelve **cero filas de forma intermitente**: 28 de 100 rondas entrelazadas sobre la misma base vinieron vacías. | No se usa. Cada consulta lleva un repositorio, y las concesiones de la página entran por un `OR` de trios (repositorio, algoritmo, digest), que además es la forma que mejor aprovecha el índice `(account, repository, digest_algorithm, digest)`. |
 | `repository IN (SELECT VALUE ...)` en el filtro exterior | El plan dice `Fallback: Unsupported subquery`, y el motor lo resuelve **por fila**: contar 2 000 filas tardó 2,9 s. | No se usa. Los repositorios permitidos se preguntan uno por uno y las páginas se unen en el adaptador. |
-| `ORDER BY` sobre las filas que coinciden | El plan dice `MemoryOrderedLimit`: trae **todas** las filas que coinciden antes de devolver las veinte primeras. 500 filas de un índice costaron 170 ms solo en ordenar. | La consulta **no lleva `ORDER BY`**. Las filas salen en el orden del índice, y la página se ordena en el adaptador por `(repositorio, ruta)`. |
+| `ORDER BY` sobre las filas que coinciden | El plan dice `MemoryOrderedLimit`: trae **todas** las filas que coinciden antes de devolver las veinte primeras. 500 filas de un índice costaron 170 ms solo en ordenar. | La consulta **no lleva `ORDER BY`**. Las filas salen en el orden del índice, y ese es el orden de la página. |
 | `count()` con dos campos de igualdad | El motor **materializa cada fila que cuenta**: 0,3 ms por fila, frente a 0,004 ms por fila de un conteo que no toca las filas. | El total se cuenta hasta un tope (256 coincidencias) y, cuando no cabe, no se cuenta. |
 | Índice de texto completo | El que ofrece SurrealDB 2.7 no lo usa el planificador (`Iterate Table`), y construirlo costó 18 s para 2 000 filas. | La búsqueda por texto es un recorrido, y el UAT lo dice. |
 
-El `LIMIT` y el `START` van como números y no atados, porque el motor no
-sabe evaluar un `LIMIT` atado (`Found NONE but the LIMIT clause must
-evaluate to a positive integer`).
+El `LIMIT` va como número y no atado, porque el motor no sabe evaluar un
+`LIMIT` atado (`Found NONE but the LIMIT clause must evaluate to a positive
+integer`). El desplazamiento **no** va al motor: la ventana entera se pide
+y el corte se hace en el adaptador, que es donde está el orden.
+
+Los índices de la búsqueda (versión 9 del esquema) son tres: el de las
+coordenadas `(account, repository, package_name, package_version, asset_path)`,
+el del digest `(account, repository, digest_algorithm, digest, asset_path)` y
+el de la etiqueta `(account, tag_name)`. Los dos primeros **acaban en la
+ruta**, y esa es la razón de que el orden que sirven sea total: dentro de
+un repositorio no hay dos assets con la misma ruta.
 
 ### La medida a escala
 
@@ -458,15 +478,30 @@ Lo que dicen estas cifras, y son la razón de ser de esta sección:
 
 | Ruta | Qué hace |
 | --- | --- |
-| `GET /api/v1/search` | La página de resultados. Los filtros van en la consulta: `repository`, `package`, `version`, `digest` (`algoritmo:hexadecimal`), `tag`, `attribute` (`format=pypi`, `mode=hosted`, `channel=trusted`), `text`, `limit` (1 a 100) y `offset`. `total` es el número de coincidencias, o `null` cuando hay más de las que se cuentan; `more` dice si hay más resultados detrás de la página. |
-| `GET /api/v1/packages/{repository}/{path}` | El detalle: el blob, los metadatos originales, la línea (a qué cuelga y qué cuelga de él), la Trust Capsule y la decisión. |
+| `GET /api/v1/search` | La página de resultados. Los filtros van en la consulta: `repository`, `package`, `version`, `digest` (`algoritmo:hexadecimal`), `tag`, `attribute` (`format=pypi`, `mode=hosted`, `channel=trusted`), `text`, `limit` (1 a 100) y `offset`. `total` es el número de coincidencias, o `null` cuando hay más de las que se cuentan; `more` dice si hay más resultados detrás de la página. La página viene en el orden del índice que sirve la consulta: la ruta en el recorrido, y el del filtro propio cuando el filtro tiene índice. |
+| `GET /api/v1/packages/{repository}/{*path}` | El detalle: el blob, los metadatos originales, la línea (a qué cuelga y qué cuelga de él), la Trust Capsule y la decisión. |
 
 La búsqueda **exige** credencial (`401` sin ella) y Cedar decide
-repositorio por repositorio. Un filtro que no existe, un filtro repetido,
-un límite que no cabe o un digest mal formado son un `400`: una consulta
+repositorio por repositorio. La acción que se pide es `DownloadAsset`,
+la misma que piden los otros listados del servicio: un listado dice qué
+hay dentro, y un despliegue que quiera que un principal sepa que un
+repositorio existe sin saber qué hay dentro no le da esa. Un filtro que
+no existe, un filtro repetido, un límite que no cabe, un digest mal
+formado o una consulta que no se puede leer son un `400`: una consulta
 que no dice lo que dice no se responde con resultados que el cliente no
 pidió. El detalle de un repositorio ajeno es un `404` —el mismo que si no
 existiera— y el de un repositorio sin permiso, un `403`.
+
+Dos cosas que **no** son una respuesta de permiso:
+
+- **Si el autorizador falla, la búsqueda responde `500`** y no una página
+  vacía. Una página vacía afirmaría que no hay nada donde no se ha podido
+  preguntar.
+- **El canal `trusted` es una frontera de la respuesta, no sólo del
+  contenido.** Lo que no tiene concesión viva no sale de la búsqueda ni
+  se cuenta, y su detalle responde `404` —no un `403`, que diría que el
+  contenido existe—. Si el libro de concessions no está o falla, la
+  respuesta es `503`: no saber no es permiso.
 
 ## S4. Lo que no se promete
 
@@ -478,8 +513,11 @@ existiera— y el de un repositorio sin permiso, un `403`.
 - **El total puede no estar.** Por encima de 256 coincidencias la
   respuesta trae `total: null` y `more: true`: la búsqueda dice que hay
   más y no dice cuántos. Es preferible a un número que no se ha contado.
-- **No hay ordenación por relevancia.** El orden es `(repositorio, ruta)`,
-  que es estable y total, no el que "encuentra" el cliente.
+  En un repositorio del canal `trusted` el total tampoco se cuenta: saber
+  cuántos hay exigiría preguntar cada concesión.
+- **No hay ordenación por relevancia.** El orden es el del índice que
+  sirve la consulta, que es estable y total, no el que "encuentra" el
+  cliente.
 - **No hay búsqueda por metadatos de formato.** Los atributos que se
   pueden filtrar son los que el catálogo guarda: formato, modo y canal.
   Los metadatos de un paquete (las etiquetas de un OCI, los classifiers de

@@ -2103,9 +2103,11 @@ catálogo. La superficie HTTP son `GET /api/v1/search` y
 
 **Cómo decide.** La cuenta sale del principal verificado y Cedar acota los
 repositorios uno por uno: lo que no se puede leer no sale **ni cuenta**, ni
-en los nombres ni en el total. El orden de la página es
-`(repositorio, ruta)`, que es un orden total dentro de la cuenta: la
-página no puede repetir ni perder un resultado entre páginas.
+en los nombres ni en el total. La acción que se pide es `DownloadAsset`,
+la misma que los otros listados del servicio: un listado dice qué hay
+dentro. Si el autorizador falla, la búsqueda responde `500` y no una
+página vacía: una página vacía afirmaría que no hay nada donde no se ha
+podido preguntar.
 
 **La búsqueda pregunta repositorio por repositorio.** Cada consulta lleva
 `account` y `repository`, que son las dos primeras columnas del índice
@@ -2115,7 +2117,18 @@ La consulta **no lleva `ORDER BY`** (el motor traería todas las filas que
 coinciden antes de devolver las veinte primeras), y el **total se cuenta
 hasta un tope** de 256 coincidencias, porque el motor materializa cada
 fila que cuenta: por encima del tope la respuesta dice que hay más y no
-dice cuántos. Un total que no se ha contado no se inventa.
+dice cuántos. Un total que no se ha contado no se inventa. El tope se
+respeta también cuando la página empieza lejos, y 256 coincidencias
+caben y 257 no.
+
+**El orden es el del índice que sirve la consulta, y es total.** El
+recorrido y el filtro por repositorio salen en el orden de la ruta; un
+filtro con índice propio —el paquete, la versión, el digest, la
+etiqueta— sale en el orden de ese índice, que es el que pidió el cliente.
+Los dos índices de assets que sirven la búsqueda **acaban en la ruta**
+(versión 9 del esquema), y como dentro de un repositorio no hay dos
+assets con la misma ruta, el orden es total: la página no puede repetir
+ni perder un resultado entre páginas.
 
 **La confianza sale de la concesión, no de la referencia.** La fila de
 `catalog_reference` guarda lo que dijo la *admisión* al publicar, y eso no
@@ -2124,6 +2137,14 @@ que la búsqueda muestra sale de `trust_grant`, que es donde vive la
 decisión y donde vive su revocación. Por eso una promoción o una
 revocación se ven en la petición siguiente, sin reescribir nada: no hay
 un índice que actualizar porque no hay un segundo estado.
+
+**El canal de confianza también es una frontera.** Un repositorio
+servido por el canal `trusted` sirve sólo lo que tiene concesión viva, y
+la búsqueda y la vista de detalle siguen la misma regla que las
+superficies de contenido: lo que no tiene concesión no sale ni se cuenta,
+y su detalle responde `404` en lugar de `403` —un `403` diría que el
+contenido existe—. Si el libro de concesiones falla o no está, la
+respuesta es `503`: no saber no es permiso.
 
 **Lo que se midió del motor antes de escribir el adaptador.** En
 SurrealDB 2.7 con RocksDB: el filtro `campo IN <array>` en la consulta
@@ -2138,9 +2159,17 @@ frente a 0,004 ms de un conteo que no las toca). De ahí salen las tres
 decisiones del adaptador: un repositorio por consulta, sin `ORDER BY`, y
 el total con tope. El índice de texto completo que ofrece SurrealDB 2.7 no
 lo usa el planificador y cuesta 18 s construirlo para 2 000 filas, así que
-la búsqueda por texto sigue siendo un recorrido. El `LIMIT` y el `START`
-van como números y no atados, porque el motor no sabe evaluar un `LIMIT`
-atado.
+la búsqueda por texto sigue siendo un recorrido. El `LIMIT` va como número
+y no atado, porque el motor no sabe evaluar un `LIMIT` atado; el
+desplazamiento no va al motor: la ventana entera se pide y el corte se
+hace en el adaptador, que es donde está el orden.
+
+La versión 9 del esquema añade los tres índices de la búsqueda: el de las
+coordenadas `(account, repository, package_name, package_version,
+asset_path)`, el del digest `(account, repository, digest_algorithm,
+digest, asset_path)` y el de la etiqueta `(account, tag_name)`. Los dos
+primeros acaban en la ruta a propósito: es lo que hace total el orden que
+sirven.
 
 **Lo que sigue sin estar.** No hay índice de texto completo: la búsqueda
 por texto es un recorrido de los assets de la cuenta. No hay ordenación
