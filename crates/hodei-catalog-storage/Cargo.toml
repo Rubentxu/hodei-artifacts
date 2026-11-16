@@ -32,6 +32,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-# La medición de la búsqueda siembra cien mil assets en una base de
-# prueba: necesita un directorio que tirar cuando termina.
+# The measurement of the search seeds a hundred thousand assets in a
+# test database: it needs a directory to throw away when it is done.
 tempfile = { workspace = true }

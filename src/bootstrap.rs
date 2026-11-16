@@ -267,9 +267,9 @@ pub async fn bootstrap(
         let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
         let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> = catalog.clone();
         let provenance_ledger: Arc<dyn hodei_catalog::ProvenanceLedger> = catalog.clone();
-        // La busqueda es el mismo catalogo con otra pregunta: no hay un
-        // indice aparte que sincronizar, y por eso lo que promete la
-        // busqueda es lo que hay.
+        // The search is the same catalog with another question: there is
+        // no separate index to synchronise, and that is why what the
+        // search promises is what there is.
         let searcher: Arc<dyn hodei_catalog::CatalogSearch> = catalog.clone();
         let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
         // The staging that an interrupted upload leaves behind is cleaned

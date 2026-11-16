@@ -185,38 +185,38 @@ pub enum Route {
     Whoami,
     /// El packument de un paquete.
     Packument {
-        /// El paquete cuyo packument se pide.
+        /// The package whose packument is asked for.
         name: PackageName,
     },
     /// El tarball de un paquete.
     Tarball {
-        /// El paquete al que pertenece el tarball.
+        /// The package the tarball belongs to.
         name: PackageName,
-        /// El nombre del fichero dentro del paquete.
+        /// The name of the file inside the package.
         file: String,
     },
     /// Todos los dist-tags de un paquete.
     DistTags {
-        /// El paquete cuyos dist-tags se piden.
+        /// The package whose dist-tags are asked for.
         name: PackageName,
     },
     /// Un dist-tag de un paquete.
     DistTag {
-        /// El paquete al que pertenece la etiqueta.
+        /// The package the tag belongs to.
         name: PackageName,
-        /// La etiqueta y la version que apunta.
+        /// The tag and the version it points at.
         tag: String,
     },
     /// `DELETE` de un paquete entero (`/{nombre}/-rev/{rev}`).
     UnpublishPackage {
-        /// El paquete que se retira.
+        /// The package that is withdrawn.
         name: PackageName,
     },
     /// `DELETE` de un tarball (`/{nombre}/-/{fichero}/-rev/{rev}`).
     UnpublishTarball {
-        /// El paquete al que pertenece el tarball.
+        /// The package the tarball belongs to.
         name: PackageName,
-        /// El nombre del fichero dentro del paquete.
+        /// The name of the file inside the package.
         file: String,
     },
 }

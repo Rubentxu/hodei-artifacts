@@ -917,14 +917,14 @@ pub enum Route {
     Root,
     /// `GET /simple/{proyecto}/`: la pagina de un proyecto.
     Project {
-        /// El proyecto cuya pagina se pide.
+        /// The project whose page is asked for.
         project: ProjectName,
     },
     /// `GET /files/{proyecto}/{fichero}`: la distribucion.
     File {
-        /// El proyecto al que pertenece la distribucion.
+        /// The project the distribution belongs to.
         project: ProjectName,
-        /// El nombre del fichero de la distribucion.
+        /// The name of the file of the distribution.
         filename: String,
     },
     /// `POST /`: la subida.
