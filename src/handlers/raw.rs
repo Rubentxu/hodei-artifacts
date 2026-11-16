@@ -85,6 +85,16 @@ pub enum RawApiError {
     Unavailable,
     /// Esto todavía no lo sabe hacer, y se dice.
     NotImplemented(&'static str),
+    /// El método no se admite en este repositorio (por ejemplo, subir a
+    /// un proxy).
+    MethodNotAllowed(&'static str),
+    /// El upstream de un proxy no entregó un contenido utilizable.
+    ///
+    /// El motivo es genérico a propósito: el cliente no tiene por qué ver
+    /// la red interna del servicio. El detalle queda en el rastro.
+    BadGateway(&'static str),
+    /// El upstream de un proxy no respondió a tiempo.
+    GatewayTimeout,
     /// Algo fallo por dentro.
     Internal,
 }
@@ -121,6 +131,12 @@ impl IntoResponse for RawApiError {
                 "the raw surface is not available".to_string(),
             ),
             Self::NotImplemented(reason) => (StatusCode::NOT_IMPLEMENTED, reason.to_string()),
+            Self::MethodNotAllowed(reason) => (StatusCode::METHOD_NOT_ALLOWED, reason.to_string()),
+            Self::BadGateway(reason) => (StatusCode::BAD_GATEWAY, reason.to_string()),
+            Self::GatewayTimeout => (
+                StatusCode::GATEWAY_TIMEOUT,
+                "the upstream did not answer in time".to_string(),
+            ),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error".to_string(),
@@ -226,7 +242,7 @@ async fn the_repository(
     // Un repositorio que no es de este formato, o que no se sirve en esta
     // release, no es un repositorio de esta superficie: se responde con
     // el mismo 404 que uno que no existe.
-    if descriptor.format != RepositoryFormat::Raw || descriptor.mode != RepositoryMode::Hosted {
+    if descriptor.format != RepositoryFormat::Raw || !descriptor.mode.is_served_by_this_release() {
         return Err(RawApiError::NotFound);
     }
     // El ambito del contenido decide dónde viven sus bytes, y esta
@@ -322,6 +338,14 @@ pub async fn publish(
         crate::actions::upload_asset(),
         &repository,
     )?;
+    // Lo que dice un proxy sale de su upstream, no de quien pregunta. Va
+    // después de Cedar: quien no puede subir recibe el mismo 403 que en
+    // cualquier otro repositorio, y no averigua el modo.
+    if !repository.mode.accepts_client_writes() {
+        return Err(RawApiError::MethodNotAllowed(
+            "a proxy repository does not accept uploads",
+        ));
+    }
 
     let correlation = correlation_id(&headers, &state.identity);
     let current =
@@ -443,6 +467,204 @@ pub async fn publish(
     Ok(response)
 }
 
+/// Trae de su upstream un contenido que el proxy aún no tiene, lo verifica
+/// y lo publica en el catálogo como un asset más.
+///
+/// Es la **primera resolución**: el contenido queda en el almacén con su
+/// recibo de procedencia, y desde entonces el proxy lo sirve sin volver a
+/// salir. No hay caducidad todavía: lo presente se sirve.
+///
+/// El contenido que se publica pasa después por la misma compuerta de
+/// confianza que cualquier otro: un repositorio `trusted` lo deja en
+/// cuarentena hasta que alguien lo promueva.
+async fn resolve_from_upstream(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+    correlation: &str,
+) -> Result<AssetRecord, RawApiError> {
+    use crate::proxy::fetch::FetchError;
+    use crate::proxy::resolution::{self, ResolveError};
+
+    let plane = state
+        .proxy_plane
+        .as_ref()
+        .ok_or(RawApiError::NotImplemented(
+            "this service has no egress for remote proxies",
+        ))?;
+    let store = the_content_store(state)?;
+    let (_, writer) = the_catalog(state)?;
+    // La configuración se valida al crear el repositorio; si aun asi no
+    // se entiende, el proxy no sale: falla cerrado.
+    let upstream = match hodei_catalog::UpstreamConfig::of(&repository.config) {
+        Ok(Some(upstream)) => upstream,
+        _ => return Err(RawApiError::BadGateway("the proxy is not configured")),
+    };
+    let actor = context.principal().subject().as_str();
+    let account = context.account().as_str();
+
+    let resolved = resolution::resolve(
+        &plane.fetcher,
+        store.as_ref(),
+        plane.ledger.as_ref(),
+        &resolution::Resolution {
+            account,
+            repository: &repository.repo_key,
+            asset_path,
+            upstream: &upstream,
+            config_version: repository.config.version,
+            actor,
+            correlation_id: correlation,
+        },
+    )
+    .await
+    .map_err(|error| {
+        // El rastro lleva el motivo; la respuesta, uno genérico.
+        tracing::warn!(
+            target: "hodei_artifacts::proxy",
+            repository = %repository.repo_key,
+            error = %error,
+            "the proxy could not resolve the content"
+        );
+        match error {
+            ResolveError::Fetch(FetchError::NotFound) => RawApiError::NotFound,
+            ResolveError::Fetch(FetchError::Busy) => RawApiError::Unavailable,
+            ResolveError::Fetch(FetchError::Timeout) => RawApiError::GatewayTimeout,
+            ResolveError::Fetch(FetchError::OutOfScope) => RawApiError::NotFound,
+            ResolveError::Fetch(FetchError::Egress(_)) => {
+                RawApiError::BadGateway("the upstream is not reachable from this service")
+            }
+            ResolveError::Fetch(FetchError::ChecksumMismatch | FetchError::ChecksumMissing) => {
+                RawApiError::BadGateway("the upstream content could not be verified")
+            }
+            ResolveError::Fetch(FetchError::Truncated | FetchError::TooLarge) => {
+                RawApiError::BadGateway("the upstream content is incomplete or too large")
+            }
+            ResolveError::Fetch(_) => RawApiError::BadGateway("the upstream did not deliver"),
+            ResolveError::Blob(error) => the_blob_error(&error),
+            ResolveError::Ledger(error) => the_publication_error(&error),
+        }
+    })?;
+
+    let publication = Publication {
+        repository: repository.repo_key.clone(),
+        asset_path: asset_path.to_string(),
+        coordinates: PackageCoordinates {
+            package_name: asset_path.to_string(),
+            package_version: resolved.digest.value.clone(),
+        },
+        digest: resolved.digest.clone(),
+        size_bytes: resolved.size_bytes,
+        tags: Vec::new(),
+        actor: actor.to_string(),
+        correlation_id: correlation.to_string(),
+        overwrite: false,
+        precondition: None,
+        subject: None,
+    };
+    match writer.publish(account, publication).await {
+        Ok(_) => {}
+        // Otra petición resolvió la misma ruta antes: lo que hay es lo que
+        // se sirve, y se lee abajo. La coalescencia es de HSP-107.
+        Err(CatalogError::Conflict { .. }) => {}
+        Err(error) => return Err(the_publication_error(&error)),
+    }
+    the_current_asset(state, context, &repository.repo_key, asset_path)
+        .await?
+        .ok_or(RawApiError::Unavailable)
+}
+
+/// Lo que pide la lectura de procedencia.
+#[derive(Debug, serde::Deserialize)]
+pub struct ProvenanceQuery {
+    /// La clave del repositorio.
+    pub repository: String,
+    /// La ruta del contenido.
+    pub path: String,
+}
+
+/// `GET /api/v1/provenance?repository=&path=`
+///
+/// Los recibos de procedencia de una ruta de un proxy, el más reciente
+/// primero. Lo autoriza la misma acción que leer el contenido
+/// (`DownloadAsset`): quien puede bajarlo puede saber de dónde vino.
+///
+/// La respuesta no lleva credenciales ni consultas: el recibo ya las
+/// excluye al escribirse.
+pub async fn provenance(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<ProvenanceQuery>,
+    headers: HeaderMap,
+) -> Result<Response, RawApiError> {
+    let context = the_context(&state, &headers).await?;
+    // La ruta se valida con las mismas reglas que la del contenido.
+    let target = path::the_target(&format!("/repository/{}/{}", query.repository, query.path))
+        .map_err(|error| RawApiError::BadRequest(error.message()))?;
+    let repository = the_repository(&state, &context, &target.repository).await?;
+    the_decision(
+        &state,
+        &context,
+        crate::actions::download_asset(),
+        &repository,
+    )?;
+    let plane = state
+        .proxy_plane
+        .as_ref()
+        .ok_or(RawApiError::NotImplemented(
+            "this service keeps no provenance ledger",
+        ))?;
+    let receipts = plane
+        .ledger
+        .receipts_of(
+            context.account().as_str(),
+            &target.repository,
+            &target.asset_path,
+        )
+        .await
+        .map_err(|error| the_publication_error(&error))?;
+    // Un recibo habla de un digest: si el canal no deja servir ese digest,
+    // tampoco dice que existe. Es la misma compuerta que la lectura.
+    let mut admitted = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        match crate::trust::admit(
+            &state,
+            context.account().as_str(),
+            &repository,
+            &receipt.digest,
+        )
+        .await
+        {
+            Ok(_) => admitted.push(receipt),
+            Err(crate::trust::Admission::Hidden) => {}
+            Err(other) => return Err(the_admission_error(other)),
+        }
+    }
+    let receipts: Vec<serde_json::Value> = admitted
+        .iter()
+        .map(|receipt| {
+            serde_json::json!({
+                "id": receipt.id,
+                "repository": receipt.repository,
+                "path": receipt.asset_path,
+                "upstream": receipt.upstream_id,
+                "source_url": receipt.source_url,
+                "config_version": receipt.config_version,
+                "digest": receipt.digest.to_string(),
+                "size_bytes": receipt.size_bytes,
+                "checksum": receipt.checksum,
+                "status": receipt.status,
+                "redirects": receipt.redirects,
+                "etag": receipt.etag,
+                "actor": receipt.actor,
+                "correlation_id": receipt.correlation_id,
+                "fetched_at": receipt.fetched_at,
+            })
+        })
+        .collect();
+    Ok(axum::Json(serde_json::json!({ "receipts": receipts })).into_response())
+}
+
 /// `GET /repository/{repository}/{*path}`
 ///
 /// Devuelve el contenido de esa dirección.
@@ -533,9 +755,23 @@ async fn the_content_of(
     )?;
 
     let correlation = correlation.to_string();
-    let asset = the_current_asset(state, context, &target.repository, &target.asset_path)
-        .await?
-        .ok_or(RawApiError::NotFound)?;
+    let asset =
+        match the_current_asset(state, context, &target.repository, &target.asset_path).await? {
+            Some(asset) => asset,
+            // Un hosted sin el contenido no lo tiene. Un proxy lo trae del
+            // upstream la primera vez y desde entonces lo sirve como propio.
+            None if repository.mode == RepositoryMode::Proxy => {
+                resolve_from_upstream(
+                    state,
+                    context,
+                    &repository,
+                    &target.asset_path,
+                    &correlation,
+                )
+                .await?
+            }
+            None => return Err(RawApiError::NotFound),
+        };
 
     // La compuerta de confianza: Cedar ya dijo que esta persona puede
     // leer el repositorio; falta decir si este **digest** puede servirse

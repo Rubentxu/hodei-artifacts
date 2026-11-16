@@ -165,6 +165,7 @@ pipeline {
                         "--test hsp104_gc_ledger_contract",
                         "--test hsp104_gc_service",
                         "--test hsp105_trust_ledger_contract",
+                        "--test hsp106_provenance_ledger_contract",
                     ).joinToString(" ")
                 )
             }
@@ -194,6 +195,7 @@ pipeline {
                         "--test oci_index_contract",
                         "--test hsp104_gc_e2e",
                         "--test hsp105_trust_e2e",
+                        "--test hsp106_proxy_e2e",
                     ).joinToString(" ")
                 )
                 sh(

@@ -106,12 +106,24 @@ impl RepositoryMode {
     /// Si esta release sabe comportarse así.
     ///
     /// El catálogo sabe DESCRIBIR los tres modos, porque un repositorio se
-    /// declara antes de existir. Lo que no puede es SERVIR un proxy sin
-    /// resolver contra el upstream, ni un group sin resolver en varios
-    /// repositorios: prometerlo aquí y no cumplirlos sería una promesa
-    /// falsa, y una promesa falsa en un registro de artefactos se paga
-    /// cuando alguien publica en un repositorio que no existe.
+    /// declara antes de existir. Lo que no puede es SERVIR un group sin
+    /// resolver en varios repositorios: prometerlo aquí y no cumplirlo sería
+    /// una promesa falsa, y una promesa falsa en un registro de artefactos
+    /// se paga cuando alguien publica en un repositorio que no existe.
+    ///
+    /// Un proxy se sirve: resuelve contra el upstream que declara su
+    /// configuración, y lo que baja lo guarda como cualquier otro contenido.
     pub fn is_served_by_this_release(&self) -> bool {
+        matches!(self, RepositoryMode::Hosted | RepositoryMode::Proxy)
+    }
+
+    /// Si los clientes pueden publicar, etiquetar y mover aliases aquí.
+    ///
+    /// Solo un repositorio `Hosted` guarda lo que se publica en él. Un
+    /// proxy escribe su propio contenido al resolver, pero ninguna petición
+    /// de un cliente lo escribe ni lo mueve: lo que dice un proxy sale del
+    /// upstream, no de quien pregunta.
+    pub fn accepts_client_writes(&self) -> bool {
         matches!(self, RepositoryMode::Hosted)
     }
 }

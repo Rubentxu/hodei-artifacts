@@ -125,7 +125,11 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// La versión 6 añade las **concesiones de confianza** (`trust_grant`):
 /// qué digest de qué repositorio puede servir el canal trusted, y por qué
 /// decisión.
-pub const SCHEMA_VERSION: i64 = 6;
+///
+/// La versión 7 añade los **recibos de procedencia** (`provenance_receipt`):
+/// de qué upstream vino el contenido de un repositorio proxy y con qué se
+/// comprobó.
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -272,9 +276,31 @@ DEFINE FIELD IF NOT EXISTS revoked_by ON trust_grant TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS revoke_reason ON trust_grant TYPE option<string>;
 DEFINE INDEX IF NOT EXISTS trust_grant_digest ON trust_grant FIELDS account, repository, digest_algorithm, digest;
 DEFINE INDEX IF NOT EXISTS trust_grant_decision ON trust_grant FIELDS account, repository, decision_id;
+
+DEFINE TABLE IF NOT EXISTS provenance_receipt SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS receipt_id ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS account ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS repository ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS asset_path ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS upstream_id ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS source_url ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS config_version ON provenance_receipt TYPE int;
+DEFINE FIELD IF NOT EXISTS digest_algorithm ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS digest ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS size_bytes ON provenance_receipt TYPE int;
+DEFINE FIELD IF NOT EXISTS checksum_kind ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS checksum_header ON provenance_receipt TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS status ON provenance_receipt TYPE int;
+DEFINE FIELD IF NOT EXISTS redirects ON provenance_receipt TYPE int;
+DEFINE FIELD IF NOT EXISTS etag ON provenance_receipt TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS actor ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS correlation_id ON provenance_receipt TYPE string;
+DEFINE FIELD IF NOT EXISTS fetched_at ON provenance_receipt TYPE datetime;
+DEFINE INDEX IF NOT EXISTS provenance_receipt_path ON provenance_receipt FIELDS account, repository, asset_path;
 "#;
 
 mod gc_ledger;
+mod provenance_ledger;
 mod trust_ledger;
 
 /// El identificador de un registro, derivado de sus coordenadas.
@@ -298,6 +324,24 @@ fn escape_id_part(value: &str) -> String {
         .replace('~', "~0")
         .replace(':', "~1")
         .replace('|', "~2")
+}
+
+/// La configuracion de un repositorio, vista desde su modo.
+///
+/// Un proxy sin upstream valido no se crea ni se reconfigura: lo que no
+/// dice a donde va no sabe resolver. Un repositorio de otro modo no tiene
+/// nada que validar aqui.
+fn the_upstream_of(mode: RepositoryMode, config: &RepositoryConfig) -> Result<(), CatalogError> {
+    if mode != RepositoryMode::Proxy {
+        return Ok(());
+    }
+    match hodei_catalog::UpstreamConfig::of(config) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(CatalogError::invalid(
+            "a proxy repository has to declare its upstream in config_settings.proxy.upstream",
+        )),
+        Err(error) => Err(CatalogError::invalid(error.to_string())),
+    }
 }
 
 /// El identificador compuesto de unas coordenadas.
@@ -1470,6 +1514,7 @@ impl CatalogWriter for SurrealCatalogStore {
                 "the settings of the repository are not an object",
             ));
         }
+        the_upstream_of(descriptor.mode, &descriptor.config)?;
         if descriptor.account != principal_account {
             return Err(CatalogError::Denied {
                 action: "configure",
@@ -1585,6 +1630,9 @@ impl CatalogWriter for SurrealCatalogStore {
         if !current.mode.is_served_by_this_release() {
             return Err(CatalogError::ModeNotImplemented { mode: current.mode });
         }
+        // Una configuracion nueva tiene que seguir diciendo a donde va un
+        // proxy: la version que lo dejara sin upstream no se guarda.
+        the_upstream_of(current.mode, &config)?;
 
         // El ámbito de los digests decide donde viven los bytes, y los
         // bytes ya publicados viven donde se publicaron. Cambiar el
@@ -1943,6 +1991,11 @@ impl CatalogWriter for SurrealCatalogStore {
                 mode: descriptor.mode,
             });
         }
+        if !descriptor.mode.accepts_client_writes() {
+            return Err(CatalogError::invalid(
+                "a proxy repository does not accept tags from a client",
+            ));
+        }
 
         // La etiqueta tiene que apuntar a una versión que exista. Las
         // versiones no se borran, así que esta comprobación no se queda
@@ -2054,6 +2107,11 @@ impl CatalogWriter for SurrealCatalogStore {
             return Err(CatalogError::ModeNotImplemented {
                 mode: descriptor.mode,
             });
+        }
+        if !descriptor.mode.accepts_client_writes() {
+            return Err(CatalogError::invalid(
+                "a proxy repository does not accept aliases from a client",
+            ));
         }
 
         // El asset tiene que existir: mover lo que no está no es mover,

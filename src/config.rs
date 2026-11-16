@@ -137,6 +137,79 @@ fn the_default_trust_policy_id() -> String {
     "default".to_string()
 }
 
+/// The egress of the remote proxy: where the service may fetch from.
+///
+/// A proxy repository names an upstream, but the repository configuration
+/// is not what decides that the service may reach it: this list does. A
+/// host that is not in `allowed_hosts` is never contacted, whatever the
+/// repository says. The default list is empty, so a service with no
+/// `[proxy]` section makes no outbound request at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyConfig {
+    /// The hosts the service may fetch from.
+    ///
+    /// Default: none.
+    #[serde(default)]
+    pub allowed_hosts: Vec<crate::proxy::egress::AllowedHost>,
+    /// The names of the environment variables a repository may use as the
+    /// credential of its upstream (`credential_ref = "env:NAME"`).
+    ///
+    /// A repository only names a variable; this list is what lets the
+    /// service read it. Default: none, so no credential is ever sent.
+    #[serde(default)]
+    pub allowed_credentials: Vec<String>,
+    /// Seconds to wait for a connection and for a name to resolve.
+    ///
+    /// Default: 5.
+    #[serde(default = "the_default_proxy_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    /// Seconds a whole resolution may last, redirects and body included.
+    ///
+    /// Default: 300.
+    #[serde(default = "the_default_proxy_total_timeout_secs")]
+    pub total_timeout_secs: u64,
+    /// The most bytes a single fetch may bring. A repository may lower it,
+    /// never raise it.
+    ///
+    /// Default: 1 GiB.
+    #[serde(default = "the_default_proxy_max_bytes")]
+    pub max_bytes: u64,
+    /// The most fetches in flight at the same time.
+    ///
+    /// Default: 8.
+    #[serde(default = "the_default_proxy_max_concurrent")]
+    pub max_concurrent: usize,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            allowed_hosts: Vec::new(),
+            allowed_credentials: Vec::new(),
+            connect_timeout_secs: the_default_proxy_connect_timeout_secs(),
+            total_timeout_secs: the_default_proxy_total_timeout_secs(),
+            max_bytes: the_default_proxy_max_bytes(),
+            max_concurrent: the_default_proxy_max_concurrent(),
+        }
+    }
+}
+
+fn the_default_proxy_connect_timeout_secs() -> u64 {
+    5
+}
+
+fn the_default_proxy_total_timeout_secs() -> u64 {
+    300
+}
+
+fn the_default_proxy_max_bytes() -> u64 {
+    1 << 30
+}
+
+fn the_default_proxy_max_concurrent() -> usize {
+    8
+}
+
 /// The default directory of the content.
 fn the_default_cas_path() -> String {
     "./data/hodei.cas".to_string()
@@ -195,6 +268,10 @@ pub struct AppConfig {
     /// The trust policy that decides promotions to the trusted channel.
     #[serde(default)]
     pub trust: TrustConfig,
+
+    /// The egress of the remote proxy.
+    #[serde(default)]
+    pub proxy: ProxyConfig,
 
     /// Database configuration
     pub database: DatabaseConfig,
@@ -652,6 +729,8 @@ fn environment_source() -> Environment {
         .try_parsing(true)
         .list_separator(",")
         .with_list_parse_key("security.cors_allowed_origins")
+        .with_list_parse_key("proxy.allowed_hosts")
+        .with_list_parse_key("proxy.allowed_credentials")
 }
 
 /// Builds the configuration from the file sources and the environment source.

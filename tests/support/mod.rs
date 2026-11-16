@@ -396,6 +396,22 @@ impl Deployment {
     /// y no hay una ruta HTTP que cree repositorios del catalogo, asi que
     /// se fija al sembrar, como lo haria quien opera el despliegue.
     pub fn seed_trusted(&self, extra: &[&str], trusted: &[&str]) {
+        self.seed_proxies(extra, trusted, &[]);
+    }
+
+    /// Siembra como [`Self::seed_trusted`] y crea ademas repositorios
+    /// **proxy** de la primera cuenta: cada uno con su clave y la
+    /// configuracion de su upstream (`config_settings.proxy.upstream`).
+    pub fn seed_proxies(
+        &self,
+        extra: &[&str],
+        trusted: &[&str],
+        proxies: &[(&str, serde_json::Value)],
+    ) {
+        let proxies: serde_json::Map<String, serde_json::Value> = proxies
+            .iter()
+            .map(|(key, upstream)| (key.to_string(), upstream.clone()))
+            .collect();
         let status = Command::new(std::env::current_exe().expect("the test binary"))
             .args([
                 "--exact",
@@ -406,6 +422,10 @@ impl Deployment {
             .env("HODEI_SEED_DB", &self.db)
             .env("HODEI_SEED_EXTRA", extra.join(","))
             .env("HODEI_SEED_TRUSTED", trusted.join(","))
+            .env(
+                "HODEI_SEED_PROXY",
+                serde_json::Value::Object(proxies).to_string(),
+            )
             .status()
             .expect("the seeder runs");
         assert!(status.success(), "the catalog could not be seeded");
@@ -1615,11 +1635,27 @@ pub fn seed_if_asked() {
     let extra: Vec<&str> = extra.split(',').filter(|one| !one.is_empty()).collect();
     let trusted = std::env::var("HODEI_SEED_TRUSTED").unwrap_or_default();
     let trusted: Vec<&str> = trusted.split(',').filter(|one| !one.is_empty()).collect();
-    seed_the_catalog(&db.to_string_lossy(), &extra, &trusted);
+    let proxies = std::env::var("HODEI_SEED_PROXY")
+        .ok()
+        .and_then(|raw| {
+            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok()
+        })
+        .unwrap_or_default();
+    seed_the_catalog_with(&db.to_string_lossy(), &extra, &trusted, &proxies);
 }
 
 /// Siembra el catálogo con un repositorio por cuenta.
 pub fn seed_the_catalog(path: &str, extra: &[&str], trusted: &[&str]) {
+    seed_the_catalog_with(path, extra, trusted, &serde_json::Map::new());
+}
+
+/// Siembra el catálogo y, ademas, un repositorio proxy por cada upstream.
+pub fn seed_the_catalog_with(
+    path: &str,
+    extra: &[&str],
+    trusted: &[&str],
+    proxies: &serde_json::Map<String, serde_json::Value>,
+) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1640,15 +1676,23 @@ pub fn seed_the_catalog(path: &str, extra: &[&str], trusted: &[&str]) {
             (SECOND_ACCOUNT, SECOND_REPOSITORY),
         ]
         .into_iter()
-        .chain(extra.iter().map(|key| (FIRST_ACCOUNT, *key)));
+        .chain(extra.iter().map(|key| (FIRST_ACCOUNT, *key)))
+        .chain(proxies.keys().map(|key| (FIRST_ACCOUNT, key.as_str())));
         for (account, key) in seeded {
             let mut config =
                 hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
-            config.config_settings = if account == FIRST_ACCOUNT && trusted.contains(&key) {
-                serde_json::json!({ "trust": { "serve": "trusted" } })
-            } else {
-                serde_json::json!({})
+            let mut settings = serde_json::Map::new();
+            if account == FIRST_ACCOUNT && trusted.contains(&key) {
+                settings.insert("trust".into(), serde_json::json!({ "serve": "trusted" }));
+            }
+            let mode = match proxies.get(key) {
+                Some(upstream) if account == FIRST_ACCOUNT => {
+                    settings.insert("proxy".into(), serde_json::json!({ "upstream": upstream }));
+                    hodei_catalog::RepositoryMode::Proxy
+                }
+                _ => hodei_catalog::RepositoryMode::Hosted,
             };
+            config.config_settings = serde_json::Value::Object(settings);
             store
                 .create_repository(
                     account,
@@ -1663,7 +1707,7 @@ pub fn seed_the_catalog(path: &str, extra: &[&str], trusted: &[&str]) {
                         account: account.to_string(),
                         repo_key: key.to_string(),
                         format: hodei_catalog::RepositoryFormat::Raw,
-                        mode: hodei_catalog::RepositoryMode::Hosted,
+                        mode,
                         config,
                         created_at: chrono::Utc::now(),
                         updated_at: chrono::Utc::now(),
