@@ -1,34 +1,44 @@
-//! La busqueda del catalogo.
+//! The catalog search.
 //!
-//! La busqueda no tiene motor: el indice es el catalogo. Las filas de
-//! `catalog_asset` son lo que se busca, y los indices de la base son lo que
-//! las hace encontrables. Un segundo indice obligaria a sincronizarlo con el
-//! catalogo en cada escritura, y el sincronismo es donde un indice se
-//! convierte en una copia que miente.
+//! The search has no engine: the index is the catalog. The rows of
+//! `catalog_asset` are what is searched, and the indexes of the database
+//! are what make them findable. A second index would have to be
+//! synchronised with the catalog on every write, and synchronisation is
+//! where an index turns into a copy that lies.
 //!
-//! # Lo que se busca
+//! # What is searched
 //!
-//! Un asset, con la forma de su repositorio y el estado de su referencia:
+//! An asset, with the shape of its repository and the state of its
+//! reference:
 //!
-//! - el repositorio y su formato, que es lo que le da sentido al asset;
-//! - la ruta, que es lo que el cliente pide;
-//! - el nombre y la version del paquete, que son sus coordenadas;
-//! - el digest y el tamano, que son el contenido;
-//! - el estado de confianza, que es de la **relacion** entre el
-//!   repositorio y el contenido, no del contenido.
+//! - the repository and its format, which is what gives the asset meaning;
+//! - the path, which is what the client asks for;
+//! - the package name and version, which are its coordinates;
+//! - the digest and the size, which are the content;
+//! - the trust state, which belongs to the **relationship** between the
+//!   repository and the content, not to the content.
 //!
-//! # El orden
+//! # The order
 //!
-//! El orden es `(repositorio, ruta)`. Es un orden **total** dentro de la
-//! cuenta: dos assets distintos no pueden compartir las dos claves, asi que
-//! la pagina no puede repetir ni perder un resultado entre paginas, y el
-//! mismo filtro devuelve la misma pagina en el mismo orden.
+//! The order is `(repository, path)`. It is a **total** order within the
+//! account: two distinct assets cannot share both keys, so a page can
+//! neither repeat nor lose a result between pages, and the same filter
+//! returns the same page in the same order.
 //!
-//! # La cuenta
+//! # The total
 //!
-//! La cuenta no es un filtro que se pueda olvidar: es parte de la
-//! consulta. Una busqueda es de una cuenta, y los resultados de otra no
-//! existen para ella.
+//! The total is the number of matches, and it is counted up to
+//! [`MAX_COUNTED`]. Counting what a large account holds costs what
+//! walking it costs, and a total that takes too long to arrive is not a
+//! total: above the cap the search says there is more and does not say
+//! how much. A total that was not counted is better than a total that was
+//! invented.
+//!
+//! # The account
+//!
+//! The account is not a filter that can be forgotten: it is part of the
+//! query. A search belongs to an account, and the results of another one
+//! do not exist for it.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::ContentDigest;
@@ -38,35 +48,47 @@ use serde::{Deserialize, Serialize};
 use crate::model::{RepositoryFormat, RepositoryMode, TrustState};
 use crate::trust::ServeChannel;
 
-/// Cuantos resultados trae una pagina, como maximo.
+/// How many results a page brings, at most.
 ///
-/// Un limite alto es un limite de memoria y de tiempo de la base, y un
-/// limite bajo hace que la busqueda no sirva para lo que se busca. El
-/// cliente puede pedir menos.
+/// A high limit is a limit of memory and of database time, and a low one
+/// makes the search useless for what is being looked for. The client can
+/// ask for less.
 pub const MAX_LIMIT: usize = 100;
 
-/// Cuantos resultados trae una pagina si el cliente no dice.
+/// How many results a page brings when the client does not say.
 pub const DEFAULT_LIMIT: usize = 20;
 
-/// Cuantos resultados se pueden dejar atras.
+/// How many results can be left behind.
 ///
-/// Un desplazamiento enorme no es una pagina: es una pregunta que no
-/// tiene respuesta util, y el motor tiene que recorrerla entera para
-/// saber que no hay nada.
+/// A huge offset is not a page: it is a question with no useful answer,
+/// and the engine has to walk it entirely to know that there is
+/// nothing.
 pub const MAX_OFFSET: usize = 100_000;
 
-/// El error de una consulta de busqueda.
+/// How many matches are counted, at most.
+///
+/// The total of a search is a number, and a number is counted. Counting
+/// the matches of a large account costs what walking it costs --the
+/// engine materialises every row it counts--, and a total that takes half
+/// a minute to arrive is a total that never arrives.
+///
+/// While it fits in this cap the total is exact. When it does not fit,
+/// the search says that there is more (`more`) and the total is not
+/// counted: better than an invented total or an endless wait.
+pub const MAX_COUNTED: usize = 256;
+
+/// The error of a search query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchError {
-    /// El limite de la pagina no cabe.
+    /// The page size does not fit.
     BadLimit(usize),
-    /// El desplazamiento no cabe.
+    /// The offset does not fit.
     BadOffset(usize),
-    /// Un filtro esta vacio.
+    /// A filter is empty.
     EmptyFilter(&'static str),
-    /// El digest no se puede leer.
+    /// The digest cannot be read.
     BadDigest(String),
-    /// El atributo no se puede leer.
+    /// The attribute cannot be read.
     BadAttribute(String),
 }
 
@@ -90,28 +112,28 @@ impl std::fmt::Display for SearchError {
 
 impl std::error::Error for SearchError {}
 
-/// Un atributo de un repositorio.
+/// An attribute of a repository.
 ///
-/// Son los que el catalogo guarda hoy: el formato, el modo y el canal por
-/// el que se sirve. No hay atributos por asset, y esta enumeracion es
-/// cerrada a proposito: un atributo que no existe no se puede buscar, y un
-/// filtro que no dice nada no puede devolver lo que el cliente pretendia.
+/// These are the ones the catalog holds today: the format, the mode and
+/// the channel it is served on. There are no per-asset attributes, and
+/// this enumeration is closed on purpose: an attribute that does not
+/// exist cannot be searched, and a filter that says nothing cannot return
+/// what the client meant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepositoryAttribute {
-    /// El formato del contenido que guarda.
+    /// The format of the content it holds.
     Format(RepositoryFormat),
-    /// Como se comporta respecto del exterior.
+    /// How it behaves towards the outside.
     Mode(RepositoryMode),
-    /// El canal por el que se sirve su contenido.
+    /// The channel its content is served on.
     Channel(ServeChannel),
 }
 
 impl RepositoryAttribute {
-    /// Lee un atributo de su texto: `nombre=valor`.
+    /// Reads an attribute from its text: `name=value`.
     ///
-    /// El texto es el que escribe el cliente en la consulta, y el
-    /// atributo que no se conoce no es un atributo: es una consulta que
-    /// no dice nada.
+    /// The text is what the client writes in the query, and an unknown
+    /// attribute is not an attribute: it is a query that says nothing.
     pub fn parse(text: &str) -> Result<Self, SearchError> {
         let (name, value) = text
             .split_once('=')
@@ -134,7 +156,7 @@ impl RepositoryAttribute {
         }
     }
 
-    /// El nombre del atributo, tal y como lo escribe el cliente.
+    /// The name of the attribute, as the client writes it.
     pub fn name(&self) -> &'static str {
         match self {
             Self::Format(_) => "format",
@@ -143,7 +165,7 @@ impl RepositoryAttribute {
         }
     }
 
-    /// El valor del atributo, tal y como lo escribe el cliente.
+    /// The value of the attribute, as the client writes it.
     pub fn value(&self) -> &'static str {
         match self {
             Self::Format(format) => format.as_str(),
@@ -153,31 +175,31 @@ impl RepositoryAttribute {
     }
 }
 
-/// La consulta de una busqueda.
+/// The query of a search.
 ///
-/// Los filtros son todos opcionales y se combinan con "y": un asset sale
-/// cuando cumple todos los que estan puestos. Un filtro vacio es un
-/// error y no un filtro que no acota nada: un `repository=` vacio no es
-/// "todos los repositorios", es una consulta que no dice nada.
+/// Every filter is optional and they combine with "and": an asset comes
+/// out when it meets all the ones that are set. An empty filter is an
+/// error and not a filter that narrows nothing: an empty `repository=` is
+/// not "every repository", it is a query that says nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchQuery {
-    /// El repositorio, por su clave.
+    /// The repository, by its key.
     pub repository: Option<String>,
-    /// El nombre del paquete.
+    /// The package name.
     pub package_name: Option<String>,
-    /// La version del paquete.
+    /// The package version.
     pub package_version: Option<String>,
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: Option<ContentDigest>,
-    /// El nombre de una etiqueta.
+    /// The name of a tag.
     pub tag: Option<String>,
-    /// Un atributo del repositorio.
+    /// An attribute of the repository.
     pub attribute: Option<RepositoryAttribute>,
-    /// Un texto que aparece en el nombre del paquete o en la ruta.
+    /// A text that appears in the package name or in the path.
     pub text: Option<String>,
-    /// Cuantos resultados trae la pagina.
+    /// How many results the page brings.
     pub limit: usize,
-    /// Cuantos resultados se dejan atras.
+    /// How many results are left behind.
     pub offset: usize,
 }
 
@@ -198,41 +220,40 @@ impl Default for SearchQuery {
 }
 
 impl SearchQuery {
-    /// Una consulta sin filtros, con la pagina por defecto.
+    /// A query without filters, with the default page.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// La consulta, con el filtro que se le pone.
+    /// The query, with the filter that is put on it.
     pub fn with_repository(mut self, repository: impl Into<String>) -> Self {
         self.repository = Some(repository.into());
         self
     }
 
-    /// La consulta, con el filtro que se le pone.
+    /// The query, with the filter that is put on it.
     pub fn with_package_name(mut self, name: impl Into<String>) -> Self {
         self.package_name = Some(name.into());
         self
     }
 
-    /// La consulta, con el filtro que se le pone.
+    /// The query, with the filter that is put on it.
     pub fn with_package_version(mut self, version: impl Into<String>) -> Self {
         self.package_version = Some(version.into());
         self
     }
 
-    /// La consulta, con el filtro que se le pone.
+    /// The query, with the filter that is put on it.
     pub fn with_digest(mut self, digest: ContentDigest) -> Self {
         self.digest = Some(digest);
         self
     }
 
-    /// La consulta, con el filtro de digest que escribe el cliente.
+    /// The query, with the digest filter the client writes.
     ///
-    /// El texto es `algoritmo:valor`, con el valor en hexadecimal. Un
-    /// digest mal formado no es un filtro: es una consulta que no dice
-    /// nada, y un filtro que no acota nada devolveria el catalogo
-    /// entero.
+    /// The text is `algorithm:value`, with the value in hexadecimal. A
+    /// malformed digest is not a filter: it is a query that says nothing,
+    /// and a filter that narrows nothing would return the whole catalog.
     pub fn with_digest_text(mut self, text: &str) -> Result<Self, SearchError> {
         let (algorithm, value) = text
             .split_once(':')
@@ -253,41 +274,41 @@ impl SearchQuery {
         Ok(self)
     }
 
-    /// La consulta, con el filtro que se le pone.
+    /// The query, with the filter that is put on it.
     pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
         self.tag = Some(tag.into());
         self
     }
 
-    /// La consulta, con el filtro que se le pone.
+    /// The query, with the filter that is put on it.
     pub fn with_attribute(mut self, attribute: RepositoryAttribute) -> Self {
         self.attribute = Some(attribute);
         self
     }
 
-    /// La consulta, con el filtro que se le pone.
+    /// The query, with the filter that is put on it.
     pub fn with_text(mut self, text: impl Into<String>) -> Self {
         self.text = Some(text.into());
         self
     }
 
-    /// La consulta, con el tamano de la pagina.
+    /// The query, with the size of the page.
     pub fn with_limit(mut self, limit: usize) -> Self {
         self.limit = limit;
         self
     }
 
-    /// La consulta, con lo que se deja atras.
+    /// The query, with what is left behind.
     pub fn with_offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
     }
 
-    /// Si la consulta dice algo que buscar.
+    /// Whether the query says something to look for.
     ///
-    /// Una consulta sin filtros es un recorrido de todo lo que hay, y eso
-    /// no es una busqueda: es un volcado. Se puede pedir --el navegador de
-    /// paquetes empieza por ahi--, pero quien lo pide lo sabe.
+    /// A query without filters is a walk over everything there is, and
+    /// that is not a search: it is a dump. It can be asked for --the
+    /// package browser starts there--, but whoever asks for it knows it.
     pub fn has_a_filter(&self) -> bool {
         self.repository.is_some()
             || self.package_name.is_some()
@@ -298,10 +319,10 @@ impl SearchQuery {
             || self.text.is_some()
     }
 
-    /// Comprueba que la consulta se puede hacer.
+    /// Checks that the query can be made.
     ///
-    /// Un filtro vacio es un error, el limite tiene que caber en una
-    /// pagina, y el texto tiene que decir algo.
+    /// An empty filter is an error, the limit has to fit in a page, and
+    /// the text has to say something.
     pub fn validate(&self) -> Result<(), SearchError> {
         if self.limit == 0 || self.limit > MAX_LIMIT {
             return Err(SearchError::BadLimit(self.limit));
@@ -326,68 +347,79 @@ impl SearchQuery {
     }
 }
 
-/// Un asset encontrado por una busqueda.
+/// An asset found by a search.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchHit {
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// El formato del repositorio.
+    /// The format of the repository.
     pub format: RepositoryFormat,
-    /// La ruta del asset dentro del repositorio.
+    /// The path of the asset inside the repository.
     pub asset_path: String,
-    /// El nombre del paquete.
+    /// The package name.
     pub package_name: String,
-    /// La version del paquete.
+    /// The package version.
     pub package_version: String,
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: ContentDigest,
-    /// Los bytes que tiene el contenido.
+    /// The bytes the content has.
     pub size_bytes: u64,
-    /// El estado de confianza del contenido en este repositorio.
+    /// The trust state of the content in this repository.
     ///
-    /// Lo decide la **concesion**: lo que tiene una concesion vigente es
-    /// de fiar, y lo que no la tiene esta en cuarentena. No se deduce de
-    /// la ausencia de hallazgos: un contenido del que nadie ha escrito
-    /// nada no es de fiar, es desconocido.
+    /// The **grant** decides it: what has a live grant is trusted, and
+    /// what has none is quarantined. It is not deduced from the absence
+    /// of findings: content nobody ever wrote about is not trusted, it is
+    /// unknown.
     pub trust_state: TrustState,
-    /// Cuando se movio por ultima vez.
+    /// When it moved last.
     pub updated_at: DateTime<Utc>,
 }
 
-/// Una pagina de resultados.
+/// A page of results.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchPage {
-    /// Cuantos resultados hay en total.
-    pub total: usize,
-    /// Cuantos resultados trae la pagina.
+    /// How many results there are in total, when they could be counted.
+    ///
+    /// It is `None` when there are more matches than are counted
+    /// ([`MAX_COUNTED`]): the search says there is more, and does not say
+    /// how much, because a total that was not counted is not a total.
+    pub total: Option<usize>,
+    /// Whether there are more results after the page.
+    ///
+    /// It is what says whether the next page has to be asked for, and it
+    /// does not depend on the total: with the total uncounted, the page
+    /// can be the last one and still have no total.
+    pub more: bool,
+    /// How many results the page brings.
     pub limit: usize,
-    /// Cuantos resultados se dejan atras.
+    /// How many results are left behind.
     pub offset: usize,
-    /// Los resultados de la pagina.
+    /// The results of the page.
     pub results: Vec<SearchHit>,
 }
 
 impl SearchPage {
-    /// Una pagina vacia, con los numeros que se pidieron.
+    /// An empty page, with the numbers that were asked for.
     pub fn empty(query: &SearchQuery) -> Self {
         Self {
-            total: 0,
+            total: Some(0),
+            more: false,
             limit: query.limit,
             offset: query.offset,
             results: Vec::new(),
         }
     }
 
-    /// Si la pagina no trae nada.
+    /// Whether the page brings nothing.
     pub fn is_empty(&self) -> bool {
         self.results.is_empty()
     }
 }
 
-/// El orden de los resultados: repositorio y ruta.
+/// The order of the results: repository and path.
 ///
-/// Es un orden **total** dentro de la cuenta, y por eso la pagina no
-/// repite ni pierde resultados entre paginas.
+/// It is a **total** order within the account, and that is why a page
+/// neither repeats nor loses results between pages.
 pub fn in_order(hits: &mut [SearchHit]) {
     hits.sort_by(|left, right| {
         left.repository
@@ -484,7 +516,8 @@ mod tests {
     fn an_empty_page_says_the_numbers_that_were_asked_for() {
         let query = SearchQuery::new().with_limit(7).with_offset(3);
         let page = SearchPage::empty(&query);
-        assert_eq!(page.total, 0);
+        assert_eq!(page.total, Some(0));
+        assert!(!page.more);
         assert_eq!(page.limit, 7);
         assert_eq!(page.offset, 3);
         assert!(page.is_empty());

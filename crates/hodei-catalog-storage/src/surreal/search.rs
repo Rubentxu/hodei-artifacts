@@ -1,70 +1,105 @@
-//! La busqueda del catalogo sobre la base.
+//! The catalog search over the database.
 //!
-//! No hay motor de busqueda: las filas de `catalog_asset` son lo que se
-//! busca, y los indices de la base son lo que las hace encontrables. Un
-//! indice aparte obligaria a copiar el catalogo en otra parte, y una copia
-//! es donde un indice empieza a mentir.
+//! The search has no engine: the rows of `catalog_asset` are what is
+//! searched, and the indexes of the database are what make them findable.
+//! A separate index would force the catalog to be copied somewhere else,
+//! and a copy is where an index starts to lie.
 //!
-//! # Las tres consultas
+//! # One repository per query
 //!
-//! Una busqueda son tres preguntas a la base:
+//! The search asks **per repository**, not per account:
 //!
-//! 1. **Cuantos hay.** El total, con la misma condicion que la pagina:
-//!    un total que no cuenta lo mismo que la pagina es un total que
-//!    miente.
-//! 2. **Cuales son.** La pagina, con el orden `(repositorio, ruta)`, que
-//!    es un orden total dentro de la cuenta.
-//! 3. **Que de esos son de fiar.** El estado de confianza no se lee de
-//!    `catalog_reference`: esa fila guarda lo que dijo la *admision* al
-//!    publicar, y no vuelve a cambiar. Lo que decide es la **concesion**,
-//!    y vive en `trust_grant`. Se pregunta aparte por los assets de la
-//!    pagina, porque no se puede leer en la misma consulta sin una union
-//!    que el motor no tiene.
+//! ```text
+//! SELECT ... FROM catalog_asset
+//! WHERE account = $account AND repository = $repository AND ...
+//! LIMIT <window>
+//! ```
 //!
-//! Leerlo del libro y no de la referencia es lo que hace que una
-//! promocion o una revocacion se vean en la peticion siguiente, sin
-//! reescribir nada: no hay un indice que actualizar porque no hay un
-//! segundo estado.
+//! The account and the repository are the first two columns of the
+//! `(account, repository, asset_path)` index, so the index serves the
+//! query. The repositories the principal may read are asked **one by one**
+//! and their results are joined in the adapter. It is not a whim: it is
+//! what avoids the two traps of the engine.
 //!
-//! # El `IN` sobre arrays no se usa
+//! - An `IN` over an array in the outer filter sometimes returns zero
+//!   rows: it was measured with 100 interleaved rounds over the same
+//!   database, and 28 of them came back empty.
+//! - A subquery in the outer filter (`IN (SELECT VALUE ...)`) is resolved
+//!   by the engine **per row**: the plan says `Fallback: Unsupported
+//!   subquery`, and counting 2000 rows took 2.9 s.
 //!
-//! En SurrealDB 2.7 con RocksDB, un filtro `campo IN <array>` en la
-//! consulta exterior devuelve **cero filas de forma intermitente**: se
-//! midio con 100 rondas entrelazadas sobre la misma base, y 28 de ellas
-//! vinieron vacias. La misma consulta con un `OR` de igualdades, o con un
-//! `IN` sobre una subconsulta, no fallo ninguna vez.
+//! With one repository per query there is neither, and the attribute
+//! filter needs no subquery either: the format, the mode and the channel
+//! are already in the repository descriptor, and are filtered here.
 //!
-//! Por eso los repositorios permitidos entran por una subconsulta y los
-//! canales de la pagina por un `OR` de pares (repositorio, ruta). La
-//! segunda forma tiene una ventaja mas: cada termino es una busqueda
-//! exacta en el indice `(account, repository, asset_path)`.
+//! # The order
 //!
-//! Y el `LIMIT` y el `START` van como numeros, no como parametros: el
-//! motor no sabe evaluar un `LIMIT` atado (`Found NONE but the LIMIT
-//! clause must evaluate to a positive integer`). Los dos numeros salen de
-//! un `usize` validado, asi que no hay texto del cliente pegado en la
-//! consulta.
+//! The query carries **no `ORDER BY`**, and that is why the engine does
+//! not sort: sorting would have to bring **all** the matching rows before
+//! returning the first twenty (the plan says `MemoryOrderedLimit`, and it
+//! was measured: 500 rows of an index cost 170 ms in sorting alone, and
+//! in an account of a hundred thousand assets that would be seconds).
+//!
+//! Without `ORDER BY`, the rows come out in the order of the index, and
+//! the page is joined and sorted in the adapter by `(repository, path)`.
+//! The window that is asked for brings one row more, to know whether
+//! there is more.
+//!
+//! # The total
+//!
+//! The total costs too, and for a reason that is not visible in the code:
+//! the engine **materialises every row it counts** (0.3 ms per row as
+//! measured), while counting through the index without touching the rows
+//! costs 0.004 ms per row. The difference is the rows that have to be
+//! counted, not the rows that have to be seen.
+//!
+//! That is why the total is counted up to [`MAX_COUNTED`]: while it fits
+//! it is exact, and when it does not fit the search says there is more and
+//! does not say how much. A repository that was emptied by the window
+//! already has its total, and does not have to be counted again.
+//!
+//! # The trust
+//!
+//! The trust state is not read from `catalog_reference`: that row holds
+//! what the *admission* said at publish time, and never changes again.
+//! What decides it is the **grant**, and it lives in `trust_grant`. It is
+//! asked for the assets of the page, because it cannot be read in the
+//! same query without a union the engine does not have.
+//!
+//! Reading it from the ledger and not from the reference is what makes a
+//! promotion or a revocation show up in the next request, without
+//! rewriting anything: there is no index to update because there is no
+//! second state.
+//!
+//! # The `LIMIT` and the `START` go as numbers
+//!
+//! The engine cannot evaluate a bound `LIMIT` (`Found NONE but the LIMIT
+//! clause must evaluate to a positive integer`). The numbers come from a
+//! validated `usize`, so no text from the client is pasted into the
+//! query.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use async_trait::async_trait;
-use hodei_catalog::search::{RepositoryAttribute, SearchHit, SearchPage, SearchQuery};
+use hodei_catalog::search::{
+    MAX_COUNTED, RepositoryAttribute, SearchHit, SearchPage, SearchQuery,
+};
 use hodei_catalog::{
-    CatalogError, CatalogSearch, RepositoryDescriptor, RepositoryFormat, TrustState,
+    CatalogError, CatalogSearch, RepositoryDescriptor, RepositoryFormat, ServeChannel, TrustState,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::{AssetRow, RepositoryRow, SurrealCatalogStore, algorithm_of};
 
-/// Cuantos repositorios pueden compartir una etiqueta.
+/// How many repositories may share a tag.
 ///
-/// Una etiqueta vive en un repositorio, y el mismo nombre puede estar en
-/// muchos. El limite es una frontera: una busqueda con mil repositorios
-/// con la misma etiqueta no es una busqueda.
+/// A tag lives in a repository, and the same name may be in many. The
+/// limit is a frontier: a search with a thousand repositories carrying
+/// the same tag is not a search.
 const MAX_TAG_TARGETS: usize = 64;
 
-/// La fila de una concesion.
+/// The row of a grant.
 #[derive(Debug, Clone, Deserialize)]
 struct GrantRow {
     repository: String,
@@ -72,18 +107,12 @@ struct GrantRow {
     digest: String,
 }
 
-/// Las coordenadas a las que apunta una etiqueta.
+/// The coordinates a tag points at.
 #[derive(Debug, Clone, Deserialize)]
 struct TagRow {
     repository: String,
     package_name: String,
     package_version: String,
-}
-
-/// El total de una consulta.
-#[derive(Debug, Clone, Deserialize)]
-struct CountRow {
-    total: i64,
 }
 
 #[async_trait]
@@ -120,81 +149,103 @@ impl CatalogSearch for SurrealCatalogStore {
             .validate()
             .map_err(|error| CatalogError::invalid(error.to_string()))?;
 
-        // Un principal que no puede leer ningun repositorio no ve nada: la
-        // busqueda no es un camino mas alla del permiso.
+        // A principal that cannot read a single repository sees nothing:
+        // the search is not a way around the permission.
         if repositories.is_empty() {
             return Ok(SearchPage::empty(query));
         }
-        let permitted: Vec<String> = repositories
-            .iter()
-            .map(|repository| repository.repo_key.clone())
-            .collect();
-        let formats: HashMap<String, RepositoryFormat> = repositories
-            .iter()
-            .map(|repository| (repository.repo_key.clone(), repository.format))
-            .collect();
 
-        // La etiqueta se resuelve antes: lo que acota la busqueda son sus
-        // coordenadas, no su nombre.
+        // The repositories that take part, in the order they are walked.
+        // The attribute filter is applied here, with the descriptor: the
+        // engine does not have to resolve it.
+        let mut candidates: Vec<&RepositoryDescriptor> = repositories.iter().collect();
+        candidates.sort_by(|left, right| left.repo_key.cmp(&right.repo_key));
+        if let Some(named) = &query.repository {
+            candidates.retain(|repository| &repository.repo_key == named);
+        }
+        if let Some(attribute) = &query.attribute {
+            candidates.retain(|repository| the_attribute_matches(attribute, repository));
+        }
+        if candidates.is_empty() {
+            return Ok(SearchPage::empty(query));
+        }
+
+        // The tag is resolved first: what narrows the search are its
+        // coordinates, not its name.
         let targets = match &query.tag {
             Some(tag) => self.the_tag_targets(principal_account, tag).await?,
             None => Vec::new(),
         };
         if query.tag.is_some() && targets.is_empty() {
-            // Una etiqueta que no existe no es una busqueda sin
-            // resultados: es una busqueda de una etiqueta que no esta.
+            // A tag that does not exist is not a search without results:
+            // it is a search for a tag that is not there.
             return Ok(SearchPage::empty(query));
         }
 
-        let (conditions, bindings) = the_conditions(principal_account, &permitted, query, &targets);
-        let where_clause = conditions.join(" AND ");
+        // The window that is asked for, and one row more to know whether
+        // there is more.
+        let window = query.offset + query.limit + 1;
 
-        // El total. La misma condicion que la pagina: un total que no
-        // cuenta lo mismo que la pagina es un total que miente.
-        let count_sql =
-            format!("SELECT count() AS total FROM catalog_asset WHERE {where_clause} GROUP ALL");
-        let mut response = self
-            .db
-            .query(&count_sql)
-            .bind(bindings.clone())
-            .await
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        let totals: Vec<CountRow> = response
-            .take(0)
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        let total = totals.first().map(|row| row.total as usize).unwrap_or(0);
+        let mut collected: Vec<AssetRow> = Vec::new();
+        let mut counted = 0usize;
+        let mut exact = true;
 
-        // La pagina. El limite y el arranque van como numeros: el motor no
-        // sabe evaluar un `LIMIT` atado, y los dos son un `usize` que no
-        // puede traer texto del cliente.
-        let page_sql = format!(
-            "SELECT account, repository, asset_path, package_name, package_version, \
-             digest_algorithm, digest, size_bytes, subject, updated_at FROM catalog_asset \
-             WHERE {where_clause} ORDER BY repository, asset_path LIMIT {} START {}",
-            query.limit, query.offset
-        );
-        let mut response = self
-            .db
-            .query(&page_sql)
-            .bind(bindings)
-            .await
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        let rows: Vec<AssetRow> = response
-            .take(0)
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        for repository in &candidates {
+            // The tag, in this repository. A tag that does not point here
+            // narrows nothing here: that repository does not take part.
+            let target = targets
+                .iter()
+                .find(|target| target.repository == repository.repo_key);
+            if query.tag.is_some() && target.is_none() {
+                continue;
+            }
 
-        // Las concesiones de los assets de la pagina.
+            let (conditions, bindings) =
+                the_conditions(principal_account, repository, query, target);
+            let rows = self.the_window(&conditions, &bindings, window).await?;
+
+            if exact {
+                if rows.len() < window {
+                    // The repository was emptied: its total is the one of
+                    // the window, and it does not have to be counted
+                    // again.
+                    counted += rows.len();
+                } else {
+                    // The repository has more than was asked for: it has
+                    // to be counted, and the count has a cap.
+                    let remaining = MAX_COUNTED.saturating_sub(counted);
+                    if remaining == 0 {
+                        exact = false;
+                    } else {
+                        let found = self.the_count(&conditions, &bindings, remaining).await?;
+                        counted += found;
+                        if found >= remaining {
+                            exact = false;
+                        }
+                    }
+                }
+            }
+
+            collected.extend(rows);
+        }
+
+        // The page: the global window, minus what is left behind. The cut
+        // is on the set, not on the order: the page is sorted afterwards,
+        // and so nothing is repeated and nothing is lost.
+        let start = query.offset.min(collected.len());
+        let end = (query.offset + query.limit).min(collected.len());
+        let more = collected.len() > query.offset + query.limit;
+        let mut rows = collected[start..end].to_vec();
+
+        // The grants of the assets of the page.
         let granted = self.the_grants(principal_account, &rows).await?;
 
         let mut results = Vec::with_capacity(rows.len());
-        for row in rows {
+        for row in rows.drain(..) {
             let asset = row.into_asset()?;
-            let format = formats
-                .get(&asset.repository)
-                .copied()
-                .unwrap_or(RepositoryFormat::Raw);
-            // La confianza sale de la concesion, no de la ausencia de
-            // findings: lo que no tiene concesion esta en cuarentena.
+            let format = repository_format(&candidates, &asset.repository);
+            // The trust comes from the grant, not from the absence of
+            // findings: what has no grant is quarantined.
             let trust_state = if granted.contains(&(
                 asset.repository.clone(),
                 algorithm_of(&asset.digest),
@@ -216,9 +267,13 @@ impl CatalogSearch for SurrealCatalogStore {
                 updated_at: asset.updated_at,
             });
         }
+        // The order of the page is the one of the catalog: (repository,
+        // path).
+        hodei_catalog::search::in_order(&mut results);
 
         Ok(SearchPage {
-            total,
+            total: if exact { Some(counted) } else { None },
+            more,
             limit: query.limit,
             offset: query.offset,
             results,
@@ -227,7 +282,63 @@ impl CatalogSearch for SurrealCatalogStore {
 }
 
 impl SurrealCatalogStore {
-    /// Las coordenadas a las que apunta una etiqueta de la cuenta.
+    /// The window of rows of a repository.
+    ///
+    /// The limit goes as a number: the engine cannot evaluate a bound
+    /// `LIMIT`, and the number comes from a `usize` that cannot carry
+    /// text from the client.
+    async fn the_window(
+        &self,
+        conditions: &[String],
+        bindings: &Map<String, Value>,
+        window: usize,
+    ) -> Result<Vec<AssetRow>, CatalogError> {
+        let sql = format!(
+            "SELECT account, repository, asset_path, package_name, package_version, \
+             digest_algorithm, digest, size_bytes, subject, updated_at FROM catalog_asset \
+             WHERE {} LIMIT {window}",
+            conditions.join(" AND ")
+        );
+        let mut response = self
+            .db
+            .query(&sql)
+            .bind(bindings.clone())
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let rows: Vec<AssetRow> = response
+            .take(0)
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        Ok(rows)
+    }
+
+    /// How many rows match, up to the cap.
+    ///
+    /// They are counted in the adapter and not with `count()` because the
+    /// engine materialises every row it counts, and here all that is
+    /// needed is how many there are: the cap bounds them.
+    async fn the_count(
+        &self,
+        conditions: &[String],
+        bindings: &Map<String, Value>,
+        cap: usize,
+    ) -> Result<usize, CatalogError> {
+        let sql = format!(
+            "SELECT asset_path FROM catalog_asset WHERE {} LIMIT {cap}",
+            conditions.join(" AND ")
+        );
+        let mut response = self
+            .db
+            .query(&sql)
+            .bind(bindings.clone())
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let rows: Vec<Value> = response
+            .take(0)
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        Ok(rows.len())
+    }
+
+    /// The coordinates a tag of the account points at.
     async fn the_tag_targets(
         &self,
         principal_account: &str,
@@ -254,17 +365,17 @@ impl SurrealCatalogStore {
         Ok(rows)
     }
 
-    /// Las concesiones activas de los assets de la pagina.
+    /// The live grants of the assets of the page.
     ///
-    /// La pregunta es por trios (repositorio, algoritmo, digest), y cada
-    /// trio es una busqueda exacta en el indice
-    /// `(account, repository, digest_algorithm, digest)`. La forma con un
-    /// `IN` sobre un array seria mas corta, pero el motor devuelve a
-    /// veces cero filas con esa forma, y una concesion que no se lee es
-    /// una confianza que no se sabe.
+    /// The question is about triples (repository, algorithm, digest), and
+    /// each triple is an exact lookup in the
+    /// `(account, repository, digest_algorithm, digest)` index. The form
+    /// with an `IN` over an array would be shorter, but the engine
+    /// sometimes returns zero rows with that form, and a grant that is
+    /// not read is a trust that is unknown.
     ///
-    /// Solo se cuentan las concesiones **vigentes**: una revocada esta
-    /// revocada, y el estado que se lee es el de ahora.
+    /// Only **live** grants are counted: a revoked one is revoked, and
+    /// the state that is read is the current one.
     async fn the_grants(
         &self,
         principal_account: &str,
@@ -276,10 +387,11 @@ impl SurrealCatalogStore {
         let mut conditions = vec!["account = $account".to_string()];
         let mut bindings = Map::new();
         bindings.insert("account".to_string(), json!(principal_account));
-        // Los trios se unen con "o": un asset esta concedido si **alguno**
-        // de los digests de la pagina lo esta. Con "y" la pagina entera
-        // se quedaria sin concesiones en cuanto un asset sin conceder
-        // llegara a la pagina, y el resultado seria que nada es de fiar.
+        // The triples are joined with "or": an asset is granted if
+        // **any** of the digests of the page is. With "and" the whole page
+        // would be left without grants as soon as an ungranted asset
+        // reached the page, and the result would be that nothing is
+        // trusted.
         let mut triples = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {
             triples.push(format!(
@@ -315,34 +427,36 @@ impl SurrealCatalogStore {
     }
 }
 
-/// La condicion de la busqueda, con lo que lleva atado.
+/// The format of the repository an asset belongs to.
+fn repository_format(
+    candidates: &[&RepositoryDescriptor],
+    repository: &str,
+) -> RepositoryFormat {
+    candidates
+        .iter()
+        .find(|candidate| candidate.repo_key == repository)
+        .map(|candidate| candidate.format)
+        .unwrap_or(RepositoryFormat::Raw)
+}
+
+/// The condition of the search, with what it binds.
 ///
-/// Los filtros van atados a parametros: el texto que el cliente escribe
-/// nunca se pega en la consulta.
+/// The filters are bound to parameters: the text the client writes is
+/// never pasted into the query.
 fn the_conditions(
     principal_account: &str,
-    permitted: &[String],
+    repository: &RepositoryDescriptor,
     query: &SearchQuery,
-    targets: &[TagRow],
+    tag_target: Option<&TagRow>,
 ) -> (Vec<String>, Map<String, Value>) {
     let mut conditions = vec![
         "account = $account".to_string(),
-        // Los repositorios permitidos entran por una subconsulta: un `IN`
-        // sobre un array en el filtro exterior devuelve a veces cero
-        // filas, y una busqueda que a veces no ve nada no es una
-        // busqueda.
-        "repository IN (SELECT VALUE repo_key FROM catalog_repository \
-         WHERE account = $account AND repo_key IN $repositories)"
-            .to_string(),
+        "repository = $repository".to_string(),
     ];
     let mut bindings = Map::new();
     bindings.insert("account".to_string(), json!(principal_account));
-    bindings.insert("repositories".to_string(), json!(permitted));
+    bindings.insert("repository".to_string(), json!(repository.repo_key));
 
-    if let Some(repository) = &query.repository {
-        conditions.push("repository = $repository".to_string());
-        bindings.insert("repository".to_string(), json!(repository));
-    }
     if let Some(package_name) = &query.package_name {
         conditions.push("package_name = $package_name".to_string());
         bindings.insert("package_name".to_string(), json!(package_name));
@@ -357,35 +471,22 @@ fn the_conditions(
         bindings.insert("digest_algorithm".to_string(), json!(algorithm_of(digest)));
         bindings.insert("digest".to_string(), json!(digest.value));
     }
-    if !targets.is_empty() {
-        // La etiqueta acota por coordenadas: un asset que no es el de la
-        // etiqueta no sale, aunque este en el mismo repositorio.
-        let mut groups = Vec::new();
-        for (index, target) in targets.iter().enumerate() {
-            groups.push(format!(
-                "(repository = $tag_repository_{index} AND package_name = $tag_package_{index} \
-                 AND package_version = $tag_version_{index})"
-            ));
-            bindings.insert(format!("tag_repository_{index}"), json!(target.repository));
-            bindings.insert(format!("tag_package_{index}"), json!(target.package_name));
-            bindings.insert(
-                format!("tag_version_{index}"),
-                json!(target.package_version),
-            );
-        }
-        conditions.push(format!("({})", groups.join(" OR ")));
-    }
-    if let Some(attribute) = &query.attribute {
-        let (condition, binding) = the_attribute_condition(attribute);
-        conditions.push(condition);
-        if let Some(binding) = binding {
-            bindings.insert("attribute".to_string(), binding);
-        }
+    if let Some(target) = tag_target {
+        // The tag narrows by coordinates: an asset that is not the one of
+        // the tag does not come out, even if it is in the same
+        // repository.
+        conditions.push("package_name = $tag_package_name".to_string());
+        conditions.push("package_version = $tag_package_version".to_string());
+        bindings.insert("tag_package_name".to_string(), json!(target.package_name));
+        bindings.insert(
+            "tag_package_version".to_string(),
+            json!(target.package_version),
+        );
     }
     if let Some(text) = &query.text {
-        // El texto se busca en el nombre del paquete y en la ruta, sin
-        // distinguir mayusculas. No hay indice de texto completo: esto es
-        // un recorrido de los assets de la cuenta.
+        // The text is looked for in the package name and in the path,
+        // without case distinction. There is no full text index: this is
+        // a walk over the assets of the account.
         conditions.push(
             "(string::contains(string::lowercase(package_name), string::lowercase($text)) \
              OR string::contains(string::lowercase(asset_path), string::lowercase($text)))"
@@ -393,44 +494,44 @@ fn the_conditions(
         );
         bindings.insert("text".to_string(), json!(text));
     }
+    if !another_filter_owns_the_order(query, tag_target) {
+        // The empty path is in no asset, so the condition does not change
+        // what is returned: it tells the engine to use the path index,
+        // and the walk comes out in the order of the path. When there is
+        // a filter with an index of its own, that one rules.
+        conditions.push("asset_path > ''".to_string());
+    }
     (conditions, bindings)
 }
 
-/// La condicion de un atributo de repositorio.
+/// Whether a filter with an index of its own rules the order.
 ///
-/// Los atributos son los que el catalogo guarda: el formato, el modo y el
-/// canal. El canal se lee como lo lee el resto del servicio: un
-/// repositorio sin ajustes de confianza es abierto, y uno que los tiene
-/// pero no se entienden es de confianza.
-fn the_attribute_condition(attribute: &RepositoryAttribute) -> (String, Option<Value>) {
+/// The package filter, the version filter, the digest and the tag have an
+/// index that serves them, and the engine uses it: the order of their
+/// rows is the one of that index, which is what the client asked for.
+/// Without them, the walk comes out in the order of the path.
+fn another_filter_owns_the_order(query: &SearchQuery, tag_target: Option<&TagRow>) -> bool {
+    query.package_name.is_some()
+        || query.package_version.is_some()
+        || query.digest.is_some()
+        || tag_target.is_some()
+}
+
+/// Whether a repository attribute is the one being looked for.
+///
+/// It is read from the descriptor, which is where the catalog holds the
+/// format, the mode and the channel. There is no need to ask the engine:
+/// the attribute filter is a question about the repository, and the
+/// repository is already at hand.
+fn the_attribute_matches(
+    attribute: &RepositoryAttribute,
+    repository: &RepositoryDescriptor,
+) -> bool {
     match attribute {
-        RepositoryAttribute::Format(_) => (
-            "repository IN (SELECT VALUE repo_key FROM catalog_repository \
-             WHERE account = $account AND repo_format = $attribute)"
-                .to_string(),
-            Some(json!(attribute.value())),
-        ),
-        RepositoryAttribute::Mode(_) => (
-            "repository IN (SELECT VALUE repo_key FROM catalog_repository \
-             WHERE account = $account AND repo_mode = $attribute)"
-                .to_string(),
-            Some(json!(attribute.value())),
-        ),
-        RepositoryAttribute::Channel(channel) => match channel {
-            hodei_catalog::ServeChannel::Open => (
-                "repository IN (SELECT VALUE repo_key FROM catalog_repository \
-                 WHERE account = $account AND (config_settings['trust'] = NONE \
-                 OR config_settings['trust'].serve = 'open'))"
-                    .to_string(),
-                None,
-            ),
-            hodei_catalog::ServeChannel::TrustedOnly => (
-                "repository IN (SELECT VALUE repo_key FROM catalog_repository \
-                 WHERE account = $account AND config_settings['trust'] != NONE \
-                 AND config_settings['trust'].serve != 'open')"
-                    .to_string(),
-                None,
-            ),
-        },
+        RepositoryAttribute::Format(format) => repository.format == *format,
+        RepositoryAttribute::Mode(mode) => repository.mode == *mode,
+        RepositoryAttribute::Channel(channel) => {
+            ServeChannel::of(&repository.config) == *channel
+        }
     }
 }

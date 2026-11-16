@@ -1,14 +1,14 @@
-//! La busqueda y la vista de detalle (HSP-113), contra el router de verdad.
+//! The search and the detail view, against the real router.
 //!
-//! Lo que se mide aqui no es el SQL: eso esta en el contrato del puerto,
-//! contra la base de verdad. Lo que se mide es la **superficie**: que la
-//! cuenta salga del principal verificado, que Cedar acote lo que se ve, y
-//! que la vista de detalle no confunda "nadie ha dicho que sea bueno" con
-//! "es bueno".
+//! What is measured here is not the SQL: that is in the contract of the
+//! port, against the real database. What is measured is the **surface**:
+//! that the account comes from the verified principal, that Cedar narrows
+//! what is seen, and that the detail view does not confuse "nobody said
+//! it is good" with "it is good".
 //!
-//! Las dos cuentas son el caso duro: la cuenta ajena tiene un asset con
-//! el mismo nombre y la misma ruta, y la busqueda de una cuenta no puede
-//! devolver ni el nombre ni el total de la otra.
+//! The two accounts are the hard case: the other account has an asset
+//! with the same name and the same path, and the search of one account
+//! cannot return neither the name nor the total of the other.
 
 use std::sync::Arc;
 
@@ -31,25 +31,26 @@ use hodei_catalog::{
 };
 use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_evidence::ContentDigest;
+use serde_json::json;
 use surrealdb::Surreal;
 use surrealdb::engine::local::RocksDb;
 use tower::ServiceExt;
 
-/// La primera cuenta.
+/// The first account.
 const ACCOUNT: &str = "acme";
-/// La segunda cuenta.
+/// The second account.
 const OTHER: &str = "other";
-/// El repositorio que la primera cuenta puede leer.
+/// The repository the first account may read.
 const READABLE: &str = "libs";
-/// El repositorio que la primera cuenta **no** puede leer.
+/// The repository the first account **cannot** read.
 const UNREADABLE: &str = "private";
-/// El repositorio de la segunda cuenta.
+/// The repository of the second account.
 const THEIRS: &str = "secrets";
 
-/// El verificador de credenciales de la prueba.
+/// The credential verifier of the test.
 ///
-/// El token es el nombre de la persona: no hay un secreto aqui, y la
-/// cuenta sale del token y no de una cabecera.
+/// The token is the name of the person: there is no secret here, and the
+/// account comes from the token and not from a header.
 struct TestAuthenticator;
 
 #[async_trait]
@@ -74,11 +75,11 @@ impl PrincipalAuthenticator for TestAuthenticator {
     }
 }
 
-/// La politica de la prueba.
+/// The policy of the test.
 ///
-/// Alice puede leer dos repositorios de su cuenta y el tercero no: lo que
-/// Cedar no concede, la busqueda no lo nombra ni lo cuenta. Carol solo
-/// puede leer el suyo.
+/// Alice may read two repositories of her account and not the third:
+/// what Cedar does not grant, the search neither names nor counts. Carol
+/// may only read hers.
 fn cedar() -> Arc<dyn AuthorizerPort> {
     let policy = r#"permit(
         principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
@@ -105,7 +106,7 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-/// Un repositorio del catalogo.
+/// A repository of the catalog.
 fn descriptor(account: &str, key: &str, format: RepositoryFormat) -> RepositoryDescriptor {
     RepositoryDescriptor {
         hrn: repository_hrn("hodei", "artifacts", "eu", account, key),
@@ -119,7 +120,7 @@ fn descriptor(account: &str, key: &str, format: RepositoryFormat) -> RepositoryD
     }
 }
 
-/// La aplicacion con un catalogo de verdad detras.
+/// The application with a real catalog behind it.
 async fn app() -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let db = Surreal::new::<RocksDb>(tmp.path().join("db"))
@@ -163,7 +164,7 @@ async fn app() -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
     (build_router(state, &config), store, tmp)
 }
 
-/// Publica un asset y devuelve su digest.
+/// Publishes an asset and returns its digest.
 async fn publish(
     store: &SurrealCatalogStore,
     account: &str,
@@ -199,8 +200,8 @@ async fn publish(
     digest
 }
 
-/// Un catalogo con dos cuentas, un repositorio que alice no puede leer y
-/// un asset con el mismo nombre en las dos.
+/// A catalog with two accounts, a repository that alice cannot read and
+/// an asset with the same name in both.
 async fn a_catalog(store: &SurrealCatalogStore) {
     for (account, key, format) in [
         (ACCOUNT, READABLE, RepositoryFormat::PyPi),
@@ -254,7 +255,7 @@ async fn a_catalog(store: &SurrealCatalogStore) {
         None,
     )
     .await;
-    // La otra cuenta tiene un asset con el mismo nombre y la misma ruta.
+    // The other account has an asset with the same name and the same path.
     publish(
         store,
         OTHER,
@@ -267,7 +268,7 @@ async fn a_catalog(store: &SurrealCatalogStore) {
     .await;
 }
 
-/// Una peticion de busqueda.
+/// A search request.
 fn search_request(token: &str, query: &str) -> Request<Body> {
     Request::builder()
         .method("GET")
@@ -277,7 +278,7 @@ fn search_request(token: &str, query: &str) -> Request<Body> {
         .expect("a request")
 }
 
-/// Una peticion del detalle de un paquete.
+/// A request for the detail of a package.
 fn package_request(token: &str, repository: &str, path: &str) -> Request<Body> {
     Request::builder()
         .method("GET")
@@ -287,7 +288,7 @@ fn package_request(token: &str, repository: &str, path: &str) -> Request<Body> {
         .expect("a request")
 }
 
-/// El cuerpo de la respuesta, como JSON.
+/// The body of the response, as JSON.
 async fn the_body(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(
         &axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
@@ -297,9 +298,9 @@ async fn the_body(response: axum::response::Response) -> serde_json::Value {
     .expect("the body is JSON")
 }
 
-/// La busqueda de una cuenta encuentra lo suyo y no lo ajeno.
+/// The search of an account finds its own and not the foreign one.
 #[tokio::test]
-async fn la_busqueda_encuentra_lo_suyo_y_no_lo_ajeno() {
+async fn the_search_finds_its_own_and_not_the_other_account() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 
@@ -311,7 +312,7 @@ async fn la_busqueda_encuentra_lo_suyo_y_no_lo_ajeno() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = the_body(response).await;
 
-    assert_eq!(body["total"], 2, "the two versions of the package");
+    assert_eq!(body["total"], json!(2), "the two versions of the package");
     let results = body["results"].as_array().expect("the results");
     assert_eq!(results.len(), 2);
     for result in results {
@@ -320,9 +321,9 @@ async fn la_busqueda_encuentra_lo_suyo_y_no_lo_ajeno() {
     }
 }
 
-/// La cuenta ajena no sale ni en los nombres ni en los totales.
+/// The other account does not come out in the names nor in the totals.
 #[tokio::test]
-async fn la_cuenta_ajena_no_sale_en_los_nombres_ni_en_los_totales() {
+async fn the_other_account_does_not_appear_in_the_names_nor_in_the_totals() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 
@@ -334,24 +335,25 @@ async fn la_cuenta_ajena_no_sale_en_los_nombres_ni_en_los_totales() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = the_body(response).await;
 
-    // El total es el de su cuenta: el mismo nombre en la otra cuenta no
-    // suma, porque un total que sumara lo ajeno diria que hay algo donde
-    // no hay nada que ver.
-    assert_eq!(body["total"], 1, "the count of the other account");
+    // The total is the one of its account: the same name in the other
+    // account does not add up, because a total that added up what is
+    // foreign would say there is something where there is nothing to
+    // see.
+    assert_eq!(body["total"], json!(1), "the count of the other account");
     let results = body["results"].as_array().expect("the results");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["repository"], THEIRS);
 
-    // Y el cuerpo no nombra nada de la cuenta ajena.
+    // And the body names nothing of the other account.
     let text = serde_json::to_string(&body).expect("the body");
     assert!(!text.contains(READABLE), "the other repository is named");
     assert!(!text.contains("apps"), "the other repository is named");
     assert!(!text.contains(UNREADABLE), "the other repository is named");
 }
 
-/// El repositorio que Cedar no concede no sale ni cuenta.
+/// The repository that Cedar does not grant neither comes out nor is counted.
 #[tokio::test]
-async fn un_repositorio_sin_permiso_no_sale_ni_cuenta() {
+async fn a_repository_without_permission_neither_appears_nor_is_counted() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 
@@ -363,13 +365,13 @@ async fn un_repositorio_sin_permiso_no_sale_ni_cuenta() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = the_body(response).await;
 
-    assert_eq!(body["total"], 0, "the unreadable repository is counted");
+    assert_eq!(body["total"], json!(0), "the unreadable repository is counted");
     assert!(body["results"].as_array().expect("the results").is_empty());
 }
 
-/// Una busqueda sin credencial no es una busqueda.
+/// A search without a credential is not a search.
 #[tokio::test]
-async fn la_busqueda_necesita_una_credencial() {
+async fn the_search_needs_a_credential() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 
@@ -382,9 +384,9 @@ async fn la_busqueda_necesita_una_credencial() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// Una consulta que no dice lo que dice es un 400.
+/// A query that does not say what it says is a 400.
 #[tokio::test]
-async fn una_consulta_que_no_dice_lo_que_dice_es_un_400() {
+async fn a_query_that_does_not_say_what_it_says_is_a_400() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 
@@ -405,10 +407,38 @@ async fn una_consulta_que_no_dice_lo_que_dice_es_un_400() {
     }
 }
 
-/// La vista de detalle dice donde estan los bytes, que se publico, de
-/// quien cuelga, que dice la evidencia y que se ha decidido.
+/// A request without filters is the walk over what there is, and the walk
+/// does not name what the principal cannot read.
 #[tokio::test]
-async fn la_vista_de_detalle_enlaza_el_blob_los_metadatos_y_la_decision() {
+async fn a_request_without_filters_is_the_walk_of_what_there_is() {
+    let (app, store, _tmp) = app().await;
+    a_catalog(&store).await;
+
+    let response = app
+        .clone()
+        .oneshot(search_request("alice", ""))
+        .await
+        .expect("the request");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = the_body(response).await;
+
+    // The two repositories that Cedar grants, and not the third.
+    assert_eq!(body["total"], json!(3), "the assets of the readable repositories");
+    let repositories: Vec<&str> = body["results"]
+        .as_array()
+        .expect("the results")
+        .iter()
+        .map(|result| result["repository"].as_str().unwrap_or(""))
+        .collect();
+    assert!(repositories.contains(&READABLE));
+    assert!(repositories.contains(&"apps"));
+    assert!(!repositories.contains(&UNREADABLE));
+}
+
+/// The detail view says where the bytes are, what was published, what
+/// it hangs from, what the evidence says and what has been decided.
+#[tokio::test]
+async fn the_detail_view_links_the_blob_the_metadata_and_the_decision() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 
@@ -425,17 +455,17 @@ async fn la_vista_de_detalle_enlaza_el_blob_los_metadatos_y_la_decision() {
     assert_eq!(body["package_name"], "labpkg");
     assert_eq!(body["package_version"], "1.0");
 
-    // El blob: donde estan los bytes.
+    // The blob: where the bytes are.
     assert_eq!(body["blob"]["scope"], "global");
     assert!(body["blob"]["digest"]["value"].is_string());
     assert_eq!(body["blob"]["size_bytes"], body["size_bytes"]);
 
-    // Los metadatos originales: la version tal y como se publico.
+    // The original metadata: the version as it was published.
     assert_eq!(body["published"]["package_name"], "labpkg");
     assert_eq!(body["published"]["package_version"], "1.0");
     assert!(body["published"]["published_at"].is_string());
 
-    // La linea: de quien cuelga.
+    // The line: what it hangs from.
     assert!(body["lineage"]["subject"].is_null());
     assert!(
         body["lineage"]["referrers"]
@@ -444,7 +474,7 @@ async fn la_vista_de_detalle_enlaza_el_blob_los_metadatos_y_la_decision() {
             .is_empty()
     );
 
-    // La capsula: lo que dice la evidencia.
+    // The capsule: what the evidence says.
     assert!(
         !body["capsule"]["content_hash"]
             .as_str()
@@ -452,15 +482,15 @@ async fn la_vista_de_detalle_enlaza_el_blob_los_metadatos_y_la_decision() {
             .is_empty()
     );
 
-    // Y la decision: sin concesion, en cuarentena. No hay findings, pero
-    // eso no es una confianza: es un silencio.
+    // And the decision: without a grant, quarantined. There are no
+    // findings, but that is not a trust: it is a silence.
     assert_eq!(body["trust"]["state"], "quarantined");
     assert!(body["trust"]["decision"].is_null());
 }
 
-/// Un referrer cuelga del asset y la vista lo dice.
+/// A referrer hangs from the asset and the view says so.
 #[tokio::test]
-async fn la_vista_dice_de_quien_cuelga_el_contenido() {
+async fn the_view_says_whose_the_content_is() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
     let subject = ContentDigest::of_bytes(b"labpkg-1.0.whl");
@@ -491,10 +521,10 @@ async fn la_vista_dice_de_quien_cuelga_el_contenido() {
     assert_eq!(referrers[0]["subject"]["value"], subject.value);
 }
 
-/// La concesion es lo que dice que el contenido es de fiar, y lo dice con
-/// su decision.
+/// The grant is what says the content is trusted, and it says it with
+/// its decision.
 #[tokio::test]
-async fn la_concesion_es_la_decision_que_dice_que_es_de_fiar() {
+async fn the_grant_is_the_decision_that_says_it_is_trusted() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
     let digest = ContentDigest::of_bytes(b"labpkg-1.0.whl");
@@ -524,7 +554,7 @@ async fn la_concesion_es_la_decision_que_dice_que_es_de_fiar() {
     assert_eq!(body["trust"]["state"], "trusted");
     assert_eq!(body["trust"]["decision"]["decision_id"], "dec-hsp113");
 
-    // Y la busqueda lo dice tambien, sin reescribir nada.
+    // And the search says it too, without rewriting anything.
     let response = app
         .oneshot(search_request("alice", "?package=labpkg"))
         .await
@@ -542,14 +572,14 @@ async fn la_concesion_es_la_decision_que_dice_que_es_de_fiar() {
     );
 }
 
-/// El detalle de un asset de otra cuenta no existe.
+/// The detail of an asset of another account does not exist.
 #[tokio::test]
-async fn el_detalle_de_un_asset_de_otra_cuenta_no_existe() {
+async fn the_detail_of_another_account_asset_does_not_exist() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 
-    // El repositorio no es de la cuenta de carol: el mismo 404 que si no
-    // existiera, porque responder distinto diria que existe.
+    // The repository is not of carol's account: the same 404 as if it did
+    // not exist, because answering differently would say it does.
     let response = app
         .clone()
         .oneshot(package_request("carol", READABLE, "labpkg-1.0.whl"))
@@ -557,7 +587,7 @@ async fn el_detalle_de_un_asset_de_otra_cuenta_no_existe() {
         .expect("the request");
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-    // Y el suyo, que existe, se ve.
+    // And hers, which exists, is seen.
     let response = app
         .oneshot(package_request("carol", THEIRS, "labpkg-1.0.whl"))
         .await
@@ -565,9 +595,9 @@ async fn el_detalle_de_un_asset_de_otra_cuenta_no_existe() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-/// El detalle de un asset de un repositorio sin permiso no se ve.
+/// The detail of an asset of a repository without permission is not seen.
 #[tokio::test]
-async fn el_detalle_de_un_repositorio_sin_permiso_no_se_ve() {
+async fn the_detail_of_a_repository_without_permission_is_not_seen() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 
@@ -579,9 +609,9 @@ async fn el_detalle_de_un_repositorio_sin_permiso_no_se_ve() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
-/// El detalle necesita una credencial.
+/// The detail needs a credential.
 #[tokio::test]
-async fn el_detalle_necesita_una_credencial() {
+async fn the_detail_needs_a_credential() {
     let (app, store, _tmp) = app().await;
     a_catalog(&store).await;
 

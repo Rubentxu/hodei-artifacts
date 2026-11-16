@@ -134,7 +134,11 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// revalidado o en cuarentena) y el `Last-Modified` del upstream: la
 /// frescura de la caché del proxy se deriva de ellos. Los recibos de la
 /// versión 7 no llevan los campos y se leen como traídos.
-pub const SCHEMA_VERSION: i64 = 8;
+///
+/// Version 9 adds the catalog **digest index** (`catalog_asset_digest`):
+/// the digest search is an exact question, and without an index the
+/// engine answers it by walking the whole repository.
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -197,6 +201,9 @@ DEFINE INDEX IF NOT EXISTS catalog_asset_subject ON catalog_asset FIELDS account
 -- La busqueda por coordenadas: el nombre y la version del paquete, con
 -- la cuenta y el repositorio delante, que es como se pregunta.
 DEFINE INDEX IF NOT EXISTS catalog_asset_package ON catalog_asset FIELDS account, repository, package_name, package_version;
+-- The digest search: it is the question "give me this content", and
+-- without an index the engine walks the whole repository to answer it.
+DEFINE INDEX IF NOT EXISTS catalog_asset_digest ON catalog_asset FIELDS account, repository, digest_algorithm, digest;
 
 DEFINE TABLE IF NOT EXISTS catalog_reference SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS account ON catalog_reference TYPE string;
@@ -571,6 +578,17 @@ impl SurrealCatalogStore {
             .check()
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
         Ok(())
+    }
+
+    /// El motor que sostiene el catálogo.
+    ///
+    /// Lo expone para las mediciones: sembrar cien mil assets por el
+    /// camino de escritura del catálogo (que escribe versión, asset,
+    /// referencia y auditoría, y comprueba el almacén de bytes) tarda
+    /// horas, y lo que se mide es la lectura. La Seed es de la
+    /// medición, no del servicio.
+    pub fn db(&self) -> &Surreal<Db> {
+        &self.db
     }
 
     /// La versión del esquema que está aplicada en la base.

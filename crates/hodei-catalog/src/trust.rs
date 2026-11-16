@@ -62,11 +62,12 @@ impl ServeChannel {
         }
     }
 
-    /// El canal que dice su nombre.
+    /// The channel that says its own name.
     ///
-    /// El nombre es el que va en la configuracion: `open` o `trusted`. Un
-    /// nombre que no existe no es un canal: es un texto que no se puede
-    /// interpretar, y un canal que no se puede leer es el cerrado.
+    /// The name is the one that goes in the configuration: `open` or
+    /// `trusted`. A name that does not exist is not a channel: it is a
+    /// text nobody can interpret, and a channel that cannot be read is
+    /// the closed one.
     pub fn parse(text: &str) -> Option<Self> {
         match text {
             "open" => Some(Self::Open),

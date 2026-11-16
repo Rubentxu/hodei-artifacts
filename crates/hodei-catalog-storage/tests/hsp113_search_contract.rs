@@ -1,18 +1,20 @@
-//! El contrato de la busqueda contra SurrealDB de verdad.
+//! The contract of the search against a real SurrealDB.
 //!
-//! Lo que se comprueba: que la busqueda encuentra lo publicado por sus
-//! coordenadas, que esta acotada a la cuenta, que no cuenta ni nombra lo
-//! que el principal no puede leer, que la pagina es estable y ordenada, y
-//! que el canal que se lee es el de la relacion y no una copia.
+//! What is checked: that the search finds what was published by its
+//! coordinates, that it is bounded to the account, that it neither counts
+//! nor names what the principal cannot read, that the page is stable and
+//! ordered, and that the channel that is read is the one of the
+//! relationship and not a copy.
 //!
-//! Y una cosa mas, que no es del catalogo sino del motor: la misma
-//! consulta repetida tiene que devolver lo mismo. En SurrealDB 2.7 con
-//! RocksDB, un filtro `IN` sobre un array en el filtro exterior devuelve
-//! a veces cero filas, y por eso las consultas de la busqueda no lo usan.
+//! And one more thing, which is not of the catalog but of the engine: the
+//! same query repeated has to return the same thing. In SurrealDB 2.7 with
+//! RocksDB, an `IN` filter over an array in the outer filter sometimes
+//! returns zero rows, and that is why the queries of the search do not
+//! use it.
 
 use std::sync::Arc;
 
-use hodei_catalog::search::{RepositoryAttribute, SearchQuery};
+use hodei_catalog::search::{MAX_COUNTED, RepositoryAttribute, SearchQuery};
 use hodei_catalog::{
     AllowAllAuthorizer, CatalogError, CatalogSearch, CatalogWriter, DigestScope,
     PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor, RepositoryFormat,
@@ -103,7 +105,7 @@ async fn publish(
     digest
 }
 
-/// Una cuenta con dos repositorios y tres assets.
+/// An account with two repositories and three assets.
 async fn a_catalog() -> (tempfile::TempDir, SurrealCatalogStore) {
     let (tmp, store) = fresh().await;
     store
@@ -199,7 +201,7 @@ async fn the_search_finds_an_asset_by_its_coordinates() {
         .await
         .expect("the search");
 
-    assert_eq!(page.total, 2, "the two versions of the package");
+    assert_eq!(page.total, Some(2), "the two versions of the package");
     assert_eq!(page.results.len(), 2);
     let first = &page.results[0];
     assert_eq!(first.repository, "libs");
@@ -224,8 +226,8 @@ async fn the_search_is_scoped_to_the_account() {
         .await
         .expect("the search");
 
-    // La cuenta ajena tiene un asset con el mismo nombre y la misma ruta.
-    assert_eq!(page.total, 2, "the account of the other is not counted");
+    // The other account has an asset with the same name and the same path.
+    assert_eq!(page.total, Some(2), "the account of the other is not counted");
     assert!(
         page.results.iter().all(|hit| hit.repository != "secrets"),
         "the repository of the other account does not appear"
@@ -236,7 +238,7 @@ async fn the_search_is_scoped_to_the_account() {
 async fn the_search_does_not_see_a_repository_the_principal_cannot_read() {
     let (_tmp, store) = a_catalog().await;
     let all = store.repositories("acme").await.expect("the repositories");
-    // El principal solo puede leer uno de los dos repositorios.
+    // The principal can only read one of the two repositories.
     let readable: Vec<_> = all
         .iter()
         .filter(|repository| repository.repo_key == "libs")
@@ -252,14 +254,15 @@ async fn the_search_does_not_see_a_repository_the_principal_cannot_read() {
         .await
         .expect("the search");
 
-    assert_eq!(page.total, 2, "only what the principal can read is counted");
+    assert_eq!(page.total, Some(2), "only what the principal can read is counted");
     assert!(
         page.results.iter().all(|hit| hit.repository == "libs"),
         "the unreadable repository does not appear"
     );
 
-    // Y el total tampoco lo cuenta: un total que contara lo que no se
-    // puede leer diria que hay algo donde no hay nada que ver.
+    // And the total does not count it either: a total that counted what
+    // cannot be read would say there is something where there is nothing
+    // to see.
     let everything = store
         .search(
             "acme",
@@ -269,7 +272,7 @@ async fn the_search_does_not_see_a_repository_the_principal_cannot_read() {
         .await
         .expect("the search");
     assert_eq!(
-        everything.total, 2,
+        everything.total, Some(2),
         "the count is the same in both accounts"
     );
 }
@@ -283,7 +286,7 @@ async fn a_principal_that_cannot_read_anything_sees_nothing() {
         .await
         .expect("the search");
 
-    assert_eq!(page.total, 0);
+    assert_eq!(page.total, Some(0));
     assert!(page.results.is_empty());
 }
 
@@ -309,7 +312,7 @@ async fn the_page_is_ordered_and_does_not_repeat_or_lose() {
         .await
         .expect("the search");
 
-    assert_eq!(first.total, 3, "the three assets of the account");
+    assert_eq!(first.total, Some(3), "the three assets of the account");
     assert_eq!(first.results.len(), 2);
     assert_eq!(second.results.len(), 1);
 
@@ -349,10 +352,10 @@ async fn the_same_search_returns_the_same_page() {
                 .expect("the search"),
         );
     }
-    // El motor devuelve a veces cero filas con algunas formas de filtro:
-    // una busqueda que a veces no ve nada no es una busqueda.
+    // The engine sometimes returns zero rows with some filter shapes: a
+    // search that sometimes sees nothing is not a search.
     for page in &pages {
-        assert_eq!(page.total, 2, "the total is always the same");
+        assert_eq!(page.total, Some(2), "the total is always the same");
         assert_eq!(page.results.len(), 2, "the page is always the same");
     }
 }
@@ -370,7 +373,7 @@ async fn the_search_filters_by_repository_version_and_digest() {
         )
         .await
         .expect("the search");
-    assert_eq!(by_repository.total, 1);
+    assert_eq!(by_repository.total, Some(1));
     assert_eq!(by_repository.results[0].repository, "apps");
 
     let by_version = store
@@ -383,7 +386,7 @@ async fn the_search_filters_by_repository_version_and_digest() {
         )
         .await
         .expect("the search");
-    assert_eq!(by_version.total, 1);
+    assert_eq!(by_version.total, Some(1));
     assert_eq!(by_version.results[0].package_version, "1.1");
 
     let digest = ContentDigest::of_bytes(b"labpkg-1.0-py3-none-any.whl");
@@ -395,7 +398,7 @@ async fn the_search_filters_by_repository_version_and_digest() {
         )
         .await
         .expect("the search");
-    assert_eq!(by_digest.total, 1);
+    assert_eq!(by_digest.total, Some(1));
     assert_eq!(
         by_digest.results[0].asset_path,
         "labpkg-1.0-py3-none-any.whl"
@@ -415,7 +418,7 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         )
         .await
         .expect("the search");
-    assert_eq!(by_format.total, 2, "the two assets of the PyPI repository");
+    assert_eq!(by_format.total, Some(2), "the two assets of the PyPI repository");
 
     let by_mode = store
         .search(
@@ -426,7 +429,7 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         .await
         .expect("the search");
     assert_eq!(
-        by_mode.total, 3,
+        by_mode.total, Some(3),
         "every repository of the account is hosted"
     );
 
@@ -441,7 +444,7 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         .await
         .expect("the search");
     assert_eq!(
-        by_channel.total, 2,
+        by_channel.total, Some(2),
         "the repository with the trusted channel is not open"
     );
 
@@ -456,7 +459,7 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         .await
         .expect("the search");
     assert_eq!(
-        trusted.total, 1,
+        trusted.total, Some(1),
         "only the repository with the trusted channel"
     );
 }
@@ -466,7 +469,7 @@ async fn the_search_filters_by_a_tag() {
     let (_tmp, store) = a_catalog().await;
     let repositories = store.repositories("acme").await.expect("the repositories");
 
-    // Una etiqueta que no existe no es una busqueda sin resultados.
+    // A tag that does not exist is not a search without results.
     let missing = store
         .search(
             "acme",
@@ -475,10 +478,10 @@ async fn the_search_filters_by_a_tag() {
         )
         .await
         .expect("the search");
-    assert_eq!(missing.total, 0);
+    assert_eq!(missing.total, Some(0));
     assert!(missing.results.is_empty());
 
-    // Y una que existe acota por sus coordenadas.
+    // And one that exists narrows by its coordinates.
     store
         .move_tag(
             "acme",
@@ -500,7 +503,7 @@ async fn the_search_filters_by_a_tag() {
         )
         .await
         .expect("the search");
-    assert_eq!(tagged.total, 1, "the tag points at one version");
+    assert_eq!(tagged.total, Some(1), "the tag points at one version");
     assert_eq!(tagged.results[0].package_version, "1.1");
 }
 
@@ -513,7 +516,7 @@ async fn the_search_finds_by_text() {
         .search("acme", &repositories, &SearchQuery::new().with_text("LAB"))
         .await
         .expect("the search");
-    assert_eq!(page.total, 2, "the text is read without case");
+    assert_eq!(page.total, Some(2), "the text is read without case");
 }
 
 #[tokio::test]
@@ -529,7 +532,7 @@ async fn the_search_reads_the_channel_of_the_asset() {
         )
         .await
         .expect("the search");
-    // Lo publicado entra en cuarentena: nadie lo ha promovido.
+    // What was published enters quarantine: nobody promoted it.
     assert!(
         page.results
             .iter()
@@ -539,21 +542,21 @@ async fn the_search_reads_the_channel_of_the_asset() {
 }
 
 #[tokio::test]
-async fn la_concesion_marca_el_contenido_y_la_revocacion_lo_quita() {
+async fn the_grant_marks_the_content_and_the_revocation_takes_it_away() {
     let (_tmp, store) = a_catalog().await;
     let repositories = store.repositories("acme").await.expect("the repositories");
     let digest = ContentDigest::of_bytes(b"labpkg-1.0-py3-none-any.whl");
     let query = SearchQuery::new().with_digest(digest.clone());
 
-    // Sin concesion, el contenido esta en cuarentena: no es que nadie lo
-    // haya mirado y no le haya pasado, es que nadie lo ha concedido.
+    // Without a grant, the content is quarantined: it is not that nobody
+    // looked at it and it passed, it is that nobody granted it.
     let page = store
         .search("acme", &repositories, &query)
         .await
         .expect("the search");
     assert_eq!(page.results[0].trust_state, TrustState::Quarantined);
 
-    // Concedido, el mismo contenido es de fiar.
+    // Granted, the same content is trusted.
     store
         .grant(&[TrustGrant {
             account: "acme".to_string(),
@@ -574,8 +577,8 @@ async fn la_concesion_marca_el_contenido_y_la_revocacion_lo_quita() {
         .expect("the search");
     assert_eq!(page.results[0].trust_state, TrustState::Trusted);
 
-    // Y en una pagina con mas de un asset, solo se concede el que lo
-    // esta: la concesion de uno no concede el otro.
+    // And in a page with more than one asset, only the one that has it
+    // is granted: the grant of one does not grant the other.
     let page = store
         .search(
             "acme",
@@ -596,8 +599,8 @@ async fn la_concesion_marca_el_contenido_y_la_revocacion_lo_quita() {
         "the concession of one asset is not the concession of the other"
     );
 
-    // Y revocado, vuelve a la cuarentena en la peticion siguiente: no hay
-    // indice que reescribir.
+    // And revoked, it goes back to quarantine in the next request: there
+    // is no index to rewrite.
     store
         .revoke_digest(
             "acme",
@@ -629,7 +632,7 @@ async fn a_filter_that_matches_nothing_says_zero() {
         )
         .await
         .expect("the search");
-    assert_eq!(page.total, 0);
+    assert_eq!(page.total, Some(0));
     assert!(page.results.is_empty());
 }
 
@@ -643,4 +646,87 @@ async fn the_search_refuses_a_query_that_does_not_say_anything() {
         .await
         .expect_err("a page of zero is not a page");
     assert!(matches!(error, CatalogError::InvalidRequest { .. }));
+}
+
+/// An asset seeded by hand, for the cases that need many.
+#[derive(Debug, serde::Serialize)]
+struct SeededAsset {
+    account: String,
+    repository: String,
+    asset_path: String,
+    package_name: String,
+    package_version: String,
+    digest_algorithm: String,
+    digest: String,
+    size_bytes: i64,
+    subject: Option<String>,
+    updated_at: surrealdb::sql::Datetime,
+}
+
+#[tokio::test]
+async fn the_page_says_whether_there_is_more() {
+    let (_tmp, store) = a_catalog().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let first = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_limit(2).with_offset(0),
+        )
+        .await
+        .expect("the search");
+    assert!(first.more, "there are three assets and the page brings two");
+
+    let last = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_limit(2).with_offset(2),
+        )
+        .await
+        .expect("the search");
+    assert!(!last.more, "the last page is the last page");
+    assert_eq!(last.total, Some(3));
+}
+
+#[tokio::test]
+async fn a_total_that_does_not_fit_is_not_counted() {
+    let (_tmp, store) = a_catalog().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    // More assets than are counted: the total does not fit, and a number
+    // that was not counted is not said.
+    let now = surrealdb::sql::Datetime::from(chrono::Utc::now());
+    let rows: Vec<SeededAsset> = (0..=MAX_COUNTED)
+        .map(|index| SeededAsset {
+            account: "acme".to_string(),
+            repository: "libs".to_string(),
+            asset_path: format!("cargado-{index:05}.whl"),
+            package_name: format!("cargado-{index:05}"),
+            package_version: "1.0".to_string(),
+            digest_algorithm: "sha256".to_string(),
+            digest: format!("{index:064x}"),
+            size_bytes: 10,
+            subject: None,
+            updated_at: now.clone(),
+        })
+        .collect();
+    store
+        .db()
+        .query("INSERT INTO catalog_asset $rows")
+        .bind(("rows", rows))
+        .await
+        .expect("the assets are seeded")
+        .check()
+        .expect("the assets are seeded");
+
+    let page = store
+        .search("acme", &repositories, &SearchQuery::new().with_limit(10))
+        .await
+        .expect("the search");
+
+    assert_eq!(page.total, None, "the total does not fit and is not counted");
+    assert!(page.more, "there are more than the page brings");
+    assert_eq!(page.results.len(), 10, "the page is still a page");
 }

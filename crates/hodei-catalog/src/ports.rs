@@ -346,30 +346,31 @@ pub trait CatalogReader: Send + Sync {
     ) -> Result<Vec<ReferrerRecord>, CatalogError>;
 }
 
-/// La búsqueda del catálogo.
+/// The catalog search.
 ///
-/// Es un puerto aparte del de lectura, y no una extensión de este: "¿qué
-/// hay?" y "¿qué hay en esta ruta?" son preguntas distintas, con límites
-/// distintos y con páginas distintas.
+/// It is a port apart from the read one, and not an extension of it: "what
+/// is there?" and "what is there at this path?" are different questions,
+/// with different limits and different pages.
 ///
-/// # El permiso va por delante
+/// # The permission comes first
 ///
-/// La búsqueda recibe los repositorios que el principal puede leer, y sólo
-/// busca en ellos. La cuenta no es un filtro que se pueda olvidar: es
-/// parte de la consulta, y un total que contara lo que no se puede leer
-/// diria que hay algo donde no hay nada que ver.
+/// The search receives the repositories the principal may read, and only
+/// looks in them. The account is not a filter that can be forgotten: it
+/// is part of the query, and a total that counted what cannot be read
+/// would say there is something where there is nothing to see.
 #[async_trait]
 pub trait CatalogSearch: Send + Sync {
-    /// Los repositorios de la cuenta.
+    /// The repositories of the account.
     ///
-    /// Los que el principal puede leer se deciden fuera: aquí sólo se
-    /// listan los de la cuenta, que es lo que el permiso puede acotar.
+    /// The ones the principal may read are decided outside: here only the
+    /// ones of the account are listed, which is what the permission can
+    /// narrow.
     async fn repositories(
         &self,
         principal_account: &str,
     ) -> Result<Vec<RepositoryDescriptor>, CatalogError>;
 
-    /// La página de resultados de una búsqueda.
+    /// The page of results of a search.
     ///
     /// Los repositorios son los que el principal puede leer. Un principal
     /// que no puede leer ninguno no ve nada, y su total es cero.

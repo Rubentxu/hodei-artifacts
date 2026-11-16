@@ -1,20 +1,20 @@
-//! La vista de detalle de un paquete.
+//! The detail view of a package.
 //!
-//! La vista es lo que el navegador de paquetes muestra de un asset: donde
-//! estan los bytes, que se publico, de quien cuelga, que evidencia hay
-//! y que decision se ha tomado sobre el.
+//! The view is what the package browser shows of an asset: where the
+//! bytes are, what was published, what it hangs from, what evidence there
+//! is and what decision has been taken about it.
 //!
-//! # Lo que la vista no dice
+//! # What the view does not say
 //!
-//! La confianza sale de la **concesion**, no de la ausencia de
-//! hallazgos. Un contenido del que nadie ha escrito nada no es de fiar:
-//! es desconocido, y lo que se dice de el es que esta en cuarentena.
-//! Confundir "nadie ha dicho que sea malo" con "nadie ha dicho que sea
-//! bueno" es como un registro acaba sirviendo software sin mirar.
+//! The trust comes from the **grant**, not from the absence of findings.
+//! Content nobody has ever written about is not trusted: it is unknown,
+//! and what is said about it is that it is quarantined. Confusing
+//! "nobody said it is bad" with "nobody said it is good" is how a
+//! registry ends up serving software without looking at it.
 //!
-//! Y la decision que se muestra es la **vigente**: si la concesion se ha
-//! revocado, la vista dice que el contenido esta en cuarentena, porque
-//! eso es lo que es ahora.
+//! And the decision that is shown is the **live** one: if the grant has
+//! been revoked, the view says the content is quarantined, because that
+//! is what it is now.
 
 use axum::{
     Json,
@@ -31,20 +31,20 @@ use crate::app_state::AppState;
 use crate::handlers::capsules::CapsuleView;
 use crate::handlers::{Authentication, the_context};
 
-/// Lo que puede fallar al pedir el detalle de un paquete.
+/// What can fail when the detail of a package is asked for.
 #[derive(Debug)]
 pub enum PackageApiError {
-    /// La peticion no se pudo autenticar.
+    /// The request could not be authenticated.
     Unauthorized,
-    /// El principal no puede leer el repositorio.
+    /// The principal cannot read the repository.
     Forbidden,
-    /// No hay nada ahi, o no es de esta cuenta.
+    /// There is nothing there, or it is not of this account.
     NotFound,
-    /// La peticion no es coherente.
+    /// The request is not coherent.
     BadRequest,
-    /// El catalogo o el libro de concesiones no pudieron responder.
+    /// The catalog or the grant ledger could not answer.
     Unavailable,
-    /// Algo fallo por dentro.
+    /// Something failed inside.
     Internal,
 }
 
@@ -69,113 +69,113 @@ impl IntoResponse for PackageApiError {
     }
 }
 
-/// El detalle de un paquete.
+/// The detail of a package.
 #[derive(Debug, serde::Serialize)]
 pub struct PackageView {
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// La ruta del asset dentro del repositorio.
+    /// The path of the asset inside the repository.
     pub asset_path: String,
-    /// El nombre del paquete.
+    /// The package name.
     pub package_name: String,
-    /// La version del paquete.
+    /// The package version.
     pub package_version: String,
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: ContentDigest,
-    /// Los bytes que tiene el contenido.
+    /// The bytes the content has.
     pub size_bytes: u64,
-    /// Cuando se movio por ultima vez.
+    /// When it moved last.
     pub updated_at: DateTime<Utc>,
-    /// Donde estan los bytes.
+    /// Where the bytes are.
     pub blob: BlobView,
-    /// Lo que se publico, tal y como se publico.
+    /// What was published, as it was published.
     pub published: PublishedView,
-    /// De quien cuelga y quien cuelga de el.
+    /// What it hangs from, and what hangs from it.
     pub lineage: LineageView,
-    /// Lo que dice la evidencia.
+    /// What the evidence says.
     pub capsule: CapsuleView,
-    /// Lo que se ha decidido sobre el contenido.
+    /// What has been decided about the content.
     pub trust: TrustView,
 }
 
-/// Donde estan los bytes.
+/// Where the bytes are.
 #[derive(Debug, serde::Serialize)]
 pub struct BlobView {
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: ContentDigest,
-    /// El ambito en el que vive.
+    /// The scope it lives in.
     pub scope: DigestScope,
-    /// Los bytes que tiene.
+    /// The bytes it has.
     pub size_bytes: u64,
-    /// Cuando se escribio la referencia.
+    /// When the reference was written.
     pub updated_at: DateTime<Utc>,
 }
 
-/// Lo que se publico.
+/// What was published.
 ///
-/// Es la version tal y como se publico: las coordenadas, el digest y el
-/// momento. El asset puede haberse movido despues a otra version, y
-/// esta es la version a la que apunta ahora.
+/// It is the version as it was published: the coordinates, the digest and
+/// the moment. The asset may have moved afterwards to another version,
+/// and this is the version it points at now.
 #[derive(Debug, serde::Serialize)]
 pub struct PublishedView {
-    /// El nombre del paquete.
+    /// The package name.
     pub package_name: String,
-    /// La version del paquete.
+    /// The package version.
     pub package_version: String,
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: ContentDigest,
-    /// Los bytes que tiene el contenido.
+    /// The bytes the content has.
     pub size_bytes: u64,
-    /// Cuando se publico.
+    /// When it was published.
     pub published_at: DateTime<Utc>,
 }
 
-/// La linea de los manifiestos.
+/// The line of the manifests.
 #[derive(Debug, serde::Serialize)]
 pub struct LineageView {
-    /// El manifiesto al que cuelga este asset, si cuelga de alguno.
+    /// The manifest this asset hangs from, if it hangs from one.
     pub subject: Option<ContentDigest>,
-    /// Los manifiestos que cuelgan de este.
+    /// The manifests that hang from this one.
     pub referrers: Vec<ReferrerView>,
 }
 
-/// Un manifiesto que cuelga de otro.
+/// A manifest that hangs from another one.
 #[derive(Debug, serde::Serialize)]
 pub struct ReferrerView {
-    /// La ruta del referrer dentro del repositorio.
+    /// The path of the referrer inside the repository.
     pub asset_path: String,
-    /// El digest del manifiesto.
+    /// The digest of the manifest.
     pub digest: ContentDigest,
-    /// Los bytes que tiene el manifiesto.
+    /// The bytes the manifest has.
     pub size_bytes: u64,
-    /// El digest al que apunta.
+    /// The digest it points at.
     pub subject: ContentDigest,
 }
 
-/// Lo que se ha decidido sobre el contenido.
+/// What has been decided about the content.
 #[derive(Debug, serde::Serialize)]
 pub struct TrustView {
-    /// El estado de confianza en este repositorio.
+    /// The trust state in this repository.
     pub state: TrustState,
-    /// La decision que lo concede, si hay alguna vigente.
+    /// The decision that grants it, if there is a live one.
     pub decision: Option<DecisionView>,
 }
 
-/// La decision de confianza que concede un contenido.
+/// The trust decision that grants a content.
 #[derive(Debug, serde::Serialize)]
 pub struct DecisionView {
-    /// La decision que concedio el contenido.
+    /// The decision that granted the content.
     pub decision_id: String,
-    /// Quien concedio.
+    /// Who granted it.
     pub actor: String,
-    /// Cuando se concedio.
+    /// When it was granted.
     pub granted_at: DateTime<Utc>,
 }
 
 /// `GET /api/v1/packages/{repository}/{path}`
 ///
-/// La ruta del asset llega con las barras de dentro, porque la ruta es lo
-/// que nombra el contenido dentro del repositorio.
+/// The path of the asset arrives with the slashes inside it, because the
+/// path is what names the content inside the repository.
 pub async fn get_package(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -194,9 +194,9 @@ pub async fn get_package(
         .ok_or(PackageApiError::Unavailable)?;
     let account = context.account().as_str();
 
-    // El repositorio primero: si no es de esta cuenta, no se evalua. Un
-    // repositorio ajeno y uno que no existen se esconden detras del
-    // mismo 404, porque responder distinto seria decir que existe.
+    // The repository first: if it is not of this account, it is not
+    // evaluated. A foreign repository and one that does not exist hide behind
+    // the same 404, because answering differently would say it exists.
     let descriptor = reader
         .repository(account, &repository)
         .await
@@ -228,8 +228,8 @@ pub async fn get_package(
         .await
         .map_err(the_catalog_error)?;
 
-    // La decision: la concesion vigente del libro. Lo que no esta
-    // concedido esta en cuarentena, y no se deduce de la evidencia.
+    // The decision: the live grant of the ledger. What is not
+    // granted is quarantined, and it is not deduced from the evidence.
     let decision = the_decision(&state, account, &repository, &asset.digest).await?;
     let state_of_trust = if decision.is_some() {
         TrustState::Trusted
@@ -237,9 +237,9 @@ pub async fn get_package(
         TrustState::Quarantined
     };
 
-    // La capsula: lo que dice la evidencia que hay. Una capsula sin
-    // evidencia no dice que el contenido sea malo: dice que no se sabe
-    // nada de el.
+    // The capsule: what the evidence says is there. A capsule with no
+    // evidence does not say the content is bad: it says nobody
+    // knows anything about it.
     let subject = crate::trust::hrn::artifact_hrn(
         descriptor.hrn.region(),
         account,
@@ -294,10 +294,10 @@ pub async fn get_package(
     }))
 }
 
-/// La concesion vigente de un contenido, si la hay.
+/// The live grant of a content, if there is one.
 ///
-/// Sin libro de concesiones no hay decision que leer: lo que no se puede
-/// leer no se concede, y lo que no se concede esta en cuarentena.
+/// Without a grant ledger there is no decision to read: what cannot be
+/// read is not granted, and what is not granted is quarantined.
 async fn the_decision(
     state: &AppState,
     account: &str,
@@ -313,7 +313,7 @@ async fn the_decision(
         .map_err(|_| PackageApiError::Unavailable)
 }
 
-/// La vista de una decision.
+/// The view of a decision.
 impl DecisionView {
     fn of(grant: TrustGrant) -> Self {
         Self {
@@ -324,7 +324,7 @@ impl DecisionView {
     }
 }
 
-/// El error del catalogo, traducido a lo que ve el cliente.
+/// The error of the catalog, translated into what the client sees.
 fn the_catalog_error(error: CatalogError) -> PackageApiError {
     match error {
         CatalogError::Missing { .. } => PackageApiError::NotFound,

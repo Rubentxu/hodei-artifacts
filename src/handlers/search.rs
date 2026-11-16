@@ -1,34 +1,34 @@
-//! La busqueda del catalogo.
+//! The catalog search.
 //!
-//! La busqueda es la pregunta "que hay?" del registro, y la responde el
-//! propio catalogo: no hay un motor aparte que haya que sincronizar con
-//! el, y por eso lo que se prometa de la busqueda es lo que hay.
+//! The search is the "what is there?" question of the registry, and the
+//! catalog itself answers it: there is no separate engine to synchronise
+//! with it, and that is why what the search promises is what there is.
 //!
-//! # La cuenta y el permiso van por delante
+//! # The account and the permission come first
 //!
-//! En este orden, y no en el otro:
+//! In this order, and not the other one around:
 //!
-//! 1. La cuenta sale del **principal verificado**. Nunca de un campo de
-//!    la peticion, y nunca de la consulta.
-//! 2. Los repositorios que el principal puede leer los dice **Cedar**,
-//!    uno por uno. Los demas no salen, y tampoco cuentan: un total que
-//!    contara lo que no se puede leer diria que hay algo donde no hay
-//!    nada que ver.
+//! 1. The account comes from the **verified principal**. Never from a
+//!    field of the request, and never from the query.
+//! 2. The repositories the principal may read are named by **Cedar**, one
+//!    by one. The others do not come out, and they are not counted
+//!    either: a total that counted what cannot be read would say there is
+//!    something where there is nothing to see.
 //!
-//! Por eso la busqueda de otra cuenta no devuelve ni nombres ni
-//! totales: la cuenta ajena no llega a la consulta.
+//! That is why the search of another account returns neither names nor
+//! totals: the other account never reaches the query.
 //!
-//! # Los filtros
+//! # The filters
 //!
-//! Todos son opcionales y se combinan con "y". Cada uno se nombra una
-//! vez: una consulta que dice dos veces lo mismo no dice lo que dice, y
-//! un filtro que no existe no es un filtro: es una consulta que el
-//! cliente no entiende, y se responde con un 400 en vez de buscar algo
-//! que el cliente no pidio.
+//! All of them are optional and they combine with "and". Each one is
+//! named once: a query that says the same thing twice does not say what
+//! it says, and a filter that does not exist is not a filter: it is a
+//! query the client does not understand, and it is answered with a 400
+//! instead of looking for something the client did not ask for.
 //!
-//! El texto libre es un **recorrido**: no hay indice de texto completo,
-//! y el filtro compara el nombre del paquete y la ruta del asset. La
-//! busqueda por texto es la unica que no acota por indice.
+//! Free text is a **walk**: there is no full text index, and the filter
+//! compares the package name and the path of the asset. The text search
+//! is the only one that does not narrow through an index.
 
 use std::collections::HashSet;
 
@@ -47,16 +47,16 @@ use hodei_evidence::ContentDigest;
 use crate::app_state::AppState;
 use crate::handlers::{Authentication, the_context, the_query_values};
 
-/// Lo que puede fallar en una busqueda.
+/// What can fail in a search.
 #[derive(Debug)]
 pub enum SearchApiError {
-    /// La peticion no se pudo autenticar.
+    /// The request could not be authenticated.
     Unauthorized,
-    /// La consulta no dice lo que dice.
+    /// The query does not say what it says.
     BadRequest(String),
-    /// El catalogo no pudo responder.
+    /// The catalog could not answer.
     Unavailable,
-    /// Algo fallo por dentro.
+    /// Something failed inside.
     Internal,
 }
 
@@ -85,47 +85,54 @@ impl IntoResponse for SearchApiError {
     }
 }
 
-/// La pagina de resultados que la API devuelve.
+/// The page of results that the API returns.
 #[derive(Debug, serde::Serialize)]
 pub struct SearchView {
-    /// Cuantos resultados hay en total.
-    pub total: usize,
-    /// Cuantos resultados trae la pagina.
+    /// How many results there are in total, when they could be counted.
+    ///
+    /// It is `null` when there are more matches than are counted: there
+    /// is more, and how much is not said because counting it would cost
+    /// what walking the whole catalog would cost.
+    pub total: Option<usize>,
+    /// Whether there are more results after the page.
+    pub more: bool,
+    /// How many results the page brings.
     pub limit: usize,
-    /// Cuantos resultados se dejan atras.
+    /// How many results are left behind.
     pub offset: usize,
-    /// Los resultados de la pagina.
+    /// The results of the page.
     pub results: Vec<SearchHitView>,
 }
 
-/// Un asset encontrado por la busqueda.
+/// An asset found by the search.
 #[derive(Debug, serde::Serialize)]
 pub struct SearchHitView {
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// El formato del repositorio.
+    /// The format of the repository.
     pub format: RepositoryFormat,
-    /// La ruta del asset dentro del repositorio.
+    /// The path of the asset inside the repository.
     pub asset_path: String,
-    /// El nombre del paquete.
+    /// The package name.
     pub package_name: String,
-    /// La version del paquete.
+    /// The package version.
     pub package_version: String,
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: ContentDigest,
-    /// Los bytes que tiene el contenido.
+    /// The bytes the content has.
     pub size_bytes: u64,
-    /// El estado de confianza del contenido en este repositorio.
+    /// The trust state of the content in this repository.
     pub trust_state: TrustState,
-    /// Cuando se movio por ultima vez.
+    /// When it moved last.
     pub updated_at: DateTime<Utc>,
 }
 
 impl SearchView {
-    /// La vista de una pagina del catalogo.
+    /// The view of a page of the catalog.
     fn of(page: SearchPage) -> Self {
         Self {
             total: page.total,
+            more: page.more,
             limit: page.limit,
             offset: page.offset,
             results: page
@@ -149,10 +156,10 @@ impl SearchView {
 
 /// `GET /api/v1/search`
 ///
-/// Los filtros se escriben en la consulta: `repository`, `package`,
-/// `version`, `digest`, `tag`, `attribute`, `text`, `limit` y `offset`.
-/// El digest va con su algoritmo (`sha256:<hexadecimal>`) y el atributo
-/// con su nombre y su valor (`format=pypi`, `mode=hosted`,
+/// The filters are written in the query: `repository`, `package`,
+/// `version`, `digest`, `tag`, `attribute`, `text`, `limit` and `offset`.
+/// The digest goes with its algorithm (`sha256:<hexadecimal>`) and the
+/// attribute with its name and its value (`format=pypi`, `mode=hosted`,
 /// `channel=trusted`).
 pub async fn get_search(
     State(state): State<AppState>,
@@ -166,8 +173,9 @@ pub async fn get_search(
             Authentication::Unavailable => SearchApiError::Unavailable,
         })?;
 
-    // Sin catalogo no hay busqueda, y se dice que no esta disponible: un
-    // 404 diria que no hay nada, y no es lo que pasa.
+    // Without a catalog there is no search, and it says that it is not
+    // available: a 404 would say there is nothing, and that is not what
+    // happens.
     let searcher = state
         .catalog_search
         .as_ref()
@@ -190,11 +198,11 @@ pub async fn get_search(
     Ok(Json(SearchView::of(page)))
 }
 
-/// Los repositorios que el principal puede leer.
+/// The repositories the principal may read.
 ///
-/// Cedar decide uno por uno, y lo que no se puede leer no sale ni
-/// cuenta. Un repositorio con un nombre que no se puede interpretar
-/// tampoco sale: lo que no se puede evaluar no se puede leer.
+/// Cedar decides one by one, and what cannot be read neither comes out
+/// nor is counted. A repository with a name that cannot be interpreted
+/// does not come out either: what cannot be evaluated cannot be read.
 fn the_permitted(
     state: &AppState,
     context: &VerifiedContext,
@@ -213,14 +221,21 @@ fn the_permitted(
         .collect()
 }
 
-/// La consulta, tal y como la escribe el cliente.
+/// The query, as the client writes it.
 ///
-/// Un filtro se nombra una vez y un filtro que no existe es un 400: una
-/// busqueda que devuelve mas de lo que se pidio es peor que una que
-/// falla.
+/// A filter is named once, and a filter that does not exist is a 400: a
+/// search that returns more than was asked for is worse than one that
+/// fails.
+///
+/// A request **without** a query is not an error: it is the walk over
+/// what there is, which is where the package browser starts. The limit
+/// of the page bounds it.
 fn the_query(raw: Option<&str>) -> Result<SearchQuery, SearchApiError> {
     let mut query = SearchQuery::new();
-    let Some(values) = the_query_values(raw) else {
+    let Some(raw) = raw else {
+        return Ok(query);
+    };
+    let Some(values) = the_query_values(Some(raw)) else {
         return Err(SearchApiError::BadRequest(
             "the query string is not readable".to_string(),
         ));
@@ -272,7 +287,7 @@ fn the_query(raw: Option<&str>) -> Result<SearchQuery, SearchApiError> {
     Ok(query)
 }
 
-/// El error del catalogo, traducido a lo que ve el cliente.
+/// The error of the catalog, translated into what the client sees.
 fn the_catalog_error(error: CatalogError) -> SearchApiError {
     match error {
         CatalogError::InvalidRequest { detail } => SearchApiError::BadRequest(detail),

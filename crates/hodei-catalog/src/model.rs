@@ -74,12 +74,12 @@ impl RepositoryFormat {
         }
     }
 
-    /// El formato que dice su nombre canónico.
+    /// The format that says its canonical name.
     ///
-    /// El nombre es el que va al cable y a la base, y es el mismo que
-    /// [`RepositoryFormat::as_str`] devuelve: lo que se escribe se lee, y
-    /// lo que se lee se escribe. Un nombre que no existe no es un
-    /// formato: es un texto que nadie puede interpretar.
+    /// The name is the one that goes to the wire and to the database, and
+    /// it is the same one [`RepositoryFormat::as_str`] returns: what is
+    /// written is read, and what is read is written. A name that does not
+    /// exist is not a format: it is a text nobody can interpret.
     pub fn parse(text: &str) -> Option<Self> {
         match text {
             "raw" => Some(Self::Raw),
@@ -126,11 +126,11 @@ impl RepositoryMode {
         }
     }
 
-    /// El modo que dice su nombre canónico.
+    /// The mode that says its canonical name.
     ///
-    /// El nombre es el que va al cable y a la base, y es el mismo que
-    /// [`RepositoryMode::as_str`] devuelve. Un nombre que no existe no es
-    /// un modo: es un texto que nadie puede interpretar.
+    /// The name is the one that goes to the wire and to the database, and
+    /// it is the same one [`RepositoryMode::as_str`] returns. A name that
+    /// does not exist is not a mode: it is a text nobody can interpret.
     pub fn parse(text: &str) -> Option<Self> {
         match text {
             "hosted" => Some(Self::Hosted),
