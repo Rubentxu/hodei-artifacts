@@ -179,6 +179,17 @@ pub struct ProxyConfig {
     /// Default: 8.
     #[serde(default = "the_default_proxy_max_concurrent")]
     pub max_concurrent: usize,
+    /// Whether the service refuses to reach any upstream.
+    ///
+    /// In offline mode a proxy repository serves only the content it
+    /// already holds with a receipt that proves where it came from; any
+    /// other path fails with an explicit error and no request leaves the
+    /// service. A repository may also go offline on its own
+    /// (`proxy.cache.offline`); this switch is the operator's and wins.
+    ///
+    /// Default: false.
+    #[serde(default)]
+    pub offline: bool,
 }
 
 impl Default for ProxyConfig {
@@ -190,6 +201,7 @@ impl Default for ProxyConfig {
             total_timeout_secs: the_default_proxy_total_timeout_secs(),
             max_bytes: the_default_proxy_max_bytes(),
             max_concurrent: the_default_proxy_max_concurrent(),
+            offline: false,
         }
     }
 }

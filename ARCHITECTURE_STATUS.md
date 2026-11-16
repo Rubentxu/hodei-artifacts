@@ -1890,7 +1890,17 @@ ninguno. El loopback y las redes privadas solo se abren con `private` en la
 entrada. Lo que se baja pasa por la misma admisión de confianza que lo que se
 sube.
 
-**Lo que sigue sin estar.** No hay TTL, revalidación ni modo offline
-(HSP-107), ni single-flight, ni repositorios virtuales o de grupo (HSP-108).
-No existe una ruta HTTP que cree repositorios proxy: se siembran o se crean
-con el catálogo.
+**La caché (HSP-107, HAR-13).** `hodei_catalog::proxy_cache` es el núcleo puro
+que decide qué hacer con una lectura (servir, revalidar, traer, cuarentena,
+offline) a partir de la política `config_settings.proxy.cache`, el libro de
+recibos y la hora; la frescura sale del libro (esquema 8: `outcome` y
+`last_modified` en el recibo), no de un estado nuevo. `src/proxy/cache.rs`
+añade el single-flight por ruta y versión de configuración, la caché negativa (tope global de 4096) y los contadores por petición;
+`fetch` hace peticiones condicionales y `resolution` distingue «confirmado»,
+«bytes nuevos» y «otros bytes para contenido inmutable». Las reglas están en
+[`uat/UAT-PROXY-VIRTUAL.md`](uat/UAT-PROXY-VIRTUAL.md).
+
+**Lo que sigue sin estar.** No hay repositorios virtuales o de grupo
+(HSP-108), ni coordinación entre réplicas (single-flight y caché negativa son
+por proceso), ni endpoint de métricas. No existe una ruta HTTP que cree
+repositorios proxy: se siembran o se crean con el catálogo.

@@ -93,3 +93,8 @@ total_timeout_secs = 300
 max_bytes = 1073741824
 # The upstream fetches in flight at once; the next one answers 503.
 max_concurrent = 8
+# Offline mode: the service reaches no upstream. A proxy repository serves only
+# the content it already holds with a receipt, and any other path fails with an
+# explicit 503. A repository can go offline by itself with proxy.cache.offline;
+# this switch is the operator's and wins.
+offline = false

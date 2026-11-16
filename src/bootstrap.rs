@@ -357,11 +357,9 @@ pub async fn bootstrap(
             },
             config.proxy.max_concurrent,
         )
-        .with_allowed_credentials(config.proxy.allowed_credentials.iter().cloned());
-        let proxy_plane = Arc::new(crate::proxy::ProxyPlane {
-            fetcher,
-            ledger: provenance_ledger,
-        });
+        .with_allowed_credentials(config.proxy.allowed_credentials.iter().cloned())
+        .with_offline(config.proxy.offline);
+        let proxy_plane = Arc::new(crate::proxy::ProxyPlane::new(fetcher, provenance_ledger));
         let app_state = app_state
             .with_catalog(reader, writer)
             .with_trust_ledger(trust_ledger)

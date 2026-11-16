@@ -129,7 +129,12 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// La versión 7 añade los **recibos de procedencia** (`provenance_receipt`):
 /// de qué upstream vino el contenido de un repositorio proxy y con qué se
 /// comprobó.
-pub const SCHEMA_VERSION: i64 = 7;
+///
+/// La versión 8 amplía el recibo con su desenlace (`outcome`: traído,
+/// revalidado o en cuarentena) y el `Last-Modified` del upstream: la
+/// frescura de la caché del proxy se deriva de ellos. Los recibos de la
+/// versión 7 no llevan los campos y se leen como traídos.
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -293,6 +298,8 @@ DEFINE FIELD IF NOT EXISTS checksum_header ON provenance_receipt TYPE option<str
 DEFINE FIELD IF NOT EXISTS status ON provenance_receipt TYPE int;
 DEFINE FIELD IF NOT EXISTS redirects ON provenance_receipt TYPE int;
 DEFINE FIELD IF NOT EXISTS etag ON provenance_receipt TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS last_modified ON provenance_receipt TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS outcome ON provenance_receipt TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS actor ON provenance_receipt TYPE string;
 DEFINE FIELD IF NOT EXISTS correlation_id ON provenance_receipt TYPE string;
 DEFINE FIELD IF NOT EXISTS fetched_at ON provenance_receipt TYPE datetime;

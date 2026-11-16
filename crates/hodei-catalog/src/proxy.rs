@@ -34,6 +34,9 @@
 //!   al origen del upstream.
 //! - `redirects` dice cuantas redirecciones se siguen y si se admiten
 //!   hacia otro origen. Por defecto, tres y solo al mismo origen.
+//!
+//! Junto a `proxy.upstream`, `proxy.cache` declara la politica de cache
+//! (TTL, cache negativa, stale y offline): ver [`crate::proxy_cache`].
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -42,6 +45,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
+use crate::proxy_cache::CachePolicy;
 use crate::{CatalogError, RepositoryConfig};
 
 /// El tope de redirecciones que una configuracion puede pedir.
@@ -125,6 +129,9 @@ pub struct UpstreamConfig {
     /// Con `true`, una respuesta que no lo declara se rechaza: el contenido
     /// no se puede presentar como verificado contra el upstream.
     pub require_checksum: bool,
+    /// La politica de cache (`proxy.cache`); los valores por defecto si la
+    /// configuracion no la declara.
+    pub cache: CachePolicy,
 }
 
 #[derive(Deserialize)]
@@ -162,10 +169,12 @@ impl UpstreamConfig {
         let Some(proxy) = config.config_settings.get("proxy") else {
             return Ok(None);
         };
-        // Una clave que no se conoce (`upstraem`, `cache`) no se ignora: un
+        // Una clave que no se conoce (`upstraem`, `caches`) no se ignora: un
         // ajuste que parece estar puesto y no se aplica es peor que un error.
         if let Some(object) = proxy.as_object()
-            && let Some(unknown) = object.keys().find(|key| key.as_str() != "upstream")
+            && let Some(unknown) = object
+                .keys()
+                .find(|key| !matches!(key.as_str(), "upstream" | "cache"))
         {
             return Err(invalid(format!(
                 "the proxy settings do not know the key {unknown:?}"
@@ -174,7 +183,11 @@ impl UpstreamConfig {
         let Some(upstream) = proxy.get("upstream") else {
             return Err(invalid("the proxy settings do not declare an upstream"));
         };
-        Self::parse(upstream).map(Some)
+        let mut config = Self::parse(upstream)?;
+        if let Some(cache) = proxy.get("cache") {
+            config.cache = CachePolicy::parse(cache)?;
+        }
+        Ok(Some(config))
     }
 
     /// Valida un upstream escrito como JSON.
@@ -249,6 +262,7 @@ impl UpstreamConfig {
             cross_origin_redirects,
             max_bytes: raw.max_bytes,
             require_checksum: raw.require_checksum,
+            cache: CachePolicy::default(),
         })
     }
 
@@ -338,6 +352,44 @@ pub enum ChecksumEvidence {
     ComputedOnly,
 }
 
+/// Que paso en la resolucion que el recibo cuenta.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptOutcome {
+    /// Se trajeron los bytes del upstream y se publicaron.
+    #[default]
+    Fetched,
+    /// El upstream confirmo que el contenido que se tiene sigue valiendo
+    /// (`304`, o los mismos bytes): no se movio nada.
+    Revalidated,
+    /// El upstream entrego **otros** bytes para un contenido inmutable. Los
+    /// bytes no se publican: el recibo guarda lo que se ofrecio, y el
+    /// contenido que se tenia queda retenido hasta que cambie la
+    /// configuracion.
+    Quarantined,
+}
+
+impl ReceiptOutcome {
+    /// El nombre estable con que se guarda y se enseña.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fetched => "fetched",
+            Self::Revalidated => "revalidated",
+            Self::Quarantined => "quarantined",
+        }
+    }
+
+    /// Lee un nombre guardado. `None` si no se conoce.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "fetched" => Some(Self::Fetched),
+            "revalidated" => Some(Self::Revalidated),
+            "quarantined" => Some(Self::Quarantined),
+            _ => None,
+        }
+    }
+}
+
 /// El recibo de una resolucion: de donde vino el contenido y con que se
 /// comprobo.
 ///
@@ -375,6 +427,12 @@ pub struct ProvenanceReceipt {
     pub redirects: u8,
     /// La etiqueta de entidad que declaro el upstream, si declaro alguna.
     pub etag: Option<String>,
+    /// El `Last-Modified` que declaro el upstream, si declaro alguno.
+    #[serde(default)]
+    pub last_modified: Option<String>,
+    /// Que paso: se trajo, se revalido o se puso en cuarentena.
+    #[serde(default)]
+    pub outcome: ReceiptOutcome,
     /// Quien pidio el contenido.
     pub actor: String,
     /// La correlacion de la peticion.
@@ -396,6 +454,23 @@ pub trait ProvenanceLedger: Send + Sync {
         repository: &str,
         asset_path: &str,
     ) -> Result<Vec<ProvenanceReceipt>, CatalogError>;
+
+    /// Los `limit` recibos mas recientes de una ruta, el mas reciente primero.
+    ///
+    /// Es la lectura de la ruta caliente: cada revalidacion deja un recibo y
+    /// con TTL 0 cada lectura escribe uno, asi que el libro de una ruta no
+    /// tiene cota y leerlo entero en cada peticion no escala.
+    async fn latest_receipts(
+        &self,
+        account: &str,
+        repository: &str,
+        asset_path: &str,
+        limit: usize,
+    ) -> Result<Vec<ProvenanceReceipt>, CatalogError> {
+        let mut receipts = self.receipts_of(account, repository, asset_path).await?;
+        receipts.truncate(limit);
+        Ok(receipts)
+    }
 }
 
 #[cfg(test)]
@@ -508,6 +583,60 @@ mod tests {
         config.config_settings =
             json!({"proxy": {"upstream": upstream(json!({})), "upstraem": {}}});
         assert!(UpstreamConfig::of(&config).is_err());
+    }
+
+    #[test]
+    fn the_cache_policy_is_read_from_proxy_cache_and_defaults_when_absent() {
+        let mut config = RepositoryConfig::new(DigestScope::Global);
+        config.config_settings = json!({"proxy": {"upstream": upstream(json!({}))}});
+        let plain = UpstreamConfig::of(&config)
+            .expect("valid")
+            .expect("upstream");
+        assert_eq!(plain.cache, CachePolicy::default());
+
+        config.config_settings = json!({"proxy": {
+            "upstream": upstream(json!({})),
+            "cache": {"ttl": {"metadata_secs": 60}, "negative_secs": 30, "offline": true},
+        }});
+        let cached = UpstreamConfig::of(&config)
+            .expect("valid")
+            .expect("upstream");
+        assert_eq!(cached.cache.metadata_ttl, Some(60));
+        assert_eq!(cached.cache.negative_secs, 30);
+        assert!(cached.cache.offline);
+
+        // Una politica de cache que no se entiende rompe la configuracion
+        // entera: no se degrada a "sin cache".
+        config.config_settings = json!({"proxy": {
+            "upstream": upstream(json!({})),
+            "cache": {"ttl": {"metadata_secs": "soon"}},
+        }});
+        assert!(UpstreamConfig::of(&config).is_err());
+    }
+
+    #[test]
+    fn a_receipt_written_before_the_cache_existed_reads_as_fetched() {
+        let old = json!({
+            "id": "prv-1", "account": "acme", "repository": "central",
+            "asset_path": "a/b", "upstream_id": "central",
+            "source_url": "https://repo.example.com/a/b", "config_version": 1,
+            "digest": serde_json::to_value(ContentDigest::of_bytes(b"x")).unwrap(),
+            "size_bytes": 1, "checksum": {"kind": "computed_only"},
+            "status": 200, "redirects": 0, "etag": null,
+            "actor": "u", "correlation_id": "c",
+            "fetched_at": "2024-01-01T00:00:00Z",
+        });
+        let receipt: ProvenanceReceipt = serde_json::from_value(old).expect("old shape");
+        assert_eq!(receipt.outcome, ReceiptOutcome::Fetched);
+        assert_eq!(receipt.last_modified, None);
+        for outcome in [
+            ReceiptOutcome::Fetched,
+            ReceiptOutcome::Revalidated,
+            ReceiptOutcome::Quarantined,
+        ] {
+            assert_eq!(ReceiptOutcome::parse(outcome.as_str()), Some(outcome));
+        }
+        assert_eq!(ReceiptOutcome::parse("other"), None);
     }
 
     #[test]

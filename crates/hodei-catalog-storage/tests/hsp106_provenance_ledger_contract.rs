@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use chrono::{Duration, Utc};
-use hodei_catalog::{AllowAllAuthorizer, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt};
+use hodei_catalog::{
+    AllowAllAuthorizer, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
+};
 use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_evidence::ContentDigest;
 use surrealdb::Surreal;
@@ -57,6 +59,8 @@ fn receipt(
         status: 200,
         redirects: 1,
         etag: Some("\"abc\"".to_string()),
+        last_modified: Some("Mon, 01 Jan 2024 00:00:00 GMT".to_string()),
+        outcome: ReceiptOutcome::Fetched,
         actor: "hrn:hodei:iam:acme:User/alice".to_string(),
         correlation_id: format!("corr-{id}"),
         fetched_at: Utc::now() - Duration::seconds(age_secs),
@@ -92,8 +96,67 @@ async fn a_receipt_is_read_as_it_was_written() {
     assert_eq!(found.redirects, 1);
     assert_eq!(found.status, 200);
     assert_eq!(found.etag, written.etag);
+    assert_eq!(found.last_modified, written.last_modified);
+    assert_eq!(found.outcome, ReceiptOutcome::Fetched);
     assert_eq!(found.actor, written.actor);
     assert_eq!(found.correlation_id, "corr-r-1");
+}
+
+#[tokio::test]
+async fn every_outcome_is_read_as_it_was_written() {
+    let (_tmp, store) = fresh().await;
+    for (id, outcome) in [
+        ("r-f", ReceiptOutcome::Fetched),
+        ("r-v", ReceiptOutcome::Revalidated),
+        ("r-q", ReceiptOutcome::Quarantined),
+    ] {
+        let mut written = receipt(id, "acme", "mirror", &format!("p/{id}"), 0);
+        written.outcome = outcome;
+        written.status = if outcome == ReceiptOutcome::Revalidated {
+            304
+        } else {
+            200
+        };
+        written.last_modified = None;
+        store.record(&written).await.expect("record");
+        let found = store
+            .receipts_of("acme", "mirror", &format!("p/{id}"))
+            .await
+            .expect("read");
+        assert_eq!(found[0].outcome, outcome);
+        assert_eq!(found[0].status, written.status);
+        assert_eq!(found[0].last_modified, None);
+    }
+}
+
+#[tokio::test]
+async fn a_receipt_written_before_the_cache_is_read_as_fetched() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db = open(&tmp.path().join("db")).await;
+    let store = store(db.clone());
+    store.initialize().await.expect("initialize");
+    // La fila tal y como la dejaba la version 7: sin `outcome` ni
+    // `last_modified`.
+    db.query(
+        "CREATE provenance_receipt:legacy SET receipt_id = 'legacy', account = 'acme', \
+         repository = 'mirror', asset_path = 'old/a.bin', upstream_id = 'central', \
+         source_url = 'https://repo.example.org/old/a.bin', config_version = 1, \
+         digest_algorithm = 'sha256', digest = 'ab', size_bytes = 1, \
+         checksum_kind = 'computed_only', status = 200, redirects = 0, \
+         actor = 'u', correlation_id = 'c', fetched_at = time::now()",
+    )
+    .await
+    .expect("legacy row")
+    .check()
+    .expect("legacy row accepted by the schema");
+
+    let found = store
+        .receipts_of("acme", "mirror", "old/a.bin")
+        .await
+        .expect("read");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].outcome, ReceiptOutcome::Fetched);
+    assert_eq!(found[0].last_modified, None);
 }
 
 #[tokio::test]
