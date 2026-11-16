@@ -1192,6 +1192,28 @@ mod tests {
     }
 
     #[test]
+    fn a_file_that_is_not_yanked_says_so() {
+        let mut document = ProjectDocument::new("labpkg");
+        document
+            .add(FileEntry {
+                filename: "labpkg-1.0-py3-none-any.whl".into(),
+                sha256: "9".repeat(64),
+                size: Some(11),
+                requires_python: None,
+                yanked: None,
+                source: None,
+            })
+            .expect("a file");
+        // El JSON dice que no esta retirada: el cliente decide con el.
+        let json = render_project_json(&document, "http://localhost");
+        let files = json.get("files").and_then(Value::as_array).expect("files");
+        assert_eq!(files[0].get("yanked"), Some(&Value::Bool(false)));
+        // Y el HTML no pone el atributo, que es lo mismo.
+        let html = render_project_html(&document, "http://localhost");
+        assert!(!html.contains("data-yanked"));
+    }
+
+    #[test]
     fn the_html_escapes_what_comes_from_the_client() {
         let mut document = ProjectDocument::new("labpkg");
         document

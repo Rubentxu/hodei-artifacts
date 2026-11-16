@@ -89,6 +89,13 @@ impl Client {
             format!("machine 127.0.0.1 login alice password {token}\n"),
         )
         .expect("the netrc is written");
+        // Un fichero con una credencial solo lo lee quien lo escribe.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&netrc, std::fs::Permissions::from_mode(0o600))
+                .expect("the netrc is private");
+        }
         Self {
             root: root.to_path_buf(),
             netrc,
