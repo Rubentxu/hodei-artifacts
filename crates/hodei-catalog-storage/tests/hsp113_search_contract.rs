@@ -1066,3 +1066,202 @@ async fn the_version_filter_works_without_the_package() {
     assert_eq!(page.total, Some(1));
     assert_eq!(page.results[0].package_version, "1.1");
 }
+
+/// A repository where the order of the path and the order of the
+/// coordinates disagree.
+///
+/// The walk has to come out in the order of the path, and a search by
+/// package in the order of the coordinates. The two orders are the same
+/// only when the data does not say otherwise, and a test that does not
+/// make them disagree cannot tell which one was applied.
+async fn a_catalog_with_two_orders() -> (tempfile::TempDir, SurrealCatalogStore) {
+    let (tmp, store) = fresh().await;
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "two",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                serde_json::json!({}),
+            ),
+        )
+        .await
+        .expect("the repository is created");
+
+    // The path says zeta first; the coordinates say alpha first.
+    publish(&store, "acme", "two", "zeta", "1.0", "a.whl").await;
+    publish(&store, "acme", "two", "alpha", "1.0", "z.whl").await;
+    // The same package with two versions: the coordinates say the older
+    // one first, and the path says the other.
+    publish(&store, "acme", "two", "p", "2.0", "b.whl").await;
+    publish(&store, "acme", "two", "p", "1.0", "y.whl").await;
+    (tmp, store)
+}
+
+/// The paths of a page, in the order they came in.
+fn the_paths(page: &hodei_catalog::search::SearchPage) -> Vec<String> {
+    page.results
+        .iter()
+        .map(|hit| hit.asset_path.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_walk_comes_out_in_the_order_of_the_path() {
+    let (_tmp, store) = a_catalog_with_two_orders().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let page = store
+        .search("acme", &repositories, &SearchQuery::new())
+        .await
+        .expect("the search");
+
+    assert_eq!(
+        the_paths(&page),
+        vec!["a.whl", "b.whl", "y.whl", "z.whl"],
+        "the walk comes out in the order of the path"
+    );
+}
+
+#[tokio::test]
+async fn the_package_filter_comes_out_in_the_order_of_the_coordinates() {
+    let (_tmp, store) = a_catalog_with_two_orders().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_package_name("p"),
+        )
+        .await
+        .expect("the search");
+
+    assert_eq!(
+        the_paths(&page),
+        vec!["y.whl", "b.whl"],
+        "the filter of the package brings the older version first, \
+         and not the order of the path"
+    );
+}
+
+#[tokio::test]
+async fn the_version_filter_comes_out_in_the_order_of_the_path() {
+    let (_tmp, store) = a_catalog_with_two_orders().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_package_version("1.0"),
+        )
+        .await
+        .expect("the search");
+
+    assert_eq!(
+        the_paths(&page),
+        vec!["a.whl", "y.whl", "z.whl"],
+        "the version alone has no index of its own, and the index of \
+         the path serves it"
+    );
+}
+
+#[tokio::test]
+async fn the_trusted_channel_comes_out_in_the_order_of_the_query() {
+    let (_tmp, store) = fresh().await;
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "tools",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                serde_json::json!({ "trust": { "serve": "trusted" } }),
+            ),
+        )
+        .await
+        .expect("the repository is created");
+    let first_path = publish(&store, "acme", "tools", "zeta", "1.0", "a.whl").await;
+    let second_path = publish(&store, "acme", "tools", "alpha", "1.0", "z.whl").await;
+
+    // The grants are asked one by one, and the order of the grants is
+    // the order of the decisions. The grant that comes first is the one
+    // of the path that comes last, so that the two orders are not the
+    // same.
+    for (digest, decision) in [(&second_path, "dec-first"), (&first_path, "dec-second")] {
+        store
+            .grant(&[TrustGrant {
+                account: "acme".to_string(),
+                repository: "tools".to_string(),
+                digest: digest.clone(),
+                decision_id: decision.to_string(),
+                actor: "hrn:hodei:iam:acme:User/alice".to_string(),
+                granted_at: chrono::Utc::now(),
+                revoked_at: None,
+                revoked_by: None,
+                revoke_reason: None,
+            }])
+            .await
+            .expect("the grant");
+    }
+
+    let repositories = store.repositories("acme").await.expect("the repositories");
+    let page = store
+        .search("acme", &repositories, &SearchQuery::new())
+        .await
+        .expect("the search");
+
+    assert_eq!(
+        the_paths(&page),
+        vec!["a.whl", "z.whl"],
+        "the rows of the trusted channel are in the order of the query, \
+         and not in the order of the grants"
+    );
+}
+
+#[tokio::test]
+async fn two_decisions_that_grant_the_same_content_serve_it_once() {
+    let (_tmp, store) = a_catalog().await;
+    let digest = the_digest_of("toolpkg-1.0.0.tgz");
+    for decision in ["dec-one", "dec-two"] {
+        store
+            .grant(&[TrustGrant {
+                account: "acme".to_string(),
+                repository: "tools".to_string(),
+                digest: digest.clone(),
+                decision_id: decision.to_string(),
+                actor: "hrn:hodei:iam:acme:User/alice".to_string(),
+                granted_at: chrono::Utc::now(),
+                revoked_at: None,
+                revoked_by: None,
+                revoke_reason: None,
+            }])
+            .await
+            .expect("the grant");
+    }
+
+    let repositories = store.repositories("acme").await.expect("the repositories");
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_repository("tools"),
+        )
+        .await
+        .expect("the search");
+
+    assert_eq!(
+        page.total,
+        Some(1),
+        "the content is one, and it is counted once"
+    );
+    assert_eq!(
+        the_paths(&page),
+        vec!["toolpkg-1.0.0.tgz"],
+        "and it comes out once"
+    );
+}

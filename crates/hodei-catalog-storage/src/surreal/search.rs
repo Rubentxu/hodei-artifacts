@@ -48,6 +48,11 @@
 //! unique inside a repository, so the order is total: a page neither
 //! repeats nor loses a result between pages.
 //!
+//! A version on its own is not a filter with an index of its own: the
+//! index of the coordinates asks for the name of the package first. The
+//! query that asks only for a version is served by the index of the
+//! path, and its rows come out in the order of the path.
+//!
 //! The repositories are asked one by one and their windows are joined in
 //! the order of the repository name, so the joined order is the order of
 //! the whole account. The window that is asked for brings one row more,
@@ -95,8 +100,20 @@
 //! answers that it does not.
 //!
 //! So a trusted repository is asked for the assets of its grants, one
-//! grant at a time, and the total is not counted there: counting what is
-//! granted means asking every grant.
+//! grant at a time, and what is not granted is not counted either: the
+//! total of a trusted repository counts the granted assets and nothing
+//! else. The total is exact while those assets fit in the window; when
+//! the grants outgrow it, the search stops asking grants and says there
+//! is more without saying how much.
+//!
+//! One grant per **digest**: the book holds a row per decision, and two
+//! decisions can grant the same content. The content is served once and
+//! counted once, because a page that shows it twice says that there are
+//! two contents where there is one.
+//!
+//! And the rows are put in the order of the query, because the order of
+//! the grants is the order of the decisions and not the order the client
+//! sees.
 //!
 //! # The `LIMIT` goes as a number
 //!
@@ -424,6 +441,12 @@ impl SurrealCatalogStore {
     /// The window is respected: the grants stop being asked for as soon
     /// as there are enough rows.
     ///
+    /// The rows come out in the order of the query and not in the order of
+    /// the grants: the grants are asked one by one, and that order is the
+    /// order of the decisions, not the order the client sees. The rows
+    /// are put in the order the other repositories use, so that the order
+    /// of the page is the same in every repository.
+    ///
     /// The second value says whether **every** grant was asked: that is
     /// what tells a total that is known from one that is not.
     async fn the_granted_rows(
@@ -457,9 +480,14 @@ impl SurrealCatalogStore {
                 .await?;
             rows.append(&mut found);
             if rows.len() >= window {
+                // The rows are put in order before they are cut: the
+                // window is the window of the page, and the page is in
+                // the order of the query.
+                the_order_of(&mut rows, query, tag_target);
                 return Ok((rows, false));
             }
         }
+        the_order_of(&mut rows, query, tag_target);
         Ok((rows, true))
     }
 
@@ -468,21 +496,37 @@ impl SurrealCatalogStore {
     /// Only **live** grants: a revoked one is revoked, and what is
     /// revoked is not served. They come from the ledger of the trust, so
     /// the rule of what is live is written once and not twice.
+    ///
+    /// One grant per **digest**: the book holds a row per decision, and
+    /// two decisions can grant the same digest. The content is served
+    /// once, and it is counted once: a row that comes out twice in a
+    /// page says that there are two contents where there is one.
     async fn the_repository_grants(
         &self,
         principal_account: &str,
         repository: &str,
     ) -> Result<Vec<GrantRow>, CatalogError> {
         let grants = self.grants_of(principal_account, repository).await?;
-        Ok(grants
-            .into_iter()
-            .filter(|grant| grant.is_active())
-            .map(|grant| GrantRow {
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let mut rows: Vec<GrantRow> = Vec::new();
+        for grant in grants {
+            if !grant.is_active() {
+                continue;
+            }
+            let algorithm = algorithm_of(&grant.digest);
+            let value = grant.digest.value.clone();
+            if !seen.insert((algorithm.clone(), value.clone())) {
+                // Another decision granted the same content: it is the
+                // same content, and it is served once.
+                continue;
+            }
+            rows.push(GrantRow {
                 repository: grant.repository,
-                digest_algorithm: algorithm_of(&grant.digest),
-                digest: grant.digest.value,
-            })
-            .collect())
+                digest_algorithm: algorithm,
+                digest: value,
+            });
+        }
+        Ok(rows)
     }
 
     /// The coordinates a tag of the account points at.
@@ -663,19 +707,53 @@ fn the_digest_of(query: &SearchQuery) -> Option<(String, String)> {
 
 /// Whether a filter with an index of its own rules the order.
 ///
-/// The package filter, the version filter, the digest and the tag have an
-/// index that serves them, and the engine uses it: the order of their
-/// rows is the one of that index, which is what the client asked for.
-/// Without them, the walk comes out in the order of the path.
+/// The digest has an index that serves it, and the engine uses it: the
+/// order of its rows is the one of that index. The same goes for the
+/// package name and for the tag, which narrow by the coordinates. A
+/// version on its own does not: the index of the coordinates asks for the
+/// name of the package first, and a query that does not give it is served
+/// by the index of the path. Without a filter of its own, the walk comes
+/// out in the order of the path.
 fn another_filter_owns_the_order(
     query: &SearchQuery,
     tag_target: Option<&TagRow>,
     has_digest: bool,
 ) -> bool {
-    has_digest
-        || query.package_name.is_some()
-        || query.package_version.is_some()
-        || tag_target.is_some()
+    has_digest || the_coordinates_own_the_order(query, tag_target)
+}
+
+/// Whether the index of the coordinates serves the query.
+///
+/// The index of the coordinates is `(account, repository, package_name,
+/// package_version, asset_path)`. It serves the queries that ask for the
+/// name of the package, and the ones that ask for a tag, because a tag
+/// narrows by the coordinates.
+fn the_coordinates_own_the_order(query: &SearchQuery, tag_target: Option<&TagRow>) -> bool {
+    query.package_name.is_some() || tag_target.is_some()
+}
+
+/// The order of the rows of a repository.
+///
+/// It is the order of the index that serves the query: the path for the
+/// walk and for the filters that do not have an index of their own, and
+/// the coordinates for the ones that narrow by them.
+///
+/// The rows of the open channel come out of the engine in this order
+/// already. The rows of the trusted channel do not: they come out of the
+/// grants one by one, and that is the order of the decisions. They are
+/// put in this order here, so that the order of the page is the same in
+/// every repository.
+fn the_order_of(rows: &mut [AssetRow], query: &SearchQuery, tag_target: Option<&TagRow>) {
+    if the_coordinates_own_the_order(query, tag_target) {
+        rows.sort_by(|left, right| {
+            left.package_name
+                .cmp(&right.package_name)
+                .then_with(|| left.package_version.cmp(&right.package_version))
+                .then_with(|| left.asset_path.cmp(&right.asset_path))
+        });
+    } else {
+        rows.sort_by(|left, right| left.asset_path.cmp(&right.asset_path));
+    }
 }
 
 /// Whether a repository attribute is the one being looked for.

@@ -23,16 +23,22 @@
 //! The order is the one of the index that serves the query, and it is
 //! **stable**: the same query returns the same page while the catalog
 //! does not change, and a page neither repeats nor loses a result between
-//! pages.
+//! pages. A revocation is not a change of the catalog, but it is a change
+//! of what is served: the page of a repository served on the trusted
+//! channel moves when a concession is revoked, because the content that
+//! was granted is not served any more.
 //!
 //! Which index serves it depends on the filter, and that is not an
 //! accident: the walk and the repository filter come out in the order of
 //! the path, and a filter with an index of its own --the package, the
-//! version, the digest, the tag-- comes out in the order of that index,
-//! which is the order the client asked for. Every one of those orders
-//! ends in the path, and the path is unique inside a repository, so the
-//! order is **total** within the account. The adapter says which order
-//! each filter gives, and the UAT writes it down.
+//! digest, the tag-- comes out in the order of that index, which is the
+//! order the client asked for. A version on its own is not one of them:
+//! the index of the coordinates asks for the name of the package first,
+//! and a query that gives only a version is served by the index of the
+//! path. Every one of those orders ends in the path, and the path is
+//! unique inside a repository, so the order is **total** within the
+//! account. The adapter says which order each filter gives, and the UAT
+//! writes it down.
 //!
 //! # The total
 //!
@@ -69,9 +75,11 @@ pub const DEFAULT_LIMIT: usize = 20;
 
 /// How many results can be left behind.
 ///
-/// A huge offset is not a page: it is a question with no useful answer,
-/// and the engine has to walk it entirely to know that there is
-/// nothing.
+/// A huge offset is not a page: it is a question with no useful answer.
+/// The offset does not go to the engine --the window is asked for whole
+/// and the page is cut here--, but the window is as deep as the offset:
+/// asking for the hundred thousandth result means asking for a hundred
+/// thousand rows to leave them behind.
 pub const MAX_OFFSET: usize = 100_000;
 
 /// How many matches are counted, at most.

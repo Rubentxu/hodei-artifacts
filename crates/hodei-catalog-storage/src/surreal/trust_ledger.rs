@@ -133,12 +133,12 @@ impl TrustLedger for SurrealCatalogStore {
     ) -> Result<u64, CatalogError> {
         let mut response = self
             .db
-            .query(
+            .query(format!(
                 "UPDATE trust_grant SET revoked_at = $at, revoked_by = $actor, \
                  revoke_reason = $reason \
                  WHERE account = $account AND repository = $repository \
-                 AND decision_id = $decision AND revoked_at IS NONE RETURN AFTER",
-            )
+                 AND decision_id = $decision AND {LIVE_GRANT} RETURN AFTER"
+            ))
             .bind(("at", Datetime::from(at)))
             .bind(("actor", actor.to_string()))
             .bind(("reason", reason.to_string()))
@@ -162,13 +162,13 @@ impl TrustLedger for SurrealCatalogStore {
     ) -> Result<u64, CatalogError> {
         let mut response = self
             .db
-            .query(
+            .query(format!(
                 "UPDATE trust_grant SET revoked_at = $at, revoked_by = $actor, \
                  revoke_reason = $reason \
                  WHERE account = $account AND repository = $repository \
                  AND digest_algorithm = $algorithm AND digest = $digest \
-                 AND revoked_at IS NONE RETURN AFTER",
-            )
+                 AND {LIVE_GRANT} RETURN AFTER"
+            ))
             .bind(("at", Datetime::from(at)))
             .bind(("actor", actor.to_string()))
             .bind(("reason", reason.to_string()))
