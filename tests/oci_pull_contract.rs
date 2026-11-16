@@ -31,6 +31,13 @@ const DOCKER_MANIFEST: &str = "application/vnd.docker.distribution.manifest.v2+j
 /// Un media type que este registro NO soporta en este corte (index).
 const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
 
+/// Un tipo que este registro **no** sirve: la firma de Notary.
+///
+/// El indice de OCI ya se sirve --lo publico HSP-102--, asi que el
+/// ejemplo de "un tipo que no se sirve" tiene que ser uno que no se vaya
+/// a servir nunca, y no el que antes lo era.
+const UNSERVED_MEDIA_TYPE: &str = "application/vnd.cncf.notary.signature";
+
 /// El seeder del catálogo (repositorios por cuenta).
 #[test]
 fn the_catalog_can_be_seeded() {
@@ -167,6 +174,7 @@ async fn the_oci_fixture_can_be_seeded() {
                     correlation_id: "oci-fixture".to_string(),
                     overwrite: false,
                     precondition: None,
+                    subject: None,
                 },
             )
             .await
@@ -726,14 +734,14 @@ async fn a_manifest_that_declares_an_unsupported_media_type_is_not_served_as_ano
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    let index = a_manifest(
+    let unserved = a_manifest(
         &the_digest(&a_config()),
         &the_digest(&a_layer(1)),
-        INDEX_MEDIA_TYPE,
+        UNSERVED_MEDIA_TYPE,
     );
-    let digest = the_digest(&index);
-    let file = deployment.directory.path().join("index.bin");
-    std::fs::write(&file, &index).expect("the index is written");
+    let digest = the_digest(&unserved);
+    let file = deployment.directory.path().join("unserved.bin");
+    std::fs::write(&file, &unserved).expect("the manifest is written");
     let published = support::Curl::upload(
         service.port,
         &format!("/repository/{FIRST_REPOSITORY}/manifests/{digest}"),
@@ -746,7 +754,7 @@ async fn a_manifest_that_declares_an_unsupported_media_type_is_not_served_as_ano
 
     // Y con un `Accept` que no lo limita, el registro lo rechaza igual:
     // el tipo que declara el manifiesto es el que decide.
-    let into = deployment.directory.path().join("index-out.bin");
+    let into = deployment.directory.path().join("unserved-out.bin");
     let answer = get_with_accept(
         &deployment,
         service.port,

@@ -38,6 +38,18 @@ pub enum Target {
         /// La referencia: el digest o la etiqueta.
         reference: String,
     },
+    /// La lista de etiquetas del repositorio: `<name>/tags/list`.
+    Tags {
+        /// El nombre del repositorio.
+        name: String,
+    },
+    /// Los referrers de un manifiesto: `<name>/referrers/<digest>`.
+    Referrers {
+        /// El nombre del repositorio.
+        name: String,
+        /// El digest del manifiesto al que se pregunta.
+        digest: String,
+    },
     /// El **inicio** de una subida: `<name>/blobs/uploads/`.
     ///
     /// Aqui no hay sesion todavia: este path es el que abre una.
@@ -60,6 +72,8 @@ impl Target {
         match self {
             Self::Blob { name, .. }
             | Self::Manifest { name, .. }
+            | Self::Tags { name }
+            | Self::Referrers { name, .. }
             | Self::UploadStart { name }
             | Self::UploadSession { name, .. } => name,
         }
@@ -90,15 +104,17 @@ fn the_levels(path: &str) -> Option<Vec<&str>> {
 
 /// El indice del nivel que nombra la clase de recurso.
 ///
-/// Es el **ultimo** nivel que sea `blobs` o `manifests` y que tenga algo
-/// detras: lo que va despues de el es la referencia.
+/// Es el **ultimo** nivel que sea `blobs`, `manifests`, `tags` o
+/// `referrers` y que tenga algo detras: lo que va despues de el es la
+/// referencia.
 fn the_kind_index(levels: &[&str]) -> Option<usize> {
     levels
         .iter()
         .enumerate()
         .rev()
         .find(|(index, level)| {
-            matches!(**level, "blobs" | "manifests") && *index + 1 < levels.len()
+            matches!(**level, "blobs" | "manifests" | "tags" | "referrers")
+                && *index + 1 < levels.len()
         })
         .map(|(index, _)| index)
 }
@@ -126,6 +142,36 @@ pub fn the_target(path: &str) -> Result<Target, OciFailure> {
                 ));
             }
             Ok(Target::Manifest { name, reference })
+        }
+        // La lista de etiquetas: `<name>/tags/list`. El `list` es parte
+        // del protocolo y no un nombre de recurso, asi que sin el no es
+        // la lista de etiquetas: es un path que no nombra nada.
+        "tags" => {
+            if rest != ["list"] {
+                return Err(OciFailure::name_invalid(
+                    "the path does not name the list of tags",
+                ));
+            }
+            Ok(Target::Tags { name })
+        }
+        // Los referrers: `<name>/referrers/<digest>`. El digest se
+        // comprueba aqui, con la misma regla que el de un blob: un
+        // digest con otra sintaxis es un error del cliente, y no una
+        // busqueda sin resultado.
+        "referrers" => {
+            if rest.len() != 1 {
+                return Err(OciFailure::name_invalid(
+                    "the path does not name a manifest to ask the referrers of",
+                ));
+            }
+            // La sintaxis se comprueba aqui: un digest con otra sintaxis
+            // es un error del cliente, y el protocolo lo dice con un
+            // `400`, no con una lista vacia.
+            the_digest_of_reference(rest[0])?;
+            Ok(Target::Referrers {
+                name,
+                digest: rest[0].to_string(),
+            })
         }
         "blobs" => {
             // La superficie de subida vive bajo `blobs/uploads`: es lo

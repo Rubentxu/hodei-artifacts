@@ -1146,7 +1146,7 @@ El hito donde Hodei deja de ser un catalogo y pasa a ser el que guarda y distrib
 - La coexistencia: un artefacto de un registro externo se referencia y se cita sin migrar sus bytes, y sin que Hodei afirme tenerlos.
 - `ADR-015`: la conclusion del SPIKE-010, con sus no-objetivos explicitos (Maven y npm no, hasta que haya demanda, spike de protocolo y UAT nueva).
 
-**La limitacion, escrita:** el subconjunto de OCI es parcial (el manifiesto de imagen, su configuracion y sus capas; el indice multi-plataforma, los referrers y las firmas no), la promocion cambia el canal sin mover bytes porque no hay bytes que muevan entre canales, y laReferences y el GC segura no estanTodavia.
+**La limitacion, escrita:** el subconjunto de OCI es parcial (el manifiesto de imagen, su configuracion y sus capas; las firmas no se validan), la promocion cambia el canal sin mover bytes porque no hay bytes que muevan entre canales, y laReferences y el GC segura no estanTodavia. El indice multi-plataforma y los referrers llegaron despues, con HAR-08 (10-sieteundecies).
 
 ## 10-tresdecies — M10: el CAS de producción
 
@@ -1495,3 +1495,117 @@ que no se puede borrar no impide arrancar.
 HTTP (esta superficie sirve los repositorios que ya están), el ámbito de
 digest particionado por cuenta (un `501` que lo dice claro), los modos
 `proxy` y `group`, y la recolección de blobs sin referencia.
+
+
+## 10-sieteundecies — M10: el indice, las etiquetas y los referrers
+
+El pull y el push ya hablaban el protocolo de OCI Distribution 1.1, pero
+faltaban las dos **preguntas** que el protocolo también tiene: qué
+etiquetas tiene el repositorio, y qué cuelga de este manifiesto. Un
+registro que sólo sube y baja no es un registro incompleto: es un
+almacén con una puerta, y un cliente de artefactos --el `oras`, el
+`cosign`-- no encuentra en el nada donde está la firma de una imagen.
+
+**El índice es un manifiesto de manifiestos.** Sus hijos son
+manifiestos, no blobs, y por eso la validación de lo que el manifiesto
+nombra depende de su clase y no de su forma: el manifiesto de imagen
+exige su configuración y sus capas, el índice exige sus hijos, y el
+manifiesto de artefacto no exige nada. Lo que el manifiesto nombra tiene
+que estar en el repositorio; lo que el manifiesto **cuelga** no, porque
+el protocolo dice que un manifiesto con un `subject` que todavía no está
+se acepta, y un cliente puede subir el referrer antes que el sujeto.
+
+**El `subject` se escribe con la publicación, en la misma transacción.**
+Un referrer visible a medias sería un referrer que existe cuando no
+existe, y la lista de referrers dejaría de ser la verdad. Por eso el
+`subject` viaja en la `Publication` y no en una segunda operación: la
+misma frontera de commit que escribe el manifiesto escribe de qué cuelga.
+
+**Las dos respuestas son las que el protocolo dice, y las dos tienen una
+regla que parece un detalle: no dicen 404.** Un `subject` que no tiene
+referrers es una lista **vacía**, y un repositorio sin etiquetas es una
+lista vacía. Un 404 haría que un cliente que busca la firma de un
+manifiesto tuviera que distinguir entre "no hay firma" y "no hay
+manifiesto", y el protocolo dice que esa distinción no existe. Lo que sí
+se dice con 404 es lo que no existe: el repositorio. La lista de
+etiquetas va en orden lexicográfico --alfanumérico sin distinguir
+mayúsculas, que es como lo define el protocolo-- y pagina con `n` y
+`last`, con el `Link` que dice si hay más. La de referrers es un índice
+de imágenes, con el `artifactType` y las anotaciones de cada manifiesto,
+y el filtro por tipo de artefacto dice en la cabecera que se ha
+aplicado.
+
+**Un referrer es una relación entre dos manifiestos, y nada más.** El
+registro **no** valida firmas: un `oras attach` de una firma cuelga un
+manifiesto que dice que cuelga de otro, y el registro lo registra como
+eso. Y un referrer **no** promueve nada: lo único que escribe el canal
+de confianza es la admisión, y escribe cuarentena; promover es una
+decisión del motor de confianza (HAR-11), y la presencia de un fichero no
+es una decisión. Por eso el informe de esta conformidad dice, en su
+cabeza, que no certifica la validación criptográfica.
+
+**El descriptor vacío no se exige en el almacén.** El descriptor que
+dice "esta imagen no tiene configuración" trae sus bytes en línea, y un
+cliente puede no subirlos nunca. Un registro que los exigiera
+rechazaría un manifiesto que el protocolo dice que es válido, y el
+cliente real que lo hace --el `oras`-- dejaría de poder adjuntar nada.
+
+**La prueba del proceso real, y de un cliente real.**
+`tests/oci_index_contract.rs` no usa mocks: es el binario de verdad en
+un puerto de verdad, con `curl` de verdad, y con el `oras` de verdad
+cuelga un SBOM de un manifiesto y lo vuelve a encontrar. Lo que mide es
+lo que un cliente ve --que el índice se sirve byte a byte con sus dos
+plataformas, que las etiquetas van en orden y paginan, que los referrers
+se listan con su `artifactType` y que su filtro dice que se ha
+aplicado-- y lo deja escrito en `target/uat/oci-index-conformity.md`,
+con su lista de lo que **no** certifica.
+
+**Lo que la revisión independiente encontró, y lo que se corrigió.**
+La pieza se revisó con tres revisores que no conocían la solución: uno
+contra el protocolo, uno contra la arquitectura y uno contra los modos
+de fallo. Los tres marcaron lo mismo en el punto más grave --el digest
+del `subject`-- y los tres tenían razón: el push aceptaba un digest a
+medio escribir, lo guardaba en el catálogo, y el manifiesto quedaba
+publicado con un 201 y **ilegible** para siempre, porque el catálogo lo
+relee con la regla de un digest. Ahora el digest que nombra un
+manifiesto --config, capa, hijo, `subject`-- tiene que ser un digest de
+verdad, y un `subject` que no lo es es un 400.
+
+Los otros tres que se corrigieron: el descriptor vacío es **uno** (el
+que dice el tipo de medio y el digest a la vez; con sólo una de las dos
+cosas, un manifiesto podía nombrar un contenido que no existía y el
+registro no lo exigía); el `n` que no es un número es un **400** con el
+código `PAGINATION_NUMBER_INVALID` que usa el registro de referencia, y
+no un 405 que diría que el registro no sabe atender la petición que sí
+sabe; y el `move_tag` **espera** entre intentos, porque sin espera los
+cuatro intentos caían en la misma ventana de conflicto y los cuatro
+fallaban.
+
+**Las dos superficies comparten el espacio de rutas del catálogo.** Un
+repositorio puede servirse por la superficie cruda y por la de OCI, y
+las dos escriben en la misma tabla: la de OCI guarda sus manifiestos en
+`manifests/<digest>` y sus blobs en `blobs/<digest>`, y la cruda guarda
+lo que el cliente publica en la ruta que pide. Un contenido publicado por
+la cruda en `manifests/<digest>` **sustituye** el asset del manifiesto de
+OCI que estaba ahí: el manifiesto deja de servirse --con un 404 honesto,
+porque el pull comprueba que la fila referencia el digest pedido y no
+sirve nunca otros bytes-- y su relación de referrers desaparece con él,
+que es lo que corresponde: el manifiesto ya no está en el repositorio.
+Namespacear las superficies, que cada una tenga su espacio, es trabajo de
+otra pieza.
+
+**Los límites, escritos.** La paginación de las etiquetas se hace en la
+capa de protocolo: el catálogo devuelve la lista completa y el corte lo
+hace quien habla el dialecto, que es quien sabe lo que el cliente ha
+visto ya. El coste es que cada petición de la lista trae todas las
+etiquetas del repositorio, y un repositorio con muchas etiquetas paga
+esa lectura en cada página. Los referrers **no** se paginan: la lista
+se devuelve entera, y un repositorio con muchísimos referrers tendría
+un índice grande. Y un referrer cuyo manifiesto ya no está en el
+almacén **tumba la lista entera** con un 503: el catálogo y el almacén
+dicen cosas distintas y eso no se disimula con una lista a medias.
+Los descriptores de los hijos de un índice **no** se comprueban contra
+el manifiesto real en su `mediaType` y su tamaño: se comprueba que el
+hijo **esté**, y el hijo se sirve con su propio tipo. Y un movimiento de
+etiqueta **no** deja evento de auditoría: el rastro dice que se
+publicó, no a qué etiqueta se colgó.

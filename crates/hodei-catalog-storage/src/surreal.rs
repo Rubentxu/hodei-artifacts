@@ -75,6 +75,7 @@
 //! catálogo no le cree, y para eso está el puerto de autorización.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -83,8 +84,8 @@ use hodei_catalog::{
     AccessDecision, AccessRequest, AssetDisposition, AssetRecord, BlobIntegrityProbe, BlobLocation,
     BlobProbeError, BlobReference, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader,
     CatalogResource, CatalogWriter, DigestScope, MutableTag, PackageCoordinates, PackageVersion,
-    Precondition, Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor,
-    RepositoryFormat, RepositoryMode, TrustState,
+    Precondition, Publication, PublishOutcome, ReferrerRecord, RepositoryConfig,
+    RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustState,
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use kernel::Hrn;
@@ -111,7 +112,12 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// el objeto **no tiene campos**, así que el motor guardaba `{}` y
 /// descartaba lo que se le había dado. Un `update_config` subía la versión
 /// de la configuración y no cambiaba nada, en silencio.
-pub const SCHEMA_VERSION: i64 = 3;
+///
+/// La versión 4 añade el **`subject`** del asset: el digest del manifiesto
+/// al que un manifiesto cuelga. Es lo que permite responder "qué cuelga
+/// de este manifiesto" sin recorrer los bytes de todos los manifiestos
+/// del repositorio.
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -167,8 +173,10 @@ DEFINE FIELD IF NOT EXISTS package_version ON catalog_asset TYPE string;
 DEFINE FIELD IF NOT EXISTS digest_algorithm ON catalog_asset TYPE string;
 DEFINE FIELD IF NOT EXISTS digest ON catalog_asset TYPE string;
 DEFINE FIELD IF NOT EXISTS size_bytes ON catalog_asset TYPE int;
+DEFINE FIELD IF NOT EXISTS subject ON catalog_asset TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_asset TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_asset_unique ON catalog_asset FIELDS account, repository, asset_path UNIQUE;
+DEFINE INDEX IF NOT EXISTS catalog_asset_subject ON catalog_asset FIELDS account, repository, subject;
 
 DEFINE TABLE IF NOT EXISTS catalog_reference SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS account ON catalog_reference TYPE string;
@@ -499,7 +507,20 @@ struct AssetRow {
     digest_algorithm: String,
     digest: String,
     size_bytes: i64,
+    subject: Option<String>,
     updated_at: Datetime,
+}
+
+/// La fila de un referrer, como está en la base.
+#[derive(Debug, Clone, Deserialize)]
+struct ReferrerRow {
+    account: String,
+    repository: String,
+    asset_path: String,
+    digest_algorithm: String,
+    digest: String,
+    size_bytes: i64,
+    subject: Option<String>,
 }
 
 /// La fila de una referencia, como está en la base.
@@ -575,6 +596,7 @@ struct AssetWrite {
     digest_algorithm: String,
     digest: String,
     size_bytes: i64,
+    subject: Option<String>,
     updated_at: Datetime,
 }
 
@@ -738,9 +760,62 @@ impl AssetRow {
             },
             digest: digest_of(&self.digest_algorithm, &self.digest)?,
             size_bytes: size_of(self.size_bytes)?,
+            subject: the_subject_of(self.subject.as_deref())?,
             updated_at: DateTime::<Utc>::from(self.updated_at),
         })
     }
+}
+
+impl ReferrerRow {
+    fn into_referrer(self) -> Result<ReferrerRecord, CatalogError> {
+        let Some(subject) = the_subject_of(self.subject.as_deref())? else {
+            return Err(CatalogError::corrupt(
+                "referrer",
+                self.asset_path.clone(),
+                "the referrer does not name a subject",
+            ));
+        };
+        Ok(ReferrerRecord {
+            account: self.account,
+            repository: self.repository,
+            asset_path: self.asset_path,
+            digest: digest_of(&self.digest_algorithm, &self.digest)?,
+            size_bytes: size_of(self.size_bytes)?,
+            subject,
+        })
+    }
+}
+
+/// El `subject` de un asset, como se guarda y como se lee.
+///
+/// Se guarda con su algoritmo --`sha256:<hexadecimal>`-- para que la
+/// columna sea la referencia completa y no dependa de que el algoritmo
+/// del contenido sea siempre el mismo.
+fn the_subject_of(subject: Option<&str>) -> Result<Option<ContentDigest>, CatalogError> {
+    let Some(subject) = subject else {
+        return Ok(None);
+    };
+    let Some((algorithm, value)) = subject.split_once(':') else {
+        return Err(CatalogError::corrupt(
+            "asset",
+            subject.to_string(),
+            "the subject does not carry its algorithm",
+        ));
+    };
+    let digest = digest_of(algorithm, value)?;
+    if !digest.is_well_formed() {
+        return Err(CatalogError::corrupt(
+            "asset",
+            subject.to_string(),
+            "the subject is not a well formed digest",
+        ));
+    }
+    Ok(Some(digest))
+}
+
+/// El `subject` de un asset, como se escribe.
+fn the_subject_text(subject: Option<&ContentDigest>) -> Option<String> {
+    subject.map(|digest| digest.to_string())
 }
 
 impl ReferenceRow {
@@ -1068,6 +1143,75 @@ impl CatalogReader for SurrealCatalogStore {
         row.ok_or_else(|| CatalogError::missing("reference", format!("{repository}/{asset_path}")))?
             .into_reference()
     }
+
+    async fn tags(
+        &self,
+        principal_account: &str,
+        repository: &str,
+    ) -> Result<Vec<MutableTag>, CatalogError> {
+        // La lista de etiquetas es una lectura **del repositorio**, no de
+        // una etiqueta: el que pregunta no sabe todavia que etiquetas hay.
+        self.decide(&AccessRequest::repository(
+            principal_account,
+            CatalogAction::Read,
+            repository,
+        ))
+        .await?;
+
+        let mut response = self
+            .db
+            .query(
+                "SELECT account, repository, tag_name, package_name, package_version, updated_at \
+                 FROM catalog_tag WHERE account = $account AND repository = $repository",
+            )
+            .bind(("account", principal_account.to_string()))
+            .bind(("repository", repository.to_string()))
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let rows: Vec<TagRow> = response
+            .take(0)
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let mut tags = Vec::with_capacity(rows.len());
+        for row in rows {
+            tags.push(row.into_tag()?);
+        }
+        Ok(tags)
+    }
+
+    async fn referrers(
+        &self,
+        principal_account: &str,
+        repository: &str,
+        subject: &ContentDigest,
+    ) -> Result<Vec<ReferrerRecord>, CatalogError> {
+        self.decide(&AccessRequest::repository(
+            principal_account,
+            CatalogAction::Read,
+            repository,
+        ))
+        .await?;
+
+        let mut response = self
+            .db
+            .query(
+                "SELECT account, repository, asset_path, digest_algorithm, digest, size_bytes, \
+                 subject FROM catalog_asset WHERE account = $account AND repository = $repository \
+                 AND subject = $subject",
+            )
+            .bind(("account", principal_account.to_string()))
+            .bind(("repository", repository.to_string()))
+            .bind(("subject", subject.to_string()))
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let rows: Vec<ReferrerRow> = response
+            .take(0)
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let mut referrers = Vec::with_capacity(rows.len());
+        for row in rows {
+            referrers.push(row.into_referrer()?);
+        }
+        Ok(referrers)
+    }
 }
 
 impl SurrealCatalogStore {
@@ -1123,7 +1267,7 @@ impl SurrealCatalogStore {
             .db
             .query(
                 "SELECT account, repository, asset_path, package_name, package_version, \
-                 digest_algorithm, digest, size_bytes, updated_at FROM catalog_asset \
+                 digest_algorithm, digest, size_bytes, subject, updated_at FROM catalog_asset \
                  WHERE account = $account AND repository = $repository AND asset_path = $asset_path \
                  LIMIT 1",
             )
@@ -1764,24 +1908,54 @@ impl CatalogWriter for SurrealCatalogStore {
 
         // Mover la etiqueta escribe la etiqueta y nada más: ni la versión
         // ni el blob que hay detrás cambian.
-        self.db
-            .query("UPSERT $id CONTENT $tag")
-            .bind(("id", tag_id(principal_account, repository, tag_name)))
-            .bind((
-                "tag",
-                TagWrite {
-                    account: principal_account.to_string(),
-                    repository: repository.to_string(),
-                    tag_name: tag_name.to_string(),
-                    package_name: coordinates.package_name.clone(),
-                    package_version: coordinates.package_version.clone(),
-                    updated_at: Datetime::from(Utc::now()),
-                },
-            ))
-            .await
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?
-            .check()
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        //
+        // Y la escritura se **reintenta**: dos publicaciones concurrentes
+        // que mueven la misma etiqueta se pelean por la fila, y el motor
+        // de disco, que escribe de uno en uno, cancela la que llega
+        // antes de que la otra termine. Un conflicto de ese tipo no es un
+        // fallo de la escritura: es la escritura llegando un instante
+        // tarde, y el siguiente intento vuelve a escribir lo mismo.
+        let mut last_failure = String::new();
+        let mut written = false;
+        for attempt in 0..WRITE_ATTEMPTS {
+            let result = self
+                .db
+                .query("UPSERT $id CONTENT $tag")
+                .bind(("id", tag_id(principal_account, repository, tag_name)))
+                .bind((
+                    "tag",
+                    TagWrite {
+                        account: principal_account.to_string(),
+                        repository: repository.to_string(),
+                        tag_name: tag_name.to_string(),
+                        package_name: coordinates.package_name.clone(),
+                        package_version: coordinates.package_version.clone(),
+                        updated_at: Datetime::from(Utc::now()),
+                    },
+                ))
+                .await
+                .map_err(|error| CatalogError::unavailable(error.to_string()))?
+                .check();
+            match result {
+                Ok(_) => {
+                    written = true;
+                    break;
+                }
+                Err(error) => last_failure = error.to_string(),
+            }
+            // Y el siguiente intento tiene que llegar **despues** del
+            // otro: el motor de disco escribe de uno en uno, y sin esta
+            // espera los cuatro intentos caen en la misma ventana de
+            // conflicto y los cuatro fallan. La espera es corta y
+            // crece: un conflicto se resuelve en milisegundos, y un
+            // cliente que espera mas de eso tiene algo mas que contar.
+            if attempt + 1 < WRITE_ATTEMPTS {
+                tokio::time::sleep(Duration::from_millis(2 * (attempt as u64 + 1))).await;
+            }
+        }
+        if !written {
+            return Err(CatalogError::unavailable(last_failure));
+        }
 
         // La versión se lee para dejar constancia de que existe, y para
         // que un tag no pueda apuntar a algo que no está.
@@ -2144,6 +2318,7 @@ impl SurrealCatalogStore {
             coordinates: coordinates.clone(),
             digest: digest.clone(),
             size_bytes: publication.size_bytes,
+            subject: publication.subject.clone(),
             updated_at: now,
         };
         let mut create_asset = true;
@@ -2153,7 +2328,12 @@ impl SurrealCatalogStore {
                 && row.package_version == coordinates.package_version
                 && row.digest == digest.value
                 && row.digest_algorithm == algorithm_of(&digest)
-                && row.size_bytes == size_bytes;
+                && row.size_bytes == size_bytes
+                // El `subject` es parte de lo que el asset dice: un
+                // asset que cuelga de otro y el mismo asset que no cuelga
+                // de ninguno no son lo mismo, aunque los bytes sean los
+                // mismos.
+                && row.subject.as_deref() == the_subject_text(publication.subject.as_ref()).as_deref();
             if same {
                 create_asset = false;
                 // Lo que no se escribe no se actualiza. El resultado que
@@ -2383,6 +2563,7 @@ impl SurrealCatalogStore {
                 digest_algorithm: algorithm_of(&plan.asset.digest),
                 digest: plan.asset.digest.value.clone(),
                 size_bytes: i64::try_from(plan.asset.size_bytes).unwrap_or(0),
+                subject: the_subject_text(plan.asset.subject.as_ref()),
                 updated_at: Datetime::from(plan.asset.updated_at),
             });
         }

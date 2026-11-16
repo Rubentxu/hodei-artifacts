@@ -36,8 +36,8 @@
 //!    comprueba.
 //!
 //! Y lo que Hodei **no** hace: hablar de protocolo entero. El subconjunto
-//! soportado de OCI esta declarado en el codigo (`oci::UNSUPPORTED`), y lo
-//! que no esta en la lista no se sirve.
+//! soportado de OCI esta declarado en el codigo (`oci::SUPPORTED_MANIFESTS`),
+//! y lo que no esta en la lista no se sirve.
 
 #![forbid(unsafe_code)]
 

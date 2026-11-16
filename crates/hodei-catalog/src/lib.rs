@@ -50,7 +50,7 @@ pub mod ports;
 pub use error::CatalogError;
 pub use model::{
     AssetDisposition, AssetRecord, BlobLocation, BlobReference, DigestScope, MutableTag,
-    PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome,
+    PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome, ReferrerRecord,
     RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustState,
     repository_hrn,
 };

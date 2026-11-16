@@ -108,6 +108,7 @@ fn publication(repository: &str, asset_path: &str, content: &[u8]) -> Publicatio
         correlation_id: CORRELATION.to_string(),
         overwrite: false,
         precondition: None,
+        subject: None,
     }
 }
 

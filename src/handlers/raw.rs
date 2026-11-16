@@ -386,6 +386,9 @@ pub async fn publish(
             conditional::the_if_match(&headers).as_deref(),
             conditional::the_if_none_match(&headers).as_deref(),
         ),
+        // Un contenido crudo no cuelga de nada: el `subject` es una
+        // relacion de los manifiestos de OCI, y aqui no hay manifiesto.
+        subject: None,
     };
 
     let (_, writer) = the_catalog(&state)?;

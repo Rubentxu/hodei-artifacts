@@ -6,12 +6,13 @@
 //! de datos: ese conocimiento vive en el crate de adaptadores.
 
 use async_trait::async_trait;
+use hodei_evidence::ContentDigest;
 use thiserror::Error;
 
 use crate::error::CatalogError;
 use crate::model::{
     AssetRecord, BlobLocation, BlobReference, MutableTag, PackageCoordinates, PackageVersion,
-    Publication, PublishOutcome, RepositoryConfig, RepositoryDescriptor,
+    Publication, PublishOutcome, ReferrerRecord, RepositoryConfig, RepositoryDescriptor,
 };
 
 /// Lo que un principal quiere hacer con el catálogo.
@@ -302,6 +303,29 @@ pub trait CatalogReader: Send + Sync {
         repository: &str,
         asset_path: &str,
     ) -> Result<BlobReference, CatalogError>;
+
+    /// Las etiquetas del repositorio.
+    ///
+    /// La lista completa, sin pagina: el que pagina es el que sabe lo
+    /// que el cliente ha visto ya, y el corte lo hace la superficie que
+    /// habla el protocolo.
+    async fn tags(
+        &self,
+        principal_account: &str,
+        repository: &str,
+    ) -> Result<Vec<MutableTag>, CatalogError>;
+
+    /// Los referrers de un manifiesto: los manifiestos de la cuenta y el
+    /// repositorio cuyo `subject` es el digest dado.
+    ///
+    /// Una lista vacía es una respuesta valida: un `subject` que no tiene
+    /// referrers no es un error, y el protocolo lo dice asi.
+    async fn referrers(
+        &self,
+        principal_account: &str,
+        repository: &str,
+        subject: &ContentDigest,
+    ) -> Result<Vec<ReferrerRecord>, CatalogError>;
 }
 
 /// La escritura del catálogo.

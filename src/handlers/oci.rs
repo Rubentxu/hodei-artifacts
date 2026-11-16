@@ -35,10 +35,11 @@ use crate::oci::target::{Target, the_digest_of_reference, the_target};
 use crate::oci::{the_catalog, the_content_store, the_context, the_decision, the_repository};
 
 /// Los media types de manifiesto que este registro sirve.
-const SUPPORTED_MANIFESTS: &[&str] = &[
-    "application/vnd.oci.image.manifest.v1+json",
-    "application/vnd.docker.distribution.manifest.v2+json",
-];
+///
+/// Son los que el subconjunto de OCI declara en el codigo: el manifiesto
+/// de imagen de OCI y el de Docker, el indice multi-plataforma y la lista
+/// de Docker, y el manifiesto de artefacto con su `subject`.
+const SUPPORTED_MANIFESTS: &[&str] = hodei_hub::oci::SUPPORTED_MANIFESTS;
 
 /// La cabecera que anuncia la version de la API de distribucion.
 const API_VERSION_HEADER: &str = "Docker-Distribution-API-Version";
@@ -103,6 +104,22 @@ pub async fn content(
         Target::Blob { name, reference } => blob(&state, &context, &name, &reference, head).await,
         Target::Manifest { name, reference } => {
             manifest(&state, &context, &name, &reference, &headers, head).await
+        }
+        // La lista de etiquetas y los referrers no son contenido: son
+        // preguntas por el repositorio, y las responde la superficie de
+        // las consultas.
+        Target::Tags { name } => {
+            crate::oci::query::the_tags(&state, &context, &name, uri.query().unwrap_or("")).await
+        }
+        Target::Referrers { name, digest } => {
+            crate::oci::query::the_referrers(
+                &state,
+                &context,
+                &name,
+                &digest,
+                uri.query().unwrap_or(""),
+            )
+            .await
         }
         // El inicio de una subida y su sesion no son contenido: son el
         // estado de una subida, y se dicen en la superficie de push.

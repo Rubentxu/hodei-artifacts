@@ -14,8 +14,73 @@ use serde::{Deserialize, Serialize};
 /// El tipo de medio del manifiesto de OCI.
 pub const MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
 
+/// El tipo de medio del manifiesto de una imagen Docker (schema 2).
+pub const DOCKER_MANIFEST_MEDIA_TYPE: &str = "application/vnd.docker.distribution.manifest.v2+json";
+
+/// El tipo de medio del indice de imagenes multi-plataforma de OCI.
+pub const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
+
+/// El tipo de medio de la lista de manifiestos multi-plataforma de Docker.
+///
+/// Es lo mismo que el indice de OCI con otro nombre: una lista de
+/// manifiestos hijos, uno por plataforma. Un registro que habla uno habla
+/// el otro, y un cliente de contenedores los usa indistintamente.
+pub const DOCKER_MANIFEST_LIST_MEDIA_TYPE: &str =
+    "application/vnd.docker.distribution.manifest.list.v2+json";
+
+/// El tipo de medio del manifiesto de artefacto de OCI.
+///
+/// El manifiesto de artefacto es el que lleva un `subject`: el manifiesto
+/// de una firma o de un SBOM que se cuelga de otro manifiesto sin tocarlo.
+pub const ARTIFACT_MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.artifact.manifest.v1+json";
+
 /// El tipo de medio de la configuracion de OCI.
 pub const CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.image.config.v1+json";
+
+/// El tipo de medio del descriptor **vacio**.
+///
+/// Es el descriptor que dice "este manifiesto no tiene configuracion":
+/// un `artifactType` y nada mas. Los bytes que nombra son un `{}` de dos
+/// bytes, y un registro no tiene por que guardarlos: el descriptor es
+/// una convencion, no un contenido.
+pub const EMPTY_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
+
+/// El digest del descriptor **vacio**.
+pub const EMPTY_DIGEST: &str =
+    "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+
+/// Si un descriptor es el descriptor vacio.
+///
+/// Un manifiesto de artefacto dice que no tiene configuracion con este
+/// descriptor, y un registro que lo exigiera en el almacen rechazaria un
+/// manifiesto que el protocolo dice que es valido.
+///
+/// El descriptor vacio es **uno**: el que dice las dos cosas a la vez,
+/// el tipo de medio y el digest de los dos bytes. Con una sola de las dos
+/// no es el descriptor vacio: es un descriptor que dice "no hay
+/// configuracion" y nombra un contenido que no esta, y un registro que
+/// lo tomara por el vacio dejaria de exigir un contenido que el
+/// manifiesto nombra.
+pub fn is_the_empty_descriptor(media_type: &str, digest: &str) -> bool {
+    media_type == EMPTY_MEDIA_TYPE && digest == EMPTY_DIGEST
+}
+
+/// Los tipos de medio de manifiesto que este registro publica y sirve.
+///
+/// Se declara aqui, en el codigo, para que no sea una promesa de la
+/// documentacion: lo que no esta en esta lista no esta soportado, y
+/// escribirlo en la lista es cambiar el comportamiento.
+///
+/// Los cinco son los que un cliente real usa: el manifiesto de imagen de
+/// OCI y el de Docker (schema 2), el indice multi-plataforma de OCI y la
+/// lista de Docker, y el manifiesto de artefacto con su `subject`.
+pub const SUPPORTED_MANIFESTS: &[&str] = &[
+    MANIFEST_MEDIA_TYPE,
+    DOCKER_MANIFEST_MEDIA_TYPE,
+    INDEX_MEDIA_TYPE,
+    DOCKER_MANIFEST_LIST_MEDIA_TYPE,
+    ARTIFACT_MANIFEST_MEDIA_TYPE,
+];
 
 /// Lo que Hodei soporta de OCI.
 ///
@@ -30,17 +95,43 @@ pub enum OciSupport {
     ExternalReference,
 }
 
-/// Los tipos de medio que Hodei NO soporta todavia.
+/// Los tipos de medio que Hodei NO soporta.
 ///
-/// La lista es corta a proposito: un indice multi-plataforma, los
-/// referrers, las firmas y los artefactos de artefactos. Hodei no los
-/// habla, y un cliente que los envie recibe un error claro en vez de una
-///interpretacion silenciosa.
-pub const UNSUPPORTED: &[&str] = &[
-    "application/vnd.oci.image.index.v1+json",
-    "application/vnd.oci.artifact.manifest.v1+json",
-    "application/vnd.cncf.notary.signature",
-];
+/// La lista es corta a proposito, y ahora mas: del indice multi-plataforma
+/// y del manifiesto de artefacto ya se habla (HAR-08), asi que lo que
+/// queda es la firma de notary, un tipo que un registro con referrers no
+/// necesita. Un cliente que lo envie recibe un error claro en vez de una
+/// reinterpretacion silenciosa.
+pub const UNSUPPORTED: &[&str] = &["application/vnd.cncf.notary.signature"];
+
+/// La clase de un manifiesto.
+///
+/// La clase decide **que descriptors hay que exigir**: un manifiesto de
+/// imagen exige su configuracion y sus capas, un indice exige sus hijos,
+/// y un manifiesto de artefacto no exige nada porque sus blobs son
+/// opcionales.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestKind {
+    /// Un manifiesto de imagen: configuracion y capas.
+    Image,
+    /// Un indice multi-plataforma: la lista de los manifiestos hijos.
+    Index,
+    /// Un manifiesto de artefacto: un `artifactType` y, si quiere, blobs.
+    Artifact,
+}
+
+/// La clase de un tipo de medio de manifiesto.
+///
+/// `None` es un tipo que este registro no habla, y un tipo que no se
+/// habla no se publica ni se sirve.
+pub fn the_kind_of(media_type: &str) -> Option<ManifestKind> {
+    match media_type {
+        MANIFEST_MEDIA_TYPE | DOCKER_MANIFEST_MEDIA_TYPE => Some(ManifestKind::Image),
+        INDEX_MEDIA_TYPE | DOCKER_MANIFEST_LIST_MEDIA_TYPE => Some(ManifestKind::Index),
+        ARTIFACT_MANIFEST_MEDIA_TYPE => Some(ManifestKind::Artifact),
+        _ => None,
+    }
+}
 
 /// Por que una peticion OCI no se puede servir.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,8 +147,8 @@ impl std::fmt::Display for OciError {
         match self {
             Self::UnsupportedMediaType(media_type) => write!(
                 formatter,
-                "the media type {media_type} is not supported: the supported subset is the image \
-                 manifest, its config and its layers"
+                "the media type {media_type} is not supported: the supported subset is the one \
+                 declared in SUPPORTED_MANIFESTS"
             ),
             Self::Unreadable(reason) => write!(formatter, "the manifest is not readable: {reason}"),
         }
@@ -136,5 +227,52 @@ impl OciManifest {
             }
         }
         digests
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Las dos listas tienen que decir lo mismo.
+    ///
+    /// El push decide con `the_kind_of` y el pull decide con
+    /// `SUPPORTED_MANIFESTS`: si una de las dos se queda atras, el
+    /// registro acepta publicar un tipo que luego no sirve, y el
+    /// cliente recibe un 201 y un 404 del mismo manifiesto.
+    #[test]
+    fn the_supported_manifests_are_exactly_the_ones_the_kind_knows() {
+        for media_type in SUPPORTED_MANIFESTS {
+            assert!(
+                the_kind_of(media_type).is_some(),
+                "{media_type} is supported but its kind is unknown"
+            );
+        }
+        for media_type in [
+            MANIFEST_MEDIA_TYPE,
+            DOCKER_MANIFEST_MEDIA_TYPE,
+            INDEX_MEDIA_TYPE,
+            DOCKER_MANIFEST_LIST_MEDIA_TYPE,
+            ARTIFACT_MANIFEST_MEDIA_TYPE,
+        ] {
+            assert!(
+                SUPPORTED_MANIFESTS.contains(&media_type),
+                "{media_type} has a kind but is not supported"
+            );
+        }
+    }
+
+    /// El descriptor vacio es **uno**: el que dice las dos cosas.
+    #[test]
+    fn the_empty_descriptor_is_the_one_that_says_both() {
+        assert!(is_the_empty_descriptor(EMPTY_MEDIA_TYPE, EMPTY_DIGEST));
+        assert!(
+            !is_the_empty_descriptor(EMPTY_MEDIA_TYPE, "sha256:aa"),
+            "un descriptor que dice 'vacio' y nombra otro contenido no es el vacio"
+        );
+        assert!(
+            !is_the_empty_descriptor("application/vnd.oci.image.layer.v1.tar", EMPTY_DIGEST),
+            "un descriptor que nombra el digest del vacio con otro tipo no es el vacio"
+        );
     }
 }
