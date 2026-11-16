@@ -2107,7 +2107,11 @@ en los nombres ni en el total. La acción que se pide es `DownloadAsset`,
 la misma que los otros listados del servicio: un listado dice qué hay
 dentro. Si el autorizador falla, la búsqueda responde `500` y no una
 página vacía: una página vacía afirmaría que no hay nada donde no se ha
-podido preguntar.
+podido preguntar. Y si el autorizador **no puede decidir** —una
+evaluación que falla no es una denegación— la respuesta también es `500`,
+en la búsqueda y en el detalle: no se confunde el silencio con un "no".
+Como las dos superficies están montadas siempre, el bundle tiene que
+declarar `DownloadAsset` para que el servicio pueda arrancar.
 
 **La búsqueda pregunta repositorio por repositorio.** Cada consulta lleva
 `account` y `repository`, que son las dos primeras columnas del índice
@@ -2123,10 +2127,15 @@ caben y 257 no.
 
 **El orden es el del índice que sirve la consulta, y es total.** El
 recorrido y el filtro por repositorio salen en el orden de la ruta; un
-filtro con índice propio —el paquete, la versión, el digest, la
-etiqueta— sale en el orden de ese índice, que es el que pidió el cliente.
+filtro con índice propio —el paquete, el digest, la etiqueta— sale en
+el orden de ese índice, que es el que pidió el cliente. La versión sola
+no es un filtro con índice propio: el índice de las coordenadas pregunta
+antes por el nombre del paquete, así que la consulta que sólo da la
+versión la sirve el índice de la ruta. En el canal `trusted` las filas
+se ponen en ese mismo orden, porque el orden de las concesiones es el
+orden de las decisiones y no el que ve el cliente.
 Los dos índices de assets que sirven la búsqueda **acaban en la ruta**
-(versión 9 del esquema), y como dentro de un repositorio no hay dos
+(versión 10 del esquema), y como dentro de un repositorio no hay dos
 assets con la misma ruta, el orden es total: la página no puede repetir
 ni perder un resultado entre páginas.
 
@@ -2144,7 +2153,11 @@ la búsqueda y la vista de detalle siguen la misma regla que las
 superficies de contenido: lo que no tiene concesión no sale ni se cuenta,
 y su detalle responde `404` en lugar de `403` —un `403` diría que el
 contenido existe—. Si el libro de concesiones falla o no está, la
-respuesta es `503`: no saber no es permiso.
+respuesta es `503`: no saber no es permiso. Y una concesión es una por
+**digest**: el libro guarda una fila por decisión, y dos decisiones
+pueden conceder el mismo contenido; el contenido se sirve una vez y se
+cuenta una vez, porque una página que lo muestra dos veces dice que hay
+dos contenidos donde hay uno.
 
 **Lo que se midió del motor antes de escribir el adaptador.** En
 SurrealDB 2.7 con RocksDB: el filtro `campo IN <array>` en la consulta
@@ -2164,12 +2177,16 @@ y no atado, porque el motor no sabe evaluar un `LIMIT` atado; el
 desplazamiento no va al motor: la ventana entera se pide y el corte se
 hace en el adaptador, que es donde está el orden.
 
-La versión 9 del esquema añade los tres índices de la búsqueda: el de las
-coordenadas `(account, repository, package_name, package_version,
-asset_path)`, el del digest `(account, repository, digest_algorithm,
-digest, asset_path)` y el de la etiqueta `(account, tag_name)`. Los dos
-primeros acaban en la ruta a propósito: es lo que hace total el orden que
-sirven.
+La versión 9 del esquema añadió los tres índices de la búsqueda: el de las
+coordenadas `(account, repository, package_name, package_version)`, el del
+digest `(account, repository, digest_algorithm, digest)` y el de la
+etiqueta `(account, tag_name)`. La **versión 10** les añade la ruta al
+final —`asset_path`— a los dos primeros, y lo dice en la versión porque el
+esquema se declara con `IF NOT EXISTS` y un índice que ya existe no cambia
+de forma: una base que aplicó la versión 9 los vuelve a definir al
+arrancar, y paga el coste de rehacerlos una sola vez. La ruta al final es
+a propósito: es lo que hace total el orden que sirven, porque dentro de
+un repositorio no hay dos assets con la misma ruta.
 
 **Lo que sigue sin estar.** No hay índice de texto completo: la búsqueda
 por texto es un recorrido de los assets de la cuenta. No hay ordenación
