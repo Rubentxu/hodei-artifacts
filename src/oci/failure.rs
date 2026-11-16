@@ -167,6 +167,24 @@ impl OciFailure {
         }
     }
 
+    /// El numero de resultados que se pide no es un numero.
+    ///
+    /// Es un error **del cliente**, y por eso es un 400: el parametro
+    /// `n` de la lista de etiquetas es un entero, y un entero que no lo
+    /// es no es una peticion que el registro no sepa atender, es una
+    /// peticion mal escrita. El codigo es el que usa el registro de
+    /// referencia, para que un cliente que mire el codigo vea lo mismo
+    /// que veria en cualquier otro.
+    pub fn pagination_number_invalid(message: impl Into<String>) -> Self {
+        Self {
+            code: "PAGINATION_NUMBER_INVALID",
+            message: message.into(),
+            status: StatusCode::BAD_REQUEST,
+            range: None,
+            challenge: None,
+        }
+    }
+
     /// La operacion no existe en esta superficie.
     pub fn unsupported(message: impl Into<String>) -> Self {
         Self {

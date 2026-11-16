@@ -627,6 +627,7 @@ fn the_publication(asset_path: &str, digest: &str, size_bytes: u64) -> hodei_cat
         correlation_id: "doc9".to_string(),
         overwrite: false,
         precondition: None,
+        subject: None,
     }
 }
 

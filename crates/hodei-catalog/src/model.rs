@@ -321,8 +321,37 @@ pub struct AssetRecord {
     pub digest: ContentDigest,
     /// Los bytes que tiene ese contenido.
     pub size_bytes: u64,
+    /// El `subject` del manifiesto, si lo tiene.
+    ///
+    /// Es el digest del manifiesto al que este apunta: lo que hace que un
+    /// manifiesto sea un **referrer** de otro. Un asset sin `subject` es
+    /// un manifiesto del todo normal, y uno con `subject` cuelga de otro.
+    pub subject: Option<ContentDigest>,
     /// Cuando se movió por última vez.
     pub updated_at: DateTime<Utc>,
+}
+
+/// Un referrer: un manifiesto que apunta a otro con `subject`.
+///
+/// Es la relación que la API de referrers del protocolo expone: los
+/// manifiestos de una cuenta y un repositorio cuyo `subject` es un
+/// digest. No dice nada sobre la **validez** de lo que el referrer
+/// afirma: un referrer es un manifiesto que dice que cuelga de otro, y
+/// quien juzgue lo que dice es el motor de confianza, no el catálogo.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReferrerRecord {
+    /// La cuenta propietaria.
+    pub account: String,
+    /// El repositorio.
+    pub repository: String,
+    /// La ruta del referrer dentro del repositorio.
+    pub asset_path: String,
+    /// El digest del manifiesto del referrer.
+    pub digest: ContentDigest,
+    /// Los bytes que tiene el manifiesto del referrer.
+    pub size_bytes: u64,
+    /// El digest del `subject` al que apunta.
+    pub subject: ContentDigest,
 }
 
 /// Una referencia viva a un blob del CAS.
@@ -490,6 +519,19 @@ pub struct Publication {
     /// Sin condición, la publicación es lo que es: una escritura.
     #[serde(default)]
     pub precondition: Option<Precondition>,
+    /// El `subject` del manifiesto, si lo tiene.
+    ///
+    /// Es el digest del manifiesto al que este cuelga: lo que hace que un
+    /// manifiesto sea un **referrer** de otro. Se escribe en la **misma**
+    /// transacción que la publicación, y no en una segunda operación: un
+    /// referrer visible a medias sería un referrer que existe cuando no
+    /// existe, y la lista de referrers dejaría de ser la verdad.
+    ///
+    /// El `subject` **no** se comprueba contra el catálogo: el protocolo
+    /// exige aceptar un manifiesto cuyo `subject` todavía no está, porque
+    /// un cliente puede subir el referrer antes que el sujeto.
+    #[serde(default)]
+    pub subject: Option<ContentDigest>,
 }
 
 /// Lo que el cliente exige que haya en la ruta antes de escribir.

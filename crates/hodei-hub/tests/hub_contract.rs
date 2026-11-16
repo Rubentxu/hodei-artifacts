@@ -21,7 +21,10 @@ use chrono::Utc;
 use hodei_evidence::ContentDigest;
 use hodei_hub::blob::{BlobStore, FileBlobStore, InMemoryBlobStore};
 use hodei_hub::hub::{ArtifactHub, Availability, PromotionError, TrustVerdict};
-use hodei_hub::oci::{MANIFEST_MEDIA_TYPE, OciError, OciManifest, UNSUPPORTED, the_digest_of};
+use hodei_hub::oci::{
+    MANIFEST_MEDIA_TYPE, ManifestKind, OciError, OciManifest, SUPPORTED_MANIFESTS, UNSUPPORTED,
+    the_digest_of, the_kind_of,
+};
 use hodei_trust_policy::decision::Outcome;
 
 // ───────────────────────────── AC1 ─────────────────────────────
@@ -220,7 +223,8 @@ fn the_oci_subset_is_declared_and_its_limitation_written() {
     assert_eq!(read.schema_version, 2);
     assert_eq!(read.the_digests().len(), 2, "la configuracion y la capa");
 
-    // Y lo que no esta soportado, se dice con su error.
+    // Y lo que no es un manifiesto de imagen, se dice con su error: este
+    // lector lee manifiestos de imagen, no indices.
     let index = serde_json::json!({
         "schemaVersion": 2,
         "mediaType": "application/vnd.oci.image.index.v1+json",
@@ -230,7 +234,8 @@ fn the_oci_subset_is_declared_and_its_limitation_written() {
         },
         "layers": []
     });
-    let error = OciManifest::read(index.to_string().as_bytes()).expect_err("un indice no se sirve");
+    let error = OciManifest::read(index.to_string().as_bytes())
+        .expect_err("un indice no es un manifiesto de imagen");
     assert!(
         matches!(error, OciError::UnsupportedMediaType(_)),
         "y el error lo dice: {error}"
@@ -240,10 +245,40 @@ fn the_oci_subset_is_declared_and_its_limitation_written() {
         "con su limitacion escrita: {error}"
     );
 
+    // El indice, en cambio, es un tipo de manifiesto que el registro
+    // habla: se publica y se sirve como lo que es, con su clase.
+    assert!(
+        SUPPORTED_MANIFESTS.contains(&"application/vnd.oci.image.index.v1+json"),
+        "el indice multi-plataforma es un tipo de manifiesto soportado"
+    );
+    assert_eq!(
+        the_kind_of("application/vnd.oci.image.index.v1+json"),
+        Some(ManifestKind::Index),
+        "y su clase es la de un indice"
+    );
+    assert_eq!(
+        the_kind_of("application/vnd.oci.artifact.manifest.v1+json"),
+        Some(ManifestKind::Artifact),
+        "el manifiesto de artefacto es un artefacto"
+    );
+    assert_eq!(
+        the_kind_of(MANIFEST_MEDIA_TYPE),
+        Some(ManifestKind::Image),
+        "y el manifiesto de imagen sigue siendo una imagen"
+    );
+    assert!(
+        the_kind_of("application/vnd.example.nonsense").is_none(),
+        "un tipo que no se habla no tiene clase"
+    );
+
     // Y la lista de lo no soportado esta en el codigo, no en un documento.
     assert!(
-        UNSUPPORTED.contains(&"application/vnd.oci.image.index.v1+json"),
-        "la limitacion esta declarada en el codigo"
+        !UNSUPPORTED.contains(&"application/vnd.oci.image.index.v1+json"),
+        "el indice ya no es una limitacion"
+    );
+    assert!(
+        UNSUPPORTED.contains(&"application/vnd.cncf.notary.signature"),
+        "la limitacion que queda esta declarada en el codigo"
     );
 }
 

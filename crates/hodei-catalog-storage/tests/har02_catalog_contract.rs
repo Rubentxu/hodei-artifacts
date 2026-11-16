@@ -181,6 +181,7 @@ fn publication(
         correlation_id: "corr-har02".to_string(),
         overwrite: false,
         precondition: None,
+        subject: None,
     }
 }
 

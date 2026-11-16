@@ -259,6 +259,7 @@ async fn a_catalog_without_a_probe_still_publishes_and_reads() {
                 correlation_id: "no-probe".to_string(),
                 overwrite: false,
                 precondition: None,
+                subject: None,
             },
         )
         .await

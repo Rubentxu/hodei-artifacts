@@ -27,6 +27,7 @@ use futures_util::StreamExt;
 use hodei_catalog::{PackageCoordinates, Publication};
 use hodei_evidence::ContentDigest;
 use hodei_hub::blob::{BlobError, BlobWriteSession, CommitExpectation};
+use hodei_hub::oci::ManifestKind;
 
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
@@ -36,17 +37,6 @@ use crate::oci::target::{Target, is_a_digest, the_digest_of_reference, the_tag_n
 use crate::oci::{
     the_catalog, the_catalog_error, the_content_store, the_context, the_decision, the_repository,
 };
-
-/// Los tipos de medio de manifiesto que este registro publica.
-///
-/// Son los mismos que el pull sirve: el subconjunto que Hodei puede
-/// verificar. Un indice multi-plataforma es de otra corte (HAR-08), y un
-/// cliente que lo manda recibe un error claro en vez de una
-/// reinterpretacion silenciosa.
-const SUPPORTED_MANIFESTS: &[&str] = &[
-    "application/vnd.oci.image.manifest.v1+json",
-    "application/vnd.docker.distribution.manifest.v2+json",
-];
 
 /// La cabecera que anuncia la version de la API de distribucion.
 const API_VERSION_HEADER: &str = "Docker-Distribution-API-Version";
@@ -62,6 +52,13 @@ const CONTENT_DIGEST_HEADER: &str = "Docker-Content-Digest";
 
 /// La cabecera con las etiquetas que el manifiesto acepta.
 const OCI_TAG_HEADER: &str = "OCI-Tag";
+
+/// La cabecera con el `subject` del manifiesto.
+///
+/// El protocolo dice que la respuesta al push **puede** llevar el
+/// `subject` del manifiesto publicado, y lo lleva: es lo que le dice al
+/// cliente a que manifiesto se ha colgado lo que ha subido.
+const OCI_SUBJECT_HEADER: &str = "OCI-Subject";
 
 /// Los parametros de la peticion que el protocolo usa.
 #[derive(Debug, Default)]
@@ -650,11 +647,13 @@ async fn put_manifest(
             "the manifest must declare its media type",
         ));
     }
-    if !SUPPORTED_MANIFESTS.contains(&declared_type.as_str()) {
+    // La clase del manifiesto dice que descriptors hay que exigir, y un
+    // tipo que este registro no habla no se publica.
+    let Some(kind) = hodei_hub::oci::the_kind_of(&declared_type) else {
         return Err(OciFailure::manifest_invalid(format!(
             "the registry does not publish manifests of type {declared_type}"
         )));
-    }
+    };
 
     // Y la cabecera tiene que coincidir con el `mediaType` del cuerpo:
     // el manifiesto dice de que es, y la cabecera es lo que el cliente
@@ -689,23 +688,35 @@ async fn put_manifest(
         }
     }
 
-    // Las referencias exigidas: la configuracion y las capas tienen que
+    // Las referencias exigidas: lo que el manifiesto nombra tiene que
     // estar en el repositorio. Un manifiesto que apunta a algo que no
     // esta es un manifiesto que no se puede descargar.
-    let required = the_required_digests(&manifest)?;
+    //
+    // El `subject` **no** se exige: el protocolo dice que un manifiesto
+    // cuyo `subject` todavia no esta se acepta, porque un cliente puede
+    // subir el referrer antes que el sujeto.
+    let required = the_required_digests(&manifest, kind)?;
+    let subject = the_subject_of(&manifest)?;
     let (reader, _) = the_catalog(&state)?;
-    for required in &required {
-        let asset = reader
-            .asset(
-                context.account().as_str(),
-                &name,
-                &format!("blobs/{required}"),
-            )
-            .await;
-        if asset.is_err() {
-            return Err(OciFailure::manifest_blob_unknown(format!(
-                "the repository does not have the blob {required}"
-            )));
+    for (required, class) in &required {
+        let path = match class {
+            TheClass::Blob => format!("blobs/{required}"),
+            TheClass::Manifest => format!("manifests/{required}"),
+        };
+        let asset = reader.asset(context.account().as_str(), &name, &path).await;
+        if let Err(error) = asset {
+            // Lo que **no** esta es un error del cliente: el manifiesto
+            // nombra algo que el repositorio no tiene. Lo que el
+            // catalogo no sabe es otra cosa, y se dice como lo que es.
+            return Err(match error {
+                hodei_catalog::CatalogError::Missing { .. } => {
+                    OciFailure::manifest_blob_unknown(format!(
+                        "the repository does not have the {} {required}",
+                        class.as_str()
+                    ))
+                }
+                other => crate::oci::the_catalog_error(&other),
+            });
         }
     }
 
@@ -749,6 +760,10 @@ async fn put_manifest(
         // una etiqueta que se mueve sigue declarado con su digest.
         overwrite: true,
         precondition: None,
+        // El `subject` va en la publicacion, y con ella se escribe: un
+        // referrer visible a medias seria un referrer que existe cuando
+        // no existe.
+        subject: subject.clone(),
     };
     let (_, writer) = the_catalog(&state)?;
     writer
@@ -802,40 +817,179 @@ async fn put_manifest(
             headers.append(OCI_TAG_HEADER, value);
         }
     }
+    // El `subject` del manifiesto, si lo tiene: el protocolo dice que la
+    // respuesta puede decirlo, y lo dice porque el cliente que sube un
+    // referrer quiere saber a que cuelga.
+    if let Some(subject) = &subject
+        && let Ok(value) = HeaderValue::from_str(&subject.to_string())
+    {
+        headers.insert(OCI_SUBJECT_HEADER, value);
+    }
     headers.insert(API_VERSION_HEADER, HeaderValue::from_static("registry/2.0"));
     Ok(response)
 }
 
 /// Los digests que el manifiesto exige que esten en el repositorio.
 ///
-/// La configuracion y las capas. Un manifiesto sin configuracion no es
-/// un manifiesto de imagen, y un manifiesto que no se puede leer no se
-/// publica.
+/// La clase del manifiesto dice **que** se exige:
+///
+/// - Un **manifiesto de imagen** exige su configuracion y sus capas.
+/// - Un **indice** exige sus hijos, que son manifiestos.
+/// - Un **manifiesto de artefacto** no exige nada: su configuracion y sus
+///   blobs son opcionales, y lo que nombra tiene que estar.
 ///
 /// El digest se devuelve **sin el algoritmo**, que es como lo nombra el
 /// catalogo: un blob vive en `blobs/<digest>`, y el prefijo `sha256:`
 /// pertenece a la referencia OCI, no a la ruta del asset. Un digest que
 /// no lo lleva no es un digest, y un manifiesto que lo nombra no se
 /// puede comprobar.
-fn the_required_digests(manifest: &serde_json::Value) -> Result<Vec<String>, OciFailure> {
+fn the_required_digests(
+    manifest: &serde_json::Value,
+    kind: ManifestKind,
+) -> Result<Vec<(String, TheClass)>, OciFailure> {
     let mut required = Vec::new();
-    let config = manifest
-        .get("config")
-        .and_then(|config| config.get("digest"))
-        .and_then(|digest| digest.as_str())
-        .ok_or_else(|| OciFailure::manifest_invalid("the manifest does not name a config"))?;
-    required.push(the_hexadecimal_digest(config)?);
-    if let Some(layers) = manifest.get("layers").and_then(|layers| layers.as_array()) {
-        for layer in layers {
-            let Some(digest) = layer.get("digest").and_then(|digest| digest.as_str()) else {
-                return Err(OciFailure::manifest_invalid(
-                    "a layer of the manifest does not name a digest",
-                ));
-            };
-            required.push(the_hexadecimal_digest(digest)?);
+    match kind {
+        ManifestKind::Image => {
+            let config = manifest
+                .get("config")
+                .and_then(|config| config.get("digest"))
+                .and_then(|digest| digest.as_str())
+                .ok_or_else(|| {
+                    OciFailure::manifest_invalid("the manifest does not name a config")
+                })?;
+            // El descriptor **vacio** no se exige: dice "esta imagen no
+            // tiene configuracion", y un registro que lo exigiera en el
+            // almacen rechazaria un manifiesto que el protocolo dice que
+            // es valido. Un cliente que lo manda en linea --con su
+            // `data`-- nunca lo sube.
+            if !the_empty_descriptor(manifest.get("config")) {
+                required.push((the_hexadecimal_digest(config)?, TheClass::Blob));
+            }
+            if let Some(layers) = manifest.get("layers").and_then(|layers| layers.as_array()) {
+                for layer in layers {
+                    let Some(digest) = layer.get("digest").and_then(|digest| digest.as_str())
+                    else {
+                        return Err(OciFailure::manifest_invalid(
+                            "a layer of the manifest does not name a digest",
+                        ));
+                    };
+                    if the_empty_descriptor(Some(layer)) {
+                        continue;
+                    }
+                    required.push((the_hexadecimal_digest(digest)?, TheClass::Blob));
+                }
+            }
+        }
+        ManifestKind::Index => {
+            let children = manifest
+                .get("manifests")
+                .and_then(|manifests| manifests.as_array())
+                .ok_or_else(|| {
+                    OciFailure::manifest_invalid("the index does not name its manifests")
+                })?;
+            for child in children {
+                let Some(digest) = child.get("digest").and_then(|digest| digest.as_str()) else {
+                    return Err(OciFailure::manifest_invalid(
+                        "a manifest of the index does not name a digest",
+                    ));
+                };
+                required.push((the_hexadecimal_digest(digest)?, TheClass::Manifest));
+            }
+        }
+        ManifestKind::Artifact => {
+            // La configuracion de un artefacto es opcional, y sus blobs
+            // tambien: lo que no se nombra no se exige.
+            //
+            // Y lo que se nombra con el descriptor **vacio** no se
+            // exige tampoco: ese descriptor dice "no hay configuracion",
+            // y un registro que lo exigiera en el almacen rechazaria un
+            // manifiesto que el protocolo dice que es valido.
+            if let Some(config) = manifest.get("config") {
+                let Some(digest) = config.get("digest").and_then(|digest| digest.as_str()) else {
+                    return Err(OciFailure::manifest_invalid(
+                        "the config of the artifact does not name a digest",
+                    ));
+                };
+                if !the_empty_descriptor(Some(config)) {
+                    required.push((the_hexadecimal_digest(digest)?, TheClass::Blob));
+                }
+            }
+            if let Some(blobs) = manifest.get("blobs").and_then(|blobs| blobs.as_array()) {
+                for blob in blobs {
+                    let Some(digest) = blob.get("digest").and_then(|digest| digest.as_str()) else {
+                        return Err(OciFailure::manifest_invalid(
+                            "a blob of the artifact does not name a digest",
+                        ));
+                    };
+                    required.push((the_hexadecimal_digest(digest)?, TheClass::Blob));
+                }
+            }
         }
     }
     Ok(required)
+}
+
+/// Si un descriptor es el descriptor **vacio**.
+///
+/// El descriptor vacio dice "esto no hay": un manifiesto de artefacto
+/// sin configuracion, o una imagen sin configuracion. Los bytes que
+/// nombra son un `{}` de dos bytes, y un cliente puede mandarlos en
+/// linea --con su `data`-- sin subirlos nunca al almacen. Un registro
+/// que los exigiera en el almacen rechazaria un manifiesto valido.
+fn the_empty_descriptor(descriptor: Option<&serde_json::Value>) -> bool {
+    let Some(descriptor) = descriptor else {
+        return false;
+    };
+    let media_type = descriptor
+        .get("mediaType")
+        .and_then(|media_type| media_type.as_str())
+        .unwrap_or_default();
+    let digest = descriptor
+        .get("digest")
+        .and_then(|digest| digest.as_str())
+        .unwrap_or_default();
+    hodei_hub::oci::is_the_empty_descriptor(media_type, digest)
+}
+
+/// La clase de lo que un manifiesto nombra.
+///
+/// Un blob vive en `blobs/<digest>` y un manifiesto en
+/// `manifests/<digest>`: son rutas distintas, y un manifiesto que exige
+/// uno no puede servir el otro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TheClass {
+    /// Un blob del repositorio.
+    Blob,
+    /// Un manifiesto del repositorio.
+    Manifest,
+}
+
+impl TheClass {
+    /// El nombre de la clase, para el mensaje del error.
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Blob => "blob",
+            Self::Manifest => "manifest",
+        }
+    }
+}
+
+/// El `subject` del manifiesto, si lo tiene.
+///
+/// Es el digest del manifiesto al que este cuelga, y **no** se exige que
+/// exista: el protocolo dice que un registro tiene que aceptar un
+/// manifiesto cuyo `subject` todavia no esta, porque un cliente puede
+/// subir el referrer antes que el sujeto.
+fn the_subject_of(manifest: &serde_json::Value) -> Result<Option<ContentDigest>, OciFailure> {
+    let Some(subject) = manifest.get("subject") else {
+        return Ok(None);
+    };
+    let Some(digest) = subject.get("digest").and_then(|digest| digest.as_str()) else {
+        return Err(OciFailure::manifest_invalid(
+            "the subject does not name a digest",
+        ));
+    };
+    Ok(Some(ContentDigest::sha256(the_hexadecimal_digest(digest)?)))
 }
 
 /// El hexadecimal de un digest, sin su algoritmo.
@@ -857,7 +1011,18 @@ fn the_hexadecimal_digest(digest: &str) -> Result<String, OciFailure> {
             "the digest {digest:?} is not one this registry understands"
         )));
     }
-    Ok(hexadecimal.to_string())
+    // Y tiene que ser **un** digest: un hexadecimal a medio escribir no
+    // nombra un contenido, y un manifiesto que lo nombra no se puede
+    // comprobar. Sin esta comprobacion, un `subject` a medio escribir
+    // se guardaria en el catalogo y el manifiesto que lo declaraba
+    // quedaria publicado y ilegible para siempre.
+    let candidate = ContentDigest::sha256(hexadecimal);
+    if !candidate.is_well_formed() {
+        return Err(OciFailure::manifest_invalid(format!(
+            "the digest {digest:?} is not a well formed digest"
+        )));
+    }
+    Ok(candidate.value)
 }
 
 /// Escribe el cuerpo en la sesion de escritura.
@@ -1005,6 +1170,7 @@ async fn publish_blob(
         // mismo, y no hay nada que sustituir.
         overwrite: true,
         precondition: None,
+        subject: None,
     };
     let (_, writer) = the_catalog(state)?;
     writer
@@ -1042,6 +1208,22 @@ fn the_blob_error(error: &BlobError) -> OciFailure {
 mod tests {
     use super::*;
 
+    /// Un digest de verdad: los tests no tienen que medir la longitud
+    /// del digest, tienen que medir **que** digest se exige.
+    const A_DIGEST: &str =
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    const B_DIGEST: &str =
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+    const C_DIGEST: &str =
+        "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+
+    /// El hexadecimal de un digest de verdad.
+    fn the_hexadecimal(digest: &str) -> &str {
+        digest
+            .strip_prefix("sha256:")
+            .expect("the digest carries its algorithm")
+    }
+
     /// El rango que el cliente declara se lee con sus dos extremos.
     #[test]
     fn the_content_range_is_read_with_both_ends() {
@@ -1064,8 +1246,8 @@ mod tests {
         assert_eq!(the_range_header(100), "0-99");
     }
 
-    /// Las referencias exigidas de un manifiesto son su config y sus
-    /// capas, y nada mas.
+    /// Las referencias exigidas de un manifiesto de imagen son su config
+    /// y sus capas, y nada mas.
     ///
     /// El digest se queda **sin el algoritmo**: es como lo nombra el
     /// catalogo, que guarda el blob en `blobs/<digest>`.
@@ -1074,11 +1256,18 @@ mod tests {
         let manifest = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "config": { "digest": "sha256:aaa" },
-            "layers": [{ "digest": "sha256:bbb" }, { "digest": "sha256:ccc" }],
+            "config": { "digest": A_DIGEST },
+            "layers": [{ "digest": B_DIGEST }, { "digest": C_DIGEST }],
         });
-        let required = the_required_digests(&manifest).expect("the digests");
-        assert_eq!(required, vec!["aaa", "bbb", "ccc"]);
+        let required = the_required_digests(&manifest, ManifestKind::Image).expect("the digests");
+        assert_eq!(
+            required,
+            vec![
+                (the_hexadecimal(A_DIGEST).to_string(), TheClass::Blob),
+                (the_hexadecimal(B_DIGEST).to_string(), TheClass::Blob),
+                (the_hexadecimal(C_DIGEST).to_string(), TheClass::Blob),
+            ]
+        );
     }
 
     /// Un digest sin su algoritmo no es un digest, y un manifiesto que lo
@@ -1091,7 +1280,8 @@ mod tests {
             "config": { "digest": "aaa" },
             "layers": [],
         });
-        let error = the_required_digests(&manifest).expect_err("there is no algorithm");
+        let error = the_required_digests(&manifest, ManifestKind::Image)
+            .expect_err("there is no algorithm");
         assert_eq!(error.the_code(), "MANIFEST_INVALID");
 
         let manifest = serde_json::json!({
@@ -1100,7 +1290,8 @@ mod tests {
             "config": { "digest": "md5:aaa" },
             "layers": [],
         });
-        let error = the_required_digests(&manifest).expect_err("the algorithm is not sha256");
+        let error = the_required_digests(&manifest, ManifestKind::Image)
+            .expect_err("the algorithm is not sha256");
         assert_eq!(error.the_code(), "MANIFEST_INVALID");
     }
 
@@ -1112,7 +1303,110 @@ mod tests {
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
             "layers": [],
         });
-        let error = the_required_digests(&manifest).expect_err("there is no config");
+        let error =
+            the_required_digests(&manifest, ManifestKind::Image).expect_err("there is no config");
+        assert_eq!(error.the_code(), "MANIFEST_INVALID");
+    }
+
+    /// Un indice exige sus hijos, que son **manifiestos** y no blobs.
+    #[test]
+    fn an_index_requires_its_children_as_manifests() {
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                { "digest": A_DIGEST, "platform": { "os": "linux", "architecture": "amd64" } },
+                { "digest": B_DIGEST, "platform": { "os": "linux", "architecture": "arm64" } }
+            ],
+        });
+        let required = the_required_digests(&manifest, ManifestKind::Index).expect("the digests");
+        assert_eq!(
+            required,
+            vec![
+                (the_hexadecimal(A_DIGEST).to_string(), TheClass::Manifest),
+                (the_hexadecimal(B_DIGEST).to_string(), TheClass::Manifest),
+            ]
+        );
+
+        // Un indice sin hijos no es un indice.
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+        });
+        let error = the_required_digests(&manifest, ManifestKind::Index)
+            .expect_err("there are no children");
+        assert_eq!(error.the_code(), "MANIFEST_INVALID");
+    }
+
+    /// Un manifiesto de artefacto no exige nada, y lo que nombra son
+    /// blobs.
+    #[test]
+    fn an_artifact_manifest_requires_nothing_and_names_blobs() {
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
+            "artifactType": "application/vnd.example.sbom.v1",
+            "blobs": [{ "digest": A_DIGEST }],
+        });
+        let required =
+            the_required_digests(&manifest, ManifestKind::Artifact).expect("the digests");
+        assert_eq!(
+            required,
+            vec![(the_hexadecimal(A_DIGEST).to_string(), TheClass::Blob)]
+        );
+
+        // Sin blobs ni configuracion, un artefacto no exige nada.
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
+            "artifactType": "application/vnd.example.sbom.v1",
+        });
+        let required =
+            the_required_digests(&manifest, ManifestKind::Artifact).expect("the digests");
+        assert!(required.is_empty());
+    }
+
+    /// El `subject` se lee, y **no** se exige que exista: el protocolo
+    /// dice que un manifiesto cuyo `subject` todavia no esta se acepta.
+    #[test]
+    fn the_subject_is_read_and_not_required_to_exist() {
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
+            "artifactType": "application/vnd.example.sbom.v1",
+            "subject": { "digest": A_DIGEST },
+        });
+        let subject = the_subject_of(&manifest).expect("the subject");
+        assert_eq!(
+            subject.map(|digest| digest.value),
+            Some(the_hexadecimal(A_DIGEST).to_string())
+        );
+
+        // Sin subject, no hay subject.
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        });
+        assert!(the_subject_of(&manifest).expect("no subject").is_none());
+
+        // Y un subject que **no** es un digest no es un subject: un
+        // digest a medio escribir se guardaria en el catalogo y dejaria
+        // el manifiesto publicado y ilegible.
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
+            "subject": { "digest": "sha256:aaa" },
+        });
+        let error = the_subject_of(&manifest).expect_err("the subject is not a digest");
+        assert_eq!(error.the_code(), "MANIFEST_INVALID");
+
+        // Un subject sin digest no es un subject.
+        let manifest = serde_json::json!({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
+            "subject": { "size": 12 },
+        });
+        let error = the_subject_of(&manifest).expect_err("there is no digest");
         assert_eq!(error.the_code(), "MANIFEST_INVALID");
     }
 }

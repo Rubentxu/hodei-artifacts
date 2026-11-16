@@ -35,6 +35,12 @@
 // superficies y dos informes: un informe que certifica casos de OCI con
 // el título de la conformidad cruda dice una cosa y su título otra.
 //
+// Y el índice, las etiquetas y los referrers tienen el suyo, en
+// `target/uat/oci-index-conformity.md`. Son tres superficies y tres
+// informes, y cada uno dice lo que **no** certifica: el del índice dice
+// que el registro no valida firmas criptográficas, y el del push no
+// puede decir lo mismo porque no las ha visto.
+//
 // La suite con `nextest` queda fuera, a propósito: la ejecuta
 // `cargo nextest run --workspace --no-fail-fast --test-threads=1`, que es
 // el aislamiento por prueba, y las pruebas de RocksDB y de binario
@@ -171,6 +177,7 @@ pipeline {
                         "--test doc9_uat",
                         "--test oci_pull_contract",
                         "--test oci_push_contract",
+                        "--test oci_index_contract",
                     ).joinToString(" ")
                 )
                 sh(
@@ -216,6 +223,20 @@ pipeline {
                 sh("cat target/uat/oci-push-conformity.md")
                 archiveArtifacts(
                     artifacts = "target/uat/oci-push-conformity.md",
+                    allowEmptyArchive = false,
+                )
+                // Y el del indice, las etiquetas y los referrers, que es
+                // **otro** informe otra vez: el del push certify el
+                // push, y un caso de referrers en el no dice nada de lo
+                // que el gate cree.
+                sh(
+                    "if [ ! -f target/uat/oci-index-conformity.md ]; then " +
+                        "echo 'the OCI index report is missing: the suite did not write it' >&2; " +
+                        "exit 1; fi"
+                )
+                sh("cat target/uat/oci-index-conformity.md")
+                archiveArtifacts(
+                    artifacts = "target/uat/oci-index-conformity.md",
                     allowEmptyArchive = false,
                 )
                 // Y el de la UAT de doc-9, que es la evidencia de la
