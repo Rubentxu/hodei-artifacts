@@ -47,6 +47,7 @@ pub mod error;
 pub mod gc;
 pub mod model;
 pub mod ports;
+pub mod trust;
 
 pub use error::CatalogError;
 pub use gc::{
@@ -64,3 +65,4 @@ pub use ports::{
     CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogWriter,
     DenyAllAuthorizer,
 };
+pub use trust::{ServeChannel, TrustGrant, TrustLedger};

@@ -104,6 +104,39 @@ impl Default for ContentConfig {
     }
 }
 
+/// The trust plane: which policy decides what may be promoted.
+///
+/// Promotion to the trusted channel is evaluated against a trust policy.
+/// Without a policy file the service has nothing to evaluate with, and
+/// every promotion is refused with a recorded decision: a missing policy
+/// is never a permit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustConfig {
+    /// A JSON file with the trust policy (`TrustPolicy`).
+    ///
+    /// Default: none.
+    #[serde(default)]
+    pub policy_file: Option<String>,
+    /// The identifier under which the policy is activated and requested.
+    ///
+    /// Default: `default`.
+    #[serde(default = "the_default_trust_policy_id")]
+    pub policy_id: String,
+}
+
+impl Default for TrustConfig {
+    fn default() -> Self {
+        Self {
+            policy_file: None,
+            policy_id: the_default_trust_policy_id(),
+        }
+    }
+}
+
+fn the_default_trust_policy_id() -> String {
+    "default".to_string()
+}
+
 /// The default directory of the content.
 fn the_default_cas_path() -> String {
     "./data/hodei.cas".to_string()
@@ -158,6 +191,10 @@ pub struct AppConfig {
     /// Where the content of the artifacts lives.
     #[serde(default)]
     pub content: ContentConfig,
+
+    /// The trust policy that decides promotions to the trusted channel.
+    #[serde(default)]
+    pub trust: TrustConfig,
 
     /// Database configuration
     pub database: DatabaseConfig,

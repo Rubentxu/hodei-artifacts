@@ -80,7 +80,21 @@ pub async fn the_tags(
         .await
         .map_err(|error| crate::oci::the_catalog_error(&error))?;
 
-    let mut names: Vec<String> = tags.into_iter().map(|tag| tag.tag_name).collect();
+    // En el canal trusted solo se listan las etiquetas cuyo **destino**
+    // tiene concesion activa: una etiqueta hacia un digest no concedido
+    // delataria que existe.
+    let servable = crate::trust::servable(state, context.account().as_str(), &repository)
+        .await
+        .map_err(the_admission_failure)?;
+    let mut names: Vec<String> = tags
+        .into_iter()
+        .filter(|tag| {
+            servable
+                .as_ref()
+                .is_none_or(|digests| digests.contains(&tag.coordinates.package_version))
+        })
+        .map(|tag| tag.tag_name)
+        .collect();
     names.sort_by(|left, right| the_order(left).cmp(&the_order(right)));
 
     // El cursor: la lista empieza **despues** de `last`. El cursor se
@@ -127,6 +141,14 @@ pub async fn the_tags(
     Ok(response)
 }
 
+/// Lo que se responde cuando el libro de confianza no se puede leer.
+///
+/// Un listado que no puede saber que se admite no lista nada: lo
+/// desconocido no se sirve.
+fn the_admission_failure(_admission: crate::trust::Admission) -> OciFailure {
+    OciFailure::unavailable("the trust ledger is not available")
+}
+
 /// Los referrers de un manifiesto.
 ///
 /// `GET /v2/<name>/referrers/<digest>`
@@ -161,9 +183,18 @@ pub async fn the_referrers(
         .await
         .map_err(|error| crate::oci::the_catalog_error(&error))?;
 
+    // Un referrer es un manifiesto: solo se lista el que se podria servir.
+    let servable = crate::trust::servable(state, context.account().as_str(), &repository)
+        .await
+        .map_err(the_admission_failure)?;
     let store = the_content_store(state)?;
     let mut manifests = Vec::with_capacity(referrers.len());
     for referrer in referrers {
+        if let Some(digests) = &servable
+            && !digests.contains(&referrer.digest.value)
+        {
+            continue;
+        }
         let bytes = store.get(&referrer.digest).await.map_err(|_| {
             OciFailure::unavailable("the catalog and the store disagree about a referrer")
         })?;

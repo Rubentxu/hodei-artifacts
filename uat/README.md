@@ -13,6 +13,7 @@ prueba que lo comprueba y una lista de lo que deja fuera.
 | --- | --- | --- |
 | [`UAT-OCI.md`](UAT-OCI.md) | OCI Distribution | Que el registro habla la Distribution Spec 1.1 con los clientes y con las categorías que el documento nombra, con la versión de cada cliente. |
 | [`UAT-OPERATIONS.md`](UAT-OPERATIONS.md) | Recolección del almacén de contenido | Que el servicio borra solo los bytes que nadie nombra, solo tras la gracia y con permiso explícito, que explica cada veredicto en una simulación y que no pierde ni repite nada tras un corte. |
+| [`UAT-SECURITY.md`](UAT-SECURITY.md) | Confianza en la distribución | Que un artefacto que nadie ha promovido no se sirve por ningún protocolo (raw u OCI), ni por una etiqueta movida, un manifiesto alternativo, un referrer o un alias, y que revocar tiene efecto en la petición siguiente. |
 
 Los informes de cada ejecución--que son lo que se archiva-- no viven aquí:
 se escriben en `target/uat/` en el momento de correr la suite, y la

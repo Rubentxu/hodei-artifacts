@@ -1835,3 +1835,34 @@ que hoy lo reclamable son los huérfanos que deja un fallo de publicación;
 las retenciones de repositorio y de cuenta cobrarán sentido cuando haya
 retiros de referencias. El ámbito de digest particionado por cuenta no se
 recorre. La lista completa de límites, con su acción, está en el contrato.
+
+## 10-vicies — M10: las políticas de confianza en la distribución (HAR-11)
+
+La ruta nativa ya no esquiva la confianza. El contrato, las pruebas y los
+límites están en [`uat/UAT-SECURITY.md`](uat/UAT-SECURITY.md); aquí se dice
+qué hay y dónde vive.
+
+**Qué hay.** `hodei_catalog::trust` define el canal de servicio de un
+repositorio (`config_settings.trust.serve`: `open` o `trusted`) y el libro
+de concesiones por digest (`TrustLedger`), que `hodei-catalog-storage`
+guarda en el motor (esquema 6). `src/trust/` conecta el plano de promoción
+de `hodei-trust-policy`: la admisión única que usan raw, blobs, manifiestos,
+etiquetas y referrers, y el cableado del arranque (la política de confianza
+sale de `[trust] policy_file`). `src/handlers/promotions.rs` expone
+`POST /api/v1/promotions` y `POST /api/v1/promotions/revoke`.
+
+**Cómo decide.** Cedar decide **quién** (`PromoteAsset`, `RevokePromotion`);
+la política de confianza decide **qué software**. Promover siempre escribe
+una decisión; solo una promoción que avanza concede, y concede el digest y
+lo que abarca (la configuración y las capas de un manifiesto, los hijos de
+un índice). No hay caché: el canal trusted lee el libro en cada petición,
+así que una revocación vale en la siguiente, y un error del libro es un
+`503`, nunca un permiso.
+
+**Lo que sigue sin estar.** Los hechos de riesgo de la promoción son los de
+cero (`RiskFacts::default()`): no se alimentan CVE ni VEX reales, y una
+concesión no caduca sola ante una CVE nueva; se retira con la revocación.
+No hay una ruta HTTP que cree repositorios del catálogo, así que el canal
+trusted se fija al sembrar o con `update_config`. Un despliegue con
+catálogo duradero tiene que declarar las dos acciones nuevas en su esquema
+Cedar.

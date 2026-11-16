@@ -265,6 +265,7 @@ pub async fn bootstrap(
             .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
         let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
         let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
+        let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> = catalog.clone();
         let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
         // The staging that an interrupted upload leaves behind is cleaned
         // here, at the boot. It is never published -- the catalog write
@@ -318,8 +319,28 @@ pub async fn bootstrap(
             content.clone() as Arc<dyn hodei_hub::BlobStore>,
             Duration::from_secs(config.content.gc_grace_secs),
         );
+        // The promotion: the decisions live in the same engine as the
+        // rest, and the policy that decides is the one the deployment
+        // declares. A policy that is declared and cannot be read stops
+        // the boot; one that is not declared leaves every promotion
+        // refused with a recorded decision.
+        let policies = crate::trust::promotion::registry_from(
+            config.trust.policy_file.as_deref(),
+            &config.trust.policy_id,
+        )
+        .map_err(BootstrapError::Initialization)?;
+        let decisions = Arc::new(hodei_trust_policy_storage::SurrealDecisionStore::new(
+            Arc::new(schema_storage.db().clone()),
+        ));
+        let plane = Arc::new(crate::trust::promotion::TrustPlane::new(
+            decisions,
+            policies,
+            config.trust.policy_id.clone(),
+        ));
         let app_state = app_state
             .with_catalog(reader, writer)
+            .with_trust_ledger(trust_ledger)
+            .with_trust_plane(plane)
             .with_content_store(content);
         match gc {
             Ok(gc) => app_state.with_gc(Arc::new(gc)),
@@ -435,6 +456,12 @@ fn configure_production_security(
         config.security.oci_api_enabled,
     )
     .map_err(|error| BootstrapError::Security(format!("invalid authorization bundle: {error}")))?;
+    // An instance that can promote has to be able to decide who may.
+    if state.trust_plane.is_some() {
+        crate::actions::check_promotion_declared(&schema).map_err(|error| {
+            BootstrapError::Security(format!("invalid authorization bundle: {error}"))
+        })?;
+    }
 
     let cedar = CedarAuthorizer::from_policies(
         &policies,

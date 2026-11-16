@@ -182,6 +182,10 @@ hodei-audit = { path = "crates/hodei-audit" }
 # adaptador sobre el motor. La superficie de contenido crudo los usa.
 hodei-catalog = { path = "crates/hodei-catalog" }
 hodei-catalog-storage = { path = "crates/hodei-catalog-storage" }
+# La promocion al canal trusted: el servicio que decide con la politica de
+# confianza y el almacen duradero de sus decisiones.
+hodei-trust-policy = { path = "crates/hodei-trust-policy" }
+hodei-trust-policy-storage = { path = "crates/hodei-trust-policy-storage" }
 # El almacén de contenido por digest: el CAS donde viven los bytes.
 hodei-hub = { path = "crates/hodei-hub" }
 # Published core; no path/git dependency to a sibling checkout.

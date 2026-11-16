@@ -59,6 +59,22 @@ pub fn download_asset() -> ActionId {
     ActionId::new("artifacts", "DownloadAsset").expect("a valid action")
 }
 
+/// Promoting a digest of a repository to its trusted channel.
+///
+/// It is the permission of **who** may promote. Whether the software
+/// qualifies is decided by the trust policy, and both have to say yes.
+pub fn promote_asset() -> ActionId {
+    ActionId::new("artifacts", "PromoteAsset").expect("a valid action")
+}
+
+/// Revoking the promotion of a digest, or of a whole decision.
+///
+/// It is its own action: whoever may promote is not thereby the one who
+/// may take a promotion back, and a policy can grant either alone.
+pub fn revoke_promotion() -> ActionId {
+    ActionId::new("artifacts", "RevokePromotion").expect("a valid action")
+}
+
 /// Every action the service authorizes with.
 pub fn all() -> Vec<ActionId> {
     vec![
@@ -68,7 +84,19 @@ pub fn all() -> Vec<ActionId> {
         access_admin_api(),
         upload_asset(),
         download_asset(),
+        promote_asset(),
+        revoke_promotion(),
     ]
+}
+
+/// Check that the bundle declares the two actions of the promotion.
+///
+/// It is separate from [`check_service_declared`] because it only applies
+/// to an instance that wires the promotion service: an instance without
+/// one never builds those actions and does not have to declare them.
+pub fn check_promotion_declared(schema: &Schema) -> Result<(), String> {
+    check_declared(schema, &promote_asset())?;
+    check_declared(schema, &revoke_promotion())
 }
 
 /// Check that the bundle declares the action the service authorizes with.

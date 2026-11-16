@@ -29,3 +29,13 @@ permit(
     action == Artifacts::Action::"DownloadAsset",
     resource
 );
+permit(
+    principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+    action == Artifacts::Action::"PromoteAsset",
+    resource
+);
+permit(
+    principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+    action == Artifacts::Action::"RevokePromotion",
+    resource
+);

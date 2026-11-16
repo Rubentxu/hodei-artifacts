@@ -34,6 +34,7 @@ pub mod raw;
 pub mod repository;
 pub mod repository_surreal;
 pub mod router;
+pub mod trust;
 
 pub use app_state::AppState;
 pub use bootstrap::{BootstrapConfig, bootstrap};

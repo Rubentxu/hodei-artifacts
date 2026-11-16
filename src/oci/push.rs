@@ -264,6 +264,23 @@ async fn the_mount(
         return Ok(None);
     }
 
+    // Montar es leer del origen: si el origen es un canal trusted, el
+    // digest tiene que estar concedido alli. Si no, el blob en cuarentena
+    // saldria a un repositorio abierto sin promoverse nunca. Lo no
+    // admitido cae a una subida normal, igual que lo que no existe: ni el
+    // 201 ni el 202 dicen si el digest esta en cuarentena.
+    if crate::trust::admit(
+        state,
+        context.account().as_str(),
+        &source_repository,
+        &asset.digest,
+    )
+    .await
+    .is_err()
+    {
+        return Ok(None);
+    }
+
     // El montaje no copia bytes: el CAS es un arbol comun y el contenido
     // ya esta. Lo que se escribe es la referencia del repositorio
     // destino, que es lo que hace que el blob sea de ese repositorio.

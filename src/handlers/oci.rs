@@ -178,6 +178,22 @@ async fn blob(
             "the repository does not reference {digest}"
         )));
     }
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        &repository,
+        &asset.digest,
+    )
+    .await
+    .map_err(|admission| {
+        the_admission_failure(
+            admission,
+            |digest| {
+                OciFailure::blob_unknown(format!("the repository does not reference {digest}"))
+            },
+            &digest,
+        )
+    })?;
     let store = the_content_store(state)?;
     let bytes = store
         .get(&asset.digest)
@@ -230,9 +246,7 @@ async fn manifest(
             .tag(context.account().as_str(), name, reference)
             .await
             .map_err(|error| match error {
-                hodei_catalog::CatalogError::Missing { .. } => OciFailure::manifest_unknown(
-                    format!("the tag {reference:?} does not point at a manifest"),
-                ),
+                hodei_catalog::CatalogError::Missing { .. } => the_unknown_manifest(reference),
                 _other => OciFailure::unavailable("the catalog is not available"),
             })?
             .coordinates
@@ -248,9 +262,7 @@ async fn manifest(
         )
         .await
         .map_err(|error| match error {
-            hodei_catalog::CatalogError::Missing { .. } => {
-                OciFailure::manifest_unknown(format!("there is no manifest {digest}"))
-            }
+            hodei_catalog::CatalogError::Missing { .. } => the_unknown_manifest(reference),
             _other => OciFailure::unavailable("the catalog is not available"),
         })?;
 
@@ -258,10 +270,22 @@ async fn manifest(
     // dice la URL: como en los blobs, el digest pedido dice **que** se
     // pide y la fila dice **que** hay.
     if asset.digest.value != digest {
-        return Err(OciFailure::manifest_unknown(format!(
-            "the repository does not reference {digest}"
-        )));
+        return Err(the_unknown_manifest(reference));
     }
+
+    // La etiqueta ya se resolvio a su digest destino: lo que se admite es
+    // el digest, no el nombre. Una etiqueta que se movio a otro digest no
+    // hereda la concesion del anterior.
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        &repository,
+        &asset.digest,
+    )
+    .await
+    .map_err(|admission| {
+        the_admission_failure(admission, |_| the_unknown_manifest(reference), &digest)
+    })?;
 
     let store = the_content_store(state)?;
     let bytes = store.get(&asset.digest).await.map_err(|_| {
@@ -289,6 +313,33 @@ async fn manifest(
     );
 
     Ok(oci_bytes_response(bytes, &media_type, &digest, head))
+}
+
+/// El 404 de un manifiesto, con la referencia que el cliente escribio.
+///
+/// Es el mismo para lo que no existe, lo que esta en cuarentena y una
+/// etiqueta que no apunta a nada: el mensaje nunca nombra el digest
+/// resuelto, que diria que el contenido esta ahi.
+fn the_unknown_manifest(reference: &str) -> OciFailure {
+    OciFailure::manifest_unknown(format!("the manifest {reference:?} is unknown"))
+}
+
+/// Lo que se responde cuando la compuerta de confianza no admite.
+///
+/// Lo no admitido responde con el mismo error OCI que lo que no existe
+/// (`unknown`), para que la respuesta no diga que el contenido esta ahi.
+/// Un libro que no responde es un 503: lo desconocido no se sirve.
+fn the_admission_failure(
+    admission: crate::trust::Admission,
+    unknown: impl FnOnce(&str) -> OciFailure,
+    digest: &str,
+) -> OciFailure {
+    match admission {
+        crate::trust::Admission::Hidden => unknown(digest),
+        crate::trust::Admission::Unavailable => {
+            OciFailure::unavailable("the trust ledger is not available")
+        }
+    }
 }
 
 /// El tipo de medio que el manifiesto declara.

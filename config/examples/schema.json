@@ -53,6 +53,26 @@
           ]
         }
       },
+      "PromoteAsset": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
+      },
+      "RevokePromotion": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
+      },
       "ReadCapsule": {
         "appliesTo": {
           "principalTypes": [

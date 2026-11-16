@@ -130,6 +130,17 @@ pub struct AppState {
     /// can reclaim. Without it the surface answers 501 and nothing is
     /// deleted.
     pub(crate) gc: Option<Arc<crate::gc::GcService>>,
+    /// The ledger of trust grants: which digest the trusted channel of a
+    /// repository may serve.
+    ///
+    /// Optional, and fail-closed: a repository with the trusted channel
+    /// and no ledger serves nothing.
+    pub(crate) trust_ledger: Option<Arc<dyn hodei_catalog::TrustLedger>>,
+    /// The promotion service and the policy it decides with.
+    ///
+    /// Optional: without it the promotion routes answer `501` and nothing
+    /// is ever granted, so a trusted channel stays empty.
+    pub(crate) trust_plane: Option<Arc<crate::trust::promotion::TrustPlane>>,
     /// The registry of the upload sessions.
     ///
     /// It lives here because it is state that **survives a request**: the
@@ -248,6 +259,8 @@ impl AppState {
             catalog_writer: None,
             content_store: None,
             gc: None,
+            trust_ledger: None,
+            trust_plane: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             max_body_size: 10 * 1024 * 1024,
             identity,
@@ -304,6 +317,8 @@ impl AppState {
             catalog_writer: None,
             content_store: None,
             gc: None,
+            trust_ledger: None,
+            trust_plane: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             max_body_size: 10 * 1024 * 1024,
             identity: Identity::system(),
@@ -377,6 +392,18 @@ impl AppState {
     ) -> Self {
         self.catalog_reader = Some(reader);
         self.catalog_writer = Some(writer);
+        self
+    }
+
+    /// Inject the promotion service.
+    pub fn with_trust_plane(mut self, plane: Arc<crate::trust::promotion::TrustPlane>) -> Self {
+        self.trust_plane = Some(plane);
+        self
+    }
+
+    /// Inject the ledger of trust grants.
+    pub fn with_trust_ledger(mut self, ledger: Arc<dyn hodei_catalog::TrustLedger>) -> Self {
+        self.trust_ledger = Some(ledger);
         self
     }
 
