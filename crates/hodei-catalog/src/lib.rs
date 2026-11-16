@@ -53,6 +53,7 @@ pub mod ports;
 pub mod proxy;
 pub mod proxy_cache;
 pub mod pypi;
+pub mod search;
 pub mod trust;
 
 pub use error::CatalogError;
@@ -77,5 +78,8 @@ pub use ports::{
 pub use proxy::{
     ChecksumEvidence, CredentialRef, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
     UpstreamConfig, UpstreamConfigError, origin_of,
+};
+pub use search::{
+    DEFAULT_LIMIT, MAX_LIMIT, RepositoryAttribute, SearchError, SearchHit, SearchPage, SearchQuery,
 };
 pub use trust::{ServeChannel, TrustGrant, TrustLedger};

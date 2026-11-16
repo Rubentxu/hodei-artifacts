@@ -61,6 +61,19 @@ impl ServeChannel {
             Self::TrustedOnly => "trusted",
         }
     }
+
+    /// El canal que dice su nombre.
+    ///
+    /// El nombre es el que va en la configuracion: `open` o `trusted`. Un
+    /// nombre que no existe no es un canal: es un texto que no se puede
+    /// interpretar, y un canal que no se puede leer es el cerrado.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "open" => Some(Self::Open),
+            "trusted" => Some(Self::TrustedOnly),
+            _ => None,
+        }
+    }
 }
 
 /// La concesion de un digest dentro de un repositorio, por una decision.
@@ -187,6 +200,18 @@ mod tests {
                 ServeChannel::TrustedOnly,
                 "{settings}"
             );
+        }
+    }
+
+    #[test]
+    fn a_channel_is_read_from_its_own_name() {
+        assert_eq!(ServeChannel::parse("open"), Some(ServeChannel::Open));
+        assert_eq!(
+            ServeChannel::parse("trusted"),
+            Some(ServeChannel::TrustedOnly)
+        );
+        for bad in ["", "OPEN", "everybody", "open "] {
+            assert_eq!(ServeChannel::parse(bad), None, "{bad:?} is not a channel");
         }
     }
 }

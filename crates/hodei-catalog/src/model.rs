@@ -73,6 +73,29 @@ impl RepositoryFormat {
             RepositoryFormat::Rpm => "rpm",
         }
     }
+
+    /// El formato que dice su nombre canónico.
+    ///
+    /// El nombre es el que va al cable y a la base, y es el mismo que
+    /// [`RepositoryFormat::as_str`] devuelve: lo que se escribe se lee, y
+    /// lo que se lee se escribe. Un nombre que no existe no es un
+    /// formato: es un texto que nadie puede interpretar.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "raw" => Some(Self::Raw),
+            "oci" => Some(Self::Oci),
+            "maven2" => Some(Self::Maven2),
+            "npm" => Some(Self::Npm),
+            "pypi" => Some(Self::PyPi),
+            "cargo" => Some(Self::Cargo),
+            "nuget" => Some(Self::NuGet),
+            "go" => Some(Self::Go),
+            "helm" => Some(Self::Helm),
+            "apt" => Some(Self::Apt),
+            "rpm" => Some(Self::Rpm),
+            _ => None,
+        }
+    }
 }
 
 /// Como se comporta un repositorio respecto del exterior.
@@ -100,6 +123,20 @@ impl RepositoryMode {
             RepositoryMode::Hosted => "hosted",
             RepositoryMode::Proxy => "proxy",
             RepositoryMode::Group => "group",
+        }
+    }
+
+    /// El modo que dice su nombre canónico.
+    ///
+    /// El nombre es el que va al cable y a la base, y es el mismo que
+    /// [`RepositoryMode::as_str`] devuelve. Un nombre que no existe no es
+    /// un modo: es un texto que nadie puede interpretar.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "hosted" => Some(Self::Hosted),
+            "proxy" => Some(Self::Proxy),
+            "group" => Some(Self::Group),
+            _ => None,
         }
     }
 
@@ -622,4 +659,55 @@ pub enum AssetDisposition {
     Replaced,
     /// La fila ya estaba con este contenido, y no se ha tocado.
     Unchanged,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_format_is_read_from_its_own_name() {
+        let formats = [
+            RepositoryFormat::Raw,
+            RepositoryFormat::Oci,
+            RepositoryFormat::Maven2,
+            RepositoryFormat::Npm,
+            RepositoryFormat::PyPi,
+            RepositoryFormat::Cargo,
+            RepositoryFormat::NuGet,
+            RepositoryFormat::Go,
+            RepositoryFormat::Helm,
+            RepositoryFormat::Apt,
+            RepositoryFormat::Rpm,
+        ];
+        for format in formats {
+            assert_eq!(
+                RepositoryFormat::parse(format.as_str()),
+                Some(format),
+                "{} does not read back",
+                format.as_str()
+            );
+        }
+        assert_eq!(RepositoryFormat::parse("zip"), None);
+        assert_eq!(RepositoryFormat::parse(""), None);
+    }
+
+    #[test]
+    fn every_mode_is_read_from_its_own_name() {
+        let modes = [
+            RepositoryMode::Hosted,
+            RepositoryMode::Proxy,
+            RepositoryMode::Group,
+        ];
+        for mode in modes {
+            assert_eq!(
+                RepositoryMode::parse(mode.as_str()),
+                Some(mode),
+                "{} does not read back",
+                mode.as_str()
+            );
+        }
+        assert_eq!(RepositoryMode::parse("mirror"), None);
+        assert_eq!(RepositoryMode::parse("Hosted"), None);
+    }
 }
