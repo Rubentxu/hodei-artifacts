@@ -80,6 +80,8 @@ pub const SCHEMA: &str = r#"{
     "actions": {
       "CreateRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
       "ReadRepository": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
+      "PromoteAsset": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
+      "RevokePromotion": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
       "ReadCapsule": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Artifact"] } },
       "UploadAsset": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } },
       "DownloadAsset": { "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Artifacts::Repository"] } }
@@ -101,6 +103,13 @@ pub fn the_policy() -> String {
                 "permit(principal == Iam::User::\"hrn:hodei:iam::{account}:User/{user}\", action == Artifacts::Action::\"{action}\", resource);\n"
             ));
         }
+    }
+    // Solo alice promueve y revoca: bob puede leer y escribir, pero la
+    // decision de que software es de fiar no es suya.
+    for action in ["PromoteAsset", "RevokePromotion"] {
+        policy.push_str(&format!(
+            "permit(principal == Iam::User::\"hrn:hodei:iam::{FIRST_ACCOUNT}:User/alice\", action == Artifacts::Action::\"{action}\", resource);\n"
+        ));
     }
     policy
 }
@@ -377,6 +386,16 @@ impl Deployment {
     /// que existen, y sin sembrarlo la suite mediria un 404 donde queria
     /// medir un push.
     pub fn seed_with(&self, extra: &[&str]) {
+        self.seed_trusted(extra, &[]);
+    }
+
+    /// Siembra como [`Self::seed_with`] y deja en el canal **trusted** los
+    /// repositorios de la primera cuenta que se nombren.
+    ///
+    /// El canal es un ajuste del repositorio (`config_settings.trust.serve`)
+    /// y no hay una ruta HTTP que cree repositorios del catalogo, asi que
+    /// se fija al sembrar, como lo haria quien opera el despliegue.
+    pub fn seed_trusted(&self, extra: &[&str], trusted: &[&str]) {
         let status = Command::new(std::env::current_exe().expect("the test binary"))
             .args([
                 "--exact",
@@ -386,6 +405,7 @@ impl Deployment {
             ])
             .env("HODEI_SEED_DB", &self.db)
             .env("HODEI_SEED_EXTRA", extra.join(","))
+            .env("HODEI_SEED_TRUSTED", trusted.join(","))
             .status()
             .expect("the seeder runs");
         assert!(status.success(), "the catalog could not be seeded");
@@ -1593,11 +1613,13 @@ pub fn seed_if_asked() {
     };
     let extra = std::env::var("HODEI_SEED_EXTRA").unwrap_or_default();
     let extra: Vec<&str> = extra.split(',').filter(|one| !one.is_empty()).collect();
-    seed_the_catalog(&db.to_string_lossy(), &extra);
+    let trusted = std::env::var("HODEI_SEED_TRUSTED").unwrap_or_default();
+    let trusted: Vec<&str> = trusted.split(',').filter(|one| !one.is_empty()).collect();
+    seed_the_catalog(&db.to_string_lossy(), &extra, &trusted);
 }
 
 /// Siembra el catálogo con un repositorio por cuenta.
-pub fn seed_the_catalog(path: &str, extra: &[&str]) {
+pub fn seed_the_catalog(path: &str, extra: &[&str], trusted: &[&str]) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1622,7 +1644,11 @@ pub fn seed_the_catalog(path: &str, extra: &[&str]) {
         for (account, key) in seeded {
             let mut config =
                 hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
-            config.config_settings = serde_json::json!({});
+            config.config_settings = if account == FIRST_ACCOUNT && trusted.contains(&key) {
+                serde_json::json!({ "trust": { "serve": "trusted" } })
+            } else {
+                serde_json::json!({})
+            };
             store
                 .create_repository(
                     account,

@@ -393,5 +393,13 @@ fn repository_v1_routes(app_state: AppState) -> Router {
                 .post(crate::handlers::repositories::create_repository),
         )
         .route("/capsules", get(crate::handlers::capsules::get_capsule))
+        // Promotion to the trusted channel and its revocation. They are
+        // tenant operations, not platform administration: each one
+        // authenticates, and Cedar decides on the repository.
+        .route("/promotions", post(crate::handlers::promotions::promote))
+        .route(
+            "/promotions/revoke",
+            post(crate::handlers::promotions::revoke),
+        )
         .with_state(app_state)
 }

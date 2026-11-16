@@ -121,7 +121,11 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// La versión 5 añade el **libro de la recolección**: las retenciones
 /// (`gc_hold`), las pasadas marcadas del recolector (`gc_run`) y el
 /// rastro de cada blob borrado (`gc_tombstone`).
-pub const SCHEMA_VERSION: i64 = 5;
+///
+/// La versión 6 añade las **concesiones de confianza** (`trust_grant`):
+/// qué digest de qué repositorio puede servir el canal trusted, y por qué
+/// decisión.
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -254,9 +258,24 @@ DEFINE FIELD IF NOT EXISTS actor ON gc_tombstone TYPE string;
 DEFINE FIELD IF NOT EXISTS account ON gc_tombstone TYPE string;
 DEFINE FIELD IF NOT EXISTS state ON gc_tombstone TYPE string;
 DEFINE FIELD IF NOT EXISTS at ON gc_tombstone TYPE datetime;
+
+DEFINE TABLE IF NOT EXISTS trust_grant SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS account ON trust_grant TYPE string;
+DEFINE FIELD IF NOT EXISTS repository ON trust_grant TYPE string;
+DEFINE FIELD IF NOT EXISTS digest_algorithm ON trust_grant TYPE string;
+DEFINE FIELD IF NOT EXISTS digest ON trust_grant TYPE string;
+DEFINE FIELD IF NOT EXISTS decision_id ON trust_grant TYPE string;
+DEFINE FIELD IF NOT EXISTS actor ON trust_grant TYPE string;
+DEFINE FIELD IF NOT EXISTS granted_at ON trust_grant TYPE datetime;
+DEFINE FIELD IF NOT EXISTS revoked_at ON trust_grant TYPE option<datetime>;
+DEFINE FIELD IF NOT EXISTS revoked_by ON trust_grant TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS revoke_reason ON trust_grant TYPE option<string>;
+DEFINE INDEX IF NOT EXISTS trust_grant_digest ON trust_grant FIELDS account, repository, digest_algorithm, digest;
+DEFINE INDEX IF NOT EXISTS trust_grant_decision ON trust_grant FIELDS account, repository, decision_id;
 "#;
 
 mod gc_ledger;
+mod trust_ledger;
 
 /// El identificador de un registro, derivado de sus coordenadas.
 ///

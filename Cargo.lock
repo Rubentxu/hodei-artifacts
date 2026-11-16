@@ -2106,6 +2106,8 @@ dependencies = [
  "hodei-hub",
  "hodei-iam",
  "hodei-policies",
+ "hodei-trust-policy",
+ "hodei-trust-policy-storage",
  "jsonwebtoken",
  "kernel",
  "serde",

@@ -263,6 +263,18 @@ fn the_decision(
     Ok(())
 }
 
+/// Lo que se responde cuando la compuerta de confianza no admite.
+///
+/// Lo no admitido es un 404, igual que lo que no existe: un 403 diria
+/// que el contenido esta ahi. Y un libro que no responde es un 503: lo
+/// desconocido no se sirve, ni se confunde con la ausencia.
+fn the_admission_error(admission: crate::trust::Admission) -> RawApiError {
+    match admission {
+        crate::trust::Admission::Hidden => RawApiError::NotFound,
+        crate::trust::Admission::Unavailable => RawApiError::Unavailable,
+    }
+}
+
 /// El contenido que hay ahora en esa dirección.
 async fn the_current_asset(
     state: &AppState,
@@ -524,6 +536,19 @@ async fn the_content_of(
     let asset = the_current_asset(state, context, &target.repository, &target.asset_path)
         .await?
         .ok_or(RawApiError::NotFound)?;
+
+    // La compuerta de confianza: Cedar ya dijo que esta persona puede
+    // leer el repositorio; falta decir si este **digest** puede servirse
+    // por su canal. Va antes de las condiciones de lectura: un 304 o un
+    // 412 diria que el contenido existe.
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        &repository,
+        &asset.digest,
+    )
+    .await
+    .map_err(the_admission_error)?;
 
     let etag = conditional::the_etag(&asset.digest);
     let outcome = conditional::the_read_condition(

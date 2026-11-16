@@ -14,6 +14,7 @@ pub mod iam;
 pub mod oci;
 pub mod playground;
 pub mod policies;
+pub mod promotions;
 pub mod raw;
 pub mod repositories;
 pub mod schemas;
