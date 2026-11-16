@@ -454,9 +454,7 @@ async fn main() {
 
     let removed = without_the_indexes(&store).await;
     if removed {
-        println!(
-            "\n=== Without the search indexes ({ROUNDS_WITHOUT_INDEXES} rounds each) ==="
-        );
+        println!("\n=== Without the search indexes ({ROUNDS_WITHOUT_INDEXES} rounds each) ===");
         for ((label, query, walks), with_index) in queries.iter().zip(with_indexes.iter()) {
             if *walks {
                 // The text search does not use an index with or without
