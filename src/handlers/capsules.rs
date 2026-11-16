@@ -14,13 +14,12 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use hodei_authz::{Credentials, VerifiedContext, verify_principal};
 use hodei_evidence::application::capsule::CapsuleAssembler;
 use hodei_evidence::domain::capsule::TrustCapsule;
 use kernel::Hrn;
 
 use crate::app_state::AppState;
-use crate::handlers::bearer_token;
+use crate::handlers::{the_context, the_one_value};
 
 /// The error of a request for a capsule.
 #[derive(Debug)]
@@ -84,18 +83,15 @@ pub async fn get_capsule(
     RawQuery(raw_query): RawQuery,
 ) -> Result<Json<CapsuleView>, CapsuleApiError> {
     // Authentication is the first gate.
-    let token = bearer_token(&headers).ok_or(CapsuleApiError::Unauthorized)?;
-    let principal =
-        match verify_principal(state.authenticator.as_ref(), &Credentials::bearer(token)).await {
-            Ok(principal) => principal,
-            Err(hodei_authz::AuthenticationError::ProviderUnavailable(_)) => {
-                return Err(CapsuleApiError::Unavailable);
-            }
-            Err(_) => return Err(CapsuleApiError::Unauthorized),
-        };
-    let context = VerifiedContext::from_principal(principal);
+    let context = the_context(&state, &headers)
+        .await
+        .map_err(|failure| match failure {
+            crate::handlers::Authentication::Unauthorized => CapsuleApiError::Unauthorized,
+            crate::handlers::Authentication::Unavailable => CapsuleApiError::Unavailable,
+        })?;
 
-    let query_hrn = parse_hrn_query(raw_query.as_deref()).ok_or(CapsuleApiError::BadRequest)?;
+    let query_hrn =
+        the_one_value(raw_query.as_deref(), "hrn").ok_or(CapsuleApiError::BadRequest)?;
     let hrn = Hrn::from_string(&query_hrn).ok_or(CapsuleApiError::BadRequest)?;
 
     // The capsule is about an artefact. A well-formed HRN for another
@@ -132,57 +128,4 @@ pub async fn get_capsule(
     let capsule = CapsuleAssembler::new().assemble(&hrn, &evidence, now);
 
     Ok(Json(CapsuleView::from(capsule)))
-}
-
-/// The `hrn` of a query string.
-///
-/// The query has to name exactly one HRN: a missing one and a repeated one
-/// are both a request that does not say what it is about.
-fn parse_hrn_query(raw_query: Option<&str>) -> Option<String> {
-    let query = raw_query?;
-    let mut found: Option<String> = None;
-    for pair in query.split('&') {
-        let (key, value) = pair.split_once('=')?;
-        if key != "hrn" {
-            continue;
-        }
-        if found.is_some() {
-            return None;
-        }
-        found = Some(percent_decode(value));
-    }
-    found
-}
-
-/// The text of a percent-encoded value.
-fn percent_decode(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'%' if index + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[index + 1..index + 3]).unwrap_or("");
-                match u8::from_str_radix(hex, 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        index += 3;
-                    }
-                    Err(_) => {
-                        out.push(bytes[index]);
-                        index += 1;
-                    }
-                }
-            }
-            b'+' => {
-                out.push(b' ');
-                index += 1;
-            }
-            byte => {
-                out.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }

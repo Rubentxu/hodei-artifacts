@@ -439,6 +439,14 @@ fn repository_v1_routes(app_state: AppState) -> Router {
                 .post(crate::handlers::repositories::create_repository),
         )
         .route("/capsules", get(crate::handlers::capsules::get_capsule))
+        // The search of the catalog and the detail of a package. They
+        // answer with the account of the verified principal and with the
+        // repositories that principal can read, and not one byte more.
+        .route("/search", get(crate::handlers::search::get_search))
+        .route(
+            "/packages/{repository}/{*path}",
+            get(crate::handlers::packages::get_package),
+        )
         // Promotion to the trusted channel and its revocation. They are
         // tenant operations, not platform administration: each one
         // authenticates, and Cedar decides on the repository.

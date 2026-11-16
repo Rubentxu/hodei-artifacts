@@ -12,14 +12,13 @@ use axum::{
     http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use hodei_authz::{Credentials, VerifiedContext, verify_principal};
 use kernel::Hrn;
 
 use crate::audit::AuditResult;
 use serde::Deserialize;
 
 use crate::app_state::AppState;
-use crate::handlers::{bearer_token, correlation_id, record_audit};
+use crate::handlers::{correlation_id, record_audit, the_context, the_one_value};
 use crate::repository::RepositoryView;
 
 #[derive(Debug)]
@@ -63,18 +62,15 @@ pub async fn get_repository(
 ) -> Result<Json<RepositoryView>, RepositoryApiError> {
     // Authentication is the first gate. `RawQuery` cannot fail extraction, so
     // a missing/duplicated hrn cannot turn into a 400 before the 401.
-    let token = bearer_token(&headers).ok_or(RepositoryApiError::Unauthorized)?;
-    let principal =
-        match verify_principal(state.authenticator.as_ref(), &Credentials::bearer(token)).await {
-            Ok(principal) => principal,
-            Err(hodei_authz::AuthenticationError::ProviderUnavailable(_)) => {
-                return Err(RepositoryApiError::Unavailable);
-            }
-            Err(_) => return Err(RepositoryApiError::Unauthorized),
-        };
-    let context = VerifiedContext::from_principal(principal);
+    let context = the_context(&state, &headers)
+        .await
+        .map_err(|failure| match failure {
+            crate::handlers::Authentication::Unauthorized => RepositoryApiError::Unauthorized,
+            crate::handlers::Authentication::Unavailable => RepositoryApiError::Unavailable,
+        })?;
 
-    let query_hrn = parse_hrn_query(raw_query.as_deref()).ok_or(RepositoryApiError::BadRequest)?;
+    let query_hrn =
+        the_one_value(raw_query.as_deref(), "hrn").ok_or(RepositoryApiError::BadRequest)?;
     let hrn = Hrn::from_string(&query_hrn).ok_or(RepositoryApiError::BadRequest)?;
 
     // Strict canonical repository shape: a well-formed HRN for another
@@ -134,16 +130,12 @@ pub async fn create_repository(
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response, RepositoryApiError> {
-    let token = bearer_token(&headers).ok_or(RepositoryApiError::Unauthorized)?;
-    let principal =
-        match verify_principal(state.authenticator.as_ref(), &Credentials::bearer(token)).await {
-            Ok(principal) => principal,
-            Err(hodei_authz::AuthenticationError::ProviderUnavailable(_)) => {
-                return Err(RepositoryApiError::Unavailable);
-            }
-            Err(_) => return Err(RepositoryApiError::Unauthorized),
-        };
-    let context = VerifiedContext::from_principal(principal);
+    let context = the_context(&state, &headers)
+        .await
+        .map_err(|failure| match failure {
+            crate::handlers::Authentication::Unauthorized => RepositoryApiError::Unauthorized,
+            crate::handlers::Authentication::Unavailable => RepositoryApiError::Unavailable,
+        })?;
     let correlation_id = correlation_id(&headers, &state.identity);
 
     // Parse the body only after authentication: a missing/invalid token is
@@ -286,54 +278,4 @@ fn valid_region(region: &str) -> bool {
         && region.chars().all(|character| {
             character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
         })
-}
-
-/// Extract exactly one `hrn` from a raw query string and percent-decode it.
-fn parse_hrn_query(raw: Option<&str>) -> Option<String> {
-    let raw = raw?;
-    let mut values = Vec::new();
-    for pair in raw.split('&') {
-        let (key, value) = pair.split_once('=')?;
-        if key == "hrn" {
-            values.push(percent_decode(value)?);
-        }
-    }
-    if values.len() != 1 {
-        return None;
-    }
-    values.pop()
-}
-
-fn percent_decode(value: &str) -> Option<String> {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'%' => {
-                let high = hex(*bytes.get(index + 1)?)?;
-                let low = hex(*bytes.get(index + 2)?)?;
-                out.push((high << 4) | low);
-                index += 3;
-            }
-            b'+' => {
-                out.push(b' ');
-                index += 1;
-            }
-            byte => {
-                out.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8(out).ok()
-}
-
-fn hex(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
