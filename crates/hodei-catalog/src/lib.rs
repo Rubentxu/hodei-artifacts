@@ -42,6 +42,7 @@
 //! registro no puede pagar, y la verificación profunda es del scrub.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod error;
 pub mod gc;

@@ -29,9 +29,9 @@ tokio = { workspace = true }
 # rastro no puede cambiar la respuesta del cliente, pero tampoco puede
 # callarse.
 tracing = { workspace = true }
-# La medición de la búsqueda siembra cien mil assets en una base de
-# prueba: necesita un directorio que tirar cuando termina.
-tempfile = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# La medición de la búsqueda siembra cien mil assets en una base de
+# prueba: necesita un directorio que tirar cuando termina.
+tempfile = { workspace = true }

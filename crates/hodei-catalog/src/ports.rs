@@ -372,8 +372,8 @@ pub trait CatalogSearch: Send + Sync {
 
     /// The page of results of a search.
     ///
-    /// Los repositorios son los que el principal puede leer. Un principal
-    /// que no puede leer ninguno no ve nada, y su total es cero.
+    /// The repositories are the ones the principal may read. A principal
+    /// that cannot read any of them sees nothing, and its total is zero.
     async fn search(
         &self,
         principal_account: &str,

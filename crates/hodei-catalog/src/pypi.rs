@@ -916,10 +916,15 @@ pub enum Route {
     /// `GET /simple/`: el indice de los proyectos.
     Root,
     /// `GET /simple/{proyecto}/`: la pagina de un proyecto.
-    Project { project: ProjectName },
+    Project {
+        /// El proyecto cuya pagina se pide.
+        project: ProjectName,
+    },
     /// `GET /files/{proyecto}/{fichero}`: la distribucion.
     File {
+        /// El proyecto al que pertenece la distribucion.
         project: ProjectName,
+        /// El nombre del fichero de la distribucion.
         filename: String,
     },
     /// `POST /`: la subida.

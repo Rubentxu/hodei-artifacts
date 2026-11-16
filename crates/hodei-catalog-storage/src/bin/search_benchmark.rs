@@ -160,6 +160,22 @@ fn the_assets() -> usize {
         .unwrap_or(DEFAULT_ASSETS)
 }
 
+/// The directory of the database of the measurement.
+///
+/// The name says the process and the moment, so two measurements do not
+/// step on each other, and the directory is not deleted: the database
+/// stays there to be measured again.
+fn the_directory() -> std::path::PathBuf {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock")
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("hodei-search-bench-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(&path).expect("the directory of the measurement");
+    path
+}
+
 /// The coordinates of an asset.
 ///
 /// The package is spread over the versions, so that a package has
@@ -344,9 +360,9 @@ async fn with_the_indexes(store: &SurrealCatalogStore) {
         "DEFINE INDEX IF NOT EXISTS catalog_asset_unique ON catalog_asset \
          FIELDS account, repository, asset_path UNIQUE",
         "DEFINE INDEX IF NOT EXISTS catalog_asset_package ON catalog_asset \
-         FIELDS account, repository, package_name, package_version",
+         FIELDS account, repository, package_name, package_version, asset_path",
         "DEFINE INDEX IF NOT EXISTS catalog_asset_digest ON catalog_asset \
-         FIELDS account, repository, digest_algorithm, digest",
+         FIELDS account, repository, digest_algorithm, digest, asset_path",
         "DEFINE INDEX IF NOT EXISTS catalog_asset_subject ON catalog_asset \
          FIELDS account, repository, subject",
     ] {
@@ -364,10 +380,9 @@ async fn with_the_indexes(store: &SurrealCatalogStore) {
 async fn main() {
     let assets = the_assets();
 
-    let tmp = tempfile::tempdir().expect("a throwaway directory");
     let path = match std::env::var("HODEI_SEARCH_DB") {
         Ok(path) => path,
-        Err(_) => tmp.keep().to_string_lossy().into_owned(),
+        Err(_) => the_directory().to_string_lossy().into_owned(),
     };
     let db = Arc::new(
         Surreal::new::<RocksDb>(path.clone())
