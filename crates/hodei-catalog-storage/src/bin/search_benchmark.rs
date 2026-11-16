@@ -347,7 +347,7 @@ async fn without_the_indexes(store: &SurrealCatalogStore) -> bool {
             .query(format!("REMOVE INDEX {index} ON {table}"))
             .await;
         if let Err(error) = response {
-            println!("  el indice {index} no se pudo quitar: {error}");
+            println!("  the index {index} could not be removed: {error}");
             removed = false;
         }
     }
@@ -355,15 +355,19 @@ async fn without_the_indexes(store: &SurrealCatalogStore) -> bool {
 }
 
 /// Declares the indexes of the search again.
+///
+/// They are declared with `OVERWRITE`, so that the shape is the one of
+/// this build even when the index was there with another one: the order
+/// of the rows depends on the path being the last column.
 async fn with_the_indexes(store: &SurrealCatalogStore) {
     for statement in [
-        "DEFINE INDEX IF NOT EXISTS catalog_asset_unique ON catalog_asset \
+        "DEFINE INDEX OVERWRITE catalog_asset_unique ON catalog_asset \
          FIELDS account, repository, asset_path UNIQUE",
-        "DEFINE INDEX IF NOT EXISTS catalog_asset_package ON catalog_asset \
+        "DEFINE INDEX OVERWRITE catalog_asset_package ON catalog_asset \
          FIELDS account, repository, package_name, package_version, asset_path",
-        "DEFINE INDEX IF NOT EXISTS catalog_asset_digest ON catalog_asset \
+        "DEFINE INDEX OVERWRITE catalog_asset_digest ON catalog_asset \
          FIELDS account, repository, digest_algorithm, digest, asset_path",
-        "DEFINE INDEX IF NOT EXISTS catalog_asset_subject ON catalog_asset \
+        "DEFINE INDEX OVERWRITE catalog_asset_subject ON catalog_asset \
          FIELDS account, repository, subject",
     ] {
         store
@@ -399,10 +403,10 @@ async fn main() {
 
     let repositories = the_repositories(&store).await;
     let seeding = the_load(&store, &repositories, assets).await;
-    println!("=== La carga ===");
+    println!("=== The load ===");
     println!("assets: {assets}");
-    println!("repositorios: {REPOSITORIES}");
-    println!("tiempo de siembra: {:.1} s", seeding.as_secs_f64());
+    println!("repositories: {REPOSITORIES}");
+    println!("seeding time: {:.1} s", seeding.as_secs_f64());
 
     // The searches that measure the cost of the search.
     let package = the_coordinates(assets / 2).0;
@@ -427,31 +431,31 @@ async fn main() {
     // ones that do are measured with fewer rounds, because each of them
     // costs seconds.
     let queries: [(&str, &SearchQuery, bool); 9] = [
-        ("el recorrido", &SearchQuery::new(), false),
-        ("por el repositorio", &by_repository, false),
-        ("por el nombre del paquete", &by_package, false),
-        ("por la version", &by_version, false),
-        ("por el digest", &by_digest, false),
-        ("por la etiqueta", &by_tag, false),
-        ("por el texto", &by_text, false),
-        ("por un texto que no existe", &by_missing_text, true),
-        ("la pagina del Offset 100", &second_page, false),
+        ("the walk", &SearchQuery::new(), false),
+        ("by the repository", &by_repository, false),
+        ("by the package name", &by_package, false),
+        ("by the version", &by_version, false),
+        ("by the digest", &by_digest, false),
+        ("by the tag", &by_tag, false),
+        ("by the text", &by_text, false),
+        ("by a text that does not exist", &by_missing_text, true),
+        ("the page of the offset 100", &second_page, false),
     ];
 
-    println!("\n=== Con los indices ({ROUNDS} rondas cada una) ===");
+    println!("\n=== With the indexes ({ROUNDS} rounds each) ===");
     let mut with_indexes = Vec::new();
     for (label, query, walks) in &queries {
         let rounds = if *walks { 2 } else { ROUNDS };
         let (measurement, found) = measure(&store, &repositories, query, rounds).await;
         let (p50, p95, max) = measurement.millis();
-        println!("{label}: p50 {p50:.2} ms, p95 {p95:.2} ms, max {max:.2} ms ({found} resultados)");
+        println!("{label}: p50 {p50:.2} ms, p95 {p95:.2} ms, max {max:.2} ms ({found} results)");
         with_indexes.push(measurement);
     }
 
     let removed = without_the_indexes(&store).await;
     if removed {
         println!(
-            "\n=== Sin los indices de la busqueda ({ROUNDS_WITHOUT_INDEXES} rondas cada una) ==="
+            "\n=== Without the search indexes ({ROUNDS_WITHOUT_INDEXES} rounds each) ==="
         );
         for ((label, query, walks), with_index) in queries.iter().zip(with_indexes.iter()) {
             if *walks {
@@ -465,11 +469,11 @@ async fn main() {
             let (indexed, _, _) = with_index.millis();
             println!(
                 "{label}: p50 {p50:.2} ms, p95 {p95:.2} ms, max {max:.2} ms \
-                (con el indice: {indexed:.2} ms, {found} resultados)"
+                (with the index: {indexed:.2} ms, {found} results)"
             );
         }
         with_the_indexes(&store).await;
     }
 
-    println!("\nLa base queda en {path}");
+    println!("\nThe database stays at {path}");
 }

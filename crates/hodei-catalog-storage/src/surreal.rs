@@ -146,7 +146,37 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// The two indexes of the assets end in the path, and that is what makes
 /// the order of the rows they serve total: within a repository there is
 /// no two assets with the same path.
-pub const SCHEMA_VERSION: i64 = 9;
+///
+/// Version 10 says it in the version, because the shape of an index is
+/// not applied by the schema: the schema declares `IF NOT EXISTS`, and an
+/// index that already exists keeps the shape it had. A database that
+/// applied version 9 may have the two indexes of the assets **without**
+/// the path at the end, and without it two assets of the same package and
+/// version tie, and the order of the rows is not total. Those databases
+/// get the two indexes redefined at the boot.
+pub const SCHEMA_VERSION: i64 = 10;
+
+/// The version whose indexes of the assets did not end in the path.
+///
+/// The version 9 created the two indexes of the assets without the path
+/// at the end, and without it two assets of the same package and version
+/// tie: the order of the rows they serve is not total, and the page can
+/// repeat a result or lose it. A database that applied that version gets
+/// the two indexes redefined at the boot.
+const SEARCH_INDEXES_WITHOUT_PATH: i64 = 9;
+
+/// The definitions of the two indexes of the assets that serve the search.
+///
+/// They are the same ones that the schema declares, and they are applied
+/// with `OVERWRITE`: the shape of an index that already exists is not
+/// changed by a `DEFINE ... IF NOT EXISTS`, and the shape is part of the
+/// contract of the order.
+const SEARCH_INDEXES: [&str; 2] = [
+    "DEFINE INDEX OVERWRITE catalog_asset_package ON catalog_asset \
+     FIELDS account, repository, package_name, package_version, asset_path",
+    "DEFINE INDEX OVERWRITE catalog_asset_digest ON catalog_asset \
+     FIELDS account, repository, digest_algorithm, digest, asset_path",
+];
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -155,10 +185,12 @@ pub const SCHEMA_VERSION: i64 = 9;
 /// escritura llegando un instante tarde.
 const WRITE_ATTEMPTS: usize = 4;
 
-/// La condición de una concesión viva.
+/// The condition of a live grant.
 ///
-/// Está escrita una vez porque la regla es una: una concesión revocada
-/// está revocada, y donde se busca una concesión viva se busca la misma.
+/// It is written once because the rule is one: a revoked grant is
+/// revoked. The rule itself lives in the domain, in
+/// [`hodei_catalog::TrustGrant::is_active`], and this is its form in the
+/// queries of the database.
 pub(crate) const LIVE_GRANT: &str = "revoked_at IS NONE";
 
 /// El esquema del catálogo.
@@ -212,10 +244,11 @@ DEFINE FIELD IF NOT EXISTS subject ON catalog_asset TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_asset TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_asset_unique ON catalog_asset FIELDS account, repository, asset_path UNIQUE;
 DEFINE INDEX IF NOT EXISTS catalog_asset_subject ON catalog_asset FIELDS account, repository, subject;
--- La busqueda por coordenadas: el nombre y la version del paquete, con
--- la cuenta y el repositorio delante, que es como se pregunta. El camino
--- va al final porque es lo que hace el orden total: dentro de un
--- repositorio no hay dos assets con el mismo camino.
+-- The search by coordinates: the name and the version of the package,
+-- with the account and the repository in front, which is how the
+-- question is asked. The path goes at the end because that is what makes
+-- the order total: within a repository there is no two assets with the
+-- same path.
 DEFINE INDEX IF NOT EXISTS catalog_asset_package ON catalog_asset FIELDS account, repository, package_name, package_version, asset_path;
 -- The digest search: it is the question "give me this content", and
 -- without an index the engine walks the whole repository to answer it.
@@ -243,8 +276,8 @@ DEFINE FIELD IF NOT EXISTS package_name ON catalog_tag TYPE string;
 DEFINE FIELD IF NOT EXISTS package_version ON catalog_tag TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_tag TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_tag_unique ON catalog_tag FIELDS account, repository, tag_name UNIQUE;
--- La busqueda por etiqueta pregunta por el nombre de la etiqueta en la
--- cuenta, no por el repositorio: este indice es el de esa pregunta.
+-- The search by tag asks for the name of the tag inside the account,
+-- not for the repository: this index is the one of that question.
 DEFINE INDEX IF NOT EXISTS catalog_tag_name ON catalog_tag FIELDS account, tag_name;
 
 DEFINE TABLE IF NOT EXISTS catalog_audit_outbox SCHEMAFULL;
@@ -586,6 +619,16 @@ impl SurrealCatalogStore {
             .check()
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
 
+        // The shape of the indexes of the search is part of the contract
+        // of the order, and the schema does not change it: every
+        // definition is `IF NOT EXISTS`, and an index that already exists
+        // keeps the shape it had. A database that applied a version whose
+        // indexes of the assets did not end in the path gets them
+        // redefined, once, here.
+        if applied == SEARCH_INDEXES_WITHOUT_PATH {
+            self.the_search_indexes_are_redefined().await?;
+        }
+
         self.db
             .query("UPSERT $id SET applied_version = $version, applied_at = $at")
             .bind(("id", Thing::from(("catalog_schema", "applied"))))
@@ -598,13 +641,31 @@ impl SurrealCatalogStore {
         Ok(())
     }
 
-    /// El motor que sostiene el catálogo.
+    /// The two indexes of the assets that serve the search, defined again.
     ///
-    /// Lo expone para las mediciones: sembrar cien mil assets por el
-    /// camino de escritura del catálogo (que escribe versión, asset,
-    /// referencia y auditoría, y comprueba el almacén de bytes) tarda
-    /// horas, y lo que se mide es la lectura. La Seed es de la
-    /// medición, no del servicio.
+    /// They are defined with `OVERWRITE`, so the shape is the one of this
+    /// build even when the index already existed with another one. The
+    /// price is a rebuild of the two indexes, and it is only paid by the
+    /// databases that need it.
+    async fn the_search_indexes_are_redefined(&self) -> Result<(), CatalogError> {
+        for statement in SEARCH_INDEXES {
+            self.db
+                .query(statement)
+                .await
+                .map_err(|error| CatalogError::unavailable(error.to_string()))?
+                .check()
+                .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// The engine that holds the catalog.
+    ///
+    /// It is exposed for the measurements: seeding a hundred thousand
+    /// assets through the write path of the catalog (which writes
+    /// version, asset, reference and audit, and checks the byte store)
+    /// takes hours, and what is measured is the read. The seed belongs to
+    /// the measurement, not to the service.
     pub fn db(&self) -> &Surreal<Db> {
         &self.db
     }
