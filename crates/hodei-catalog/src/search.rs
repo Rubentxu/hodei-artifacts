@@ -48,11 +48,20 @@ pub const MAX_LIMIT: usize = 100;
 /// Cuantos resultados trae una pagina si el cliente no dice.
 pub const DEFAULT_LIMIT: usize = 20;
 
+/// Cuantos resultados se pueden dejar atras.
+///
+/// Un desplazamiento enorme no es una pagina: es una pregunta que no
+/// tiene respuesta util, y el motor tiene que recorrerla entera para
+/// saber que no hay nada.
+pub const MAX_OFFSET: usize = 100_000;
+
 /// El error de una consulta de busqueda.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchError {
     /// El limite de la pagina no cabe.
     BadLimit(usize),
+    /// El desplazamiento no cabe.
+    BadOffset(usize),
     /// Un filtro esta vacio.
     EmptyFilter(&'static str),
     /// El digest no se puede leer.
@@ -66,6 +75,9 @@ impl std::fmt::Display for SearchError {
         match self {
             Self::BadLimit(limit) => {
                 write!(formatter, "the limit {limit} is not a page size")
+            }
+            Self::BadOffset(offset) => {
+                write!(formatter, "the offset {offset} is beyond the window")
             }
             Self::EmptyFilter(name) => write!(formatter, "the filter {name} is empty"),
             Self::BadDigest(value) => write!(formatter, "the digest {value} is not a digest"),
@@ -294,6 +306,9 @@ impl SearchQuery {
         if self.limit == 0 || self.limit > MAX_LIMIT {
             return Err(SearchError::BadLimit(self.limit));
         }
+        if self.offset > MAX_OFFSET {
+            return Err(SearchError::BadOffset(self.offset));
+        }
         for (value, name) in [
             (self.repository.as_deref(), "repository"),
             (self.package_name.as_deref(), "package"),
@@ -413,6 +428,23 @@ mod tests {
         assert!(
             SearchQuery::new()
                 .with_limit(MAX_LIMIT + 1)
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn the_offset_of_a_page_is_bounded() {
+        assert!(SearchQuery::new().with_offset(0).validate().is_ok());
+        assert!(
+            SearchQuery::new()
+                .with_offset(MAX_OFFSET)
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            SearchQuery::new()
+                .with_offset(MAX_OFFSET + 1)
                 .validate()
                 .is_err()
         );

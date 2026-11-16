@@ -194,6 +194,9 @@ DEFINE FIELD IF NOT EXISTS subject ON catalog_asset TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_asset TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_asset_unique ON catalog_asset FIELDS account, repository, asset_path UNIQUE;
 DEFINE INDEX IF NOT EXISTS catalog_asset_subject ON catalog_asset FIELDS account, repository, subject;
+-- La busqueda por coordenadas: el nombre y la version del paquete, con
+-- la cuenta y el repositorio delante, que es como se pregunta.
+DEFINE INDEX IF NOT EXISTS catalog_asset_package ON catalog_asset FIELDS account, repository, package_name, package_version;
 
 DEFINE TABLE IF NOT EXISTS catalog_reference SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS account ON catalog_reference TYPE string;
@@ -215,6 +218,9 @@ DEFINE FIELD IF NOT EXISTS package_name ON catalog_tag TYPE string;
 DEFINE FIELD IF NOT EXISTS package_version ON catalog_tag TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_tag TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_tag_unique ON catalog_tag FIELDS account, repository, tag_name UNIQUE;
+-- La busqueda por etiqueta pregunta por el nombre de la etiqueta en la
+-- cuenta, no por el repositorio: este indice es el de esa pregunta.
+DEFINE INDEX IF NOT EXISTS catalog_tag_name ON catalog_tag FIELDS account, tag_name;
 
 DEFINE TABLE IF NOT EXISTS catalog_audit_outbox SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS event_id ON catalog_audit_outbox TYPE string;
@@ -308,6 +314,7 @@ DEFINE INDEX IF NOT EXISTS provenance_receipt_path ON provenance_receipt FIELDS 
 
 mod gc_ledger;
 mod provenance_ledger;
+mod search;
 mod trust_ledger;
 
 /// El identificador de un registro, derivado de sus coordenadas.

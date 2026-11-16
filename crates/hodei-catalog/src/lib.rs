@@ -72,7 +72,7 @@ pub use model::{
 };
 pub use ports::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
-    CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogWriter,
+    CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogSearch, CatalogWriter,
     DenyAllAuthorizer, MAX_ASSETS_UNDER,
 };
 pub use proxy::{
@@ -80,6 +80,7 @@ pub use proxy::{
     UpstreamConfig, UpstreamConfigError, origin_of,
 };
 pub use search::{
-    DEFAULT_LIMIT, MAX_LIMIT, RepositoryAttribute, SearchError, SearchHit, SearchPage, SearchQuery,
+    DEFAULT_LIMIT, MAX_LIMIT, MAX_OFFSET, RepositoryAttribute, SearchError, SearchHit, SearchPage,
+    SearchQuery,
 };
 pub use trust::{ServeChannel, TrustGrant, TrustLedger};
