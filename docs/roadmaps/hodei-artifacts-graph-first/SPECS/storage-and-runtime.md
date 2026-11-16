@@ -8,7 +8,7 @@ No existe transacción ACID entre TypeDB y S3. Protocolo obligatorio:
 3. Finalizar blob inmutable verificado; guardar receipt que se puede verificar; fail antes de publicar si checksum incorrecto.
 4. En WRITE txn TypeDB confirmar Asset → Blob, AssetKey único, estado Available, referencias y audit; gestionar carreras optimistic/version/constraints con retries finitos.
 5. Responder éxito solo tras ambas condiciones. Si TypeDB commit falla, blob queda huérfano temporal y se GC tras período de gracia y reconciliación; si S3 falla, asset nunca se hace Available.
-6. Borrar recurso lógico: no borrar bytes si quedan referencias vivas/sesiones/copia backup/pins; retención y grace period; protección ante concurrent publish/GC.
+6. Borrar recurso lógico: no borrar bytes si quedan referencias vivas/sesiones/copia backup/pins; retención y grace period; protección ante concurrent publish/GC. Implementado en HSP-104 (`uat/UAT-OPERATIONS.md`): hoy los bytes reclamables son los huérfanos, porque el registro no borra assets.
 
 ## Lecturas
 - `HEAD/GET`: obtener `AssetLocator`, identidad/permiso, blob receipt/digest; streaming `Bytes` desde FS/S3 sin cargar todos los bytes. ETag fuerte por digest (representación concreta), Last-Modified, 304/412/416/206 según HTTP correcto, Range con límites.

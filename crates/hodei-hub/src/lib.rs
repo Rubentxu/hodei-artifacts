@@ -44,6 +44,7 @@
 pub mod blob;
 pub mod hub;
 pub mod oci;
+pub mod reclaim;
 
 pub use blob::{
     BlobError, BlobStore, BlobWriteSession, CommitExpectation, FileBlobStore, FileBlobWriteSession,
@@ -53,3 +54,4 @@ pub use hub::{
     ArtifactHub, Availability, HubArtifact, PromotionAudit, PromotionError, TrustVerdict,
 };
 pub use oci::{OciDescriptor, OciError, OciManifest, OciSupport};
+pub use reclaim::{BlobReclaim, Reclaimed, StoredBlob};

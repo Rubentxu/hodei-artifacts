@@ -8,6 +8,7 @@
 //! - Error handling and logging
 
 pub mod capsules;
+pub mod gc;
 pub mod health;
 pub mod iam;
 pub mod oci;

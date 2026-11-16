@@ -5,7 +5,7 @@
 | R-01 P0 | Colisión HRN/Cedar intertenant | UID completo y propiedades round-trip + no alias sin alcance |
 | R-02 P0 | SCP concediendo en lugar de limitar | autorizer compuesto, tests para SCP-only y deny overriding |
 | R-03 P0 | contaminación estado Cedar concurrente | snapshot por evaluación, no `RwLock` global sustituido |
-| R-04 P0 | publicar metadata sin blob o GC de blob referenciado | protocolo CAS-DB, crash matrix, reconciliación |
+| R-04 P0 | publicar metadata sin blob o GC de blob referenciado | protocolo CAS-DB, crash matrix, reconciliación · mitigado en parte por HSP-104: el GC lee las raíces reales, no borra ante un estado desconocido y respeta gracia y retenciones; ver `uat/UAT-OPERATIONS.md` |
 | R-05 P0 | TypeDB CE punto único de fallo | RPO/RTO honestos, restore validado, sin afirmar HA |
 | R-06 P0 | leak S3/cross tenant por digest | auth antes de ruta/redirect, queries de cuenta, tests negativos |
 | R-07 P1 | sobresaturación de TypeDB por análisis recursivo | limites, semáforos, paginación, profiling de selectividad y backpressure |

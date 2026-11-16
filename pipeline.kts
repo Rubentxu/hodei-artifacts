@@ -103,6 +103,7 @@ pipeline {
                         "--test hub_contract",
                         "--test m9_uat",
                         "--test har01_cas_contract",
+                        "--test hsp104_reclaim_contract",
                         "--test m6_uat",
                         "--test m5_uat",
                         "--test capsule_read",
@@ -161,6 +162,8 @@ pipeline {
                         "--test support_reconciliation",
                         "--test har03_outbox_contract",
                         "--test har04_raw_hosted_contract",
+                        "--test hsp104_gc_ledger_contract",
+                        "--test hsp104_gc_service",
                     ).joinToString(" ")
                 )
             }
@@ -188,6 +191,7 @@ pipeline {
                         "--test oci_pull_contract",
                         "--test oci_push_contract",
                         "--test oci_index_contract",
+                        "--test hsp104_gc_e2e",
                     ).joinToString(" ")
                 )
                 sh(

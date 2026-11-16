@@ -44,10 +44,15 @@
 #![forbid(unsafe_code)]
 
 pub mod error;
+pub mod gc;
 pub mod model;
 pub mod ports;
 
 pub use error::CatalogError;
+pub use gc::{
+    ContentHold, ContentLedger, ContentRoot, DeletionState, GcDeletion, GcRun, HoldScope, RootKind,
+    RunCandidate, RunState,
+};
 pub use model::{
     AssetDisposition, AssetRecord, BlobLocation, BlobReference, DigestScope, MutableTag,
     PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome, ReferrerRecord,

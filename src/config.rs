@@ -53,6 +53,20 @@ pub struct ContentConfig {
     /// Default: 3600 seconds.
     #[serde(default = "the_default_staging_max_age_secs")]
     pub staging_max_age_secs: u64,
+    /// How long an unreferenced blob is left alone before the garbage
+    /// collection may reclaim it.
+    ///
+    /// The grace must outlast the time between the moment the bytes reach
+    /// the store and the moment the catalog row that references them is
+    /// written: a blob uploaded a moment ago has no row yet and is not
+    /// garbage. The collection also refuses to delete anything while it
+    /// cannot tell what is alive.
+    ///
+    /// Minimum: 1 second (tests); a production value is hours.
+    ///
+    /// Default: 86400 seconds (one day).
+    #[serde(default = "the_default_gc_grace_secs")]
+    pub gc_grace_secs: u64,
 }
 
 impl ContentConfig {
@@ -69,6 +83,13 @@ impl ContentConfig {
                 self.staging_max_age_secs
             )));
         }
+        if self.gc_grace_secs < the_minimum_gc_grace_secs() {
+            return Err(ConfigError::Message(format!(
+                "Invalid content configuration: gc_grace_secs must be at least {} second, and {} was given",
+                the_minimum_gc_grace_secs(),
+                self.gc_grace_secs
+            )));
+        }
         Ok(())
     }
 }
@@ -78,6 +99,7 @@ impl Default for ContentConfig {
         Self {
             cas_path: the_default_cas_path(),
             staging_max_age_secs: the_default_staging_max_age_secs(),
+            gc_grace_secs: the_default_gc_grace_secs(),
         }
     }
 }
@@ -90,6 +112,17 @@ fn the_default_cas_path() -> String {
 /// The default age of an interrupted write that the store cleans up.
 fn the_default_staging_max_age_secs() -> u64 {
     3600
+}
+
+/// The default grace of an unreferenced blob before it is reclaimable.
+fn the_default_gc_grace_secs() -> u64 {
+    86_400
+}
+
+/// The smallest grace the collection accepts: zero would make a blob that
+/// is being published reclaimable at the instant it arrives.
+fn the_minimum_gc_grace_secs() -> u64 {
+    1
 }
 
 /// The default life of an upload session that nobody finishes.

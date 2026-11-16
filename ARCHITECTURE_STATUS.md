@@ -1800,3 +1800,38 @@ durante una hora, y cuando el hueco se acaba la sesión nueva se rechaza
 con un `400`--un error del cliente-- en lugar de un `429`. Las dos cosas
 están escritas en el contrato de compatibilidad con su acción concreta,
 porque un límite que no está escrito es un límite que nadie ha decidido.
+
+## 10-novendecies — M10: la recolección segura del almacén de contenido (HAR-10)
+
+Hasta aquí el almacén de contenido solo crecía: nada borraba bytes, y las
+secciones anteriores dejaron escrito que «la recolección de blobs sin
+referencia» no existía. Ahora existe, y es la **única** superficie que
+borra bytes. Su contrato, sus pruebas y sus límites están en
+[`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md); aquí se dice qué hay y
+dónde vive.
+
+**Qué hay.** `hodei_hub::BlobStore` sabe listar sus blobs con su fecha y
+borrar uno solo si sigue sin tocarse pasada la gracia, bajo el mismo
+cerrojo que la subida; una subida que deduplica contra un blob existente
+lo toca. `hodei_catalog` define el libro de la recolección (corridas,
+tombstones y retenciones) y `hodei-catalog-storage` lo guarda en el motor
+(esquema 5). El servicio vive en `src/gc/`: un **plan puro** (`plan.rs`)
+que, dadas las raíces, las retenciones y los blobs, da un veredicto y sus
+razones por blob, y un **servicio** (`service.rs`) que hace la pasada de
+marca y barrido, reanudable e idempotente. La superficie HTTP son cinco
+rutas administrativas bajo `/api/v1/gc/` (plan, barrido, y alta, listado y
+baja de retenciones), cada una con su propio recurso para la política.
+
+**Cómo decide.** Las raíces se leen en cada pasada de las fuentes reales
+--el catálogo y los manifiestos del propio almacén--, sin contadores
+propios. El borrado exige que el blob no tenga raíces, que ninguna
+retención lo cubra, que haya pasado la gracia
+(`content.gc_grace_secs`, un día por defecto) y que dos censos seguidos
+coincidan; cualquier duda es un estado desconocido y no se borra. Por
+defecto la superficie solo simula.
+
+**Lo que sigue sin estar.** El registro no borra assets ni manifiestos, así
+que hoy lo reclamable son los huérfanos que deja un fallo de publicación;
+las retenciones de repositorio y de cuenta cobrarán sentido cuando haya
+retiros de referencias. El ámbito de digest particionado por cuenta no se
+recorre. La lista completa de límites, con su acción, está en el contrato.
