@@ -1952,5 +1952,31 @@ lectura-modificación-escritura de los metadatos y deja los fallos parciales
 recuperables por construcción. Las releases son inmutables salvo
 `release_redeploy`; los snapshots flotantes se reponen.
 
-**Lo que sigue sin estar.** Proxy y grupo Maven (HSP-110), metadatos a nivel
-de grupo y `Range` en lo derivado.
+**Lo que sigue sin estar.** Metadatos de plugins derivados en un hosted y
+`Range` en lo derivado. El proxy y el grupo Maven llegaron en HSP-110 (abajo).
+
+## 10-quatervicies — M10: Maven 2 proxy y group (HAR-16)
+
+Un repositorio `maven2` en modo `proxy` o `group` resuelve dependencias para
+el mismo cliente Maven que usa el hosted. El contrato, las pruebas y los
+límites están en la sección MAVEN-REMOTE de
+[`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md).
+
+**Qué hay.** Nada de la infraestructura se duplica: el proxy es el de
+HSP-106/107 (`the_proxy_asset`, caché, TTL, offline, cuarentena) y el grupo
+el de HSP-108 (`raw_group`, `walk_group`). HSP-110 añade la adaptación Maven:
+`proxy_cache::kind_of` trata el nombre flotante de un snapshot como
+revalidable, `hodei_catalog::maven` aporta `Contribution`,
+`declared_contribution` y `merged_metadata`, y `handlers/maven.rs`
+(`the_group_derived`) resuelve metadatos y checksums de un grupo. `raw.rs`
+despacha Maven 2 por modo.
+
+**Cómo decide.** El proxy sirve lo que el upstream entrega sin reescribirlo;
+solo aplica la `version_policy`. En el grupo, un fichero lo gana el primer
+miembro que lo tiene y su checksum se calcula del fichero ganador; los
+metadatos de artefacto son la unión de las versiones de las hojas y los de
+versión los del primer miembro que los tiene. Un metadato ilegible de un
+upstream es `502`, no una lista parcial.
+
+**Lo que sigue sin estar.** Fusión de metadatos de plugins y `Range` en lo
+derivado.

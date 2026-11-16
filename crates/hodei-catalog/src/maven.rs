@@ -24,7 +24,7 @@
 //! ```
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -876,12 +876,25 @@ fn stamp(moment: DateTime<Utc>) -> String {
     moment.format("%Y%m%d%H%M%S").to_string()
 }
 
-/// Los metadatos de un artefacto, derivados de sus ficheros.
+/// Las versiones que un repositorio aporta a los metadatos de un artefacto.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Contribution {
+    /// Las versiones que lista.
+    pub versions: Vec<String>,
+    /// Su `lastUpdated` (`yyyyMMddHHmmss`), si lo conoce.
+    pub last_updated: Option<String>,
+}
+
+/// Cuantas versiones se aceptan de los metadatos de un upstream: el XML ya
+/// esta acotado en bytes, esto acota lo que se acumula al fusionar.
+pub const MAX_MERGED_VERSIONS: usize = 20_000;
+
+/// Lo que aportan al artefacto los ficheros de un repositorio hosted.
 ///
-/// Una version aparece cuando existe su **POM**: el POM es lo ultimo que un
+/// Una version cuenta cuando existe su **POM**: es lo ultimo que un
 /// despliegue completo deja, y una version con jar y sin POM no se puede
-/// resolver. Devuelve `None` si no hay ninguna version.
-pub fn artifact_metadata(group_id: &str, artifact_id: &str, files: &[Known]) -> Option<String> {
+/// resolver.
+pub fn hosted_contribution(group_id: &str, artifact_id: &str, files: &[Known]) -> Contribution {
     let mut versions: BTreeMap<String, DateTime<Utc>> = BTreeMap::new();
     for known in files {
         if let Ok(Target::File(file)) = parse_path(&known.path)
@@ -893,17 +906,108 @@ pub fn artifact_metadata(group_id: &str, artifact_id: &str, files: &[Known]) -> 
             *at = (*at).max(known.updated_at);
         }
     }
-    if versions.is_empty() {
+    let last_updated = versions.values().max().map(|at| stamp(*at));
+    Contribution {
+        versions: versions.into_keys().collect(),
+        last_updated,
+    }
+}
+
+/// Lo que aportan al artefacto unos metadatos que sirve un upstream.
+///
+/// Los metadatos tienen que ser del artefacto que se pide: unos de otro
+/// `groupId` o `artifactId` no aportan nada. Las versiones con una forma
+/// que Maven no admite se descartan en vez de colarse en los metadatos
+/// fusionados.
+pub fn declared_contribution(
+    bytes: &[u8],
+    group_id: &str,
+    artifact_id: &str,
+) -> Result<Contribution, XmlError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| XmlError::Malformed)?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let leaves = leaves(text)?;
+    if first(&leaves, "metadata/groupId").is_some_and(|declared| declared != group_id)
+        || first(&leaves, "metadata/artifactId").is_some_and(|declared| declared != artifact_id)
+    {
+        return Ok(Contribution::default());
+    }
+    let versions: Vec<String> = leaves
+        .iter()
+        .filter(|(path, _)| path == "metadata/versioning/versions/version")
+        .map(|(_, text)| text.as_str())
+        .filter(|version| is_valid_version(version))
+        .take(MAX_MERGED_VERSIONS)
+        .map(str::to_string)
+        .collect();
+    let last_updated = first(&leaves, "metadata/versioning/lastUpdated")
+        .filter(|stamp| stamp.len() == 14 && stamp.bytes().all(|byte| byte.is_ascii_digit()))
+        .map(str::to_string);
+    Ok(Contribution {
+        versions,
+        last_updated,
+    })
+}
+
+/// Si unos metadatos son de estas coordenadas y no listan **ninguna**
+/// version (ni siquiera una invalida): es el caso de los metadatos de un
+/// grupo de plugins, que un grupo sirve tal cual.
+///
+/// Unos metadatos de otro artefacto, o con versiones que se descartaron,
+/// no cumplen: no se sirven verbatim.
+pub fn lists_no_versions(bytes: &[u8], group_id: &str, artifact_id: &str) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let Ok(leaves) = leaves(text) else {
+        return false;
+    };
+    first(&leaves, "metadata/groupId").is_none_or(|declared| declared == group_id)
+        && first(&leaves, "metadata/artifactId").is_none_or(|declared| declared == artifact_id)
+        && !leaves
+            .iter()
+            .any(|(path, _)| path == "metadata/versioning/versions/version")
+}
+
+/// Los metadatos de un artefacto a partir de lo que aportan uno o varios
+/// repositorios. Devuelve `None` si ninguno aporta una version.
+///
+/// El resultado es el mismo para el mismo conjunto de versiones, sin
+/// importar quien las aporta ni en que orden: `latest` y `release` salen
+/// del orden de versiones de Maven y `lastUpdated` es el mayor que se
+/// conozca. Si hay mas de `MAX_MERGED_VERSIONS`, se conservan las mas
+/// nuevas.
+pub fn merged_metadata(
+    group_id: &str,
+    artifact_id: &str,
+    contributions: &[Contribution],
+) -> Option<String> {
+    let seen: BTreeSet<&String> = contributions
+        .iter()
+        .flat_map(|contribution| contribution.versions.iter())
+        .collect();
+    if seen.is_empty() {
         return None;
     }
-    let mut ordered: Vec<&String> = versions.keys().collect();
+    let mut ordered: Vec<&String> = seen.into_iter().collect();
     sort_versions(&mut ordered);
+    // El tope se aplica sobre el resultado ordenado y se conservan las mas
+    // nuevas: asi no depende de que miembro llega primero.
+    if ordered.len() > MAX_MERGED_VERSIONS {
+        ordered.drain(..ordered.len() - MAX_MERGED_VERSIONS);
+    }
     let latest = ordered.last().copied()?;
     let release = ordered
         .iter()
         .rev()
         .find(|version| !version.ends_with(SNAPSHOT_SUFFIX));
-    let last = versions.values().max().copied()?;
+    let last = contributions
+        .iter()
+        .filter_map(|contribution| contribution.last_updated.as_deref())
+        .max()
+        .map(str::to_string)
+        .unwrap_or_else(|| stamp(DateTime::<Utc>::UNIX_EPOCH));
 
     let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<metadata>\n");
     xml.push_str(&format!("  <groupId>{}</groupId>\n", encode(group_id)));
@@ -921,9 +1025,20 @@ pub fn artifact_metadata(group_id: &str, artifact_id: &str, files: &[Known]) -> 
         xml.push_str(&format!("      <version>{}</version>\n", encode(version)));
     }
     xml.push_str("    </versions>\n");
-    xml.push_str(&format!("    <lastUpdated>{}</lastUpdated>\n", stamp(last)));
+    xml.push_str(&format!("    <lastUpdated>{last}</lastUpdated>\n"));
     xml.push_str("  </versioning>\n</metadata>\n");
     Some(xml)
+}
+
+/// Los metadatos de un artefacto, derivados de sus ficheros.
+///
+/// Devuelve `None` si no hay ninguna version con POM.
+pub fn artifact_metadata(group_id: &str, artifact_id: &str, files: &[Known]) -> Option<String> {
+    merged_metadata(
+        group_id,
+        artifact_id,
+        &[hosted_contribution(group_id, artifact_id, files)],
+    )
 }
 
 /// Ordena versiones sin entrar nunca en panico.
@@ -1459,5 +1574,133 @@ mod tests {
         let mut versions: Vec<&String> = owned.iter().collect();
         sort_versions(&mut versions);
         assert_eq!(versions.len(), owned.len());
+    }
+
+    fn upstream_metadata(group: &str, artifact: &str, versions: &[&str], updated: &str) -> String {
+        let listed: String = versions
+            .iter()
+            .map(|version| format!("<version>{version}</version>"))
+            .collect();
+        format!(
+            "<metadata><groupId>{group}</groupId><artifactId>{artifact}</artifactId>\
+             <versioning><versions>{listed}</versions>\
+             <lastUpdated>{updated}</lastUpdated></versioning></metadata>"
+        )
+    }
+
+    #[test]
+    fn upstream_metadata_contributes_its_versions_and_date() {
+        let xml = upstream_metadata("org.acme", "widget", &["1.0", "1.1"], "20240101120000");
+        let found = declared_contribution(xml.as_bytes(), "org.acme", "widget").expect("parses");
+        assert_eq!(found.versions, vec!["1.0", "1.1"]);
+        assert_eq!(found.last_updated.as_deref(), Some("20240101120000"));
+    }
+
+    #[test]
+    fn upstream_metadata_of_another_artifact_contributes_nothing() {
+        let xml = upstream_metadata("org.acme", "other", &["9.9"], "20240101120000");
+        let found = declared_contribution(xml.as_bytes(), "org.acme", "widget").expect("parses");
+        assert_eq!(found, Contribution::default());
+    }
+
+    #[test]
+    fn upstream_versions_with_an_invalid_shape_are_dropped() {
+        let xml = upstream_metadata(
+            "org.acme",
+            "widget",
+            &["1.0", "../evil", "2.0"],
+            "not-a-date",
+        );
+        let found = declared_contribution(xml.as_bytes(), "org.acme", "widget").expect("parses");
+        assert_eq!(found.versions, vec!["1.0", "2.0"]);
+        assert_eq!(found.last_updated, None);
+    }
+
+    #[test]
+    fn only_metadata_of_these_coordinates_without_versions_is_served_verbatim() {
+        let plugins = "<metadata><plugins><plugin><prefix>x</prefix></plugin></plugins></metadata>";
+        assert!(lists_no_versions(plugins.as_bytes(), "org.acme", "widget"));
+        // Con versiones (aunque se descarten) o de otro artefacto: no.
+        let hostile = upstream_metadata("org.acme", "widget", &["../evil"], "20240101000000");
+        assert!(!lists_no_versions(hostile.as_bytes(), "org.acme", "widget"));
+        let foreign = upstream_metadata("org.evil", "other", &[], "20240101000000");
+        assert!(!lists_no_versions(foreign.as_bytes(), "org.acme", "widget"));
+        assert!(!lists_no_versions(
+            b"<metadata><unclosed>",
+            "org.acme",
+            "widget"
+        ));
+    }
+
+    #[test]
+    fn the_version_cap_keeps_the_newest_whatever_the_order_of_the_members() {
+        let many: Vec<String> = (0..MAX_MERGED_VERSIONS).map(|n| format!("1.{n}")).collect();
+        let big = Contribution {
+            versions: many,
+            last_updated: None,
+        };
+        let newer = Contribution {
+            versions: vec!["9.0".to_string()],
+            last_updated: None,
+        };
+        let one = merged_metadata("org.acme", "widget", &[big.clone(), newer.clone()]);
+        let other = merged_metadata("org.acme", "widget", &[newer, big]);
+        assert_eq!(one, other);
+        let xml = one.expect("merged");
+        assert!(xml.contains("<version>9.0</version>"));
+        assert!(!xml.contains("<version>1.0</version>"));
+    }
+
+    #[test]
+    fn upstream_metadata_with_a_doctype_is_refused() {
+        let xml = "<!DOCTYPE metadata [<!ENTITY x \"y\">]><metadata/>";
+        assert_eq!(
+            declared_contribution(xml.as_bytes(), "org.acme", "widget"),
+            Err(XmlError::Doctype)
+        );
+    }
+
+    #[test]
+    fn merged_metadata_unions_versions_and_does_not_depend_on_the_order() {
+        let first = Contribution {
+            versions: vec!["1.0".into(), "1.2".into()],
+            last_updated: Some("20240101000000".into()),
+        };
+        let second = Contribution {
+            versions: vec!["1.1".into(), "1.2".into(), "2.0-SNAPSHOT".into()],
+            last_updated: Some("20250101000000".into()),
+        };
+        let one = merged_metadata("org.acme", "widget", &[first.clone(), second.clone()])
+            .expect("there are versions");
+        let other = merged_metadata("org.acme", "widget", &[second, first]).expect("versions");
+        assert_eq!(one, other);
+        assert!(one.contains("<latest>2.0-SNAPSHOT</latest>"));
+        assert!(one.contains("<release>1.2</release>"));
+        assert!(one.contains("<lastUpdated>20250101000000</lastUpdated>"));
+        let listed: Vec<&str> = one.matches("<version>").collect();
+        assert_eq!(listed.len(), 4, "a repeated version is listed once");
+    }
+
+    #[test]
+    fn merged_metadata_without_versions_is_nothing() {
+        assert_eq!(merged_metadata("org.acme", "widget", &[]), None);
+        assert_eq!(
+            merged_metadata("org.acme", "widget", &[Contribution::default()]),
+            None
+        );
+    }
+
+    #[test]
+    fn merged_metadata_of_one_hosted_repository_is_the_derived_one() {
+        let files = vec![Known {
+            path: "org/acme/widget/1.0/widget-1.0.pom".to_string(),
+            updated_at: Utc::now(),
+        }];
+        let derived = artifact_metadata("org.acme", "widget", &files).expect("metadata");
+        let contribution = hosted_contribution("org.acme", "widget", &files);
+        assert_eq!(
+            merged_metadata("org.acme", "widget", &[contribution]),
+            Some(derived)
+        );
     }
 }

@@ -250,13 +250,13 @@ async fn the_repository(
     // Un repositorio que no es de este formato, o que no se sirve en esta
     // release, no es un repositorio de esta superficie: se responde con
     // el mismo 404 que uno que no existe.
-    // Maven 2 comparte esta superficie, pero solo hosted en esta release: el
-    // proxy y el grupo Maven son otro trabajo y no se sirven a medias.
-    let served_format = match descriptor.format {
-        RepositoryFormat::Raw => true,
-        RepositoryFormat::Maven2 => descriptor.mode == RepositoryMode::Hosted,
-        _ => false,
-    };
+    // Maven 2 comparte esta superficie en sus tres modos: hosted, proxy y
+    // grupo. Los metadatos y checksums que cambian segun el modo se
+    // resuelven en `maven`.
+    let served_format = matches!(
+        descriptor.format,
+        RepositoryFormat::Raw | RepositoryFormat::Maven2
+    );
     if !served_format || !descriptor.mode.is_served_by_this_release() {
         return Err(RawApiError::NotFound);
     }
@@ -586,6 +586,13 @@ pub(super) async fn the_proxy_asset(
         .ok_or(RawApiError::NotImplemented(
             "this service has no egress for remote proxies",
         ))?;
+    // Un proxy Maven aplica la politica de versiones del repositorio: una
+    // version que no admite no se pide al upstream.
+    if repository.format == RepositoryFormat::Maven2
+        && !super::maven::admits_path(repository, asset_path)?
+    {
+        return Err(RawApiError::NotFound);
+    }
     let store = the_content_store(state)?;
     let account = context.account().as_str();
     let current = the_current_asset(state, context, &repository.repo_key, asset_path).await?;
@@ -1183,21 +1190,42 @@ async fn the_content_of(
     )?;
 
     let correlation = correlation.to_string();
-    // En Maven, metadatos y checksums se derivan de lo publicado; el resto de
-    // rutas sigue el flujo normal de un hosted.
-    if repository.format == RepositoryFormat::Maven2
-        && let Some(response) = super::maven::the_derived(
-            state,
-            context,
-            &repository,
-            &target.asset_path,
-            headers,
-            head,
-            &correlation,
-        )
-        .await?
-    {
-        return Ok((response, correlation));
+    // En Maven, metadatos y checksums no se guardan en un hosted: se derivan
+    // de lo publicado. Un grupo los compone con lo que aportan sus miembros
+    // (la union de versiones, el checksum del fichero que gana). Un proxy
+    // sirve los del upstream tal cual, como cualquier otro contenido. El
+    // resto de rutas sigue el flujo normal.
+    if repository.format == RepositoryFormat::Maven2 {
+        let derived = match repository.mode {
+            RepositoryMode::Hosted => {
+                super::maven::the_derived(
+                    state,
+                    context,
+                    &repository,
+                    &target.asset_path,
+                    headers,
+                    head,
+                    &correlation,
+                )
+                .await?
+            }
+            RepositoryMode::Group => {
+                super::maven::the_group_derived(
+                    state,
+                    context,
+                    &repository,
+                    &target.asset_path,
+                    headers,
+                    head,
+                    &correlation,
+                )
+                .await?
+            }
+            _ => None,
+        };
+        if let Some(response) = derived {
+            return Ok((response, correlation));
+        }
     }
     // Un hosted sirve lo que tiene. Un proxy decide cada vez si lo que tiene
     // vale, hay que revalidarlo o hay que traerlo.
@@ -1207,7 +1235,6 @@ async fn the_content_of(
     let mut resolved_by: Option<(String, u64)> = None;
     let mut repository = repository;
     let (asset, served) = if repository.mode == RepositoryMode::Group {
-        let group_key = repository.repo_key.clone();
         let version = repository.config.version;
         let resolution = super::raw_group::the_group_asset(
             state,
@@ -1219,21 +1246,13 @@ async fn the_content_of(
         .await;
         // El rastro de la resolucion: que grupo, en que version de su
         // configuracion, que miembros se consultaron y quien gano.
-        let result = match &resolution.outcome {
-            Ok(_) => AuditResult::Allowed,
-            Err(_) => AuditResult::Failed,
-        };
-        record_audit(
+        super::raw_group::record_resolution(
             state,
-            context.principal().subject().as_str(),
-            context.account().as_str(),
-            "resolve",
-            &format!(
-                "{group_key}@v{version}/{} [{}]",
-                target.asset_path,
-                resolution.trail_line()
-            ),
-            result,
+            context,
+            &repository,
+            &target.asset_path,
+            &resolution.trail_line(),
+            resolution.outcome.is_ok(),
             &correlation,
         );
         let won = resolution.outcome?;

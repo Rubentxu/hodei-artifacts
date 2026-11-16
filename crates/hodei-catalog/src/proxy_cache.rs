@@ -74,6 +74,29 @@ fn invalid(reason: impl Into<String>) -> UpstreamConfigError {
     UpstreamConfigError(reason.into())
 }
 
+/// Si la ruta es un fichero de una version `-SNAPSHOT` con el nombre
+/// flotante de Maven (`.../1.0-SNAPSHOT/widget-1.0-SNAPSHOT.jar`).
+///
+/// Ese nombre apunta a la ultima construccion y el upstream lo republica:
+/// un cambio es lo esperado, no un incumplimiento. Los ficheros con marca
+/// de tiempo (`widget-1.0-20240101.120000-1.jar`) no llevan el nombre de
+/// la version y siguen siendo inmutables.
+fn is_floating_snapshot(asset_path: &str) -> bool {
+    let mut segments = asset_path.rsplit('/');
+    let (Some(file), Some(directory), Some(artifact)) =
+        (segments.next(), segments.next(), segments.next())
+    else {
+        return false;
+    };
+    if !directory.ends_with("-SNAPSHOT") {
+        return false;
+    }
+    // `{artifactId}-{version}` y despues la extension o un clasificador.
+    let floating = format!("{artifact}-{directory}");
+    file.strip_prefix(floating.as_str())
+        .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('-'))
+}
+
 /// Que clase de ruta es: de eso depende como se trata un cambio.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheKind {
@@ -231,7 +254,7 @@ impl CachePolicy {
                 last == entry || named == entry
             }
         });
-        if metadata {
+        if metadata || is_floating_snapshot(asset_path) {
             CacheKind::Metadata
         } else {
             CacheKind::Content
@@ -854,5 +877,30 @@ mod tests {
             receipt(digest('b'), ReceiptOutcome::Quarantined, 30, 2),
         ];
         assert_eq!(CacheEntry::of(&served, 1, &healed).quarantined_at, None);
+    }
+
+    #[test]
+    fn a_floating_snapshot_is_mutable_and_a_timestamped_one_is_not() {
+        let policy = CachePolicy::default();
+        for path in [
+            "org/acme/widget/1.0-SNAPSHOT/widget-1.0-SNAPSHOT.jar",
+            "org/acme/widget/1.0-SNAPSHOT/widget-1.0-SNAPSHOT.pom",
+            "org/acme/widget/1.0-SNAPSHOT/widget-1.0-SNAPSHOT-sources.jar",
+            "org/acme/widget/1.0-SNAPSHOT/widget-1.0-SNAPSHOT.jar.sha1",
+        ] {
+            assert_eq!(policy.kind_of(path), CacheKind::Metadata, "{path}");
+        }
+        for path in [
+            "org/acme/widget/1.0-SNAPSHOT/widget-1.0-20240101.120000-1.jar",
+            "org/acme/widget/1.0/widget-1.0.jar",
+            "widget-1.0-SNAPSHOT.jar",
+            "org/acme/widget/1.0-SNAPSHOT/readme.txt",
+            // El nombre de la version dentro de otro nombre no es flotante.
+            "org/acme/lib/1.0-SNAPSHOT/lib-11.0-SNAPSHOT.jar",
+            "org/acme/lib/1.0-SNAPSHOT/other-1.0-SNAPSHOT.jar",
+            "org/acme/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOTS.jar",
+        ] {
+            assert_eq!(policy.kind_of(path), CacheKind::Content, "{path}");
+        }
     }
 }
