@@ -1,9 +1,10 @@
 # Formatos de paquetes — contrato de aceptación
 
-**Tareas:** HSP-109 (HAR-15, Maven 2 hosted) · **Servicio medido:** `hodei-artifacts 0.2.0`
+**Tareas:** HSP-109 (HAR-15, Maven 2 hosted) · HSP-110 (HAR-16, Maven 2 proxy y group) · **Servicio medido:** `hodei-artifacts 0.2.0`
 
 Este documento reúne los contratos de aceptación de los formatos de paquetes
-nativos. Hoy solo tiene una sección, MAVEN; cada formato nuevo añade la suya.
+nativos. Hoy tiene dos secciones, MAVEN (hosted) y MAVEN-REMOTE (proxy y
+group); cada formato nuevo añade la suya.
 
 ## MAVEN — repositorios Maven 2 hosted
 
@@ -72,10 +73,10 @@ La prueba con `mvn` falla, y no se salta, si `mvn` no está en el `PATH`.
 
 ### 3. Lo que este contrato NO promete
 
-- **Proxy y grupo Maven.** Solo `hosted`; el proxy y los grupos de Maven son
-  de HSP-110.
+- **Proxy y grupo Maven.** Esta sección cubre solo `hosted`; el proxy y los
+  grupos están en MAVEN-REMOTE.
 - **Metadatos a nivel de grupo** (`maven-metadata.xml` de plugins) no se
-  derivan; se responde `404`.
+  derivan en un `hosted`; se responde `404`.
 - **Rangos.** Los metadatos y checksums derivados no atienden `Range`.
 - **`lastUpdated` determinista.** Es la fecha de la última modificación de
   los ficheros del catálogo, no la hora de la petición: dos lecturas sin
@@ -102,3 +103,94 @@ La prueba con `mvn` falla, y no se salta, si `mvn` no está en el `PATH`.
   resultado en esos casos extremos es el de una inserción estable.
 - **Coste de los checksums.** El `.md5`/`.sha1`/`.sha512` de un fichero se
   calcula leyéndolo entero en cada petición.
+
+## MAVEN-REMOTE — repositorios Maven 2 proxy y group
+
+### 1. Qué afirma este contrato
+
+Afirma que **el mismo cliente Maven resuelve dependencias a través de un
+group de repositorios internos y proxies** (un hosted y un "Central"), que lo
+bajado queda en caché y se vuelve a resolver sin red, y que el servicio no
+reescribe lo que un upstream publica ni mezcla ficheros y checksums de
+miembros distintos.
+
+- **Proxy Maven 2.** Reutiliza el proxy de HSP-106/107 (TTL, validadores,
+  `stale_if_error`, offline, cuarentena, credencial por repositorio). Sirve
+  POM, jar y metadatos **tal cual** los entrega el upstream: no los
+  reescribe, ni los normaliza, ni los valida contra el layout (una ruta
+  legítima que el servicio no entendiera no debe romperse). Lo único que
+  aplica es la `version_policy` del repositorio: un proxy `release` no
+  pregunta por un snapshot (`404` sin tocar el upstream).
+- **Qué es mutable y qué no.** El contenido de una release o de un snapshot
+  con marca de tiempo es inmutable: si el upstream entrega otros bytes, el
+  proxy los retiene (`502` «withheld») hasta que cambie la configuración. Los
+  `maven-metadata.xml`, sus checksums y el nombre flotante
+  `lib-1.0-SNAPSHOT.jar` son revalidables y siguen el TTL de metadatos: con
+  TTL 0 se pregunta en cada lectura y lo nuevo se sirve; dentro del TTL no se
+  pregunta.
+- **Group Maven 2.** Para un fichero gana el primer miembro que lo tiene
+  (un `404` pasa al siguiente; un error del miembro **no** salta al
+  siguiente). El checksum de un fichero se calcula **sobre el fichero del
+  miembro ganador**, nunca con el sidecar de otro miembro ni con el del
+  upstream. Los `maven-metadata.xml` de artefacto son la **unión de las
+  versiones** de todos los miembros (hosted: las que tienen POM publicado;
+  proxy: las que declara su metadato) con `latest`, `release` y
+  `lastUpdated` recalculados; los de versión (snapshots) son los del primer
+  miembro que los tiene; sus checksums se calculan sobre los bytes servidos.
+  Un metadato de upstream que no se puede leer es un `502`, no una lista
+  incompleta. Un proxy no aporta al group versiones que su `version_policy`
+  no admite (un proxy `release` no anuncia `2.0-SNAPSHOT`), y los metadatos
+  de otro artefacto o con versiones inválidas no aportan nada. Solo los
+  metadatos de estas coordenadas que no listan **ninguna** versión (grupo de
+  plugins) se sirven verbatim desde el primer upstream que los trae.
+- **Sin red.** Con el servicio en `offline`, un proxy del group que no tiene
+  copia no aporta (no es un error) y se sigue con el siguiente miembro; si
+  ninguno la sirve, la respuesta es `503` («sin red»), no un `404`.
+- **Rastro.** Las cabeceras `x-hodei-resolved-from` y `x-hodei-group-version`
+  dicen qué miembro sirvió y con qué versión de la configuración, y cada
+  resolución queda auditada con su recorrido.
+- **Credenciales.** Cada proxy envía solo la suya y solo a su upstream; la de
+  quien pregunta no sale nunca, y ninguna aparece en el registro.
+
+### 2. Cómo se comprueba
+
+| Prueba | Qué mide |
+| --- | --- |
+| `crates/hodei-catalog/src/maven.rs` y `proxy_cache.rs` (unitarias) | Contribución de versiones, fusión de metadatos y clasificación snapshot flotante/inmutable, como funciones puras. |
+| `tests/hsp110_maven_remote_e2e.rs` | El protocolo con `curl` contra el servicio real y upstreams locales: Central cacheado y resuelto offline desde el group (POM verbatim, checksum del fichero servido, versiones unidas), snapshot flotante y sus metadatos revalidados por TTL (y sin preguntar dentro del TTL), release y snapshot con marca no sobrescritos, prioridad entre miembros, `404` que continúa y `5xx` que no salta, conflicto de coordenadas hosted/proxy en los dos órdenes con su checksum, segregación de credenciales (también la ausencia de credencial), `version_policy` en el proxy y a través del group, revalidación con `ETag` y `304`, `PUT` rechazado, checksums `md5`/`sha1`/`sha256`/`sha512` de metadatos del group, metadatos de plugins y de versión, metadatos de otro artefacto y metadato ilegible, y un group con varios proxies sirviendo offline desde el que tiene copia. |
+| `tests/hsp110_maven_cli.rs` | El cliente **real** (`mvn` 3.9.x, `dependency:get`) resuelve a través de un group con hosted y proxy, y otra vez con el servicio en offline y la caché local vacía, sin que el upstream reciba una petición y sin avisos de checksum. |
+
+La prueba con `mvn` falla, y no se salta, si `mvn` no está en el `PATH`.
+
+### 3. Lo que este contrato NO promete
+
+- **Metadatos de plugins no fusionados.** Se sirve el primer documento que
+  trae un upstream, tal cual; no se unen los de varios miembros.
+- **Tope de versiones fusionadas.** 20 000 (`MAX_MERGED_VERSIONS`, se
+  conservan las más nuevas); un metadato de más de 1 MiB es un `502`. Ambos
+  topes se comprueban solo con pruebas unitarias.
+- **Confusión de dependencias.** La unión de versiones es la semántica
+  habitual de un group Maven: si un upstream anuncia `org.acme:interna:99.0`
+  y el hosted no la tiene, el group la anuncia (y la resuelve desde el
+  proxy). La prioridad protege las versiones que el hosted **sí** tiene, no
+  a las que no tiene. Quien necesite cerrar eso debe poner el hosted en un
+  group aparte, sin proxies, o acotar el `scope` del upstream.
+- **Un proxy directo no filtra su metadato.** `GET` al proxy sirve el XML del
+  upstream tal cual, incluidos snapshots que su `version_policy` no admite;
+  el filtrado de versiones se aplica en el group.
+- **Un miembro caído es un error del group.** Mientras un miembro falle, los
+  metadatos de artefacto del group no se sirven (sería una lista incompleta
+  que Maven daría por buena); la disponibilidad se recupera con
+  `stale_if_error` o `offline` en el proxy.
+- **Un fichero oculto por confianza es un `404`** y no se busca en el
+  siguiente miembro (la revocación de un digest no debe hacer aparecer otro
+  contenido), igual que en los grupos de Raw. Los metadatos de versión
+  siguen la misma regla; en los de artefacto, que son una unión, un miembro
+  que oculta su metadato simplemente no aporta.
+- **Coste.** Cada lectura de metadatos de un group relee y recalcula la
+  unión; con upstreams de miles de versiones eso es CPU por petición, sin
+  caché.
+- **Sin `Range`** en lo derivado, y los checksums de un fichero se calculan
+  leyéndolo entero en cada petición.
+- **Escritura.** Un proxy o un group no aceptan `PUT`; se despliega en el
+  hosted.

@@ -510,6 +510,61 @@ impl Deployment {
         );
     }
 
+    /// Crea repositorios **Maven2 proxy** de la primera cuenta. Cada uno es
+    /// una clave, su `config_settings.maven` (`null` si no lleva) y su
+    /// `config_settings.proxy` (el upstream y su cache).
+    pub fn seed_maven_proxies(
+        &self,
+        repositories: &[(&str, serde_json::Value, serde_json::Value)],
+    ) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, maven, proxy)| {
+                serde_json::json!({ "key": key, "maven": maven, "proxy": proxy })
+            })
+            .collect();
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env(
+                "HODEI_SEED_MAVEN",
+                serde_json::Value::Array(repositories).to_string(),
+            )
+            .status()
+            .expect("the maven proxy seeder runs");
+        assert!(status.success(), "the maven proxies could not be seeded");
+    }
+
+    /// Crea grupos **Maven2** de la primera cuenta, en el orden dado.
+    pub fn seed_maven_groups(&self, groups: &[(&str, &[&str])]) {
+        let groups: Vec<serde_json::Value> = groups
+            .iter()
+            .map(|(key, members)| {
+                serde_json::json!({ "key": key, "members": members, "format": "maven2" })
+            })
+            .collect();
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env(
+                "HODEI_SEED_GROUPS",
+                serde_json::Value::Array(groups).to_string(),
+            )
+            .status()
+            .expect("the maven group seeder runs");
+        assert!(status.success(), "the maven groups could not be seeded");
+    }
+
     /// Cambia los miembros de un grupo ya sembrado: la version de su
     /// configuracion sube.
     pub fn reconfigure_group(&self, key: &str, members: &[&str]) {
@@ -1932,7 +1987,11 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
                         ),
                         account: FIRST_ACCOUNT.to_string(),
                         repo_key: key.to_string(),
-                        format: hodei_catalog::RepositoryFormat::Raw,
+                        format: if group["format"].as_str() == Some("maven2") {
+                            hodei_catalog::RepositoryFormat::Maven2
+                        } else {
+                            hodei_catalog::RepositoryFormat::Raw
+                        },
                         mode: hodei_catalog::RepositoryMode::Group,
                         config,
                         created_at: chrono::Utc::now(),
@@ -1968,9 +2027,17 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
             let key = repository["key"].as_str().expect("the key");
             let mut config =
                 hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
+            let mut settings = serde_json::Map::new();
             if !repository["maven"].is_null() {
-                config.config_settings = serde_json::json!({ "maven": repository["maven"] });
+                settings.insert("maven".into(), repository["maven"].clone());
             }
+            let mode = if repository["proxy"].is_null() {
+                hodei_catalog::RepositoryMode::Hosted
+            } else {
+                settings.insert("proxy".into(), repository["proxy"].clone());
+                hodei_catalog::RepositoryMode::Proxy
+            };
+            config.config_settings = serde_json::Value::Object(settings);
             store
                 .create_repository(
                     FIRST_ACCOUNT,
@@ -1985,7 +2052,7 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                         account: FIRST_ACCOUNT.to_string(),
                         repo_key: key.to_string(),
                         format: hodei_catalog::RepositoryFormat::Maven2,
-                        mode: hodei_catalog::RepositoryMode::Hosted,
+                        mode,
                         config,
                         created_at: chrono::Utc::now(),
                         updated_at: chrono::Utc::now(),

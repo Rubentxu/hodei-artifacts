@@ -35,7 +35,7 @@ use hodei_authz::VerifiedContext;
 use hodei_catalog::maven::{
     self, Algorithm, Known, MavenConfig, MavenFile, MetadataLevel, Subject, Target, VersionKind,
 };
-use hodei_catalog::{AssetRecord, CatalogError, RepositoryDescriptor};
+use hodei_catalog::{AssetRecord, CatalogError, RepositoryDescriptor, RepositoryMode};
 use hodei_evidence::domain::content::ContentDigest;
 use md5::Md5;
 use sha1::Sha1;
@@ -450,6 +450,53 @@ pub(super) async fn the_derived(
         }
     };
 
+    respond_derived(
+        content,
+        content_type,
+        headers,
+        head,
+        correlation,
+        &GroupTrace::default(),
+    )
+    .map(Some)
+}
+
+/// Lo que un grupo anade a una respuesta derivada: quien aporto el contenido
+/// y en que version de su configuracion.
+#[derive(Default)]
+pub(super) struct GroupTrace {
+    /// Los miembros que aportaron, separados por comas.
+    pub from: Option<String>,
+    /// La version de la configuracion del grupo.
+    pub version: Option<u64>,
+}
+
+fn apply_trace(response: &mut Response, trace: &GroupTrace) {
+    if let Some(from) = &trace.from
+        && let Ok(value) = HeaderValue::from_str(from)
+    {
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-hodei-resolved-from"),
+            value,
+        );
+    }
+    if let Some(version) = trace.version {
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-hodei-group-version"),
+            HeaderValue::from(version),
+        );
+    }
+}
+
+/// La respuesta de un contenido derivado: condicionales, cabeceras y cuerpo.
+fn respond_derived(
+    content: Vec<u8>,
+    content_type: &'static str,
+    headers: &HeaderMap,
+    head: bool,
+    correlation: &str,
+    trace: &GroupTrace,
+) -> Result<Response, RawApiError> {
     let etag = conditional::the_etag(&ContentDigest::of_bytes(&content));
     match conditional::the_read_condition(
         conditional::the_if_match(headers).as_deref(),
@@ -460,7 +507,8 @@ pub(super) async fn the_derived(
         conditional::ReadOutcome::NotModified => {
             let mut response = StatusCode::NOT_MODIFIED.into_response();
             apply_common_headers(&mut response, &etag, correlation);
-            return Ok(Some(response));
+            apply_trace(&mut response, trace);
+            return Ok(response);
         }
         conditional::ReadOutcome::Serve => {}
     }
@@ -473,6 +521,7 @@ pub(super) async fn the_derived(
     };
     let mut response = (StatusCode::OK, body).into_response();
     apply_common_headers(&mut response, &etag, correlation);
+    apply_trace(&mut response, trace);
     let response_headers = response.headers_mut();
     response_headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     response_headers.insert(
@@ -484,5 +533,372 @@ pub(super) async fn the_derived(
     if let Ok(value) = HeaderValue::from_str(&length.to_string()) {
         response_headers.insert(header::CONTENT_LENGTH, value);
     }
-    Ok(Some(response))
+    Ok(response)
+}
+
+// ---------------------------------------------------------------------------
+// Grupos y proxies.
+// ---------------------------------------------------------------------------
+
+/// Si la politica de versiones de un repositorio Maven 2 admite la ruta.
+///
+/// Un proxy aplica la misma politica que un hosted (`release` / `snapshot`):
+/// una version que el repositorio no admite no se pide al upstream. Lo que
+/// no es un fichero ni unos metadatos de version se deja pasar: el proxy no
+/// inventa reglas sobre rutas que no entiende.
+pub(super) fn admits_path(
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+) -> Result<bool, RawApiError> {
+    let config = the_config(repository)?;
+    let snapshot = match maven::parse_path(asset_path) {
+        Ok(Target::File(file)) => file.is_snapshot(),
+        Ok(Target::Metadata(MetadataLevel::Version { version, .. })) => {
+            version.ends_with(maven::SNAPSHOT_SUFFIX)
+        }
+        Ok(Target::Checksum {
+            subject: Subject::File(file),
+            ..
+        }) => file.is_snapshot(),
+        Ok(Target::Checksum {
+            subject: Subject::Metadata(MetadataLevel::Version { version, .. }),
+            ..
+        }) => version.ends_with(maven::SNAPSHOT_SUFFIX),
+        // Lo que no se entiende pasa, salvo que cuelgue de una carpeta
+        // `-SNAPSHOT`: ahi un nombre raro no es una forma de esquivar la
+        // politica.
+        _ => {
+            let in_snapshot_directory = asset_path
+                .rsplit('/')
+                .skip(1)
+                .any(|segment| segment.ends_with(maven::SNAPSHOT_SUFFIX));
+            return Ok(!in_snapshot_directory || config.admits(true));
+        }
+    };
+    Ok(config.admits(snapshot))
+}
+
+/// Lo que un miembro hoja de un grupo aporta a unos metadatos.
+struct Piece {
+    /// Los bytes que el miembro sirve en esa ruta de metadatos.
+    bytes: Vec<u8>,
+    /// Lo que aportan a la lista de versiones del artefacto.
+    contribution: maven::Contribution,
+    /// Si lo sirve un upstream tal cual (y no se deriva de lo publicado).
+    verbatim: bool,
+}
+
+/// Lee un fichero de metadatos que un proxy tiene, con tope de tamano.
+async fn read_cached(state: &AppState, asset: &AssetRecord) -> Result<Vec<u8>, RawApiError> {
+    if asset.size_bytes > maven::MAX_XML_BYTES as u64 {
+        tracing::warn!("a proxied maven metadata file is larger than the limit");
+        return Err(RawApiError::BadGateway(
+            "the upstream metadata is larger than the limit",
+        ));
+    }
+    let store = the_content_store(state)?;
+    let bytes = store
+        .get(&asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    Ok(bytes.to_vec())
+}
+
+/// Lo que un miembro hoja aporta a los metadatos de `level`.
+///
+/// `Ok(None)` es un MISS: el miembro no tiene metadatos para esa ruta, o la
+/// compuerta de confianza oculta el fichero que los respalda.
+async fn the_piece(
+    state: &AppState,
+    context: &VerifiedContext,
+    member: &RepositoryDescriptor,
+    level: &MetadataLevel,
+    metadata_path: &str,
+    correlation: &str,
+) -> Result<Option<Piece>, RawApiError> {
+    super::raw_group::global_only(member)?;
+    if member.mode == RepositoryMode::Proxy {
+        if !admits_path(member, metadata_path)? {
+            return Ok(None);
+        }
+        let served =
+            match super::raw::the_proxy_asset(state, context, member, metadata_path, correlation)
+                .await
+            {
+                Ok(served) => served,
+                Err(RawApiError::NotFound) => return Ok(None),
+                Err(other) => return Err(other),
+            };
+        match crate::trust::admit(
+            state,
+            context.account().as_str(),
+            member,
+            &served.asset.digest,
+        )
+        .await
+        {
+            Ok(()) => {}
+            // Los de artefacto son una union: un miembro que los oculta no
+            // aporta. Los de version los sirve un solo miembro: ocultos es
+            // un 404 y no se busca en el siguiente, como con un fichero.
+            Err(crate::trust::Admission::Hidden) => {
+                return match level {
+                    MetadataLevel::Artifact { .. } => Ok(None),
+                    MetadataLevel::Version { .. } => Err(RawApiError::NotFound),
+                };
+            }
+            Err(other) => return Err(the_admission_error(other)),
+        }
+        let bytes = read_cached(state, &served.asset).await?;
+        let contribution = match level {
+            MetadataLevel::Artifact {
+                group_id,
+                artifact_id,
+            } => {
+                let mut declared = maven::declared_contribution(&bytes, group_id, artifact_id)
+                    .map_err(|_| RawApiError::BadGateway("the upstream metadata cannot be read"))?;
+                // Un proxy no ofrece versiones que su politica no admite: el
+                // cliente las pediria y recibiria un 404.
+                let config = the_config(member)?;
+                declared
+                    .versions
+                    .retain(|version| config.admits(version.ends_with(maven::SNAPSHOT_SUFFIX)));
+                declared
+            }
+            MetadataLevel::Version { .. } => maven::Contribution::default(),
+        };
+        return Ok(Some(Piece {
+            bytes,
+            contribution,
+            verbatim: true,
+        }));
+    }
+    // Un hosted aporta lo que tiene publicado.
+    match level {
+        MetadataLevel::Artifact {
+            group_id,
+            artifact_id,
+        } => {
+            let prefix = format!("{}/{artifact_id}/", group_id.replace('.', "/"));
+            let known = known_under(state, context, member, &prefix).await?;
+            let contribution = maven::hosted_contribution(group_id, artifact_id, &known);
+            if contribution.versions.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(Piece {
+                bytes: Vec::new(),
+                contribution,
+                verbatim: false,
+            }))
+        }
+        MetadataLevel::Version { .. } => Ok(derived_metadata(state, context, member, level)
+            .await?
+            .map(|xml| Piece {
+                bytes: xml.into_bytes(),
+                contribution: maven::Contribution::default(),
+                verbatim: false,
+            })),
+    }
+}
+
+/// Los metadatos que sirve un grupo: de artefacto, la union de las
+/// versiones de todos los miembros; de version, los del primer miembro que
+/// los tiene.
+///
+/// Devuelve los bytes y los miembros que aportaron. El rastro queda en
+/// `trail`.
+async fn group_metadata(
+    state: &AppState,
+    context: &VerifiedContext,
+    group: &RepositoryDescriptor,
+    level: &MetadataLevel,
+    metadata_path: &str,
+    trail: &mut Vec<(String, super::raw_group::Step)>,
+    correlation: &str,
+) -> Result<(Vec<u8>, Vec<String>), RawApiError> {
+    use super::raw_group::Step;
+
+    let mut pieces: Vec<(String, Piece)> = Vec::new();
+    // Un proxy sin red y sin copia no tiene nada que aportar: se sigue con
+    // el siguiente. Si al final nadie sirvio, ese es el error.
+    let mut offline: Option<RawApiError> = None;
+    for member in super::raw_group::the_leaves(state, context, group).await? {
+        let key = member.repo_key.clone();
+        match the_piece(state, context, &member, level, metadata_path, correlation).await {
+            Ok(Some(piece)) => {
+                trail.push((key.clone(), Step::Hit));
+                pieces.push((key, piece));
+                // Los de version no se fusionan: gana el primero.
+                if matches!(level, MetadataLevel::Version { .. }) {
+                    break;
+                }
+            }
+            Ok(None) => trail.push((key, Step::Miss)),
+            Err(error @ RawApiError::Offline(_)) => {
+                trail.push((key, Step::Miss));
+                offline = Some(error);
+            }
+            Err(error) => {
+                trail.push((key, Step::Error));
+                return Err(error);
+            }
+        }
+    }
+    if pieces.is_empty()
+        && let Some(error) = offline
+    {
+        return Err(error);
+    }
+    let MetadataLevel::Artifact {
+        group_id,
+        artifact_id,
+    } = level
+    else {
+        let (key, piece) = pieces.into_iter().next().ok_or(RawApiError::NotFound)?;
+        return Ok((piece.bytes, vec![key]));
+    };
+
+    let contributions: Vec<maven::Contribution> = pieces
+        .iter()
+        .map(|(_, piece)| piece.contribution.clone())
+        .collect();
+    let contributors = |only_versions: bool| -> Vec<String> {
+        pieces
+            .iter()
+            .filter(|(_, piece)| !only_versions || !piece.contribution.versions.is_empty())
+            .map(|(key, _)| key.clone())
+            .collect()
+    };
+    match maven::merged_metadata(group_id, artifact_id, &contributions) {
+        Some(xml) => Ok((xml.into_bytes(), contributors(true))),
+        None => {
+            // Metadatos que no listan versiones (por ejemplo los de un
+            // grupo de plugins): no se fusionan, se sirve el primero que
+            // un upstream trae, tal cual.
+            let (key, piece) = pieces
+                .into_iter()
+                .find(|(_, piece)| {
+                    piece.verbatim && maven::lists_no_versions(&piece.bytes, group_id, artifact_id)
+                })
+                .ok_or(RawApiError::NotFound)?;
+            Ok((piece.bytes, vec![key]))
+        }
+    }
+}
+
+/// El checksum de un fichero que sirve un grupo: es el del fichero del
+/// miembro que gana esa ruta, nunca el de un sidecar de otro miembro.
+async fn group_file_checksum(
+    state: &AppState,
+    context: &VerifiedContext,
+    group: &RepositoryDescriptor,
+    subject_path: &str,
+    algorithm: Algorithm,
+    trail: &mut Vec<(String, super::raw_group::Step)>,
+    correlation: &str,
+) -> Result<(Vec<u8>, Vec<String>), RawApiError> {
+    let resolution =
+        super::raw_group::the_group_asset(state, context, group, subject_path, correlation).await;
+    trail.extend(resolution.trail.iter().cloned());
+    let won = resolution.outcome?;
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        &won.member,
+        &won.asset.digest,
+    )
+    .await
+    .map_err(the_admission_error)?;
+    let text = checksum_of(state, &won.asset, algorithm).await?;
+    Ok((text.into_bytes(), vec![won.member.repo_key]))
+}
+
+/// Lo que un grupo Maven sirve en una ruta de metadatos o de checksum.
+///
+/// `Ok(None)` dice que la ruta es de un fichero: la resuelve el grupo como
+/// cualquier otro (gana el primer miembro que lo tiene).
+pub(super) async fn the_group_derived(
+    state: &AppState,
+    context: &VerifiedContext,
+    group: &RepositoryDescriptor,
+    asset_path: &str,
+    headers: &HeaderMap,
+    head: bool,
+    correlation: &str,
+) -> Result<Option<Response>, RawApiError> {
+    let Ok(target) = maven::parse_path(asset_path) else {
+        return Ok(None);
+    };
+    let mut trail: Vec<(String, super::raw_group::Step)> = Vec::new();
+    let outcome = match target {
+        Target::File(_) => return Ok(None),
+        Target::Metadata(level) => {
+            let found = group_metadata(
+                state,
+                context,
+                group,
+                &level,
+                asset_path,
+                &mut trail,
+                correlation,
+            )
+            .await;
+            found.map(|(bytes, from)| (bytes, "application/xml", from))
+        }
+        Target::Checksum {
+            algorithm,
+            subject: Subject::Metadata(level),
+            subject_path,
+        } => {
+            let found = group_metadata(
+                state,
+                context,
+                group,
+                &level,
+                &subject_path,
+                &mut trail,
+                correlation,
+            )
+            .await;
+            found.map(|(bytes, from)| {
+                (
+                    checksum_of_bytes(&bytes, algorithm).into_bytes(),
+                    "text/plain; charset=utf-8",
+                    from,
+                )
+            })
+        }
+        Target::Checksum {
+            algorithm,
+            subject: Subject::File(_),
+            subject_path,
+        } => {
+            let found = group_file_checksum(
+                state,
+                context,
+                group,
+                &subject_path,
+                algorithm,
+                &mut trail,
+                correlation,
+            )
+            .await;
+            found.map(|(bytes, from)| (bytes, "text/plain; charset=utf-8", from))
+        }
+    };
+    super::raw_group::record_resolution(
+        state,
+        context,
+        group,
+        asset_path,
+        &super::raw_group::trail_text(&trail),
+        outcome.is_ok(),
+        correlation,
+    );
+    let (content, content_type, from) = outcome?;
+    let trace = GroupTrace {
+        from: Some(from.join(",")),
+        version: Some(group.config.version),
+    };
+    respond_derived(content, content_type, headers, head, correlation, &trace).map(Some)
 }

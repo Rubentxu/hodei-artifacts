@@ -81,12 +81,47 @@ pub(super) struct Resolution {
 impl Resolution {
     /// El rastro en una linea: `internal:miss,mirror:hit`.
     pub fn trail_line(&self) -> String {
-        self.trail
-            .iter()
-            .map(|(member, step)| format!("{member}:{}", step.as_str()))
-            .collect::<Vec<_>>()
-            .join(",")
+        trail_text(&self.trail)
     }
+}
+
+/// Un rastro en una linea: `internal:miss,mirror:hit`.
+pub(super) fn trail_text(trail: &[(String, Step)]) -> String {
+    trail
+        .iter()
+        .map(|(member, step)| format!("{member}:{}", step.as_str()))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Deja en la auditoria el rastro de una resolucion: que grupo, en que
+/// version de su configuracion, que miembros se consultaron y como acabo.
+pub(super) fn record_resolution(
+    state: &AppState,
+    context: &VerifiedContext,
+    group: &RepositoryDescriptor,
+    asset_path: &str,
+    trail: &str,
+    succeeded: bool,
+    correlation: &str,
+) {
+    let result = if succeeded {
+        crate::audit::AuditResult::Allowed
+    } else {
+        crate::audit::AuditResult::Failed
+    };
+    crate::handlers::record_audit(
+        state,
+        context.principal().subject().as_str(),
+        context.account().as_str(),
+        "resolve",
+        &format!(
+            "{}@v{}/{asset_path} [{trail}]",
+            group.repo_key, group.config.version
+        ),
+        result,
+        correlation,
+    );
 }
 
 fn the_failure(error: GroupError) -> RawApiError {
@@ -194,14 +229,13 @@ pub(super) async fn the_group_asset(
     Resolution { outcome, trail }
 }
 
-async fn resolve(
+/// Los miembros hoja de un grupo, en el orden en que se consultan, ya
+/// leidos y filtrados por lo que el principal puede leer.
+pub(super) async fn the_leaves(
     state: &AppState,
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
-    asset_path: &str,
-    correlation: &str,
-    trail: &mut Vec<(String, Step)>,
-) -> Result<Won, RawApiError> {
+) -> Result<Vec<RepositoryDescriptor>, RawApiError> {
     let config = match GroupConfig::of(&group.config) {
         Ok(Some(config)) => config,
         _ => {
@@ -214,18 +248,40 @@ async fn resolve(
         known.get(key).cloned().unwrap_or(Lookup::Missing)
     })
     .map_err(the_failure)?;
+    walk.leaves
+        .iter()
+        .map(|key| found.remove(key).ok_or(RawApiError::Unavailable))
+        .collect()
+}
 
-    for key in &walk.leaves {
-        let Some(member) = found.remove(key) else {
-            return Err(RawApiError::Unavailable);
-        };
-        // El miembro se lee como se leeria por su ruta directa: esta
-        // release solo sirve el ambito global.
-        if member.config.digest_scope != hodei_catalog::DigestScope::Global {
-            trail.push((key.clone(), Step::Error));
-            return Err(RawApiError::NotImplemented(
-                "this service serves the content of a repository only in the global scope",
-            ));
+/// El miembro se lee como se leeria por su ruta directa: esta release solo
+/// sirve el ambito global.
+pub(super) fn global_only(member: &RepositoryDescriptor) -> Result<(), RawApiError> {
+    if member.config.digest_scope == hodei_catalog::DigestScope::Global {
+        Ok(())
+    } else {
+        Err(RawApiError::NotImplemented(
+            "this service serves the content of a repository only in the global scope",
+        ))
+    }
+}
+
+async fn resolve(
+    state: &AppState,
+    context: &VerifiedContext,
+    group: &RepositoryDescriptor,
+    asset_path: &str,
+    correlation: &str,
+    trail: &mut Vec<(String, Step)>,
+) -> Result<Won, RawApiError> {
+    // Un proxy sin red y sin copia no la tiene a su alcance: se sigue con el
+    // siguiente miembro. Si ninguno la sirve, ese es el error.
+    let mut offline: Option<RawApiError> = None;
+    for member in the_leaves(state, context, group).await? {
+        let key = member.repo_key.clone();
+        if let Err(error) = global_only(&member) {
+            trail.push((key, Step::Error));
+            return Err(error);
         }
         let looked = match member.mode {
             RepositoryMode::Proxy => {
@@ -255,11 +311,15 @@ async fn resolve(
                 });
             }
             Ok(None) => trail.push((key.clone(), Step::Miss)),
+            Err(error @ RawApiError::Offline(_)) => {
+                trail.push((key.clone(), Step::Miss));
+                offline = Some(error);
+            }
             Err(error) => {
                 trail.push((key.clone(), Step::Error));
                 return Err(error);
             }
         }
     }
-    Err(RawApiError::NotFound)
+    Err(offline.unwrap_or(RawApiError::NotFound))
 }
