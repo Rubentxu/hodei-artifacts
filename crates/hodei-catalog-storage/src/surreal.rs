@@ -135,9 +135,17 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// frescura de la caché del proxy se deriva de ellos. Los recibos de la
 /// versión 7 no llevan los campos y se leen como traídos.
 ///
-/// Version 9 adds the catalog **digest index** (`catalog_asset_digest`):
-/// the digest search is an exact question, and without an index the
-/// engine answers it by walking the whole repository.
+/// Version 9 adds the **indexes of the search**: the digest one
+/// (`catalog_asset_digest`), the coordinates one (`catalog_asset_package`)
+/// and the tag one (`catalog_tag_name`). The digest search is an exact
+/// question, and without an index the engine answers it by walking the
+/// whole repository; the search by package and by tag ask for the
+/// coordinates, and the last of them asks for the tag by name inside the
+/// account.
+///
+/// The two indexes of the assets end in the path, and that is what makes
+/// the order of the rows they serve total: within a repository there is
+/// no two assets with the same path.
 pub const SCHEMA_VERSION: i64 = 9;
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
@@ -146,6 +154,12 @@ pub const SCHEMA_VERSION: i64 = 9;
 /// Un conflicto de transacción no es un fallo de la escritura: es la
 /// escritura llegando un instante tarde.
 const WRITE_ATTEMPTS: usize = 4;
+
+/// La condición de una concesión viva.
+///
+/// Está escrita una vez porque la regla es una: una concesión revocada
+/// está revocada, y donde se busca una concesión viva se busca la misma.
+pub(crate) const LIVE_GRANT: &str = "revoked_at IS NONE";
 
 /// El esquema del catálogo.
 ///
@@ -199,11 +213,15 @@ DEFINE FIELD IF NOT EXISTS updated_at ON catalog_asset TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_asset_unique ON catalog_asset FIELDS account, repository, asset_path UNIQUE;
 DEFINE INDEX IF NOT EXISTS catalog_asset_subject ON catalog_asset FIELDS account, repository, subject;
 -- La busqueda por coordenadas: el nombre y la version del paquete, con
--- la cuenta y el repositorio delante, que es como se pregunta.
-DEFINE INDEX IF NOT EXISTS catalog_asset_package ON catalog_asset FIELDS account, repository, package_name, package_version;
+-- la cuenta y el repositorio delante, que es como se pregunta. El camino
+-- va al final porque es lo que hace el orden total: dentro de un
+-- repositorio no hay dos assets con el mismo camino.
+DEFINE INDEX IF NOT EXISTS catalog_asset_package ON catalog_asset FIELDS account, repository, package_name, package_version, asset_path;
 -- The digest search: it is the question "give me this content", and
 -- without an index the engine walks the whole repository to answer it.
-DEFINE INDEX IF NOT EXISTS catalog_asset_digest ON catalog_asset FIELDS account, repository, digest_algorithm, digest;
+-- The path goes at the end for the same reason as above: it makes the
+-- order of the rows total.
+DEFINE INDEX IF NOT EXISTS catalog_asset_digest ON catalog_asset FIELDS account, repository, digest_algorithm, digest, asset_path;
 
 DEFINE TABLE IF NOT EXISTS catalog_reference SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS account ON catalog_reference TYPE string;

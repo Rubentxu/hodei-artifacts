@@ -105,7 +105,10 @@ async fn publish(
     digest
 }
 
-/// An account with two repositories and three assets.
+/// An account with three repositories and three assets.
+///
+/// The third one is served on the `trusted` channel: what has no grant
+/// there does not come out, and it is not counted either.
 async fn a_catalog() -> (tempfile::TempDir, SurrealCatalogStore) {
     let (tmp, store) = fresh().await;
     store
@@ -127,6 +130,19 @@ async fn a_catalog() -> (tempfile::TempDir, SurrealCatalogStore) {
             descriptor(
                 "acme",
                 "apps",
+                RepositoryFormat::Npm,
+                RepositoryMode::Hosted,
+                serde_json::json!({}),
+            ),
+        )
+        .await
+        .expect("the repository is created");
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "tools",
                 RepositoryFormat::Npm,
                 RepositoryMode::Hosted,
                 serde_json::json!({ "trust": { "serve": "trusted" } }),
@@ -177,6 +193,15 @@ async fn a_catalog() -> (tempfile::TempDir, SurrealCatalogStore) {
     .await;
     publish(
         &store,
+        "acme",
+        "tools",
+        "toolpkg",
+        "1.0.0",
+        "toolpkg-1.0.0.tgz",
+    )
+    .await;
+    publish(
+        &store,
         "other",
         "secrets",
         "labpkg",
@@ -185,6 +210,11 @@ async fn a_catalog() -> (tempfile::TempDir, SurrealCatalogStore) {
     )
     .await;
     (tmp, store)
+}
+
+/// The digest of an asset that was published with this path.
+fn the_digest_of(path: &str) -> ContentDigest {
+    ContentDigest::of_bytes(path.as_bytes())
 }
 
 #[tokio::test]
@@ -444,7 +474,7 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
     assert_eq!(
         by_mode.total,
         Some(3),
-        "every repository of the account is hosted"
+        "the three assets that can be served"
     );
 
     let by_channel = store
@@ -459,8 +489,8 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         .expect("the search");
     assert_eq!(
         by_channel.total,
-        Some(2),
-        "the repository with the trusted channel is not open"
+        Some(3),
+        "the repositories with the open channel"
     );
 
     let trusted = store
@@ -475,8 +505,8 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
         .expect("the search");
     assert_eq!(
         trusted.total,
-        Some(1),
-        "only the repository with the trusted channel"
+        Some(0),
+        "the trusted repository has nothing granted"
     );
 }
 
@@ -679,6 +709,57 @@ struct SeededAsset {
     updated_at: surrealdb::sql::Datetime,
 }
 
+/// An account with one repository and `count` assets.
+///
+/// The assets share the package name when it is asked for: that is what
+/// makes the filter of the package own the order of the rows.
+async fn a_catalog_with(
+    count: usize,
+    package: Option<&str>,
+) -> (tempfile::TempDir, SurrealCatalogStore) {
+    let (tmp, store) = fresh().await;
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "bulk",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                serde_json::json!({}),
+            ),
+        )
+        .await
+        .expect("the repository is created");
+    let now = surrealdb::sql::Datetime::from(chrono::Utc::now());
+    let rows: Vec<SeededAsset> = (0..count)
+        .map(|index| SeededAsset {
+            account: "acme".to_string(),
+            repository: "bulk".to_string(),
+            asset_path: format!("cargado-{index:05}.whl"),
+            package_name: match package {
+                Some(name) => name.to_string(),
+                None => format!("cargado-{index:05}"),
+            },
+            package_version: format!("1.{index:05}"),
+            digest_algorithm: "sha256".to_string(),
+            digest: format!("{index:064x}"),
+            size_bytes: 10,
+            subject: None,
+            updated_at: now.clone(),
+        })
+        .collect();
+    store
+        .db()
+        .query("INSERT INTO catalog_asset $rows")
+        .bind(("rows", rows))
+        .await
+        .expect("the assets are seeded")
+        .check()
+        .expect("the assets are seeded");
+    (tmp, store)
+}
+
 #[tokio::test]
 async fn the_page_says_whether_there_is_more() {
     let (_tmp, store) = a_catalog().await;
@@ -748,4 +829,240 @@ async fn a_total_that_does_not_fit_is_not_counted() {
     );
     assert!(page.more, "there are more than the page brings");
     assert_eq!(page.results.len(), 10, "the page is still a page");
+}
+
+#[tokio::test]
+async fn the_trusted_channel_only_shows_what_is_granted() {
+    let (_tmp, store) = a_catalog().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    // The tool was published and nobody promoted it: it does not come
+    // out, and it is not counted either. A listing that showed it would
+    // say that the content exists where the download answers that it
+    // does not.
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_repository("tools"),
+        )
+        .await
+        .expect("the search");
+    assert_eq!(page.total, Some(0), "what is not granted is not counted");
+    assert!(page.results.is_empty(), "and it does not come out");
+
+    // Granted, it comes out.
+    let digest = the_digest_of("toolpkg-1.0.0.tgz");
+    store
+        .grant(&[TrustGrant {
+            account: "acme".to_string(),
+            repository: "tools".to_string(),
+            digest: digest.clone(),
+            decision_id: "dec-hsp113-tools".to_string(),
+            actor: "hrn:hodei:iam:acme:User/alice".to_string(),
+            granted_at: chrono::Utc::now(),
+            revoked_at: None,
+            revoked_by: None,
+            revoke_reason: None,
+        }])
+        .await
+        .expect("the grant");
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_repository("tools"),
+        )
+        .await
+        .expect("the search");
+    assert_eq!(page.total, Some(1), "the granted asset is counted");
+    assert_eq!(page.results[0].asset_path, "toolpkg-1.0.0.tgz");
+    assert_eq!(page.results[0].trust_state, TrustState::Trusted);
+
+    // And revoked, it goes back to being invisible: there is no index to
+    // rewrite.
+    store
+        .revoke_digest(
+            "acme",
+            "tools",
+            &digest,
+            "hrn:hodei:iam:acme:User/alice",
+            "an operator withdrew it",
+            chrono::Utc::now(),
+        )
+        .await
+        .expect("the revocation");
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_repository("tools"),
+        )
+        .await
+        .expect("the search");
+    assert_eq!(page.total, Some(0), "a revoked grant does not serve");
+    assert!(page.results.is_empty());
+}
+
+#[tokio::test]
+async fn the_total_is_exact_until_it_does_not_fit() {
+    // The cap is the last total that is exact: 255 fits, 256 is the cap
+    // and still fits, and 257 does not.
+    for (count, expected) in [(255, Some(255)), (256, Some(256)), (257, None)] {
+        let (_tmp, store) = a_catalog_with(count, None).await;
+        let repositories = store.repositories("acme").await.expect("the repositories");
+        let page = store
+            .search("acme", &repositories, &SearchQuery::new().with_limit(10))
+            .await
+            .expect("the search");
+        assert_eq!(page.total, expected, "{count} assets");
+    }
+}
+
+#[tokio::test]
+async fn the_cap_holds_when_the_page_starts_far_away() {
+    let (_tmp, store) = a_catalog_with(300, None).await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    // The window is 301 rows and the repository is emptied by it: its
+    // total is above the cap, and a total above the cap is not counted.
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_limit(100).with_offset(200),
+        )
+        .await
+        .expect("the search");
+    assert_eq!(page.total, None, "a total above the cap is not counted");
+    assert_eq!(page.results.len(), 100, "the page is still a page");
+    assert!(!page.more, "there is nothing behind the last page");
+}
+
+#[tokio::test]
+async fn the_pages_do_not_repeat_or_lose_when_the_repository_is_bigger_than_the_window() {
+    let (_tmp, store) = a_catalog_with(30, None).await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let mut seen: Vec<String> = Vec::new();
+    for offset in (0..30).step_by(7) {
+        let page = store
+            .search(
+                "acme",
+                &repositories,
+                &SearchQuery::new().with_limit(7).with_offset(offset),
+            )
+            .await
+            .expect("the search");
+        seen.extend(page.results.iter().map(|hit| hit.asset_path.clone()));
+    }
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(seen.len(), 30, "every asset comes out once");
+    assert_eq!(unique.len(), 30, "and no asset comes out twice");
+}
+
+#[tokio::test]
+async fn the_pages_do_not_repeat_or_lose_when_the_package_filter_owns_the_order() {
+    // Every asset is of the same package, so the index of the package
+    // serves the query and the rows come out in its order, which is not
+    // the order of the path. The pages still have to be consecutive.
+    let (_tmp, store) = a_catalog_with(30, Some("cargado")).await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let mut seen: Vec<String> = Vec::new();
+    for offset in (0..30).step_by(7) {
+        let page = store
+            .search(
+                "acme",
+                &repositories,
+                &SearchQuery::new()
+                    .with_package_name("cargado")
+                    .with_limit(7)
+                    .with_offset(offset),
+            )
+            .await
+            .expect("the search");
+        seen.extend(page.results.iter().map(|hit| hit.asset_path.clone()));
+    }
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(seen.len(), 30, "every asset comes out once");
+    assert_eq!(unique.len(), 30, "and no asset comes out twice");
+}
+
+#[tokio::test]
+async fn a_repository_without_assets_brings_nothing_and_does_not_break_the_total() {
+    let (_tmp, store) = a_catalog().await;
+    store
+        .create_repository(
+            "acme",
+            descriptor(
+                "acme",
+                "empty",
+                RepositoryFormat::Raw,
+                RepositoryMode::Hosted,
+                serde_json::json!({}),
+            ),
+        )
+        .await
+        .expect("the repository is created");
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let page = store
+        .search("acme", &repositories, &SearchQuery::new())
+        .await
+        .expect("the search");
+    assert_eq!(page.total, Some(3), "the three assets of the account");
+    assert_eq!(page.results.len(), 3);
+}
+
+#[tokio::test]
+async fn a_text_that_matches_nothing_says_zero() {
+    let (_tmp, store) = a_catalog().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_text("no-existe-este-paquete"),
+        )
+        .await
+        .expect("the search");
+    assert_eq!(page.total, Some(0));
+    assert!(page.results.is_empty());
+}
+
+#[tokio::test]
+async fn a_page_of_the_maximum_size_comes_whole() {
+    let (_tmp, store) = a_catalog_with(120, Some("cargado")).await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let page = store
+        .search("acme", &repositories, &SearchQuery::new().with_limit(100))
+        .await
+        .expect("the search");
+    assert_eq!(page.results.len(), 100, "the biggest page comes whole");
+    assert!(page.more, "and there is more behind it");
+    assert_eq!(page.total, Some(120));
+}
+
+#[tokio::test]
+async fn the_version_filter_works_without_the_package() {
+    let (_tmp, store) = a_catalog().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+
+    let page = store
+        .search(
+            "acme",
+            &repositories,
+            &SearchQuery::new().with_package_version("1.1"),
+        )
+        .await
+        .expect("the search");
+    assert_eq!(page.total, Some(1));
+    assert_eq!(page.results[0].package_version, "1.1");
 }

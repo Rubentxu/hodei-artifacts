@@ -41,9 +41,17 @@
 //! in an account of a hundred thousand assets that would be seconds).
 //!
 //! Without `ORDER BY`, the rows come out in the order of the index, and
-//! the page is joined and sorted in the adapter by `(repository, path)`.
-//! The window that is asked for brings one row more, to know whether
-//! there is more.
+//! **that is the order of the page**: the walk and the repository filter
+//! come out in the order of the path, and a filter with an index of its
+//! own comes out in the order of that index, which is the order the
+//! client asked for. Every index ends in the path, and the path is
+//! unique inside a repository, so the order is total: a page neither
+//! repeats nor loses a result between pages.
+//!
+//! The repositories are asked one by one and their windows are joined in
+//! the order of the repository name, so the joined order is the order of
+//! the whole account. The window that is asked for brings one row more,
+//! to know whether there is more.
 //!
 //! # The total
 //!
@@ -58,6 +66,13 @@
 //! does not say how much. A repository that was emptied by the window
 //! already has its total, and does not have to be counted again.
 //!
+//! The count asks for **one row more** than what is left of the cap:
+//! that extra row is what tells "exactly the cap" from "more than the
+//! cap", and without it the last exact total would be thrown away. And
+//! the cap holds even when the window is deep: a page that starts far
+//! away brings more rows than the cap, and a total above the cap is not
+//! counted.
+//!
 //! # The trust
 //!
 //! The trust state is not read from `catalog_reference`: that row holds
@@ -71,24 +86,38 @@
 //! rewriting anything: there is no index to update because there is no
 //! second state.
 //!
-//! # The `LIMIT` and the `START` go as numbers
+//! # The trusted channel only shows what is granted
+//!
+//! A repository served on the `trusted` channel serves only what has a
+//! live grant, and the same rule holds for what is *listed*: the other
+//! listings of the service filter by the same grants, and a listing that
+//! did not filter would say that the content exists where the download
+//! answers that it does not.
+//!
+//! So a trusted repository is asked for the assets of its grants, one
+//! grant at a time, and the total is not counted there: counting what is
+//! granted means asking every grant.
+//!
+//! # The `LIMIT` goes as a number
 //!
 //! The engine cannot evaluate a bound `LIMIT` (`Found NONE but the LIMIT
 //! clause must evaluate to a positive integer`). The numbers come from a
 //! validated `usize`, so no text from the client is pasted into the
-//! query.
+//! query. The offset is not given to the engine at all: the window is
+//! asked for whole and the page is cut here.
 
 use std::collections::HashSet;
 
 use async_trait::async_trait;
 use hodei_catalog::search::{MAX_COUNTED, RepositoryAttribute, SearchHit, SearchPage, SearchQuery};
 use hodei_catalog::{
-    CatalogError, CatalogSearch, RepositoryDescriptor, RepositoryFormat, ServeChannel, TrustState,
+    CatalogError, CatalogSearch, RepositoryDescriptor, RepositoryFormat, ServeChannel, TrustLedger,
+    TrustState,
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use super::{AssetRow, RepositoryRow, SurrealCatalogStore, algorithm_of};
+use super::{AssetRow, LIVE_GRANT, RepositoryRow, SurrealCatalogStore, algorithm_of};
 
 /// How many repositories may share a tag.
 ///
@@ -198,8 +227,40 @@ impl CatalogSearch for SurrealCatalogStore {
                 continue;
             }
 
-            let (conditions, bindings) =
-                the_conditions(principal_account, repository, query, target);
+            if ServeChannel::of(&repository.config) == ServeChannel::TrustedOnly {
+                // A repository served on the trusted channel shows only
+                // what is granted.
+                let (rows, complete) = self
+                    .the_granted_rows(principal_account, repository, query, target, window)
+                    .await?;
+                if complete {
+                    // Every grant was asked, so the rows that came out
+                    // are all of them: the repository knows its total.
+                    counted += rows.len();
+                } else {
+                    // The grants stopped being asked for with rows
+                    // enough: there may be more, and the total is not
+                    // counted.
+                    exact = false;
+                }
+                collected.extend(rows);
+                // Only the window of the whole account is needed: the rest
+                // is behind the page, and keeping it would multiply the
+                // memory by the number of repositories.
+                collected.truncate(window);
+                continue;
+            }
+
+            let digest = the_digest_of(query);
+            let (conditions, bindings) = the_conditions(
+                principal_account,
+                repository,
+                query,
+                target,
+                digest
+                    .as_ref()
+                    .map(|(algorithm, value)| (algorithm.as_str(), value.as_str())),
+            );
             let rows = self.the_window(&conditions, &bindings, window).await?;
 
             if exact {
@@ -215,21 +276,39 @@ impl CatalogSearch for SurrealCatalogStore {
                     if remaining == 0 {
                         exact = false;
                     } else {
-                        let found = self.the_count(&conditions, &bindings, remaining).await?;
-                        counted += found;
-                        if found >= remaining {
+                        // One row more than what is left of the cap: that
+                        // extra row is what tells "exactly the cap" from
+                        // "more than the cap".
+                        let found = self
+                            .the_count(&conditions, &bindings, remaining + 1)
+                            .await?;
+                        if found > remaining {
+                            counted += remaining;
                             exact = false;
+                        } else {
+                            counted += found;
                         }
                     }
                 }
             }
 
             collected.extend(rows);
+            // Only the window of the whole account is needed: the rest is
+            // behind the page, and keeping it would multiply the memory
+            // by the number of repositories.
+            collected.truncate(window);
+        }
+
+        // The cap holds even when the window was deep: a page that starts
+        // far away brings more rows than the cap, and a total above the
+        // cap is not counted.
+        if counted > MAX_COUNTED {
+            exact = false;
         }
 
         // The page: the global window, minus what is left behind. The cut
-        // is on the set, not on the order: the page is sorted afterwards,
-        // and so nothing is repeated and nothing is lost.
+        // is on the order the rows came in, which is total: a page
+        // neither repeats nor loses a result between pages.
         let start = query.offset.min(collected.len());
         let end = (query.offset + query.limit).min(collected.len());
         let more = collected.len() > query.offset + query.limit;
@@ -265,9 +344,6 @@ impl CatalogSearch for SurrealCatalogStore {
                 updated_at: asset.updated_at,
             });
         }
-        // The order of the page is the one of the catalog: (repository,
-        // path).
-        hodei_catalog::search::in_order(&mut results);
 
         Ok(SearchPage {
             total: if exact { Some(counted) } else { None },
@@ -334,6 +410,79 @@ impl SurrealCatalogStore {
             .take(0)
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
         Ok(rows.len())
+    }
+
+    /// The rows of a repository in the trusted channel.
+    ///
+    /// Only what is granted is listed: a repository served on the
+    /// trusted channel does not serve what has no live grant, and a
+    /// listing that showed it would say that the content exists where
+    /// the download answers that it does not.
+    ///
+    /// The grants are asked one by one, and each one is an exact lookup
+    /// in the `(account, repository, digest_algorithm, digest)` index.
+    /// The window is respected: the grants stop being asked for as soon
+    /// as there are enough rows.
+    ///
+    /// The second value says whether **every** grant was asked: that is
+    /// what tells a total that is known from one that is not.
+    async fn the_granted_rows(
+        &self,
+        principal_account: &str,
+        repository: &RepositoryDescriptor,
+        query: &SearchQuery,
+        tag_target: Option<&TagRow>,
+        window: usize,
+    ) -> Result<(Vec<AssetRow>, bool), CatalogError> {
+        let grants = self
+            .the_repository_grants(principal_account, &repository.repo_key)
+            .await?;
+        let mut rows: Vec<AssetRow> = Vec::new();
+        for grant in grants {
+            // A search by digest only looks at the grant of that digest.
+            if let Some(digest) = &query.digest
+                && (digest.value != grant.digest || algorithm_of(digest) != grant.digest_algorithm)
+            {
+                continue;
+            }
+            let (conditions, bindings) = the_conditions(
+                principal_account,
+                repository,
+                query,
+                tag_target,
+                Some((grant.digest_algorithm.as_str(), grant.digest.as_str())),
+            );
+            let mut found = self
+                .the_window(&conditions, &bindings, window - rows.len())
+                .await?;
+            rows.append(&mut found);
+            if rows.len() >= window {
+                return Ok((rows, false));
+            }
+        }
+        Ok((rows, true))
+    }
+
+    /// The live grants of a repository.
+    ///
+    /// Only **live** grants: a revoked one is revoked, and what is
+    /// revoked is not served. They come from the ledger of the trust, so
+    /// the rule of what is live is written once and not twice.
+    async fn the_repository_grants(
+        &self,
+        principal_account: &str,
+        repository: &str,
+    ) -> Result<Vec<GrantRow>, CatalogError> {
+        let grants = self.grants_of(principal_account, repository).await?;
+        Ok(grants
+            .into_iter()
+            .filter(|grant| grant.is_active())
+            .map(|grant| GrantRow {
+                repository: grant.repository,
+                digest_algorithm: algorithm_of(&grant.digest),
+                digest: grant.digest.value,
+            })
+            .collect())
     }
 
     /// The coordinates a tag of the account points at.
@@ -406,7 +555,7 @@ impl SurrealCatalogStore {
         conditions.push(format!("({})", triples.join(" OR ")));
         let sql = format!(
             "SELECT repository, digest_algorithm, digest FROM trust_grant \
-             WHERE {} AND revoked_at = NONE",
+             WHERE {} AND {LIVE_GRANT}",
             conditions.join(" AND ")
         );
         let mut response = self
@@ -438,11 +587,16 @@ fn repository_format(candidates: &[&RepositoryDescriptor], repository: &str) -> 
 ///
 /// The filters are bound to parameters: the text the client writes is
 /// never pasted into the query.
+///
+/// The digest comes apart: the one the client asked for and the one of
+/// the grant that is being asked for are the same condition, and in a
+/// trusted repository it is always the grant that says which one.
 fn the_conditions(
     principal_account: &str,
     repository: &RepositoryDescriptor,
     query: &SearchQuery,
     tag_target: Option<&TagRow>,
+    digest: Option<(&str, &str)>,
 ) -> (Vec<String>, Map<String, Value>) {
     let mut conditions = vec![
         "account = $account".to_string(),
@@ -460,11 +614,11 @@ fn the_conditions(
         conditions.push("package_version = $package_version".to_string());
         bindings.insert("package_version".to_string(), json!(package_version));
     }
-    if let Some(digest) = &query.digest {
+    if let Some((algorithm, value)) = digest {
         conditions.push("digest_algorithm = $digest_algorithm".to_string());
         conditions.push("digest = $digest".to_string());
-        bindings.insert("digest_algorithm".to_string(), json!(algorithm_of(digest)));
-        bindings.insert("digest".to_string(), json!(digest.value));
+        bindings.insert("digest_algorithm".to_string(), json!(algorithm));
+        bindings.insert("digest".to_string(), json!(value));
     }
     if let Some(target) = tag_target {
         // The tag narrows by coordinates: an asset that is not the one of
@@ -489,7 +643,7 @@ fn the_conditions(
         );
         bindings.insert("text".to_string(), json!(text));
     }
-    if !another_filter_owns_the_order(query, tag_target) {
+    if !another_filter_owns_the_order(query, tag_target, digest.is_some()) {
         // The empty path is in no asset, so the condition does not change
         // what is returned: it tells the engine to use the path index,
         // and the walk comes out in the order of the path. When there is
@@ -499,16 +653,28 @@ fn the_conditions(
     (conditions, bindings)
 }
 
+/// The digest the client asked for, with its algorithm.
+fn the_digest_of(query: &SearchQuery) -> Option<(String, String)> {
+    query
+        .digest
+        .as_ref()
+        .map(|digest| (algorithm_of(digest), digest.value.clone()))
+}
+
 /// Whether a filter with an index of its own rules the order.
 ///
 /// The package filter, the version filter, the digest and the tag have an
 /// index that serves them, and the engine uses it: the order of their
 /// rows is the one of that index, which is what the client asked for.
 /// Without them, the walk comes out in the order of the path.
-fn another_filter_owns_the_order(query: &SearchQuery, tag_target: Option<&TagRow>) -> bool {
-    query.package_name.is_some()
+fn another_filter_owns_the_order(
+    query: &SearchQuery,
+    tag_target: Option<&TagRow>,
+    has_digest: bool,
+) -> bool {
+    has_digest
+        || query.package_name.is_some()
         || query.package_version.is_some()
-        || query.digest.is_some()
         || tag_target.is_some()
 }
 

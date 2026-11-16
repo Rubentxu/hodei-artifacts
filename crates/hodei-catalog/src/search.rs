@@ -20,10 +20,19 @@
 //!
 //! # The order
 //!
-//! The order is `(repository, path)`. It is a **total** order within the
-//! account: two distinct assets cannot share both keys, so a page can
-//! neither repeat nor lose a result between pages, and the same filter
-//! returns the same page in the same order.
+//! The order is the one of the index that serves the query, and it is
+//! **stable**: the same query returns the same page while the catalog
+//! does not change, and a page neither repeats nor loses a result between
+//! pages.
+//!
+//! Which index serves it depends on the filter, and that is not an
+//! accident: the walk and the repository filter come out in the order of
+//! the path, and a filter with an index of its own --the package, the
+//! version, the digest, the tag-- comes out in the order of that index,
+//! which is the order the client asked for. Every one of those orders
+//! ends in the path, and the path is unique inside a repository, so the
+//! order is **total** within the account. The adapter says which order
+//! each filter gives, and the UAT writes it down.
 //!
 //! # The total
 //!
@@ -304,21 +313,6 @@ impl SearchQuery {
         self
     }
 
-    /// Whether the query says something to look for.
-    ///
-    /// A query without filters is a walk over everything there is, and
-    /// that is not a search: it is a dump. It can be asked for --the
-    /// package browser starts there--, but whoever asks for it knows it.
-    pub fn has_a_filter(&self) -> bool {
-        self.repository.is_some()
-            || self.package_name.is_some()
-            || self.package_version.is_some()
-            || self.digest.is_some()
-            || self.tag.is_some()
-            || self.attribute.is_some()
-            || self.text.is_some()
-    }
-
     /// Checks that the query can be made.
     ///
     /// An empty filter is an error, the limit has to fit in a page, and
@@ -416,18 +410,6 @@ impl SearchPage {
     }
 }
 
-/// The order of the results: repository and path.
-///
-/// It is a **total** order within the account, and that is why a page
-/// neither repeats nor loses results between pages.
-pub fn in_order(hits: &mut [SearchHit]) {
-    hits.sort_by(|left, right| {
-        left.repository
-            .cmp(&right.repository)
-            .then_with(|| left.asset_path.cmp(&right.asset_path))
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,12 +430,8 @@ mod tests {
 
     #[test]
     fn a_query_without_filters_is_a_walk() {
-        assert!(!SearchQuery::new().has_a_filter());
-        assert!(
-            SearchQuery::new()
-                .with_package_name("labpkg")
-                .has_a_filter()
-        );
+        // The walk is a valid query: it is the one the package browser
+        // starts with.
         assert!(SearchQuery::new().validate().is_ok());
     }
 
@@ -495,21 +473,11 @@ mod tests {
     }
 
     #[test]
-    fn the_order_is_total_and_stable() {
-        let mut hits = vec![a_hit("b", "two"), a_hit("a", "two"), a_hit("a", "one")];
-        in_order(&mut hits);
-        let order: Vec<(String, String)> = hits
-            .iter()
-            .map(|hit| (hit.repository.clone(), hit.asset_path.clone()))
-            .collect();
-        assert_eq!(
-            order,
-            vec![
-                ("a".to_string(), "one".to_string()),
-                ("a".to_string(), "two".to_string()),
-                ("b".to_string(), "two".to_string()),
-            ]
-        );
+    fn a_hit_carries_what_the_search_found() {
+        let hit = a_hit("libs", "one.whl");
+        assert_eq!(hit.repository, "libs");
+        assert_eq!(hit.asset_path, "one.whl");
+        assert_eq!(hit.trust_state, TrustState::Quarantined);
     }
 
     #[test]
