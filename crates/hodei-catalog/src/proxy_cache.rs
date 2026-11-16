@@ -276,6 +276,16 @@ impl CachePolicy {
                     CacheKind::Metadata
                 }
             }
+            RepositoryFormat::PyPi => {
+                // El documento de un proyecto (`{proyecto}`) es metadata: el
+                // upstream publica versiones nuevas. Las distribuciones
+                // (`{proyecto}/{fichero}`) son contenido inmutable.
+                if asset_path.contains('/') {
+                    CacheKind::Content
+                } else {
+                    CacheKind::Metadata
+                }
+            }
             _ => self.kind_of(asset_path),
         }
     }

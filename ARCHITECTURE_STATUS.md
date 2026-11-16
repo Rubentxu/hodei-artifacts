@@ -2032,3 +2032,53 @@ base: el servicio debe estar parado), ni alta disponibilidad, ni restauración
 sobre datos existentes. El filtro del export depende del comportamiento de
 SurrealDB 2.7 y falla alto si cambia.
 
+
+## 10-septvicies — M10: PyPI hosted, proxy y group (HAR-18)
+
+Un repositorio `pypi` se sirve en `/pypi/{repo}/…` para los clientes `twine` y
+`pip` reales. El contrato, las pruebas y los límites están en la sección PYPI
+de [`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md).
+
+**Qué hay.** El módulo puro `hodei_catalog::pypi` (normalización de nombres
+PEP 503, nombres de fichero, versiones PEP 440, el documento de un proyecto,
+la negociación HTML/JSON, las rutas de la superficie y la comprobación de una
+subida contra sus bytes) y `handlers/pypi.rs`, que lo cablea con lo que ya
+existía: Cedar, `the_current_asset`, `trust::admit`, el proxy de HSP-106/107
+(`proxy_cache::kind_in` clasifica el documento del proyecto como metadatos
+revalidables y la distribución como contenido inmutable) y el group de
+HSP-108. No se duplica ninguna infraestructura: lo que hace falta del proxy
+—pedir una URL concreta con una cabecera `Accept`— son dos funciones nuevas
+(`open_conditional_at` y `resolve_url`) sobre las que ya habia.
+
+**Cómo decide.** Publicar es escribir la distribución (`overwrite: false`, así
+que una distribución es inmutable) y después una instantánea nueva del
+documento del proyecto (`{proyecto}#project`, direccionada por digest) con
+una precondición sobre la anterior y reintentos acotados. El hash que declara
+el cliente se comprueba contra los bytes que han llegado, y el nombre y la
+versión contra los del nombre del fichero: un cliente que miente no publica.
+La versión se compara en su forma canónica (PEP 440), que es la que lleva el
+nombre del fichero, y el nombre del fichero tiene que ser uno que el `pip`
+acepte. Antes de publicar nada se comprueba que el índice del proyecto cabe
+en el límite de contenido del servicio. Retirar una versión es otra
+instantánea del documento. En el proxy, el índice del upstream se pide en JSON
+y **se vuelve a pintar aquí**: el HTML que sale de este servicio lo escribe
+este servicio, con los valores escapados.
+
+**El límite de la subida tiene dos capas.** El límite del transporte
+(`DefaultBodyLimit::max`) topa el cuerpo entero, con el sobre `multipart`
+incluido, y el manejador topa los bytes del fichero. Sin el tope del
+transporte, el `multipart` acumula las cabeceras de las partes en memoria sin
+tope: el límite de `axum` por defecto (2 MiB) no servía, porque una
+distribución no cabe en 2 MiB, y desactivar el límite no servía tampoco. Con
+las dos capas, un sobre con una cabecera gigante es un `413` y el límite del
+servicio se respeta sin excepciones.
+
+**Lo que decide el canal de confianza.** La superficie PyPI no se salta la
+compuerta de `trust::admit`: la distribución se admite tanto si viene del
+catálogo como si la trae el upstream, y el índice solo anuncia los digests
+que el canal deja servir (`trust::servable`, como hace OCI). En el canal
+`trusted`, una distribución sin concesión no se anuncia ni se descarga.
+
+**Lo que sigue sin estar.** La API JSON de PyPI, la búsqueda, la validación de
+los metadatos del paquete, las firmas y las atestaciones, y el retiro de una
+versión por el cliente (es una extensión propia del servicio).

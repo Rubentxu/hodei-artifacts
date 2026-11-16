@@ -34,6 +34,15 @@ use tower_http::{
 use tracing::Level;
 use utoipa_swagger_ui::SwaggerUi;
 
+/// How much room the `multipart` envelope gets on top of the file.
+///
+/// The limit that applies to an upload is the configured one, and it is the
+/// limit of the *file*. The envelope --the boundaries and the headers of
+/// the parts-- travels with it, so the transport gets this much more room
+/// to read the body before it refuses it. It is a bound and not a
+/// reservation: a client that sends fewer parts uses less.
+const MULTIPART_ENVELOPE_SLACK: usize = 256 * 1024;
+
 /// Build the Axum router with all routes and middleware.
 pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
     // The administrative surface is closed unless it is explicitly enabled.
@@ -393,6 +402,29 @@ fn raw_routes(app_state: AppState) -> Router {
                 .delete(crate::handlers::npm::handle)
                 // Any other method gets the same JSON error as the rest.
                 .fallback(crate::handlers::npm::handle),
+        )
+        // The PyPI surface: `twine upload` and `pip install`. The project
+        // name arrives normalized and the file name percent-encoded, and
+        // only the protocol grammar may decode them.
+        .route(
+            "/pypi/{*target}",
+            axum::routing::get(crate::handlers::pypi::handle)
+                .head(crate::handlers::pypi::handle)
+                .post(crate::handlers::pypi::handle)
+                // Any other method gets the same error as the rest.
+                .fallback(crate::handlers::pypi::handle)
+                // The default limit of `axum` is 2 MiB, and a distribution
+                // does not fit in 2 MiB. The limit that applies is the
+                // configured one, and it is enforced in two layers: the
+                // transport caps the whole body --the `multipart` envelope
+                // included-- and the handler caps the bytes of the file.
+                // Without the transport cap, an envelope with gigantic
+                // headers would pile up in memory with no limit.
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
         )
         .with_state(app_state)
 }
