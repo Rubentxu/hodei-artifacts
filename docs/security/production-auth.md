@@ -49,6 +49,26 @@ Authorization: Bearer <JWT>
 
 Los repositorios exigen `Artifacts::Action::"ReadRepository"`/`"CreateRepository"`; la administración exige `Admin::Action::"AccessAdminApi"` con recurso `AdminApi/<método>-<ruta>` (por ejemplo `get-schemas-load`). El gate administrativo solo se abre con `admin_api_enabled=true` y este bundle inyectado.
 
+## Las acciones que el bundle tiene que declarar
+
+El servicio no arranca si el bundle no declara las acciones con las que
+decide. No es una comprobación de forma: Cedar no puede decidir sobre una
+acción que el esquema no conoce, y el bundle se quedaría sin poder
+contestar a las superficies que sí están montadas.
+
+Siempre: `Artifacts::Action::"ReadRepository"`,
+`"CreateRepository"`, `"ReadCapsule"` y `"DownloadAsset"`. Esta última la
+piden la búsqueda del catálogo y la vista de detalle de un paquete, que
+están montadas siempre: un bundle sin ella arranca y después responde
+`500` en cada búsqueda, que es peor que no arrancar.
+
+Con `admin_api_enabled`: `Admin::Action::"AccessAdminApi"`. Con las
+superficies de contenido RAW u OCI: `Artifacts::Action::"UploadAsset"`,
+porque esas superficies **escriben** y sin la acción de subida el bundle
+no podría decidir sobre un `push`.
+
+El ejemplo de `config/examples/` declara las cuatro de siempre.
+
 ## Rotación
 
 - Con HS256: el secreto se lee al arrancar. Para rotar, despliega el nuevo secreto y reinicia; no hay recarga en caliente ni ventana de doble secreto. Planifica la rotación antes de la expiración de los tokens emitidos o emite tokens nuevos tras el reinicio.
