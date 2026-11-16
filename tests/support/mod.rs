@@ -1066,6 +1066,15 @@ const OCI_PUSH_DISCLAIMER: &str = "\
 - **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea: lo que se ha medido es que los bytes vuelven intactos.\n\
 - **Ni la recolección de blobs sin referencia.** Un blob sin referenciar se puede quedar en el almacén; lo que se ha comprobado es que no se publica solo.";
 
+/// Lo que el informe del indice y los referrers **no** certifica.
+const OCI_INDEX_DISCLAIMER: &str = "\
+- **Ni la validacion criptografica de las firmas.** Un referrer de firma se registra como lo que es: un manifiesto que dice que cuelga de otro. El registro **no** comprueba firmas, y la presencia de una no concede nada: la decision la toma el motor de confianza.\n\
+- **Ni la promocion de nada.** Lo que se ha comprobado es que un referrer **no** cambia el canal de confianza de aquello a lo que cuelga: sigue en cuarentena, y promoverla es de otra tarea.\n\
+- **Ni compatibilidad OCI completa.** Lo que se ha ejecutado es el corte de **consulta y adjuntos**: la lista de etiquetas, los referrers, el indice multi-plataforma y el manifiesto de artefacto. Las sesiones de subida son de otra tarea.\n\
+- **Ni `docker` de la CLI.** Los clientes reales que han hablado con el registro son `oras`.\n\
+- **Ni la suite oficial de conformidad.** Este informe dice lo que se ha ejecutado aqui, no lo que dice la suite del `distribution-spec`.\n\
+- **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea.";
+
 impl Report {
     /// Un informe vacío, el de la superficie cruda.
     pub fn new() -> Self {
@@ -1096,6 +1105,28 @@ impl Report {
                 the_tools(),
                 the_first_line_of(&["skopeo", "--version"]),
                 the_first_line_of(&["podman", "--version"])
+            ),
+            cases: Vec::new(),
+        }
+    }
+
+    /// Un informe vacio, el del indice y los referrers.
+    ///
+    /// Es un informe aparte, con su titulo y su aviso: uno que certify
+    /// el push y el indice en el mismo titulo diria que el registro
+    /// cumple el protocolo entero, y lo que se ha medido es una parte.
+    pub fn for_oci_index() -> Self {
+        Self {
+            title: "Conformidad OCI indice, etiquetas y referrers — informe",
+            disclaimer: OCI_INDEX_DISCLAIMER,
+            path: Self::the_oci_index_path(),
+            // Las versiones de los clientes van en el informe: un cliente
+            // sin version es un cliente del que no se puede decir que
+            // habla el protocolo.
+            tools: format!(
+                "{}; `oras {}`",
+                the_tools(),
+                the_version_of(&[&the_oras(), "version"])
             ),
             cases: Vec::new(),
         }
@@ -1140,6 +1171,14 @@ impl Report {
             .join("target")
             .join("uat")
             .join("oci-push-conformity.md")
+    }
+
+    /// La ruta del fichero del informe del indice.
+    pub fn the_oci_index_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("uat")
+            .join("oci-index-conformity.md")
     }
 
     /// Escribe el informe.
@@ -1214,6 +1253,50 @@ pub fn record_oci_push(case: Case) {
     report.record(case);
 }
 
+/// El informe del indice y los referrers, compartido por los casos de su
+/// binario.
+static OCI_INDEX_REPORT: OnceLock<Mutex<Report>> = OnceLock::new();
+
+/// El informe del indice y los referrers.
+pub fn the_oci_index_report() -> &'static Mutex<Report> {
+    OCI_INDEX_REPORT.get_or_init(|| Mutex::new(Report::for_oci_index()))
+}
+
+/// Anota un caso en el informe del indice y los referrers.
+pub fn record_oci_index(case: Case) {
+    let mut report = the_oci_index_report()
+        .lock()
+        .expect("the report is not poisoned");
+    report.record(case);
+}
+
+/// Donde esta el `oras`.
+///
+/// No siempre esta en el `PATH` de quien lanza las pruebas, y una
+/// herramienta que no se encuentra es una herramienta que no se puede
+/// probar: se dice donde se busca y se deja el sitio.
+pub fn the_oras() -> String {
+    if let Some(binary) = std::env::var_os("HODEI_ORAS_BIN") {
+        return binary.to_string_lossy().into_owned();
+    }
+    for candidate in [
+        "oras".to_string(),
+        format!(
+            "{}/.local/bin/oras",
+            std::env::var("HOME").unwrap_or_default()
+        ),
+    ] {
+        if Command::new(&candidate)
+            .arg("version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return candidate;
+        }
+    }
+    "oras".to_string()
+}
+
 /// La versión del servicio que se ha probado.
 pub fn the_version() -> String {
     let commit = Command::new("git")
@@ -1252,6 +1335,19 @@ pub fn the_moment() -> String {
             String::from_utf8_lossy(&output.stdout).trim().to_string()
         }
         _ => "sin fecha".to_string(),
+    }
+}
+
+/// La version de una herramienta, sin el ruido que la envuelve.
+///
+/// El `oras` dice su version en una linea con la forma
+/// `Version:        1.2.0`, y en el informe lo que interesa es el
+/// numero.
+fn the_version_of(command: &[&str]) -> String {
+    let line = the_first_line_of(command);
+    match line.split_once(':') {
+        Some((_, version)) => version.trim().to_string(),
+        None => line,
     }
 }
 
