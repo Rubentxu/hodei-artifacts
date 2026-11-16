@@ -315,6 +315,11 @@ pub async fn bootstrap(
         // The garbage collection reads the roots from the same catalog and
         // reclaims from the same store; it is the only thing that deletes
         // bytes. If the store cannot reclaim, the surface stays closed.
+        let scrub = crate::recovery::Scrubber::new(
+            ledger.clone(),
+            content.clone() as Arc<dyn hodei_hub::BlobStore>,
+            Duration::from_secs(config.content.gc_grace_secs),
+        );
         let gc = crate::gc::GcService::new(
             ledger,
             content.clone() as Arc<dyn hodei_hub::BlobStore>,
@@ -366,6 +371,13 @@ pub async fn bootstrap(
             .with_proxy_plane(proxy_plane)
             .with_trust_plane(plane)
             .with_content_store(content);
+        let app_state = match scrub {
+            Ok(scrub) => app_state.with_scrub(Arc::new(scrub)),
+            Err(error) => {
+                warn!(%error, "the integrity scrub is not available");
+                app_state
+            }
+        };
         match gc {
             Ok(gc) => app_state.with_gc(Arc::new(gc)),
             Err(error) => {

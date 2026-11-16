@@ -500,3 +500,71 @@ async fn holds_validate_their_input_and_can_be_released() {
     assert!(w.service.release_hold(&hold.id).await.unwrap());
     assert!(!w.service.release_hold(&hold.id).await.unwrap());
 }
+
+/// Un manifiesto OCI corrupto o ausente no hace abortar al scrub: es
+/// exactamente lo que tiene que informar (a diferencia de la recoleccion,
+/// que ante un manifiesto ilegible no actua).
+#[tokio::test]
+async fn a_damaged_or_missing_oci_manifest_is_reported_by_the_scrub_not_fatal() {
+    use hodei_artifacts_api::recovery::{Finding, Scrubber};
+
+    fn find(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+        for entry in std::fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(found) = find(&path, name) {
+                    return Some(found);
+                }
+            } else if path.file_name().is_some_and(|n| n == name) {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    let w = world();
+    let config = put(&w, b"config").await;
+    let layer = put(&w, b"layer").await;
+    let damaged = put(&w, &manifest(&config, &[&layer])).await;
+    let other_layer = put(&w, b"another layer").await;
+    let missing = put(&w, &manifest(&config, &[&other_layer])).await;
+    {
+        let mut state = w.ledger.state.lock().unwrap();
+        state.roots = vec![
+            root(
+                RootKind::Asset,
+                "app",
+                &format!("manifests/{}", damaged.value),
+                &damaged,
+            ),
+            root(
+                RootKind::Asset,
+                "app",
+                &format!("manifests/{}", missing.value),
+                &missing,
+            ),
+        ];
+    }
+    let cas = w._dir.path().join("cas");
+    let file = find(&cas, &damaged.value).expect("the manifest file");
+    std::fs::write(&file, b"not the manifest anymore").unwrap();
+    let gone = find(&cas, &missing.value).expect("the manifest file");
+    std::fs::remove_file(gone).unwrap();
+
+    // La recoleccion no actua ante un manifiesto ilegible...
+    assert!(w.service.dry_run().await.is_err());
+
+    // ...y el scrub lo informa en vez de abortar.
+    let scrubber = Scrubber::new(w.ledger.clone(), w.store.clone(), GRACE).expect("scrubber");
+    let report = scrubber
+        .run()
+        .await
+        .expect("the scrub reports, it does not fail");
+    assert!(!report.is_sound());
+    assert!(report.findings.iter().any(
+        |finding| matches!(finding, Finding::Corrupt { digest, .. } if *digest == damaged.to_string())
+    ));
+    assert!(report.findings.iter().any(
+        |finding| matches!(finding, Finding::BrokenReference { digest, .. } if *digest == missing.to_string())
+    ));
+}

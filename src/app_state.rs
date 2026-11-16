@@ -130,6 +130,11 @@ pub struct AppState {
     /// can reclaim. Without it the surface answers 501 and nothing is
     /// deleted.
     pub(crate) gc: Option<Arc<crate::gc::GcService>>,
+    /// The integrity scrub of the registry: it reads the store and the
+    /// catalog and reports; it never writes.
+    ///
+    /// Optional for the same reason as the garbage collection.
+    pub(crate) scrub: Option<Arc<crate::recovery::Scrubber>>,
     /// The ledger of trust grants: which digest the trusted channel of a
     /// repository may serve.
     ///
@@ -264,6 +269,7 @@ impl AppState {
             catalog_writer: None,
             content_store: None,
             gc: None,
+            scrub: None,
             trust_ledger: None,
             proxy_plane: None,
             trust_plane: None,
@@ -323,6 +329,7 @@ impl AppState {
             catalog_writer: None,
             content_store: None,
             gc: None,
+            scrub: None,
             trust_ledger: None,
             proxy_plane: None,
             trust_plane: None,
@@ -423,6 +430,12 @@ impl AppState {
     /// Inject the garbage collection of the store of content.
     pub fn with_gc(mut self, gc: Arc<crate::gc::GcService>) -> Self {
         self.gc = Some(gc);
+        self
+    }
+
+    /// Inject the integrity scrub of the registry.
+    pub fn with_scrub(mut self, scrub: Arc<crate::recovery::Scrubber>) -> Self {
+        self.scrub = Some(scrub);
         self
     }
 
