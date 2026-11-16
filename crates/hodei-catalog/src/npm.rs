@@ -184,17 +184,41 @@ pub enum Route {
     /// `GET /-/whoami`.
     Whoami,
     /// El packument de un paquete.
-    Packument { name: PackageName },
+    Packument {
+        /// The package whose packument is asked for.
+        name: PackageName,
+    },
     /// El tarball de un paquete.
-    Tarball { name: PackageName, file: String },
+    Tarball {
+        /// The package the tarball belongs to.
+        name: PackageName,
+        /// The name of the file inside the package.
+        file: String,
+    },
     /// Todos los dist-tags de un paquete.
-    DistTags { name: PackageName },
+    DistTags {
+        /// The package whose dist-tags are asked for.
+        name: PackageName,
+    },
     /// Un dist-tag de un paquete.
-    DistTag { name: PackageName, tag: String },
+    DistTag {
+        /// The package the tag belongs to.
+        name: PackageName,
+        /// The tag and the version it points at.
+        tag: String,
+    },
     /// `DELETE` de un paquete entero (`/{nombre}/-rev/{rev}`).
-    UnpublishPackage { name: PackageName },
+    UnpublishPackage {
+        /// The package that is withdrawn.
+        name: PackageName,
+    },
     /// `DELETE` de un tarball (`/{nombre}/-/{fichero}/-rev/{rev}`).
-    UnpublishTarball { name: PackageName, file: String },
+    UnpublishTarball {
+        /// The package the tarball belongs to.
+        name: PackageName,
+        /// The name of the file inside the package.
+        file: String,
+    },
 }
 
 impl Route {

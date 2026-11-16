@@ -16,6 +16,16 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Changed
 
+- La **búsqueda del catálogo** y la **vista de detalle de un paquete** piden
+  la acción `DownloadAsset` y no `ReadRepository`: un listado dice qué hay
+  dentro, y es el mismo permiso que piden los otros listados del servicio
+  (Maven, npm, PyPI, OCI). Un bundle que no declara `DownloadAsset` ya no
+  arranca: las dos superficies están montadas siempre, y sin esa acción no
+  podrían decidir.
+- Un **autorizador que no puede decidir** ya no se confunde con uno que
+  deniega: la búsqueda responde `500` y la vista de detalle también, en vez
+  de una página vacía o un `403`. Una página vacía affirmaría que no hay
+  nada donde no se ha podido preguntar.
 - **Cambio incompatible**: la accion del playground de politicas se expresa
   ahora en la forma canonica `Namespace::Action::"nombre"`
   (`Api::Action::"read"`), que es la que usa el gate. Antes se aceptaba la
@@ -33,6 +43,19 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- La **búsqueda del catálogo** (`GET /api/v1/search`) y la **vista de
+  detalle de un paquete** (`GET /api/v1/packages/{repository}/{*path}`): la
+  primera busca por repositorio, paquete, versión, digest, etiqueta,
+  atributo y texto libre, con página y desplazamiento; la segunda enlaza el
+  blob, lo que se publicó, la línea, la *Trust Capsule* y la decisión.
+  No hay motor de búsqueda nuevo: el índice es el propio catálogo, y por
+  eso lo que promete la búsqueda es lo que hay. La página viene en el orden
+  del índice que sirve la consulta, y ese orden es total, así que una
+  página no repite ni pierde un resultado entre páginas. La confianza se
+  lee de la concesión viva del libro y no de la referencia, de modo que una
+  promoción o una revocación se ven en la petición siguiente. El canal
+  `trusted` es también una frontera: lo que no tiene concesión viva no sale
+  ni se cuenta, y su detalle responde `404`.
 - La **conformidad de la superficie de contenido crudo**, de caja negra:
   el binario de verdad en un puerto de verdad, con `curl` de verdad y
   `sha256sum` de verdad. Lo que se mide es que lo publicado vuelve

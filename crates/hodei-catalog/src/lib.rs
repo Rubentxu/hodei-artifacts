@@ -42,6 +42,7 @@
 //! registro no puede pagar, y la verificación profunda es del scrub.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 pub mod error;
 pub mod gc;
@@ -53,6 +54,7 @@ pub mod ports;
 pub mod proxy;
 pub mod proxy_cache;
 pub mod pypi;
+pub mod search;
 pub mod trust;
 
 pub use error::CatalogError;
@@ -71,11 +73,15 @@ pub use model::{
 };
 pub use ports::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
-    CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogWriter,
+    CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogSearch, CatalogWriter,
     DenyAllAuthorizer, MAX_ASSETS_UNDER,
 };
 pub use proxy::{
     ChecksumEvidence, CredentialRef, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
     UpstreamConfig, UpstreamConfigError, origin_of,
+};
+pub use search::{
+    DEFAULT_LIMIT, MAX_COUNTED, MAX_LIMIT, MAX_OFFSET, RepositoryAttribute, SearchError, SearchHit,
+    SearchPage, SearchQuery,
 };
 pub use trust::{ServeChannel, TrustGrant, TrustLedger};

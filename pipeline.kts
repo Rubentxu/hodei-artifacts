@@ -168,6 +168,8 @@ pipeline {
                         "--test hsp106_provenance_ledger_contract",
                         "--test hsp108_group_contract",
                         "--test hsp109_maven_contract",
+                        "--test hsp113_search_contract",
+                        "--test hsp113_search_e2e",
                     ).joinToString(" ")
                 )
             }

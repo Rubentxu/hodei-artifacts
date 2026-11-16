@@ -134,7 +134,49 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// revalidado o en cuarentena) y el `Last-Modified` del upstream: la
 /// frescura de la caché del proxy se deriva de ellos. Los recibos de la
 /// versión 7 no llevan los campos y se leen como traídos.
-pub const SCHEMA_VERSION: i64 = 8;
+///
+/// Version 9 adds the **indexes of the search**: the digest one
+/// (`catalog_asset_digest`), the coordinates one (`catalog_asset_package`)
+/// and the tag one (`catalog_tag_name`). The digest search is an exact
+/// question, and without an index the engine answers it by walking the
+/// whole repository; the search by package and by tag ask for the
+/// coordinates, and the last of them asks for the tag by name inside the
+/// account.
+///
+/// The two indexes of the assets end in the path, and that is what makes
+/// the order of the rows they serve total: within a repository there is
+/// no two assets with the same path.
+///
+/// Version 10 says it in the version, because the shape of an index is
+/// not applied by the schema: the schema declares `IF NOT EXISTS`, and an
+/// index that already exists keeps the shape it had. A database that
+/// applied version 9 may have the two indexes of the assets **without**
+/// the path at the end, and without it two assets of the same package and
+/// version tie, and the order of the rows is not total. Those databases
+/// get the two indexes redefined at the boot.
+pub const SCHEMA_VERSION: i64 = 10;
+
+/// The version whose indexes of the assets did not end in the path.
+///
+/// The version 9 created the two indexes of the assets without the path
+/// at the end, and without it two assets of the same package and version
+/// tie: the order of the rows they serve is not total, and the page can
+/// repeat a result or lose it. A database that applied that version gets
+/// the two indexes redefined at the boot.
+const SEARCH_INDEXES_WITHOUT_PATH: i64 = 9;
+
+/// The definitions of the two indexes of the assets that serve the search.
+///
+/// They are the same ones that the schema declares, and they are applied
+/// with `OVERWRITE`: the shape of an index that already exists is not
+/// changed by a `DEFINE ... IF NOT EXISTS`, and the shape is part of the
+/// contract of the order.
+const SEARCH_INDEXES: [&str; 2] = [
+    "DEFINE INDEX OVERWRITE catalog_asset_package ON catalog_asset \
+     FIELDS account, repository, package_name, package_version, asset_path",
+    "DEFINE INDEX OVERWRITE catalog_asset_digest ON catalog_asset \
+     FIELDS account, repository, digest_algorithm, digest, asset_path",
+];
 
 /// Cuantas veces se intenta una escritura que se ha caído por un conflicto
 /// de transacción.
@@ -142,6 +184,14 @@ pub const SCHEMA_VERSION: i64 = 8;
 /// Un conflicto de transacción no es un fallo de la escritura: es la
 /// escritura llegando un instante tarde.
 const WRITE_ATTEMPTS: usize = 4;
+
+/// The condition of a live grant.
+///
+/// It is written once because the rule is one: a revoked grant is
+/// revoked. The rule itself lives in the domain, in
+/// [`hodei_catalog::TrustGrant::is_active`], and this is its form in the
+/// queries of the database.
+pub(crate) const LIVE_GRANT: &str = "revoked_at IS NONE";
 
 /// El esquema del catálogo.
 ///
@@ -194,6 +244,17 @@ DEFINE FIELD IF NOT EXISTS subject ON catalog_asset TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_asset TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_asset_unique ON catalog_asset FIELDS account, repository, asset_path UNIQUE;
 DEFINE INDEX IF NOT EXISTS catalog_asset_subject ON catalog_asset FIELDS account, repository, subject;
+-- The search by coordinates: the name and the version of the package,
+-- with the account and the repository in front, which is how the
+-- question is asked. The path goes at the end because that is what makes
+-- the order total: within a repository there is no two assets with the
+-- same path.
+DEFINE INDEX IF NOT EXISTS catalog_asset_package ON catalog_asset FIELDS account, repository, package_name, package_version, asset_path;
+-- The digest search: it is the question "give me this content", and
+-- without an index the engine walks the whole repository to answer it.
+-- The path goes at the end for the same reason as above: it makes the
+-- order of the rows total.
+DEFINE INDEX IF NOT EXISTS catalog_asset_digest ON catalog_asset FIELDS account, repository, digest_algorithm, digest, asset_path;
 
 DEFINE TABLE IF NOT EXISTS catalog_reference SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS account ON catalog_reference TYPE string;
@@ -215,6 +276,9 @@ DEFINE FIELD IF NOT EXISTS package_name ON catalog_tag TYPE string;
 DEFINE FIELD IF NOT EXISTS package_version ON catalog_tag TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON catalog_tag TYPE datetime;
 DEFINE INDEX IF NOT EXISTS catalog_tag_unique ON catalog_tag FIELDS account, repository, tag_name UNIQUE;
+-- The search by tag asks for the name of the tag inside the account,
+-- not for the repository: this index is the one of that question.
+DEFINE INDEX IF NOT EXISTS catalog_tag_name ON catalog_tag FIELDS account, tag_name;
 
 DEFINE TABLE IF NOT EXISTS catalog_audit_outbox SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS event_id ON catalog_audit_outbox TYPE string;
@@ -308,6 +372,7 @@ DEFINE INDEX IF NOT EXISTS provenance_receipt_path ON provenance_receipt FIELDS 
 
 mod gc_ledger;
 mod provenance_ledger;
+mod search;
 mod trust_ledger;
 
 /// El identificador de un registro, derivado de sus coordenadas.
@@ -554,6 +619,16 @@ impl SurrealCatalogStore {
             .check()
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
 
+        // The shape of the indexes of the search is part of the contract
+        // of the order, and the schema does not change it: every
+        // definition is `IF NOT EXISTS`, and an index that already exists
+        // keeps the shape it had. A database that applied a version whose
+        // indexes of the assets did not end in the path gets them
+        // redefined, once, here.
+        if applied == SEARCH_INDEXES_WITHOUT_PATH {
+            self.the_search_indexes_are_redefined().await?;
+        }
+
         self.db
             .query("UPSERT $id SET applied_version = $version, applied_at = $at")
             .bind(("id", Thing::from(("catalog_schema", "applied"))))
@@ -564,6 +639,35 @@ impl SurrealCatalogStore {
             .check()
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
         Ok(())
+    }
+
+    /// The two indexes of the assets that serve the search, defined again.
+    ///
+    /// They are defined with `OVERWRITE`, so the shape is the one of this
+    /// build even when the index already existed with another one. The
+    /// price is a rebuild of the two indexes, and it is only paid by the
+    /// databases that need it.
+    async fn the_search_indexes_are_redefined(&self) -> Result<(), CatalogError> {
+        for statement in SEARCH_INDEXES {
+            self.db
+                .query(statement)
+                .await
+                .map_err(|error| CatalogError::unavailable(error.to_string()))?
+                .check()
+                .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// The engine that holds the catalog.
+    ///
+    /// It is exposed for the measurements: seeding a hundred thousand
+    /// assets through the write path of the catalog (which writes
+    /// version, asset, reference and audit, and checks the byte store)
+    /// takes hours, and what is measured is the read. The seed belongs to
+    /// the measurement, not to the service.
+    pub fn db(&self) -> &Surreal<Db> {
+        &self.db
     }
 
     /// La versión del esquema que está aplicada en la base.

@@ -14,6 +14,7 @@ use crate::model::{
     AssetRecord, BlobLocation, BlobReference, MutableTag, PackageCoordinates, PackageVersion,
     Publication, PublishOutcome, ReferrerRecord, RepositoryConfig, RepositoryDescriptor,
 };
+use crate::search::{SearchPage, SearchQuery};
 
 /// Lo que un principal quiere hacer con el catálogo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -343,6 +344,42 @@ pub trait CatalogReader: Send + Sync {
         repository: &str,
         subject: &ContentDigest,
     ) -> Result<Vec<ReferrerRecord>, CatalogError>;
+}
+
+/// The catalog search.
+///
+/// It is a port apart from the read one, and not an extension of it: "what
+/// is there?" and "what is there at this path?" are different questions,
+/// with different limits and different pages.
+///
+/// # The permission comes first
+///
+/// The search receives the repositories the principal may read, and only
+/// looks in them. The account is not a filter that can be forgotten: it
+/// is part of the query, and a total that counted what cannot be read
+/// would say there is something where there is nothing to see.
+#[async_trait]
+pub trait CatalogSearch: Send + Sync {
+    /// The repositories of the account.
+    ///
+    /// The ones the principal may read are decided outside: here only the
+    /// ones of the account are listed, which is what the permission can
+    /// narrow.
+    async fn repositories(
+        &self,
+        principal_account: &str,
+    ) -> Result<Vec<RepositoryDescriptor>, CatalogError>;
+
+    /// The page of results of a search.
+    ///
+    /// The repositories are the ones the principal may read. A principal
+    /// that cannot read any of them sees nothing, and its total is zero.
+    async fn search(
+        &self,
+        principal_account: &str,
+        repositories: &[RepositoryDescriptor],
+        query: &SearchQuery,
+    ) -> Result<SearchPage, CatalogError>;
 }
 
 /// La escritura del catálogo.

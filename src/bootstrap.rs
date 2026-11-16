@@ -267,6 +267,10 @@ pub async fn bootstrap(
         let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
         let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> = catalog.clone();
         let provenance_ledger: Arc<dyn hodei_catalog::ProvenanceLedger> = catalog.clone();
+        // The search is the same catalog with another question: there is
+        // no separate index to synchronise, and that is why what the
+        // search promises is what there is.
+        let searcher: Arc<dyn hodei_catalog::CatalogSearch> = catalog.clone();
         let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
         // The staging that an interrupted upload leaves behind is cleaned
         // here, at the boot. It is never published -- the catalog write
@@ -367,6 +371,7 @@ pub async fn bootstrap(
         let proxy_plane = Arc::new(crate::proxy::ProxyPlane::new(fetcher, provenance_ledger));
         let app_state = app_state
             .with_catalog(reader, writer)
+            .with_catalog_search(searcher)
             .with_trust_ledger(trust_ledger)
             .with_proxy_plane(proxy_plane)
             .with_trust_plane(plane)

@@ -19,7 +19,7 @@ use crate::repository::{
     DenyAllAuthenticator, InMemoryRepositoryStore, RepositoryReader, RepositoryWriter,
 };
 use hodei_authz::PrincipalAuthenticator;
-use hodei_catalog::{CatalogReader, CatalogWriter};
+use hodei_catalog::{CatalogReader, CatalogSearch, CatalogWriter};
 use hodei_hub::blob::BlobStore;
 use hodei_iam::register_iam_schema::ports::RegisterIamSchemaPort;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
@@ -119,6 +119,12 @@ pub struct AppState {
     /// exist -- a 404 would be a lie.
     pub(crate) catalog_reader: Option<Arc<dyn CatalogReader>>,
     pub(crate) catalog_writer: Option<Arc<dyn CatalogWriter>>,
+    /// The search of the catalog.
+    ///
+    /// It is optional for the same reason the catalog is: a deployment
+    /// that serves content without an index answers that the search is
+    /// not available, and not that there is nothing to find.
+    pub(crate) catalog_search: Option<Arc<dyn CatalogSearch>>,
     /// The store of content by digest.
     ///
     /// Optional for the same reason the catalog is: without it there are no
@@ -267,6 +273,7 @@ impl AppState {
             audit_sink,
             catalog_reader: None,
             catalog_writer: None,
+            catalog_search: None,
             content_store: None,
             gc: None,
             scrub: None,
@@ -327,6 +334,7 @@ impl AppState {
             audit_sink,
             catalog_reader: None,
             catalog_writer: None,
+            catalog_search: None,
             content_store: None,
             gc: None,
             scrub: None,
@@ -406,6 +414,16 @@ impl AppState {
     ) -> Self {
         self.catalog_reader = Some(reader);
         self.catalog_writer = Some(writer);
+        self
+    }
+
+    /// Inject the search of the catalog.
+    ///
+    /// It is a port of its own and not a method of the reader: "what is
+    /// there?" and "what is at this path?" are different questions, with
+    /// different bounds and different pages.
+    pub fn with_catalog_search(mut self, searcher: Arc<dyn CatalogSearch>) -> Self {
+        self.catalog_search = Some(searcher);
         self
     }
 

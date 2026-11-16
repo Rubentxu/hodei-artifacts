@@ -31,5 +31,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# The measurement of the search seeds a hundred thousand assets in a
+# test database: it needs a directory to throw away when it is done.
+tempfile = { workspace = true }

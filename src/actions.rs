@@ -145,9 +145,15 @@ pub fn check_declared(schema: &Schema, action: &ActionId) -> Result<(), String> 
 ///
 /// The administrative action is only checked when the administrative surface
 /// is enabled: a deployment that closes it never builds that action, so it
-/// never needs to declare it. The same goes for the two actions of the raw
-/// content surface: an instance that does not mount that surface does not
-/// build those actions, and does not have to declare them.
+/// never needs to declare it. The same goes for the upload of the content:
+/// an instance that does not mount a surface that writes does not build
+/// that action, and does not have to declare it.
+///
+/// The download of the content is always required: the search of the
+/// catalog and the detail of a package are always mounted, and they ask
+/// for that permission, because a listing says what is inside. A bundle
+/// that does not declare it would leave those two surfaces without a
+/// verdict, and every request would end in a 500.
 pub fn check_service_declared(
     schema: &Schema,
     admin_enabled: bool,
@@ -157,19 +163,14 @@ pub fn check_service_declared(
     check_declared(schema, &read_repository())?;
     check_declared(schema, &read_capsule())?;
     check_declared(schema, &create_repository())?;
+    check_declared(schema, &download_asset())?;
     if admin_enabled {
         check_declared(schema, &access_admin_api())?;
     }
-    if raw_enabled {
-        check_declared(schema, &upload_asset())?;
-        check_declared(schema, &download_asset())?;
-    }
-    if oci_enabled {
-        // La superficie OCI **lee y escribe**: sin las dos acciones
-        // declaradas, el bundle no puede decidir sobre un pull ni sobre
-        // un push, y cada peticion acabaria en un 403 en vez de negarse
-        // a arrancar.
-        check_declared(schema, &download_asset())?;
+    if raw_enabled || oci_enabled {
+        // The content surface **writes**: without the upload declared, the
+        // bundle cannot decide on a push, and every request would end in a
+        // 403 instead of the service refusing to start.
         check_declared(schema, &upload_asset())?;
     }
     Ok(())
