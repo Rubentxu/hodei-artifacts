@@ -1929,3 +1929,28 @@ audita la resolución con su recorrido.
 **Lo que sigue sin estar.** No hay caché de resolución, enrutado por ruta ni
 prioridades distintas del orden; los grupos de varios formatos tampoco. Los
 límites aceptados están en la sección 4 del UAT.
+
+## 10-tresvicies — M10: Maven 2 hosted (HAR-15)
+
+Un repositorio de formato `maven2` y modo `hosted` publica y resuelve con el
+protocolo de Maven. El contrato, las pruebas y los límites están en la
+sección MAVEN de [`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md).
+
+**Qué hay.** `hodei_catalog::maven` es el núcleo puro: análisis del layout,
+versiones y su orden, POM, metadatos, checksums y la política
+(`config_settings.maven`: `version_policy`, `release_redeploy`).
+`CatalogReader::assets_under` lista los ficheros bajo un prefijo (con tope) y
+`hodei-catalog-storage` valida la configuración Maven al crear o reconfigurar.
+`src/handlers/maven.rs` aplica el protocolo y `raw.rs` lo conecta a
+`PUT`/`GET`/`HEAD`.
+
+**Cómo decide.** El modelo de contenido no cambia: cada fichero es un asset
+direccionado por su digest. `maven-metadata.xml` y los checksums se
+**derivan** del catálogo en cada lectura, y lo que un cliente sube de ellos
+se valida y se acepta sin almacenar. Eso elimina la carrera de
+lectura-modificación-escritura de los metadatos y deja los fallos parciales
+recuperables por construcción. Las releases son inmutables salvo
+`release_redeploy`; los snapshots flotantes se reponen.
+
+**Lo que sigue sin estar.** Proxy y grupo Maven (HSP-110), metadatos a nivel
+de grupo y `Range` en lo derivado.

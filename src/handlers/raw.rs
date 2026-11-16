@@ -175,7 +175,7 @@ type TheCatalog<'a> = (&'a Arc<dyn CatalogReader>, &'a Arc<dyn CatalogWriter>);
 ///
 /// Es opcional: una instancia sin catalogo no sirve contenido crudo, y lo
 /// dice con un 503 en vez de fingir que el contenido no existe.
-fn the_catalog(state: &AppState) -> Result<TheCatalog<'_>, RawApiError> {
+pub(super) fn the_catalog(state: &AppState) -> Result<TheCatalog<'_>, RawApiError> {
     let reader = state
         .catalog_reader
         .as_ref()
@@ -188,7 +188,7 @@ fn the_catalog(state: &AppState) -> Result<TheCatalog<'_>, RawApiError> {
 }
 
 /// El almacén de contenido.
-fn the_content_store(state: &AppState) -> Result<&Arc<dyn BlobStore>, RawApiError> {
+pub(super) fn the_content_store(state: &AppState) -> Result<&Arc<dyn BlobStore>, RawApiError> {
     state.content_store.as_ref().ok_or(RawApiError::Unavailable)
 }
 
@@ -250,7 +250,14 @@ async fn the_repository(
     // Un repositorio que no es de este formato, o que no se sirve en esta
     // release, no es un repositorio de esta superficie: se responde con
     // el mismo 404 que uno que no existe.
-    if descriptor.format != RepositoryFormat::Raw || !descriptor.mode.is_served_by_this_release() {
+    // Maven 2 comparte esta superficie, pero solo hosted en esta release: el
+    // proxy y el grupo Maven son otro trabajo y no se sirven a medias.
+    let served_format = match descriptor.format {
+        RepositoryFormat::Raw => true,
+        RepositoryFormat::Maven2 => descriptor.mode == RepositoryMode::Hosted,
+        _ => false,
+    };
+    if !served_format || !descriptor.mode.is_served_by_this_release() {
         return Err(RawApiError::NotFound);
     }
     // El ambito del contenido decide dónde viven sus bytes, y esta
@@ -292,7 +299,7 @@ fn the_decision(
 /// Lo no admitido es un 404, igual que lo que no existe: un 403 diria
 /// que el contenido esta ahi. Y un libro que no responde es un 503: lo
 /// desconocido no se sirve, ni se confunde con la ausencia.
-fn the_admission_error(admission: crate::trust::Admission) -> RawApiError {
+pub(super) fn the_admission_error(admission: crate::trust::Admission) -> RawApiError {
     match admission {
         crate::trust::Admission::Hidden => RawApiError::NotFound,
         crate::trust::Admission::Unavailable => RawApiError::Unavailable,
@@ -356,6 +363,26 @@ pub async fn publish(
     }
 
     let correlation = correlation_id(&headers, &state.identity);
+    // Un repositorio Maven 2 decide aqui que se guarda y que solo se valida.
+    let maven_file = if repository.format == RepositoryFormat::Maven2 {
+        match super::maven::the_write(&repository, &target.asset_path)? {
+            super::maven::Write::Absorbed(absorbed) => {
+                return super::maven::absorb(
+                    &state,
+                    &context,
+                    &repository,
+                    &target.asset_path,
+                    absorbed,
+                    request.into_body(),
+                    &correlation,
+                )
+                .await;
+            }
+            super::maven::Write::File { file, replace } => Some((file, replace)),
+        }
+    } else {
+        None
+    };
     let current =
         the_current_asset(&state, &context, &target.repository, &target.asset_path).await?;
     let current_etag = current
@@ -378,7 +405,11 @@ pub async fn publish(
     // conflicto. Y se dice **antes** de leer el cuerpo cuando el cliente
     // ha declarado el digest: un cliente que ya sabe que no puede
     // publicar no tiene por que enviar el contenido.
-    let replace = policy::the_replace_policy(&repository.config.config_settings);
+    // En Maven la sustitucion la decide la version del fichero, no `raw.replace`.
+    let replace = match &maven_file {
+        Some((_, replace)) => *replace,
+        None => policy::the_replace_policy(&repository.config.config_settings),
+    };
     let declared = declared_digest(&headers)?;
     if replace == policy::ReplacePolicy::Deny
         && let Some(current) = current_digest.as_ref()
@@ -397,8 +428,11 @@ pub async fn publish(
         (policy::ReplacePolicy::Deny, Some(current)) => Some(current),
         _ => None,
     };
-    let (digest, length) =
-        write_the_content(&state, request.into_body(), declared, refuse_replacement).await?;
+    let body = match &maven_file {
+        Some((file, _)) => super::maven::the_file_body(file, request.into_body()).await?,
+        None => request.into_body(),
+    };
+    let (digest, length) = write_the_content(&state, body, declared, refuse_replacement).await?;
 
     let publication = Publication {
         repository: target.repository.clone(),
@@ -1149,6 +1183,22 @@ async fn the_content_of(
     )?;
 
     let correlation = correlation.to_string();
+    // En Maven, metadatos y checksums se derivan de lo publicado; el resto de
+    // rutas sigue el flujo normal de un hosted.
+    if repository.format == RepositoryFormat::Maven2
+        && let Some(response) = super::maven::the_derived(
+            state,
+            context,
+            &repository,
+            &target.asset_path,
+            headers,
+            head,
+            &correlation,
+        )
+        .await?
+    {
+        return Ok((response, correlation));
+    }
     // Un hosted sirve lo que tiene. Un proxy decide cada vez si lo que tiene
     // vale, hay que revalidarlo o hay que traerlo.
     // Un grupo recorre sus miembros en orden y sirve la ruta del primero que
@@ -1452,7 +1502,7 @@ fn declared_digest(headers: &HeaderMap) -> Result<Option<ContentDigest>, RawApiE
 /// fallo del cliente. Confundir los dos sería decirle a un cliente que
 /// su fichero no existe cuando lo que pasa es que el servidor lo tiene
 /// roto.
-fn the_blob_error(error: &BlobError) -> RawApiError {
+pub(super) fn the_blob_error(error: &BlobError) -> RawApiError {
     match error {
         BlobError::NotFound => RawApiError::NotFound,
         BlobError::Corrupted { .. }
@@ -1485,7 +1535,7 @@ fn the_publication_error(error: &CatalogError) -> RawApiError {
 }
 
 /// Las cabeceras que todas las respuestas llevan.
-fn apply_common_headers(response: &mut Response, etag: &str, correlation: &str) {
+pub(super) fn apply_common_headers(response: &mut Response, etag: &str, correlation: &str) {
     if let Ok(value) = HeaderValue::from_str(etag) {
         response.headers_mut().insert(header::ETAG, value);
     }
@@ -1497,7 +1547,7 @@ fn apply_common_headers(response: &mut Response, etag: &str, correlation: &str) 
 }
 
 /// El hexadecimal de los bytes.
-fn hex_of(bytes: &[u8]) -> String {
+pub(super) fn hex_of(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

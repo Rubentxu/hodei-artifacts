@@ -480,6 +480,36 @@ impl Deployment {
         assert!(status.success(), "the groups could not be seeded");
     }
 
+    /// Crea repositorios **Maven2 hosted** de la primera cuenta. Cada uno
+    /// es una clave y su `config_settings.maven` (`null` si no lleva).
+    ///
+    /// Se siembra en un proceso aparte y con el servicio parado: la base
+    /// la bloquea el proceso que la abre.
+    pub fn seed_maven(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, maven)| serde_json::json!({ "key": key, "maven": maven }))
+            .collect();
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env(
+                "HODEI_SEED_MAVEN",
+                serde_json::Value::Array(repositories).to_string(),
+            )
+            .status()
+            .expect("the maven seeder runs");
+        assert!(
+            status.success(),
+            "the maven repositories could not be seeded"
+        );
+    }
+
     /// Cambia los miembros de un grupo ya sembrado: la version de su
     /// configuracion sube.
     pub fn reconfigure_group(&self, key: &str, members: &[&str]) {
@@ -1707,6 +1737,12 @@ pub fn seed_if_asked() {
     let Some(db) = std::env::var_os("HODEI_SEED_DB") else {
         return;
     };
+    if let Ok(repositories) = std::env::var("HODEI_SEED_MAVEN") {
+        let repositories: Vec<serde_json::Value> =
+            serde_json::from_str(&repositories).expect("the maven repositories parse");
+        seed_the_maven(&db.to_string_lossy(), &repositories);
+        return;
+    }
     if let Ok(groups) = std::env::var("HODEI_SEED_GROUPS") {
         let groups: Vec<serde_json::Value> =
             serde_json::from_str(&groups).expect("the groups parse");
@@ -1905,6 +1941,58 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
                 )
                 .await
                 .expect("the group is created");
+        }
+        drop(store);
+        drop(db);
+    });
+}
+
+/// Crea repositorios Maven2 hosted de la primera cuenta.
+fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
+    use hodei_catalog::CatalogWriter;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime");
+    runtime.block_on(async {
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path)
+            .await
+            .expect("rocksdb");
+        db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+        let store = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
+            db.clone(),
+            std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
+        );
+        store.initialize().await.expect("initialize");
+        for repository in repositories {
+            let key = repository["key"].as_str().expect("the key");
+            let mut config =
+                hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
+            if !repository["maven"].is_null() {
+                config.config_settings = serde_json::json!({ "maven": repository["maven"] });
+            }
+            store
+                .create_repository(
+                    FIRST_ACCOUNT,
+                    hodei_catalog::RepositoryDescriptor {
+                        hrn: hodei_catalog::repository_hrn(
+                            "hodei",
+                            "artifacts",
+                            "eu",
+                            FIRST_ACCOUNT,
+                            key,
+                        ),
+                        account: FIRST_ACCOUNT.to_string(),
+                        repo_key: key.to_string(),
+                        format: hodei_catalog::RepositoryFormat::Maven2,
+                        mode: hodei_catalog::RepositoryMode::Hosted,
+                        config,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                    },
+                )
+                .await
+                .expect("the maven repository is created");
         }
         drop(store);
         drop(db);
