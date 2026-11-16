@@ -52,6 +52,7 @@ pub mod npm;
 pub mod ports;
 pub mod proxy;
 pub mod proxy_cache;
+pub mod pypi;
 pub mod trust;
 
 pub use error::CatalogError;

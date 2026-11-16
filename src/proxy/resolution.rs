@@ -32,6 +32,7 @@ use hodei_catalog::{
 };
 use hodei_evidence::domain::content::ContentDigest;
 use hodei_hub::blob::{BlobError, BlobStore, CommitExpectation};
+use url::Url;
 
 use super::fetch::{FetchError, Fetched, ProxyFetcher, Validators};
 
@@ -52,6 +53,8 @@ pub struct Resolution<'a> {
     pub actor: &'a str,
     /// La correlacion de la peticion.
     pub correlation_id: &'a str,
+    /// El `Accept` que se pide al upstream, si es distinto del de siempre.
+    pub accept: Option<&'a str>,
 }
 
 /// Un contenido resuelto y verificado.
@@ -112,6 +115,26 @@ pub async fn resolve(
     request: &Resolution<'_>,
     known: Option<&Known>,
 ) -> Result<Outcome, ResolveError> {
+    let Some(url) = request.upstream.target(request.asset_path) else {
+        return Err(FetchError::OutOfScope.into());
+    };
+    resolve_url(fetcher, store, ledger, request, known, url).await
+}
+
+/// Como [`resolve`], pero con la URL exacta de donde se trae el contenido.
+///
+/// Lo usa la superficie PyPI: la pagina de un proyecto y cada distribucion
+/// se piden por la URL que declara el upstream, que no es la ruta del
+/// asset. La URL se juzga con la misma politica de salida que cualquier
+/// otra.
+pub async fn resolve_url(
+    fetcher: &ProxyFetcher,
+    store: &dyn BlobStore,
+    ledger: &dyn ProvenanceLedger,
+    request: &Resolution<'_>,
+    known: Option<&Known>,
+    url: Url,
+) -> Result<Outcome, ResolveError> {
     let validators = known.and_then(|known| {
         let validators = Validators {
             etag: known.etag.clone(),
@@ -120,7 +143,7 @@ pub async fn resolve(
         (!validators.is_empty()).then_some(validators)
     });
     let fetched = fetcher
-        .open_conditional(request.upstream, request.asset_path, validators.as_ref())
+        .open_conditional_at(request.upstream, url, request.accept, validators.as_ref())
         .await?;
     let mut opened = match fetched {
         Fetched::Content(opened) => *opened,

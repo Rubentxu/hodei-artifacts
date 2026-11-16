@@ -283,3 +283,98 @@ La prueba con `npm` falla, y no se salta, si `npm` no está en el `PATH`.
   por esas cabeceras (`Vary`), que el servicio no emite.
 - **Tarballs en memoria.** Se cargan enteros (tope de contenido del servicio) y
   no admiten `Range`.
+
+## PYPI — repositorios PyPI hosted, proxy y group
+
+### 1. Qué afirma este contrato
+
+Un repositorio con `format: pypi` se sirve en `/pypi/{repo}/…` con la Simple
+API de PyPI. Lo que sigue lo comprueban los clientes `twine` y `pip` de
+verdad, no un simulacro.
+
+- **Publicar e instalar.** `twine upload` publica un wheel y un sdist, y
+  `pip install` los instala (el wheel tal cual, y el sdist construyéndolo en
+  el cliente). El hash que declara el cliente tiene que ser el de los bytes
+  que han llegado: si no, un `400` y no se publica nada. El nombre y la
+  versión tienen que ser los del nombre del fichero.
+- **Nombres normalizados (PEP 503).** `Lab.Pkg`, `lab_pkg`, `lab-pkg` y
+  `LAB--PKG` son el mismo proyecto, y el índice lo publica con el nombre
+  normalizado (`lab-pkg`). Un proyecto que no existe es un `404`: no se
+  inventa.
+- **El índice negocia su representación.** `GET /pypi/{repo}/simple/{proyecto}/`
+  sirve HTML (PEP 503) o JSON (PEP 691) según la cabecera `Accept`. Los dos
+  dicen lo mismo: el hash (en el fragmento `#sha256=` del HTML, en
+  `hashes.sha256` del JSON), la versión de Python que necesita
+  (`data-requires-python` / `requires-python`), el estado *yanked* y el
+  tamaño. Las URL de las distribuciones son absolutas y salen del `Host` (y de
+  `x-forwarded-proto`) de la petición. El índice lleva su `ETag`, y con él no
+  se sirve otra vez (`304`).
+- **Distribuciones inmutables.** Publicar el mismo nombre de fichero con
+  otros bytes es un `409` y los bytes publicados no se reescriben; el mismo
+  contenido otra vez es idempotente.
+- **El índice es una instantánea.** El documento de un proyecto se escribe
+  entero cuando se publica o se retira, direccionado por su digest, con una
+  precondición sobre el documento anterior y reintentos acotados. Las
+  instantáneas anteriores no se tocan, y las distribuciones viven en su propia
+  ruta y no se reescriben con el documento.
+- **Retirar una versión (PEP 592).** `POST /pypi/{repo}/yank` retira la
+  versión **entera**, con su motivo: el JSON lo dice con `yanked: "motivo"` y
+  el HTML con `data-yanked`. Lo retirado sigue descargable cuando se pide
+  exactamente esa versión.
+- **Autenticación.** `pip` y `twine` no saben mandar un `Bearer`: la
+  superficie acepta la cabecera `Bearer` con la credencial de la plataforma y
+  la autenticación básica, cuya **contraseña es** la credencial de la
+  plataforma. Sin credencial, un `401` con
+  `WWW-Authenticate: Basic realm="hodei", Bearer`; sin permiso Cedar, un
+  `403`.
+- **Proxy.** El proxy pide el JSON de la Simple API a su upstream (con la
+  cabecera `Accept` del protocolo) y **vuelve a pintar el índice**: el HTML que
+  sale de este servicio lo escribe este servicio, con los valores escapados, y
+  el HTML del upstream no se devuelve. Las distribuciones se traen de la URL
+  que declara el upstream y se comprueban contra el hash que el índice
+  publica: si no coinciden, un `502`. Lo que ya se trajo se cachea (el
+  documento del proyecto es revalidable, la distribución es contenido
+  inmutable).
+- **Group.** El grupo une los proyectos de sus miembros, y cada fichero lo
+  gana el primer miembro que lo tiene.
+- **Un proxy o un grupo no aceptan escrituras.** Publicar en ellos es un
+  `405`.
+
+### 2. Cómo se comprueba
+
+| Prueba | Qué mide |
+| --- | --- |
+| `crates/hodei-catalog/src/pypi.rs` (unitarias) | Normalización de nombres (PEP 503), nombres de fichero de wheel y sdist, versiones (PEP 440), el documento de un proyecto, la negociación de la representación, el escapado del HTML, las rutas de la superficie y la comprobación de una subida contra sus bytes, como funciones puras. |
+| `tests/hsp112_pypi_e2e.rs` | El protocolo con `curl` contra el servicio real: la subida multipart que habla `twine`, el índice en JSON y en HTML con el mismo hash, el `ETag` y el `304`, los cuatro nombres del mismo proyecto y el `404` del que no existe, el hash que no es el de los bytes (`400`, y no se publica), el `yanked` de una versión y su descarga, el group que une los proyectos de sus miembros, el proxy que vuelve a pintar el índice del upstream sin su HTML y con los valores escapados, y los `401` y `405`. |
+| `tests/hsp112_pypi_cli.rs` | Los clientes **reales** (`twine` y `pip`) con `HOME` y `netrc` temporales: publicar un wheel y un sdist, comprobar el índice que ve el `pip`, instalar el wheel y comprobar el módulo instalado, instalar el sdist construyéndolo, y el `401` de una credencial que no vale. La credencial viaja en las variables de entorno de `twine` y en el `netrc` temporal, nunca en argv. |
+
+Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
+`PATH`.
+
+### 3. Lo que este contrato NO promete
+
+- **Sin API JSON de PyPI.** No se sirve `/pypi/{proyecto}/json` (la que usa
+  `twine` para preguntar si un paquete ya existe): el `twine` solo publica.
+- **Sin búsqueda ni `pip index`.** No hay búsqueda de proyectos.
+- **Sin metadatos del proyecto.** El `METADATA` del paquete no se valida ni se
+  sirve: lo que se comprueba es el hash, el nombre y la versión del fichero.
+  Las dependencias (`Requires-Dist`) se leen del wheel ya instalado, no del
+  índice.
+- **Sin firmas ni atestaciones.** `twine` no firma y la superficie no acepta
+  ni verifica firmas (PEP 740).
+- **El retiro es una extensión propia.** PyPI no tiene API para retirar una
+  versión, y `pip` no la invoca: se retira con `POST /pypi/{repo}/yank`.
+- **Una publicación son dos escrituras.** La distribución y después el
+  documento; si el servicio cae entre ambas, la distribución queda en el
+  catálogo sin anunciarse, y reintentar con los mismos bytes completa la
+  publicación.
+- **El proxy no reescribe el JSON entero.** Se reescriben las URL de las
+  distribuciones; el resto del documento es el del upstream.
+- **El índice de un proxy no se puede enumerar.** Sale vacío: el cliente
+  pregunta proyecto a proyecto, porque lo que hay en el upstream no se puede
+  saber sin pedirlo.
+- **Distribuciones en memoria.** Se cargan enteras (tope de contenido del
+  servicio) y no admiten `Range`.
+- **El sdist se construye en el cliente.** Instalar desde un sdist necesita las
+  herramientas de construcción allí (`--no-build-isolation`); el servicio no
+  las trae ni las ejecuta.

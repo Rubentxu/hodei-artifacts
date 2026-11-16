@@ -394,6 +394,17 @@ fn raw_routes(app_state: AppState) -> Router {
                 // Any other method gets the same JSON error as the rest.
                 .fallback(crate::handlers::npm::handle),
         )
+        // The PyPI surface: `twine upload` and `pip install`. The project
+        // name arrives normalized and the file name percent-encoded, and
+        // only the protocol grammar may decode them.
+        .route(
+            "/pypi/{*target}",
+            axum::routing::get(crate::handlers::pypi::handle)
+                .head(crate::handlers::pypi::handle)
+                .post(crate::handlers::pypi::handle)
+                // Any other method gets the same error as the rest.
+                .fallback(crate::handlers::pypi::handle),
+        )
         .with_state(app_state)
 }
 

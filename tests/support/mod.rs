@@ -25,9 +25,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
+use base64::Engine as _;
 use hodei_catalog::CatalogWriter;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
+use sha2::Digest as _;
 
 /// El binario del servicio, tal y como lo compila la CI.
 pub const BIN: &str = env!("CARGO_BIN_EXE_hodei-artifacts-api");
@@ -585,6 +587,37 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the npm proxies");
     }
 
+    /// Crea repositorios **PyPI hosted** de la primera cuenta. Cada uno es
+    /// una clave y su `config_settings.pypi` (`null` si no lleva).
+    pub fn seed_pypi(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, pypi)| serde_json::json!({ "key": key, "pypi": pypi, "format": "pypi" }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the pypi repositories");
+    }
+
+    /// Crea repositorios **PyPI proxy** de la primera cuenta: la clave y su
+    /// `config_settings.proxy` (el upstream y su cache).
+    pub fn seed_pypi_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, proxy)| serde_json::json!({ "key": key, "proxy": proxy, "format": "pypi" }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the pypi proxies");
+    }
+
+    /// Crea grupos **PyPI** de la primera cuenta, en el orden dado.
+    pub fn seed_pypi_groups(&self, groups: &[(&str, &[&str])]) {
+        let groups: Vec<serde_json::Value> = groups
+            .iter()
+            .map(|(key, members)| {
+                serde_json::json!({ "key": key, "members": members, "format": "pypi" })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_GROUPS", groups, "the pypi groups");
+    }
+
     /// Crea grupos **npm** de la primera cuenta, en el orden dado.
     pub fn seed_npm_groups(&self, groups: &[(&str, &[&str])]) {
         let groups: Vec<serde_json::Value> = groups
@@ -796,6 +829,143 @@ pub fn stop(service: &mut Service) {
 pub fn kill(service: &mut Service) {
     let _ = service.child.kill();
     let _ = service.child.wait();
+}
+
+/// Los metadatos de una distribucion, como los lee `twine`.
+pub fn the_metadata(name: &str, version: &str, requires_python: Option<&str>) -> String {
+    let mut metadata = format!(
+        "Metadata-Version: 2.1\n\
+         Name: {name}\n\
+         Version: {version}\n\
+         Summary: a distribution for the PyPI suite\n"
+    );
+    if let Some(requires_python) = requires_python {
+        metadata.push_str(&format!("Requires-Python: {requires_python}\n"));
+    }
+    metadata.push('\n');
+    metadata
+}
+
+/// El nombre que lleva el fichero de una distribucion.
+///
+/// PEP 427: en el nombre del fichero, el nombre del proyecto se escribe con
+/// `_` en vez de `-`.
+pub fn the_escaped_name(name: &str) -> String {
+    name.replace(['-', '.'], "_")
+}
+
+/// Un `RECORD` de wheel: los ficheros, su hash y su tamano.
+fn the_record(entries: &[(&str, &[u8])]) -> String {
+    let mut record = String::new();
+    for (path, body) in entries {
+        let digest = sha2::Sha256::digest(body);
+        record.push_str(&format!(
+            "{path},sha256={},{}\n",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest),
+            body.len()
+        ));
+    }
+    record
+}
+
+/// Un wheel: un zip con los metadatos, el `RECORD` y el modulo del paquete.
+pub fn a_wheel(name: &str, version: &str, requires_python: Option<&str>) -> Vec<u8> {
+    use std::io::Write;
+    let escaped = the_escaped_name(name);
+    let dist = format!("{escaped}-{version}.dist-info");
+    let metadata = the_metadata(name, version, requires_python);
+    let wheel = "Wheel-Version: 1.0\n\
+                 Generator: hodei-tests\n\
+                 Root-Is-Purelib: true\n\
+                 Tag: py3-none-any\n";
+    let module = format!("\"\"\"{name}.\"\"\"\n\nVALUE = 42\n");
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let entries: Vec<(String, Vec<u8>)> = vec![
+        (format!("{dist}/METADATA"), metadata.into_bytes()),
+        (format!("{dist}/WHEEL"), wheel.as_bytes().to_vec()),
+        (format!("{name}/__init__.py"), module.into_bytes()),
+    ];
+    for (path, body) in &entries {
+        writer
+            .start_file(path.clone(), options)
+            .expect("the file of the wheel starts");
+        writer
+            .write_all(body)
+            .expect("the body of the file is written");
+    }
+    let record = the_record(
+        &entries
+            .iter()
+            .map(|(path, body)| (path.as_str(), body.as_slice()))
+            .collect::<Vec<_>>(),
+    );
+    writer
+        .start_file(format!("{dist}/RECORD"), options)
+        .expect("the record of the wheel starts");
+    writer
+        .write_all(record.as_bytes())
+        .expect("the record is written");
+    writer.finish().expect("the wheel is closed").into_inner()
+}
+
+/// Un sdist: un tar con gzip con el `PKG-INFO` y el `pyproject.toml`.
+pub fn an_sdist(name: &str, version: &str, requires_python: Option<&str>) -> Vec<u8> {
+    use std::io::Write;
+    let root = format!("{name}-{version}");
+    let metadata = the_metadata(name, version, requires_python);
+    let pyproject = format!(
+        "[build-system]\n\
+         requires = [\"setuptools>=61\"]\n\
+         build-backend = \"setuptools.build_meta\"\n\
+         \n\
+         [project]\n\
+         name = \"{name}\"\n\
+         version = \"{version}\"\n"
+    );
+    let module = format!("\"\"\"{name}.\"\"\"\n\nVALUE = 42\n");
+    let entries: Vec<(String, &[u8])> = vec![
+        (format!("{root}/PKG-INFO"), metadata.as_bytes()),
+        (format!("{root}/pyproject.toml"), pyproject.as_bytes()),
+        (format!("{root}/{name}/__init__.py"), module.as_bytes()),
+    ];
+    let mut tar: Vec<u8> = Vec::new();
+    for (path, body) in entries {
+        tar.extend_from_slice(&the_tar_header(&path, body.len() as u64));
+        tar.extend_from_slice(body);
+        let padding = (512 - body.len() % 512) % 512;
+        tar.extend(std::iter::repeat_n(0u8, padding));
+    }
+    // Dos bloques de ceros: el fin del archivo.
+    tar.extend(std::iter::repeat_n(0u8, 1024));
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(&tar).expect("the tar is compressed");
+    encoder.finish().expect("the sdist is closed")
+}
+
+/// La cabecera de un fichero de tar.
+fn the_tar_header(path: &str, size: u64) -> [u8; 512] {
+    let mut header = [0u8; 512];
+    header[..path.len()].copy_from_slice(path.as_bytes());
+    let write = |header: &mut [u8; 512], at: usize, text: &str| {
+        header[at..at + text.len()].copy_from_slice(text.as_bytes());
+    };
+    write(&mut header, 100, "000644 ");
+    write(&mut header, 108, "000000 ");
+    write(&mut header, 116, "000000 ");
+    write(&mut header, 124, &format!("{size:011o} "));
+    write(&mut header, 136, &format!("{:011o} ", 0));
+    // El checksum se calcula con el campo en blanco.
+    header[148..156].fill(b' ');
+    header[156] = b'0';
+    write(&mut header, 257, "ustar");
+    header[263] = 0;
+    write(&mut header, 265, "00");
+    let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
+    write(&mut header, 148, &format!("{checksum:06o} "));
+    header[154] = 0;
+    header
 }
 
 /// El comando `sha256sum` que comprueba el digest de un fichero.
@@ -2037,6 +2207,8 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
                             hodei_catalog::RepositoryFormat::Npm
                         } else if group["format"].as_str() == Some("maven2") {
                             hodei_catalog::RepositoryFormat::Maven2
+                        } else if group["format"].as_str() == Some("pypi") {
+                            hodei_catalog::RepositoryFormat::PyPi
                         } else {
                             hodei_catalog::RepositoryFormat::Raw
                         },
@@ -2082,8 +2254,13 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
             if !repository["npm"].is_null() {
                 settings.insert("npm".into(), repository["npm"].clone());
             }
+            if !repository["pypi"].is_null() {
+                settings.insert("pypi".into(), repository["pypi"].clone());
+            }
             let format = if repository["format"].as_str() == Some("npm") {
                 hodei_catalog::RepositoryFormat::Npm
+            } else if repository["format"].as_str() == Some("pypi") {
+                hodei_catalog::RepositoryFormat::PyPi
             } else {
                 hodei_catalog::RepositoryFormat::Maven2
             };

@@ -17,6 +17,7 @@ pub mod oci;
 pub mod playground;
 pub mod policies;
 pub mod promotions;
+pub mod pypi;
 pub mod raw;
 mod raw_group;
 pub mod repositories;

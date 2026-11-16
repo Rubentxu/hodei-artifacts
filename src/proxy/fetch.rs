@@ -328,12 +328,32 @@ impl ProxyFetcher {
         asset_path: &str,
         validators: Option<&Validators>,
     ) -> Result<Fetched, FetchError> {
+        // Lo que no cae en un scope no consume ni un permiso.
+        let url = upstream.target(asset_path).ok_or(FetchError::OutOfScope)?;
+        self.open_conditional_at(upstream, url, None, validators)
+            .await
+    }
+
+    /// Como [`Self::open_conditional`], pero con la URL exacta y el `Accept`
+    /// que se pide.
+    ///
+    /// Lo usa la superficie PyPI, cuyo upstream habla JSON: la pagina de un
+    /// proyecto se pide por la URL que declara el propio upstream, y con un
+    /// `Accept` que dice que se quiere el JSON de la Simple API.
+    ///
+    /// La URL **no** se salta la politica de salida: se juzga igual que
+    /// cualquier otra, salto a salto.
+    pub async fn open_conditional_at(
+        &self,
+        upstream: &UpstreamConfig,
+        url: Url,
+        accept: Option<&str>,
+        validators: Option<&Validators>,
+    ) -> Result<Fetched, FetchError> {
         if self.offline {
             return Err(FetchError::Offline);
         }
         let validators = validators.filter(|validators| !validators.is_empty());
-        // Lo que no cae en un scope no consume ni un permiso.
-        let mut url = upstream.target(asset_path).ok_or(FetchError::OutOfScope)?;
         let permit = self
             .permits
             .clone()
@@ -346,11 +366,19 @@ impl ProxyFetcher {
             .max_bytes
             .map_or(self.limits.max_bytes, |own| own.min(self.limits.max_bytes));
         let upstream_origin = upstream.origin();
+        let mut url = url;
         let mut redirects: u8 = 0;
 
         loop {
             let response = self
-                .hop(upstream, &upstream_origin, &url, deadline, validators)
+                .hop(
+                    upstream,
+                    &upstream_origin,
+                    &url,
+                    deadline,
+                    accept,
+                    validators,
+                )
                 .await?;
             let status = response.status().as_u16();
             match status {
@@ -389,6 +417,7 @@ impl ProxyFetcher {
         upstream_origin: &str,
         url: &Url,
         deadline: tokio::time::Instant,
+        accept: Option<&str>,
         validators: Option<&Validators>,
     ) -> Result<reqwest::Response, FetchError> {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -437,7 +466,10 @@ impl ProxyFetcher {
 
         let mut request = client
             .get(url.clone())
-            .header(ACCEPT, "application/octet-stream, */*;q=0.8")
+            .header(
+                ACCEPT,
+                accept.unwrap_or("application/octet-stream, */*;q=0.8"),
+            )
             .header(ACCEPT_ENCODING, "identity");
         // La credencial es del upstream: solo viaja a su origen.
         if let Some(credential) = &upstream.credential

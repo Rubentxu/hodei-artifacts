@@ -2032,3 +2032,34 @@ base: el servicio debe estar parado), ni alta disponibilidad, ni restauración
 sobre datos existentes. El filtro del export depende del comportamiento de
 SurrealDB 2.7 y falla alto si cambia.
 
+
+## 10-septvicies — M10: PyPI hosted, proxy y group (HAR-18)
+
+Un repositorio `pypi` se sirve en `/pypi/{repo}/…` para los clientes `twine` y
+`pip` reales. El contrato, las pruebas y los límites están en la sección PYPI
+de [`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md).
+
+**Qué hay.** El módulo puro `hodei_catalog::pypi` (normalización de nombres
+PEP 503, nombres de fichero, versiones PEP 440, el documento de un proyecto,
+la negociación HTML/JSON, las rutas de la superficie y la comprobación de una
+subida contra sus bytes) y `handlers/pypi.rs`, que lo cablea con lo que ya
+existía: Cedar, `the_current_asset`, `trust::admit`, el proxy de HSP-106/107
+(`proxy_cache::kind_in` clasifica el documento del proyecto como metadatos
+revalidables y la distribución como contenido inmutable) y el group de
+HSP-108. No se duplica ninguna infraestructura: lo que hace falta del proxy
+—pedir una URL concreta con una cabecera `Accept`— son dos funciones nuevas
+(`open_conditional_at` y `resolve_url`) sobre las que ya habia.
+
+**Cómo decide.** Publicar es escribir la distribución (`overwrite: false`, así
+que una distribución es inmutable) y después una instantánea nueva del
+documento del proyecto (`{proyecto}#project`, direccionada por digest) con
+una precondición sobre la anterior y reintentos acotados. El hash que declara
+el cliente se comprueba contra los bytes que han llegado, y el nombre y la
+versión contra los del nombre del fichero: un cliente que miente no publica.
+Retirar una versión es otra instantánea del documento. En el proxy, el índice
+del upstream se pide en JSON y **se vuelve a pintar aquí**: el HTML que sale
+de este servicio lo escribe este servicio, con los valores escapados.
+
+**Lo que sigue sin estar.** La API JSON de PyPI, la búsqueda, la validación de
+los metadatos del paquete, las firmas y las atestaciones, y el retiro de una
+versión por el cliente (es una extensión propia del servicio).

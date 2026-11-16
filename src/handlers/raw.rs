@@ -37,6 +37,7 @@ use hodei_catalog::{
 use hodei_evidence::domain::content::ContentDigest;
 use hodei_hub::blob::{BlobError, BlobStore, CommitExpectation};
 use sha2::{Digest, Sha256};
+use url::Url;
 
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
@@ -591,6 +592,34 @@ pub(super) async fn the_proxy_asset(
     asset_path: &str,
     correlation: &str,
 ) -> Result<ProxyServed, RawApiError> {
+    the_proxy_asset_at(
+        state,
+        context,
+        repository,
+        asset_path,
+        None,
+        None,
+        correlation,
+    )
+    .await
+}
+
+/// Como [`the_proxy_asset`], pero con la URL exacta de donde se trae el
+/// contenido y el `Accept` que se pide.
+///
+/// La Simple API de PyPI no tiene la forma de las demas superficies: la
+/// pagina de un proyecto y cada distribucion se piden por la URL que
+/// declara el upstream, que no es la ruta del asset. La cache, los recibos
+/// y la publicacion son los mismos.
+pub(super) async fn the_proxy_asset_at(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+    url: Option<Url>,
+    accept: Option<&str>,
+    correlation: &str,
+) -> Result<ProxyServed, RawApiError> {
     use hodei_catalog::proxy_cache::{CacheDecision, CacheEntry, Context, decide, stale_allowed};
 
     use crate::proxy::cache::PathKey;
@@ -744,6 +773,8 @@ pub(super) async fn the_proxy_asset(
                 correlation,
                 known.as_ref(),
                 overwrite,
+                url,
+                accept,
             )
         })
         .await;
@@ -836,26 +867,45 @@ async fn fetch_and_publish(
     correlation: &str,
     known: Option<&hodei_catalog::proxy_cache::Known>,
     overwrite: bool,
+    url: Option<Url>,
+    accept: Option<&str>,
 ) -> crate::proxy::FlightResult {
     use crate::proxy::resolution::{self, Outcome};
 
     plane.metrics.record_upstream_request();
-    let outcome = resolution::resolve(
-        &plane.fetcher,
-        store,
-        plane.ledger.as_ref(),
-        &resolution::Resolution {
-            account,
-            repository: &repository.repo_key,
-            asset_path,
-            upstream,
-            config_version: repository.config.version,
-            actor,
-            correlation_id: correlation,
-        },
-        known,
-    )
-    .await
+    let request = resolution::Resolution {
+        account,
+        repository: &repository.repo_key,
+        asset_path,
+        upstream,
+        config_version: repository.config.version,
+        actor,
+        correlation_id: correlation,
+        accept,
+    };
+    let outcome = match url {
+        Some(url) => {
+            resolution::resolve_url(
+                &plane.fetcher,
+                store,
+                plane.ledger.as_ref(),
+                &request,
+                known,
+                url,
+            )
+            .await
+        }
+        None => {
+            resolution::resolve(
+                &plane.fetcher,
+                store,
+                plane.ledger.as_ref(),
+                &request,
+                known,
+            )
+            .await
+        }
+    }
     .map_err(|error| {
         // El rastro lleva el motivo; la respuesta, uno genérico.
         tracing::warn!(

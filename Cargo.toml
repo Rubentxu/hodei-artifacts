@@ -108,7 +108,7 @@ ed25519-dalek = "2.0"
 jsonwebtoken = "^9.3"
 
 # HTTP / networking
-axum = { version = "0.8.6", features = ["macros"] }
+axum = { version = "0.8.6", features = ["macros", "multipart"] }
 hyper = { version = "1", features = ["full"] }
 reqwest = { version = "0.12.23", features = ["json"] }
 tower = { version = "0.5", features = ["util"] }
@@ -254,3 +254,8 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 hodei-hrn = "0.2.1"
+# Los fixtures de PyPI (un wheel y un sdist) se construyen aqui: un zip y
+# un tar con gzip, sin depender de una herramienta de Python. El zip va sin
+# codecs: el fixture se escribe *stored*, que no necesita ninguno.
+zip = { version = "3.0.0", default-features = false }
+flate2 = "1.1.11"

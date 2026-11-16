@@ -207,6 +207,8 @@ pipeline {
                         "--test hsp110_maven_cli",
                         "--test hsp111_npm_e2e",
                         "--test hsp111_npm_cli",
+                        "--test hsp112_pypi_e2e",
+                        "--test hsp112_pypi_cli",
                     ).joinToString(" ")
                 )
                 sh(
