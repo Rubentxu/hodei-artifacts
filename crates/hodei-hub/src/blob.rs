@@ -172,6 +172,14 @@ pub trait BlobWriteSession: Send {
     /// Cuantos bytes llevan escritos.
     fn bytes_written(&self) -> u64;
 
+    /// El digest de lo que lleva escrito.
+    ///
+    /// Se calcula mientras pasan los trozos, y es el mismo digest que el
+    /// commit va a comprobar: quien lo consulta no vuelve a calcularlo
+    /// por su cuenta, porque dos calculos del mismo contenido son dos
+    /// oportunidades de discrepar.
+    fn the_digest(&self) -> ContentDigest;
+
     /// Donde se esta escribiendo, si el almacen tiene esa nocion.
     ///
     /// Sirve para comprobar que dos escrituras en curso **no** comparten
@@ -566,6 +574,13 @@ impl BlobWriteSession for FileBlobWriteSession {
         self.written
     }
 
+    fn the_digest(&self) -> ContentDigest {
+        // El hasher se clona para no consumirlo: la sesion puede seguir
+        // escribiendo, y el digest de lo escrito hasta ahora tiene que
+        // seguir siendo el mismo despues del siguiente trozo.
+        ContentDigest::sha256(hex_of(&self.hasher.clone().finalize()))
+    }
+
     fn the_staging_path(&self) -> Option<&Path> {
         Some(&self.staging_path)
     }
@@ -842,6 +857,10 @@ impl BlobWriteSession for InMemoryBlobWriteSession {
 
     fn bytes_written(&self) -> u64 {
         self.bytes.len() as u64
+    }
+
+    fn the_digest(&self) -> ContentDigest {
+        ContentDigest::sha256(hex_of(&self.hasher.clone().finalize()))
     }
 
     fn the_staging_path(&self) -> Option<&Path> {

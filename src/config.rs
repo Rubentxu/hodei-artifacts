@@ -92,6 +92,16 @@ fn the_default_staging_max_age_secs() -> u64 {
     3600
 }
 
+/// The default life of an upload session that nobody finishes.
+fn default_oci_upload_ttl_secs() -> u64 {
+    3600
+}
+
+/// The default number of upload sessions alive at the same time.
+fn default_oci_max_concurrent_uploads() -> usize {
+    64
+}
+
 /// The smallest age that still is a margin of prudence.
 ///
 /// Below a minute, the age of a staging file says nothing: the file is
@@ -151,7 +161,7 @@ pub struct ServerConfig {
 /// opens it when the application state has both an authenticator and an
 /// authorizer; every request then needs a bearer credential and a Cedar
 /// permit.
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// Whether the `/api/v1` administrative surface is reachable.
     ///
@@ -180,6 +190,22 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub oci_api_enabled: bool,
 
+    /// How long an upload session lives without being touched, in seconds.
+    ///
+    /// The protocol of push is by chunks, and a session that nobody
+    /// finishes is a session that holds a staging file on disk. The
+    /// session is *forgettable*: after this time it is not there, and the
+    /// client gets an explicit error instead of a upload that never ends.
+    #[serde(default = "default_oci_upload_ttl_secs")]
+    pub oci_upload_ttl_secs: u64,
+
+    /// How many upload sessions can be alive at the same time.
+    ///
+    /// A cap, and not a queue: a client that opens sessions and abandons
+    /// them cannot fill the registry.
+    #[serde(default = "default_oci_max_concurrent_uploads")]
+    pub oci_max_concurrent_uploads: usize,
+
     /// Browser origins allowed by CORS.
     ///
     /// Default: empty, which means no cross-origin access. Wildcards are
@@ -206,6 +232,31 @@ pub struct SecurityConfig {
     /// Cedar schema used to validate the policy bundle.
     #[serde(default)]
     pub authorization_schema_path: Option<String>,
+}
+
+/// El valor por defecto de la configuracion de seguridad.
+///
+/// Todo cerrado y sin credenciales: un despliegue que no dice nada no
+/// dice que si a nada. Y los limites de la superficie OCI tienen sus
+/// valores, porque un limite que vale cero no es un limite: es una
+/// superficie que no funciona.
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            admin_api_enabled: false,
+            raw_api_enabled: false,
+            oci_api_enabled: false,
+            oci_upload_ttl_secs: default_oci_upload_ttl_secs(),
+            oci_max_concurrent_uploads: default_oci_max_concurrent_uploads(),
+            cors_allowed_origins: Vec::new(),
+            auth_jwt_secret: None,
+            auth_jwks_path: None,
+            auth_issuer: None,
+            auth_audience: None,
+            authorization_policy_path: None,
+            authorization_schema_path: None,
+        }
+    }
 }
 
 impl std::fmt::Debug for SecurityConfig {

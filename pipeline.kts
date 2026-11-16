@@ -30,6 +30,11 @@
 // informe no ha hecho su trabajo. Por eso el informe se archiva, y su
 // ausencia hace fallar la etapa.
 //
+// El push de OCI Distribution tiene **su** informe, en
+// `target/uat/oci-push-conformity.md`, y también se archiva. Son dos
+// superficies y dos informes: un informe que certifica casos de OCI con
+// el título de la conformidad cruda dice una cosa y su título otra.
+//
 // La suite con `nextest` queda fuera, a propósito: la ejecuta
 // `cargo nextest run --workspace --no-fail-fast --test-threads=1`, que es
 // el aislamiento por prueba, y las pruebas de RocksDB y de binario
@@ -165,11 +170,22 @@ pipeline {
                         "--test blob_integrity_contract",
                         "--test doc9_uat",
                         "--test oci_pull_contract",
+                        "--test oci_push_contract",
                     ).joinToString(" ")
                 )
                 sh(
                     "if [ ! -f target/uat/raw-conformity.md ]; then " +
                         "echo 'the conformity report is missing: the suite did not write it' >&2; " +
+                        "exit 1; fi"
+                )
+                // El informe del push OCI es la evidencia de la otra
+                // mitad de la distribucion, y es **otro** informe: el de
+                // la superficie cruda lo leen los gates de la
+                // conformidad RAW, y un caso de OCI en el no dice nada
+                // de lo que el gate cree.
+                sh(
+                    "if [ ! -f target/uat/oci-push-conformity.md ]; then " +
+                        "echo 'the OCI push report is missing: the suite did not write it' >&2; " +
                         "exit 1; fi"
                 )
                 // La UAT de doc-9 trae sus dieciseis escenarios, cada uno
@@ -193,6 +209,13 @@ pipeline {
                 sh("cat target/uat/raw-conformity.md")
                 archiveArtifacts(
                     artifacts = "target/uat/raw-conformity.md",
+                    allowEmptyArchive = false,
+                )
+                // Y el del push OCI, que dice que el protocolo se habla
+                // con un cliente de verdad.
+                sh("cat target/uat/oci-push-conformity.md")
+                archiveArtifacts(
+                    artifacts = "target/uat/oci-push-conformity.md",
                     allowEmptyArchive = false,
                 )
                 // Y el de la UAT de doc-9, que es la evidencia de la
