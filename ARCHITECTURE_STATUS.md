@@ -2056,9 +2056,19 @@ documento del proyecto (`{proyecto}#project`, direccionada por digest) con
 una precondición sobre la anterior y reintentos acotados. El hash que declara
 el cliente se comprueba contra los bytes que han llegado, y el nombre y la
 versión contra los del nombre del fichero: un cliente que miente no publica.
-Retirar una versión es otra instantánea del documento. En el proxy, el índice
-del upstream se pide en JSON y **se vuelve a pintar aquí**: el HTML que sale
-de este servicio lo escribe este servicio, con los valores escapados.
+La versión se compara en su forma canónica (PEP 440), que es la que lleva el
+nombre del fichero, y el nombre del fichero tiene que ser uno que el `pip`
+acepte. Antes de publicar nada se comprueba que el índice del proyecto cabe
+en el límite de contenido del servicio. Retirar una versión es otra
+instantánea del documento. En el proxy, el índice del upstream se pide en JSON
+y **se vuelve a pintar aquí**: el HTML que sale de este servicio lo escribe
+este servicio, con los valores escapados.
+
+**Lo que decide el canal de confianza.** La superficie PyPI no se salta la
+compuerta de `trust::admit`: la distribución se admite tanto si viene del
+catálogo como si la trae el upstream, y el índice solo anuncia los digests
+que el canal deja servir (`trust::servable`, como hace OCI). En el canal
+`trusted`, una distribución sin concesión no se anuncia ni se descarga.
 
 **Lo que sigue sin estar.** La API JSON de PyPI, la búsqueda, la validación de
 los metadatos del paquete, las firmas y las atestaciones, y el retiro de una

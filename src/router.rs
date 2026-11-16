@@ -403,7 +403,12 @@ fn raw_routes(app_state: AppState) -> Router {
                 .head(crate::handlers::pypi::handle)
                 .post(crate::handlers::pypi::handle)
                 // Any other method gets the same error as the rest.
-                .fallback(crate::handlers::pypi::handle),
+                .fallback(crate::handlers::pypi::handle)
+                // The default limit of `axum` is 2 MiB, and a distribution
+                // does not fit in 2 MiB. The limit that applies is the
+                // configured one, and it is enforced by the handler, which
+                // knows the bytes that have arrived.
+                .layer(axum::extract::DefaultBodyLimit::disable()),
         )
         .with_state(app_state)
 }

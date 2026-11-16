@@ -47,6 +47,12 @@ pub const JSON_CONTENT_TYPE: &str = "application/vnd.pypi.simple.v1+json";
 /// El tipo de contenido de la Simple API en HTML (PEP 503).
 pub const HTML_CONTENT_TYPE: &str = "application/vnd.pypi.simple.v1+html";
 
+/// El tipo de contenido de la Simple API en JSON, en su version *latest*.
+///
+/// PEP 691 lo define como la misma representacion que la version `1.0`,
+/// y un cliente puede pedirla en vez de la otra.
+pub const LATEST_JSON_CONTENT_TYPE: &str = "application/vnd.pypi.simple.latest+json";
+
 /// La version de la Simple API que se anuncia.
 pub const API_VERSION: &str = "1.0";
 
@@ -206,6 +212,10 @@ impl Distribution {
     /// El nombre de un wheel es
     /// `{distribucion}-{version}(-{build})?-{python}-{abi}-{plataforma}.whl`
     /// y el de un sdist `{nombre}-{version}.tar.gz` (o `.zip`).
+    ///
+    /// Las partes tienen que ser las que son: un nombre que el `pip` no
+    /// acepta no se anuncia, porque un enlace que el cliente no puede
+    /// instalar es un enlace roto.
     pub fn parse(filename: &str) -> Result<Self, PypiError> {
         if filename.is_empty() || filename.len() > 255 {
             return Err(PypiError::InvalidFileName(filename.to_string()));
@@ -214,19 +224,30 @@ impl Distribution {
             return Err(PypiError::InvalidFileName(filename.to_string()));
         }
         if let Some(stem) = filename.strip_suffix(".whl") {
+            // Ni una parte mas ni una menos: el nombre de un wheel tiene
+            // cinco partes, o seis con etiqueta de compilacion.
             let parts: Vec<&str> = stem.split('-').collect();
-            if parts.len() < 5 {
+            let (version_text, tags) = match parts.len() {
+                5 => (&parts[1], &parts[2..]),
+                6 => {
+                    if !valid_build(parts[2]) {
+                        return Err(PypiError::InvalidFileName(filename.to_string()));
+                    }
+                    (&parts[1], &parts[3..])
+                }
+                _ => return Err(PypiError::InvalidFileName(filename.to_string())),
+            };
+            // Las tres etiquetas: version de Python, ABI y plataforma.
+            if tags.len() != 3 || !tags.iter().all(|tag| valid_tag(tag)) {
                 return Err(PypiError::InvalidFileName(filename.to_string()));
             }
-            let version = parts[1];
-            if !valid_version(version) {
-                return Err(PypiError::InvalidVersion(version.to_string()));
-            }
+            let version = Version::parse(version_text)
+                .ok_or_else(|| PypiError::InvalidVersion(version_text.to_string()))?;
             let project = ProjectName::parse(parts[0])?;
             return Ok(Self {
                 filename: filename.to_string(),
                 project,
-                version: version.to_string(),
+                version: version.canonical(),
                 kind: DistributionKind::Wheel,
             });
         }
@@ -234,17 +255,16 @@ impl Distribution {
             let Some(stem) = filename.strip_suffix(suffix) else {
                 continue;
             };
-            let Some((name, version)) = stem.rsplit_once('-') else {
+            let Some((name, version_text)) = stem.rsplit_once('-') else {
                 return Err(PypiError::InvalidFileName(filename.to_string()));
             };
-            if !valid_version(version) {
-                return Err(PypiError::InvalidVersion(version.to_string()));
-            }
+            let version = Version::parse(version_text)
+                .ok_or_else(|| PypiError::InvalidVersion(version_text.to_string()))?;
             let project = ProjectName::parse(name)?;
             return Ok(Self {
                 filename: filename.to_string(),
                 project,
-                version: version.to_string(),
+                version: version.canonical(),
                 kind: DistributionKind::Sdist,
             });
         }
@@ -252,121 +272,374 @@ impl Distribution {
     }
 }
 
+/// La etiqueta de compilacion de un wheel: un numero y, detras, lo que
+/// sea.
+///
+/// PEP 427 dice que tiene que empezar por un digito, y el `pip` tambien.
+fn valid_build(build: &str) -> bool {
+    let Some(first) = build.as_bytes().first() else {
+        return false;
+    };
+    first.is_ascii_digit()
+        && build
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// Una etiqueta de un wheel: version de Python, ABI o plataforma.
+///
+/// Cada etiqueta es un conjunto de etiquetas sueltas separadas por un
+/// punto: `py2.py3`, `cp39.cp310`, `manylinux_2_17_x86_64`.
+fn valid_tag(tag: &str) -> bool {
+    if tag.is_empty() {
+        return false;
+    }
+    tag.split('.').all(|part| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    })
+}
+
+/// La clase de una *pre release*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PreKind {
+    /// Una alfa.
+    Alpha,
+    /// Una beta.
+    Beta,
+    /// Una *release candidate*.
+    Rc,
+}
+
+impl PreKind {
+    /// La letra con la que se escribe.
+    fn letter(self) -> &'static str {
+        match self {
+            Self::Alpha => "a",
+            Self::Beta => "b",
+            Self::Rc => "rc",
+        }
+    }
+}
+
+/// Una version de PEP 440.
+///
+/// La PEP define la gramatica y la forma **canonica**. Lo que se guarda y
+/// lo que se compara es la forma canonica, porque un cliente puede escribir
+/// la version como le plazca (`1.0-2`, `1.0.rc1`, `v1.0`) y el nombre del
+/// fichero la lleva canonica (`1.0.post2`, `1.0rc1`, `1.0`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Version {
+    /// La epoca.
+    epoch: u64,
+    /// La release: sus numeros.
+    release: Vec<u64>,
+    /// La pre release: su clase y su numero.
+    pre: Option<(PreKind, u64)>,
+    /// El post release.
+    post: Option<u64>,
+    /// La *development release*.
+    dev: Option<u64>,
+    /// La version local, ya normalizada.
+    local: Option<String>,
+}
+
+impl Version {
+    /// Lee una version de PEP 440.
+    ///
+    /// `None` si lo que hay no es una version de PEP 440.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let text = raw.trim();
+        if text.is_empty() {
+            return None;
+        }
+        // El prefijo `v` es de la PEP: `v1.0` es `1.0`.
+        let text = text.strip_prefix(['v', 'V']).unwrap_or(text);
+        // La version local va al final y separated por un `+`.
+        let (text, local) = match text.split_once('+') {
+            Some((head, local)) => (head, Some(normalize_local(local)?)),
+            None => (text, None),
+        };
+        // La epoca: `1!2.0`.
+        let (epoch, text) = match text.split_once('!') {
+            Some((epoch, tail)) => {
+                if epoch.is_empty() || !epoch.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                (epoch.parse().ok()?, tail)
+            }
+            None => (0, text),
+        };
+        // La release: `1`, `1.0`, `1.0.0`.
+        let end = text
+            .find(|character: char| !character.is_ascii_digit() && character != '.')
+            .unwrap_or(text.len());
+        let (mut release_text, mut rest) = text.split_at(end);
+        // El punto que separa la release de su sufijo (`1.0.dev1`) no es
+        // parte de la release: es el separador del sufijo.
+        if let Some(stripped) = release_text.strip_suffix('.') {
+            release_text = stripped;
+            rest = &text[end - 1..];
+        }
+        let mut release = Vec::new();
+        for part in release_text.split('.') {
+            if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            release.push(part.parse().ok()?);
+        }
+        // Los sufijos van en este orden y cada uno una vez: una *pre
+        // release*, un *post release* y una *development release*.
+        let mut pre = None;
+        let mut post = None;
+        let mut dev = None;
+        if let Some((kind, number, tail)) = take_marker(rest, PRE_MARKERS) {
+            pre = Some((kind, number));
+            rest = tail;
+        }
+        if let Some((number, tail)) = take_implicit_post(rest) {
+            post = Some(number);
+            rest = tail;
+        } else if let Some((_, number, tail)) = take_marker(rest, POST_MARKERS) {
+            post = Some(number);
+            rest = tail;
+        }
+        if let Some((_, number, tail)) = take_marker(rest, DEV_MARKERS) {
+            dev = Some(number);
+            rest = tail;
+        }
+        if !rest.is_empty() {
+            return None;
+        }
+        Some(Self {
+            epoch,
+            release,
+            pre,
+            post,
+            dev,
+            local,
+        })
+    }
+
+    /// La forma canonica de la version.
+    ///
+    /// Es la que lleva el nombre del fichero: `1.0-2` es `1.0.post2`, y
+    /// `1.0+Ubuntu-1` es `1.0+ubuntu.1`.
+    pub fn canonical(&self) -> String {
+        let mut version = String::new();
+        if self.epoch != 0 {
+            version.push_str(&self.epoch.to_string());
+            version.push('!');
+        }
+        let release: Vec<String> = self.release.iter().map(u64::to_string).collect();
+        version.push_str(&release.join("."));
+        if let Some((kind, number)) = self.pre {
+            version.push_str(kind.letter());
+            version.push_str(&number.to_string());
+        }
+        if let Some(post) = self.post {
+            version.push_str(".post");
+            version.push_str(&post.to_string());
+        }
+        if let Some(dev) = self.dev {
+            version.push_str(".dev");
+            version.push_str(&dev.to_string());
+        }
+        if let Some(local) = &self.local {
+            version.push('+');
+            version.push_str(local);
+        }
+        version
+    }
+}
+
+impl Ord for Version {
+    /// El orden de PEP 440.
+    ///
+    /// Una *pre release* va antes que su release, un *post release* va
+    /// despues, una *development release* va antes que las dos, y la
+    /// version local va despues de la misma version sin ella.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        self.epoch
+            .cmp(&other.epoch)
+            .then_with(|| {
+                let length = self.release.len().max(other.release.len());
+                for index in 0..length {
+                    let left = self.release.get(index).copied().unwrap_or(0);
+                    let right = other.release.get(index).copied().unwrap_or(0);
+                    match left.cmp(&right) {
+                        Ordering::Equal => {}
+                        other => return other,
+                    }
+                }
+                Ordering::Equal
+            })
+            .then_with(|| match (self.pre, other.pre) {
+                (None, None) => Ordering::Equal,
+                // Sin pre release es la mas nueva.
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(left), Some(right)) => left.cmp(&right),
+            })
+            .then_with(|| self.post.cmp(&other.post))
+            .then_with(|| match (self.dev, other.dev) {
+                (None, None) => Ordering::Equal,
+                // Sin development release es la mas nueva.
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(left), Some(right)) => left.cmp(&right),
+            })
+            .then_with(|| match (&self.local, &other.local) {
+                (None, None) => Ordering::Equal,
+                // La version local es mas nueva que la misma sin ella.
+                (None, Some(_)) => Ordering::Less,
+                (Some(_), None) => Ordering::Greater,
+                (Some(left), Some(right)) => left.cmp(right),
+            })
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Las marcas de una *pre release*, de la mas larga a la mas corta.
+///
+/// El orden importa: `alpha` antes que `a`, y `preview` antes que `pre`.
+const PRE_MARKERS: &[(&str, PreKind)] = &[
+    ("alpha", PreKind::Alpha),
+    ("a", PreKind::Alpha),
+    ("beta", PreKind::Beta),
+    ("b", PreKind::Beta),
+    ("preview", PreKind::Rc),
+    ("pre", PreKind::Rc),
+    ("c", PreKind::Rc),
+    ("rc", PreKind::Rc),
+];
+
+/// Las marcas de un *post release*, de la mas larga a la mas corta.
+const POST_MARKERS: &[(&str, PreKind)] = &[
+    ("post", PreKind::Rc),
+    ("rev", PreKind::Rc),
+    ("r", PreKind::Rc),
+];
+
+/// Las marcas de una *development release*.
+const DEV_MARKERS: &[(&str, PreKind)] = &[("dev", PreKind::Rc)];
+
+/// La forma canonica de una version.
+///
+/// `None` si lo que hay no es una version de PEP 440.
+pub fn canonical_version(raw: &str) -> Option<String> {
+    Version::parse(raw).map(|version| version.canonical())
+}
+
 /// Si una version es una version de PEP 440.
 ///
 /// No es el comparador (de eso se encarga el cliente), es el filtro: un
 /// indice con una version que no existe no se sirve.
 pub fn valid_version(version: &str) -> bool {
-    if version.is_empty() {
-        return false;
-    }
-    let mut rest = version;
-    if let Some((head, local)) = rest.split_once('+') {
-        if !valid_local(local) {
-            return false;
-        }
-        rest = head;
-    }
-    if let Some((epoch, head)) = rest.split_once('!') {
-        if epoch.is_empty() || !epoch.bytes().all(|byte| byte.is_ascii_digit()) {
-            return false;
-        }
-        rest = head;
-    }
-    let mut end = 0;
-    for (index, character) in rest.char_indices() {
-        if character.is_ascii_digit() || character == '.' {
-            end = index + character.len_utf8();
-        } else {
-            break;
-        }
-    }
-    let mut release = &rest[..end];
-    // El punto que separa la parte de release de un sufijo (`1.0.dev1`)
-    // no es parte de la release, pero sigue siendo del sufijo.
-    if release.ends_with('.') {
-        release = &release[..release.len() - 1];
-        end -= 1;
-    }
-    if release.is_empty() || release.starts_with('.') || release.contains("..") {
-        return false;
-    }
-    rest = &rest[end..];
-    let mut seen_pre = false;
-    let mut seen_post = false;
-    while !rest.is_empty() {
-        if let Some(tail) = rest.strip_prefix(".dev") {
-            let Some((_, tail)) = split_number(tail) else {
-                return false;
-            };
-            rest = tail;
-            continue;
-        }
-        if let Some(tail) = rest.strip_prefix(".post") {
-            if seen_post {
-                return false;
-            }
-            let Some((_, tail)) = split_number(tail) else {
-                return false;
-            };
-            seen_post = true;
-            rest = tail;
-            continue;
-        }
-        if rest.starts_with('-') {
-            // La forma implicita de un *post release*: `1.0-1`.
-            let Some((_, tail)) = split_number(&rest[1..]) else {
-                return false;
-            };
-            if seen_post {
-                return false;
-            }
-            seen_post = true;
-            rest = tail;
-            continue;
-        }
-        let Some((marker, tail)) = pre_marker(rest) else {
-            return false;
-        };
-        if seen_pre || seen_post {
-            return false;
-        }
-        seen_pre = true;
-        let Some((_, tail)) = split_number(tail) else {
-            return false;
-        };
-        rest = tail;
-        let _ = marker;
-    }
-    true
+    canonical_version(version).is_some()
 }
 
-/// La parte local de una version (`1.0+local.1`).
-fn valid_local(local: &str) -> bool {
+/// La parte local de una version, normalizada.
+///
+/// Los segmentos se separan por `.`, `-` o `_` y se escriben en
+/// minusculas: `1.0+Ubuntu-1` es `1.0+ubuntu.1`.
+fn normalize_local(local: &str) -> Option<String> {
     if local.is_empty() {
-        return false;
+        return None;
     }
-    local
-        .split(['.', '-', '_'])
-        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+    let mut segments = Vec::new();
+    for part in local.split(['.', '-', '_']) {
+        if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+            return None;
+        }
+        segments.push(part.to_ascii_lowercase());
+    }
+    Some(segments.join("."))
 }
 
-/// Un numero opcional al final de un fragmento: `1`, `1.2`, o nada.
-fn split_number(text: &str) -> Option<(&str, &str)> {
+/// Un numero al principio del texto.
+fn take_number(text: &str) -> Option<(u64, &str)> {
     let end = text
         .find(|character: char| !character.is_ascii_digit())
         .unwrap_or(text.len());
-    Some((&text[..end], &text[end..]))
+    if end == 0 {
+        return None;
+    }
+    text[..end]
+        .parse()
+        .ok()
+        .map(|number| (number, &text[end..]))
 }
 
-/// El marcador de una *pre release* al principio del resto de la version.
-fn pre_marker(text: &str) -> Option<(&'static str, &str)> {
-    for marker in ["alpha", "beta", "preview", "pre", "rc", "a", "b", "c"] {
-        if let Some(tail) = text.strip_prefix(marker) {
-            return Some((marker, tail));
+/// El separador de una marca: `.`, `-` o `_`.
+fn take_separator(text: &str) -> &str {
+    match text.as_bytes().first() {
+        Some(b'.' | b'-' | b'_') => &text[1..],
+        _ => text,
+    }
+}
+
+/// El numero que va detras de una marca, si lo hay.
+///
+/// Sin separador, el numero tiene que empezar por un digito: `rc1` lleva
+/// un numero y `rcx` no lo lleva.
+fn take_optional_number(text: &str) -> (u64, &str) {
+    let separated = take_separator(text);
+    if separated.len() != text.len() {
+        return match take_number(separated) {
+            Some((number, tail)) => (number, tail),
+            None => (0, separated),
+        };
+    }
+    match take_number(text) {
+        Some((number, tail)) => (number, tail),
+        None => (0, text),
+    }
+}
+
+/// Una marca con su numero opcional.
+///
+/// El separador va delante de la marca y es opcional; el numero va detras
+/// de un separador opcional. Si la marca no esta, no se consume nada: el
+/// separador es de la marca que venga.
+fn take_marker<'a>(
+    text: &'a str,
+    names: &[(&'static str, PreKind)],
+) -> Option<(PreKind, u64, &'a str)> {
+    let separated = take_separator(text);
+    if separated.len() != text.len() {
+        for (name, kind) in names {
+            if let Some(tail) = separated.strip_prefix(name) {
+                let (number, tail) = take_optional_number(tail);
+                return Some((*kind, number, tail));
+            }
+        }
+        return None;
+    }
+    for (name, kind) in names {
+        if let Some(tail) = text.strip_prefix(name) {
+            let (number, tail) = take_optional_number(tail);
+            return Some((*kind, number, tail));
         }
     }
     None
+}
+
+/// El *post release* implicito: `1.0-1`.
+///
+/// El guion va pegado y el numero tambien: `1.0-1` es un post release y
+/// `1.0-r1` es otra cosa.
+fn take_implicit_post(text: &str) -> Option<(u64, &str)> {
+    let tail = text.strip_prefix('-')?;
+    take_number(tail)
 }
 
 /// Un fichero de un proyecto, tal y como lo ve el indice.
@@ -695,13 +968,12 @@ pub fn decode_segment(segment: &str) -> Result<String, PypiError> {
 /// su propio comparador. Aqui solo se ordena lo que se enseña, y de forma
 /// que `1.10` vaya despues de `1.9`.
 pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
-    let numbers = |version: &str| -> Vec<u64> {
-        let head = version.split(['-', '+', '!']).next().unwrap_or(version);
-        head.split('.')
-            .map(|part| part.parse::<u64>().unwrap_or(0))
-            .collect()
-    };
-    numbers(left).cmp(&numbers(right))
+    match (Version::parse(left), Version::parse(right)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        // Una version que no es de PEP 440 se ordena como texto: no la
+        // sabe nadie mas, y al menos el orden es estable.
+        _ => left.cmp(right),
+    }
 }
 
 /// Como se negocia la representacion del indice.
@@ -733,7 +1005,7 @@ pub fn negotiate(accept: Option<&str>) -> Representation {
                 quality = value.parse().unwrap_or(0.0);
             }
         }
-        let representation = if media == JSON_CONTENT_TYPE {
+        let representation = if media == JSON_CONTENT_TYPE || media == LATEST_JSON_CONTENT_TYPE {
             Some(Representation::Json)
         } else if media == HTML_CONTENT_TYPE || media == "text/html" {
             Some(Representation::Html)
@@ -743,6 +1015,11 @@ pub fn negotiate(accept: Option<&str>) -> Representation {
         let Some(representation) = representation else {
             continue;
         };
+        // Una calidad de cero es una negativa: el cliente dice que no
+        // quiere esa representacion.
+        if quality <= 0.0 {
+            continue;
+        }
         if best.is_none_or(|(current, _)| quality > current) {
             best = Some((quality, representation));
         }
@@ -1003,6 +1280,12 @@ pub fn parse_upload(
             "the name {declared_name:?} is not the project of the file"
         )));
     }
+    // La version que declara el cliente y la del nombre del fichero se
+    // comparan en su forma canonica: el cliente puede escribirla como le
+    // plazca (`1.0-2`, `1.0.rc1`, `v1.0`) y el nombre del fichero la
+    // lleva canonica (`1.0.post2`, `1.0rc1`, `1.0`).
+    let declared_version = canonical_version(declared_version)
+        .ok_or_else(|| PypiError::InvalidVersion(declared_version.to_string()))?;
     if declared_version != distribution.version {
         return Err(PypiError::Mismatch(format!(
             "the version {declared_version:?} is not the version of the file"
@@ -1010,7 +1293,7 @@ pub fn parse_upload(
     }
     Ok(Upload {
         project: declared_project,
-        version: declared_version.to_string(),
+        version: declared_version,
         filename: filename.to_string(),
         sha256: declared_sha256.to_ascii_lowercase(),
         requires_python: lookup("requires_python")
@@ -1252,6 +1535,92 @@ mod tests {
             Representation::Html
         );
         assert_eq!(negotiate(Some("application/json")), Representation::Html);
+        // La version `latest` del JSON es la misma representacion.
+        assert_eq!(
+            negotiate(Some("application/vnd.pypi.simple.latest+json")),
+            Representation::Json
+        );
+        // Una calidad de cero es una negativa.
+        assert_eq!(
+            negotiate(Some("application/vnd.pypi.simple.v1+json;q=0")),
+            Representation::Html
+        );
+    }
+
+    #[test]
+    fn a_version_is_canonicalized_the_way_pep_440_says() {
+        for (raw, canonical) in [
+            ("1.0", "1.0"),
+            ("1.0-2", "1.0.post2"),
+            ("1.0-rc1", "1.0rc1"),
+            ("1.0.rc1", "1.0rc1"),
+            ("1.0_rc1", "1.0rc1"),
+            ("1.0.alpha1", "1.0a1"),
+            ("1.0.beta1", "1.0b1"),
+            ("1.0.pre1", "1.0rc1"),
+            ("1.0.c1", "1.0rc1"),
+            ("v1.0", "1.0"),
+            ("1.0.post", "1.0.post0"),
+            ("1.0-r2", "1.0.post2"),
+            ("1.2post2", "1.2.post2"),
+            ("1.0+ubuntu-1", "1.0+ubuntu.1"),
+            ("01.0", "1.0"),
+            ("1.0.dev", "1.0.dev0"),
+        ] {
+            assert_eq!(
+                canonical_version(raw).as_deref(),
+                Some(canonical),
+                "{raw:?}"
+            );
+        }
+        for bad in [
+            "1.0-",
+            "1.0.dev1.post1",
+            "1.0.dev1.dev2",
+            "1.0.post1.post2",
+            "1.0-1-2",
+            "1.0+_x",
+            "1!",
+        ] {
+            assert!(
+                canonical_version(bad).is_none(),
+                "{bad:?} should not be a version"
+            );
+        }
+    }
+
+    #[test]
+    fn a_version_is_compared_in_its_canonical_form() {
+        // El cliente escribe la version como le plazca; el nombre del
+        // fichero la lleva canonica.
+        let sha = "e".repeat(64);
+        let mut fields = vec![
+            (":action".to_string(), "file_upload".to_string()),
+            ("protocol_version".to_string(), "1".to_string()),
+            ("name".to_string(), "labpkg".to_string()),
+            ("version".to_string(), "1.0-2".to_string()),
+            ("sha256_digest".to_string(), sha.clone()),
+        ];
+        let upload =
+            parse_upload(&fields, "labpkg-1.0.post2.tar.gz", &sha).expect("a valid upload");
+        assert_eq!(upload.version, "1.0.post2");
+        // Y una version que no es la del fichero se rechaza.
+        fields[3].1 = "1.0-3".to_string();
+        assert!(matches!(
+            parse_upload(&fields, "labpkg-1.0.post2.tar.gz", &sha),
+            Err(PypiError::Mismatch(_))
+        ));
+    }
+
+    #[test]
+    fn a_wheel_that_the_client_would_reject_is_not_a_distribution() {
+        // Las partes de un wheel son las que son: ni una mas ni una menos.
+        assert!(Distribution::parse("labpkg-1.0-py3-none-any.whl").is_ok());
+        assert!(Distribution::parse("labpkg-1.0-1-py3-none-any.whl").is_ok());
+        assert!(Distribution::parse("labpkg-1.0-py3-none-any-extra.whl").is_err());
+        assert!(Distribution::parse("labpkg-1.0-1-2-py3-none-any.whl").is_err());
+        assert!(Distribution::parse("labpkg-1.0-x-py3-none-any.whl").is_err());
+        assert!(Distribution::parse("labpkg-1.0-py3-none.whl").is_err());
     }
 
     #[test]

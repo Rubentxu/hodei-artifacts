@@ -35,6 +35,21 @@ const BOUNDARY: &str = "hodeipypiboundary";
 /// Los campos son los que manda `twine`: la accion, la version del
 /// protocolo, el nombre, la version y el hash.
 fn the_upload(name: &str, version: &str, filename: &str, file: &[u8], sha256: &str) -> Vec<u8> {
+    the_upload_with(name, version, filename, file, sha256, None)
+}
+
+/// El cuerpo de una subida, con firma si se pide.
+///
+/// El `twine upload --sign` manda la firma como otra parte con nombre de
+/// fichero: no es una segunda distribucion.
+fn the_upload_with(
+    name: &str,
+    version: &str,
+    filename: &str,
+    file: &[u8],
+    sha256: &str,
+    signature: Option<&str>,
+) -> Vec<u8> {
     let mut body: Vec<u8> = Vec::new();
     for (field, value) in [
         (":action", "file_upload"),
@@ -62,7 +77,18 @@ fn the_upload(name: &str, version: &str, filename: &str, file: &[u8], sha256: &s
         .as_bytes(),
     );
     body.extend_from_slice(file);
-    body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+    body.extend_from_slice(b"\r\n");
+    if let Some(signature) = signature {
+        body.extend_from_slice(
+            format!(
+                "--{BOUNDARY}\r\n\
+                 Content-Disposition: form-data; name=\"gpg_signature\"; filename=\"{filename}.asc\"\r\n\
+                 Content-Type: application/pgp-signature\r\n\r\n{signature}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
     body
 }
 
@@ -690,6 +716,257 @@ fn a_proxy_does_not_accept_writes() {
         ),
     );
     assert_eq!(published.status, 405);
+}
+
+/// Una distribucion de mas de dos megas se publica.
+///
+/// El limite por defecto del servidor web es de dos megas, y una
+/// distribucion de verdad no cabe en dos. El limite que manda es el
+/// configurado, y lo aplica el servicio.
+#[test]
+fn a_distribution_bigger_than_two_megabytes_is_published() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let service = deployment.start(&[]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    let wheel = support::a_big_wheel("bigpkg", "1.0", None, 3 * 1024 * 1024);
+    assert!(wheel.len() > 2 * 1024 * 1024, "the wheel is not big enough");
+    let hash = the_sha256(&wheel);
+    let published = upload(
+        dir,
+        port,
+        "pypi-hosted",
+        &token,
+        the_upload(
+            "bigpkg",
+            "1.0",
+            "bigpkg-1.0-py3-none-any.whl",
+            &wheel,
+            &hash,
+        ),
+    );
+    assert_eq!(published.status, 200, "{}", text_of(&published));
+
+    // Y se descarga igual que se publico.
+    let into = dir.join("big.whl");
+    let download = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-hosted/files/bigpkg/bigpkg-1.0-py3-none-any.whl",
+        &token,
+        &[],
+        Some(&into),
+    );
+    assert_eq!(download.status, 200);
+    assert_eq!(std::fs::read(&into).expect("the download"), wheel);
+}
+
+/// Un tramo del contenido se sirve como un tramo.
+///
+/// El `pip` de hoy pide un tramo para no bajar dos veces lo mismo, y un
+/// tramo que no cabe se dice que no cabe.
+#[test]
+fn a_range_asks_for_a_part_of_the_distribution() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let service = deployment.start(&[]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    let wheel = support::a_wheel("labpkg", "1.0", None);
+    let hash = the_sha256(&wheel);
+    let published = upload(
+        dir,
+        port,
+        "pypi-hosted",
+        &token,
+        the_upload(
+            "labpkg",
+            "1.0",
+            "labpkg-1.0-py3-none-any.whl",
+            &wheel,
+            &hash,
+        ),
+    );
+    assert_eq!(published.status, 200, "{}", text_of(&published));
+
+    // El principio del fichero.
+    let into = dir.join("part.whl");
+    let part = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-hosted/files/labpkg/labpkg-1.0-py3-none-any.whl",
+        &token,
+        &[("range", "bytes=0-9")],
+        Some(&into),
+    );
+    assert_eq!(part.status, 206);
+    assert_eq!(
+        part.header("content-range").as_deref(),
+        Some(format!("bytes 0-9/{}", wheel.len()).as_str())
+    );
+    assert_eq!(std::fs::read(&into).expect("the part"), wheel[..10]);
+
+    // Un tramo que no cabe: se dice que no.
+    let impossible = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-hosted/files/labpkg/labpkg-1.0-py3-none-any.whl",
+        &token,
+        &[("range", "bytes=99999999-")],
+        None,
+    );
+    assert_eq!(impossible.status, 416);
+}
+
+/// El canal de confianza no anuncia lo que no deja servir.
+///
+/// El canal `trusted` solo sirve los digests con concesion activa. Un
+/// indice que anuncia una distribucion que no se puede descargar es un
+/// indice roto.
+#[test]
+fn the_trusted_channel_does_not_announce_what_it_does_not_serve() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi_trusted(&["pypi-trusted"], &[("pypi-trusted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let service = deployment.start(&[]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    let wheel = support::a_wheel("labpkg", "1.0", None);
+    let hash = the_sha256(&wheel);
+    let published = upload(
+        dir,
+        port,
+        "pypi-trusted",
+        &token,
+        the_upload(
+            "labpkg",
+            "1.0",
+            "labpkg-1.0-py3-none-any.whl",
+            &wheel,
+            &hash,
+        ),
+    );
+    assert_eq!(published.status, 200, "{}", text_of(&published));
+
+    // El indice no anuncia la distribucion: el canal no la admite.
+    let page = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-trusted/simple/labpkg/",
+        &token,
+        &[("accept", "application/vnd.pypi.simple.v1+json")],
+        None,
+    );
+    assert_eq!(page.status, 200, "{}", text_of(&page));
+    let document = json_of(&page);
+    let files = document["files"].as_array().expect("the files");
+    assert!(files.is_empty(), "the index announces what it cannot serve");
+
+    // Y la distribucion no se descarga.
+    let download = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-trusted/files/labpkg/labpkg-1.0-py3-none-any.whl",
+        &token,
+        &[],
+        None,
+    );
+    assert_eq!(download.status, 404);
+}
+
+/// La version se compara en su forma canonica.
+///
+/// El cliente puede escribir la version como le plazca y el nombre del
+/// fichero la lleva canonica: `1.0-2` y `1.0.post2` son la misma version.
+#[test]
+fn a_version_that_is_not_canonical_is_accepted() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let service = deployment.start(&[]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    let sdist = support::an_sdist("labpkg", "1.0.post2", None);
+    let hash = the_sha256(&sdist);
+    let published = upload(
+        dir,
+        port,
+        "pypi-hosted",
+        &token,
+        the_upload("labpkg", "1.0-2", "labpkg-1.0.post2.tar.gz", &sdist, &hash),
+    );
+    assert_eq!(published.status, 200, "{}", text_of(&published));
+
+    // Y el indice lo dice con la version canonica.
+    let page = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-hosted/simple/labpkg/",
+        &token,
+        &[("accept", "application/vnd.pypi.simple.v1+json")],
+        None,
+    );
+    assert_eq!(page.status, 200, "{}", text_of(&page));
+    assert_eq!(json_of(&page)["versions"], json!(["1.0.post2"]));
+}
+
+/// Una subida firmada no se toma por dos distribuciones.
+///
+/// El `twine upload --sign` manda la firma como otra parte con nombre de
+/// fichero. No es una segunda distribucion: la superficie no guarda
+/// firmas, y una subida firmada se publica como las demas.
+#[test]
+fn a_signed_upload_is_not_taken_for_two_distributions() {
+    let deployment = Deployment::new();
+    deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let service = deployment.start(&[]);
+    let port = service.port;
+    let dir = deployment.directory.path();
+
+    let wheel = support::a_wheel("labpkg", "1.0", None);
+    let hash = the_sha256(&wheel);
+    let published = upload(
+        dir,
+        port,
+        "pypi-hosted",
+        &token,
+        the_upload_with(
+            "labpkg",
+            "1.0",
+            "labpkg-1.0-py3-none-any.whl",
+            &wheel,
+            &hash,
+            Some("-----BEGIN PGP SIGNATURE-----\nnot-a-signature\n-----END PGP SIGNATURE-----\n"),
+        ),
+    );
+    assert_eq!(published.status, 200, "{}", text_of(&published));
+
+    // Y la distribucion se sirve como las demas.
+    let page = call(
+        dir,
+        port,
+        "GET",
+        "/pypi/pypi-hosted/simple/labpkg/",
+        &token,
+        &[("accept", "application/vnd.pypi.simple.v1+json")],
+        None,
+    );
+    assert_eq!(page.status, 200, "{}", text_of(&page));
+    assert_eq!(json_of(&page)["versions"], json!(["1.0"]));
 }
 
 /// Las paginas de un upstream: la del JSON y la del HTML.

@@ -80,6 +80,14 @@ use crate::raw::conditional;
 /// carrera con otra.
 const MAX_ATTEMPTS: usize = 6;
 
+/// Cuantos campos puede traer una subida.
+///
+/// El `twine` manda unos cuantos: la accion, la version del protocolo, el
+/// nombre, la version, el hash, el `requires-python` y el fichero. Un
+/// limite alto de sobra y uno bajo delatan a un cliente que no es un
+/// cliente.
+const MAX_PARTS: usize = 64;
+
 /// Lo que se le dice al cliente cuando se agotan los reintentos.
 const CONTENDED: &str = "the project is being updated concurrently; retry it";
 
@@ -412,10 +420,42 @@ pub async fn handle(
             outcome
         }
         (Route::Upload, false) if method == Method::POST => {
-            upload(&state, &context, &repository, request, &correlation).await
+            let resource = format!("{repository_key}/");
+            let outcome = upload(&state, &context, &repository, request, &correlation).await;
+            let result = match &outcome {
+                Ok(_) => AuditResult::Allowed,
+                Err(Failure::Raw(RawApiError::Forbidden)) => AuditResult::Denied,
+                Err(_) => AuditResult::Failed,
+            };
+            record_audit(
+                &state,
+                context.principal().subject().as_str(),
+                context.account().as_str(),
+                "upload",
+                &resource,
+                result,
+                &correlation,
+            );
+            outcome
         }
         (Route::Yank, false) if method == Method::POST => {
-            yank(&state, &context, &repository, request, &correlation).await
+            let resource = format!("{repository_key}/yank");
+            let outcome = yank(&state, &context, &repository, request, &correlation).await;
+            let result = match &outcome {
+                Ok(_) => AuditResult::Allowed,
+                Err(Failure::Raw(RawApiError::Forbidden)) => AuditResult::Denied,
+                Err(_) => AuditResult::Failed,
+            };
+            record_audit(
+                &state,
+                context.principal().subject().as_str(),
+                context.account().as_str(),
+                "yank",
+                &resource,
+                result,
+                &correlation,
+            );
+            outcome
         }
         (Route::Upload, _) | (Route::Yank, _) => Err(Failure::plain(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -627,10 +667,10 @@ async fn the_leaf_project(
         .await
         .map_err(|error| the_blob_error(&error))?;
     let document = the_document(&bytes)?;
+    let files = the_admitted_files(state, context, repository, document.files).await?;
     Ok(ProjectView {
         name: document.name,
-        files: document
-            .files
+        files: files
             .into_iter()
             .map(|entry| FileView {
                 entry,
@@ -638,6 +678,27 @@ async fn the_leaf_project(
             })
             .collect(),
     })
+}
+
+/// Los ficheros que el canal de confianza deja servir.
+///
+/// El canal abierto no filtra nada. El canal `trusted` deja servir solo los
+/// digests con concesion activa, y el indice no anuncia lo que no se puede
+/// descargar: es lo mismo que hace la superficie OCI con sus listados.
+async fn the_admitted_files(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    files: Vec<FileEntry>,
+) -> Result<Vec<FileEntry>, Failure> {
+    match crate::trust::servable(state, context.account().as_str(), repository).await {
+        Ok(None) => Ok(files),
+        Ok(Some(allowed)) => Ok(files
+            .into_iter()
+            .filter(|file| allowed.contains(&file.sha256))
+            .collect()),
+        Err(error) => Err(the_admission_error(error).into()),
+    }
 }
 
 /// El documento de un proyecto tal y como lo publico el upstream.
@@ -666,10 +727,14 @@ async fn the_proxy_project(
         .await
         .map_err(|error| the_blob_error(&error))?;
     let document = the_document(&bytes)?;
-    let files = document
-        .files
+    let files = the_admitted_files(state, context, repository, document.files).await?;
+    let files = files
         .into_iter()
-        .map(|entry| {
+        .filter_map(|entry| {
+            // Un upstream puede declarar un nombre que no es una
+            // distribucion. No se anuncia: un enlace que no se puede
+            // descargar es un enlace roto, y el indice no los publica.
+            pypi::Distribution::parse(&entry.filename).ok()?;
             // La URL del upstream puede ser relativa: es relativa a su base.
             let entry = match entry.source.as_deref() {
                 Some(source) if !source.contains("://") => {
@@ -685,14 +750,18 @@ async fn the_proxy_project(
                 }
                 _ => entry,
             };
-            FileView {
+            Some(FileView {
                 entry,
                 owner: repository.clone(),
-            }
+            })
         })
         .collect();
     Ok(ProjectView {
-        name: document.name,
+        // El nombre del upstream puede venir sin normalizar: el indice
+        // lo dice como lo dice PEP 503, o no lo dice.
+        name: ProjectName::parse(&document.name)
+            .map(|name| name.as_str().to_string())
+            .unwrap_or_else(|_| project.as_str().to_string()),
         files,
     })
 }
@@ -754,17 +823,61 @@ async fn the_file(
         conditional::ReadOutcome::Serve => {}
     }
     let store = the_content_store(state)?;
-    let (body, length) = if ask.head {
-        (Vec::new(), asset.size_bytes as usize)
-    } else {
-        let bytes = store
-            .get(&asset.digest)
-            .await
-            .map_err(|error| the_blob_error(&error))?;
-        let length = bytes.len();
-        (bytes.to_vec(), length)
+    let length = asset.size_bytes;
+    // El tramo se sirve como lo sirve la superficie cruda: un `Range` que
+    // se entiende es un 206 con su `Content-Range`, y uno que no se
+    // entiende se ignora. El `pip` de hoy pide tramos para no bajar dos
+    // veces lo mismo.
+    let request = match crate::raw::range::the_range(
+        ask.headers
+            .get(header::RANGE)
+            .and_then(|value| value.to_str().ok()),
+        length,
+    ) {
+        Ok(request) => request,
+        Err(crate::raw::range::RangeError::Unsatisfiable) => {
+            return Err(RawApiError::RangeNotSatisfiable(length).into());
+        }
     };
-    let mut response = (StatusCode::OK, Body::from(body)).into_response();
+    let (body, status, content_range, response_length) = match request {
+        crate::raw::range::RangeRequest::Whole => {
+            if ask.head {
+                (Body::empty(), StatusCode::OK, None, length)
+            } else {
+                let bytes = store
+                    .get(&asset.digest)
+                    .await
+                    .map_err(|error| the_blob_error(&error))?;
+                let served = bytes.len() as u64;
+                (Body::from(bytes), StatusCode::OK, None, served)
+            }
+        }
+        crate::raw::range::RangeRequest::Single { first, last } => {
+            let served = last - first + 1;
+            let content_range = crate::raw::range::the_content_range(first, last, length);
+            if ask.head {
+                (
+                    Body::empty(),
+                    StatusCode::PARTIAL_CONTENT,
+                    Some(content_range),
+                    served,
+                )
+            } else {
+                let bytes = store
+                    .read_range(&asset.digest, first, served)
+                    .await
+                    .map_err(|error| the_blob_error(&error))?;
+                let served = bytes.len() as u64;
+                (
+                    Body::from(bytes),
+                    StatusCode::PARTIAL_CONTENT,
+                    Some(content_range),
+                    served,
+                )
+            }
+        }
+    };
+    let mut response = (status, body).into_response();
     apply_common_headers(&mut response, &etag, ask.correlation);
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -774,8 +887,13 @@ async fn the_file(
         header::HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
+    if let Some(content_range) = content_range
+        && let Ok(value) = HeaderValue::from_str(&content_range)
+    {
+        response.headers_mut().insert(header::CONTENT_RANGE, value);
+    }
     if ask.head
-        && let Ok(value) = HeaderValue::from_str(&length.to_string())
+        && let Ok(value) = HeaderValue::from_str(&response_length.to_string())
     {
         response.headers_mut().insert(header::CONTENT_LENGTH, value);
     }
@@ -814,6 +932,17 @@ async fn the_distribution(
             correlation,
         )
         .await?;
+        // La compuerta de confianza va tambien aqui: el software que
+        // trae el upstream es software, y lo que el canal no admite no se
+        // sirve ni porque venga de fuera.
+        crate::trust::admit(
+            state,
+            context.account().as_str(),
+            owner,
+            &served.asset.digest,
+        )
+        .await
+        .map_err(the_admission_error)?;
         return Ok(served.asset);
     }
     let asset = the_current_asset(state, context, &owner.repo_key, asset_path)
@@ -973,6 +1102,49 @@ where
     Err(Failure::plain(StatusCode::CONFLICT, CONTENDED))
 }
 
+/// Que el indice del proyecto pueda guardar esta entrada.
+///
+/// El documento del proyecto tiene un tope: el del contenido que acepta
+/// este servicio. Si la entrada no cabe, se dice **antes** de publicar la
+/// distribucion. El tamano se mira con el documento que hay ahora, y el
+/// documento que se escriba despues lo comprueba otra vez: entre las dos
+/// cosas puede haber cambiado el mundo, y lo que manda es el segundo
+/// control.
+async fn the_index_fits(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    project: &ProjectName,
+    entry: &FileEntry,
+) -> Result<(), Failure> {
+    let mut document =
+        match the_current_asset(state, context, &repository.repo_key, project.as_str()).await? {
+            Some(asset) => {
+                let bytes = the_content_store(state)?
+                    .get(&asset.digest)
+                    .await
+                    .map_err(|error| the_blob_error(&error))?;
+                let value: Value =
+                    serde_json::from_slice(&bytes).map_err(|_| RawApiError::Internal)?;
+                pypi::ProjectDocument::from_value(&value).map_err(|_| RawApiError::Internal)?
+            }
+            None => pypi::ProjectDocument::new(project.as_str()),
+        };
+    if document.file(&entry.filename).is_some() {
+        // Ya estaba: el documento no crece.
+        return Ok(());
+    }
+    document
+        .add(entry.clone())
+        .map_err(|_| RawApiError::Internal)?;
+    let bytes = serde_json::to_vec(&document.to_value(&the_files_base(&repository.repo_key)))
+        .map_err(|_| RawApiError::Internal)?;
+    if bytes.len() > state.max_body_size {
+        return Err(RawApiError::PayloadTooLarge.into());
+    }
+    Ok(())
+}
+
 /// `POST /pypi/{repositorio}/`: la subida de `twine`.
 async fn upload(
     state: &AppState,
@@ -990,6 +1162,19 @@ async fn upload(
     let upload = pypi::parse_upload(&fields, &filename, &sha256)?;
 
     let asset_path = format!("{}/{}", upload.project.as_str(), upload.filename);
+    let entry = FileEntry {
+        filename: upload.filename.clone(),
+        sha256: upload.sha256.clone(),
+        size: Some(bytes.len() as u64),
+        requires_python: upload.requires_python.clone(),
+        yanked: None,
+        source: None,
+    };
+    // El indice del proyecto tiene que caber: si no cabe, se dice antes
+    // de publicar la distribucion. Publicar y luego no poder anunciar
+    // deja el contenido publicado y invisible.
+    the_index_fits(state, context, repository, &upload.project, &entry).await?;
+
     let (digest, length) = write_the_content(state, Body::from(bytes), None, None).await?;
     let (_, writer) = the_catalog(state)?;
     let publication = Publication {
@@ -1031,9 +1216,6 @@ async fn upload(
         Err(error) => return Err(the_publication_error(&error).into()),
     }
 
-    let filename = upload.filename.clone();
-    let sha256 = upload.sha256.clone();
-    let requires_python = upload.requires_python.clone();
     let written = update_document(
         state,
         context,
@@ -1042,18 +1224,11 @@ async fn upload(
         true,
         correlation,
         |document| {
-            if document.file(&filename).is_some() {
+            if document.file(&entry.filename).is_some() {
                 // Ya estaba: el documento no cambia.
                 return Ok(false);
             }
-            document.add(FileEntry {
-                filename: filename.clone(),
-                sha256: sha256.clone(),
-                size: Some(length),
-                requires_python: requires_python.clone(),
-                yanked: None,
-                source: None,
-            })?;
+            document.add(entry.clone())?;
             Ok(true)
         },
     )
@@ -1075,7 +1250,10 @@ async fn upload(
 /// Los campos y el fichero de una subida.
 ///
 /// El limite es el del contenido: una distribucion que no cabe no se
-/// publica, y se dice antes de gastarla.
+/// publica, y se dice antes de gastarla. El limite cuenta **todos** los
+/// bytes de la subida, no los de un campo: el `twine` manda unos cuantos
+/// campos de texto y el fichero, y un cliente que manda mil campos
+/// vacios no gasta memoria.
 async fn the_multipart(
     state: &AppState,
     request: Request<Body>,
@@ -1091,11 +1269,20 @@ async fn the_multipart(
     let limit = state.max_body_size;
     let mut fields: Vec<(String, String)> = Vec::new();
     let mut file: Option<(String, Vec<u8>)> = None;
+    let mut total = 0usize;
+    let mut parts = 0usize;
     while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|_| Failure::plain(StatusCode::BAD_REQUEST, "the upload cannot be read"))?
     {
+        parts += 1;
+        if parts > MAX_PARTS {
+            return Err(Failure::plain(
+                StatusCode::BAD_REQUEST,
+                "the upload carries too many fields",
+            ));
+        }
         let name = field.name().unwrap_or_default().to_string();
         let filename = field.file_name().map(str::to_string);
         let mut bytes: Vec<u8> = Vec::new();
@@ -1104,7 +1291,8 @@ async fn the_multipart(
             .await
             .map_err(|_| Failure::plain(StatusCode::BAD_REQUEST, "the upload cannot be read"))?
         {
-            if bytes.len() + chunk.len() > limit {
+            total += chunk.len();
+            if total > limit {
                 return Err(RawApiError::PayloadTooLarge.into());
             }
             bytes.extend_from_slice(&chunk);
@@ -1112,10 +1300,11 @@ async fn the_multipart(
         match filename {
             Some(filename) => {
                 if name != "content" {
-                    return Err(Failure::plain(
-                        StatusCode::BAD_REQUEST,
-                        "the upload carries more than one distribution",
-                    ));
+                    // Una parte con nombre de fichero que no es la
+                    // distribucion--la firma del `twine upload --sign`--
+                    // no es una segunda distribucion: se ignora. Esta
+                    // superficie no guarda firmas.
+                    continue;
                 }
                 if file.is_some() {
                     // Dos distribuciones en una subida: no se elige una, se
@@ -1162,16 +1351,17 @@ async fn yank(
         .get("version")
         .and_then(Value::as_str)
         .ok_or(RawApiError::BadRequest("the version is missing"))?;
-    if !pypi::valid_version(version) {
+    // La version se canoniza: el documento guarda las versiones como las
+    // llevan los nombres de los ficheros, y esas son canonicas.
+    let Some(version) = pypi::canonical_version(version) else {
         return Err(RawApiError::BadRequest("the version is not valid").into());
-    }
+    };
     let yanked = value.get("yanked").and_then(Value::as_bool).unwrap_or(true);
     let reason = value
         .get("reason")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let version = version.to_string();
     let written = update_document(
         state,
         context,

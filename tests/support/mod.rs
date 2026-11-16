@@ -597,6 +597,27 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the pypi repositories");
     }
 
+    /// Crea repositorios **PyPI hosted** de la primera cuenta, algunos de
+    /// ellos en el canal **trusted**.
+    ///
+    /// El canal es un ajuste del repositorio (`config_settings.trust.serve`)
+    /// y no hay una ruta HTTP que lo fije: se fija al sembrar, como lo
+    /// haria quien opera el despliegue.
+    pub fn seed_pypi_trusted(&self, trusted: &[&str], repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, pypi)| {
+                serde_json::json!({
+                    "key": key,
+                    "pypi": pypi,
+                    "format": "pypi",
+                    "trusted": trusted.contains(key),
+                })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the pypi repositories");
+    }
+
     /// Crea repositorios **PyPI proxy** de la primera cuenta: la clave y su
     /// `config_settings.proxy` (el upstream y su cache).
     pub fn seed_pypi_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
@@ -870,6 +891,24 @@ fn the_record(entries: &[(&str, &[u8])]) -> String {
 
 /// Un wheel: un zip con los metadatos, el `RECORD` y el modulo del paquete.
 pub fn a_wheel(name: &str, version: &str, requires_python: Option<&str>) -> Vec<u8> {
+    the_wheel(name, version, requires_python, 0)
+}
+
+/// Un wheel con un miembro de relleno.
+///
+/// Una distribucion de verdad pesa mas de dos megas, y el limite que
+/// trae el servidor web por defecto son dos: hace falta una que lo pase.
+pub fn a_big_wheel(
+    name: &str,
+    version: &str,
+    requires_python: Option<&str>,
+    filler: usize,
+) -> Vec<u8> {
+    the_wheel(name, version, requires_python, filler)
+}
+
+/// El wheel de siempre, con un miembro de relleno si se pide.
+fn the_wheel(name: &str, version: &str, requires_python: Option<&str>, filler: usize) -> Vec<u8> {
     use std::io::Write;
     let escaped = the_escaped_name(name);
     let dist = format!("{escaped}-{version}.dist-info");
@@ -882,11 +921,14 @@ pub fn a_wheel(name: &str, version: &str, requires_python: Option<&str>) -> Vec<
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    let entries: Vec<(String, Vec<u8>)> = vec![
+    let mut entries: Vec<(String, Vec<u8>)> = vec![
         (format!("{dist}/METADATA"), metadata.into_bytes()),
         (format!("{dist}/WHEEL"), wheel.as_bytes().to_vec()),
         (format!("{name}/__init__.py"), module.into_bytes()),
     ];
+    if filler > 0 {
+        entries.push((format!("{name}/data.bin"), vec![b'x'; filler]));
+    }
     for (path, body) in &entries {
         writer
             .start_file(path.clone(), options)
@@ -2256,6 +2298,10 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
             }
             if !repository["pypi"].is_null() {
                 settings.insert("pypi".into(), repository["pypi"].clone());
+            }
+            if repository["trusted"].as_bool() == Some(true) {
+                // El canal de confianza es un ajuste del repositorio.
+                settings.insert("trust".into(), serde_json::json!({ "serve": "trusted" }));
             }
             let format = if repository["format"].as_str() == Some("npm") {
                 hodei_catalog::RepositoryFormat::Npm

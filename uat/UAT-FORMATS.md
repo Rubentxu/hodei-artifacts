@@ -296,7 +296,16 @@ verdad, no un simulacro.
   `pip install` los instala (el wheel tal cual, y el sdist construyéndolo en
   el cliente). El hash que declara el cliente tiene que ser el de los bytes
   que han llegado: si no, un `400` y no se publica nada. El nombre y la
-  versión tienen que ser los del nombre del fichero.
+  versión tienen que ser los del nombre del fichero, y la versión se compara
+  en su forma canónica (PEP 440): `1.0-2`, `1.0.rc1` y `v1.0` son la misma
+  versión que `1.0.post2`, `1.0rc1` y `1.0`. El nombre del fichero tiene que
+  ser uno que el `pip` acepte: un wheel al que le falte una parte no se
+  publica, porque un enlace que el cliente no puede instalar es un enlace
+  roto. Una subida firmada (`twine upload --sign`) se publica como las
+  demás: la firma no se guarda.
+- **El límite de la subida es el configurado.** Una distribución de más de dos
+  megas —que es lo normal— se publica; lo que no cabe en el límite del
+  servicio es un `413`, y se dice antes de publicar nada.
 - **Nombres normalizados (PEP 503).** `Lab.Pkg`, `lab_pkg`, `lab-pkg` y
   `LAB--PKG` son el mismo proyecto, y el índice lo publica con el nombre
   normalizado (`lab-pkg`). Un proyecto que no existe es un `404`: no se
@@ -312,6 +321,12 @@ verdad, no un simulacro.
 - **Distribuciones inmutables.** Publicar el mismo nombre de fichero con
   otros bytes es un `409` y los bytes publicados no se reescriben; el mismo
   contenido otra vez es idempotente.
+- **El canal de confianza manda sobre el índice.** Un repositorio en el canal
+  `trusted` solo sirve los digests con concesión activa: el índice no anuncia
+  las distribuciones que no se pueden descargar, y pedir una que no está
+  admitida es un `404`, como lo que no existe.
+- **Las distribuciones admiten `Range`.** Un tramo se sirve con un `206` y su
+  `Content-Range`, y un tramo que no cabe es un `416`.
 - **El índice es una instantánea.** El documento de un proyecto se escribe
   entero cuando se publica o se retira, direccionado por su digest, con una
   precondición sobre el documento anterior y reintentos acotados. Las
@@ -344,8 +359,8 @@ verdad, no un simulacro.
 
 | Prueba | Qué mide |
 | --- | --- |
-| `crates/hodei-catalog/src/pypi.rs` (unitarias) | Normalización de nombres (PEP 503), nombres de fichero de wheel y sdist, versiones (PEP 440), el documento de un proyecto, la negociación de la representación, el escapado del HTML, las rutas de la superficie y la comprobación de una subida contra sus bytes, como funciones puras. |
-| `tests/hsp112_pypi_e2e.rs` | El protocolo con `curl` contra el servicio real: la subida multipart que habla `twine`, el índice en JSON y en HTML con el mismo hash, el `ETag` y el `304`, los cuatro nombres del mismo proyecto y el `404` del que no existe, el hash que no es el de los bytes (`400`, y no se publica), el `yanked` de una versión y su descarga, el group que une los proyectos de sus miembros, el proxy que vuelve a pintar el índice del upstream sin su HTML y con los valores escapados, y los `401` y `405`. |
+| `crates/hodei-catalog/src/pypi.rs` (unitarias) | Normalización de nombres (PEP 503), nombres de fichero de wheel y sdist —incluido el wheel que el `pip` rechazaría—, versiones de PEP 440 y su forma canónica, el documento de un proyecto, la negociación de la representación, el escapado del HTML, las rutas de la superficie y la comprobación de una subida contra sus bytes, como funciones puras. |
+| `tests/hsp112_pypi_e2e.rs` | El protocolo con `curl` contra el servicio real: la subida multipart que habla `twine` (con y sin firma), el índice en JSON y en HTML con el mismo hash, el `ETag` y el `304`, los cuatro nombres del mismo proyecto y el `404` del que no existe, el hash que no es el de los bytes (`400`, y no se publica), la distribución de tres megas, el `Range` de una distribución (`206` y `416`), la versión que no es canónica, el canal `trusted` que no anuncia lo que no sirve, el `yanked` de una versión y su descarga, el group que une los proyectos de sus miembros, el proxy que vuelve a pintar el índice del upstream sin su HTML y con los valores escapados, y los `401` y `405`. |
 | `tests/hsp112_pypi_cli.rs` | Los clientes **reales** (`twine` y `pip`) con `HOME` y `netrc` temporales: publicar un wheel y un sdist, comprobar el índice que ve el `pip`, instalar el wheel y comprobar el módulo instalado, instalar el sdist construyéndolo, y el `401` de una credencial que no vale. La credencial viaja en las variables de entorno de `twine` y en el `netrc` temporal, nunca en argv. |
 
 Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
@@ -360,21 +375,32 @@ Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
   sirve: lo que se comprueba es el hash, el nombre y la versión del fichero.
   Las dependencias (`Requires-Dist`) se leen del wheel ya instalado, no del
   índice.
-- **Sin firmas ni atestaciones.** `twine` no firma y la superficie no acepta
-  ni verifica firmas (PEP 740).
+- **Sin firmas ni atestaciones.** La superficie no guarda ni verifica firmas
+  (PEP 740): una subida firmada se publica, y su firma se ignora.
 - **El retiro es una extensión propia.** PyPI no tiene API para retirar una
   versión, y `pip` no la invoca: se retira con `POST /pypi/{repo}/yank`.
 - **Una publicación son dos escrituras.** La distribución y después el
   documento; si el servicio cae entre ambas, la distribución queda en el
   catálogo sin anunciarse, y reintentar con los mismos bytes completa la
-  publicación.
+  publicación. Antes de publicar se comprueba que el índice del proyecto
+  cabe: si no cabe, se dice (`413`) y no se publica nada.
 - **El proxy no reescribe el JSON entero.** Se reescriben las URL de las
-  distribuciones; el resto del documento es el del upstream.
+  distribuciones; el resto del documento es el del upstream. El upstream tiene
+  que servir el JSON de la Simple API: uno que solo sirva HTML no se puede
+  proxar.
+- **Las URL del índice salen del `Host` de la petición.** Son absolutas, y
+  las construye el servicio con la cabecera `Host` (y `x-forwarded-proto`).
+- **El alcance del upstream no acota la URL de la distribución.** El
+  alcance (`scopes`) acota las rutas que se sirven del upstream; la URL de
+  una distribución la declara el upstream y la acota la lista de destinos
+  permitidos del servicio. Un proxy de PyPI necesita el alcance completo.
 - **El índice de un proxy no se puede enumerar.** Sale vacío: el cliente
   pregunta proyecto a proyecto, porque lo que hay en el upstream no se puede
   saber sin pedirlo.
+- **El índice de un grupo no tiene paginación.** Se recorren sus miembros y
+  sus proyectos en cada petición.
 - **Distribuciones en memoria.** Se cargan enteras (tope de contenido del
-  servicio) y no admiten `Range`.
+  servicio) antes de servirlas: admiten `Range`, pero no hay streaming.
 - **El sdist se construye en el cliente.** Instalar desde un sdist necesita las
   herramientas de construcción allí (`--no-build-isolation`); el servicio no
   las trae ni las ejecuta.
