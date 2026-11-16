@@ -197,7 +197,7 @@ pub(super) fn the_content_store(state: &AppState) -> Result<&Arc<dyn BlobStore>,
 /// La autenticación es la primera puerta: una petición sin credencial no
 /// llega a mirar la ruta, y por eso no puede convertirse en un 400 que
 /// diga algo de la ruta que el cliente no tiene permiso de conocer.
-async fn the_context(
+pub(super) async fn the_context(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<VerifiedContext, RawApiError> {
@@ -228,6 +228,24 @@ async fn the_repository(
     context: &VerifiedContext,
     repository: &str,
 ) -> Result<RepositoryDescriptor, RawApiError> {
+    the_repository_in(
+        state,
+        context,
+        repository,
+        &[RepositoryFormat::Raw, RepositoryFormat::Maven2],
+    )
+    .await
+}
+
+/// El repositorio, si es de uno de los formatos que sirve la superficie que
+/// pregunta. Raw/Maven y npm comparten reglas (cuenta, modo, ambito) y solo
+/// difieren en los formatos admitidos.
+pub(super) async fn the_repository_in(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &str,
+    served: &[RepositoryFormat],
+) -> Result<RepositoryDescriptor, RawApiError> {
     let (reader, _) = the_catalog(state)?;
     let descriptor = match reader
         .repository(context.account().as_str(), repository)
@@ -253,10 +271,7 @@ async fn the_repository(
     // Maven 2 comparte esta superficie en sus tres modos: hosted, proxy y
     // grupo. Los metadatos y checksums que cambian segun el modo se
     // resuelven en `maven`.
-    let served_format = matches!(
-        descriptor.format,
-        RepositoryFormat::Raw | RepositoryFormat::Maven2
-    );
+    let served_format = served.contains(&descriptor.format);
     if !served_format || !descriptor.mode.is_served_by_this_release() {
         return Err(RawApiError::NotFound);
     }
@@ -278,7 +293,7 @@ async fn the_repository(
 /// repositorio, no sobre la ruta. Una ruta concreta no es un recurso
 /// con identidad propia en el catalogo, y una acción sobre un recurso
 /// que no existe no se puede evaluar.
-fn the_decision(
+pub(super) fn the_decision(
     state: &AppState,
     context: &VerifiedContext,
     action: hodei_authz::model::ActionId,
@@ -628,6 +643,7 @@ pub(super) async fn the_proxy_asset(
         .map(|asset| CacheEntry::of(&asset.digest, asset.size_bytes, &receipts));
     let config_version = repository.config.version;
     let decision_context = Context {
+        format: repository.format,
         policy: &upstream.cache,
         asset_path,
         upstream_id: &upstream.id,
@@ -962,7 +978,7 @@ fn the_proxy_error(failure: &crate::proxy::cache::ProxyFailure) -> RawApiError {
 }
 
 /// Pone en la respuesta cómo se sirvió el contenido de un proxy.
-fn apply_cache_headers(
+pub(super) fn apply_cache_headers(
     response: &mut Response,
     served: &Option<(CacheStatus, Option<(String, String)>)>,
 ) {
@@ -993,7 +1009,7 @@ fn apply_cache_headers(
 /// `X-Hodei-Group-Version`: quien descarga sabe de que repositorio salio
 /// lo que tiene, y una resolucion distinta tras reconfigurar el grupo es
 /// visible.
-fn apply_group_headers(response: &mut Response, resolved_by: &Option<(String, u64)>) {
+pub(super) fn apply_group_headers(response: &mut Response, resolved_by: &Option<(String, u64)>) {
     let Some((member, version)) = resolved_by else {
         return;
     };
@@ -1171,6 +1187,76 @@ async fn the_content(
     outcome
 }
 
+/// Un asset ya resuelto segun el modo del repositorio pedido.
+pub(super) struct Resolved {
+    pub(super) asset: AssetRecord,
+    /// Como se sirvio, si salio de un proxy.
+    pub(super) served: Option<(CacheStatus, Option<(String, String)>)>,
+    /// Que miembro de un grupo lo sirvio y en que version de su configuracion.
+    pub(super) resolved_by: Option<(String, u64)>,
+    /// El repositorio que respalda el contenido: el pedido o el miembro que
+    /// gano. La confianza se decide sobre este.
+    pub(super) repository: RepositoryDescriptor,
+}
+
+/// Resuelve una ruta segun el modo del repositorio.
+///
+/// Un hosted sirve lo que tiene. Un proxy decide cada vez si lo que tiene
+/// vale, hay que revalidarlo o hay que traerlo. Un grupo recorre sus
+/// miembros en orden y sirve la ruta del primero que la tiene; lo que pasa
+/// despues (confianza, condiciones, rango) es del miembro que gano, no del
+/// grupo.
+pub(super) async fn the_resolved_asset(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: RepositoryDescriptor,
+    asset_path: &str,
+    correlation: &str,
+) -> Result<Resolved, RawApiError> {
+    if repository.mode == RepositoryMode::Group {
+        let version = repository.config.version;
+        let resolution =
+            super::raw_group::the_group_asset(state, context, &repository, asset_path, correlation)
+                .await;
+        // El rastro de la resolucion: que grupo, en que version de su
+        // configuracion, que miembros se consultaron y quien gano.
+        super::raw_group::record_resolution(
+            state,
+            context,
+            &repository,
+            asset_path,
+            &resolution.trail_line(),
+            resolution.outcome.is_ok(),
+            correlation,
+        );
+        let won = resolution.outcome?;
+        Ok(Resolved {
+            asset: won.asset,
+            served: won.served,
+            resolved_by: Some((won.member.repo_key.clone(), version)),
+            repository: won.member,
+        })
+    } else if repository.mode == RepositoryMode::Proxy {
+        let served = the_proxy_asset(state, context, &repository, asset_path, correlation).await?;
+        Ok(Resolved {
+            asset: served.asset,
+            served: Some((served.status, served.provenance)),
+            resolved_by: None,
+            repository,
+        })
+    } else {
+        let asset = the_current_asset(state, context, &repository.repo_key, asset_path)
+            .await?
+            .ok_or(RawApiError::NotFound)?;
+        Ok(Resolved {
+            asset,
+            served: None,
+            resolved_by: None,
+            repository,
+        })
+    }
+}
+
 /// El contenido, una vez que se sabe quién lo pide.
 async fn the_content_of(
     state: &AppState,
@@ -1227,57 +1313,12 @@ async fn the_content_of(
             return Ok((response, correlation));
         }
     }
-    // Un hosted sirve lo que tiene. Un proxy decide cada vez si lo que tiene
-    // vale, hay que revalidarlo o hay que traerlo.
-    // Un grupo recorre sus miembros en orden y sirve la ruta del primero que
-    // la tiene; lo que pasa despues (confianza, condiciones, rango) es del
-    // miembro que gano, no del grupo.
-    let mut resolved_by: Option<(String, u64)> = None;
-    let mut repository = repository;
-    let (asset, served) = if repository.mode == RepositoryMode::Group {
-        let version = repository.config.version;
-        let resolution = super::raw_group::the_group_asset(
-            state,
-            context,
-            &repository,
-            &target.asset_path,
-            &correlation,
-        )
-        .await;
-        // El rastro de la resolucion: que grupo, en que version de su
-        // configuracion, que miembros se consultaron y quien gano.
-        super::raw_group::record_resolution(
-            state,
-            context,
-            &repository,
-            &target.asset_path,
-            &resolution.trail_line(),
-            resolution.outcome.is_ok(),
-            &correlation,
-        );
-        let won = resolution.outcome?;
-        resolved_by = Some((won.member.repo_key.clone(), version));
-        repository = won.member;
-        (won.asset, won.served)
-    } else if repository.mode == RepositoryMode::Proxy {
-        let served = the_proxy_asset(
-            state,
-            context,
-            &repository,
-            &target.asset_path,
-            &correlation,
-        )
-        .await?;
-        (served.asset, Some((served.status, served.provenance)))
-    } else {
-        let asset = match the_current_asset(state, context, &target.repository, &target.asset_path)
-            .await?
-        {
-            Some(asset) => asset,
-            None => return Err(RawApiError::NotFound),
-        };
-        (asset, None)
-    };
+    let Resolved {
+        asset,
+        served,
+        resolved_by,
+        repository,
+    } = the_resolved_asset(state, context, repository, &target.asset_path, &correlation).await?;
 
     // La compuerta de confianza: Cedar ya dijo que esta persona puede
     // leer el repositorio; falta decir si este **digest** puede servirse
@@ -1412,7 +1453,7 @@ async fn the_content_of(
 /// cuando esa dirección publica una vez. Si lo que llega no es eso, la
 /// escritura se aborta: no queda ni un byte en el almacén, y el cliente
 /// recibe un conflicto en vez de un contenido que no se publico.
-async fn write_the_content(
+pub(super) async fn write_the_content(
     state: &AppState,
     body: Body,
     declared: Option<ContentDigest>,
@@ -1534,7 +1575,7 @@ pub(super) fn the_blob_error(error: &BlobError) -> RawApiError {
 }
 
 /// Un error del catalogo, traducido a HTTP.
-fn the_publication_error(error: &CatalogError) -> RawApiError {
+pub(super) fn the_publication_error(error: &CatalogError) -> RawApiError {
     match error {
         CatalogError::Missing { .. } => RawApiError::NotFound,
         CatalogError::Denied { .. } => RawApiError::Forbidden,

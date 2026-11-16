@@ -42,6 +42,7 @@ use hodei_evidence::ContentDigest;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::model::RepositoryFormat;
 use crate::proxy::{ChecksumEvidence, ProvenanceReceipt, ReceiptOutcome, UpstreamConfigError};
 
 /// El tope de cualquier duracion de la politica: diez años.
@@ -261,6 +262,24 @@ impl CachePolicy {
         }
     }
 
+    /// La clase de una ruta segun el formato del repositorio.
+    ///
+    /// En npm el contenido inmutable son los tarballs (`{nombre}/-/{fichero}.tgz`)
+    /// y todo lo demas es un packument, que el upstream republica. El resto de
+    /// formatos se rigen por las rutas de metadatos de la politica.
+    pub fn kind_in(&self, format: RepositoryFormat, asset_path: &str) -> CacheKind {
+        match format {
+            RepositoryFormat::Npm => {
+                if crate::npm::is_tarball_path(asset_path) {
+                    CacheKind::Content
+                } else {
+                    CacheKind::Metadata
+                }
+            }
+            _ => self.kind_of(asset_path),
+        }
+    }
+
     /// El TTL que le toca a una clase de ruta.
     pub fn ttl_of(&self, kind: CacheKind) -> Option<u64> {
         match kind {
@@ -385,6 +404,8 @@ pub enum CacheDecision {
 /// El contexto de una peticion.
 #[derive(Debug, Clone)]
 pub struct Context<'a> {
+    /// El formato del repositorio.
+    pub format: RepositoryFormat,
     /// La politica vigente.
     pub policy: &'a CachePolicy,
     /// La ruta relativa.
@@ -443,7 +464,7 @@ pub fn decide(ctx: &Context<'_>, entry: Option<&CacheEntry>) -> CacheDecision {
         };
     }
 
-    let kind = ctx.policy.kind_of(ctx.asset_path);
+    let kind = ctx.policy.kind_in(ctx.format, ctx.asset_path);
     let known = |with_validators: bool| Known {
         digest: entry.digest.clone(),
         size_bytes: entry.size_bytes,
@@ -493,7 +514,10 @@ pub fn stale_allowed(ctx: &Context<'_>, entry: &CacheEntry) -> bool {
     else {
         return false;
     };
-    match ctx.policy.ttl_of(ctx.policy.kind_of(ctx.asset_path)) {
+    match ctx
+        .policy
+        .ttl_of(ctx.policy.kind_in(ctx.format, ctx.asset_path))
+    {
         None => true,
         Some(ttl) => {
             age_secs(confirmation, ctx.now) < ttl.saturating_add(ctx.policy.stale_if_error_secs)
@@ -540,6 +564,7 @@ mod tests {
 
     fn ctx<'a>(policy: &'a CachePolicy, path: &'a str, now: i64) -> Context<'a> {
         Context {
+            format: RepositoryFormat::Maven2,
             policy,
             asset_path: path,
             upstream_id: "central",
@@ -548,6 +573,27 @@ mod tests {
             offline: false,
             now: at(now),
         }
+    }
+
+    #[test]
+    fn npm_tarballs_are_content_and_packuments_are_metadata() {
+        let policy = CachePolicy::default();
+        let npm = RepositoryFormat::Npm;
+        assert_eq!(policy.kind_in(npm, "lodash"), CacheKind::Metadata);
+        assert_eq!(policy.kind_in(npm, "@acme/lib"), CacheKind::Metadata);
+        assert_eq!(
+            policy.kind_in(npm, "lodash/-/lodash-4.17.21.tgz"),
+            CacheKind::Content
+        );
+        // Los demas formatos no cambian de criterio.
+        assert_eq!(
+            policy.kind_in(RepositoryFormat::Maven2, "a/b/maven-metadata.xml"),
+            CacheKind::Metadata
+        );
+        assert_eq!(
+            policy.kind_in(RepositoryFormat::Raw, "lodash"),
+            CacheKind::Content
+        );
     }
 
     #[test]

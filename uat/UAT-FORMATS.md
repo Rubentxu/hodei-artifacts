@@ -1,10 +1,10 @@
 # Formatos de paquetes — contrato de aceptación
 
-**Tareas:** HSP-109 (HAR-15, Maven 2 hosted) · HSP-110 (HAR-16, Maven 2 proxy y group) · **Servicio medido:** `hodei-artifacts 0.2.0`
+**Tareas:** HSP-109 (HAR-15, Maven 2 hosted) · HSP-110 (HAR-16, Maven 2 proxy y group) · HSP-111 (HAR-17, npm hosted, proxy y group) · **Servicio medido:** `hodei-artifacts 0.2.0`
 
 Este documento reúne los contratos de aceptación de los formatos de paquetes
-nativos. Hoy tiene dos secciones, MAVEN (hosted) y MAVEN-REMOTE (proxy y
-group); cada formato nuevo añade la suya.
+nativos. Hoy tiene tres secciones, MAVEN (hosted), MAVEN-REMOTE (proxy y
+group) y NPM; cada formato nuevo añade la suya.
 
 ## MAVEN — repositorios Maven 2 hosted
 
@@ -194,3 +194,92 @@ La prueba con `mvn` falla, y no se salta, si `mvn` no está en el `PATH`.
   leyéndolo entero en cada petición.
 - **Escritura.** Un proxy o un group no aceptan `PUT`; se despliega en el
   hosted.
+
+## NPM — repositorios npm hosted, proxy y group
+
+### 1. Qué afirma este contrato
+
+Un repositorio con `format: npm` se sirve en `/npm/{repo}/…` con el protocolo
+de registro que el cliente `npm` espera. Lo que sigue lo comprueba el propio
+cliente `npm`, no un simulacro.
+
+- **Publicar e instalar.** `npm publish` y `npm install` funcionan con
+  paquetes sin alcance y con alcance (`@acme/widget`). El tarball se guarda tal
+  cual llegó; el packument anuncia su `shasum` (sha1) y su `integrity`
+  (sha512) calculados por el servicio, y el `package-lock.json` resultante
+  lleva el mismo `integrity` que el sha512 del tarball servido. Un `dist`
+  declarado que no coincide con los bytes es un `400`. Las URL de los
+  tarballs del packument son absolutas y salen del `Host` (y de
+  `x-forwarded-proto`) de la petición.
+- **Versiones inmutables.** Publicar otra vez una versión existente es un
+  `403` (npm lo traduce a «You cannot publish over the previously published
+  versions»); los bytes históricos nunca se reescriben.
+- **Packument y dist-tags versionados.** El packument es una instantánea por
+  cambio (publicar, mover una etiqueta, deprecar): cada una queda en el
+  historial del catálogo y las anteriores no se tocan. `npm dist-tag add/rm/ls`
+  funciona; `latest` se puede mover pero no quitar (`400`) y una etiqueta no
+  puede apuntar a una versión inexistente (`404`). Las escrituras concurrentes
+  del packument se resuelven con una precondición sobre su digest y hasta 6
+  intentos (cuatro publicaciones simultáneas se conservan todas); con más
+  contención el que agota los intentos recibe un `409` explícito, nunca una
+  pérdida silenciosa.
+- **Deprecar sí, despublicar no.** `npm deprecate` marca versiones y deja
+  rastro auditado; `npm unpublish` (de una versión o del paquete entero) es un
+  `403` con su rastro `unpublish`/`Denied` en el registro del servicio. Es la
+  política conservadora: nada publicado desaparece.
+- **Autenticación y alcances.** Sin credencial, `401` con
+  `WWW-Authenticate: Bearer`; sin permiso Cedar, `403`. Un repositorio puede
+  limitar los alcances que admite (`config_settings.npm.scopes`); publicar un
+  paquete de otro alcance, o sin alcance cuando se exige, es un `403`. El origen de cada
+  versión (quién, cuándo, correlación) queda en el catálogo.
+- **Proxy y group.** El proxy sirve packuments (revalidables por TTL) y
+  tarballs (inmutables) del upstream y reescribe las URL de los tarballs a las
+  suyas, de modo que el cliente nunca habla con el upstream. El group sigue el
+  patrón de los demás formatos: gana el primer miembro, un `404` continúa, un
+  error del upstream es `502` y no salta, y en offline lo cacheado se sirve
+  sin tocar la red (sin copia, `503`).
+- **Errores.** Siempre con cuerpo `{"error": "…"}`, que es lo que `npm`
+  muestra al usuario.
+
+### 2. Cómo se comprueba
+
+| Prueba | Qué mide |
+| --- | --- |
+| `crates/hodei-catalog/src/npm.rs` (unitarias) | Nombres, rutas del protocolo, parseo y validación de publicaciones y deprecaciones, dist-tags, integridad declarada y política de alcances, como funciones puras. |
+| `tests/hsp111_npm_e2e.rs` | El protocolo con `curl` contra el servicio real: tarballs con URL absolutas e integridad, `304`, `ping` y `whoami`, auditoría (404 con JSON), método no soportado (405 con JSON), cuatro publicaciones simultáneas del mismo paquete, errores JSON (401/404/403/400), instantáneas con tarballs publicados intactos, dist-tags (incluido `latest` y versión inexistente), deprecate y unpublish con su rastro, política de alcances y escrituras rechazadas en proxy y group. |
+| `tests/hsp111_npm_cli.rs` | El cliente **real** (`npm`) con `HOME`, caché y `.npmrc` temporales: publicar con y sin alcance, republicar (falla), instalar comprobando el `integrity` del lock contra el sha512 servido, `dist-tag`, `deprecate`, `unpublish` rechazado; y una instalación a través de un group con proxy y hosted, el `E404` de un paquete inexistente y una segunda instalación offline sin que el upstream reciba una petición. El token viaja solo en el `.npmrc` temporal, nunca en argv. |
+
+La prueba con `npm` falla, y no se salta, si `npm` no está en el `PATH`.
+
+### 3. Lo que este contrato NO promete
+
+- **Sin despublicación.** No hay forma de retirar una versión por el cliente;
+  la retirada de contenido es una operación de administración del catálogo, no
+  de `npm unpublish`.
+- **Sin búsqueda ni auditoría.** `npm search` y `npm audit` no se implementan;
+  `audit` recibe un `404` que `npm` tolera.
+- **Sin `_rev`.** El packument no sirve `_rev`; `npm unpublish` envía
+  `undefined`, algo que se rechaza igualmente.
+- **Un packument de un proxy es del upstream.** Se reescriben las URL de los
+  tarballs, no el resto del documento.
+- **Una publicación son dos escrituras.** El tarball y luego el packument; si
+  el servicio cae entre ambas queda un tarball sin versión anunciada.
+- **Provenance.** Se registra el origen en el catálogo; no se verifican
+  atestaciones de Sigstore.
+- **Una publicación fallida deja el tarball.** Si tras escribir el tarball el
+  packument agota los intentos (`409`), el tarball queda en el catálogo sin
+  anunciarse; reintentar con los mismos bytes completa la publicación y con
+  otros se rechaza como versión ya existente.
+- **Un `deprecate` obsoleto se toma por `unpublish`.** El cliente envía el
+  packument entero que leyó; si alguien publica en medio, su documento no trae
+  la versión nueva y se rechaza con `403` (y rastro `unpublish`) en vez de
+  reconciliarse. Es el lado seguro: nunca se borra nada. Por la misma razón, un
+  `deprecate` obsoleto puede deshacer otra deprecación hecha entre medias.
+- **Permisos por repositorio, no por paquete.** Quien puede subir al
+  repositorio publica, depreca y mueve etiquetas de cualquier paquete que su
+  política de alcances admita.
+- **URL de tarball según `Host`.** El `dist.tarball` servido se construye con
+  `Host` y `x-forwarded-proto`; detrás de una caché compartida hay que variar
+  por esas cabeceras (`Vary`), que el servicio no emite.
+- **Tarballs en memoria.** Se cargan enteros (tope de contenido del servicio) y
+  no admiten `Range`.

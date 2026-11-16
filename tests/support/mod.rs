@@ -565,6 +565,52 @@ impl Deployment {
         assert!(status.success(), "the maven groups could not be seeded");
     }
 
+    /// Crea repositorios **npm hosted** de la primera cuenta. Cada uno es
+    /// una clave y su `config_settings.npm` (`null` si no lleva).
+    pub fn seed_npm(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, npm)| serde_json::json!({ "key": key, "npm": npm, "format": "npm" }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the npm repositories");
+    }
+
+    /// Crea repositorios **npm proxy** de la primera cuenta: la clave y su
+    /// `config_settings.proxy` (el upstream y su cache).
+    pub fn seed_npm_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, proxy)| serde_json::json!({ "key": key, "proxy": proxy, "format": "npm" }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the npm proxies");
+    }
+
+    /// Crea grupos **npm** de la primera cuenta, en el orden dado.
+    pub fn seed_npm_groups(&self, groups: &[(&str, &[&str])]) {
+        let groups: Vec<serde_json::Value> = groups
+            .iter()
+            .map(|(key, members)| {
+                serde_json::json!({ "key": key, "members": members, "format": "npm" })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_GROUPS", groups, "the npm groups");
+    }
+
+    fn run_the_seeder(&self, variable: &str, entries: Vec<serde_json::Value>, what: &str) {
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env(variable, serde_json::Value::Array(entries).to_string())
+            .status()
+            .expect("the seeder runs");
+        assert!(status.success(), "{what} could not be seeded");
+    }
+
     /// Cambia los miembros de un grupo ya sembrado: la version de su
     /// configuracion sube.
     pub fn reconfigure_group(&self, key: &str, members: &[&str]) {
@@ -1060,7 +1106,7 @@ impl Curl {
     /// Ejecuta el `curl` y devuelve su respuesta.
     pub fn run(&self) -> Answer {
         let mut command = self.command();
-        the_answer(&mut command, None)
+        the_answer(&mut command, self.body.as_deref())
     }
 
     /// Lanza el `curl` en segundo plano.
@@ -1987,7 +2033,9 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
                         ),
                         account: FIRST_ACCOUNT.to_string(),
                         repo_key: key.to_string(),
-                        format: if group["format"].as_str() == Some("maven2") {
+                        format: if group["format"].as_str() == Some("npm") {
+                            hodei_catalog::RepositoryFormat::Npm
+                        } else if group["format"].as_str() == Some("maven2") {
                             hodei_catalog::RepositoryFormat::Maven2
                         } else {
                             hodei_catalog::RepositoryFormat::Raw
@@ -2031,6 +2079,14 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
             if !repository["maven"].is_null() {
                 settings.insert("maven".into(), repository["maven"].clone());
             }
+            if !repository["npm"].is_null() {
+                settings.insert("npm".into(), repository["npm"].clone());
+            }
+            let format = if repository["format"].as_str() == Some("npm") {
+                hodei_catalog::RepositoryFormat::Npm
+            } else {
+                hodei_catalog::RepositoryFormat::Maven2
+            };
             let mode = if repository["proxy"].is_null() {
                 hodei_catalog::RepositoryMode::Hosted
             } else {
@@ -2051,7 +2107,7 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                         ),
                         account: FIRST_ACCOUNT.to_string(),
                         repo_key: key.to_string(),
-                        format: hodei_catalog::RepositoryFormat::Maven2,
+                        format,
                         mode,
                         config,
                         created_at: chrono::Utc::now(),

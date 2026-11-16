@@ -12,6 +12,7 @@ pub mod gc;
 pub mod health;
 pub mod iam;
 mod maven;
+pub mod npm;
 pub mod oci;
 pub mod playground;
 pub mod policies;
