@@ -319,6 +319,8 @@ fn admin_v1_routes(app_state: AppState) -> Router {
             get(crate::handlers::gc::list_holds).post(crate::handlers::gc::place_hold),
         )
         .route("/gc/holds/release", post(crate::handlers::gc::release_hold))
+        // Integrity scrub of the registry: read-only, its own resource.
+        .route("/scrub", get(crate::handlers::scrub::report))
         // Playground routes
         .route(
             "/playground/evaluate",

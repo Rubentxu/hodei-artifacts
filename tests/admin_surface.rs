@@ -38,6 +38,7 @@ const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/v1/iam/evaluate"),
     ("POST", "/api/v1/playground/evaluate"),
     ("GET", "/api/v1/gc/plan"),
+    ("GET", "/api/v1/scrub"),
     ("POST", "/api/v1/gc/sweep"),
     ("GET", "/api/v1/gc/holds"),
     ("POST", "/api/v1/gc/holds"),

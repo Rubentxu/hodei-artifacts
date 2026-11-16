@@ -1,6 +1,9 @@
-# Operación del almacén de contenido — contrato de recolección
+# Operación del almacén de contenido — recolección y recuperación
 
-**Tarea:** HSP-104 (HAR-10) · **Servicio medido:** `hodei-artifacts 0.2.0`
+**Tareas:** HSP-104 (HAR-10, recolección) y HSP-115 (HAR-21, recuperación) · **Servicio medido:** `hodei-artifacts 0.2.0`
+
+Este contrato tiene dos partes: la **recolección** (secciones 1 a 5) y la
+**recuperación** (sección RECOVERY, al final).
 
 ## 1. Qué afirma este contrato
 
@@ -162,3 +165,160 @@ cargo test --test hsp104_reclaim_contract --test hsp104_gc_ledger_contract \
 La pipeline registra las cuatro suites (`pipeline.kts`): el contrato del
 almacén en la etapa rápida, las dos de catálogo y servicio en la de base
 de datos, y el proceso real en la de infraestructura.
+
+---
+
+# RECOVERY — copia, restauración, scrub y reparación
+
+**Tarea:** HSP-115 (HAR-21)
+
+## R1. Qué afirma
+
+Afirma que un operador puede **copiar** el registro con el servicio parado,
+**restaurarlo** en una instalación limpia y comprobar que sirve los mismos
+bytes, y que puede **detectar** el daño del almacén sin que nada lo repare a
+escondidas. Las reglas:
+
+- **Nunca se inventan bytes.** Una reparación solo copia bytes de una copia
+  que se ha verificado entera, con el digest comprobado antes de publicarlos.
+  Un blob que no está en la copia queda como `not_in_backup`; no se
+  reconstruye ni se sustituye.
+- **El orden es metadatos, luego bytes.** La copia exporta el catálogo, filtra
+  el export y copia cada blob verificando su hash; el manifiesto
+  (`manifest.json`) lista cada blob con su digest, su tamaño y el hash de los
+  metadatos. La copia se escribe en un directorio temporal hermano y se
+  publica con un renombrado atómico: una copia a medias nunca tiene el nombre
+  definitivo.
+- **Un blob dañado no entra en la copia.** Si al copiar el hash no coincide, el
+  blob se excluye y se declara (`excluded`); la orden termina con código `1`.
+- **Una copia dañada o de un formato futuro se rechaza entera**, antes de
+  escribir nada en el destino.
+- **La restauración solo entra en una instalación limpia.** Exige base y
+  almacén vacíos; sobre datos existentes se niega y los deja intactos. Al
+  terminar hace un scrub final y lo informa.
+- **El scrub distingue tres daños:** `corrupt` (el contenido no tiene el
+  digest que dice su nombre), `broken_reference` (una raíz nombra un blob que
+  no existe) y `orphan` (un blob que nadie nombra). Reutiliza el censo de la
+  recolección y reconfirma cada raíz sin blob antes de acusarla. A diferencia
+  de la recolección, que ante un manifiesto OCI ilegible no actúa, el scrub
+  sigue: un manifiesto ausente o corrupto es justo lo que informa
+  (`broken_reference` o `corrupt`), y una prueba de servicio lo comprueba.
+- **La reparación es explícita y acotada.** `repair --from` restaura desde la
+  copia los blobs corruptos o ausentes, deja el corrupto en `quarantine/` y
+  informa de `restored`, `quarantined`, `not_in_backup` y `backup_damaged`. Un
+  huérfano no se repara: lo retira la recolección, con su gracia.
+
+## R2. Qué se ha medido
+
+`tests/hsp115_recovery_e2e.rs` ejecuta el binario `hodei-recovery` y el
+servicio **reales** como procesos, con `curl` y `sha256sum` como clientes, y
+una base RocksDB real:
+
+| Caso | Qué comprueba |
+| --- | --- |
+| REC-01 | Copia, `verify`, restauración en instalación limpia y un servicio nuevo que sirve los tres contenidos con el mismo sha256. |
+| REC-02 | El scrub encuentra, a la vez, un blob corrupto, una referencia rota y un huérfano, y el informe los nombra uno a uno. |
+| REC-03 | La reparación restaura el corrupto desde la copia y lo deja en cuarentena; un blob publicado **después** de la copia sale `not_in_backup` y sus bytes no se inventan. |
+| REC-04 | Una copia de un formato futuro y una copia con un blob alterado se rechazan antes de escribir nada en el almacén de destino, y `repair` no repara desde una copia dañada. |
+| REC-05 | Una restauración sobre datos existentes se niega y los deja intactos. |
+| REC-06 | `kill -9` en mitad de una subida: el scrub queda sano, la copia no contiene el blob a medias, y tras restaurar se sirve lo publicado y se responde `404` a lo cortado. |
+| HTTP | `GET /api/v1/scrub` sobre el servicio vivo informa del daño y no cambia nada. |
+
+Las pruebas unitarias cubren el manifiesto (`manifest.rs`), el veredicto puro
+del scrub (`scrub.rs`), la copia verificada (`backup.rs`) y el filtro del
+export (`export.rs`).
+
+### Un defecto del export de SurrealDB 2.7, corregido
+
+El `db.export` de SurrealDB 2.7.0 emite, para un campo `array<T>`, la
+definición del campo y la de su elemento implícito (`campo[*]`), y su propio
+`import` falla después con «already exists». Una restauración real lo
+destapó con `gc_run.candidates`. La copia lo corrige en `src/recovery/export.rs`:
+retira la definición implícita solo si la del campo padre la implica y
+conserva byte a byte el resto (también los saltos `\r\n`). Como el filtro solo
+conoce las formas que conoce, la copia **ensaya el import** del export ya
+filtrado en una base en memoria que se descarta: si no se importa, la copia
+no se publica. El hash del manifiesto es el del fichero ya filtrado.
+
+### RPO y RTO medidos (UAT local)
+
+Medidos con el e2e (`--nocapture`), con tres blobs de 20 a 26 KB, base
+RocksDB y el binario en modo debug, sobre una máquina de desarrollo:
+
+| Métrica | Valor medido | Qué incluye |
+| --- | --- | --- |
+| Copia | ~1,8 s | Proceso entero: abrir la base, exportar, filtrar, ensayar el import en memoria, copiar y verificar tres blobs, fsync y renombrado. |
+| RTO (restauración) | 313 ms en la orden; ~2,0 s con el proceso | Verificar la copia, importar, copiar los blobs y el scrub final. No incluye arrancar el servicio. |
+| RPO | el intervalo entre copias | La copia es un instante: lo escrito después no está en ella. REC-03 lo demuestra con un blob posterior. |
+
+**Cómo leerlas.** Es un fixture pequeño: sirve para fijar el orden de
+magnitud del coste fijo (abrir la base, ~1,5 s) y para detectar regresiones,
+no para prometer un tiempo de restauración de un despliegue real. El coste
+real crece con los bytes del almacén (se leen y escriben una vez y se
+verifican con un hash) y con el tamaño del catálogo: **hay que medirlo en
+el despliegue**, con `hodei-recovery restore`, que imprime `elapsed_ms`.
+
+## R3. La superficie
+
+| Orden | Qué hace |
+| --- | --- |
+| `hodei-recovery backup --to DIR` | Copia coherente: catálogo y bytes. Con `--json` emite el informe y los tiempos. |
+| `hodei-recovery verify DIR` | Comprueba el manifiesto, los metadatos y cada blob de la copia. No escribe. |
+| `hodei-recovery restore --from DIR` | Restaura en una instalación limpia y hace un scrub final. |
+| `hodei-recovery scrub` | Informa de blobs corruptos, referencias rotas y huérfanos. No repara. |
+| `hodei-recovery repair --from DIR` | Verifica la copia, hace scrub, restaura los blobs reparables y vuelve a hacer scrub. |
+| `GET /api/v1/scrub` | El mismo scrub sobre el servicio vivo; ruta administrativa propia. `501` sin scrub, `409` si ya hay uno en curso, `500` genérico en error (el detalle va al log). |
+
+Los valores por defecto (`--db`, `--cas`, `--namespace`, `--database`,
+`--grace-secs`) salen de la configuración del servicio. Código de salida:
+`0` sano, `1` daño encontrado o blobs excluidos, `2` error.
+
+## R4. Lo que no se promete
+
+- **No hay copia en caliente.** `backup`, `restore` y `repair` abren la base
+  y RocksDB la bloquea: **el servicio debe estar parado**. La orden lo dice
+  si no puede abrirla. `scrub` por HTTP sí corre con el servicio vivo.
+- **No hay alta disponibilidad ni replicación.** Lo que hay es recuperación
+  desde una copia; el RPO es el intervalo entre copias y el RTO es el de
+  parar, restaurar y arrancar. La replicación se estudia aparte.
+- **La restauración solo entra en una instalación limpia.** No hay fusión con
+  datos existentes ni restauración parcial de un repositorio o una cuenta.
+- **Una copia por directorio, sin rotación ni cifrado.** Dónde se guarda, con
+  qué retención y con qué cifrado lo decide el operador.
+- **El scrub completo lee todo el almacén, y cada blob entero en memoria.** La
+  verificación de un blob lo lee de una vez: un blob de varios GB puede
+  agotar la memoria del servicio vivo. En el servicio solo corre un scrub a
+  la vez y no se programa solo; para almacenes con blobs muy grandes, use la
+  orden `hodei-recovery scrub` con el servicio parado y memoria suficiente.
+- **El ensayo del import cuesta memoria** en proporción al catálogo.
+- **Una restauración interrumpida no se reintenta sobre lo que dejó.** El
+  import de metadatos va antes que la copia de blobs; si falla una copia por
+  E/S, la base ya tiene datos y el reintento se niega (`not clean`). El
+  operador borra el destino parcial y repite; la copia de origen no cambia.
+- **La copia no anota lo que ya estaba mal en el origen.** Un blob que
+  desaparece mientras se copia no se lista, y una referencia del catálogo sin
+  blob no consta en el manifiesto: la detecta el scrub (haga `scrub` antes de
+  confiar en una copia, y el scrub final de `restore` lo repite).
+- **El hash del manifiesto da integridad, no autenticidad.** Una copia
+  manipulada con su hash recalculado se acepta, y el import ejecuta el
+  SurrealQL del fichero. Guarde las copias donde solo escribe el operador.
+- **Un huérfano no es un daño que se repare.** El scrub lo informa; lo retira
+  la recolección (con su gracia y su permiso explícito).
+- **Una referencia rota solo se repara si la copia tiene el blob.** Si no lo
+  tiene, queda informada: no hay forma honesta de recuperar esos bytes.
+- **La restauración cruzada de versiones** se limita al `format` del manifiesto
+  (hoy `1`): una copia con un formato mayor se rechaza; no hay migración de
+  esquema dentro de la restauración.
+- **El filtro del export es específico de SurrealDB 2.7.** Si una versión
+  futura corrige o cambia el export, el filtro falla alto en vez de adivinar;
+  entonces hay que revisarlo.
+
+## R5. Cómo se ejecuta
+
+```bash
+cargo test --test hsp115_recovery_e2e -- --nocapture
+cargo test -p hodei-artifacts-api --lib recovery
+```
+
+La pipeline registra la suite `hsp115_recovery_e2e` en la etapa de
+infraestructura (`pipeline.kts`), junto al proceso real de la recolección.

@@ -21,6 +21,7 @@ pub mod raw;
 mod raw_group;
 pub mod repositories;
 pub mod schemas;
+pub mod scrub;
 
 use axum::http::{HeaderMap, header};
 

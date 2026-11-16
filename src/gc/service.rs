@@ -74,6 +74,15 @@ pub struct SweepReport {
     pub skipped: u64,
 }
 
+/// Como el censo trata un manifiesto que no se puede leer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManifestReads {
+    /// Un manifiesto ilegible es estado desconocido: la recoleccion no actua.
+    Strict,
+    /// Un manifiesto ausente o corrupto no aporta aristas y el censo sigue.
+    Lenient,
+}
+
 /// La recoleccion de basura del almacen.
 pub struct GcService {
     ledger: Arc<dyn ContentLedger>,
@@ -121,7 +130,19 @@ impl GcService {
     ///
     /// Devuelve tambien los blobs, porque el barrido necesita saber que
     /// sigue en el almacen.
-    async fn census(&self) -> Result<(Plan, Vec<StoredBlob>), GcError> {
+    pub(crate) async fn census(&self) -> Result<(Plan, Vec<StoredBlob>), GcError> {
+        self.census_with(ManifestReads::Strict).await
+    }
+
+    /// Como [`Self::census`], con la politica de lectura de manifiestos.
+    ///
+    /// `Lenient` es para el scrub: un manifiesto ausente o corrupto no
+    /// aborta el censo, porque eso es justo lo que el scrub tiene que
+    /// informar. Otros fallos de lectura siguen siendo estado desconocido.
+    pub(crate) async fn census_with(
+        &self,
+        reads: ManifestReads,
+    ) -> Result<(Plan, Vec<StoredBlob>), GcError> {
         let blobs = self.reclaimer()?.list_blobs().await.map_err(|error| {
             GcError::Unknown(format!("the store could not be listed: {error:?}"))
         })?;
@@ -151,16 +172,25 @@ impl GcService {
             if !seen.insert(root.digest.clone()) {
                 continue;
             }
-            let bytes = self
-                .store
-                .get_with(&root.digest, ReadPolicy::Verify)
-                .await
-                .map_err(|error| {
-                    GcError::Unknown(format!(
+            let bytes = match self.store.get_with(&root.digest, ReadPolicy::Verify).await {
+                Ok(bytes) => bytes,
+                Err(error @ (BlobError::NotFound | BlobError::Corrupted { .. }))
+                    if reads == ManifestReads::Lenient =>
+                {
+                    tracing::warn!(
+                        digest = %root.digest,
+                        ?error,
+                        "a manifest is missing or damaged: it contributes no edges"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    return Err(GcError::Unknown(format!(
                         "the manifest {} could not be read: {error:?}",
                         root.digest
-                    ))
-                })?;
+                    )));
+                }
+            };
             // Las aristas son defensa en profundidad: cada capa y cada
             // configuracion tiene ya su propia raiz `blobs/<digest>`, y
             // cada hijo de un indice es un manifiesto con la suya. Un

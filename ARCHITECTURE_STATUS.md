@@ -2004,3 +2004,31 @@ servicio.
 
 **Lo que sigue sin estar.** Búsqueda, auditoría, despublicación por el
 cliente y verificación de atestaciones de procedencia.
+
+## 10-sexvicies — M10: backup, restore, scrub y reconciliación (HAR-21)
+
+Hasta aquí el almacén sabía borrar lo que nadie nombra, pero no sabía
+recuperarse. El contrato, las pruebas, las mediciones y los límites están en
+la sección RECOVERY de [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md); aquí
+se dice qué hay y dónde vive.
+
+**Qué hay.** `src/recovery/` es la biblioteca: `manifest` (el formato de la
+copia y su comprobación), `backup` (copia, verificación, restauración y
+reparación), `scrub` (el veredicto puro `assess` y el `Scrubber`, que
+reutiliza el censo de `src/gc/`) y `export` (el filtro que corrige el export
+de SurrealDB 2.7). `src/bin/hodei-recovery.rs` es la orden del operador
+(`backup`, `verify`, `restore`, `scrub`, `repair`) y `GET /api/v1/scrub` es el
+scrub sobre el servicio vivo.
+
+**Cómo decide.** Los metadatos van antes que los bytes y cada blob se copia a
+un fichero parcial, se verifica y se renombra; la copia se publica con un
+renombrado atómico. Una copia dañada o de un formato futuro se rechaza antes
+de escribir. La reparación solo copia bytes verificados de la copia y deja el
+blob corrupto en cuarentena; lo que la copia no tiene queda informado, no
+inventado.
+
+**Lo que sigue sin estar.** No hay copia en caliente (RocksDB bloquea la
+base: el servicio debe estar parado), ni alta disponibilidad, ni restauración
+sobre datos existentes. El filtro del export depende del comportamiento de
+SurrealDB 2.7 y falla alto si cambia.
+
