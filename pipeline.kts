@@ -21,6 +21,8 @@
 //   integration    las pruebas que usan la base de datos embebida
 //   infrastructure las que arrancan el servicio, lo reinician o lo ejecutan
 //                  como proceso, y la conformidad de caja negra
+//   e2e            la compatibilidad con clientes de verdad y con la suite
+//                  oficial del `distribution-spec`
 //   frontend       los componentes, que necesitan otro lenguaje y otro toolchain
 //
 // La conformidad de caja negra escribe su informe en
@@ -40,6 +42,14 @@
 // informes, y cada uno dice lo que **no** certifica: el del índice dice
 // que el registro no valida firmas criptográficas, y el del push no
 // puede decir lo mismo porque no las ha visto.
+//
+// La compatibilidad con clientes de verdad es una etapa aparte, porque
+// necesita herramientas que el resto no necesita: la suite oficial del
+// `distribution-spec` (que se compila con Go), el `podman`, el `docker`
+// de la CLI y el `oras`. Su informe está en
+// `target/uat/oci-compatibility.md`, y el detalle por prueba de la suite
+// oficial, en `target/uat/oci-conformance/`. El contrato que dice qué se
+// ha medido y con qué versiones está en `uat/UAT-OCI.md`.
 //
 // La suite con `nextest` queda fuera, a propósito: la ejecuta
 // `cargo nextest run --workspace --no-fail-fast --test-threads=1`, que es
@@ -248,6 +258,82 @@ pipeline {
                     artifacts = "target/uat/doc9.md",
                     allowEmptyArchive = false,
                 )
+            }
+        }
+
+        stage("e2e (real clients and conformance)") {
+            timestamps {
+                // Las herramientas primero: una que falta se ve como un
+                // fallo del registro, y el `assert` que falla no dice
+                // que lo que falta es el `podman`.
+                sh("bash scripts/oci-e2e-preflight.sh")
+                // La suite oficial de conformidad no está en el
+                // repositorio: es código de OpenContainers, con su
+                // licencia y su ritmo. Lo que se fija aquí es el commit
+                // exacto del que se usa y el digest de sus fuentes, y lo
+                // que se ejecuta se compila antes de correr.
+                sh("bash scripts/oci-conformance.sh")
+                // El informe de una ejecución anterior no es la evidencia
+                // de esta: se borra antes de correr.
+                sh("rm -rf target/uat/oci-compatibility.md target/uat/oci-conformance")
+                sh("mkdir -p target/uat")
+                // Un solo hilo: los casos eligen el puerto al azar y el
+                // almacén de imágenes del `podman` es de la máquina, y
+                // dos casos a la vez se pisan el puerto y el almacén. La
+                // suite tarda más, y lo que se mide se mide igual.
+                //
+                // Y la suite toma, ademas, un cerrojo para las
+                // construcciones de imagen: dos `podman build` a la vez se
+                // pelean por el `fuse-overlayfs`, el desmontaje se queda
+                // esperando y la máquina se queda colgada.
+                //
+                // El código de salida se guarda en un fichero porque cada
+                // `sh` es una consola distinta: el veredicto se da al
+                // final, con la evidencia ya archivada.
+                sh(
+                    "cargo test --workspace --test oci_e2e_contract -- --test-threads=1 " +
+                        "> target/uat/oci-e2e.log 2>&1; echo $? > target/uat/oci-e2e.status"
+                )
+                // El log y el informe se leen **antes** de fallar: la
+                // evidencia de un fallo es justo lo que hay que poder
+                // leer, y un fallo que se lleva la evidencia consigo no
+                // deja nada que mirar.
+                sh("cat target/uat/oci-e2e.log")
+                sh("cat target/uat/oci-compatibility.md || true")
+                archiveArtifacts(
+                    artifacts = "target/uat/oci-e2e.log",
+                    allowEmptyArchive = true,
+                )
+                archiveArtifacts(
+                    artifacts = "target/uat/oci-compatibility.md",
+                    allowEmptyArchive = true,
+                )
+                // Y el detalle de la suite oficial: el informe declara
+                // las categorías, y estos son los resultados de cada
+                // prueba.
+                archiveArtifacts(
+                    artifacts = "target/uat/oci-conformance",
+                    allowEmptyArchive = true,
+                )
+                // Y ahora el veredicto, con la evidencia ya guardada: la
+                // suite en verde y el informe escrito.
+                sh(
+                    "if [ \"$(cat target/uat/oci-e2e.status)\" != \"0\" ]; then " +
+                        "echo 'the OCI E2E suite did not pass: the log is target/uat/oci-e2e.log' >&2; " +
+                        "exit 1; fi"
+                )
+                sh(
+                    "if [ ! -f target/uat/oci-compatibility.md ]; then " +
+                        "echo 'the OCI compatibility report is missing: the suite did not write it' >&2; " +
+                        "exit 1; fi"
+                )
+                // Y el informe tiene que estar **completo**. Un informe
+                // que existe pero a quien le faltan casos--porque un caso
+                // se renombró, se marcó como ignorado o se borró-- es el
+                // informe de una suite que no es la que esta etapa cree.
+                // El fichero se archiva antes: aunque este paso falle,
+                // el informe de lo que pasó se puede leer.
+                sh("bash scripts/check-oci-compatibility.sh target/uat/oci-compatibility.md")
             }
         }
 

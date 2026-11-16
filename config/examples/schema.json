@@ -17,6 +17,9 @@
   "Artifacts": {
     "entityTypes": {
       "Repository": {
+        "memberOfTypes": [
+          "Artifacts::Repository"
+        ],
         "shape": {
           "type": "Record",
           "attributes": {}

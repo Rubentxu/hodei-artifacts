@@ -74,7 +74,7 @@ pub const SCHEMA: &str = r#"{
   "Iam": { "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } }, "actions": {} },
   "Artifacts": {
     "entityTypes": {
-      "Repository": { "shape": { "type": "Record", "attributes": {} } },
+      "Repository": { "memberOfTypes": ["Artifacts::Repository"], "shape": { "type": "Record", "attributes": {} } },
       "Artifact": { "shape": { "type": "Record", "attributes": {} } }
     },
     "actions": {
@@ -366,6 +366,17 @@ impl Deployment {
     /// conexión abierta, y el servicio es otro proceso que tiene que poder
     /// abrir la base.
     pub fn seed(&self) {
+        self.seed_with(&[]);
+    }
+
+    /// Siembra el catálogo con un repositorio por cuenta **y** los que se
+    /// le pidan.
+    ///
+    /// Los repositorios de mas son los que necesita una suite que empuja a
+    /// un repositorio con nombre: el registro solo publica en repositorios
+    /// que existen, y sin sembrarlo la suite mediria un 404 donde queria
+    /// medir un push.
+    pub fn seed_with(&self, extra: &[&str]) {
         let status = Command::new(std::env::current_exe().expect("the test binary"))
             .args([
                 "--exact",
@@ -374,6 +385,7 @@ impl Deployment {
                 "--test-threads=1",
             ])
             .env("HODEI_SEED_DB", &self.db)
+            .env("HODEI_SEED_EXTRA", extra.join(","))
             .status()
             .expect("the seeder runs");
         assert!(status.success(), "the catalog could not be seeded");
@@ -397,69 +409,98 @@ impl Deployment {
     /// que muere antes de abrir el puerto se repite: lo que se prueba es
     /// el servicio, no la carrera del bloqueo.
     pub fn start(&self, extra_environment: &[(&str, &str)]) -> Service {
-        let log = self.log_path();
         for _attempt in 0..5 {
-            let port = free_port();
-            let stderr = File::create(&log).expect("the log of the service");
-            let stdout = stderr.try_clone().expect("the log of the service, twice");
-            let mut command = Command::new(BIN);
-            command
-                .env_remove("RUN_MODE")
-                .env_remove("HODEI_SECURITY__AUTH_JWKS_PATH")
-                .env("HODEI_SERVER__HOST", "127.0.0.1")
-                .env("HODEI_SERVER__PORT", port.to_string())
-                .env("HODEI_ROCKSDB__PATH", &self.db)
-                .env("HODEI_CONTENT__CAS_PATH", &self.cas)
-                .env("HODEI_REPOSITORY__DURABLE", "true")
-                .env("HODEI_SECURITY__RAW_API_ENABLED", "true")
-                .env("HODEI_SECURITY__OCI_API_ENABLED", "true")
-                .env(
-                    "HODEI_SECURITY__AUTH_JWT_SECRET",
-                    String::from_utf8(SECRET.to_vec()).unwrap(),
-                )
-                .env("HODEI_SECURITY__AUTH_ISSUER", ISSUER)
-                .env("HODEI_SECURITY__AUTH_AUDIENCE", AUDIENCE)
-                .env(
-                    "HODEI_SECURITY__AUTHORIZATION_POLICY_PATH",
-                    self.policy_path(),
-                )
-                .env(
-                    "HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH",
-                    self.schema_path(),
-                )
-                .env("RUST_LOG", "info")
-                .stdin(Stdio::null())
-                .stdout(Stdio::from(stdout))
-                .stderr(Stdio::from(stderr));
-            for (name, value) in extra_environment {
-                command.env(name, value);
+            if let Some(service) = self.try_start(free_port(), extra_environment) {
+                return service;
             }
-            let mut child = command.spawn().expect("the service starts");
-
-            let deadline = Instant::now() + Duration::from_secs(30);
-            while Instant::now() < deadline {
-                // El puerto lo dice el servicio, y solo lo dice si lo
-                // ha ocupado: esa es la prueba de que el hijo es el
-                // dueño del puerto.
-                if the_bound_port(&log) == Some(port)
-                    && TcpStream::connect(("127.0.0.1", port)).is_ok()
-                    && matches!(child.try_wait(), Ok(None))
-                {
-                    return Service { port, child };
-                }
-                if matches!(child.try_wait(), Ok(Some(_))) {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-            std::thread::sleep(Duration::from_millis(500));
         }
         panic!(
             "the service did not open the port; the log says:\n{}",
-            std::fs::read_to_string(&log).unwrap_or_default()
+            std::fs::read_to_string(self.log_path()).unwrap_or_default()
         );
+    }
+
+    /// Arranca el servicio en un puerto concreto.
+    ///
+    /// El reinicio necesita el **mismo** puerto: el cliente ya sabe a
+    /// donde mira, y con otro puerto se mediria otro servicio--uno recien
+    /// nacido-- y no lo que se quiere medir--el mismo servicio, otra vez.
+    ///
+    /// Los intentos se repiten en el mismo puerto, como los de
+    /// [`Self::start`]: el motor de disco puede tardar en soltar el
+    /// bloqueo del directorio, y un reinicio que se rinde al primer
+    /// intento mediria un fallo de arranque por el arranque.
+    pub fn start_on(&self, port: u16, extra_environment: &[(&str, &str)]) -> Service {
+        for _attempt in 0..5 {
+            if let Some(service) = self.try_start(port, extra_environment) {
+                return service;
+            }
+        }
+        panic!(
+            "the service did not open the port {port}; the log says:\n{}",
+            std::fs::read_to_string(self.log_path()).unwrap_or_default()
+        )
+    }
+
+    /// Un intento de arrancar el servicio en un puerto.
+    fn try_start(&self, port: u16, extra_environment: &[(&str, &str)]) -> Option<Service> {
+        let log = self.log_path();
+        let stderr = File::create(&log).expect("the log of the service");
+        let stdout = stderr.try_clone().expect("the log of the service, twice");
+        let mut command = Command::new(BIN);
+        command
+            .env_remove("RUN_MODE")
+            .env_remove("HODEI_SECURITY__AUTH_JWKS_PATH")
+            .env("HODEI_SERVER__HOST", "127.0.0.1")
+            .env("HODEI_SERVER__PORT", port.to_string())
+            .env("HODEI_ROCKSDB__PATH", &self.db)
+            .env("HODEI_CONTENT__CAS_PATH", &self.cas)
+            .env("HODEI_REPOSITORY__DURABLE", "true")
+            .env("HODEI_SECURITY__RAW_API_ENABLED", "true")
+            .env("HODEI_SECURITY__OCI_API_ENABLED", "true")
+            .env(
+                "HODEI_SECURITY__AUTH_JWT_SECRET",
+                String::from_utf8(SECRET.to_vec()).unwrap(),
+            )
+            .env("HODEI_SECURITY__AUTH_ISSUER", ISSUER)
+            .env("HODEI_SECURITY__AUTH_AUDIENCE", AUDIENCE)
+            .env(
+                "HODEI_SECURITY__AUTHORIZATION_POLICY_PATH",
+                self.policy_path(),
+            )
+            .env(
+                "HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH",
+                self.schema_path(),
+            )
+            .env("RUST_LOG", "info")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
+        for (name, value) in extra_environment {
+            command.env(name, value);
+        }
+        let mut child = command.spawn().expect("the service starts");
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            // El puerto lo dice el servicio, y solo lo dice si lo ha
+            // ocupado: esa es la prueba de que el hijo es el dueño del
+            // puerto.
+            if the_bound_port(&log) == Some(port)
+                && TcpStream::connect(("127.0.0.1", port)).is_ok()
+                && matches!(child.try_wait(), Ok(None))
+            {
+                return Some(Service { port, child });
+            }
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        std::thread::sleep(Duration::from_millis(500));
+        None
     }
 
     /// La ruta del log del servicio.
@@ -1075,6 +1116,20 @@ const OCI_INDEX_DISCLAIMER: &str = "\
 - **Ni la suite oficial de conformidad.** Este informe dice lo que se ha ejecutado aqui, no lo que dice la suite del `distribution-spec`.\n\
 - **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea.";
 
+/// Lo que el informe de la compatibilidad con clientes reales **no**
+/// certifica.
+///
+/// Este informe es el que mide **que clientes hablan el protocolo**, y su
+/// valor esta en que sean los de verdad. Su limite esta en lo que los
+/// clientes de verdad no hacen, y en lo que el registro no hace.
+const OCI_E2E_DISCLAIMER: &str = "\
+- **Ni la conformidad de las categorias que no se han ejecutado.** El informe nombra las categorias de la suite oficial que se han ejecutado, con su resultado. De las demas no se dice nada: una categoria que no se ha ejecutado no es una categoria conforme, y decir lo contrario seria propaganda.\n\
+- **Ni validacion criptografica de las firmas.** Un referrer de firma se registra como lo que es: un manifiesto que dice que cuelga de otro. El registro **no** comprueba firmas, y la presencia de una no concede nada: la decision la toma el motor de confianza.\n\
+- **Ni la promocion de nada.** Lo que se ha comprobado es que un referrer **no** cambia el canal de confianza de aquello a lo que cuelga: sigue en cuarentena, y promoverla es de otra tarea.\n\
+- **Ni que el cliente de Docker y el motor sean la misma cosa.** El `docker` de la CLI es el cliente real y el motor que hay detras es el `podman` exponiendo la API de Docker: la CLI de Docker no habla con un registro, habla con un demonio.\n\
+- **Ni el borrado de contenido.** El protocolo lo tiene (borrar un blob, un manifiesto, una etiqueta) y este registro no lo implementa.\n\
+- **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea.";
+
 impl Report {
     /// Un informe vacío, el de la superficie cruda.
     pub fn new() -> Self {
@@ -1132,6 +1187,31 @@ impl Report {
         }
     }
 
+    /// Un informe vacio, el de la compatibilidad con los clientes reales.
+    ///
+    /// Es un informe **aparte**, con su titulo y su aviso: el del indice
+    /// certify las consultas y los adjuntos, y lo que se mide aqui es otra
+    /// cosa--que clientes de verdad hablan el protocolo-- y un informe que
+    /// lo mezclara diria que el registro lo cumple entero.
+    pub fn for_oci_e2e() -> Self {
+        Self {
+            title: "Compatibilidad OCI con clientes reales — informe",
+            disclaimer: OCI_E2E_DISCLAIMER,
+            path: Self::the_oci_e2e_path(),
+            // Las versiones de los clientes van en el informe: una
+            // compatibilidad sin la version del cliente no es una
+            // compatibilidad, es una intencion.
+            tools: format!(
+                "{}; `oras {}`; `podman {}`; `docker {}`",
+                the_tools(),
+                the_version_of(&[&the_oras(), "version"]),
+                the_first_line_of(&[&the_podman(), "--version"]),
+                the_first_line_of(&[&the_docker(), "--version"]),
+            ),
+            cases: Vec::new(),
+        }
+    }
+
     /// Anota un caso y escribe el informe.
     ///
     /// Un caso con el mismo identificador **reemplaza** al anterior: un
@@ -1181,12 +1261,29 @@ impl Report {
             .join("oci-index-conformity.md")
     }
 
+    /// La ruta del fichero del informe de la compatibilidad con los
+    /// clientes reales.
+    pub fn the_oci_e2e_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("uat")
+            .join("oci-compatibility.md")
+    }
+
     /// Escribe el informe.
+    ///
+    /// La escritura es **atomica**: el informe se escribe en un fichero
+    /// al lado y se renombra encima. Un informe a medias--por un corte o
+    /// por un lector que llega mientras se escribe-- es un informe
+    /// corrupto, y un informe corrupto que existe pasa el guard de la
+    /// pipeline como si fuera bueno.
     pub fn write(&self) {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).expect("the directory of the report");
         }
-        std::fs::write(&self.path, self.as_markdown()).expect("the report is written");
+        let temporary = self.path.with_extension("md.tmp");
+        std::fs::write(&temporary, self.as_markdown()).expect("the report is written");
+        std::fs::rename(&temporary, &self.path).expect("the report is put in its place");
     }
 
     /// El informe, en Markdown.
@@ -1207,12 +1304,12 @@ impl Report {
         for case in &self.cases {
             text.push_str(&format!(
                 "| {} | {} | {} | `{}` | {} {} |\n",
-                case.id,
-                case.given,
-                case.when,
-                case.command.replace('|', "\\|"),
+                the_cell(&case.id),
+                the_cell(&case.given),
+                the_cell(&case.when),
+                the_cell(&case.command),
                 if case.passed { "PASS" } else { "FALLO" },
-                case.outcome
+                the_cell(&case.outcome)
             ));
         }
         text.push_str(&format!(
@@ -1221,6 +1318,34 @@ impl Report {
         ));
         text
     }
+}
+
+/// El texto de una celda de la tabla del informe.
+///
+/// La tabla es de Markdown, asi que una barra vertical rompe la fila y
+/// un salto de linea la convierte en dos: el texto de un caso--que puede
+/// ser la salida de un cliente-- se escapa para que la tabla siga siendo
+/// una tabla.
+///
+/// Y se **redacta**: el informe dice con quien se hablo, no con que se
+/// autentico. Un texto que llega al informe sin pasar por aqui puede
+/// llevar un token, y un informe se archiva y se comparte.
+fn the_cell(text: &str) -> String {
+    let mut cell = String::new();
+    for line in text.lines() {
+        if !cell.is_empty() {
+            cell.push_str("<br>");
+        }
+        cell.push_str(&line.replace('|', "\\|"));
+    }
+    the_names()
+        .lock()
+        .expect("the names of the credentials")
+        .iter()
+        .filter(|(token, _)| !token.is_empty())
+        .fold(cell, |cell, (token, name)| {
+            cell.replace(token.as_str(), name)
+        })
 }
 
 /// El informe compartido por los casos de este binario.
@@ -1270,6 +1395,24 @@ pub fn record_oci_index(case: Case) {
     report.record(case);
 }
 
+/// El informe de la compatibilidad con los clientes reales, compartido por
+/// los casos de su binario.
+static OCI_E2E_REPORT: OnceLock<Mutex<Report>> = OnceLock::new();
+
+/// El informe de la compatibilidad con los clientes reales.
+pub fn the_oci_e2e_report() -> &'static Mutex<Report> {
+    OCI_E2E_REPORT.get_or_init(|| Mutex::new(Report::for_oci_e2e()))
+}
+
+/// Anota un caso en el informe de la compatibilidad con los clientes
+/// reales.
+pub fn record_oci_e2e(case: Case) {
+    let mut report = the_oci_e2e_report()
+        .lock()
+        .expect("the report is not poisoned");
+    report.record(case);
+}
+
 /// Donde esta el `oras`.
 ///
 /// No siempre esta en el `PATH` de quien lanza las pruebas, y una
@@ -1279,23 +1422,96 @@ pub fn the_oras() -> String {
     if let Some(binary) = std::env::var_os("HODEI_ORAS_BIN") {
         return binary.to_string_lossy().into_owned();
     }
-    for candidate in [
-        "oras".to_string(),
-        format!(
-            "{}/.local/bin/oras",
-            std::env::var("HOME").unwrap_or_default()
-        ),
-    ] {
-        if Command::new(&candidate)
-            .arg("version")
-            .output()
-            .is_ok_and(|output| output.status.success())
-        {
-            return candidate;
-        }
-    }
-    "oras".to_string()
+    THE_ORAS
+        .get_or_init(|| {
+            for candidate in [
+                "oras".to_string(),
+                format!(
+                    "{}/.local/bin/oras",
+                    std::env::var("HOME").unwrap_or_default()
+                ),
+            ] {
+                if Command::new(&candidate)
+                    .arg("version")
+                    .output()
+                    .is_ok_and(|output| output.status.success())
+                {
+                    return candidate;
+                }
+            }
+            "oras".to_string()
+        })
+        .clone()
 }
+
+/// Donde esta el `oras`: se busca **una vez**.
+///
+/// La busqueda lanza un proceso por cada comando que usa la herramienta,
+/// y una prueba que llama a `oras` veinte veces lanza veinte procesos
+/// para preguntar lo mismo.
+static THE_ORAS: OnceLock<String> = OnceLock::new();
+
+/// Donde esta el `docker` de la CLI.
+///
+/// La CLI de Docker no viene con el sistema: se instala aparte, y el sitio
+/// donde se ha puesto se dice, para que el informe pueda nombrar la version
+/// con la que se ha hablado.
+pub fn the_docker() -> String {
+    if let Some(binary) = std::env::var_os("HODEI_DOCKER_BIN") {
+        return binary.to_string_lossy().into_owned();
+    }
+    THE_DOCKER
+        .get_or_init(|| {
+            for candidate in [
+                "docker".to_string(),
+                format!(
+                    "{}/.local/bin/docker",
+                    std::env::var("HOME").unwrap_or_default()
+                ),
+            ] {
+                if Command::new(&candidate)
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|output| output.status.success())
+                {
+                    return candidate;
+                }
+            }
+            "docker".to_string()
+        })
+        .clone()
+}
+
+/// Donde esta el `docker` de la CLI: se busca **una vez**.
+static THE_DOCKER: OnceLock<String> = OnceLock::new();
+
+/// Donde esta el `podman`.
+///
+/// El `podman` es el motor de imagen, y el que hace de demonio para el
+/// `docker` de la CLI: la CLI de Docker no habla con un registro, habla con
+/// un demonio.
+pub fn the_podman() -> String {
+    if let Some(binary) = std::env::var_os("HODEI_PODMAN_BIN") {
+        return binary.to_string_lossy().into_owned();
+    }
+    THE_PODMAN
+        .get_or_init(|| {
+            for candidate in ["podman".to_string(), "/usr/bin/podman".to_string()] {
+                if Command::new(&candidate)
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|output| output.status.success())
+                {
+                    return candidate;
+                }
+            }
+            "podman".to_string()
+        })
+        .clone()
+}
+
+/// Donde esta el `podman`: se busca **una vez**.
+static THE_PODMAN: OnceLock<String> = OnceLock::new();
 
 /// La versión del servicio que se ha probado.
 pub fn the_version() -> String {
@@ -1375,11 +1591,13 @@ pub fn seed_if_asked() {
     let Some(db) = std::env::var_os("HODEI_SEED_DB") else {
         return;
     };
-    seed_the_catalog(&db.to_string_lossy());
+    let extra = std::env::var("HODEI_SEED_EXTRA").unwrap_or_default();
+    let extra: Vec<&str> = extra.split(',').filter(|one| !one.is_empty()).collect();
+    seed_the_catalog(&db.to_string_lossy(), &extra);
 }
 
 /// Siembra el catálogo con un repositorio por cuenta.
-pub fn seed_the_catalog(path: &str) {
+pub fn seed_the_catalog(path: &str, extra: &[&str]) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1394,11 +1612,14 @@ pub fn seed_the_catalog(path: &str) {
             std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
         );
         store.initialize().await.expect("initialize");
-        for (account, key) in [
+        let seeded = [
             (FIRST_ACCOUNT, FIRST_REPOSITORY),
             (FIRST_ACCOUNT, FIRST_ONLY_REPOSITORY),
             (SECOND_ACCOUNT, SECOND_REPOSITORY),
-        ] {
+        ]
+        .into_iter()
+        .chain(extra.iter().map(|key| (FIRST_ACCOUNT, *key)));
+        for (account, key) in seeded {
             let mut config =
                 hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
             config.config_settings = serde_json::json!({});

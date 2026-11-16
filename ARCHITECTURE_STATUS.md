@@ -2,7 +2,7 @@
 
 **Hito vigente:** M0 — Convergencia (del roadmap `hodei-artifacts-trustgraph-v3`).
 **Generación de documento que manda:** PRD v3 y la UAT de convergencia que lo acompaña.
-**Fecha:** 2026-11-11.
+**Fecha:** 2026-11-16.
 
 Este documento dice la verdad del repositorio: qué se construye hoy, qué es
 material heredado, y qué capacidades existen de verdad. Reemplaza a las
@@ -94,6 +94,11 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 | Auditoría de seguridad | eventos de las mutaciones | `tests/audit_events.rs`, `tests/iam_audit.rs` |
 | Outbox de auditoría | frontera única de commit y entrega | `crates/hodei-catalog-storage/tests/har03_outbox_contract.rs` |
 | Comando operador del índice de políticas | `ensure-iam-index` | `tests/iam_account_index.rs` |
+| Contenido crudo: publicar, descargar y describir | `PUT|GET|HEAD /repository/{*target}` | `tests/raw_conformity_uat.rs` |
+| OCI: pull de blobs y manifiestos | `GET|HEAD /v2/{*target}` | `tests/oci_pull_contract.rs` |
+| OCI: push de blobs y manifiestos | `POST|PATCH|PUT /v2/{*target}` | `tests/oci_push_contract.rs` |
+| OCI: índice, etiquetas y referrers | `GET /v2/<name>/tags/list`, `GET /v2/<name>/referrers/<digest>` | `tests/oci_index_contract.rs` |
+| OCI: compatibilidad con clientes reales | la suite oficial de la distribution-spec | `tests/oci_e2e_contract.rs` · `uat/UAT-OCI.md` |
 
 ### 3.2 Experimentales
 
@@ -112,11 +117,13 @@ AI Investigator (M8), Trusted Artifact Hub (M9).
 
 La generación anterior de material lo describía como un "registry de
 artefactos multi-formato con control de acceso" y una "plataforma de gestión
-de organizaciones". **Ninguna de las dos cosas es cierta hoy.**
+de organizaciones". Hoy es lo primero **a medias** --un registro de
+artefactos OCI con control de acceso, no multi-formato-- y no lo segundo.
 
-- No hay almacenamiento de blobs. El registro de artefactos por digest es M1.
-- No hay OCI, ni Maven, ni npm. Eso es M9, y su material está en
-  `crates/distribution`, sin integrar.
+- No hay Maven ni npm. La superficie de OCI **sí** existe --pull, push,
+  índice, etiquetas y referrers, con su contrato de compatibilidad en
+  `uat/UAT-OCI.md`--, pero vive en `src/oci/` y `src/handlers/oci.rs`, no en
+  el material de `crates/distribution`, que sigue sin integrar.
 - No hay organizaciones ni SCP. El modelo vivo es la cuenta por defecto.
 - No hay grafo, ni evidencia, ni decisión de promoción. Son M1, M2 y M3.
 
@@ -128,6 +135,7 @@ de organizaciones". **Ninguna de las dos cosas es cierta hoy.**
 | `docs/security/*.md` | vigente: describe el comportamiento comprobado |
 | `docs/ci-strategy.md` | vigente |
 | `docs/cedar-policies-manual.md` | vigente |
+| `uat/UAT-OCI.md` | vigente: el contrato de compatibilidad OCI --con qué clientes y con qué versión se ha medido, y qué categorías se declaran-- |
 | `docs/prd/` (10 documentos) | `deprecada`: el PRD v3 lo sustituye |
 | `docs/prd.md` | `deprecada`: el PRD v3 lo sustituye |
 | `docs/arquitectura/` (10 documentos) | `legacy`: siete de ellos se llaman "final", "definitiva" o "corregida" y se contradicen entre sí. Este documento los sustituye a todos |
@@ -1609,3 +1617,186 @@ el manifiesto real en su `mediaType` y su tamaño: se comprueba que el
 hijo **esté**, y el hijo se sirve con su propio tipo. Y un movimiento de
 etiqueta **no** deja evento de auditoría: el rastro dice que se
 publicó, no a qué etiqueta se colgó.
+
+## 10-ochoidecies — M10: la compatibilidad OCI, con clientes de verdad
+
+Las tres piezas anteriores hicieron que el registro **hablara** el protocolo
+de OCI Distribution 1.1: el pull, el push y el índice. Eso no es lo mismo
+que ser compatible. La compatibilidad es una afirmación **medible**: dice
+con qué clientes, con qué versión y sobre qué categorías. Y medible
+significa también **acotada**: un contrato que solo dice «somos
+compatibles» no dice nada, porque no se puede comprobar ni desmentir. Por
+eso el contrato vive en `uat/UAT-OCI.md`, y por eso nombra una por una
+las 38 categorías de la suite oficial que se han ejecutado --las de API y
+las de datos-- con el estado que cada una tuvo **en la ejecución**.
+
+**La lista de categorías no está escrita a mano: la CI la comprueba.** La
+suite oficial de la distribution-spec se descarga, se verifica por el
+digest de sus fuentes, se compila y se ejecuta contra el registro en cada
+carrera de la pipeline; la prueba
+`the_official_conformance_suite_runs_the_declared_categories` falla si
+alguna de las categorías declaradas deja de estar en verde. Una
+declaración que se puede comprobar es una declaración; una declaración
+en un documento es un deseo. Y el otro lado de la misma regla: una
+categoría que no se ha ejecutado **no** se declara. El conjunto de datos
+en `sha512` no se ha ejecutado porque el registro no habla ese
+algoritmo, y los parámetros `?tag=` tampoco, y los manifiestos dispersos
+tampoco; declararlos en verde sería propaganda, así que el contrato los
+nombra con su estado real --`Disabled`--, con el motivo y con la acción
+concreta que los dejaría en verde.
+
+**Y el informe de la ejecución también se comprueba.** El binario de
+pruebas lleva el informe en memoria y lo vuelca en cada caso, así que el
+informe de disco es el de la **última** ejecución: una ejecución parcial
+--con un filtro de nombre-- deja un informe con un solo caso. Por eso
+`scripts/check-oci-compatibility.sh` exige los nueve casos y que ninguno
+esté en rojo, y la etapa de la pipeline lo ejecuta después de archivar el
+informe: un informe que existe con menos casos es el informe de una suite
+que no es la que la etapa cree, y eso es peor que un informe que falta.
+
+**El detalle que hizo el trabajo posible: el demonio de Docker no es el
+registro.** La CLI de Docker no habla con un registro: habla con un
+demonio, y el demonio es quien habla con el registro. Por eso el caso de
+la CLI levanta `podman system service` --un demonio que expone la API de
+Docker por un socket unix-- y por eso la imagen que la CLI publica se
+carga antes con `podman save` y `docker load`: lo que la CLI empuja es lo
+que el **demonio** tiene, no lo que el cliente tiene. El registro de la
+prueba habla HTTP sin TLS, como un registro de desarrollo, y el demonio
+solo relaja la verificación del TLS cuando el registro se llama
+`localhost`: por eso la dirección de la prueba es `localhost:<puerto>` y
+no una dirección IP, y por eso la configuración va en el fichero
+`registries.conf` del usuario --la del sistema no manda--. Son tres
+detalles que no son del registro, y que sin ellos la prueba mide el
+entorno y no el protocolo.
+
+**El digest que se compara es el del registro, no el del cliente.** Podman
+puede añadir la anotación `org.opencontainers.image.created` al empujar, así
+que el digest de la imagen local **puede no ser** el digest publicado. Los
+casos comparan tres cosas: el digest que dice el cliente (`--digestfile`),
+el digest que vuelve al tirar de la imagen, y el `Docker-Content-Digest` que
+devuelve el propio registro. Cuando los tres coinciden, la ida y la vuelta
+es real y no una casualidad del formato.
+
+**Y hay un digest más, que es el del demonio, y que no es el del registro.**
+La imagen entra en el demonio de Docker por un tar--con el manifiesto de su
+formato local-- y sale por otro--con el manifiesto que el registro publicó,
+que es el de Docker y no el de OCI--. Los dos digests son reales y el
+demonio los anota en la misma lista, **cuyo orden no es un contrato**: una
+prueba que compara el primero de la lista falla unas veces y otras no. Lo
+que sí es un contrato es el digest que el registro publica antes y después
+de la ida y vuelta, y que el cliente se anote **ese** entre los que tiene.
+La prueba de la imagen de una plataforma hace eso, y la del índice de dos
+compara el digest publicado antes y después de la vuelta.
+
+**Y la suite toma un cerrojo para las construcciones de imagen.** Dos
+`podman build` a la vez en la misma máquina se pelean por el
+`fuse-overlayfs`: el desmontaje se queda esperando a que termine la
+escritura, el proceso no termina, y la máquina se queda con gigas de
+páginas sucias y con procesos en estado irrecuperable. El cerrojo--un
+`flock` sobre un fichero del `target`-- serializa las construcciones, y la
+suite se puede correr en paralelo sin colgar la máquina.
+
+**Lo que se comprueba con clientes de verdad, y con un servidor de
+verdad.** El `oras` empuja un artefacto con su tipo de medio, adjunta un
+SBOM con su `subject` y lo vuelve a encontrar por la API de referrers; la
+CLI de Docker publica y recupera una imagen de una plataforma y publica y
+recupera un índice de dos plataformas; el `podman` publica, etiqueta y
+vuelve a tirar; una cuenta de otra cuenta **no** puede publicar en el
+repositorio de la primera; un reintento del cliente deja **el mismo**
+digest; y el contenido publicado sobrevive a que el servicio se pare y
+vuelva a levantar en el mismo puerto. La suite oficial cubre lo demás: la
+subida por trozos, la subida en un solo `POST`, la subida en streaming, el
+`HEAD` y el `GET` de blobs, el manifiesto por digest y por etiqueta, el
+manifiesto con `subject`, los referrers, y los datos --imagen, índice,
+índice anidado, artefacto, artefacto sin capas, capa no distribuible,
+digest inválido.
+
+**Lo que este trabajo encontró, y lo que se corrigió.** Cuatro
+desviaciones, y las cuatro tenían un síntoma engañoso --que es lo que hace
+una prueba con clientes de verdad más valiosa que una prueba con el mismo
+cliente de siempre. La primera: el esquema Cedar no declaraba el tipo de
+ancestro de `Artifacts::Repository`, así que un repositorio con niveles
+(`team/demo`) se respondía con **403 DENIED**; el motor de autorización
+fallaba cerrado porque el padre que el mapeador declara no estaba
+permitido por el esquema: el 403 no era una decisión, era un fallo del
+esquema. La segunda: la negociación del `Accept` leía **solo la
+primera** cabecera, y un cliente que manda varias --la CLI de Docker
+manda la del índice y la de la imagen-- se quedaba sin manifiesto con
+`MANIFEST_UNKNOWN`; la prueba leía lo que el primer cliente mandaba, y
+el protocolo manda leer lo que el cliente mandaba. La tercera: el `PUT`
+que cierra una subida no comprobaba el rango, así que un trozo fuera de
+orden respondía `400` en lugar de `416`, y el cliente no sabía que su
+desfase era el problema --el `416` es lo que lleva el `Range` que dice por
+dónde seguir. Y la cuarta: las capas **extranjeras** --las que declaran
+sus `urls`-- se exigían en el almacén, con lo que un manifiesto válido se
+rechazaba con `MANIFEST_BLOB_UNKNOWN`; el cliente baja esa capa de donde
+el manifiesto dice, no del registro.
+
+**La revisión independiente pasó dos rondas, y la segunda encontró cuatro
+cosas más.** La primera --un revisor contra el protocolo, otro contra la
+fiabilidad y otro contra el riesgo-- dejó cuatro desviaciones, todas
+corregidas. La segunda, sobre el diff ya corregido, dejó otras cuatro, y
+todas eran del mismo tipo: **acuerdos entre lo que el cliente dice y lo
+que el registro comprueba**. El `Accept` no leía el **peso**: un
+`Accept: */*;q=0`--un «no acepto nada»--servía cualquier manifiesto, y
+era el único caso en que el registro servía un tipo que el cliente había
+rechazado; ahora `q=0` es un rechazo (RFC 9110, sección 12.5.1). El
+rango del `PUT` de cierre se comprobaba **solo por su inicio**: un trozo
+que declaraba `Content-Range: 0-99` y mandaba tres bytes se aceptaba, y
+ahora el rango declarado y la longitud del cuerpo tienen que cuadrar. La
+exención de la capa extranjera era **más ancha de lo que la
+especificación necesita**: eximía cualquier descriptor con `urls`, y la
+capa no distribuible es la que su **tipo de medio** declara, que es una
+cosa más estrecha--un descriptor con `urls` y un tipo de medio cualquiera
+es una capa normal con una pista, y eximirla era dejar de exigir un
+contenido que el manifiesto nombra. Y la exención no se aplicaba a los
+**blobs de un artefacto**, con lo que el mismo concepto se trataba de dos
+maneras según la forma del manifiesto.
+
+**Y el esquema Cedar introduce una regla, y la regla está escrita.** El
+cambio del tipo de ancestro no es un detalle: convierte «deny» en
+«hereda» para todo el subárbol de un repositorio, y eso es una decisión
+de autorización que tiene que estar en un sitio donde alguien la pueda
+leer. La regla está en el manual de Cedar y en el contrato de
+compatibilidad: el ancestro es la **cadena de prefijos del nombre**,
+dentro de la misma cuenta, y **el arreglo es del operador**--el esquema
+que el servicio carga lo elige quien lo despliega, así que una
+instalación con el esquema anterior sigue con el `403`--. Es un límite
+que se escribe, no un defecto que se esconde.
+
+**Los límites, escritos.** El registro **no borra contenido publicado**:
+el `DELETE` de una etiqueta, de un manifiesto o de un blob responde `405`,
+y la suite lo marca `Skip`, que es su forma de decir «este registro no
+implementa esto». El `DELETE` de la **sesión de subida** sí existe, y
+responde `204`. El `GET` de un blob **no** negocia rangos: devuelve el
+blob entero con `200` en lugar de `206`; la especificación lo
+**recomienda** (`SHOULD`) y no lo exige, así que es una desviación
+recomendada y no un incumplimiento, y es lo que echan de menos los
+clientes que descargan en paralelo. El montaje anónimo de un
+blob **no** está implementado: el registro cae a una subida normal, que es
+el repliegue que el protocolo contempla. Y el modelo de digest **no**
+lleva algoritmo: el contenido es `sha256` y solo `sha256`, y por eso las
+tres categorías de `sha512` no se han ejecutado. Extender el modelo de
+digest es tarea propia y transversal --lo tocarían el hub, el catálogo y
+la evidencia--, no un remiendo de esta pieza. Por encima de todo esto, el
+contrato **no** certifica la validación criptográfica de las firmas: el
+registro transporta referrers y atestaciones y sabe contarlos, y la
+presencia de una firma no concede nada, porque la decisión la toma el
+motor de confianza. Y **no** certifica la promoción: publicar en el
+registro no es promover un artefacto a un canal de distribución.
+
+**Y hay dos límites que la prueba enseñó y que no se han arreglado.** La
+capa **no distribuible** la baja el cliente de donde el manifiesto dice, y
+el registro **no comprueba** que esa `url` exista, que sirva ese contenido
+ni que los bytes tengan el digest declarado: el registro apunta, y quien
+confía en el manifiesto verifica. Lo que sí comprueba es que la `url` sea
+`https` y que el tipo de medio sea exactamente uno de los dos de no
+distribución --un descriptor con `urls` y cualquier otro tipo de medio es
+una capa normal, y esa sí se exige en el almacén. Y las **sesiones de
+subida** viven en un registro **global**: 64 a la vez, una hora cada una,
+configurables por despliegue. El tope no es por cuenta, así que una
+cuenta que abre sesiones y las abandona ocupa el hueco de las demás
+durante una hora, y cuando el hueco se acaba la sesión nueva se rechaza
+con un `400`--un error del cliente-- en lugar de un `429`. Las dos cosas
+están escritas en el contrato de compatibilidad con su acción concreta,
+porque un límite que no está escrito es un límite que nadie ha decidido.
