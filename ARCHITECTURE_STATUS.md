@@ -99,6 +99,8 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 | OCI: push de blobs y manifiestos | `POST|PATCH|PUT /v2/{*target}` | `tests/oci_push_contract.rs` |
 | OCI: índice, etiquetas y referrers | `GET /v2/<name>/tags/list`, `GET /v2/<name>/referrers/<digest>` | `tests/oci_index_contract.rs` |
 | OCI: compatibilidad con clientes reales | la suite oficial de la distribution-spec | `tests/oci_e2e_contract.rs` · `uat/UAT-OCI.md` |
+| Búsqueda del catálogo: filtros, paginación y aislamiento por cuenta | `GET /api/v1/search` | `crates/hodei-catalog-storage/tests/hsp113_search_contract.rs`, `tests/hsp113_search_e2e.rs` |
+| Detalle de un paquete: blob, metadatos, lineage, cápsula y decisión | `GET /api/v1/packages/{repository}/{path}` | `tests/hsp113_search_e2e.rs` |
 
 ### 3.2 Experimentales
 
@@ -2082,3 +2084,66 @@ que el canal deja servir (`trust::servable`, como hace OCI). En el canal
 **Lo que sigue sin estar.** La API JSON de PyPI, la búsqueda, la validación de
 los metadatos del paquete, las firmas y las atestaciones, y el retiro de una
 versión por el cliente (es una extensión propia del servicio).
+
+## 10-octovicies — M10: la búsqueda y el navegador de paquetes (HAR-19)
+
+Buscar en el registro es preguntar por el catálogo, y el catálogo es el
+índice: no hay un motor de búsqueda aparte que haya que sincronizar con
+él, y por eso lo que la búsqueda promete es lo que hay. El contrato, las
+pruebas y los límites están en la sección SEARCH de
+[`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md).
+
+**Qué hay.** El módulo puro `hodei_catalog::search` (la consulta, sus
+filtros, su paginación, su orden y su validación), el puerto `CatalogSearch`
+—un puerto nuevo, y no una extensión de `CatalogReader`, porque "¿qué
+hay?" y "¿qué hay en esta ruta?" son preguntas distintas— y su adaptador
+en `hodei-catalog-storage`, que escribe las consultas sobre las filas del
+catálogo. La superficie HTTP son `GET /api/v1/search` y
+`GET /api/v1/packages/{repositorio}/{ruta}`.
+
+**Cómo decide.** La cuenta sale del principal verificado y Cedar acota los
+repositorios uno por uno: lo que no se puede leer no sale **ni cuenta**, ni
+en los nombres ni en el total. El orden de la página es
+`(repositorio, ruta)`, que es un orden total dentro de la cuenta: la
+página no puede repetir ni perder un resultado entre páginas.
+
+**La búsqueda pregunta repositorio por repositorio.** Cada consulta lleva
+`account` y `repository`, que son las dos primeras columnas del índice
+`(account, repository, asset_path)`, y las páginas de cada repositorio se
+unen en el adaptador. No es estilo: es lo que evita las trampas del motor.
+La consulta **no lleva `ORDER BY`** (el motor traería todas las filas que
+coinciden antes de devolver las veinte primeras), y el **total se cuenta
+hasta un tope** de 256 coincidencias, porque el motor materializa cada
+fila que cuenta: por encima del tope la respuesta dice que hay más y no
+dice cuántos. Un total que no se ha contado no se inventa.
+
+**La confianza sale de la concesión, no de la referencia.** La fila de
+`catalog_reference` guarda lo que dijo la *admisión* al publicar, y eso no
+vuelve a cambiar: leída ahí, una promoción no se vería nunca. El estado
+que la búsqueda muestra sale de `trust_grant`, que es donde vive la
+decisión y donde vive su revocación. Por eso una promoción o una
+revocación se ven en la petición siguiente, sin reescribir nada: no hay
+un índice que actualizar porque no hay un segundo estado.
+
+**Lo que se midió del motor antes de escribir el adaptador.** En
+SurrealDB 2.7 con RocksDB: el filtro `campo IN <array>` en la consulta
+exterior devuelve **cero filas de forma intermitente** (28 de 100 rondas
+entrelazadas sobre la misma base vinieron vacías); una subconsulta en el
+filtro exterior la resuelve el motor **por fila** (`Fallback: Unsupported
+subquery`: 2,9 s en contar 2 000 filas); un `ORDER BY` trae todas las
+filas que coinciden antes de devolver las veinte primeras
+(`MemoryOrderedLimit`: 170 ms en ordenar 500); y un `count()` con dos
+campos de igualdad materializa cada fila que cuenta (0,3 ms por fila,
+frente a 0,004 ms de un conteo que no las toca). De ahí salen las tres
+decisiones del adaptador: un repositorio por consulta, sin `ORDER BY`, y
+el total con tope. El índice de texto completo que ofrece SurrealDB 2.7 no
+lo usa el planificador y cuesta 18 s construirlo para 2 000 filas, así que
+la búsqueda por texto sigue siendo un recorrido. El `LIMIT` y el `START`
+van como números y no atados, porque el motor no sabe evaluar un `LIMIT`
+atado.
+
+**Lo que sigue sin estar.** No hay índice de texto completo: la búsqueda
+por texto es un recorrido de los assets de la cuenta. No hay ordenación
+por relevancia, ni facets, ni sinónimos, ni búsqueda por metadatos de
+formato más allá del nombre y la versión del paquete. La consola web
+(HSP-114) sigue sin consumir esta superficie.
