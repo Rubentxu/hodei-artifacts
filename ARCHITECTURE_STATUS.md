@@ -1980,3 +1980,27 @@ upstream es `502`, no una lista parcial.
 
 **Lo que sigue sin estar.** Fusión de metadatos de plugins y `Range` en lo
 derivado.
+
+## 10-quinquavicies — M10: npm hosted, proxy y group (HAR-17)
+
+Un repositorio `npm` se sirve en `/npm/{repo}/…` para el cliente `npm` real.
+El contrato, las pruebas y los límites están en la sección NPM de
+[`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md).
+
+**Qué hay.** El módulo puro `hodei_catalog::npm` (nombres, rutas, parseo de
+publicaciones, dist-tags, integridad, alcances) y `handlers/npm.rs`, que lo
+cablea con lo que ya existía: Cedar, `the_resolved_asset`, `trust::admit`, el
+proxy de HSP-106/107 (`proxy_cache::kind_in` clasifica el tarball como
+contenido inmutable y el resto como metadatos revalidables) y el group de
+HSP-108. No se duplica ninguna infraestructura.
+
+**Cómo decide.** Publicar es escribir el tarball (`overwrite: false`, así la
+versión es inmutable) y después una instantánea nueva del packument
+(`{nombre}#packument`, direccionada por digest) con una precondición sobre la
+anterior y reintentos acotados. Mover un dist-tag o deprecar es otra
+instantánea; nada se reescribe. `unpublish` se rechaza (`403`) y deja rastro.
+En el proxy y el group las URL de los tarballs se reescriben a las del propio
+servicio.
+
+**Lo que sigue sin estar.** Búsqueda, auditoría, despublicación por el
+cliente y verificación de atestaciones de procedencia.

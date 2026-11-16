@@ -11,6 +11,7 @@ chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
 kernel = { path = "../kernel" }
 serde = { workspace = true }
+semver = "1.0"
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true }

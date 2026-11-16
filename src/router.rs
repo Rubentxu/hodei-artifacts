@@ -380,6 +380,18 @@ fn raw_routes(app_state: AppState) -> Router {
                 .get(crate::handlers::raw::download)
                 .head(crate::handlers::raw::describe),
         )
+        // The npm registry surface. It is read raw as well: the name of a
+        // scoped package arrives as `@scope%2fname` and only the protocol
+        // grammar may decode it.
+        .route(
+            "/npm/{*target}",
+            axum::routing::get(crate::handlers::npm::handle)
+                .head(crate::handlers::npm::handle)
+                .put(crate::handlers::npm::handle)
+                .delete(crate::handlers::npm::handle)
+                // Any other method gets the same JSON error as the rest.
+                .fallback(crate::handlers::npm::handle),
+        )
         .with_state(app_state)
 }
 

@@ -376,6 +376,24 @@ fn the_maven_of(format: RepositoryFormat, config: &RepositoryConfig) -> Result<(
         .map_err(CatalogError::invalid)
 }
 
+/// Los ajustes de npm de un repositorio.
+///
+/// Solo un repositorio npm los declara, y los que declara tienen que
+/// entenderse.
+fn the_npm_of(format: RepositoryFormat, config: &RepositoryConfig) -> Result<(), CatalogError> {
+    if format != RepositoryFormat::Npm {
+        if config.config_settings.get("npm").is_some() {
+            return Err(CatalogError::invalid(
+                "only an npm repository can declare config_settings.npm",
+            ));
+        }
+        return Ok(());
+    }
+    hodei_catalog::npm::NpmConfig::of_settings(&config.config_settings)
+        .map(|_| ())
+        .map_err(CatalogError::invalid)
+}
+
 /// El identificador compuesto de unas coordenadas.
 ///
 /// Las partes se escapan una a una y se unen con `|`, que ya no puede
@@ -1671,6 +1689,7 @@ impl CatalogWriter for SurrealCatalogStore {
         }
         the_upstream_of(descriptor.mode, &descriptor.config)?;
         the_maven_of(descriptor.format, &descriptor.config)?;
+        the_npm_of(descriptor.format, &descriptor.config)?;
         if descriptor.account != principal_account {
             return Err(CatalogError::Denied {
                 action: "configure",
@@ -1798,6 +1817,7 @@ impl CatalogWriter for SurrealCatalogStore {
         // proxy: la version que lo dejara sin upstream no se guarda.
         the_upstream_of(current.mode, &config)?;
         the_maven_of(current.format, &config)?;
+        the_npm_of(current.format, &config)?;
         // Y un grupo sigue siendo un grupo valido: la version que lo dejara
         // con un ciclo o un miembro que no existe no se guarda.
         self.the_group_of(

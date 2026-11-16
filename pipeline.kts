@@ -204,6 +204,8 @@ pipeline {
                         "--test hsp109_maven_cli",
                         "--test hsp110_maven_remote_e2e",
                         "--test hsp110_maven_cli",
+                        "--test hsp111_npm_e2e",
+                        "--test hsp111_npm_cli",
                     ).joinToString(" ")
                 )
                 sh(
