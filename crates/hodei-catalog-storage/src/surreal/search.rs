@@ -14,11 +14,17 @@
 //!    miente.
 //! 2. **Cuales son.** La pagina, con el orden `(repositorio, ruta)`, que
 //!    es un orden total dentro de la cuenta.
-//! 3. **En que canal estan.** El estado de confianza es de la
-//!    *relacion* entre el repositorio y el contenido, y vive en
-//!    `catalog_reference`: no se puede leer en la misma consulta sin una
-//!    union que el motor no tiene, asi que se pregunta aparte por los
-//!    assets de la pagina.
+//! 3. **Que de esos son de fiar.** El estado de confianza no se lee de
+//!    `catalog_reference`: esa fila guarda lo que dijo la *admision* al
+//!    publicar, y no vuelve a cambiar. Lo que decide es la **concesion**,
+//!    y vive en `trust_grant`. Se pregunta aparte por los assets de la
+//!    pagina, porque no se puede leer en la misma consulta sin una union
+//!    que el motor no tiene.
+//!
+//! Leerlo del libro y no de la referencia es lo que hace que una
+//! promocion o una revocacion se vean en la peticion siguiente, sin
+//! reescribir nada: no hay un indice que actualizar porque no hay un
+//! segundo estado.
 //!
 //! # El `IN` sobre arrays no se usa
 //!
@@ -39,7 +45,7 @@
 //! un `usize` validado, asi que no hay texto del cliente pegado en la
 //! consulta.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use hodei_catalog::search::{RepositoryAttribute, SearchHit, SearchPage, SearchQuery};
@@ -58,12 +64,12 @@ use super::{AssetRow, RepositoryRow, SurrealCatalogStore, algorithm_of};
 /// con la misma etiqueta no es una busqueda.
 const MAX_TAG_TARGETS: usize = 64;
 
-/// La fila de una referencia, con su canal.
+/// La fila de una concesion.
 #[derive(Debug, Clone, Deserialize)]
-struct ChannelRow {
+struct GrantRow {
     repository: String,
-    asset_path: String,
-    trust_state: String,
+    digest_algorithm: String,
+    digest: String,
 }
 
 /// Las coordenadas a las que apunta una etiqueta.
@@ -177,8 +183,8 @@ impl CatalogSearch for SurrealCatalogStore {
             .take(0)
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
 
-        // El canal de cada asset de la pagina.
-        let channels = self.the_channels(principal_account, &rows).await?;
+        // Las concesiones de los assets de la pagina.
+        let granted = self.the_grants(principal_account, &rows).await?;
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
@@ -187,10 +193,17 @@ impl CatalogSearch for SurrealCatalogStore {
                 .get(&asset.repository)
                 .copied()
                 .unwrap_or(RepositoryFormat::Raw);
-            let trust_state = channels
-                .get(&(asset.repository.clone(), asset.asset_path.clone()))
-                .copied()
-                .unwrap_or(TrustState::Quarantined);
+            // La confianza sale de la concesion, no de la ausencia de
+            // findings: lo que no tiene concesion esta en cuarentena.
+            let trust_state = if granted.contains(&(
+                asset.repository.clone(),
+                algorithm_of(&asset.digest),
+                asset.digest.value.clone(),
+            )) {
+                TrustState::Trusted
+            } else {
+                TrustState::Quarantined
+            };
             results.push(SearchHit {
                 repository: asset.repository,
                 format,
@@ -241,32 +254,43 @@ impl SurrealCatalogStore {
         Ok(rows)
     }
 
-    /// El canal de los assets de la pagina.
+    /// Las concesiones activas de los assets de la pagina.
     ///
-    /// La pregunta es por pares (repositorio, ruta), y cada par es una
-    /// busqueda exacta en el indice. La forma con un `IN` sobre un array
-    /// seria mas corta, pero el motor devuelve a veces cero filas con esa
-    /// forma, y un canal que no se lee es un canal que no se sabe.
-    async fn the_channels(
+    /// La pregunta es por trios (repositorio, algoritmo, digest), y cada
+    /// trio es una busqueda exacta en el indice
+    /// `(account, repository, digest_algorithm, digest)`. La forma con un
+    /// `IN` sobre un array seria mas corta, pero el motor devuelve a
+    /// veces cero filas con esa forma, y una concesion que no se lee es
+    /// una confianza que no se sabe.
+    ///
+    /// Solo se cuentan las concesiones **vigentes**: una revocada esta
+    /// revocada, y el estado que se lee es el de ahora.
+    async fn the_grants(
         &self,
         principal_account: &str,
         rows: &[AssetRow],
-    ) -> Result<HashMap<(String, String), TrustState>, CatalogError> {
+    ) -> Result<HashSet<(String, String, String)>, CatalogError> {
         if rows.is_empty() {
-            return Ok(HashMap::new());
+            return Ok(HashSet::new());
         }
         let mut conditions = vec!["account = $account".to_string()];
         let mut bindings = Map::new();
         bindings.insert("account".to_string(), json!(principal_account));
         for (index, row) in rows.iter().enumerate() {
             conditions.push(format!(
-                "(repository = $channel_repository_{index} AND asset_path = $channel_path_{index})"
+                "(repository = $grant_repository_{index} AND digest_algorithm = $grant_algorithm_{index} \
+                 AND digest = $grant_digest_{index})"
             ));
-            bindings.insert(format!("channel_repository_{index}"), json!(row.repository));
-            bindings.insert(format!("channel_path_{index}"), json!(row.asset_path));
+            bindings.insert(format!("grant_repository_{index}"), json!(row.repository));
+            bindings.insert(
+                format!("grant_algorithm_{index}"),
+                json!(row.digest_algorithm),
+            );
+            bindings.insert(format!("grant_digest_{index}"), json!(row.digest));
         }
         let sql = format!(
-            "SELECT repository, asset_path, trust_state FROM catalog_reference WHERE {}",
+            "SELECT repository, digest_algorithm, digest FROM trust_grant \
+             WHERE {} AND revoked_at = NONE",
             conditions.join(" AND ")
         );
         let mut response = self
@@ -275,15 +299,12 @@ impl SurrealCatalogStore {
             .bind(bindings)
             .await
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        let rows: Vec<ChannelRow> = response
+        let rows: Vec<GrantRow> = response
             .take(0)
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
         Ok(rows
             .into_iter()
-            .map(|row| {
-                let state = TrustState::of(&row.trust_state);
-                ((row.repository, row.asset_path), state)
-            })
+            .map(|row| (row.repository, row.digest_algorithm, row.digest))
             .collect())
     }
 }

@@ -343,7 +343,12 @@ pub struct SearchHit {
     pub digest: ContentDigest,
     /// Los bytes que tiene el contenido.
     pub size_bytes: u64,
-    /// El canal en el que vive el contenido en este repositorio.
+    /// El estado de confianza del contenido en este repositorio.
+    ///
+    /// Lo decide la **concesion**: lo que tiene una concesion vigente es
+    /// de fiar, y lo que no la tiene esta en cuarentena. No se deduce de
+    /// la ausencia de hallazgos: un contenido del que nadie ha escrito
+    /// nada no es de fiar, es desconocido.
     pub trust_state: TrustState,
     /// Cuando se movio por ultima vez.
     pub updated_at: DateTime<Utc>,

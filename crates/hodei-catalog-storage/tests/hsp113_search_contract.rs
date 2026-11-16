@@ -16,7 +16,7 @@ use hodei_catalog::search::{RepositoryAttribute, SearchQuery};
 use hodei_catalog::{
     AllowAllAuthorizer, CatalogError, CatalogSearch, CatalogWriter, DigestScope,
     PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor, RepositoryFormat,
-    RepositoryMode, TrustState, repository_hrn,
+    RepositoryMode, TrustGrant, TrustLedger, TrustState, repository_hrn,
 };
 use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_evidence::ContentDigest;
@@ -536,6 +536,62 @@ async fn the_search_reads_the_channel_of_the_asset() {
             .all(|hit| hit.trust_state == TrustState::Quarantined),
         "what nobody promoted is quarantined"
     );
+}
+
+#[tokio::test]
+async fn la_concesion_marca_el_contenido_y_la_revocacion_lo_quita() {
+    let (_tmp, store) = a_catalog().await;
+    let repositories = store.repositories("acme").await.expect("the repositories");
+    let digest = ContentDigest::of_bytes(b"labpkg-1.0-py3-none-any.whl");
+    let query = SearchQuery::new().with_digest(digest.clone());
+
+    // Sin concesion, el contenido esta en cuarentena: no es que nadie lo
+    // haya mirado y no le haya pasado, es que nadie lo ha concedido.
+    let page = store
+        .search("acme", &repositories, &query)
+        .await
+        .expect("the search");
+    assert_eq!(page.results[0].trust_state, TrustState::Quarantined);
+
+    // Concedido, el mismo contenido es de fiar.
+    store
+        .grant(&[TrustGrant {
+            account: "acme".to_string(),
+            repository: "libs".to_string(),
+            digest: digest.clone(),
+            decision_id: "dec-hsp113".to_string(),
+            actor: "hrn:hodei:iam:acme:User/alice".to_string(),
+            granted_at: chrono::Utc::now(),
+            revoked_at: None,
+            revoked_by: None,
+            revoke_reason: None,
+        }])
+        .await
+        .expect("the grant");
+    let page = store
+        .search("acme", &repositories, &query)
+        .await
+        .expect("the search");
+    assert_eq!(page.results[0].trust_state, TrustState::Trusted);
+
+    // Y revocado, vuelve a la cuarentena en la peticion siguiente: no hay
+    // indice que reescribir.
+    store
+        .revoke_digest(
+            "acme",
+            "libs",
+            &digest,
+            "hrn:hodei:iam:acme:User/alice",
+            "an operator withdrew it",
+            chrono::Utc::now(),
+        )
+        .await
+        .expect("the revocation");
+    let page = store
+        .search("acme", &repositories, &query)
+        .await
+        .expect("the search");
+    assert_eq!(page.results[0].trust_state, TrustState::Quarantined);
 }
 
 #[tokio::test]
