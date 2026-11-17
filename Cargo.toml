@@ -30,6 +30,7 @@ members = [
     "crates/hodei-simulation",
     "crates/hodei-simulation-storage",
     "crates/hodei-counterfactual",
+    "crates/hodei-hub-s3",
     "crates/hodei-spike-ladybug",
     ".",
 ]
