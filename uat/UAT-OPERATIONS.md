@@ -706,4 +706,6 @@ de desarrollo, y necesita el binario construido (`cargo build --bin
 hodei-artifacts-api`) y el navegador (`npx playwright install chromium`).
 El tipo se comprueba sobre el programa completo del frontend
 (`tsconfig.app.json`), que incluye los ficheros de prueba: el type-check
-que deja fuera a los tests es un type-check que no comprueba.
+que deja fuera a los tests es un type-check que no comprueba. La
+configuración del tooling (`vite`, `vitest` y `playwright`) se comprueba
+también, en su propio programa (`tsconfig.node.json`).

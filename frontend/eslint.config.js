@@ -48,12 +48,14 @@ export default tseslint.config([
       },
     },
   },
-  // New configuration for test files
+  // The test files live in the application program: they are checked
+  // with the rest of the frontend, and the project they belong to is
+  // the one that includes them.
   {
-    files: ['**/*.{test,spec}.{ts,tsx}', 'src/__tests__/**/*.ts'], // Target test files
+    files: ['**/*.{test,spec}.{ts,tsx}'], // Target test files
     languageOptions: {
       parserOptions: {
-        project: './tsconfig.vitest.json', // Use the new tsconfig for test files
+        project: './tsconfig.app.json', // The program that includes the test files
         tsconfigRootDir: import.meta.dirname,
       },
     },

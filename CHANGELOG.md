@@ -245,11 +245,13 @@ Cambios que todavia no estan en una release. El formato sigue
 
 - El **type-check del frontend comprueba el frontend entero**. El programa
   de la consola (`frontend/tsconfig.console.json`) se queda corto: 121
-  errores de tipos en 63 ficheros vivían fuera de él, y nadie los veía.
-  Ahora `npm run type-check` mira el programa completo
-  (`frontend/tsconfig.app.json`), **los ficheros de prueba incluidos**, y no
-  informa de ningún error. El programa de la consola, que ya no hacía falta,
-  se retira.
+  errores de tipos en 57 ficheros vivían fuera de él, y los ficheros de
+  prueba —con 17 errores más— no estaban en ningún programa: 138 errores en
+  60 ficheros que nadie veía. Ahora `npm run type-check` mira el programa
+  completo (`frontend/tsconfig.app.json`), **los ficheros de prueba
+  incluidos**, y no informa de ningún error. El programa de la consola, que
+  ya no hacía falta, se retira, y la configuración del tooling (`vite`,
+  `vitest` y `playwright`) entra también en el type-check.
 - Los errores que había no eran solo unused: `zod` se importaba sin estar
   declarado en `package.json`, y el fichero que lo importa no se podía
   ni siquiera cargar. `zod` está declarado y bloqueado.
@@ -303,7 +305,7 @@ Cambios que todavia no estan en una release. El formato sigue
   y la etapa de frontend de la CI lo ejecuta. El `build` también: antes
   `tsc -b` recorría el árbol entero y ahora comprueba el programa de la
   consola, porque el frontend heredado tiene errores de tipos que nadie ha
-  corregido desde que dejó de comprobarse —121 errores en 63 ficheros, que
+  corregido desde que dejó de comprobarse —121 errores en 57 ficheros, que
   hacen que `tsc -b` no pase—. Corregirlos todos de golpe es un trabajo
   aparte (HSP-133), y mientras tanto el `build` vuelve a poder hacerse.
 - El **`build` del frontend no compilaba**: un fichero muerto con JSX en un

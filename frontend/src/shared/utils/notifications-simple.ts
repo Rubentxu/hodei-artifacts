@@ -10,14 +10,14 @@ export const toast = {
     // También podemos usar alert para demostraciones visuales
     if (typeof window !== 'undefined') {
       // No usar alert en producción, solo para demo
-      setTimeout(() => alert(`✅ Success: ${message}`), 100);
+      setTimeout(() => window.alert?.(`✅ Success: ${message}`), 100);
     }
   },
 
   error: (message: string) => {
     console.error(`❌ ERROR: ${message}`);
     if (typeof window !== 'undefined') {
-      setTimeout(() => alert(`❌ Error: ${message}`), 100);
+      setTimeout(() => window.alert?.(`❌ Error: ${message}`), 100);
     }
   },
 
