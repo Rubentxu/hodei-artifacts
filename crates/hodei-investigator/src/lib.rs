@@ -71,6 +71,7 @@
 pub mod claim;
 pub mod corpus;
 pub mod deterministic;
+pub mod freshness;
 pub mod guard;
 pub mod investigator;
 pub mod model;
@@ -80,6 +81,9 @@ pub mod report;
 pub mod scope;
 
 pub use claim::{AIClaim, ClaimError, ClaimKind, InvestigationTrace};
+pub use freshness::{
+    ChangeKind, ChangedReference, CurrentWorld, EVIDENCE_SOURCE, Freshness, GRAPH_SOURCE, judge,
+};
 pub use guard::{
     ActionKind, ActionState, CapabilityGuard, GuardError, ProposedAction, TracedAction,
 };
