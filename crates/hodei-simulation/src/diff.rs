@@ -139,6 +139,17 @@ impl SimulationDiff {
     pub fn is_empty(&self) -> bool {
         self.structural.is_empty() && self.decisions.iter().all(|change| !change.is_a_change())
     }
+
+    /// La forma canonica del diff: lo que se compara entre dos
+    /// simulaciones del mismo mundo.
+    ///
+    /// El diff trae el manifiesto de lecturas, y ese manifiesto lleva el
+    /// orden en que se leyo. Dos simulaciones del mismo mundo leen en
+    /// orden distinto y por eso sus manifiestos son iguales pero no
+    /// identicos: la forma canonica es la que se compara.
+    pub fn canonical(&self) -> crate::compare::CanonicalDiff {
+        crate::compare::canonical(self)
+    }
 }
 
 /// La decision de un sujeto, con la politica que la produjo.

@@ -1205,6 +1205,25 @@ de prueba tiene que estar en exactamente una suite, ninguna suite puede
 nombrar un target que no existe, y el inventario de lo descubierto se
 imprime en el log del job.
 
+### La puerta del dia a dia
+
+La pipeline de `pipeline.kts` es la **puerta de la entrega**: ocho etapas
+sobre el workspace entero. Es la puerta que dice si el repositorio entero
+esta bien, y por eso no se abre cada diez minutos: abrirla cuesta mas que
+escribir el cambio que la abria.
+
+`scripts/test-affected.sh` es la **puerta del dia a dia**: mira lo que ha
+cambiado contra la rama base, deduce los paquetes afectados --y los que
+dependen de ellos, porque un cambio en el nucleo arrastra a quien esta
+encima-- y corre **solo** el formato, los avisos y las pruebas de esos
+paquetes. El formato se pide **por paquete** y no por el workspace entero:
+`cargo fmt --all` recorre todos los archivos del repositorio, y el de un
+crate son unos segundos.
+
+Las dos puertas no se contradicen: la del dia a dia no sustituye a la de la
+entrega, la adelanta. La de la entrega sigue siendo la que dice si el
+repositorio entero esta bien.
+
 ## 14. Lo que este documento no dice
 
 No dice qué viene después en detalle: eso está en el roadmap v3 y en el
@@ -2315,3 +2334,66 @@ pregunta, y lo que se le dice es si lo que dice sigue en pie.
 El aislamiento de tenant no es un detalle: el registro se pregunta por la
 cuenta que se comprueba, y un sujeto de otra cuenta no se consulta —se
 dice que no se sabe, en vez de consultar lo que no es suyo—.
+
+## 10-trigesima — M7: el resultado versionado de una simulación
+
+La simulación entregaba un **diff**: qué relaciones aparecen, qué relaciones
+desaparecen y qué decisiones cambian. El diff es el interior de la respuesta;
+el **resultado** es el contrato de fuera: lo que recibe un consumidor —una
+consola, un informe, un segundo servicio— y por eso está **versionado**
+(`SIMULATION_RESULT_VERSION`, hoy `1.0.0`).
+
+### Las tres separaciones
+
+El contrato separa tres cosas que se confunden muy fácil:
+
+- **Lo observado** (`observed`): el estado real tal como se leyó —las
+  relaciones que estaban, la política que estaba en vigor y la evidencia que
+  se consumió para decidir.
+- **Lo hipotético** (`hypotheses`): los escenarios que se superponen. Van
+  marcados como hipotéticos y **no se publican como hechos del grafo**: una
+  hipótesis que se confunde con un hecho es una mentira con formato de dato.
+- **Lo que no se ha cubierto** (`coverage` y `conflicts`): un resultado que no
+  dice lo que no ha mirado parece completo.
+
+### El contrato viaja sin objetos de política
+
+La política **completa** no viaja: es un objeto grande y con forma de
+política, y un contrato que lo lleva deja de ser portable. Lo que viaja es su
+**sello** —identificador y versión— que es lo que hace falta para saber qué
+reglas se aplicaron. Los helpers de comparación y normalización
+(`crates/hodei-simulation/src/compare.rs`) trabajan con sellos y **jamás** con
+objetos de política, y son **puros**: ordenan, deduplican y declaran
+contradicciones sin leer, sin escribir y sin decidir.
+
+### Los conflictos se declaran
+
+Un **ciclo** que el overlay cierra, una **relación que se dice dos veces** y
+dos hipótesis **que se contradicen** no son fallos: son hechos del escenario,
+y se declaran en vez de esconderse. Un overlay que cierra un ciclo y se
+presenta como un overlay normal es un overlay que nadie puede leer. Y solo se
+declaran los que la hipótesis **introduce**: un ciclo que ya estaba en el
+mundo real no es culpa de la simulación.
+
+La base obsoleta es la excepción: no es un conflicto del resultado, es un
+**error tipado** (`SimulationError::StaleBase`). Un diff calculado sobre un
+mundo que nadie tiene no dice la verdad, y se dice antes de devolverlo.
+
+### La conformidad es portable
+
+La suite de conformidad vive en el **dominio**
+(`crates/hodei-simulation/src/conformance.rs`) y no en el almacén: por eso
+corre contra un fixture **en memoria** y contra el grafo real de **SurrealDB**
+con los mismos cinco escenarios —el orden de las lecturas, el ciclo, el
+duplicado, la adición con su eliminación y la base obsoleta—. El fixture es el
+mismo para los dos, y por eso los dos informes son comparables: si el
+adaptador de SurrealDB dijera otra cosa que el de memoria, el fallo es del
+adaptador y no del escenario.
+
+### Lo que NO hay
+
+No hay promoción automática, ni fork materializado, ni DSL de consulta, ni un
+repositorio nuevo. La simulación sigue siendo una **superposición** (SPIKE-008)
+y su resultado sigue sin escribir en el ledger, en el grafo autoritativo ni en
+las decisiones de promoción: el puerto del grafo no tiene método de escritura
+y la UAT de M7 sigue comprobándolo.

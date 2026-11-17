@@ -16,6 +16,14 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Changed
 
+- La **puerta del día a día** (`scripts/test-affected.sh`): mira lo que ha
+  cambiado contra la rama base, deduce los paquetes afectados —y los que
+  dependen de ellos, porque un cambio en el núcleo arrastra a quien está
+  encima— y corre **solo** el formato, los avisos y las pruebas de esos
+  paquetes. El formato se pide **por paquete**: `cargo fmt --all` recorre
+  todos los archivos del repositorio y el de un crate son unos segundos. La
+  pipeline de `pipeline.kts` sigue siendo la **puerta de la entrega**: esta
+  no la sustituye, la adelanta.
 - La **búsqueda del catálogo** y la **vista de detalle de un paquete** piden
   la acción `DownloadAsset` y no `ReadRepository`: un listado dice qué hay
   dentro, y es el mismo permiso que piden los otros listados del servicio
@@ -43,6 +51,21 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- El **resultado versionado de una simulación** (`SimulationResult`, versión
+  `1.0.0`): el contrato de *fuera* de la simulación. Separa **lo observado**
+  de **lo hipotético** —una hipótesis no se publica como hecho del grafo—,
+  dice **qué políticas y qué versiones** intervinieron (con su sello, sin
+  arrastrar el objeto de la política: un contrato que lleva la política
+  entera deja de ser portable), declara **la cobertura** de lo que se ha
+  mirado y de lo que no, y declara los **conflictos** del escenario: el ciclo
+  que el overlay cierra, la relación que se dice dos veces y las hipótesis que
+  se contradicen. Los helpers de comparación y normalización son **puros** y
+  trabajan sin objetos de política. La **conformidad es portable**: la misma
+  suite de cinco escenarios corre contra un fixture **en memoria** y contra el
+  grafo real de **SurrealDB**, con el mismo fixture para los dos. No hay
+  promoción automática, ni fork materializado, ni DSL de consulta, ni un
+  repositorio nuevo, y la simulación sigue sin escribir en el ledger, en el
+  grafo autoritativo ni en las decisiones de promoción.
 - La **frescura de un informe entregado**
   (`POST /api/v1/investigations/freshness`): una comprobación **bajo
   demanda** de si un informe de investigación sigue apoyándose en el mundo.
