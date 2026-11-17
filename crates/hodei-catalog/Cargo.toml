@@ -18,3 +18,5 @@ url = { workspace = true }
 # El nuspec viaja comprimido dentro del nupkg: aqui si hacen falta los
 # codecs, a diferencia de los fixtures stored del workspace.
 zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
+flate2 = "1.1.11"
+sha2 = { workspace = true }
