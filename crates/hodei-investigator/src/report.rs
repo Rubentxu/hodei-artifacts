@@ -160,16 +160,28 @@ pub fn verify_statement(
 fn the_asserted_relations(statement: &str) -> Vec<(String, String, String)> {
     let hrns = the_hrn_substrings(statement);
     let lowered = statement.to_lowercase();
+    // Las dos escrituras de cada relacion: la que escribe el **grafo**
+    // (`depends_on`) y la que escribe un **modelo** (`depends on`). Las dos
+    // son la misma relacion, y el manifiesto guarda la identidad con la
+    // primera: sin las dos, una relacion que el mundo tiene de verdad
+    // --"deployed_as", "affected_by"-- salia como no comprobada, que es
+    // una manera de mentir por omision.
     let words = [
         ("depends on", "depends_on"),
         ("depends", "depends_on"),
+        ("depends_on", "depends_on"),
         ("contains", "contains"),
         ("affected by", "affected_by"),
+        ("affected_by", "affected_by"),
         ("deployed as", "deployed_as"),
+        ("deployed_as", "deployed_as"),
     ];
 
     let mut asserted = Vec::new();
-    for word_index in 0..lowered.len() {
+    // Los limites de palabra, no los de byte: un enunciado puede traer
+    // acentos --lo escribe un modelo-- y un corte a mitad de un caracter
+    // es un panic, no una relacion.
+    for (word_index, _) in lowered.char_indices() {
         for (phrase, relation) in words {
             if lowered[word_index..].starts_with(phrase) {
                 // Los dos HRNs que rodean la palabra, en el orden en que
@@ -179,7 +191,12 @@ fn the_asserted_relations(statement: &str) -> Vec<(String, String, String)> {
                 let from = the_last_hrn_before(before, &hrns);
                 let to = the_first_hrn_after(after, &hrns);
                 if let (Some(from), Some(to)) = (from, to) {
-                    asserted.push((relation.to_string(), from, to));
+                    let asserted_relation = (relation.to_string(), from, to);
+                    // La misma relacion contada dos veces --"depends" y
+                    // "depends_on" se parecen-- es UNA relacion.
+                    if !asserted.contains(&asserted_relation) {
+                        asserted.push(asserted_relation);
+                    }
                 }
             }
         }

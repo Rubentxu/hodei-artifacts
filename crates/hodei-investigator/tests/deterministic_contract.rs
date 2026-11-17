@@ -25,7 +25,7 @@ use hodei_evidence::domain::graph::NodeKind;
 use hodei_investigator::guard::CapabilityGuard;
 use hodei_investigator::investigator::{EvidenceRetriever, InvestigationError, Investigator};
 use hodei_investigator::model::FixtureProvider;
-use hodei_investigator::report::{FindingKind, VerificationStatus};
+use hodei_investigator::report::{FindingKind, VerificationStatus, verify_statement};
 use hodei_investigator::scope::{
     Coverage, FactStatus, RetrievalError, RetrievalScope, RetrievedContext, ScopedFact, TrustLevel,
 };
@@ -115,6 +115,17 @@ impl TheRetriever {
             calls: std::sync::atomic::AtomicUsize::new(0),
         })
     }
+
+    /// Un mundo con el manifiesto que se le dice: lo que el mundo tiene es
+    /// lo que se prueba.
+    fn with_read_set(facts: Vec<ScopedFact>, read_set: ReadSet) -> Arc<Self> {
+        Arc::new(Self {
+            facts,
+            coverage: Coverage::Complete,
+            read_set,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
 }
 
 #[async_trait]
@@ -179,6 +190,72 @@ async fn a_computed_relation_is_a_verified_fact() {
         "el enunciado dice la relacion: {}",
         facts[0].statement
     );
+}
+
+/// La relacion que el GRAFO escribe con su nombre canonico --"deployed_as"--
+/// es un hecho verificado tambien: el verificador reconoce las dos
+/// escrituras de cada relacion, la del grafo y la que escribe un modelo.
+/// Sin las dos, una relacion que el mundo tiene de verdad salia como no
+/// comprobada, que es mentir por omision.
+#[tokio::test]
+async fn a_canonical_relation_spelling_is_a_verified_fact() {
+    let mut read_set = ReadSet::empty();
+    read_set.read(ReadStamp::relation(
+        format!("deployed_as|{}|{}", subject(), library()),
+        "ev-relation-1",
+    ));
+    read_set.read(ReadStamp::evidence("ev-relation-1", "sha256:aaa"));
+
+    let deployment = ScopedFact {
+        evidence_id: "ev-relation-1".to_string(),
+        text: format!("{} deployed_as {}", subject(), library()),
+        path: vec![subject(), library()],
+        kind: NodeKind::Artifact,
+        trust: TrustLevel::Untrusted,
+        status: FactStatus::Loaded,
+    };
+
+    let investigator = the_investigator(TheRetriever::with_read_set(vec![deployment], read_set));
+    let investigation = investigator
+        .investigate_without_a_model("inv-1", &the_scope(), "why are we affected?", Utc::now())
+        .await
+        .expect("la investigacion se hace");
+
+    let facts: Vec<_> = investigation
+        .report
+        .findings
+        .iter()
+        .filter(|finding| finding.kind == FindingKind::VerifiedFact)
+        .collect();
+    assert_eq!(
+        facts.len(),
+        1,
+        "un hecho verificado: {:?}",
+        investigation.report.findings
+    );
+    assert_eq!(facts[0].status, VerificationStatus::Verified);
+    assert!(
+        facts[0].statement.contains("deployed_as"),
+        "el enunciado dice la relacion: {}",
+        facts[0].statement
+    );
+}
+
+/// Un enunciado con acentos no rompe el verificador: el corte es por
+/// caracter, no por byte. Un enunciado lo escribe un modelo, y un modelo
+/// escribe con acentos.
+#[test]
+fn a_statement_with_accents_does_not_break_the_verifier() {
+    let mut read_set = ReadSet::empty();
+    read_set.read(ReadStamp::relation(
+        format!("affected_by|{}|{}", subject(), library()),
+        "ev-relation-1",
+    ));
+    read_set.read(ReadStamp::evidence("ev-relation-1", "sha256:aaa"));
+
+    let statement = format!("¿está {} affected_by {}?", subject(), library());
+    let status = verify_statement(&statement, &["ev-relation-1".to_string()], &read_set);
+    assert_eq!(status, VerificationStatus::Verified);
 }
 
 /// El texto de la evidencia NO se publica: lo escribio un tercero y aqui
