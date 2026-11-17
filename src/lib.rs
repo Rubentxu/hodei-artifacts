@@ -32,6 +32,7 @@ pub mod iam_backfill;
 pub mod investigation;
 pub mod oci;
 pub mod openapi;
+pub mod openpgp;
 pub mod proxy;
 pub mod raw;
 pub mod recovery;

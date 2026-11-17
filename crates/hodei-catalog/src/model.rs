@@ -114,9 +114,11 @@ impl RepositoryFormat {
     /// one and the proxy one —their protocol documents were verified
     /// byte for byte— and neither assembles a group yet.
     ///
-    /// The formats that are declared but not served yet —helm, apt and
-    /// rpm— have no modality at all: a repository of one of them can be
-    /// declared, and it waits for its turn.
+    /// The formats that are declared but not served yet —helm— have no
+    /// modality at all: a repository of one of them can be declared, and
+    /// it waits for its turn. Apt and rpm serve the hosted one: the
+    /// distro clients install from what this hub publishes, and the proxy
+    /// of a distro mirror is another protocol with another surface.
     pub fn serves_modes(&self) -> &'static [RepositoryMode] {
         match self {
             RepositoryFormat::Raw
@@ -128,10 +130,11 @@ impl RepositoryFormat {
                 RepositoryMode::Group,
             ],
             RepositoryFormat::Oci | RepositoryFormat::Cargo => &[RepositoryMode::Hosted],
+            RepositoryFormat::Apt | RepositoryFormat::Rpm => &[RepositoryMode::Hosted],
             RepositoryFormat::NuGet | RepositoryFormat::Go => {
                 &[RepositoryMode::Hosted, RepositoryMode::Proxy]
             }
-            RepositoryFormat::Helm | RepositoryFormat::Apt | RepositoryFormat::Rpm => &[],
+            RepositoryFormat::Helm => &[],
         }
     }
 
@@ -160,6 +163,8 @@ impl RepositoryFormat {
             RepositoryFormat::Cargo,
             RepositoryFormat::Go,
             RepositoryFormat::NuGet,
+            RepositoryFormat::Apt,
+            RepositoryFormat::Rpm,
         ]
     }
 }

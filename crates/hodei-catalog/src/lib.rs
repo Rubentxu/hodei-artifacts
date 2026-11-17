@@ -44,6 +44,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod apt;
 pub mod cargo;
 pub mod error;
 pub mod gc;
@@ -59,6 +60,7 @@ pub mod proxy_cache;
 pub mod pypi;
 pub mod search;
 pub mod trust;
+pub mod yum;
 
 pub use error::CatalogError;
 pub use gc::{

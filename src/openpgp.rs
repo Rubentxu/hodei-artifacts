@@ -1,0 +1,287 @@
+//! Lo minimo de OpenPGP que necesita la firma de metadata de sistemas:
+//! una clave Ed25519, su publicacion como anillo que `gpgv` acepta, y
+//! firmas separadas en texto blindado sobre el `Release` de APT o el `repomd.xml`
+//! de yum.
+//!
+//! No es una implementacion propia del formato: el trazado de paquetes
+//! y la firma las hace el crate `pgp`, y `gpgv` es el oraculo en las
+//! pruebas. Eso es deliberado: un trazado casero de OpenPGP que `gpg`
+//! no valide es exactamente el fallo que la AC quiere evitar, y apt no
+//! negocia: firma mal formada es "el repositorio no existe".
+//!
+//! La clave se genera una vez por proceso y viaja en la memoria como
+//! `MetadataSigner`; el material privado puede serializarse en blindado
+//! y volver a cargarse, que es como un operador persiste la identidad
+//! entre reinicios.
+
+use pgp::composed::{
+    Deserializable, DetachedSignature, KeyType, SecretKeyParamsBuilder, SignedPublicKey,
+    SignedSecretKey,
+};
+use pgp::crypto::hash::HashAlgorithm;
+use pgp::ser::Serialize;
+use pgp::types::{KeyDetails, Password};
+use rand::thread_rng;
+
+/// Los fallos del firmante: construir o cargar la clave, y firmar. La
+/// firma no puede fallar con una clave ya cargada, pero el formato lo
+/// dice con su tipo y aqui se traduce a algo propio.
+#[derive(Debug, thiserror::Error)]
+pub enum OpenPgpError {
+    #[error("the key could not be built: {0}")]
+    Key(String),
+    #[error("the armored key is not a readable OpenPGP secret key")]
+    NotASecretKey,
+    #[error("the signature could not be computed: {0}")]
+    Signing(String),
+}
+
+/// La clave con la que el hub firma la metadata de los repositorios de
+/// sistema, mas su certificate publico. El `uid` es lo que las
+/// herramientas de la distro muestran como firmante.
+#[derive(Debug, Clone)]
+pub struct MetadataSigner {
+    secret: SignedSecretKey,
+    public: SignedPublicKey,
+}
+
+impl MetadataSigner {
+    /// Genera una clave Ed25519 nueva con la identidad dada. La firma
+    /// primaria es de la propia clave (sin subclaves): apt y rpm solo
+    /// necesitan encontrar la clave de la huella en el anillo.
+    pub fn generate(uid: &str) -> Result<Self, OpenPgpError> {
+        let mut params = SecretKeyParamsBuilder::default();
+        params
+            .key_type(KeyType::Ed25519Legacy)
+            .can_certify(true)
+            .can_sign(true)
+            .primary_user_id(uid.into());
+        let secret = params
+            .build()
+            .map_err(|error| OpenPgpError::Key(error.to_string()))?
+            .generate(thread_rng())
+            .map_err(|error| OpenPgpError::Key(error.to_string()))?;
+        let secret = secret
+            .sign(&mut thread_rng(), &Password::from(""))
+            .map_err(|error| OpenPgpError::Key(error.to_string()))?;
+        let public = SignedPublicKey::from(secret.clone());
+        Ok(Self { secret, public })
+    }
+
+    /// Recupera el firmante desde el texto blindado de una clave
+    /// privada exportada con `to_armor`. Es la via de persistencia:
+    /// el operador guarda el archivo y el hub vuelve a firmar con la
+    /// misma identidad en cada arranque.
+    pub fn from_armor(armored: &str) -> Result<Self, OpenPgpError> {
+        let (secret, _) = SignedSecretKey::from_armor_single(std::io::Cursor::new(armored))
+            .map_err(|_| OpenPgpError::NotASecretKey)?;
+        let public = SignedPublicKey::from(secret.clone());
+        Ok(Self { secret, public })
+    }
+
+    /// La clave privada en texto blindado, para persistirla.
+    pub fn to_armor(&self) -> Result<String, OpenPgpError> {
+        self.secret
+            .to_armored_string(pgp::composed::ArmorOptions::default())
+            .map_err(|error| OpenPgpError::Key(error.to_string()))
+    }
+
+    /// El anillo de claves publico en binario: es lo que `gpgv
+    /// --keyring` lee, y lo que apt espera en `TrustedPart` cuando se
+    /// exporta en claro; para el archivo `.asc` que se instala en
+    /// `signed-by` usa `key_asc`.
+    pub fn keyring(&self) -> Result<Vec<u8>, OpenPgpError> {
+        self.public
+            .to_bytes()
+            .map_err(|error| OpenPgpError::Key(error.to_string()))
+    }
+
+    /// La clave publica en texto blindado: el `key.asc` que el
+    /// administrador de la distro referencia con `signed-by`.
+    pub fn key_asc(&self) -> Result<String, OpenPgpError> {
+        self.public
+            .to_armored_string(pgp::composed::ArmorOptions::default())
+            .map_err(|error| OpenPgpError::Key(error.to_string()))
+    }
+
+    /// La huella en hexadecimal mayusculo, tal y como la imprimen `gpg
+    /// --list-keys` y `dnf`; sirve para los log de auditoria y para
+    /// que el documente qué clave hay que esperar en el anillo.
+    pub fn fingerprint_hex(&self) -> String {
+        self.public.fingerprint().to_string().to_uppercase()
+    }
+
+    /// La firma separada en texto blindado (tipo `Binary`, SHA-256)
+    /// sobre los bytes exactos de la metadata: `Release.gpg` y
+    /// `repomd.xml.asc` son exactamente esto sobre el cuerpo que se
+    /// sirve en la misma peticion. El armor no es un adorno: apt
+    /// concatena firma y mensaje para gpgv, y solo el formato blindado
+    /// se reconoce ahi como firma separada.
+    pub fn sign_detached(&self, data: &[u8]) -> Result<Vec<u8>, OpenPgpError> {
+        let signature = DetachedSignature::sign_binary_data(
+            thread_rng(),
+            &self.secret.primary_key,
+            &Password::from(""),
+            HashAlgorithm::Sha256,
+            std::io::Cursor::new(data.to_vec()),
+        )
+        .map_err(|error| OpenPgpError::Signing(error.to_string()))?;
+        signature
+            .to_armored_string(pgp::composed::ArmorOptions::default())
+            .map(String::into_bytes)
+            .map_err(|error| OpenPgpError::Signing(error.to_string()))
+    }
+}
+
+/// El firmante con el que arranca el proceso. Si el operador deja la
+/// clave en `HODEI_METADATA_SIGNER_ARMOR` (el texto blindado que
+/// devuelve `to_armor`), esa es la identidad del hub; si no, se genera
+/// una efimera: cada arranque firma con una clave nueva, y el cliente
+/// tiene que leer la que se sirve en `key.asc`, que es como funciona
+/// en una prueba y como funciona en un hub de un solo nodo.
+pub fn bootstrap_signer() -> MetadataSigner {
+    if let Ok(armor) = std::env::var("HODEI_METADATA_SIGNER_ARMOR") {
+        return MetadataSigner::from_armor(&armor)
+            .expect("HODEI_METADATA_SIGNER_ARMOR must hold an armored OpenPGP secret key");
+    }
+    MetadataSigner::generate("Hodei Security Platform <metadata@hodei.local>")
+        .expect("an Ed25519 signing key can always be generated")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RELEASE: &[u8] = b"Origin: Hodei\nSuite: stable\nCodename: hodei\nDate: Tue, 17 Nov 2026 18:00:00 UTC\nArchitectures: amd64 arm64\nComponents: main\n";
+
+    fn parse_detached(signature: &[u8]) -> DetachedSignature {
+        let (detached, _) = DetachedSignature::from_armor_single(std::io::Cursor::new(signature))
+            .expect("a standalone armored signature");
+        detached
+    }
+
+    #[test]
+    fn a_generated_key_signs_and_the_crate_verifies() {
+        let signer = MetadataSigner::generate("Hodei <hodei@example.local>").expect("a key");
+        let signature = signer.sign_detached(RELEASE).expect("a signature");
+        let detached = parse_detached(&signature);
+        detached
+            .verify(&signer.public, RELEASE)
+            .expect("the signature opens with the public key");
+    }
+
+    #[test]
+    fn the_signer_survives_the_armor_round_trip() {
+        let signer = MetadataSigner::generate("Hodei <hodei@example.local>").expect("a key");
+        let armor = signer.to_armor().expect("armored secret");
+        let loaded = MetadataSigner::from_armor(&armor).expect("the same key loads");
+        assert_eq!(signer.fingerprint_hex(), loaded.fingerprint_hex());
+        let signature = loaded.sign_detached(RELEASE).expect("it still signs");
+        let detached = parse_detached(&signature);
+        detached
+            .verify(&signer.public, RELEASE)
+            .expect("the original key opens what the reloaded one signed");
+    }
+
+    #[test]
+    fn a_signature_over_other_bytes_does_not_open() {
+        let signer = MetadataSigner::generate("Hodei <hodei@example.local>").expect("a key");
+        let signature = signer.sign_detached(RELEASE).expect("a signature");
+        let detached = parse_detached(&signature);
+        assert!(
+            detached
+                .verify(&signer.public, b"Origin: Nobody\n")
+                .is_err()
+        );
+    }
+
+    /// El oraculo de verdad: `gpgv`, el mismo verificador que apt
+    /// invoca por detras, valida la firma contra el anillo que
+    /// servimos. Sin `gpgv` en la maquina, la prueba se omite.
+    #[test]
+    fn gpgv_opens_what_we_sign() {
+        if which("gpgv").is_none() {
+            eprintln!("skipping: gpgv is not installed");
+            return;
+        }
+        let signer = MetadataSigner::generate("Hodei <hodei@example.local>").expect("a key");
+        let dir = std::env::temp_dir().join(format!("hodei-gpgv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let keyring = dir.join("key.bin");
+        let message = dir.join("Release");
+        let signature = dir.join("Release.gpg");
+        std::fs::write(&keyring, signer.keyring().expect("a keyring")).expect("write keyring");
+        std::fs::write(&message, RELEASE).expect("write release");
+        std::fs::write(
+            &signature,
+            signer.sign_detached(RELEASE).expect("a signature"),
+        )
+        .expect("write signature");
+        let output = std::process::Command::new("gpgv")
+            .arg("--keyring")
+            .arg(&keyring)
+            .arg(&signature)
+            .arg(&message)
+            // El mensaje de exito esta localizado; se fija el idioma para
+            // poder comprobar que gpgv dijo literalmente buena firma.
+            .env("LC_ALL", "C")
+            .output()
+            .expect("gpgv runs");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stderr.contains("Good signature"),
+            "gpgv said: {stderr}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// El formato del alambre para `Release.gpg` es la firma separada
+    /// en texto blindado: `apt-key verify` (el envoltorio que apt
+    /// invoca) solo la acepta asi, y el armor es lo que la hace
+    /// inspeccionable a ojo en el repositorio.
+    #[test]
+    fn the_detached_signature_is_armored_the_way_apt_expects() {
+        let signer = MetadataSigner::generate("Hodei <hodei@example.local>").expect("a key");
+        let signature = signer.sign_detached(RELEASE).expect("a signature");
+        let text = String::from_utf8(signature.clone()).expect("armor is ascii");
+        assert!(
+            text.starts_with("-----BEGIN PGP SIGNATURE-----"),
+            "apt hands the file to apt-key verify, which requires armor"
+        );
+        if which("gpgv").is_none() {
+            eprintln!("skipping the gpgv step: gpgv is not installed");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("hodei-armor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let keyring = dir.join("key.bin");
+        let message = dir.join("Release");
+        let sigfile = dir.join("Release.gpg");
+        std::fs::write(&keyring, signer.keyring().expect("a keyring")).expect("write keyring");
+        std::fs::write(&message, RELEASE).expect("write release");
+        std::fs::write(&sigfile, &signature).expect("write signature");
+        let output = std::process::Command::new("gpgv")
+            .arg("--keyring")
+            .arg(&keyring)
+            .arg(&sigfile)
+            .arg(&message)
+            .env("LC_ALL", "C")
+            .output()
+            .expect("gpgv runs");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stderr.contains("Good signature"),
+            "gpgv said: {stderr}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn which(program: &str) -> Option<std::path::PathBuf> {
+        std::env::var_os("PATH").and_then(|paths| {
+            std::env::split_paths(&paths).find_map(|dir| {
+                let candidate = dir.join(program);
+                candidate.is_file().then_some(candidate)
+            })
+        })
+    }
+}

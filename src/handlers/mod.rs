@@ -7,6 +7,8 @@
 //! - Mapping results to HTTP responses
 //! - Error handling and logging
 
+pub mod apt;
+
 pub mod capabilities;
 pub mod capsules;
 pub mod cargo;
@@ -31,6 +33,7 @@ pub mod repositories;
 pub mod schemas;
 pub mod scrub;
 pub mod search;
+pub mod yum;
 
 use axum::http::{HeaderMap, header};
 use hodei_authz::{Credentials, VerifiedContext, verify_principal};
