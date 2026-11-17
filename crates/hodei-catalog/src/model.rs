@@ -107,11 +107,13 @@ impl RepositoryFormat {
     /// The raw surface, and the npm and PyPI ones that ride on it, serve
     /// the three modalities: what a client publishes, what a proxy brings
     /// from its upstream, and what a group composes of its members. The
-    /// OCI surface serves only the hosted one: a push is a write, and a
-    /// write lands where the client publishes.
+    /// OCI surface and the cargo one serve only the hosted one for now:
+    /// a push is a write, and a write lands where the client publishes.
+    /// The proxy semantics of cargo need a client-verified upstream before
+    /// they can be declared.
     ///
-    /// The formats that are declared but not served yet —cargo, nuget,
-    /// go, helm, apt and rpm— have no modality at all: a repository of
+    /// The formats that are declared but not served yet —nuget, go,
+    /// helm, apt and rpm— have no modality at all: a repository of
     /// one of them can be declared, and it waits for its turn.
     pub fn serves_modes(&self) -> &'static [RepositoryMode] {
         match self {
@@ -123,9 +125,8 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
-            RepositoryFormat::Oci => &[RepositoryMode::Hosted],
-            RepositoryFormat::Cargo
-            | RepositoryFormat::NuGet
+            RepositoryFormat::Oci | RepositoryFormat::Cargo => &[RepositoryMode::Hosted],
+            RepositoryFormat::NuGet
             | RepositoryFormat::Go
             | RepositoryFormat::Helm
             | RepositoryFormat::Apt
@@ -155,6 +156,7 @@ impl RepositoryFormat {
             RepositoryFormat::Maven2,
             RepositoryFormat::Npm,
             RepositoryFormat::PyPi,
+            RepositoryFormat::Cargo,
         ]
     }
 }
