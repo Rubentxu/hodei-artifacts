@@ -14,6 +14,7 @@
  */
 
 import { useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Search } from 'lucide-react';
 
@@ -79,7 +80,7 @@ export const BrowseView = () => {
 
   const search = useSearch(query);
 
-  const submit = (event: React.FormEvent) => {
+  const submit = (event: FormEvent) => {
     event.preventDefault();
     const next = new URLSearchParams();
     if (draft.repository) next.set('repository', draft.repository);

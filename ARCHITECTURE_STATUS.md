@@ -109,7 +109,7 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 
 | Capacidad | Por qué es experimental |
 | --- | --- |
-| Frontend (`frontend/`) | La **consola del catálogo** (`frontend/src/features/console/`) habla con la API viva y está medida de extremo a extremo contra el servicio de verdad. El resto del frontend sigue llamando a un contrato OpenAPI que describe superficies que el backend actual no expone: usuarios, búsqueda, artefactos y tokens. Su navegación no está alineada con la API viva. El tipo se comprueba sobre el programa completo del frontend (`frontend/tsconfig.app.json`), los ficheros de prueba incluidos: HSP-133 quitó los 121 errores de tipos que el frontend heredado arrastraba desde que dejó de comprobarse. |
+| Frontend (`frontend/`) | La **consola del catálogo** (`frontend/src/features/console/`) habla con la API viva y está medida de extremo a extremo contra el servicio de verdad. El resto del frontend sigue llamando a un contrato OpenAPI que describe superficies que el backend actual no expone: usuarios, búsqueda, artefactos y tokens. Su navegación no está alineada con la API viva. El tipo se comprueba sobre el programa completo del frontend (`frontend/tsconfig.app.json`), los ficheros de prueba incluidos, y también sobre la configuración del tooling: HSP-133 quitó los 138 errores de tipos que el frontend heredado arrastraba desde que dejó de comprobarse (121 en el programa de la aplicación y 17 en los ficheros de prueba, que no estaban en ningún programa). |
 | Playground de políticas | Admite varias gramáticas de acción y está por detrás de la superficie administrativa. |
 
 ### 3.3 Planificadas — en el roadmap, sin implementar
