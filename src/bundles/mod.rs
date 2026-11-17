@@ -18,11 +18,15 @@
 //! - Un paquete nunca lleva credenciales: el manifiesto no guarda URLs de
 //!   configuracion, y los recibos ya nacen sin secretos.
 
+pub mod export;
+pub mod import;
 pub mod manifest;
 
+pub use export::{ExportReport, export};
+pub use import::{ImportReport, Mapping, import, read_manifest};
 pub use manifest::{
-    AssetEntry, BlobEntry, BundleManifest, DecisionEvidence, Origin, Withheld, BLOBS_DIRECTORY,
-    FORMAT, MANIFEST_NAME,
+    AssetEntry, BLOBS_DIRECTORY, BlobEntry, BundleManifest, DecisionEvidence, FORMAT,
+    MANIFEST_NAME, Origin, Withheld,
 };
 
 use thiserror::Error;
@@ -63,4 +67,21 @@ impl From<hodei_catalog::CatalogError> for BundleError {
     fn from(error: hodei_catalog::CatalogError) -> Self {
         Self::Catalog(error.to_string())
     }
+}
+
+/// El comando de operador reporta el paquete con el error de recuperacion:
+/// exportar e importar son operaciones del mismo binario.
+impl From<BundleError> for crate::recovery::RecoveryError {
+    fn from(error: BundleError) -> Self {
+        Self::Bundle(error.to_string())
+    }
+}
+
+/// El digest de un texto de manifiesto ya comprobado.
+///
+/// `check_importable` exige la forma `sha256:<hex>` antes de que nadie
+/// llame a esto; fuera de ese camino devuelve `None` en vez de improvisar.
+pub fn content_digest(text: &str) -> Option<hodei_evidence::ContentDigest> {
+    let hex = crate::recovery::manifest::hex_of(text)?;
+    Some(hodei_evidence::ContentDigest::sha256(hex))
 }

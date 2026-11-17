@@ -859,10 +859,7 @@ mod tests {
             fetched_at: at(0),
         };
         let entry = CacheEntry::of(&served, 1, std::slice::from_ref(&receipt));
-        assert_eq!(
-            decide(&offline, Some(&entry)),
-            CacheDecision::OfflineServe
-        );
+        assert_eq!(decide(&offline, Some(&entry)), CacheDecision::OfflineServe);
 
         // Lo que no es el upstream vigente tampoco se sirve sin red, y un
         // importado no abre excepciones.

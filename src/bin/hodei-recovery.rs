@@ -6,9 +6,18 @@
 //!   hodei-recovery [GLOBAL OPTIONS] restore --from DIR
 //!   hodei-recovery [GLOBAL OPTIONS] scrub
 //!   hodei-recovery [GLOBAL OPTIONS] repair --from DIR
+//!   hodei-recovery [GLOBAL OPTIONS] bundle export --to DIR --account ACC --repository KEY
+//!   hodei-recovery [GLOBAL OPTIONS] bundle import --from DIR --account ACC --repository KEY \
+//!     [--allow-mapping] [--overwrite]
 //!
 //! Global options: `--db PATH`, `--cas PATH`, `--namespace NAME`,
 //! `--database NAME`, `--grace-secs N`, `--json`.
+//!
+//! A resolution bundle is not a copy of the registry: it is what a proxy
+//! repository resolved, with the provenance that backed each path. The
+//! import verifies the whole package before making anything visible, and
+//! signs the receipts under the destination configuration: the upstream
+//! of the origin is provenance, not authority.
 //!
 //! Paths, namespace and database default to the configuration the service
 //! reads, so the command works on the data the service actually uses.
@@ -22,21 +31,46 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
+use hodei_artifacts_api::bundles::{self, Mapping};
 use hodei_artifacts_api::config::AppConfig;
 use hodei_artifacts_api::recovery::{self, RecoveryError, ScrubReport};
 use serde::Serialize;
 
 const USAGE: &str = "usage: hodei-recovery [--db PATH] [--cas PATH] [--namespace NAME] \
-[--database NAME] [--grace-secs N] [--json] <backup --to DIR | verify DIR | restore --from DIR | scrub | repair --from DIR>";
+[--database NAME] [--grace-secs N] [--json] <backup --to DIR | verify DIR | restore --from DIR | \
+scrub | repair --from DIR | bundle export --to DIR --account ACC --repository KEY | \
+bundle import --from DIR --account ACC --repository KEY [--allow-mapping] [--overwrite]>";
 
 enum Command {
-    Backup { to: PathBuf },
-    Verify { backup: PathBuf },
-    Restore { from: PathBuf },
+    Backup {
+        to: PathBuf,
+    },
+    Verify {
+        backup: PathBuf,
+    },
+    Restore {
+        from: PathBuf,
+    },
     Scrub,
-    Repair { from: PathBuf },
+    Repair {
+        from: PathBuf,
+    },
+    BundleExport {
+        to: PathBuf,
+        account: String,
+        repository: String,
+    },
+    BundleImport {
+        from: PathBuf,
+        account: String,
+        repository: String,
+        allow_mapping: bool,
+        overwrite: bool,
+    },
 }
 
 struct Options {
@@ -56,6 +90,10 @@ fn parse_options() -> Result<Options, String> {
     let mut database = None;
     let mut grace_secs = None;
     let mut json = false;
+    let mut account = None;
+    let mut repository = None;
+    let mut allow_mapping = false;
+    let mut overwrite = false;
     let mut name: Option<String> = None;
     let mut to = None;
     let mut from = None;
@@ -67,6 +105,12 @@ fn parse_options() -> Result<Options, String> {
             "--cas" => cas = Some(args.next().ok_or("--cas needs a path")?),
             "--namespace" => namespace = Some(args.next().ok_or("--namespace needs a name")?),
             "--database" => database = Some(args.next().ok_or("--database needs a name")?),
+            "--account" => account = Some(args.next().ok_or("--account needs a name")?),
+            "--repository" => {
+                repository = Some(args.next().ok_or("--repository needs a name")?);
+            }
+            "--allow-mapping" => allow_mapping = true,
+            "--overwrite" => overwrite = true,
             "--grace-secs" => {
                 let value = args.next().ok_or("--grace-secs needs a number")?;
                 grace_secs = Some(
@@ -102,6 +146,33 @@ fn parse_options() -> Result<Options, String> {
         Some("repair") => Command::Repair {
             from: from.ok_or("repair needs --from DIR")?,
         },
+        Some("bundle") => {
+            let account = account
+                .clone()
+                .ok_or("a bundle command needs --account ACC")?;
+            let repository = repository
+                .clone()
+                .ok_or("a bundle command needs --repository KEY")?;
+            match positional
+                .and_then(|sub| sub.into_os_string().into_string().ok())
+                .as_deref()
+            {
+                Some("export") => Command::BundleExport {
+                    to: to.ok_or("bundle export needs --to DIR")?,
+                    account,
+                    repository,
+                },
+                Some("import") => Command::BundleImport {
+                    from: from.ok_or("bundle import needs --from DIR")?,
+                    account,
+                    repository,
+                    allow_mapping,
+                    overwrite,
+                },
+                Some(other) => return Err(format!("unknown bundle command: {other}")),
+                None => return Err("bundle needs export or import".to_string()),
+            }
+        }
         Some(other) => return Err(format!("unknown command: {other}")),
         None => return Err("a command is needed".to_string()),
     };
@@ -310,7 +381,90 @@ async fn run(options: &Options) -> Result<ExitCode, RecoveryError> {
                 ExitCode::from(1)
             })
         }
+        Command::BundleExport {
+            to,
+            account,
+            repository,
+        } => {
+            let (store, blobs) = bundle_targets(&target).await?;
+            let report =
+                bundles::export(&store, &store, &store, &blobs, account, repository, to).await?;
+            if options.json {
+                print_json(&report);
+            } else {
+                println!(
+                    "bundle written to {}: {} paths, {} bytes of blobs",
+                    report.path.display(),
+                    report.exported,
+                    report.blob_bytes
+                );
+                for withheld in &report.withheld {
+                    println!("  withheld {}: {}", withheld.asset_path, withheld.reason);
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::BundleImport {
+            from,
+            account,
+            repository,
+            allow_mapping,
+            overwrite,
+        } => {
+            let (store, blobs) = bundle_targets(&target).await?;
+            let mapping = Mapping {
+                allow: *allow_mapping,
+                overwrite: *overwrite,
+            };
+            let correlation_id = format!("bundle-import-{}", Utc::now().to_rfc3339());
+            let report = bundles::import(
+                &store,
+                &store,
+                &store,
+                &blobs,
+                account,
+                repository,
+                from,
+                mapping,
+                "hodei-recovery",
+                &correlation_id,
+            )
+            .await?;
+            if options.json {
+                print_json(&report);
+            } else {
+                println!(
+                    "imported {} paths ({} already present) and {} bytes of blobs into {}/{}",
+                    report.imported, report.already_present, report.blob_bytes, account, repository
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
+}
+
+/// The catalog and the content store a bundle command works on.
+///
+/// The command operates as the operator, outside the API boundary: the
+/// authorizer it injects allows everything it reads and writes, because
+/// the permission of the operator is the invocation of the command.
+async fn bundle_targets(
+    target: &Target,
+) -> Result<
+    (
+        hodei_catalog_storage::SurrealCatalogStore,
+        hodei_hub::blob::FileBlobStore,
+    ),
+    RecoveryError,
+> {
+    let db = recovery::open_database(&target.db, &target.namespace, &target.database).await?;
+    let store = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
+        db,
+        Arc::new(hodei_catalog::AllowAllAuthorizer),
+    );
+    let blobs = hodei_hub::blob::FileBlobStore::new(&target.cas)
+        .map_err(|error| RecoveryError::Store(error.to_string()))?;
+    Ok((store, blobs))
 }
 
 #[tokio::main]

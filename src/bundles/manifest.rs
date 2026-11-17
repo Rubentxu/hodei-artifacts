@@ -245,8 +245,10 @@ impl BundleManifest {
                 // ruta que lo comparte: un mismo contenido no puede medir
                 // dos cosas.
                 Some(_) => {
-                    for entry in
-                        self.assets.iter().filter(|entry| entry.digest == blob.digest)
+                    for entry in self
+                        .assets
+                        .iter()
+                        .filter(|entry| entry.digest == blob.digest)
                     {
                         if entry.size_bytes != blob.length {
                             return Err(BundleError::Unsound(format!(
@@ -314,7 +316,9 @@ fn check_path(path: &str) -> Result<(), BundleError> {
     if path.is_empty()
         || path.starts_with('/')
         || path.contains('\\')
-        || path.split('/').any(|segment| segment == ".." || segment.is_empty())
+        || path
+            .split('/')
+            .any(|segment| segment == ".." || segment.is_empty())
         || path.chars().any(|c| c.is_control())
     {
         return Err(BundleError::Unsound(format!(
@@ -413,7 +417,9 @@ mod tests {
         bundle.format = FORMAT + 1;
         let error = bundle.check_importable().expect_err("refused");
         assert!(
-            error.to_string().contains(&format!("format {}", FORMAT + 1)),
+            error
+                .to_string()
+                .contains(&format!("format {}", FORMAT + 1)),
             "{error}"
         );
     }
@@ -424,7 +430,10 @@ mod tests {
             let mut bundle = manifest();
             bundle.assets[0].asset_path = case.to_string();
             bundle.assets[0].receipt.asset_path = case.to_string();
-            assert!(bundle.check_importable().is_err(), "{case:?} should be refused");
+            assert!(
+                bundle.check_importable().is_err(),
+                "{case:?} should be refused"
+            );
         }
     }
 
@@ -497,7 +506,9 @@ mod tests {
             receipt: receipt("c/same", content),
             decision: None,
         };
-        bundle.blobs.retain(|blob| blob.digest == bundle.assets[0].digest);
+        bundle
+            .blobs
+            .retain(|blob| blob.digest == bundle.assets[0].digest);
         bundle.check_importable().expect("sound");
     }
 
@@ -539,7 +550,10 @@ mod tests {
         let hex = digest('a').value;
         assert_eq!(
             BundleManifest::blob_file(&format!("sha256:{hex}")),
-            PathBuf::from("blobs").join(&hex[0..2]).join(&hex[2..4]).join(hex)
+            PathBuf::from("blobs")
+                .join(&hex[0..2])
+                .join(&hex[2..4])
+                .join(hex)
         );
     }
 
