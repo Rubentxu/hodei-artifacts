@@ -43,6 +43,24 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- La **frescura de un informe entregado**
+  (`POST /api/v1/investigations/freshness`): una comprobación **bajo
+  demanda** de si un informe de investigación sigue apoyándose en el mundo.
+  El cliente trae de vuelta el manifiesto que recibió --los sellos de lo que
+  se leyó y la versión del mundo en que se leyó-- y la respuesta es de
+  **tres**: `current` (el mundo no se movió bajo lo que el informe dice),
+  `stale` (se movió, y la respuesta dice **qué referencia** se movió) o
+  `unknown` (una fuente no se pudo consultar). Lo tercero **no** es lo
+  primero: un almacén que no contesta no dice que el mundo no se movió, y
+  un comprobador que ante la duda dijera «vigente» fabricaría una garantía
+  que no tiene. Caduca lo que el informe **sostiene** --el apoyo de la
+  relación que leyó y la evidencia con el digest que leyó-- y **no** caduca
+  lo que pasó en el mundo que el informe no leyó. La comprobación es una
+  **función pura** en el dominio (`judge`) y el almacenamiento solo trae el
+  mundo: la versión del tenant en el registro de deltas que ya existía, los
+  deltas posteriores a la versión leída y los digests de ahora. No hay motor
+  de suscripciones, ni cola, ni tabla nueva, ni TTL, y el registro se
+  pregunta **por el tenant**: un sujeto de otra cuenta no se consulta.
 - La **investigación de un artefacto** (`POST /api/v1/investigations`): una
   consulta de **solo lectura** que explica lo que el servicio sabe de un
   artefacto, qué sostiene cada afirmación, qué falta y qué se quedó fuera

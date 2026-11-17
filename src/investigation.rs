@@ -25,14 +25,18 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hodei_authz::{AuthorizationOutcome, VerifiedContext};
+use hodei_evidence::domain::delta::RelationDeltaLedger;
 use hodei_evidence::ports::{ContentStore, EvidenceStore, StoreError};
 use hodei_hub::blob::BlobError;
 use hodei_hub::blob::BlobStore;
 use hodei_investigator::Investigator;
+use hodei_investigator::freshness::Freshness;
 use hodei_investigator::guard::CapabilityGuard;
 use hodei_investigator::investigator::{Investigation, InvestigationError};
+use hodei_investigator::read_set::ReadSet;
 use hodei_investigator::scope::{EvidenceReadAuthorizer, RetrievalScope};
 use hodei_investigator_storage::GraphEvidenceRetriever;
+use hodei_investigator_storage::freshness::LedgerFreshness;
 use kernel::Hrn;
 use surrealdb::Connection;
 
@@ -56,6 +60,17 @@ pub trait InvestigationPort: Send + Sync {
         question: &str,
         now: DateTime<Utc>,
     ) -> Result<Investigation, InvestigationError>;
+
+    /// Says whether a delivered report still rests on the world.
+    ///
+    /// The manifest is the one of the report the client holds: the check
+    /// is under demand, and the client is the one that says what it read.
+    /// The answer is of three: still current, stale, or unknown.
+    async fn freshness_of(
+        &self,
+        scope: &RetrievalScope,
+        report: &ReadSet,
+    ) -> Result<Freshness, InvestigationError>;
 }
 
 /// The investigation over the graph and the evidence of the deployment.
@@ -63,6 +78,7 @@ pub struct GraphInvestigation<C: Connection> {
     evidence: Arc<dyn EvidenceStore>,
     content: Arc<dyn ContentStore>,
     graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
+    deltas: Arc<dyn RelationDeltaLedger>,
     authorize_resource: Arc<AuthorizeResourceUseCase>,
     limits: InvestigationConfig,
 }
@@ -73,6 +89,7 @@ impl<C: Connection> GraphInvestigation<C> {
         evidence: Arc<dyn EvidenceStore>,
         content: Arc<dyn ContentStore>,
         graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
+        deltas: Arc<dyn RelationDeltaLedger>,
         authorize_resource: Arc<AuthorizeResourceUseCase>,
         limits: InvestigationConfig,
     ) -> Self {
@@ -80,9 +97,20 @@ impl<C: Connection> GraphInvestigation<C> {
             evidence,
             content,
             graph,
+            deltas,
             authorize_resource,
             limits,
         }
+    }
+
+    /// The tenant of the graph for a subject, or the reason there is
+    /// none.
+    fn the_tenant(&self, subject: &Hrn) -> Result<Hrn, InvestigationError> {
+        self.limits.the_graph_tenant(subject).ok_or_else(|| {
+            InvestigationError::NoAnswer(
+                "the tenant of the graph is not a canonical HRN".to_string(),
+            )
+        })
     }
 }
 
@@ -99,14 +127,7 @@ impl<C: Connection> InvestigationPort for GraphInvestigation<C> {
         // The tenant of the graph: the account the investigation is about.
         // A graph written under another name has no relations to show, and
         // that is said in the coverage of the report rather than hidden.
-        let tenant = self
-            .limits
-            .the_graph_tenant(&scope.subject)
-            .ok_or_else(|| {
-                InvestigationError::NoAnswer(
-                    "the tenant of the graph is not a canonical HRN".to_string(),
-                )
-            })?;
+        let tenant = self.the_tenant(&scope.subject)?;
         // The authorizer carries the context of THIS request: the decision
         // is taken for the principal that asked, and not for whoever asked
         // last.
@@ -125,6 +146,19 @@ impl<C: Connection> InvestigationPort for GraphInvestigation<C> {
         investigator
             .investigate_without_a_model(investigation, scope, question, now)
             .await
+    }
+
+    async fn freshness_of(
+        &self,
+        scope: &RetrievalScope,
+        report: &ReadSet,
+    ) -> Result<Freshness, InvestigationError> {
+        // El tenant es el de la cuenta del sujeto, y el comprobador
+        // consulta SOLO ese tenant: una comprobacion de otra cuenta no
+        // se hace por el camino de un tenant ajeno.
+        let tenant = self.the_tenant(&scope.subject)?;
+        let checker = LedgerFreshness::new(self.evidence.clone(), self.deltas.clone(), tenant);
+        Ok(checker.freshness_of(report, &scope.subject).await)
     }
 }
 

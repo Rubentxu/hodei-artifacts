@@ -41,6 +41,7 @@ investigations:
         content:
           application/json:
             schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '422': { $ref: '../components/responses.yaml#/BadRequest' }
       '401':
         description: La credencial no es válida.
         content:
@@ -63,6 +64,67 @@ investigations:
             schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
       '500':
         description: Lo que se leyó no cabe en el alcance en el que se leyó.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '503':
+        description: La investigación no está disponible en este despliegue.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+
+# La frescura de un informe entregado.
+#
+# El cliente trae de vuelta el manifiesto que recibió y pregunta si sigue
+# apoyándose en el mundo. La comprobación es bajo demanda y es una
+# LECTURA: no relee el contexto entero, no invalida nada y no escribe.
+investigationsFreshness:
+  post:
+    tags: [investigation]
+    summary: Comprobar si un informe sigue vigente
+    description: >
+      Un informe es una afirmación con fecha: dice qué leyó y en qué
+      versión del mundo. Esta operación compara el manifiesto que el
+      cliente trae de vuelta con el mundo de ahora, y responde si el
+      informe sigue vigente, si está obsoleto --diciendo qué referencia
+      se movió--, o si no se puede saber porque una fuente no se pudo
+      consultar.
+
+      Lo que no se sabe NO se dice vigente: un almacén que no contesta no
+      dice que el mundo no se movió.
+
+      El sujeto de otra cuenta no está: se esconde detrás del mismo 404
+      que un sujeto que no existe, y no se evalúa.
+    operationId: investigateFreshness
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '../components/schemas/investigation.yaml#/FreshnessRequest' }
+    responses:
+      '200':
+        description: El veredicto de la frescura.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/FreshnessResponse' }
+      '400':
+        description: El sujeto no es un HRN canónico.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '422': { $ref: '../components/responses.yaml#/BadRequest' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '403':
+        description: El permiso de investigar no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '404':
+        description: No hay nada ahí, o no es de esta cuenta.
         content:
           application/json:
             schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }

@@ -51,3 +51,6 @@ InvestigationFinding: { $ref: './investigation.yaml#/InvestigationFinding' }
 InvestigationReadSet: { $ref: './investigation.yaml#/InvestigationReadSet' }
 InvestigationReadStamp: { $ref: './investigation.yaml#/InvestigationReadStamp' }
 InvestigationError: { $ref: './investigation.yaml#/InvestigationError' }
+FreshnessRequest: { $ref: './investigation.yaml#/FreshnessRequest' }
+FreshnessResponse: { $ref: './investigation.yaml#/FreshnessResponse' }
+InvestigationChangedReference: { $ref: './investigation.yaml#/InvestigationChangedReference' }

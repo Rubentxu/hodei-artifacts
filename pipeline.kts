@@ -100,6 +100,7 @@ pipeline {
                         "--test m7_uat",
                         "--test investigator_contract",
                         "--test deterministic_contract",
+                        "--test freshness_contract",
                         "--test m8_uat",
                         "--test hub_contract",
                         "--test m9_uat",
@@ -174,6 +175,8 @@ pipeline {
                         "--test hsp114_console_contract",
                         "--test hsp132_registry_list",
                         "--test hsp88_investigation_query",
+                        "--test hsp89_investigation_freshness",
+                        "--test freshness_storage",
                     ).joinToString(" ")
                 )
             }

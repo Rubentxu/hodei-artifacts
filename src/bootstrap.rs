@@ -572,11 +572,18 @@ fn wire_the_investigation(
     let evidence: Arc<dyn hodei_evidence::ports::EvidenceStore> = Arc::new(
         hodei_evidence_storage::SurrealEvidenceStore::new(db.clone()),
     );
-    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db));
+    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
+    // El registro de deltas es el MISMO que usa el grafo --la misma
+    // tabla--: el comprobador de frescura pregunta por la version del
+    // tenant y por lo que cambio desde la version que el informe dice
+    // haber leido, y esa historia la escribe el grafo.
+    let deltas: Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger> =
+        Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(db));
     let investigation = Arc::new(crate::investigation::GraphInvestigation::new(
         evidence,
         Arc::new(crate::investigation::CasContentStore::new(content)),
         graph,
+        deltas,
         state.authorize_resource.clone(),
         config.investigation.clone(),
     ));

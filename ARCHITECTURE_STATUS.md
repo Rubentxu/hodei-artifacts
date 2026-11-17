@@ -105,6 +105,7 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 | Capacidades: qué formatos y modalidades se pueden crear | `GET /api/v1/capabilities` | `tests/hsp114_console_contract.rs` |
 | Consola del catálogo: repositorios, búsqueda, detalle, promoción y retirada | `frontend/src/features/console/` | `frontend/src/features/console/__tests__/`, `frontend/tests/e2e/` · `uat/UAT-OPERATIONS.md` |
 | Investigación de un artefacto: informe con citas, cobertura y manifiesto de lecturas | `POST /api/v1/investigations` | `tests/hsp88_investigation_query.rs`, `crates/hodei-investigator/tests/deterministic_contract.rs` |
+| Frescura de un informe entregado: vigente, obsoleto o no se sabe | `POST /api/v1/investigations/freshness` | `tests/hsp89_investigation_freshness.rs`, `crates/hodei-investigator/tests/freshness_contract.rs`, `crates/hodei-investigator-storage/tests/freshness_storage.rs` |
 
 ### 3.2 Experimentales
 
@@ -2261,3 +2262,56 @@ por texto es un recorrido de los assets de la cuenta. No hay ordenación
 por relevancia, ni facets, ni sinónimos, ni búsqueda por metadatos de
 formato más allá del nombre y la versión del paquete. La consola web
 (HSP-114) sigue sin consumir esta superficie.
+
+## 10-novedicies — M8: la frescura de un informe entregado
+
+Un informe de investigación es una **afirmación con fecha**: dice qué leyó
+—con su digest— y en qué versión del mundo. Lo que se entregó hace un rato
+puede haber caducado, y la pregunta es si sigue apoyándose en el mundo.
+
+La respuesta es de **tres**, y no de dos: `current`, `stale` y `unknown`.
+Un almacén que no contesta **no dice que el mundo no se movió**: dice que
+nadie lo sabe. Un comprobador que ante la duda contestara «vigente»
+fabricaría una garantía que no tiene, y una garantía inventada es peor que
+una respuesta incómoda.
+
+### Lo que caduca y lo que no
+
+Caduca lo que el informe **sostiene**: el apoyo de la relación que leyó y la
+evidencia con el digest que leyó. **No** caduca lo que pasó en el mundo y
+el informe no leyó: una relación nueva de otro sujeto no invalida un
+informe que no la mencionaba, y el apoyo que se añadió a una relación que
+el informe leyó sigue dejando en pie lo que el informe dijo de ella. La
+identidad de la relación no basta para decir que caducó: lo que dejó de
+sostenerse es **un apoyo**, y el verificador contrasta el apoyo, no la
+relación entera.
+
+### Dónde está la decisión
+
+En `crates/hodei-investigator/src/freshness.rs`, y es una **función pura**:
+`judge` compara un manifiesto con un mundo y dice un veredicto. El mundo —
+las versiones de ahora, los digests de ahora, los cambios de ahora— lo trae
+el almacenamiento, y el almacenamiento no decide: decide esa función. Por
+eso el mismo manifiesto y el mismo mundo dan el mismo veredicto, siempre.
+
+El adaptador (`crates/hodei-investigator-storage/src/freshness.rs`) solo
+**trae el mundo**: la versión del tenant en el registro de deltas, los
+deltas posteriores a la versión que el manifiesto dice haber leído, y los
+digests de la evidencia del sujeto. Los deltas se piden **por el tenant** y
+por los **tipos de relación que el manifiesto dice haber leído** —la
+identidad del sello es `{tipo}|{desde}|{hasta}`—, así que no se pregunta
+por lo que no es del informe. Y si los deltas no caben en el trabajo que la
+comprobación se permite, la respuesta es `unknown`: un «vigente» sin haber
+leído todo sería una garantía inventada.
+
+### Lo que no hay
+
+No hay motor de suscripciones, ni cola, ni tabla nueva, ni TTL: la
+comprobación es **bajo demanda** y la historia que consulta es el registro
+de deltas que ya existía (H2, HSP-81). No hay invalidación proactiva
+porque no hay ningún consumidor que la necesite: el que tiene el informe
+pregunta, y lo que se le dice es si lo que dice sigue en pie.
+
+El aislamiento de tenant no es un detalle: el registro se pregunta por la
+cuenta que se comprueba, y un sujeto de otra cuenta no se consulta —se
+dice que no se sabe, en vez de consultar lo que no es suyo—.

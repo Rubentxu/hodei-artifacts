@@ -118,7 +118,13 @@ InvestigationReadSet:
         un vector porque puede no haber un único cursor global.
       items:
         type: array
-        items: { type: string }
+        description: El par (fuente, versión).
+        minItems: 2
+        maxItems: 2
+        items:
+          anyOf:
+            - type: string
+            - type: integer
     stamps:
       type: array
       description: >
@@ -156,3 +162,68 @@ InvestigationError:
     message:
       type: string
       description: Lo que pasó, en palabras.
+
+# La frescura de un informe entregado.
+#
+# Un informe es una afirmación con fecha: dice qué leyó y en qué versión
+# del mundo. La comprobación es **bajo demanda** --el cliente trae de
+# vuelta el manifiesto que recibió-- y su respuesta es de tres: vigente,
+# obsoleto, o no se sabe. Lo tercero NO es lo primero: un almacén que no
+# contesta no dice que el mundo no se movió.
+FreshnessRequest:
+  type: object
+  required: [subject, read_set]
+  properties:
+    subject:
+      type: string
+      description: >
+        El sujeto sobre el que se investigó: el HRN canónico del
+        artefacto. El HRN de otra cuenta no está.
+      maxLength: 512
+    read_set:
+      $ref: './investigation.yaml#/InvestigationReadSet'
+
+FreshnessResponse:
+  type: object
+  required: [status]
+  properties:
+    status:
+      type: string
+      description: >
+        El veredicto: `current` (el mundo no se movió bajo lo que el
+        informe dice), `stale` (se movió, y lo que se movió toca lo que
+        el informe sostiene) o `unknown` (una fuente no se pudo
+        consultar, y eso no es lo mismo que estar vigente).
+      enum: [current, stale, unknown]
+    changed:
+      type: array
+      description: >
+        Las referencias que se movieron, cuando el informe está obsoleto.
+        Sin esta lista, un informe caducado no sería accionable.
+      items: { $ref: './investigation.yaml#/InvestigationChangedReference' }
+    reason:
+      type: string
+      description: Por qué no se pudo saber, cuando no se pudo saber.
+
+InvestigationChangedReference:
+  type: object
+  required: [source, kind, resource, evidence, what]
+  properties:
+    source:
+      type: string
+      description: La fuente que se movió.
+    kind:
+      type: string
+      description: Qué clase de referencia es.
+      enum: [evidence, relation, policy]
+    resource:
+      type: string
+      description: La identidad de la referencia.
+    evidence:
+      type: string
+      description: >
+        El apoyo que se movió: la evidencia que la sostenía.
+    what:
+      type: string
+      description: Qué le pasó a la referencia.
+      enum: [added, removed, gone, changed]

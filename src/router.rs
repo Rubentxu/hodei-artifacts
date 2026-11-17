@@ -495,6 +495,10 @@ fn investigation_route(app_state: AppState, enabled: bool) -> axum::Router {
                 "/investigations",
                 post(crate::handlers::investigation::investigate),
             )
+            .route(
+                "/investigations/freshness",
+                post(crate::handlers::investigation::freshness),
+            )
             .with_state(app_state)
     } else {
         axum::Router::new()
