@@ -13,6 +13,10 @@
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
+    /* The e2e fixtures are JavaScript modules that the Playwright specs
+       import: without this, they have no types and the specs that use
+       them cannot be checked. */
+    "allowJs": true,
     "jsx": "react-jsx",
 
     /* Path aliases */
@@ -28,13 +32,13 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    /* The test files are part of the program: a type error in a test is
+       a type error in the frontend, and the type-check that skips them
+       is a type-check that does not check. The end-to-end specs and the
+       fixtures they use are part of the frontend too. */
+    "types": ["vitest/globals", "node"]
   },
-  "include": ["src"],
-  "exclude": [
-    "src/__tests__",
-    "**/*.test.tsx",
-    "**/*.spec.ts",
-    "src/setupTests.ts"
-  ]
+  "include": ["src", "tests"]
 }

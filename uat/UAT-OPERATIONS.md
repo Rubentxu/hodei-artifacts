@@ -704,7 +704,6 @@ cd frontend && npx playwright test
 La prueba de extremo a extremo levanta el servicio de verdad y el servidor
 de desarrollo, y necesita el binario construido (`cargo build --bin
 hodei-artifacts-api`) y el navegador (`npx playwright install chromium`).
-El tipo se comprueba sobre el programa de la consola
-(`tsconfig.console.json`), que es el de la consola y lo que usa: el
-frontend heredado tiene errores de tipos que nadie ha corregido desde que
-dejó de comprobarse, y corregirlos todos de golpe es un trabajo aparte.
+El tipo se comprueba sobre el programa completo del frontend
+(`tsconfig.app.json`), que incluye los ficheros de prueba: el type-check
+que deja fuera a los tests es un type-check que no comprueba.
