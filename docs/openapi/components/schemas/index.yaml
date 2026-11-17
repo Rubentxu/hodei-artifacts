@@ -14,7 +14,6 @@ PackageResult: { $ref: './search.yaml#/PackageResult' }
 Repository: { $ref: './repository.yaml#/Repository' }
 RepositoryListResponse: { $ref: './repository.yaml#/RepositoryListResponse' }
 CreateRepositoryRequest: { $ref: './repository.yaml#/CreateRepositoryRequest' }
-UpdateRepositoryRequest: { $ref: './repository.yaml#/UpdateRepositoryRequest' }
 ArtifactUploadResponse: { $ref: './artifact.yaml#/ArtifactUploadResponse' }
 PresignedUrlResponse: { $ref: './artifact.yaml#/PresignedUrlResponse' }
 CreateUserCommand: { $ref: './users.yaml#/CreateUserCommand' }

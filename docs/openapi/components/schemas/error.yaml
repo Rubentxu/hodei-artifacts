@@ -1,13 +1,34 @@
+# El cuerpo de un error.
+#
+# Es lo que el servicio sirve: la **clase** del fallo y un mensaje para
+# quien lee el registro. La clase es lo que un cliente necesita para
+# distinguir un fallo de otro: un permiso denegado no es una ausencia, y
+# lo que está guardado y no se puede leer tampoco es una ausencia.
+#
+# `code` y `details` quedan como campos opcionales para los clientes que
+# los leían; el servicio no los envía.
 Error:
   type: object
-  required: [error, message, code]
+  required: [error, message]
   properties:
     error:
       type: string
+      description: >
+        La clase del fallo. Distingue lo que un cliente tiene que decir de
+        otra manera: un permiso denegado no es una ausencia, y lo que está
+        guardado no se puede leer tampoco es una ausencia.
+      enum:
+        [unauthenticated, permission, absence, invalid, conflict, corruption, indeterminate, unavailable]
     message:
       type: string
+      description: >
+        Lo que pasó, para quien lee el registro. Nunca nombra un recurso
+        de otra cuenta: la respuesta a una cosa que no está es la misma
+        esté donde esté.
     code:
       type: integer
+      description: Campo opcional, heredado del contrato antiguo. El servicio no lo envía.
     details:
       type: object
       additionalProperties: true
+      description: Campo opcional, heredado del contrato antiguo. El servicio no lo envía.

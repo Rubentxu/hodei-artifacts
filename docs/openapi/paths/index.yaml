@@ -5,8 +5,10 @@
 # los use llegue a la superficie que existe.
 #
 # v1 core
-/v1/repositories: { $ref: './repositories.yaml#/repositoriesRoot' }
-/v1/repositories/{id}: { $ref: './repositories.yaml#/repositoryById' }
+#
+# El registro de repositorios cuelga de `/api/v1`, que es donde la API
+# vive: el camino que se declara es el que el servicio sirve.
+/api/v1/repositories: { $ref: './repositories.yaml#/repositoriesRoot' }
 /v1/artifacts: { $ref: './artifacts.yaml#/artifactsRoot' }
 /v1/artifacts/{id}: { $ref: './artifacts.yaml#/artifactById' }
 /v1/search: { $ref: './search.yaml#/searchV1' }

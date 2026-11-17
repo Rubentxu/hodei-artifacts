@@ -62,6 +62,11 @@ impl RepositoryReader for CountingReader {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.inner.find_by_hrn(account, hrn).await
     }
+
+    async fn list(&self, account: &str) -> Result<Vec<RepositoryView>, RepositoryReadError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.list(account).await
+    }
 }
 
 struct FailingReader;
@@ -73,6 +78,10 @@ impl RepositoryReader for FailingReader {
         _account: &str,
         _hrn: &Hrn,
     ) -> Result<Option<RepositoryView>, RepositoryReadError> {
+        Err(RepositoryReadError::Unavailable)
+    }
+
+    async fn list(&self, _account: &str) -> Result<Vec<RepositoryView>, RepositoryReadError> {
         Err(RepositoryReadError::Unavailable)
     }
 }
@@ -301,7 +310,7 @@ async fn foreign_account_is_404_and_never_reads() {
     let (status, body) = call(&app, Some("alice"), &foreign.to_string()).await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body, serde_json::Value::Null);
+    assert_eq!(body["error"], "absence");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
@@ -341,14 +350,14 @@ async fn reader_failure_is_503() {
 }
 
 #[tokio::test]
-async fn missing_query_is_400_without_reading() {
+async fn a_query_that_names_the_hrn_twice_is_400_without_reading() {
     let calls = Arc::new(AtomicUsize::new(0));
     let (app, _tmp, calls) = app(cedar_lax(), reader(calls)).await;
     let response = app
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/repositories")
+                .uri(format!("/api/v1/repositories?hrn={}&hrn={}", hrn(), hrn()))
                 .header("authorization", "Bearer alice")
                 .body(Body::empty())
                 .unwrap(),
@@ -408,12 +417,16 @@ async fn malformed_hrn_is_400_and_never_reads() {
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
+/// A decision that could not be taken is not a permission that was
+/// refused: the read says that it could not answer, and it says so with
+/// the class of the failure.
 #[tokio::test]
-async fn indeterminate_authorizer_is_403_and_never_reads() {
+async fn indeterminate_authorizer_is_500_and_never_reads() {
     let calls = Arc::new(AtomicUsize::new(0));
     let (app, _tmp, calls) = app(Arc::new(IndeterminateAuthorizer), reader(calls)).await;
-    let (status, _) = call(&app, Some("alice"), &hrn().to_string()).await;
+    let (status, body) = call(&app, Some("alice"), &hrn().to_string()).await;
 
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "indeterminate");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }

@@ -83,7 +83,7 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 | Capacidad | Ruta | Dónde se demuestra |
 | --- | --- | --- |
 | Salud | `GET /health`, `/health/ready`, `/health/live` | `tests/repository_read.rs` |
-| Repositorios: alta y lectura | `GET|POST /api/v1/repositories` | `tests/repository_create.rs`, `tests/repository_read.rs` |
+| Repositorios del registro: lista paginada, alta y lectura | `GET|POST /api/v1/repositories` | `tests/hsp132_registry_list.rs`, `tests/repository_create.rs`, `tests/repository_read.rs`, `tests/repository_durable.rs` |
 | Políticas IAM: alta, listado, lectura, modificación, baja | `/api/v1/iam/policies*` | `tests/iam_policy_timestamps.rs`, `tests/iam_audit.rs` |
 | Evaluación de políticas IAM | `POST /api/v1/iam/evaluate` | `tests/policy_circuits.rs` |
 | Validación y evaluación de políticas | `/api/v1/policies/validate`, `/api/v1/policies/evaluate` | `tests/policy_circuits.rs` |

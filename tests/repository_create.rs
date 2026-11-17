@@ -300,12 +300,15 @@ async fn concurrent_equivalent_requests_create_exactly_one_entity() {
     assert_eq!(store.len(), 1);
 }
 
+/// Una decisión que no se pudo tomar no es un permiso denegado: el alta
+/// dice que no pudo decidir, y no dice que no.
 #[tokio::test]
-async fn indeterminate_authorizer_is_403_and_has_no_effect() {
+async fn indeterminate_authorizer_is_500_and_has_no_effect() {
     let (app, store, _tmp) = app(Arc::new(IndeterminateAuthorizer)).await;
-    let (status, _) = post(&app, Some("alice"), json!({"name": "releases"})).await;
+    let (status, body) = post(&app, Some("alice"), json!({"name": "releases"})).await;
 
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(body["error"], "indeterminate");
     assert_eq!(store.len(), 0);
 }
 

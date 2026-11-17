@@ -259,3 +259,7 @@ hodei-hrn = "0.2.1"
 # codecs: el fixture se escribe *stored*, que no necesita ninguno.
 zip = { version = "3.0.0", default-features = false }
 flate2 = "1.1.11"
+# El contrato de OpenAPI se lee en las pruebas: una prueba que compara lo
+# que el contrato declara con lo que la ruta sirve necesita leerlo, y no
+# adivinarlo.
+serde_yaml = "0.9"
