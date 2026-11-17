@@ -60,6 +60,7 @@ pub mod proxy_cache;
 pub mod pypi;
 pub mod search;
 pub mod trust;
+pub mod yum;
 
 pub use error::CatalogError;
 pub use gc::{

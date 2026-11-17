@@ -867,15 +867,12 @@ mod tests {
     #[test]
     fn the_form_upload_hides_the_nupkg_behind_the_envelope() {
         let zip = nupkg(&[("Sample.nuspec", &nuspec("Sample.Form", "1.0.0"))], false);
-        let body = format!(
-            "--7ca4\r\nContent-Disposition: form-data; name=\"description\"\r\n\r\nignored\r\n\
+        let mut body = "--7ca4\r\nContent-Disposition: form-data; name=\"description\"\r\n\r\nignored\r\n\
              --7ca4\r\nContent-Disposition: form-data; name=\"package\"; filename=\"sample.form.1.0.0.nupkg\"\r\nContent-Type: application/octet-stream\r\n\r\n"
-        )
-        .into_bytes()
-        .into_iter()
-        .chain(zip.clone())
-        .chain(b"\r\n--7ca4--\r\n".iter().copied())
-        .collect::<Vec<u8>>();
+            .as_bytes()
+            .to_vec();
+        body.extend(zip.clone());
+        body.extend(b"\r\n--7ca4--\r\n".iter().copied());
         assert_eq!(multipart_package(&body).expect("the nupkg part"), zip);
         // Un cuerpo que no es formulario no se toca: el zip crudo se
         // reconoce por su cabecera, no por adivinar.

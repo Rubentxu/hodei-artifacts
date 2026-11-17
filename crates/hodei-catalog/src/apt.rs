@@ -254,7 +254,7 @@ pub(crate) fn build_test_deb_compressed(
         block[156] = b'0'; // tipo fichero regular
         block.extend_from_slice(data);
         let pad = (512 - data.len() % 512) % 512;
-        block.extend(std::iter::repeat(0).take(pad));
+        block.extend(std::iter::repeat_n(0, pad));
         block
     }
 

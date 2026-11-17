@@ -459,6 +459,20 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // RPM/yum: the pool of `.rpm`, the generated `primary` index and
+        // `repomd`, its `repomd.xml.asc` and the hub key. Same contract
+        // as apt for raw paths and body limits.
+        .route(
+            "/yum/{*target}",
+            axum::routing::get(crate::handlers::yum::handle)
+                .put(crate::handlers::yum::handle)
+                .fallback(crate::handlers::yum::handle)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         // The Go module proxy: `GET {module}/@v/list|.info|.mod|.zip` and
         // `{module}/@latest`, plus the `PUT` of those same paths that
         // publishes into a hosted repository. Module paths carry `!` and

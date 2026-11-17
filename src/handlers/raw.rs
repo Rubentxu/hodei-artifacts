@@ -1677,3 +1677,134 @@ pub(super) fn hex_of(bytes: &[u8]) -> String {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// Fonteria comun de las superficies de sistema operativo (apt, yum)
+// ---------------------------------------------------------------------------
+
+/// La respuesta comun de un documento: estado, cuerpo, tipo, etag,
+/// cabeceras comunes y `nosniff`. La comparten apt y yum porque el
+/// contrato HTTP es el mismo: bytes deterministas con condicionales.
+pub(super) fn system_body_response(
+    status: StatusCode,
+    body: Vec<u8>,
+    content_type: &str,
+    etag: &str,
+    correlation: &str,
+) -> Response {
+    let mut response = (status, Body::from(body)).into_response();
+    apply_common_headers(&mut response, etag, correlation);
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(content_type).expect("a content type"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
+/// `If-None-Match`/`If-Match` contra el etag de un documento: un 304
+/// dice que no cambio; `None` dice que quien llama debe servir el
+/// cuerpo. Con HEAD no se envia cuerpo, solo el tamano.
+pub(super) fn system_conditional_read(
+    etag: &str,
+    headers: &HeaderMap,
+    correlation: &str,
+    head: bool,
+    body: &[u8],
+) -> Result<Option<Response>, RawApiError> {
+    match conditional::the_read_condition(
+        conditional::the_if_match(headers).as_deref(),
+        conditional::the_if_none_match(headers).as_deref(),
+        Some(etag),
+    ) {
+        conditional::ReadOutcome::Failed => Err(RawApiError::PreconditionFailed),
+        conditional::ReadOutcome::NotModified => {
+            let mut response = StatusCode::NOT_MODIFIED.into_response();
+            apply_common_headers(&mut response, etag, correlation);
+            Ok(Some(response))
+        }
+        conditional::ReadOutcome::Serve => Ok(if head {
+            let mut response = StatusCode::OK.into_response();
+            apply_common_headers(&mut response, etag, correlation);
+            if let Ok(value) = HeaderValue::from_str(&body.len().to_string()) {
+                response.headers_mut().insert(header::CONTENT_LENGTH, value);
+            }
+            Some(response)
+        } else {
+            None
+        }),
+    }
+}
+
+/// Sirve un documento derivado (indice, cabecera, firma): su etag es el
+/// digest de los bytes que se responden, y las condicionales valen
+/// sobre ese mismo documento.
+pub(super) fn serve_system_bytes(
+    bytes: Vec<u8>,
+    content_type: &str,
+    headers: &HeaderMap,
+    head: bool,
+    correlation: &str,
+) -> Result<Response, RawApiError> {
+    let digest = ContentDigest::of_bytes(&bytes);
+    let etag = conditional::the_etag(&digest);
+    if let Some(response) = system_conditional_read(&etag, headers, correlation, head, &bytes)? {
+        return Ok(response);
+    }
+    Ok(system_body_response(
+        StatusCode::OK,
+        bytes,
+        content_type,
+        &etag,
+        correlation,
+    ))
+}
+
+/// Escribe un asset inmutable en el catalogo. El conflicto con el mismo
+/// digest es el eco de una publicacion interrumpida, no una
+/// reescritura; con otros bytes es un 409 con el motivo dado.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn publish_system_asset(
+    context: &VerifiedContext,
+    writer: &dyn CatalogWriter,
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+    coordinates: PackageCoordinates,
+    digest: ContentDigest,
+    size_bytes: u64,
+    conflict_message: &str,
+    correlation: &str,
+) -> Result<(), RawApiError> {
+    let publication = Publication {
+        repository: repository.repo_key.clone(),
+        asset_path: asset_path.to_string(),
+        coordinates,
+        digest,
+        size_bytes,
+        tags: Vec::new(),
+        actor: context.principal().subject().as_str().to_string(),
+        correlation_id: correlation.to_string(),
+        overwrite: false,
+        precondition: None,
+        subject: None,
+    };
+    match writer
+        .publish(context.account().as_str(), publication)
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(CatalogError::Conflict { .. }) => Err(RawApiError::Conflict(Box::leak(
+            conflict_message.to_string().into_boxed_str(),
+        ))),
+        Err(error) => Err(the_publication_error(&error)),
+    }
+}
+
+/// El momento cero: sin publicaciones, la fecha de un indice es la del
+/// epoch para que el documento sea determinista.
+pub(super) fn epoch_moment() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp(0, 0).expect("the epoch is a valid moment")
+}

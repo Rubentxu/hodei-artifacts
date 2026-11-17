@@ -225,6 +225,9 @@ chrono = { workspace = true }
 # El digest del contenido que se sube: el cliente puede declararlo y hay
 # que poder compararlo con lo que llega.
 sha2 = { workspace = true }
+# El indice `primary` de yum se sirve gzip: createrepo lo comprime y
+# dnf exige el open-checksum del texto sin comprimir.
+flate2 = "1.1.11"
 # La firma de metadata de sistemas (Release.gpg, repomd.xml.asc): OpenPGP
 # con clave Ed25519, contrastada con gpgv en las pruebas.
 pgp = { workspace = true }

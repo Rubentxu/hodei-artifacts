@@ -417,3 +417,76 @@ Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
 - **El sdist se construye en el cliente.** Instalar desde un sdist necesita las
   herramientas de construcción allí (`--no-build-isolation`); el servicio no
   las trae ni las ejecuta.
+
+## LINUX — repositorios hosted Debian (apt) y Fedora (yum/dnf)
+
+### 1. Qué afirma este contrato
+
+- **Dos superficies, solo hosted.** `/apt/{repositorio}/...` habla el
+  lenguaje de `apt-ftparchive` y `/yum/{repositorio}/...` el de
+  `createrepo_c`. Los formatos `apt` y `rpm` admiten **exclusivamente el
+  modo hosted**: crear su repositorio como proxy o group se rechaza en la
+  alta. No hay mirror de archivos Debian ni caché de distribuciones
+  Fedora: lo que publica una mano, lo sirve Hodei.
+- **La ruta la dicta el binario.** Un `.deb` se publica en
+  `pool/main/{Package}/{archivo}.deb` y un `.rpm` en
+  `pool/{name}-{epoch:}-{version}-{release}.{arch}.rpm`; las rutas que
+  declaren el `control` y el header reales del paquete. Subirlo a otro
+  sitio es un `409` que nombra la ruta correcta, y un cuerpo que no es lo
+  que dice su ruta, un `400`.
+- **Metadata derivada, nunca escrita.** Los índices no son documentos que
+  se reescriben: `Packages` se ensambla listando registros, y el
+  `primary.xml.gz` se arma por contenido desde los headers de los `.rpm`
+  publicados. La ruta del primary es su propio SHA256
+  (`repodata/{sha256}-primary.xml.gz`): es inmutable y cacheable para
+  siempre. La revisión y los tiempos del `repomd.xml` salen del último
+  asset publicado, no del reloj: mismo estado, mismos bytes, dos lecturas.
+- **Firmas de metadata OpenPGP.** `Release.gpg` y `repomd.xml.asc` son
+  firmas separadas en armadura sobre esos mismos bytes, y `key.asc` es la
+  clave pública del hub, también en armadura: el `signed-by` de apt y el
+  `gpgkey` de dnf. El oráculo `gpgv` abre la firma y rechaza cualquier
+  metadata alterada.
+- **Inmutabilidad y updates parciales.** Cada versión publicada es para
+  siempre: bytes distintos bajo la misma ruta son `409`; reenviar los
+  mismos bytes es el eco (`200`). Cada `.deb` deja dos assets atómicos —
+  los bytes y su registro `.record`—; si una caída deja el binario sin
+  registro, el paquete es invisible para el índice, nunca corrupto. Las
+  lecturas de metadata llevan ETag e `If-None-Match` (`304`).
+
+### 2. Cómo se comprueba
+
+- `tests/hsp122_apt_e2e.rs` y `tests/hsp122_yum_e2e.rs`: gramática,
+  ensamblado de índices, checksums cruzados del `repomd` con el gz
+  servido, firma verificada con `gpgv` real, condicionales e
+  inmutabilidad a nivel HTTP.
+- `tests/hsp122_apt_client.rs`: `apt-get` de `debian:bookworm` (distro
+  fijada) construye el `.deb` con `dpkg-deb`, lo publica el hub y el
+  cliente real instala verificando la firma del `Release`; con la clave
+  de un tercero, `apt-get update` se niega.
+- `tests/hsp122_yum_client.rs`: `dnf` y `microdnf` de
+  `quay.io/fedora/fedora:latest` (distro fijada) construyen el `.rpm` con
+  `rpmbuild`, el hub lo indexa y ambos clientes lo instalan con
+  `repo_gpgcheck=1`; con la clave de un tercero, `microdnf` se niega con
+  `repomd.xml GPG signature verification error`.
+
+### 3. Lo que este contrato NO promete
+
+- **No hay proxy ni group para apt/rpm.** Nada de espejar el archivo de
+  una distro, cachejar descargas de upstream o fusionar repositorios de
+  distribución en un group. Está fuera de alcance por decisión de diseño
+  (los índices de upstream se validan contra sus propios firmantes, no
+  contra el del hub).
+- **No se firman los paquetes.** `gpgcheck=0` / sin verificación de `.deb`
+  es el diseño: la garantía pedida es la firma de la **metadata**; la
+  integridad del paquete la dan los SHA256 y tamaños que el índice fija y
+  el cliente comprueba tras la descarga.
+- **Subconjunto de superficies del formato.** apt: solo componente
+  `main`, índices `Packages` sin comprimir y sin índice `Sources` de
+  `.dsc`; yum: solo `primary`, sin `filelists`, `other`, `updateinfo` ni
+  deltarpm. El parser de `.rpm` lee el header para indexar; la integridad
+  del payload la verifica `rpm`, no el hub.
+- **El rigor del cliente es del cliente.** `dnf5` 5.4.x avisa del fallo de
+  firma de repomd y continúa; quien aprieta `repo_gpgcheck` hasta negarse
+  es `microdnf` (y `apt`+`gpgv` en el lado Debian). El contrato promete
+  que la firma servida abre con la clave publicada y que ningún cliente
+  que la exige instala con otra clave.

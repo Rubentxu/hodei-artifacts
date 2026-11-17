@@ -649,6 +649,16 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the apt repositories");
     }
 
+    /// Crea repositorios **yum hosted** de la primera cuenta. Cada
+    /// entrada es una clave y su config (`null` si no tiene).
+    pub fn seed_yum(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, yum)| serde_json::json!({ "key": key, "format": "rpm", "yum": yum }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the yum repositories");
+    }
+
     /// Crea repositorios **go hosted** de la primera cuenta. Cada entrada
     /// es una clave y su config (`null` si no tiene).
     pub fn seed_go(&self, repositories: &[(&str, serde_json::Value)]) {

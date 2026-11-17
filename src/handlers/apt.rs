@@ -22,16 +22,16 @@ use axum::{
 };
 use base64::Engine as _;
 use hodei_catalog::{
-    CatalogError, PackageCoordinates, Publication, RepositoryDescriptor, RepositoryFormat,
+    PackageCoordinates, RepositoryDescriptor, RepositoryFormat,
     apt::{self, AptError, Route},
 };
-use hodei_evidence::ContentDigest;
 use serde_json::json;
 
 use super::raw::{
-    RawApiError, apply_cache_headers, apply_common_headers, the_admission_error, the_blob_error,
-    the_catalog, the_content_store, the_context, the_current_asset, the_decision,
-    the_publication_error, the_repository_in, the_resolved_asset, write_the_content,
+    RawApiError, apply_cache_headers, epoch_moment, publish_system_asset, serve_system_bytes,
+    system_body_response, the_admission_error, the_blob_error, the_catalog, the_content_store,
+    the_context, the_current_asset, the_decision, the_publication_error, the_repository_in,
+    the_resolved_asset, write_the_content,
 };
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
@@ -102,7 +102,7 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
 /// apt lleva la credencial en el userinfo de la URI: `Basic`, con el
 /// token como contrasena y el usuario informativo. La superficie
 /// compartida solo habla Bearer, asi que aqui se normaliza la cabecera.
-fn normalize_authorization(headers: &mut HeaderMap) {
+pub(crate) fn normalize_authorization(headers: &mut HeaderMap) {
     if crate::handlers::bearer_token(headers).is_some() {
         return;
     }
@@ -261,7 +261,7 @@ async fn records(
     let found = reader
         .assets_under(context.account().as_str(), &repository.repo_key, "pool/")
         .await
-        .map_err(|error| Failure::from(the_publication_error_ref(&error)))?;
+        .map_err(|error| Failure::from(the_publication_error(&error)))?;
     let mut out = Vec::new();
     for asset in found
         .into_iter()
@@ -326,7 +326,13 @@ async fn serve_index(
     the_decision(state, context, crate::actions::download_asset(), repository)?;
     let all = records(state, context, repository).await?;
     let body = index_body(&all, architecture);
-    serve_bytes(body.into_bytes(), "text/plain", headers, head, correlation)
+    Ok(serve_system_bytes(
+        body.into_bytes(),
+        "text/plain",
+        headers,
+        head,
+        correlation,
+    )?)
 }
 
 /// El aggregate `Release` del dist: las cabeceras del archive y la lista
@@ -343,7 +349,7 @@ async fn release_bytes(
         .iter()
         .map(|record| record.updated_at)
         .max()
-        .unwrap_or_else(epoch);
+        .unwrap_or_else(epoch_moment);
     let date = Route::release_date(&newest);
     let indexes: Vec<(String, Vec<u8>)> = apt::ARCHITECTURES
         .iter()
@@ -361,10 +367,6 @@ async fn release_bytes(
     Ok(apt::release_header(dist, &date, &view).into_bytes())
 }
 
-fn epoch() -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::from_timestamp(0, 0).expect("the epoch is a valid moment")
-}
-
 async fn serve_release(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -376,7 +378,13 @@ async fn serve_release(
 ) -> Result<Response, Failure> {
     the_decision(state, context, crate::actions::download_asset(), repository)?;
     let bytes = release_bytes(state, context, repository, dist).await?;
-    serve_bytes(bytes, "text/plain", headers, head, correlation)
+    Ok(serve_system_bytes(
+        bytes,
+        "text/plain",
+        headers,
+        head,
+        correlation,
+    )?)
 }
 
 async fn serve_release_signature(
@@ -399,40 +407,18 @@ async fn serve_release_signature(
                 &format!("the Release could not be signed: {error}"),
             )
         })?;
-    serve_bytes(
+    Ok(serve_system_bytes(
         signature,
         "application/pgp-signature",
         headers,
         head,
         correlation,
-    )
-}
-
-/// Sirve un documento derivado: se decide el permiso, se calculan los
-/// bytes y se responde con su etag, con condicionales y HEAD incluidos.
-fn serve_bytes(
-    bytes: Vec<u8>,
-    content_type: &str,
-    headers: &HeaderMap,
-    head: bool,
-    correlation: &str,
-) -> Result<Response, Failure> {
-    let digest = ContentDigest::of_bytes(&bytes);
-    let etag = conditional::the_etag(&digest);
-    if let Some(response) = conditional_read(&etag, headers, correlation, head, &bytes)? {
-        return Ok(response);
-    }
-    Ok(body_response(
-        StatusCode::OK,
-        bytes,
-        content_type,
-        &etag,
-        correlation,
-    ))
+    )?)
 }
 
 /// Un documento que sale de la clave del hub: la parte que puede fallar
 /// se evalua solo cuando el permiso ya es permiso.
+#[allow(clippy::too_many_arguments)]
 async fn serve_document<T, E>(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -454,7 +440,13 @@ where
             &format!("the apt document could not be produced: {error}"),
         )
     })?;
-    serve_bytes(bytes, content_type, headers, head, correlation)
+    Ok(serve_system_bytes(
+        bytes,
+        content_type,
+        headers,
+        head,
+        correlation,
+    )?)
 }
 
 /// Los bytes de un `.deb`, verificados contra su asset y la compuerta de
@@ -495,7 +487,7 @@ async fn read_deb(
     } else {
         bytes.len()
     };
-    let mut response = body_response(
+    let mut response = system_body_response(
         StatusCode::OK,
         bytes,
         "application/vnd.debian.binary-package",
@@ -618,7 +610,7 @@ async fn upload(
     }
 
     if !deb_already {
-        publish_asset(
+        publish_system_asset(
             context,
             writer.as_ref(),
             repository,
@@ -638,7 +630,7 @@ async fn upload(
         .await?;
     }
     if !record_already {
-        publish_asset(
+        publish_system_asset(
             context,
             writer.as_ref(),
             repository,
@@ -659,110 +651,4 @@ async fn upload(
     }
 
     Ok(axum::Json(json!({ "ok": true })).into_response())
-}
-
-/// Escribe un asset inmutable; el conflicto con el mismo digest es el eco
-/// de una publicacion interrumpida, no una reescritura.
-#[allow(clippy::too_many_arguments)]
-async fn publish_asset(
-    context: &hodei_authz::VerifiedContext,
-    writer: &dyn hodei_catalog::ports::CatalogWriter,
-    repository: &RepositoryDescriptor,
-    asset_path: &str,
-    coordinates: PackageCoordinates,
-    digest: ContentDigest,
-    size_bytes: u64,
-    conflict_message: &str,
-    correlation: &str,
-) -> Result<(), Failure> {
-    let publication = Publication {
-        repository: repository.repo_key.clone(),
-        asset_path: asset_path.to_string(),
-        coordinates,
-        digest,
-        size_bytes,
-        tags: Vec::new(),
-        actor: context.principal().subject().as_str().to_string(),
-        correlation_id: correlation.to_string(),
-        overwrite: false,
-        precondition: None,
-        subject: None,
-    };
-    match writer
-        .publish(context.account().as_str(), publication)
-        .await
-    {
-        Ok(_) => Ok(()),
-        Err(CatalogError::Conflict { .. }) => {
-            Err(Failure::plain(StatusCode::CONFLICT, conflict_message))
-        }
-        Err(error) => Err(the_publication_error(&error).into()),
-    }
-}
-
-/// El error de publicacion de una lectura de lista: la lista no la provoca
-/// un conflicto, pero el mismo traductor sabe que significa cada variante.
-fn the_publication_error_ref(error: &CatalogError) -> RawApiError {
-    match error {
-        CatalogError::Denied { .. } => RawApiError::Forbidden,
-        CatalogError::Missing { .. } => RawApiError::NotFound,
-        CatalogError::Unavailable { .. } | CatalogError::Corrupt { .. } => RawApiError::Internal,
-        other => RawApiError::BadRequest(Box::leak(other.to_string().into_boxed_str())),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Respuesta comun
-// ---------------------------------------------------------------------------
-
-/// `If-None-Match` contra el etag del documento: un 304 dice que no cambio.
-fn conditional_read(
-    etag: &str,
-    headers: &HeaderMap,
-    correlation: &str,
-    head: bool,
-    body: &[u8],
-) -> Result<Option<Response>, Failure> {
-    match conditional::the_read_condition(
-        conditional::the_if_match(headers).as_deref(),
-        conditional::the_if_none_match(headers).as_deref(),
-        Some(etag),
-    ) {
-        conditional::ReadOutcome::Failed => Err(RawApiError::PreconditionFailed.into()),
-        conditional::ReadOutcome::NotModified => {
-            let mut response = StatusCode::NOT_MODIFIED.into_response();
-            apply_common_headers(&mut response, etag, correlation);
-            Ok(Some(response))
-        }
-        conditional::ReadOutcome::Serve => Ok(if head {
-            let mut response = StatusCode::OK.into_response();
-            apply_common_headers(&mut response, etag, correlation);
-            if let Ok(value) = HeaderValue::from_str(&body.len().to_string()) {
-                response.headers_mut().insert(header::CONTENT_LENGTH, value);
-            }
-            Some(response)
-        } else {
-            None
-        }),
-    }
-}
-
-fn body_response(
-    status: StatusCode,
-    body: Vec<u8>,
-    content_type: &str,
-    etag: &str,
-    correlation: &str,
-) -> Response {
-    let mut response = (status, Body::from(body)).into_response();
-    apply_common_headers(&mut response, etag, correlation);
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(content_type).expect("a content type"),
-    );
-    response.headers_mut().insert(
-        header::HeaderName::from_static("x-content-type-options"),
-        HeaderValue::from_static("nosniff"),
-    );
-    response
 }

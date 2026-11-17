@@ -95,7 +95,7 @@ fn tar_block(name: &str, data: &[u8]) -> Vec<u8> {
     block[156] = b'0';
     block.extend_from_slice(data);
     let pad = (512 - data.len() % 512) % 512;
-    block.extend(std::iter::repeat(0).take(pad));
+    block.extend(std::iter::repeat_n(0, pad));
     block
 }
 
