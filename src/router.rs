@@ -427,6 +427,24 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // The Cargo sparse registry: `GET config.json`, the deterministic
+        // index paths, the download and `PUT api/v1/crates/new`. The path
+        // is the protocol grammar's own, so it arrives raw and the handler
+        // is the one that decodes it.
+        .route(
+            "/cargo/{*target}",
+            axum::routing::get(crate::handlers::cargo::handle)
+                .put(crate::handlers::cargo::handle)
+                // Any other method gets the same JSON error as the rest.
+                .fallback(crate::handlers::cargo::handle)
+                // A publish body carries the whole .crate, so the default
+                // limit of `axum` would refuse it before the protocol.
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         .with_state(app_state)
 }
 

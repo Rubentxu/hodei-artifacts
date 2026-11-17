@@ -2848,6 +2848,7 @@ dependencies = [
  "kernel",
  "md-5 0.10.6",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",

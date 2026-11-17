@@ -577,6 +577,18 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the npm repositories");
     }
 
+    /// Crea repositorios **cargo hosted** de la primera cuenta. Cada entrada
+    /// es una clave y su config (`null` si no tiene).
+    pub fn seed_cargo(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(
+                |(key, cargo)| serde_json::json!({ "key": key, "cargo": cargo, "format": "cargo" }),
+            )
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the cargo repositories");
+    }
+
     /// Crea repositorios **npm proxy** de la primera cuenta: la clave y su
     /// `config_settings.proxy` (el upstream y su cache).
     pub fn seed_npm_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
@@ -2307,6 +2319,8 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::Npm
             } else if repository["format"].as_str() == Some("pypi") {
                 hodei_catalog::RepositoryFormat::PyPi
+            } else if repository["format"].as_str() == Some("cargo") {
+                hodei_catalog::RepositoryFormat::Cargo
             } else {
                 hodei_catalog::RepositoryFormat::Maven2
             };
