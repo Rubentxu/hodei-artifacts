@@ -12,6 +12,8 @@
 //! Y todo lo que devuelve cabe en el alcance: si no cabe, el
 //! investigador lo rechaza antes de preguntarle al modelo.
 
+pub mod freshness;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;

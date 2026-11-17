@@ -12,6 +12,7 @@ hodei-evidence-storage = { path = "../hodei-evidence-storage" }
 hodei-investigator = { path = "../hodei-investigator" }
 kernel = { path = "../kernel" }
 surrealdb = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }
