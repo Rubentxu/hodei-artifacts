@@ -1,0 +1,158 @@
+# Los esquemas de la investigación.
+#
+# La investigación es una LECTURA: el cuerpo nombra el sujeto y la
+# pregunta, y la respuesta es el informe del investigador. El informe
+# dice qué se sabe del sujeto, qué sostiene cada afirmación, qué falta y
+# qué se quedó fuera por el presupuesto.
+#
+# El informe es **versionado**: `schema_version` dice con qué contrato se
+# está leyendo, porque un consumidor que assume la forma del informe sin
+# mirar la versión se equivoca en silencio.
+InvestigationRequest:
+  type: object
+  required: [subject]
+  properties:
+    subject:
+      type: string
+      description: >
+        El sujeto de la investigación: el HRN canónico del artefacto
+        (`hrn:hodei:artifacts:<region>:<cuenta>:artifact/<repositorio>/<algo>-<hex>`).
+        El HRN de otra cuenta no está: se esconde detrás del mismo 404
+        que un sujeto que no existe.
+      maxLength: 512
+    question:
+      type: string
+      description: >
+        La pregunta. Sin modelo nadie la contesta, y el informe la declara
+        sin responder; se guarda en la traza para que quien lea el informe
+        después sepa qué se preguntó.
+      maxLength: 2000
+    max_evidence:
+      type: integer
+      description: >
+        Cuántas piezas de evidencia puede leer. **Solo acota**: un cliente
+        que pide menos recibe menos, y uno que pide más recibe el límite
+        del despliegue.
+      minimum: 0
+    max_relations:
+      type: integer
+      description: Cuántas relaciones del grafo puede leer. Solo acota.
+      minimum: 0
+    max_bytes:
+      type: integer
+      format: int64
+      description: Cuántos bytes de contenido puede leer. Solo acota.
+      minimum: 0
+
+InvestigationReport:
+  type: object
+  required: [schema_version, subject, findings, coverage, read_set]
+  properties:
+    schema_version:
+      type: string
+      description: La versión del contrato del informe.
+      example: '1'
+    subject:
+      type: string
+      description: El sujeto sobre el que se investigó.
+    findings:
+      type: array
+      description: >
+        Lo que se encontró, en el orden que lo produjo la afirmación que
+        lo sostiene. Las clases NO se mezclan: un hecho verificado no es
+        una inferencia, y una incertidumbre no es un hecho.
+      items: { $ref: './investigation.yaml#/InvestigationFinding' }
+    coverage:
+      description: >
+        Cuánto de lo que hay se entregó. Una cobertura parcial se declara:
+        un alcance conocido pero incompleto no se presenta como respuesta
+        exhaustiva.
+      oneOf:
+        - type: string
+          enum: [complete]
+        - type: object
+          required: [partial]
+          properties:
+            partial:
+              type: object
+              required: [omitted]
+              properties:
+                omitted:
+                  type: integer
+                  description: Cuántos hechos se dejaron fuera por el presupuesto.
+    read_set:
+      $ref: './investigation.yaml#/InvestigationReadSet'
+
+InvestigationFinding:
+  type: object
+  required: [kind, statement, citations, status, basis]
+  properties:
+    kind:
+      type: string
+      description: La clase del hallazgo.
+      enum: [verified_fact, evidence_backed_claim, inference, uncertainty, recommendation]
+    statement:
+      type: string
+      description: El enunciado, tal como lo dijo quien lo dijo.
+    citations:
+      type: array
+      description: Las evidencias que se citan.
+      items: { type: string }
+    status:
+      type: string
+      description: El estado de la verificación.
+      enum: [verified, unverified, contradicted, unverifiable]
+    basis:
+      type: string
+      description: >
+        En qué se apoya el estado: el origen y los límites del hallazgo.
+
+InvestigationReadSet:
+  type: object
+  required: [generations, stamps]
+  properties:
+    generations:
+      type: array
+      description: >
+        La versión de cada fuente en el momento de leer, sin relojes. Es
+        un vector porque puede no haber un único cursor global.
+      items:
+        type: array
+        items: { type: string }
+    stamps:
+      type: array
+      description: >
+        Los sellos de lo que se leyó: identificadores y con qué se verifica
+        su origen. Nunca llevan el contenido: llevan el digest.
+      items: { $ref: './investigation.yaml#/InvestigationReadStamp' }
+
+InvestigationReadStamp:
+  type: object
+  required: [kind, resource, verified_by]
+  properties:
+    kind:
+      type: string
+      description: Qué clase de recurso se leyó.
+      enum: [evidence, relation, policy]
+    resource:
+      type: string
+      description: El identificador del recurso.
+    verified_by:
+      type: string
+      description: >
+        Con qué se verifica el origen: el digest, la identidad o la versión.
+
+InvestigationError:
+  type: object
+  required: [error, message]
+  properties:
+    error:
+      type: string
+      description: >
+        La clase del fallo. Un permiso denegado no es una ausencia, y lo
+        que está guardado no se puede leer tampoco es una ausencia.
+      enum:
+        [unauthenticated, permission, absence, invalid, conflict, corruption, indeterminate, unavailable]
+    message:
+      type: string
+      description: Lo que pasó, en palabras.

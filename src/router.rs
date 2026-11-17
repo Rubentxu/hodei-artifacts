@@ -52,7 +52,8 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
         (config.security.admin_api_enabled, app_state.clone()),
         admin_gate,
     ));
-    let repositories = repository_v1_routes(app_state.clone());
+    let repositories =
+        repository_v1_routes(app_state.clone(), config.security.investigation_api_enabled);
     let api = admin_api.merge(repositories);
     // The raw content surface is a surface of its own, and it is **not**
     // under `/api/v1`: the administrative API and the endpoint that serves
@@ -431,7 +432,7 @@ fn raw_routes(app_state: AppState) -> Router {
 
 /// Repository routes have their own credential/authorization gate; they are
 /// deliberately not behind `admin_api_enabled`.
-fn repository_v1_routes(app_state: AppState) -> Router {
+fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Router {
     Router::new()
         .route(
             "/repositories",
@@ -473,5 +474,29 @@ fn repository_v1_routes(app_state: AppState) -> Router {
             "/promotions/revoke",
             post(crate::handlers::promotions::revoke),
         )
-        .with_state(app_state)
+        .with_state(app_state.clone())
+        .merge(investigation_route(
+            app_state.clone(),
+            investigation_enabled,
+        ))
+}
+
+/// The investigation of a subject: a read that explains what the service
+/// knows about it.
+///
+/// It is mounted only when the deployment says so: the Cedar bundle has to
+/// declare the action it asks for, and a surface that is mounted without
+/// that declaration answers `500` to every request, which is a worse
+/// answer than a `404`.
+fn investigation_route(app_state: AppState, enabled: bool) -> axum::Router {
+    if enabled {
+        axum::Router::new()
+            .route(
+                "/investigations",
+                post(crate::handlers::investigation::investigate),
+            )
+            .with_state(app_state)
+    } else {
+        axum::Router::new()
+    }
 }

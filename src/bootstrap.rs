@@ -401,6 +401,11 @@ pub async fn bootstrap(
         config.security.oci_max_concurrent_uploads,
     )));
     let app_state = configure_production_security(app_state, config)?;
+    // La investigacion se cablea DESPUES de la seguridad de produccion:
+    // el autorizador que la investigation usa es el que el deployment
+    // declara, y cablearla antes seria cablear el de reserva --el que
+    // deniega todo-- por error de orden.
+    let app_state = wire_the_investigation(app_state, config, &schema_storage)?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
             "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"
@@ -495,6 +500,7 @@ fn configure_production_security(
         config.security.admin_api_enabled,
         config.security.raw_api_enabled,
         config.security.oci_api_enabled,
+        config.security.investigation_api_enabled,
     )
     .map_err(|error| BootstrapError::Security(format!("invalid authorization bundle: {error}")))?;
     // An instance that can promote has to be able to decide who may.
@@ -538,6 +544,46 @@ fn configure_production_security(
 /// It is both the record id and the version the record declares, so the
 /// reader can always find it again.
 pub const UNVERSIONED_SCHEMA_ID: &str = "latest";
+
+/// Cablea la investigacion sobre el grafo y la evidencia.
+///
+/// Se cablea al final, cuando la seguridad de produccion ya ha
+/// sustituido el autorizador de reserva por el que declara el
+/// deployment: el autorizador que la investigation usa tiene que ser el
+/// mismo que decide en la frontera, y no uno que deniega todo.
+///
+/// Sin almacen de contenido no hay investigacion: el contenido de la
+/// evidencia vive en el CAS del deployment, y un despliegue que no tiene
+/// uno no puede leer las pruebas. La superficie responde entonces con un
+/// `503` y dice por que, en vez de devolver un informe vacio que parece
+/// una respuesta.
+fn wire_the_investigation(
+    state: AppState,
+    config: &AppConfig,
+    schema_storage: &Arc<SurrealSchemaAdapter>,
+) -> Result<AppState, BootstrapError> {
+    let Some(content) = state.content_store.clone() else {
+        warn!(
+            "the investigation is not wired: the deployment has no store of content to read the evidence from"
+        );
+        return Ok(state.with_investigation_limits(config.investigation.clone()));
+    };
+    let db = Arc::new(schema_storage.db().clone());
+    let evidence: Arc<dyn hodei_evidence::ports::EvidenceStore> = Arc::new(
+        hodei_evidence_storage::SurrealEvidenceStore::new(db.clone()),
+    );
+    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db));
+    let investigation = Arc::new(crate::investigation::GraphInvestigation::new(
+        evidence,
+        Arc::new(crate::investigation::CasContentStore::new(content)),
+        graph,
+        state.authorize_resource.clone(),
+        config.investigation.clone(),
+    ));
+    Ok(state
+        .with_investigation(investigation)
+        .with_investigation_limits(config.investigation.clone()))
+}
 
 /// SurrealDB adapter for schema storage
 ///

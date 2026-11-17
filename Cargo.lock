@@ -2170,6 +2170,8 @@ dependencies = [
  "hodei-hrn",
  "hodei-hub",
  "hodei-iam",
+ "hodei-investigator",
+ "hodei-investigator-storage",
  "hodei-policies",
  "hodei-trust-policy",
  "hodei-trust-policy-storage",

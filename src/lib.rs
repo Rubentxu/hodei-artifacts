@@ -28,6 +28,7 @@ pub mod evidence_surreal;
 pub mod gc;
 pub mod handlers;
 pub mod iam_backfill;
+pub mod investigation;
 pub mod oci;
 pub mod openapi;
 pub mod proxy;

@@ -75,6 +75,17 @@ pub fn revoke_promotion() -> ActionId {
     ActionId::new("artifacts", "RevokePromotion").expect("a valid action")
 }
 
+/// Investigating a subject.
+///
+/// It is a **read**: the investigation explains what the service knows
+/// about a subject, and it does not change anything. It has its own
+/// action because it answers a different question than the download does:
+/// a deployment may want to let a principal read the bytes of a package
+/// without letting it ask why the package is affected.
+pub fn investigate() -> ActionId {
+    ActionId::new("artifacts", "Investigate").expect("a valid action")
+}
+
 /// Every action the service authorizes with.
 pub fn all() -> Vec<ActionId> {
     vec![
@@ -86,6 +97,7 @@ pub fn all() -> Vec<ActionId> {
         download_asset(),
         promote_asset(),
         revoke_promotion(),
+        investigate(),
     ]
 }
 
@@ -159,6 +171,7 @@ pub fn check_service_declared(
     admin_enabled: bool,
     raw_enabled: bool,
     oci_enabled: bool,
+    investigation_enabled: bool,
 ) -> Result<(), String> {
     check_declared(schema, &read_repository())?;
     check_declared(schema, &read_capsule())?;
@@ -172,6 +185,12 @@ pub fn check_service_declared(
         // bundle cannot decide on a push, and every request would end in a
         // 403 instead of the service refusing to start.
         check_declared(schema, &upload_asset())?;
+    }
+    if investigation_enabled {
+        // The investigation surface asks for its own action: a bundle that
+        // does not declare it cannot grant it, and every request would end
+        // in a 403 instead of the service refusing to start.
+        check_declared(schema, &investigate())?;
     }
     Ok(())
 }

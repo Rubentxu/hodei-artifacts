@@ -75,6 +75,11 @@ tags:
       La consola del catálogo: los repositorios de la cuenta, lo que se
       puede crear, la búsqueda, el detalle de un activo y las
       promociones al canal de confianza.
+  - name: investigation
+    description: >
+      La investigación de un artefacto: una lectura que explica lo que el
+      servicio sabe de él, con las citas de cada afirmación y el manifiesto
+      de lo que se leyó.
 
 paths:
   $ref: ./paths/index.yaml

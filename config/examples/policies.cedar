@@ -21,6 +21,11 @@ permit(
 );
 permit(
     principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
+    action == Artifacts::Action::"Investigate",
+    resource
+);
+permit(
+    principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
     action == Artifacts::Action::"UploadAsset",
     resource
 );

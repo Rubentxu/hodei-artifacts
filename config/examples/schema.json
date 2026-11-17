@@ -83,6 +83,16 @@
           ]
         }
       },
+      "Investigate": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Artifact"
+          ]
+        }
+      },
       "UploadAsset": {
         "appliesTo": {
           "principalTypes": [

@@ -45,3 +45,9 @@ PromoteResponse: { $ref: './console.yaml#/PromoteResponse' }
 RevokeRequest: { $ref: './console.yaml#/RevokeRequest' }
 RevokeResponse: { $ref: './console.yaml#/RevokeResponse' }
 CatalogError: { $ref: './console.yaml#/CatalogError' }
+InvestigationRequest: { $ref: './investigation.yaml#/InvestigationRequest' }
+InvestigationReport: { $ref: './investigation.yaml#/InvestigationReport' }
+InvestigationFinding: { $ref: './investigation.yaml#/InvestigationFinding' }
+InvestigationReadSet: { $ref: './investigation.yaml#/InvestigationReadSet' }
+InvestigationReadStamp: { $ref: './investigation.yaml#/InvestigationReadStamp' }
+InvestigationError: { $ref: './investigation.yaml#/InvestigationError' }
