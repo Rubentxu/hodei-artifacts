@@ -482,6 +482,31 @@ impl Deployment {
         assert!(status.success(), "the groups could not be seeded");
     }
 
+    /// Crea un **grupo go** de la primera cuenta: la clave y la lista
+    /// ordenada de sus miembros.
+    pub fn seed_go_group(&self, key: &str, members: &[&str]) {
+        let groups = vec![serde_json::json!({
+            "key": key,
+            "members": members,
+            "format": "go",
+        })];
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env(
+                "HODEI_SEED_GROUPS",
+                serde_json::Value::Array(groups).to_string(),
+            )
+            .status()
+            .expect("the group seeder runs");
+        assert!(status.success(), "the go group could not be seeded");
+    }
+
     /// Crea repositorios **Maven2 hosted** de la primera cuenta. Cada uno
     /// es una clave y su `config_settings.maven` (`null` si no lleva).
     ///
@@ -587,6 +612,36 @@ impl Deployment {
             )
             .collect();
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the cargo repositories");
+    }
+
+    /// Crea repositorios **go hosted** de la primera cuenta. Cada entrada
+    /// es una clave y su config (`null` si no tiene).
+    pub fn seed_go(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, go)| serde_json::json!({ "key": key, "format": "go", "go": go }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go repositories");
+    }
+
+    /// Crea repositorios **go proxy** de la primera cuenta: la clave y su
+    /// `config_settings.proxy` (el upstream y su cache).
+    pub fn seed_go_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, proxy)| serde_json::json!({ "key": key, "proxy": proxy, "format": "go" }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go proxies");
+    }
+
+    /// Crea repositorios **helm** de la primera cuenta, servidos por el
+    /// canal OCI. Cada entrada es una clave y su config (`null` si no tiene).
+    pub fn seed_helm(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, helm)| serde_json::json!({ "key": key, "format": "helm", "helm": helm }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the helm repositories");
     }
 
     /// Crea repositorios **npm proxy** de la primera cuenta: la clave y su
@@ -2263,6 +2318,8 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
                             hodei_catalog::RepositoryFormat::Maven2
                         } else if group["format"].as_str() == Some("pypi") {
                             hodei_catalog::RepositoryFormat::PyPi
+                        } else if group["format"].as_str() == Some("go") {
+                            hodei_catalog::RepositoryFormat::Go
                         } else {
                             hodei_catalog::RepositoryFormat::Raw
                         },
@@ -2321,6 +2378,10 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::PyPi
             } else if repository["format"].as_str() == Some("cargo") {
                 hodei_catalog::RepositoryFormat::Cargo
+            } else if repository["format"].as_str() == Some("go") {
+                hodei_catalog::RepositoryFormat::Go
+            } else if repository["format"].as_str() == Some("helm") {
+                hodei_catalog::RepositoryFormat::Helm
             } else {
                 hodei_catalog::RepositoryFormat::Maven2
             };

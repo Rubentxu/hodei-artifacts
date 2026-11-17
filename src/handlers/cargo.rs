@@ -70,19 +70,8 @@ impl Failure {
 
 impl IntoResponse for Failure {
     fn into_response(self) -> Response {
-        let (status, message) = match &self {
-            Self::Raw(RawApiError::Unauthorized) => {
-                (StatusCode::UNAUTHORIZED, "unauthorized".into())
-            }
-            Self::Raw(RawApiError::Forbidden) => (StatusCode::FORBIDDEN, "forbidden".into()),
-            Self::Raw(RawApiError::NotFound) => (StatusCode::NOT_FOUND, "not found".into()),
-            Self::Raw(RawApiError::BadRequest(reason)) => {
-                (StatusCode::BAD_REQUEST, reason.to_string())
-            }
-            Self::Raw(_) => (
-                StatusCode::BAD_REQUEST,
-                "the request could not be served".to_string(),
-            ),
+        let (status, message) = match self {
+            Self::Raw(error) => error.the_verdict(),
             Self::Cargo(error) => (
                 if matches!(error, CargoError::InvalidPath(_)) {
                     StatusCode::NOT_FOUND
@@ -91,7 +80,7 @@ impl IntoResponse for Failure {
                 },
                 error.message(),
             ),
-            Self::Plain(status, message) => (*status, message.clone()),
+            Self::Plain(status, message) => (status, message),
         };
         let mut response = (status, axum::Json(json!({ "error": message }))).into_response();
         if status == StatusCode::UNAUTHORIZED {

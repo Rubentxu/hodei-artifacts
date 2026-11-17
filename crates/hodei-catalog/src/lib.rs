@@ -47,6 +47,7 @@
 pub mod cargo;
 pub mod error;
 pub mod gc;
+pub mod gomod;
 pub mod group;
 pub mod maven;
 pub mod model;

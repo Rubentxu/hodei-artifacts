@@ -445,6 +445,23 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // The Go module proxy: `GET {module}/@v/list|.info|.mod|.zip` and
+        // `{module}/@latest`, plus the `PUT` of those same paths that
+        // publishes into a hosted repository. Module paths carry `!` and
+        // `%2f` escapes that must not be decoded by the router.
+        .route(
+            "/go/{*target}",
+            axum::routing::get(crate::handlers::go::handle)
+                .put(crate::handlers::go::handle)
+                .fallback(crate::handlers::go::handle)
+                // A module zip is a whole source tree, so the default
+                // limit of `axum` would refuse it before the protocol.
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         .with_state(app_state)
 }
 

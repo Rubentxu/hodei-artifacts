@@ -123,13 +123,15 @@ pub async fn the_repository(
         // no decir que existe un repositorio que no se puede usar.
         //
         // El formato que se acepta es el que guarda el contenido de esta
-        // superficie --el crudo y el de imagen--, y los demas (maven2,
-        // npm, pypi…) no significan nada aqui: una ruta de otro formato
-        // no es un recurso de la distribucion.
+        // superficie --el crudo, el de imagen y el de chart--: un chart
+        // Helm por OCI es un artefacto OCI, y `helm push` y `helm pull`
+        // hablan la distribucion estandar, sin superficie propia. Los
+        // demas (maven2, npm, pypi…) no significan nada aqui: una ruta de
+        // otro formato no es un recurso de la distribucion.
         Ok(descriptor)
             if !matches!(
                 descriptor.format,
-                RepositoryFormat::Raw | RepositoryFormat::Oci
+                RepositoryFormat::Raw | RepositoryFormat::Oci | RepositoryFormat::Helm
             ) || descriptor.mode != RepositoryMode::Hosted =>
         {
             Err(OciFailure::name_unknown(format!(
