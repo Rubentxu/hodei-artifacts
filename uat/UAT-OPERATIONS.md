@@ -742,19 +742,36 @@ informe se puede comprobar. Las reglas, una por una:
   (`investigation.graph_tenant_template`) es configuración. Un grafo
   escrito bajo otro nombre no tiene relaciones que mostrar, y el informe
   lo dice en vez de inventarlas.
+- **Un informe puede caducar, y se dice.** Un informe es una afirmación con
+  fecha: dice qué leyó y en qué versión del mundo. La comprobación es **bajo
+  demanda** --el cliente trae de vuelta el manifiesto-- y su respuesta es de
+  **tres**: `current` (el mundo no se movió bajo lo que el informe dice),
+  `stale` (se movió, y la respuesta dice **qué referencia** se movió) o
+  `unknown` (una fuente no se pudo consultar).
+- **Lo que no se sabe no se dice vigente.** Un almacén que no contesta no
+  dice que el mundo no se movió, y un informe que no dice de qué mundo habló
+  no puede comprobarse: se dice que no se sabe, nunca que sigue vigente.
+- **Caduca lo que el informe sostiene, y solo eso.** El apoyo de la relación
+  que leyó y la evidencia con el digest que leyó. Un cambio ajeno al
+  manifiesto **no** invalida el informe: lo que no se leyó no puede caducar
+  lo que se leyó.
 
 ## I2. Qué se ha medido
 
 | Prueba | Qué comprueba |
 | --- | --- |
-| `tests/hsp88_investigation_query.rs` | La consulta autorizada devuelve el informe con su sujeto, sus hallazgos, su cobertura y su manifiesto; lo que no está autenticado, lo que es de otra cuenta, lo que no es un artefacto, lo que no es un HRN y lo que no tiene permiso **no llega a leer nada**; una pregunta más larga que el límite se rechaza; la petición solo acota el presupuesto; la superficie no tiene otros métodos; un despliegue que no la declara no la monta; el informe cita la evidencia con su digest; lo que no cabe se declara omitido; y sin modelo la pregunta se declara sin responder. |
+| `tests/hsp88_investigation_query.rs` | La consulta autorizada devuelve el informe con su sujeto, sus hallazgos, su cobertura y su manifiesto; lo que no está autenticado, lo que es de otra cuenta, lo que no es un artefacto, lo que no es un HRN y lo que no tiene permiso **no llega a leer nada**; una pregunta más larga que el límite se rechaza; la petición solo acorta el presupuesto; la superficie no tiene otros métodos; un despliegue que no la declara no la monta; el informe cita la evidencia con su digest; lo que no cabe se declara omitido; y sin modelo la pregunta se declara sin responder. |
 | `crates/hodei-investigator/tests/deterministic_contract.rs` | El dominio sin modelo: los hechos que calculan las herramientas, las incertidumbres que se declaran, el manifiesto que lleva el informe y la traza que dice que no hubo modelo. |
+| `tests/hsp89_investigation_freshness.rs` | La comprobación de la frescura: un informe cuyo mundo no se movió sigue vigente; el apoyo que se retiró lo deja obsoleto, diciendo qué referencia se movió; un cambio ajeno al informe no lo invalida; un informe sin versión **no** dice que sigue vigente; y lo que no está autenticado, es de otra cuenta o no tiene permiso **no lee nada**. |
+| `crates/hodei-investigator/tests/freshness_contract.rs` | El verificador puro: la respuesta de tres, el cambio ajeno que no invalida, el apoyo ajeno de la misma relación que no invalida, la fuente que no se puede consultar (que es `unknown`, no `current`) y el manifiesto sin versión. |
+| `crates/hodei-investigator-storage/tests/freshness_storage.rs` | El comprobador sobre el almacenamiento real: la versión del tenant, los deltas que el grafo escribió, la retirada de un apoyo y el aislamiento de la cuenta. |
 
 ## I3. La superficie
 
 | Ruta | Qué hace |
 | --- | --- |
 | `POST /api/v1/investigations` | La investigación de un artefacto. El cuerpo nombra el sujeto (un HRN canónico de artefacto) y, si se quiere, la pregunta; la respuesta es el informe versionado del investigador. |
+| `POST /api/v1/investigations/freshness` | La comprobación de la frescura de un informe. El cuerpo nombra el sujeto y trae de vuelta el manifiesto; la respuesta dice `current`, `stale` (con las referencias que se movieron) o `unknown` (con el motivo). |
 
 La superficie está **cerrada por defecto**: se abre con
 `security.investigation_api_enabled = true`, y un bundle que no declara
@@ -775,10 +792,19 @@ despliegue (`investigation.max_question_length`, `investigation.max_evidence`,
   incertidumbres; la pregunta, sin responder.
 - **Un despliegue sin evidencia no inventa evidencia.** El informe dice
   que no hay nada, con la cobertura que lo declara.
+- **La frescura no invalida nada por su cuenta.** No hay motor de
+  suscripciones, ni cola, ni TTL: la comprobación es bajo demanda, y lo que
+  responde es lo que el mundo dice ahora, no una decisión sobre el informe.
+- **La frescura no relee el contexto.** Compara el manifiesto con la
+  posición del tenant y con los deltas posteriores a la versión leída; no
+  vuelve a recuperar la evidencia ni regenera el informe.
 
 ## I5. Cómo se ejecuta
 
 ```bash
 cargo test --test hsp88_investigation_query
 cargo test -p hodei-investigator --test deterministic_contract
+cargo test --test hsp89_investigation_freshness
+cargo test -p hodei-investigator --test freshness_contract
+cargo test -p hodei-investigator-storage --test freshness_storage
 ```

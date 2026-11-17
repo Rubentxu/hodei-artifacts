@@ -44,3 +44,5 @@
 # La investigación de un artefacto: una lectura que explica lo que el
 # servicio sabe de él.
 /api/v1/investigations: { $ref: './investigations.yaml#/investigations' }
+# Y si un informe entregado sigue apoyándose en el mundo.
+/api/v1/investigations/freshness: { $ref: './investigations.yaml#/investigationsFreshness' }

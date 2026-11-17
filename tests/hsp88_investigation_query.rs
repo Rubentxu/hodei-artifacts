@@ -213,6 +213,17 @@ impl hodei_artifacts_api::investigation::InvestigationPort for CountingInvestiga
             },
         })
     }
+
+    async fn freshness_of(
+        &self,
+        _scope: &hodei_investigator::scope::RetrievalScope,
+        _report: &ReadSet,
+    ) -> Result<
+        hodei_investigator::freshness::Freshness,
+        hodei_investigator::investigator::InvestigationError,
+    > {
+        Ok(hodei_investigator::freshness::Freshness::Current)
+    }
 }
 
 /// La aplicacion con la superficie de investigacion montada.
@@ -689,6 +700,9 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
         evidence.clone() as Arc<dyn hodei_evidence::ports::EvidenceStore>,
         Arc::new(CasContentStore::new(blobs.clone() as Arc<dyn BlobStore>)),
         graph,
+        Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(
+            db.clone(),
+        )) as Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
         authorize,
         config.investigation.clone(),
     )));
@@ -812,6 +826,9 @@ async fn lo_que_no_cabe_en_el_presupuesto_se_declara_omitido() {
         evidence.clone() as Arc<dyn hodei_evidence::ports::EvidenceStore>,
         Arc::new(CasContentStore::new(blobs.clone() as Arc<dyn BlobStore>)),
         graph,
+        Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(
+            db.clone(),
+        )) as Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
         authorize,
         config.investigation.clone(),
     )));
@@ -891,6 +908,9 @@ async fn sin_modelo_la_pregunta_se_declara_sin_responder() {
         evidence.clone() as Arc<dyn hodei_evidence::ports::EvidenceStore>,
         Arc::new(CasContentStore::new(blobs.clone() as Arc<dyn BlobStore>)),
         graph,
+        Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(
+            db.clone(),
+        )) as Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
         authorize,
         config.investigation.clone(),
     )));

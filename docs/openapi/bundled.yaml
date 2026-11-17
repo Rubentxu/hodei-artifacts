@@ -1282,12 +1282,69 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/InvestigationError'
+        '422':
+          $ref: '#/components/responses/BadRequest'
         '500':
           description: Lo que se leyó no cabe en el alcance en el que se leyó.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/InvestigationError'
+        '503':
+          description: La investigación no está disponible en este despliegue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationError'
+  /api/v1/investigations/freshness:
+    post:
+      tags:
+        - investigation
+      summary: Comprobar si un informe sigue vigente
+      description: |
+        Un informe es una afirmación con fecha: dice qué leyó y en qué versión del mundo. Esta operación compara el manifiesto que el cliente trae de vuelta con el mundo de ahora, y responde si el informe sigue vigente, si está obsoleto --diciendo qué referencia se movió--, o si no se puede saber porque una fuente no se pudo consultar.
+        Lo que no se sabe NO se dice vigente: un almacén que no contesta no dice que el mundo no se movió.
+        El sujeto de otra cuenta no está: se esconde detrás del mismo 404 que un sujeto que no existe, y no se evalúa.
+      operationId: investigateFreshness
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FreshnessRequest'
+      responses:
+        '200':
+          description: El veredicto de la frescura.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshnessResponse'
+        '400':
+          description: El sujeto no es un HRN canónico.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationError'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationError'
+        '403':
+          description: El permiso de investigar no está concedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationError'
+        '404':
+          description: No hay nada ahí, o no es de esta cuenta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvestigationError'
+        '422':
+          $ref: '#/components/responses/BadRequest'
         '503':
           description: La investigación no está disponible en este despliegue.
           content:
@@ -2470,8 +2527,13 @@ components:
             La versión de cada fuente en el momento de leer, sin relojes. Es un vector porque puede no haber un único cursor global.
           items:
             type: array
+            description: El par (fuente, versión).
+            minItems: 2
+            maxItems: 2
             items:
-              type: string
+              anyOf:
+                - type: string
+                - type: integer
         stamps:
           type: array
           description: |
@@ -2543,3 +2605,72 @@ components:
         message:
           type: string
           description: Lo que pasó, en palabras.
+    FreshnessRequest:
+      type: object
+      required:
+        - subject
+        - read_set
+      properties:
+        subject:
+          type: string
+          description: |
+            El sujeto sobre el que se investigó: el HRN canónico del artefacto. El HRN de otra cuenta no está.
+          maxLength: 512
+        read_set:
+          $ref: '#/components/schemas/InvestigationReadSet'
+    InvestigationChangedReference:
+      type: object
+      required:
+        - source
+        - kind
+        - resource
+        - evidence
+        - what
+      properties:
+        source:
+          type: string
+          description: La fuente que se movió.
+        kind:
+          type: string
+          description: Qué clase de referencia es.
+          enum:
+            - evidence
+            - relation
+            - policy
+        resource:
+          type: string
+          description: La identidad de la referencia.
+        evidence:
+          type: string
+          description: |
+            El apoyo que se movió: la evidencia que la sostenía.
+        what:
+          type: string
+          description: Qué le pasó a la referencia.
+          enum:
+            - added
+            - removed
+            - gone
+            - changed
+    FreshnessResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: |
+            El veredicto: `current` (el mundo no se movió bajo lo que el informe dice), `stale` (se movió, y lo que se movió toca lo que el informe sostiene) o `unknown` (una fuente no se pudo consultar, y eso no es lo mismo que estar vigente).
+          enum:
+            - current
+            - stale
+            - unknown
+        changed:
+          type: array
+          description: |
+            Las referencias que se movieron, cuando el informe está obsoleto. Sin esta lista, un informe caducado no sería accionable.
+          items:
+            $ref: '#/components/schemas/InvestigationChangedReference'
+        reason:
+          type: string
+          description: Por qué no se pudo saber, cuando no se pudo saber.

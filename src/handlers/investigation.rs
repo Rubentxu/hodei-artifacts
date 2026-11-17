@@ -2,9 +2,9 @@
 //!
 //! The endpoint answers the question the investigation exists for: what
 //! does the service know about this artefact, what supports each claim,
-//! what is missing, and what was left out. The answer is the report of the
-//! investigator: versioned, with the citations of every claim and with the
-//! coverage of what was read.
+//! what is missing, and what was left out. The answer is the report of
+//! the investigator: versioned, with the citations of every claim and with
+//! the coverage of what was read.
 //!
 //! It is a **read**. There is no route here that promotes an artefact,
 //! that changes a policy, that approves an exception or that writes a
@@ -21,6 +21,15 @@
 //! 3. **Cedar** decides on the subject, one subject at a time. A decision
 //!    that could not be taken is not a permission.
 //! 4. Only then does anything get **read**.
+//!
+//! # The freshness of a delivered report
+//!
+//! A report is a claim with a date: it says what was read and in which
+//! version of the world. The other route of this surface answers whether
+//! that report still rests on the world: **still current**, **stale** (and
+//! which reference moved), or **unknown** (a source could not be
+//! consulted). It is a check under demand: the client brings back the
+//! manifest it was given, and the service says whether it still holds.
 
 use axum::{
     Json,
@@ -28,7 +37,10 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use hodei_authz::VerifiedContext;
+use hodei_investigator::freshness::{ChangedReference, Freshness};
 use hodei_investigator::investigator::InvestigationError;
+use hodei_investigator::read_set::ReadSet;
 use hodei_investigator::report::InvestigationReport;
 use hodei_investigator::scope::{RetrievalBudget, RetrievalScope};
 use kernel::Hrn;
@@ -122,6 +134,52 @@ pub struct InvestigationRequest {
     pub max_bytes: Option<u64>,
 }
 
+/// What the client asks when it wants to know whether a report it holds
+/// still rests on the world.
+#[derive(Debug, serde::Deserialize)]
+pub struct FreshnessRequest {
+    /// The subject the report is about.
+    pub subject: String,
+    /// The manifest of the report: the stamps of what was read and the
+    /// version of the world it was read at.
+    pub read_set: ReadSet,
+}
+
+/// The answer to the freshness of a report.
+#[derive(Debug, serde::Serialize)]
+pub struct FreshnessView {
+    /// The verdict: `current`, `stale` or `unknown`.
+    pub status: &'static str,
+    /// The references that moved, when the report is stale.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub changed: Vec<ChangedReference>,
+    /// Why it could not be told, when it could not be told.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl From<Freshness> for FreshnessView {
+    fn from(freshness: Freshness) -> Self {
+        match freshness {
+            Freshness::Current => Self {
+                status: "current",
+                changed: Vec::new(),
+                reason: None,
+            },
+            Freshness::Stale { changed } => Self {
+                status: "stale",
+                changed,
+                reason: None,
+            },
+            Freshness::Unknown { reason } => Self {
+                status: "unknown",
+                changed: Vec::new(),
+                reason: Some(reason),
+            },
+        }
+    }
+}
+
 /// `POST /api/v1/investigations`
 ///
 /// The body names the subject and, optionally, the question. The answer is
@@ -137,47 +195,10 @@ pub async fn investigate(
     headers: HeaderMap,
     Json(request): Json<InvestigationRequest>,
 ) -> Result<Json<InvestigationReport>, InvestigationApiError> {
-    // 1. The principal is verified.
-    let context = the_context(&state, &headers)
-        .await
-        .map_err(|failure| match failure {
-            Authentication::Unauthorized => InvestigationApiError::Unauthorized,
-            Authentication::Unavailable => InvestigationApiError::Unavailable,
-        })?;
+    // 1. The principal is verified, and the gates come in order.
+    let (context, subject) = the_authorized_subject(&state, &headers, &request.subject).await?;
 
-    // 2. The subject: a canonical HRN of an artefact of the service.
-    let subject = Hrn::from_string(request.subject.trim()).ok_or_else(|| {
-        InvestigationApiError::BadRequest("the subject is not a canonical HRN".to_string())
-    })?;
-    if subject.partition() != "hodei"
-        || subject.service() != "artifacts"
-        || subject.resource_type() != "artifact"
-    {
-        // A well-formed HRN of another service or type is not a subject of
-        // an investigation, and it is not evaluated.
-        return Err(InvestigationApiError::NotFound);
-    }
-
-    // The account comes from the verified principal. A foreign HRN is
-    // hidden behind the same 404 as a missing one.
-    if subject.account_id() != context.account().as_str() {
-        return Err(InvestigationApiError::NotFound);
-    }
-
-    // 3. Cedar decides on the subject. A decision that could not be taken
-    // is not a permission, and neither is a denial: what is not permitted
-    // is not investigated.
-    let outcome = state
-        .authorize_resource
-        .execute_canonical(context.clone(), crate::actions::investigate(), &subject)
-        .map_err(|_| {
-            InvestigationApiError::BadRequest("the subject is not a valid resource".to_string())
-        })?;
-    if !outcome.allows_access() {
-        return Err(InvestigationApiError::Forbidden);
-    }
-
-    // 4. The question has a size, and the budget is the deployment's.
+    // 2. The question has a size, and the budget is the deployment's.
     let limits = &state.investigation_limits;
     let question = request.question.clone().unwrap_or_default();
     if question.chars().count() > limits.max_question_length {
@@ -214,13 +235,97 @@ pub async fn investigate(
     Ok(Json(investigation.report))
 }
 
+/// `POST /api/v1/investigations/freshness`
+///
+/// The body names the subject and brings back the manifest of a report the
+/// client holds. The answer says whether that report still rests on the
+/// world: `current`, `stale` --with the references that moved--, or
+/// `unknown` when a source could not be consulted.
+///
+/// It is a **read**, like the rest of the surface: it compares what the
+/// client says it read with what the world says now, and it writes
+/// nothing.
+pub async fn freshness(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<FreshnessRequest>,
+) -> Result<Json<FreshnessView>, InvestigationApiError> {
+    let (context, subject) = the_authorized_subject(&state, &headers, &request.subject).await?;
+
+    let actor = the_actor(&context)?;
+    let scope = RetrievalScope::new(actor, subject);
+
+    let freshness = state
+        .investigation
+        .as_ref()
+        .ok_or(InvestigationApiError::Unavailable)?
+        .freshness_of(&scope, &request.read_set)
+        .await
+        .map_err(the_investigation_error)?;
+
+    Ok(Json(FreshnessView::from(freshness)))
+}
+
+/// The gates, in order: the principal, the HRN, the account, Cedar.
+///
+/// They are the SAME gates for every route of this surface, and they come
+/// BEFORE anything is read: what is rejected here does not consult a
+/// blob, a graph or a ledger.
+async fn the_authorized_subject(
+    state: &AppState,
+    headers: &HeaderMap,
+    subject: &str,
+) -> Result<(VerifiedContext, Hrn), InvestigationApiError> {
+    // 1. The principal is verified.
+    let context = the_context(state, headers)
+        .await
+        .map_err(|failure| match failure {
+            Authentication::Unauthorized => InvestigationApiError::Unauthorized,
+            Authentication::Unavailable => InvestigationApiError::Unavailable,
+        })?;
+
+    // 2. The subject: a canonical HRN of an artefact of the service.
+    let subject = Hrn::from_string(subject.trim()).ok_or_else(|| {
+        InvestigationApiError::BadRequest("the subject is not a canonical HRN".to_string())
+    })?;
+    if subject.partition() != "hodei"
+        || subject.service() != "artifacts"
+        || subject.resource_type() != "artifact"
+    {
+        // A well-formed HRN of another service or type is not a subject of
+        // an investigation, and it is not evaluated.
+        return Err(InvestigationApiError::NotFound);
+    }
+
+    // The account comes from the verified principal. A foreign HRN is
+    // hidden behind the same 404 as a missing one.
+    if subject.account_id() != context.account().as_str() {
+        return Err(InvestigationApiError::NotFound);
+    }
+
+    // 3. Cedar decides on the subject. A decision that could not be taken
+    // is not a permission, and neither is a denial: what is not permitted
+    // is not investigated.
+    let outcome = state
+        .authorize_resource
+        .execute_canonical(context.clone(), crate::actions::investigate(), &subject)
+        .map_err(|_| {
+            InvestigationApiError::BadRequest("the subject is not a valid resource".to_string())
+        })?;
+    if !outcome.allows_access() {
+        return Err(InvestigationApiError::Forbidden);
+    }
+
+    Ok((context, subject))
+}
+
 /// The identity that asks, as the HRN the scope is built with.
 ///
 /// The actor is the **verified** principal, and its account has to be the
 /// account of the question: an identity that claims one account while the
 /// credential carries another is not an identity this service can ask
 /// with.
-fn the_actor(context: &hodei_authz::VerifiedContext) -> Result<Hrn, InvestigationApiError> {
+fn the_actor(context: &VerifiedContext) -> Result<Hrn, InvestigationApiError> {
     let actor = Hrn::from_string(context.principal().subject().as_str())
         .ok_or(InvestigationApiError::Forbidden)?;
     if actor.account_id() != context.account().as_str() {
