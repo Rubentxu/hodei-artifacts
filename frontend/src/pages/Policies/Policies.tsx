@@ -3,12 +3,11 @@
  * Utiliza la arquitectura Clean Code con servicios y hooks
  */
 
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Textarea } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { usePolicyService } from '@/shared/hooks';
@@ -166,9 +165,11 @@ const Policies = () => {
                   <Checkbox
                     id="isActive"
                     checked={newPolicy.isActive}
-                    checked={newPolicy.isActive}
                     onCheckedChange={checked =>
-                      setNewPolicy(prev => ({ ...prev, isActive: checked }))
+                      setNewPolicy(prev => ({
+                        ...prev,
+                        isActive: checked === true,
+                      }))
                     }
                   />
                   <label
@@ -216,16 +217,16 @@ const Policies = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Política Cedar *
                   </label>
-                  <Textarea
+                  <textarea
                     value={newPolicy.policy}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                    onChange={e =>
                       setNewPolicy(prev => ({
                         ...prev,
                         policy: e.target.value,
                       }))
                     }
                     placeholder="Escribe tu política Cedar aquí..."
-                    className="w-full h-64 font-mono text-sm"
+                    className="w-full h-64 font-mono text-sm rounded-md border border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     rows={12}
                   />
                 </div>

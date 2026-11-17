@@ -1,5 +1,3 @@
-import React from 'react';
-
 interface SearchResultHighlighterProps {
   text: string;
   query: string;

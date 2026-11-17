@@ -3,7 +3,7 @@
  * Utiliza la arquitectura Clean Code con servicios y hooks
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';

@@ -1,8 +1,6 @@
 import type { Policy, NewPolicy, UpdatePolicy } from '../types/policy.types';
 
 class PolicyService {
-  private readonly basePath = '/policies';
-
   async getPolicies(): Promise<Policy[]> {
     // const response = await apiClient.get<Policy[]>(this.basePath);
     // return response.data;

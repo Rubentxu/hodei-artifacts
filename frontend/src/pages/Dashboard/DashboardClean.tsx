@@ -3,7 +3,7 @@
  * Utiliza los nuevos servicios y hooks siguiendo principios SOLID
  */
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -15,11 +15,9 @@ import {
   useRepositoryMetrics,
 } from '@/shared/hooks';
 import type { Repository } from '@/shared/types';
-import type { PackageResult } from '@/shared/types/openapi-generated.types';
 import {
   TrendingUp,
   Package,
-  Users,
   HardDrive,
   Download,
   Clock,
@@ -43,8 +41,7 @@ const DashboardClean = () => {
     usePopularPackages(5);
   const { data: recentPackagesData, isLoading: recentLoading } =
     useRecentPackages(5);
-  const { data: metricsData, isLoading: metricsLoading } =
-    useRepositoryMetrics();
+  const { isLoading: metricsLoading } = useRepositoryMetrics();
 
   const repositories = repositoriesData?.data || [];
   const popularPackages = popularPackagesData || [];

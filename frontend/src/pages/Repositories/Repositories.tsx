@@ -3,10 +3,9 @@ import { useNotifications } from '@/shared/stores/ui.store';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Spinner } from '@/components/ui/Spinner';
 import { useRepositories, useRepositoryFilters } from '@/shared/hooks';
 import { useDebounce } from '@/shared/hooks';
-import type { RepositoryType, RepositoryFilters } from '@/shared/types';
+import type { RepositoryType } from '@/shared/types';
 
 const Repositories = () => {
   const { showInfo } = useNotifications();

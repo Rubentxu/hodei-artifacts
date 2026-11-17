@@ -64,7 +64,7 @@ export const useSearchStore = create<SearchState & SearchActions>()(
         set(state => ({ favorites: state.favorites.filter(f => f.id !== id) }));
       },
       clearFilters: () =>
-        set(state => ({ filters: { ...initialState.filters } })),
+        set(_state => ({ filters: { ...initialState.filters } })),
       reset: () => set(initialState),
     }),
     {

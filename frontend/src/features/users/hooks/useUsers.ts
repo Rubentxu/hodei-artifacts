@@ -1,13 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userService } from '../services/userApi';
-import { useNotificationStore } from '@/shared/stores';
+import { useNotifications } from '@/shared/stores';
 import type { NewUser, UpdateUser } from '../types/user.types';
 
 const USERS_KEY = 'users';
 
 export const useUsers = () => {
   const queryClient = useQueryClient();
-  const { addNotification } = useNotificationStore();
+  const { addNotification } = useNotifications();
 
   const { data: users, isLoading } = useQuery({
     queryKey: [USERS_KEY],

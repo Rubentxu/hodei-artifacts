@@ -1,13 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tokenService } from '../services/tokenApi';
-import { useNotificationStore } from '@/shared/stores';
+import { useNotifications } from '@/shared/stores';
 import type { NewApiToken, ApiToken } from '../types/token.types';
 
 const TOKENS_KEY = 'tokens';
 
 export const useTokens = () => {
   const queryClient = useQueryClient();
-  const { addNotification } = useNotificationStore();
+  const { addNotification } = useNotifications();
 
   const { data: tokens, isLoading } = useQuery({
     queryKey: [TOKENS_KEY],
