@@ -362,6 +362,10 @@ pub enum ReceiptOutcome {
     /// El upstream confirmo que el contenido que se tiene sigue valiendo
     /// (`304`, o los mismos bytes): no se movio nada.
     Revalidated,
+    /// Los bytes no llegaron de una salida a la red, sino de un paquete de
+    /// resolucion importado: el recibo conserva la procedencia original y
+    /// la autoridad es la configuracion del repositorio de destino.
+    Imported,
     /// El upstream entrego **otros** bytes para un contenido inmutable. Los
     /// bytes no se publican: el recibo guarda lo que se ofrecio, y el
     /// contenido que se tenia queda retenido hasta que cambie la
@@ -375,6 +379,7 @@ impl ReceiptOutcome {
         match self {
             Self::Fetched => "fetched",
             Self::Revalidated => "revalidated",
+            Self::Imported => "imported",
             Self::Quarantined => "quarantined",
         }
     }
@@ -384,6 +389,7 @@ impl ReceiptOutcome {
         match raw {
             "fetched" => Some(Self::Fetched),
             "revalidated" => Some(Self::Revalidated),
+            "imported" => Some(Self::Imported),
             "quarantined" => Some(Self::Quarantined),
             _ => None,
         }
@@ -632,9 +638,15 @@ mod tests {
         for outcome in [
             ReceiptOutcome::Fetched,
             ReceiptOutcome::Revalidated,
+            ReceiptOutcome::Imported,
             ReceiptOutcome::Quarantined,
         ] {
             assert_eq!(ReceiptOutcome::parse(outcome.as_str()), Some(outcome));
+            assert_eq!(
+                serde_json::to_value(outcome).unwrap(),
+                json!(outcome.as_str()),
+                "the stored name and the wire name are one name"
+            );
         }
         assert_eq!(ReceiptOutcome::parse("other"), None);
     }

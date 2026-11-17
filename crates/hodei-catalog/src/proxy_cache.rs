@@ -827,6 +827,47 @@ mod tests {
         assert_eq!(decide(&offline, Some(&other)), CacheDecision::OfflineMiss);
     }
 
+    /// Un recibo de importacion confirma el contenido igual que un fetch:
+    /// lo que autoriza a servirlo sin red es la configuracion vigente del
+    /// repositorio, no como llegaron los bytes.
+    #[test]
+    fn an_imported_receipt_of_the_current_upstream_is_served_offline() {
+        let policy = policy(json!({"ttl": {"content_secs": 1}}));
+        let mut offline = ctx(&policy, "a/b", 1_000_000);
+        offline.offline = true;
+        offline.config_version = 4;
+
+        let served = digest('a');
+        let mut receipt = ProvenanceReceipt {
+            id: "prv-import".into(),
+            account: "acme".into(),
+            repository: "central".into(),
+            asset_path: "a/b".into(),
+            upstream_id: "central".into(),
+            source_url: "https://repo.example.com/a/b".into(),
+            config_version: 4,
+            digest: served.clone(),
+            size_bytes: 1,
+            checksum: ChecksumEvidence::ComputedOnly,
+            status: 200,
+            redirects: 0,
+            etag: None,
+            last_modified: None,
+            outcome: ReceiptOutcome::Imported,
+            actor: "u".into(),
+            correlation_id: "c".into(),
+            fetched_at: at(0),
+        };
+        let entry = CacheEntry::of(&served, 1, std::slice::from_ref(&receipt));
+        assert_eq!(decide(&offline, Some(&entry)), CacheDecision::OfflineServe);
+
+        // Lo que no es el upstream vigente tampoco se sirve sin red, y un
+        // importado no abre excepciones.
+        receipt.upstream_id = "elsewhere".into();
+        let entry = CacheEntry::of(&served, 1, std::slice::from_ref(&receipt));
+        assert_eq!(decide(&offline, Some(&entry)), CacheDecision::OfflineMiss);
+    }
+
     #[test]
     fn a_quarantine_lasts_until_the_configuration_changes() {
         let policy = CachePolicy::default();

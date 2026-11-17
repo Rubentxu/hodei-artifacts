@@ -21,6 +21,7 @@ pub mod auth;
 pub mod authorization;
 pub mod blob_probe;
 pub mod bootstrap;
+pub mod bundles;
 pub mod composition_root;
 pub mod config;
 pub mod evidence;

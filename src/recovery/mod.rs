@@ -61,6 +61,9 @@ pub enum RecoveryError {
     /// El almacen o el catalogo fallaron.
     #[error("the store failed: {0}")]
     Store(String),
+    /// El paquete de resolucion no pudo exportarse o importarse.
+    #[error("the resolution bundle failed: {0}")]
+    Bundle(String),
     /// El sistema de ficheros fallo.
     #[error("the file system failed: {0}")]
     Io(String),
