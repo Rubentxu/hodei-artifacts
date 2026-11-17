@@ -462,6 +462,23 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // The NuGet v3 surface: the service index, the flat container,
+        // the registration leaf and the `PUT package/{id}/{version}` that
+        // pushes a nupkg. Package ids and versions arrive raw: the
+        // handler is the one that normalizes them.
+        .route(
+            "/nuget/{*target}",
+            axum::routing::get(crate::handlers::nuget::handle)
+                .put(crate::handlers::nuget::handle)
+                .fallback(crate::handlers::nuget::handle)
+                // A nupkg is a whole package, so the default limit of
+                // `axum` would refuse it before the protocol.
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         .with_state(app_state)
 }
 

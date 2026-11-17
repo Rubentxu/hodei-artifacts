@@ -567,10 +567,19 @@ async fn the_capabilities_say_what_can_be_created() {
         "the OCI surface serves only the hosted one"
     );
     assert_eq!(of("npm")["modes"], json!(["hosted", "proxy", "group"]));
-    assert!(
-        formats.iter().all(|format| format["name"] != "cargo"),
-        "a format that this release does not serve is not offered"
+    assert_eq!(
+        of("cargo")["modes"],
+        json!(["hosted"]),
+        "the sparse index serves what cargo reads and what cargo publishes"
     );
+    assert_eq!(of("go")["modes"], json!(["hosted", "proxy"]));
+    assert_eq!(of("nuget")["modes"], json!(["hosted", "proxy"]));
+    for unserved in ["helm", "apt", "rpm"] {
+        assert!(
+            formats.iter().all(|format| format["name"] != unserved),
+            "a format that this release does not serve is not offered: {unserved}"
+        );
+    }
 }
 
 #[tokio::test]

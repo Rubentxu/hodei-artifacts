@@ -52,6 +52,7 @@ pub mod group;
 pub mod maven;
 pub mod model;
 pub mod npm;
+pub mod nuget;
 pub mod ports;
 pub mod proxy;
 pub mod proxy_cache;

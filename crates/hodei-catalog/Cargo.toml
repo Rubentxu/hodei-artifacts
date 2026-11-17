@@ -15,3 +15,6 @@ semver = "1.0"
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true }
+# El nuspec viaja comprimido dentro del nupkg: aqui si hacen falta los
+# codecs, a diferencia de los fixtures stored del workspace.
+zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
