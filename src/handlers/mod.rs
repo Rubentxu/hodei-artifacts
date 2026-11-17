@@ -19,6 +19,7 @@ pub mod health;
 pub mod iam;
 pub mod investigation;
 mod maven;
+pub mod migration;
 pub mod npm;
 pub mod nuget;
 pub mod oci;
