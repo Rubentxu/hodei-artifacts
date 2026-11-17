@@ -507,6 +507,31 @@ impl Deployment {
         assert!(status.success(), "the go group could not be seeded");
     }
 
+    /// Crea un **grupo nuget** de la primera cuenta: la clave y la lista
+    /// ordenada de sus miembros.
+    pub fn seed_nuget_group(&self, key: &str, members: &[&str]) {
+        let groups = vec![serde_json::json!({
+            "key": key,
+            "members": members,
+            "format": "nuget",
+        })];
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env(
+                "HODEI_SEED_GROUPS",
+                serde_json::Value::Array(groups).to_string(),
+            )
+            .status()
+            .expect("the group seeder runs");
+        assert!(status.success(), "the nuget group could not be seeded");
+    }
+
     /// Crea repositorios **Maven2 hosted** de la primera cuenta. Cada uno
     /// es una clave y su `config_settings.maven` (`null` si no lleva).
     ///
@@ -632,6 +657,30 @@ impl Deployment {
             .map(|(key, proxy)| serde_json::json!({ "key": key, "proxy": proxy, "format": "go" }))
             .collect();
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go proxies");
+    }
+
+    /// Crea repositorios **nuget hosted** de la primera cuenta. Cada
+    /// entrada es una clave y su config (`null` si no tiene).
+    pub fn seed_nuget(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(
+                |(key, nuget)| serde_json::json!({ "key": key, "format": "nuget", "nuget": nuget }),
+            )
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the nuget repositories");
+    }
+
+    /// Crea repositorios **nuget proxy** de la primera cuenta: la clave y
+    /// su `config_settings.proxy` (el upstream y su cache).
+    pub fn seed_nuget_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(
+                |(key, proxy)| serde_json::json!({ "key": key, "proxy": proxy, "format": "nuget" }),
+            )
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the nuget proxies");
     }
 
     /// Crea repositorios **helm** de la primera cuenta, servidos por el
@@ -1322,8 +1371,14 @@ impl Curl {
     ) -> Self {
         let mut curl = Self::base(port, path, token);
         if method != "GET" {
-            curl.args.push("--request".to_string());
-            curl.args.push(method.to_string());
+            // `--request HEAD` hace que curl espere un cuerpo que HEAD
+            // nunca trae: el modo descripcion es `--head`.
+            if method == "HEAD" {
+                curl.args.push("--head".to_string());
+            } else {
+                curl.args.push("--request".to_string());
+                curl.args.push(method.to_string());
+            }
         }
         if let Some(file) = body {
             curl.args.push("--data-binary".to_string());
@@ -1335,6 +1390,9 @@ impl Curl {
         }
         curl.args.push("--output".to_string());
         curl.args.push(match into {
+            // Con `--head` curl escribe las cabeceras en el destino:
+            // HEAD no trae cuerpo, y el arnes lo exige vacio.
+            Some(_) if method == "HEAD" => "/dev/null".to_string(),
             Some(file) => file.display().to_string(),
             None => "/dev/null".to_string(),
         });
@@ -1342,7 +1400,13 @@ impl Curl {
             .or(body)
             .and_then(|file| file.parent())
             .map(Path::to_path_buf);
-        curl.body = into.map(Path::to_path_buf);
+        // HEAD no escribe cuerpo: si senalaramos el destino, la lectura
+        // encontraria los restos del numero de fichero de otro run.
+        curl.body = if method == "HEAD" {
+            None
+        } else {
+            into.map(Path::to_path_buf)
+        };
         curl
     }
 
@@ -2320,6 +2384,8 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
                             hodei_catalog::RepositoryFormat::PyPi
                         } else if group["format"].as_str() == Some("go") {
                             hodei_catalog::RepositoryFormat::Go
+                        } else if group["format"].as_str() == Some("nuget") {
+                            hodei_catalog::RepositoryFormat::NuGet
                         } else {
                             hodei_catalog::RepositoryFormat::Raw
                         },
@@ -2380,6 +2446,8 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::Cargo
             } else if repository["format"].as_str() == Some("go") {
                 hodei_catalog::RepositoryFormat::Go
+            } else if repository["format"].as_str() == Some("nuget") {
+                hodei_catalog::RepositoryFormat::NuGet
             } else if repository["format"].as_str() == Some("helm") {
                 hodei_catalog::RepositoryFormat::Helm
             } else {

@@ -110,11 +110,13 @@ impl RepositoryFormat {
     /// OCI surface and the cargo one serve only the hosted one for now:
     /// a push is a write, and a write lands where the client publishes.
     /// The proxy semantics of cargo need a client-verified upstream before
-    /// they can be declared.
+    /// they can be declared. The go and nuget surfaces serve the hosted
+    /// one and the proxy one —their protocol documents were verified
+    /// byte for byte— and neither assembles a group yet.
     ///
-    /// The formats that are declared but not served yet —nuget, go,
-    /// helm, apt and rpm— have no modality at all: a repository of
-    /// one of them can be declared, and it waits for its turn.
+    /// The formats that are declared but not served yet —helm, apt and
+    /// rpm— have no modality at all: a repository of one of them can be
+    /// declared, and it waits for its turn.
     pub fn serves_modes(&self) -> &'static [RepositoryMode] {
         match self {
             RepositoryFormat::Raw
@@ -126,11 +128,10 @@ impl RepositoryFormat {
                 RepositoryMode::Group,
             ],
             RepositoryFormat::Oci | RepositoryFormat::Cargo => &[RepositoryMode::Hosted],
-            RepositoryFormat::NuGet
-            | RepositoryFormat::Go
-            | RepositoryFormat::Helm
-            | RepositoryFormat::Apt
-            | RepositoryFormat::Rpm => &[],
+            RepositoryFormat::NuGet | RepositoryFormat::Go => {
+                &[RepositoryMode::Hosted, RepositoryMode::Proxy]
+            }
+            RepositoryFormat::Helm | RepositoryFormat::Apt | RepositoryFormat::Rpm => &[],
         }
     }
 
@@ -157,6 +158,8 @@ impl RepositoryFormat {
             RepositoryFormat::Npm,
             RepositoryFormat::PyPi,
             RepositoryFormat::Cargo,
+            RepositoryFormat::Go,
+            RepositoryFormat::NuGet,
         ]
     }
 }

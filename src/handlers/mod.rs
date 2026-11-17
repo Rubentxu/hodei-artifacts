@@ -18,6 +18,7 @@ pub mod iam;
 pub mod investigation;
 mod maven;
 pub mod npm;
+pub mod nuget;
 pub mod oci;
 pub mod packages;
 pub mod playground;
