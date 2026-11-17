@@ -2,6 +2,48 @@
 
 This directory contains utility scripts for the Hodei Artifacts API project.
 
+## test-affected.sh
+
+La puerta del dia a dia: corre **solo** las pruebas de lo que ha cambiado.
+
+La pipeline de `pipeline.kts` es la puerta de la entrega --ocho etapas sobre
+el workspace entero-- y por eso no se abre cada diez minutos. Esta corre lo
+que toca: mira lo que ha cambiado contra la rama base, deduce los paquetes
+afectados **y los que dependen de ellos**, y corre el formato, los avisos y
+las pruebas de esos paquetes.
+
+### Uso
+
+```bash
+# Contra la rama base por defecto (main)
+./scripts/test-affected.sh
+
+# Contra otra rama base
+./scripts/test-affected.sh origin/main
+
+# Solo las pruebas (sin formato ni avisos)
+./scripts/test-affected.sh --no-clippy
+
+# Sin pruebas (solo formato y avisos)
+./scripts/test-affected.sh --no-tests
+```
+
+### Que deduce
+
+El mapeo lo hace el manifiesto del workspace (`cargo metadata`), no un
+recorrido de rutas: el manifiesto sabe que archivos son de que paquete y
+quien depende de quien. Un cambio en un crate de dominio arrastra a quien
+depende de el, y si no se arrastra el fallo aparece en el sitio equivocado.
+
+El formato se pide **por paquete** y no con `cargo fmt --all`: el primero son
+unos segundos y el segundo recorre todos los archivos del repositorio.
+
+### Cuando correr la pipeline
+
+La pipeline sigue siendo la puerta de la entrega: se corre cuando el
+repositorio entero tiene que estar bien --al cerrar un lote de trabajo, antes
+de un tag-- y esta no la sustituye, la adelanta.
+
 ## test_api.sh
 
 A comprehensive test script for the Hodei Artifacts API that validates all endpoints, OpenAPI specification, and Swagger UI functionality.
