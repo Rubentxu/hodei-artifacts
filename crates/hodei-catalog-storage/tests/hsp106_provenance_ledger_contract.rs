@@ -108,6 +108,7 @@ async fn every_outcome_is_read_as_it_was_written() {
     for (id, outcome) in [
         ("r-f", ReceiptOutcome::Fetched),
         ("r-v", ReceiptOutcome::Revalidated),
+        ("r-i", ReceiptOutcome::Imported),
         ("r-q", ReceiptOutcome::Quarantined),
     ] {
         let mut written = receipt(id, "acme", "mirror", &format!("p/{id}"), 0);
