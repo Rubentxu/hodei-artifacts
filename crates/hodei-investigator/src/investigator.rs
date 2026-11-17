@@ -105,7 +105,9 @@ pub struct Investigation {
 /// El investigador.
 pub struct Investigator {
     retriever: Arc<dyn EvidenceRetriever>,
-    model: Arc<dyn ModelProvider>,
+    /// El modelo es **opcional**: hay despliegues sin modelo, y en ellos la
+    /// investigacion es la de las herramientas.
+    model: Option<Arc<dyn ModelProvider>>,
     guard: Arc<std::sync::Mutex<CapabilityGuard>>,
 }
 
@@ -118,7 +120,21 @@ impl Investigator {
     ) -> Self {
         Self {
             retriever,
-            model,
+            model: Some(model),
+            guard: Arc::new(std::sync::Mutex::new(guard)),
+        }
+    }
+
+    /// El investigador **sin modelo**: el que no pregunta a nadie.
+    ///
+    /// Su investigacion es la de las herramientas: los hechos que
+    /// calcularon y las incertidumbres que se declaran. La guardia sigue
+    /// estando: las acciones que se propongan esperan aprobacion de una
+    /// persona, tambien aqui.
+    pub fn without_a_model(retriever: Arc<dyn EvidenceRetriever>, guard: CapabilityGuard) -> Self {
+        Self {
+            retriever,
+            model: None,
             guard: Arc::new(std::sync::Mutex::new(guard)),
         }
     }
@@ -129,6 +145,9 @@ impl Investigator {
     /// afirmacion no vale, **no** devuelve nada: una respuesta con una
     /// afirmacion fabricada dentro es una respuesta en la que no se puede
     /// apoyar nada.
+    ///
+    /// Sin modelo no hay quien pregunte: la investigacion se dice que no
+    /// se pudo hacer, y no se devuelve una respuesta a medias.
     pub async fn investigate(
         &self,
         investigation: &str,
@@ -136,43 +155,17 @@ impl Investigator {
         question: &str,
         now: DateTime<Utc>,
     ) -> Result<Investigation, InvestigationError> {
-        // 0. El alcance que ya cruza cuentas se cierra ANTES de pedir
-        // nada: un actor de cuenta A y un sujeto de cuenta B no forman
-        // una investigacion, y el rechazo sale antes de recuperar.
-        if scope.crosses_accounts() {
-            return Err(InvestigationError::NotAuthorized {
-                actor: scope.actor.to_string(),
-                resource: scope.subject.to_string(),
-            });
-        }
+        let model = self.model.as_ref().ok_or_else(|| {
+            InvestigationError::NoAnswer("there is no model in this deployment".to_string())
+        })?;
 
-        // 1. La recuperacion, y su comprobacion. La denegacion del
-        // borde es explicita, y un almacen caido cierra, no abre.
-        let context = match self.retriever.retrieve(scope).await {
-            Ok(context) => context,
-            Err(RetrievalError::NotAuthorized { actor, resource }) => {
-                return Err(InvestigationError::NotAuthorized { actor, resource });
-            }
-            Err(RetrievalError::Stale {
-                source,
-                expected,
-                found,
-            }) => {
-                return Err(InvestigationError::Stale(format!(
-                    "{source} was at generation {expected} and is at {found}"
-                )));
-            }
-            Err(RetrievalError::Unavailable(reason)) => {
-                return Err(InvestigationError::NoAnswer(reason));
-            }
-        };
+        // 1. La recuperacion, y su comprobacion.
+        let context = self.the_context(scope).await?;
         let facts = &context.facts;
-        check_the_scope(scope, facts).map_err(InvestigationError::OutOfScope)?;
 
         // 2. La pregunta, con el contexto delimitado.
         let request = the_prompt(question, facts);
-        let response = self
-            .model
+        let response = model
             .complete(&request)
             .await
             .map_err(InvestigationError::NoAnswer)?;
@@ -226,6 +219,103 @@ impl Investigator {
             trace,
             report,
         })
+    }
+
+    /// La investigacion **sin modelo**: la de las herramientas.
+    ///
+    /// Es la misma operacion, con la misma recuperacion y el mismo control
+    /// de alcance, pero sin la pregunta al modelo: lo que se entrega son
+    /// los hechos que las herramientas calcularon y las incertidumbres que
+    /// se declaran. La pregunta se declara **sin responder**, porque sin
+    /// modelo nadie la responde, y una respuesta que finge haberla
+    ///respondido es una fabricacion.
+    pub async fn investigate_without_a_model(
+        &self,
+        investigation: &str,
+        scope: &RetrievalScope,
+        question: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Investigation, InvestigationError> {
+        let context = self.the_context(scope).await?;
+        let facts = &context.facts;
+
+        // Las afirmaciones que las herramientas calculan, y la
+        // incertidumbre que declara los limites de una respuesta sin
+        // modelo.
+        let mut claims = crate::deterministic::the_computed_claims(facts);
+        claims.push(crate::deterministic::the_uncertainty_of_a_model_less_answer(question));
+
+        // Lo que las afirmaciones citaron. Sin modelo no se le dio nada a
+        // nadie: lo que se leyo es el contexto, y el manifiesto lo dice.
+        let known: Vec<String> = facts.iter().map(|fact| fact.evidence_id.clone()).collect();
+        let mut cited: Vec<String> = claims
+            .iter()
+            .flat_map(|claim| claim.citations.clone())
+            .collect();
+        cited.sort();
+        cited.dedup();
+
+        let report = build_report(&scope.subject, &claims, &context.read_set, context.coverage);
+
+        let trace = InvestigationTrace::new(
+            investigation,
+            crate::deterministic::DETERMINISTIC_PROVIDER,
+            crate::deterministic::NO_MODEL,
+            None,
+            crate::deterministic::NO_PROMPT_VERSION,
+            known,
+            context.coverage,
+            context.read_set,
+            Vec::new(),
+            cited,
+            now,
+        );
+
+        Ok(Investigation {
+            claims,
+            trace,
+            report,
+        })
+    }
+
+    /// La recuperacion dentro del alcance, y su comprobacion.
+    ///
+    /// La recuperacion se **comprueba** contra el alcance otra vez, porque
+    /// un recuperador que se equivoca no puede meter nada. Y el alcance
+    /// que cruza cuentas se cierra ANTES de pedir nada: un actor de cuenta
+    /// A y un sujeto de cuenta B no forman una investigacion, y el
+    /// rechazo sale antes de recuperar.
+    async fn the_context(
+        &self,
+        scope: &RetrievalScope,
+    ) -> Result<RetrievedContext, InvestigationError> {
+        if scope.crosses_accounts() {
+            return Err(InvestigationError::NotAuthorized {
+                actor: scope.actor.to_string(),
+                resource: scope.subject.to_string(),
+            });
+        }
+
+        let context = match self.retriever.retrieve(scope).await {
+            Ok(context) => context,
+            Err(RetrievalError::NotAuthorized { actor, resource }) => {
+                return Err(InvestigationError::NotAuthorized { actor, resource });
+            }
+            Err(RetrievalError::Stale {
+                source,
+                expected,
+                found,
+            }) => {
+                return Err(InvestigationError::Stale(format!(
+                    "{source} was at generation {expected} and is at {found}"
+                )));
+            }
+            Err(RetrievalError::Unavailable(reason)) => {
+                return Err(InvestigationError::NoAnswer(reason));
+            }
+        };
+        check_the_scope(scope, &context.facts).map_err(InvestigationError::OutOfScope)?;
+        Ok(context)
     }
 
     /// Registra una accion que el investigador quiere hacer.

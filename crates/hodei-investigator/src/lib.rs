@@ -70,6 +70,7 @@
 
 pub mod claim;
 pub mod corpus;
+pub mod deterministic;
 pub mod guard;
 pub mod investigator;
 pub mod model;
