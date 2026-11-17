@@ -1,29 +1,60 @@
+# El repositorio del registro.
+#
+# Es el repositorio del **registro**: un nombre y, si alguien lo dijo, una
+# descripción. El repositorio del catálogo —el que tiene formato, modalidad
+# y canal— es otra cosa, y vive bajo `/api/v1/catalog/repositories`.
 Repository:
   type: object
-  required: [id, name, createdAt]
+  required: [hrn, account, name]
   properties:
-    id: { type: string, format: uuid }
-    name: { type: string }
-    description: { type: string }
-    createdAt: { type: string, format: date-time }
+    hrn:
+      type: string
+      description: El nombre canónico del repositorio.
+    account:
+      type: string
+      description: La cuenta a la que pertenece.
+    name:
+      type: string
+      description: El nombre del repositorio dentro de la cuenta.
+    description:
+      type: string
+      nullable: true
+      description: Lo que el repositorio es, si alguien lo dijo.
 
+# La página de la lista.
+#
+# `total` cuenta lo que el principal **puede leer**, y no lo que hay: lo
+# que Cedar deniega no sale de la lista y no se cuenta en ella. Un total
+# que contase lo que no se puede ver diría cuánta hay.
 RepositoryListResponse:
   type: object
+  required: [total, items, limit, offset]
   properties:
-    total: { type: integer }
+    total:
+      type: integer
+      description: Cuántos repositorios puede leer el principal.
     items:
       type: array
+      description: La página que se pidió.
       items: { $ref: '#/Repository' }
+    limit:
+      type: integer
+      description: El tamaño de la página.
+    offset:
+      type: integer
+      description: Dónde empieza la página.
 
 CreateRepositoryRequest:
   type: object
   required: [name]
   properties:
-    name: { type: string }
-    description: { type: string }
-
-UpdateRepositoryRequest:
-  type: object
-  properties:
-    name: { type: string }
-    description: { type: string }
+    name:
+      type: string
+      description: El nombre del repositorio dentro de la cuenta.
+    description:
+      type: string
+      description: Lo que el repositorio es, si alguien lo dice.
+    region:
+      type: string
+      default: global
+      description: La región del repositorio.

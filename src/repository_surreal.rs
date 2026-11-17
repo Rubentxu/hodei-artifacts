@@ -48,6 +48,7 @@ impl SurrealRepositoryStore {
                 DEFINE FIELD IF NOT EXISTS name ON repository TYPE string;
                 DEFINE FIELD IF NOT EXISTS description ON repository TYPE option<string>;
                 DEFINE INDEX IF NOT EXISTS repository_hrn_unique ON repository FIELDS hrn UNIQUE;
+                DEFINE INDEX IF NOT EXISTS repository_account_name ON repository FIELDS account, name, hrn;
                 "#,
             )
             .await
@@ -76,6 +77,29 @@ impl RepositoryReader for SurrealRepositoryStore {
             .take(0)
             .map_err(|_| RepositoryReadError::Unavailable)?;
         Ok(rows.into_iter().next().map(Row::into_view))
+    }
+
+    async fn list(&self, account: &str) -> Result<Vec<RepositoryView>, RepositoryReadError> {
+        // The account is part of the query and not a filter of the
+        // result: the rows of another account never travel, and the
+        // database does not have to be asked for them to be dropped.
+        //
+        // The index on `(account, name, hrn)` is what keeps the query
+        // inside the account: without it, the database would walk the
+        // rows of every tenant and sort them to keep the ones of this
+        // one.
+        let mut response = self
+            .db
+            .query(
+                "SELECT hrn, account, name, description FROM repository WHERE account = $account ORDER BY name, hrn",
+            )
+            .bind(("account", account.to_string()))
+            .await
+            .map_err(|_| RepositoryReadError::Unavailable)?;
+        let rows: Vec<Row> = response
+            .take(0)
+            .map_err(|_| RepositoryReadError::Unavailable)?;
+        Ok(rows.into_iter().map(Row::into_view).collect())
     }
 }
 

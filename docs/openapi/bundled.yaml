@@ -69,15 +69,25 @@ tags:
     description: |
       La consola del catálogo: los repositorios de la cuenta, lo que se puede crear, la búsqueda, el detalle de un activo y las promociones al canal de confianza.
 paths:
-  /v1/repositories:
+  /api/v1/repositories:
     get:
       tags:
         - repositories
-      summary: Listar repositorios
+      summary: Listar los repositorios de la cuenta
+      description: |
+        Sin `hrn`, la respuesta es la página de los repositorios de la cuenta del principal verificado que puede leer, con `total`, `items`, `limit` y `offset`. Lo que Cedar deniega no sale de la página ni se cuenta en el `total`.
+        Con `hrn`, la respuesta es ese repositorio. Un `hrn` de otra cuenta es el mismo `404` que un `hrn` que no existe.
       operationId: listRepositories
       parameters:
+        - name: hrn
+          in: query
+          required: false
+          description: El repositorio que se lee. Sin este parámetro, la respuesta es la lista.
+          schema:
+            type: string
         - name: limit
           in: query
+          description: El tamaño de la página.
           schema:
             type: integer
             minimum: 1
@@ -85,21 +95,57 @@ paths:
             default: 20
         - name: offset
           in: query
+          description: Dónde empieza la página.
           schema:
             type: integer
             minimum: 0
             default: 0
       responses:
         '200':
-          description: Lista de repositorios
+          description: La página de la cuenta, o el repositorio que se nombró.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RepositoryListResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/RepositoryListResponse'
+                  - $ref: '#/components/schemas/Repository'
+        '400':
+          description: El `hrn` no es un nombre canónico, o la página no es una página.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          description: La credencial no es válida o no está.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: El permiso de leer no está concedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: |
+            No hay ese repositorio. Un `hrn` de otra cuenta es el mismo `404` que un `hrn` que no existe: el cuerpo no dice si el nombre existe en otro sitio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
-          $ref: '#/components/responses/InternalError'
+          description: No se pudo decidir, o lo guardado no se pudo leer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: El registro no está disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     post:
       tags:
         - repositories
@@ -118,72 +164,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Repository'
+        '400':
+          description: El cuerpo no es un repositorio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: La credencial no es válida o no está.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: El permiso de crear no está concedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/InternalError'
-  /v1/repositories/{id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-    get:
-      tags:
-        - repositories
-      summary: Obtener un repositorio
-      operationId: getRepository
-      responses:
-        '200':
-          description: Detalles del repositorio
+          description: Ya hay un repositorio con ese nombre.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Repository'
-        '404':
-          $ref: '#/components/responses/NotFound'
+                $ref: '#/components/schemas/Error'
         '500':
-          $ref: '#/components/responses/InternalError'
-    put:
-      tags:
-        - repositories
-      summary: Actualizar un repositorio
-      operationId: updateRepository
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateRepositoryRequest'
-      responses:
-        '200':
-          description: Repositorio actualizado
+          description: No se pudo decidir.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Repository'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/BadRequest'
-        '500':
-          $ref: '#/components/responses/InternalError'
-    delete:
-      tags:
-        - repositories
-      summary: Eliminar un repositorio
-      operationId: deleteRepository
-      responses:
-        '204':
-          description: Repositorio eliminado
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: El registro no está disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/artifacts:
     post:
       tags:
@@ -1234,20 +1250,8 @@ components:
         Token Bearer JWT para integración con sistemas externos.
         Formato: Authorization: Bearer <token>
   responses:
-    Unauthorized:
-      description: No autorizado - credenciales inválidas o ausentes
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    InternalError:
-      description: Error interno del servidor
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    Conflict:
-      description: Conflicto - el recurso ya existe
+    NotFound:
+      description: Recurso no encontrado
       content:
         application/json:
           schema:
@@ -1258,8 +1262,14 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-    NotFound:
-      description: Recurso no encontrado
+    InternalError:
+      description: Error interno del servidor
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: No autorizado - credenciales inválidas o ausentes
       content:
         application/json:
           schema:
@@ -1270,49 +1280,85 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflicto - el recurso ya existe
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
     Repository:
       type: object
       required:
-        - id
+        - hrn
+        - account
         - name
-        - createdAt
       properties:
-        id:
+        hrn:
           type: string
-          format: uuid
+          description: El nombre canónico del repositorio.
+        account:
+          type: string
+          description: La cuenta a la que pertenece.
         name:
           type: string
+          description: El nombre del repositorio dentro de la cuenta.
         description:
           type: string
-        createdAt:
-          type: string
-          format: date-time
+          nullable: true
+          description: Lo que el repositorio es, si alguien lo dijo.
     RepositoryListResponse:
       type: object
+      required:
+        - total
+        - items
+        - limit
+        - offset
       properties:
         total:
           type: integer
+          description: Cuántos repositorios puede leer el principal.
         items:
           type: array
+          description: La página que se pidió.
           items:
             $ref: '#/components/schemas/Repository'
+        limit:
+          type: integer
+          description: El tamaño de la página.
+        offset:
+          type: integer
+          description: Dónde empieza la página.
     Error:
       type: object
       required:
         - error
         - message
-        - code
       properties:
         error:
           type: string
+          description: |
+            La clase del fallo. Distingue lo que un cliente tiene que decir de otra manera: un permiso denegado no es una ausencia, y lo que está guardado no se puede leer tampoco es una ausencia.
+          enum:
+            - unauthenticated
+            - permission
+            - absence
+            - invalid
+            - conflict
+            - corruption
+            - indeterminate
+            - unavailable
         message:
           type: string
+          description: |
+            Lo que pasó, para quien lee el registro. Nunca nombra un recurso de otra cuenta: la respuesta a una cosa que no está es la misma esté donde esté.
         code:
           type: integer
+          description: Campo opcional, heredado del contrato antiguo. El servicio no lo envía.
         details:
           type: object
           additionalProperties: true
+          description: Campo opcional, heredado del contrato antiguo. El servicio no lo envía.
     CreateRepositoryRequest:
       type: object
       required:
@@ -1320,15 +1366,14 @@ components:
       properties:
         name:
           type: string
+          description: El nombre del repositorio dentro de la cuenta.
         description:
           type: string
-    UpdateRepositoryRequest:
-      type: object
-      properties:
-        name:
+          description: Lo que el repositorio es, si alguien lo dice.
+        region:
           type: string
-        description:
-          type: string
+          default: global
+          description: La región del repositorio.
     ArtifactUploadResponse:
       type: object
       properties:

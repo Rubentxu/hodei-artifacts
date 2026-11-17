@@ -243,6 +243,25 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Fixed
 
+- La **lista del registro de repositorios** sirve lo que el contrato
+  promete. `GET /api/v1/repositories` sin `hrn` respondía `400` a todo lo
+  que no nombrara un repositorio, y el contrato declaraba una lista con
+  `limit` y `offset` que nadie servía. Ahora la ruta sirve la página de los
+  repositorios de la cuenta del principal verificado (`total`, `items`,
+  `limit`, `offset`), y con `hrn` sigue devolviendo el repositorio, con el
+  mismo `404` para una cuenta ajena que para un nombre que no existe.
+  Cedar decide un repositorio cada vez: lo que deniega no sale de la página
+  **ni se cuenta** en el `total`, porque un total que contase lo que no se
+  puede ver diría cuánta hay.
+- El **cuerpo de los errores** del registro es `{"error": "<clase>",
+  "message": "..."}`, como el del catálogo, y el contrato lo declara así. Un
+  **autorizador que no puede decidir** ya no se confunde con uno que
+  deniega: la lectura responde `500` con su clase, y no `403`.
+- El contrato retiraba un camino que el servicio no sirve:
+  `GET|PUT|DELETE /v1/repositories/{id}` prometía leer, actualizar y borrar
+  un repositorio del registro, y no hay ni una ni otra. La promesa se
+  retira del contrato en vez de dejarlo ahí, y el camino que queda es
+  `/api/v1/repositories`, que es donde la API vive.
 - Los **ajustes del repositorio** no se perdian en silencio. En una tabla
   `SCHEMAFULL`, un campo `TYPE object` **sin** `FLEXIBLE` declara que el
   objeto no tiene campos, así que el motor guardaba `{}` y descartaba lo

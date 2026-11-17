@@ -72,7 +72,7 @@ Con la configuración por defecto todas devuelven `403` con cuerpo `administrati
 
 Matiz actual: el gate administrativo se aplica a las rutas administrativas registradas; una ruta desconocida bajo `/api/v1` responde `404` y la ruta de repositorios tiene su propio gate. El test actual es `repository_route_uses_its_own_auth_gate`.
 
-El repositorio contiene además un **registry inactivo en el contrato OpenAPI**: `docs/openapi/paths/repositories.yaml` publica listar/crear/obtener/actualizar por UUID bajo `/v1/repositories`, con `ApiKeyAuth`/`BasicAuth`/`BearerAuth`. No está montado en Axum. La ruta propuesta aquí (`GET /api/v1/repositories?hrn=...`) no reconcilia todavía con esa especificación; HSP-12/HSP-15 deben decidir el contrato definitivo.
+El repositorio contiene además un **registry inactivo en el contrato OpenAPI**: `docs/openapi/paths/repositories.yaml` publicaba listar/crear/obtener/actualizar por UUID bajo `/v1/repositories`, con `ApiKeyAuth`/`BasicAuth`/`BearerAuth`, y ninguna de esas rutas estaba montada en Axum. **HSP-132 lo reconcilia**: el contrato declara ahora el camino que el servicio sirve (`/api/v1/repositories`), con la lista paginada que la ruta sirve y la lectura por `hrn`; el camino por UUID, que prometía una lectura, una modificación y una baja que no existen, se retira del contrato en vez de dejarlo ahí.
 
 ## 4. `crates/repository`: inventario y bloqueos
 
@@ -148,6 +148,7 @@ pub struct RepositoryView {
 - **Contrato HTTP**: sin principal → `401`; recurso inexistente, de otra cuenta o denegado → **`404` uniforme** para no filtrar existencia; `403` solo cuando el contrato permita revelar la existencia. No se hace “cargar → 403” con un recurso ajeno.
 - **HRN**: mientras Artifacts use `kernel::Hrn`, el handler debe exigir `partition = hodei`, `service = artifacts`, `resource_type = repository`, longitudes y forma canónica; `kernel::Hrn::from_string` es más laxo que el contrato. HSP-12 sustituye esta validación por `hodei-hrn` 0.2 o por un wrapper estricto. La clave de almacenamiento es la serialización canónica, nunca la query cruda ni `resource_id` como path.
 - **Reversibilidad**: añadir el puerto, un handler y una ruta; retirarlos no requiere migración de datos. El dominio legacy no se toca.
+- **Ampliación posterior**: el seam crece sin cambiar de naturaleza. HSP-16 añadió `RepositoryWriter` para el alta, y HSP-132 añadió `RepositoryReader::list`, la consulta por cuenta que la lista del registro necesita. El criterio se mantiene: la cuenta la decide el principal verificado, y la lista pregunta a la base por esa cuenta y no por un filtro posterior.
 
 ### Por qué es un único seam activo
 

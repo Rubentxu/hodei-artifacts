@@ -171,6 +171,7 @@ pipeline {
                         "--test hsp113_search_contract",
                         "--test hsp113_search_e2e",
                         "--test hsp114_console_contract",
+                        "--test hsp132_registry_list",
                     ).joinToString(" ")
                 )
             }

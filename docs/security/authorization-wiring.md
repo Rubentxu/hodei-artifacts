@@ -36,6 +36,7 @@ Axum (HSP-8) -> VerifiedContext + ActionId + ResourceRef
 ## Límites
 
 - HSP-15 monta `GET /api/v1/repositories?hrn=...` y usa este caso de uso; la ruta tiene su propio gate y no depende de `admin_api_enabled`.
+- HSP-132 amplía la misma ruta con la lista de la cuenta (`GET /api/v1/repositories` sin `hrn`). El caso de uso se invoca **un repositorio cada vez**: lo que Cedar deniega no sale de la página ni se cuenta en el `total`, y una decisión que no se pudo tomar responde `500` con su clase y no una página vacía.
 - El bundle real de schema/políticas es HSP-14; el evaluador IAM existente sigue en `AppState` y su reconciliación queda pendiente.
 - La dependencia con `hodei-authz` es la versión publicada `=0.1.1` desde HSP-18; el `Cargo.lock` versionado fija la resolución.
 - El `AppState` ya expone `authorize_resource`; el handler de repositorios lo invoca con el `VerifiedContext` del bearer verificado.

@@ -1,24 +1,80 @@
+# El registro de repositorios.
+#
+# `/api/v1/repositories` sirve dos lecturas, y el parámetro dice cuál se
+# pide: sin `hrn` es la **lista** de los repositorios de la cuenta, con la
+# paginación que este mismo contrato promete; con `hrn` es ese repositorio.
+#
+# Un repositorio de otra cuenta es el mismo `404` que un repositorio que no
+# existe, y no sale en la lista: decir que existe es decir que es de otro.
 repositoriesRoot:
   get:
     tags: [repositories]
-    summary: Listar repositorios
+    summary: Listar los repositorios de la cuenta
+    description: >
+      Sin `hrn`, la respuesta es la página de los repositorios de la cuenta
+      del principal verificado que puede leer, con `total`, `items`, `limit`
+      y `offset`. Lo que Cedar deniega no sale de la página ni se cuenta en
+      el `total`.
+
+      Con `hrn`, la respuesta es ese repositorio. Un `hrn` de otra cuenta es
+      el mismo `404` que un `hrn` que no existe.
     operationId: listRepositories
     parameters:
+      - name: hrn
+        in: query
+        required: false
+        description: El repositorio que se lee. Sin este parámetro, la respuesta es la lista.
+        schema: { type: string }
       - name: limit
         in: query
+        description: El tamaño de la página.
         schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
       - name: offset
         in: query
+        description: Dónde empieza la página.
         schema: { type: integer, minimum: 0, default: 0 }
     responses:
       '200':
-        description: Lista de repositorios
+        description: La página de la cuenta, o el repositorio que se nombró.
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/repository.yaml#/RepositoryListResponse'
-      '401': { $ref: '../components/responses.yaml#/Unauthorized' }
-      '500': { $ref: '../components/responses.yaml#/InternalError' }
+              oneOf:
+                - $ref: '../components/schemas/repository.yaml#/RepositoryListResponse'
+                - $ref: '../components/schemas/repository.yaml#/Repository'
+      '400':
+        description: El `hrn` no es un nombre canónico, o la página no es una página.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '401':
+        description: La credencial no es válida o no está.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '403':
+        description: El permiso de leer no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '404':
+        description: >
+          No hay ese repositorio. Un `hrn` de otra cuenta es el mismo `404`
+          que un `hrn` que no existe: el cuerpo no dice si el nombre existe
+          en otro sitio.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '500':
+        description: No se pudo decidir, o lo guardado no se pudo leer.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '503':
+        description: El registro no está disponible.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
   post:
     tags: [repositories]
     summary: Crear repositorio
@@ -36,54 +92,33 @@ repositoriesRoot:
           application/json:
             schema:
               $ref: '../components/schemas/repository.yaml#/Repository'
-      '409': { $ref: '../components/responses.yaml#/Conflict' }
-      '422': { $ref: '../components/responses.yaml#/BadRequest' }
-      '500': { $ref: '../components/responses.yaml#/InternalError' }
-
-repositoryById:
-  parameters:
-    - name: id
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-  get:
-    tags: [repositories]
-    summary: Obtener un repositorio
-    operationId: getRepository
-    responses:
-      '200':
-        description: Detalles del repositorio
+      '400':
+        description: El cuerpo no es un repositorio.
         content:
           application/json:
-            schema:
-              $ref: '../components/schemas/repository.yaml#/Repository'
-      '404': { $ref: '../components/responses.yaml#/NotFound' }
-      '500': { $ref: '../components/responses.yaml#/InternalError' }
-  put:
-    tags: [repositories]
-    summary: Actualizar un repositorio
-    operationId: updateRepository
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/repository.yaml#/UpdateRepositoryRequest'
-    responses:
-      '200':
-        description: Repositorio actualizado
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '401':
+        description: La credencial no es válida o no está.
         content:
           application/json:
-            schema:
-              $ref: '../components/schemas/repository.yaml#/Repository'
-      '404': { $ref: '../components/responses.yaml#/NotFound' }
-      '422': { $ref: '../components/responses.yaml#/BadRequest' }
-      '500': { $ref: '../components/responses.yaml#/InternalError' }
-  delete:
-    tags: [repositories]
-    summary: Eliminar un repositorio
-    operationId: deleteRepository
-    responses:
-      '204': { description: Repositorio eliminado }
-      '404': { $ref: '../components/responses.yaml#/NotFound' }
-      '500': { $ref: '../components/responses.yaml#/InternalError' }
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '403':
+        description: El permiso de crear no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '409':
+        description: Ya hay un repositorio con ese nombre.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '500':
+        description: No se pudo decidir.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      '503':
+        description: El registro no está disponible.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }

@@ -36,6 +36,28 @@ fn view() -> RepositoryView {
     )
 }
 
+/// The canonical name of a repository of an account.
+fn hrn_of(account: &str, name: &str) -> Hrn {
+    Hrn::with_region(
+        "hodei".to_string(),
+        "artifacts".to_string(),
+        "eu".to_string(),
+        account.to_string(),
+        "repository".to_string(),
+        name.to_string(),
+    )
+}
+
+/// The row of a repository of an account.
+fn view_of(account: &str, name: &str) -> RepositoryView {
+    RepositoryView::new(
+        hrn_of(account, name).to_string(),
+        account.to_string(),
+        name.to_string(),
+        Some(format!("the {name} repository")),
+    )
+}
+
 #[tokio::test]
 async fn create_is_persisted_in_the_database_and_duplicate_is_rejected() {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -90,4 +112,37 @@ async fn two_writers_share_the_database_unique_index() {
         .count();
     assert_eq!(successes, 1);
     assert_eq!(conflicts, 1);
+}
+
+/// The list is asked to the database by account, and not filtered there:
+/// the rows of another account never travel, and the query is the one that
+/// says so.
+#[tokio::test]
+async fn the_list_is_the_accounts_and_it_is_ordered() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let path = tmp.path().join("db");
+    let db = open(&path).await;
+    let store = SurrealRepositoryStore::new(db);
+    store.initialize().await.expect("initialize");
+
+    for (account, name) in [
+        ("acme", "snapshots"),
+        ("acme", "releases"),
+        ("acme", "nightly"),
+        ("other", "private"),
+    ] {
+        let resource = hrn_of(account, name);
+        store
+            .create(account, &resource, view_of(account, name))
+            .await
+            .expect("create");
+    }
+
+    let listed = store.list("acme").await.expect("list");
+    let names: Vec<&str> = listed.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(names, ["nightly", "releases", "snapshots"]);
+
+    let foreign = store.list("other").await.expect("list");
+    assert_eq!(foreign.len(), 1);
+    assert_eq!(foreign[0].name, "private");
 }
