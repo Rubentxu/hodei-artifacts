@@ -109,6 +109,10 @@ cargo build --workspace
 # Ejecutar tests
 cargo test --workspace
 
+# O solo los de lo que has cambiado: deduce los paquetes afectados y los
+# que dependen de ellos (la puerta del dia a dia)
+./scripts/test-affected.sh
+
 # Lanzar la API de desarrollo
 cargo run --bin hodei-artifacts-api
 
@@ -117,6 +121,12 @@ cd frontend
 npm install
 npm run dev
 ```
+
+La CI de este repositorio es local y la lleva `pipeline.kts`: ocho etapas
+sobre el workspace entero. Es la **puerta de la entrega** y por eso no se
+abre cada diez minutos. `scripts/test-affected.sh` es la puerta del día a
+día: mira lo que ha cambiado contra `main` y corre solo el formato, los
+avisos y las pruebas de los paquetes afectados.
 
 ## 🔒 Seguridad por defecto
 
