@@ -157,6 +157,17 @@ pub struct AppState {
     /// Optional: without it the promotion routes answer `501` and nothing
     /// is ever granted, so a trusted channel stays empty.
     pub(crate) trust_plane: Option<Arc<crate::trust::promotion::TrustPlane>>,
+    /// The investigation of a subject.
+    ///
+    /// Optional, and fail-closed: a deployment without the evidence and
+    /// the graph answers that the investigation is not available, and not
+    /// that there is nothing to find -- a 404 would be a lie, and an empty
+    /// report would be worse.
+    pub(crate) investigation: Option<Arc<dyn crate::investigation::InvestigationPort>>,
+    /// The limits of the investigation.
+    ///
+    /// They are the deployment's, and a request can only narrow them.
+    pub(crate) investigation_limits: crate::config::InvestigationConfig,
     /// The registry of the upload sessions.
     ///
     /// It lives here because it is state that **survives a request**: the
@@ -285,6 +296,8 @@ impl AppState {
             identity,
             admin_authenticator_configured: true,
             admin_authorizer_configured: true,
+            investigation: None,
+            investigation_limits: crate::config::InvestigationConfig::default(),
         }
     }
 
@@ -346,6 +359,8 @@ impl AppState {
             identity: Identity::system(),
             admin_authenticator_configured: false,
             admin_authorizer_configured: false,
+            investigation: None,
+            investigation_limits: crate::config::InvestigationConfig::default(),
         }
     }
 
@@ -378,6 +393,21 @@ impl AppState {
     /// Replace the reader of the accepted evidence.
     pub fn with_evidence_store(mut self, store: Arc<dyn EvidenceReader>) -> Self {
         self.evidence_reader = store;
+        self
+    }
+
+    /// Wire the investigation of a subject.
+    pub fn with_investigation(
+        mut self,
+        investigation: Arc<dyn crate::investigation::InvestigationPort>,
+    ) -> Self {
+        self.investigation = Some(investigation);
+        self
+    }
+
+    /// Set the limits of the investigation.
+    pub fn with_investigation_limits(mut self, limits: crate::config::InvestigationConfig) -> Self {
+        self.investigation_limits = limits;
         self
     }
 

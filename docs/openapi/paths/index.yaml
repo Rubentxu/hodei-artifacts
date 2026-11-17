@@ -40,3 +40,7 @@
 /api/v1/packages/{repository}/{path}: { $ref: './console.yaml#/catalogPackage' }
 /api/v1/promotions: { $ref: './console.yaml#/promotions' }
 /api/v1/promotions/revoke: { $ref: './console.yaml#/promotionsRevoke' }
+
+# La investigación de un artefacto: una lectura que explica lo que el
+# servicio sabe de él.
+/api/v1/investigations: { $ref: './investigations.yaml#/investigations' }

@@ -13,6 +13,7 @@ pub mod catalog_repositories;
 pub mod gc;
 pub mod health;
 pub mod iam;
+pub mod investigation;
 mod maven;
 pub mod npm;
 pub mod oci;

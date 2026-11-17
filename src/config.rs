@@ -24,6 +24,134 @@ pub struct RepositoryConfig {
     pub durable: bool,
 }
 
+/// The limits of the investigation surface.
+///
+/// An investigation is a read with a cost: it reads the evidence and the
+/// graph of the subject. The limits are the **deployment's**, and a
+/// request can only **narrow** them: a client that asks for less gets
+/// less, and a client that asks for more gets the limit. What does not fit
+/// is **omitted and declared**, never truncated in silence.
+///
+/// The limits are the same ones the domain uses for a retrieval, so the
+/// budget of the surface and the budget of the investigator cannot
+/// disagree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvestigationConfig {
+    /// How many evidence pieces one investigation may read.
+    ///
+    /// Default: 100.
+    #[serde(default = "the_default_investigation_max_evidence")]
+    pub max_evidence: usize,
+    /// How many relations one investigation may read.
+    ///
+    /// Default: 400.
+    #[serde(default = "the_default_investigation_max_relations")]
+    pub max_relations: usize,
+    /// How many bytes of evidence content one investigation may read.
+    ///
+    /// Default: 262144 (256 KiB).
+    #[serde(default = "the_default_investigation_max_bytes")]
+    pub max_bytes: u64,
+    /// How long the question may be, in characters.
+    ///
+    /// The question is not answered by the tools: it is kept in the trace
+    /// and declared as unanswered. It still has a size, because a size
+    /// that does not exist is a size nobody bounds.
+    ///
+    /// Default: 2000.
+    #[serde(default = "the_default_investigation_max_question_length")]
+    pub max_question_length: usize,
+    /// How the tenant of the graph is named.
+    ///
+    /// The graph keeps its rows under the tenant that owns them, and the
+    /// name of that tenant is a convention of **whoever writes the
+    /// evidence**, not of this service: the producer that delivers the
+    /// evidence declares the tenant, and the rows are stored under it.
+    ///
+    /// The template says how to build that name from the account of the
+    /// subject, and `{account}` and `{region}` are the two things that
+    /// change from one account to another. A deployment whose producer
+    /// names the tenant differently says so here; a deployment that does
+    /// not say anything gets the default, and a graph written under
+    /// another name simply has no relations to show.
+    ///
+    /// Default: `hrn:hodei:artifacts:{region}:{account}:artifact/{account}`.
+    #[serde(default = "the_default_investigation_graph_tenant")]
+    pub graph_tenant_template: String,
+}
+
+impl Default for InvestigationConfig {
+    fn default() -> Self {
+        Self {
+            max_evidence: the_default_investigation_max_evidence(),
+            max_relations: the_default_investigation_max_relations(),
+            max_bytes: the_default_investigation_max_bytes(),
+            max_question_length: the_default_investigation_max_question_length(),
+            graph_tenant_template: the_default_investigation_graph_tenant(),
+        }
+    }
+}
+
+impl InvestigationConfig {
+    /// Check that the template of the tenant names an HRN.
+    ///
+    /// The check is done with a placeholder account and a placeholder
+    /// region, because those are the two things the template has to be
+    /// able to carry: a template that does not name an HRN with them
+    /// would fail on the first request instead of at the start.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let probe = self
+            .graph_tenant_template
+            .replace("{account}", "probe-account")
+            .replace("{region}", "probe-region");
+        if kernel::Hrn::from_string(&probe).is_none() {
+            return Err(ConfigError::Message(format!(
+                "Invalid investigation configuration: the graph tenant template {} does not name an HRN",
+                self.graph_tenant_template
+            )));
+        }
+        Ok(())
+    }
+
+    /// The tenant of the graph for a subject.
+    ///
+    /// The account of the subject is the account of the tenant, and the
+    /// region of the subject is the region of the tenant: the tenant is
+    /// where the account lives, not a thing that lives next to it.
+    pub fn the_graph_tenant(&self, subject: &kernel::Hrn) -> Option<kernel::Hrn> {
+        let name = self
+            .graph_tenant_template
+            .replace("{account}", subject.account_id())
+            .replace("{region}", subject.region());
+        kernel::Hrn::from_string(&name)
+    }
+}
+
+/// How many evidence pieces one investigation may read.
+fn the_default_investigation_max_evidence() -> usize {
+    100
+}
+
+/// How many relations one investigation may read.
+fn the_default_investigation_max_relations() -> usize {
+    400
+}
+
+/// How many bytes of evidence content one investigation may read.
+fn the_default_investigation_max_bytes() -> u64 {
+    256 * 1024
+}
+
+/// How long the question may be.
+fn the_default_investigation_max_question_length() -> usize {
+    2000
+}
+
+/// How the tenant of the graph is named.
+fn the_default_investigation_graph_tenant() -> String {
+    "hrn:hodei:artifacts:{region}:{account}:artifact/{account}".to_string()
+}
+
 /// Where the content of the artifacts lives.
 ///
 /// The content is stored **by digest**, not by path: the same content is
@@ -277,6 +405,10 @@ pub struct AppConfig {
     #[serde(default)]
     pub content: ContentConfig,
 
+    /// The limits of the investigation surface.
+    #[serde(default)]
+    pub investigation: InvestigationConfig,
+
     /// The trust policy that decides promotions to the trusted channel.
     #[serde(default)]
     pub trust: TrustConfig,
@@ -349,6 +481,16 @@ pub struct SecurityConfig {
     #[serde(default)]
     pub oci_api_enabled: bool,
 
+    /// Whether the investigation surface (`/api/v1/investigations`) is served.
+    ///
+    /// Same shape as `raw_api_enabled`: the surface asks for its own Cedar
+    /// action, and a bundle that does not declare it cannot grant it. The
+    /// default denies before any handler runs, and turning this on without
+    /// a bundle that declares the action is a deployment that says "yes" to
+    /// nothing.
+    #[serde(default)]
+    pub investigation_api_enabled: bool,
+
     /// How long an upload session lives without being touched, in seconds.
     ///
     /// The protocol of push is by chunks, and a session that nobody
@@ -405,6 +547,7 @@ impl Default for SecurityConfig {
             admin_api_enabled: false,
             raw_api_enabled: false,
             oci_api_enabled: false,
+            investigation_api_enabled: false,
             oci_upload_ttl_secs: default_oci_upload_ttl_secs(),
             oci_max_concurrent_uploads: default_oci_max_concurrent_uploads(),
             cors_allowed_origins: Vec::new(),
@@ -702,6 +845,7 @@ impl AppConfig {
         self.rocksdb.validate()?;
         self.logging.validate()?;
         self.content.validate()?;
+        self.investigation.validate()?;
         Ok(())
     }
 

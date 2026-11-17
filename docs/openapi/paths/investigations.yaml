@@ -1,0 +1,73 @@
+# El camino de la investigación.
+#
+# Es una LECTURA: el cuerpo nombra el sujeto y, si se quiere, la
+# pregunta, y la respuesta es el informe del investigador. No hay aquí un
+# camino que promueva, que cambie una política, que apruebe una excepción
+# o que escriba una decisión: la superficie tiene un método y ese método
+# solo lee.
+#
+# El método es un `POST` porque la pregunta viaja en el cuerpo, y el
+# cuerpo de una consulta no es el cuerpo de una orden: no se escribe
+# nada, y la acción de Cedar de esta superficie es una lectura.
+investigations:
+  post:
+    tags: [investigation]
+    summary: Investigar un artefacto
+    description: >
+      Lo que el servicio sabe del artefacto, qué sostiene cada
+      afirmación, qué falta y qué se quedó fuera por el presupuesto. El
+      informe lleva las citas de cada afirmación y el manifiesto de lo
+      que se leyó, con sus digests, para que lo que dice se pueda
+      comprobar.
+
+      El sujeto de otra cuenta no está: se esconde detrás del mismo 404
+      que un sujeto que no existe, y no se evalúa. Un despliegue sin
+      modelo contesta igual: los hallazgos son los de las herramientas y
+      la pregunta se declara sin responder.
+    operationId: investigate
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationRequest' }
+    responses:
+      '200':
+        description: El informe de la investigación.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationReport' }
+      '400':
+        description: El sujeto no es un HRN canónico, o la pregunta es más larga que el límite.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '403':
+        description: El permiso de investigar no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '404':
+        description: No hay nada ahí, o no es de esta cuenta.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '409':
+        description: El mundo cambió mientras se leía, y no hay una lectura coherente que presentar.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '500':
+        description: Lo que se leyó no cabe en el alcance en el que se leyó.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }
+      '503':
+        description: La investigación no está disponible en este despliegue.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/investigation.yaml#/InvestigationError' }

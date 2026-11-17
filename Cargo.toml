@@ -190,6 +190,11 @@ hodei-trust-policy = { path = "crates/hodei-trust-policy" }
 hodei-trust-policy-storage = { path = "crates/hodei-trust-policy-storage" }
 # El almacén de contenido por digest: el CAS donde viven los bytes.
 hodei-hub = { path = "crates/hodei-hub" }
+# El investigador: el dominio de la explicacion con citas, y su
+# recuperador sobre el grafo y la evidencia. La superficie de
+# investigacion los sirve; no reescribe nada de lo que hacen.
+hodei-investigator = { path = "crates/hodei-investigator" }
+hodei-investigator-storage = { path = "crates/hodei-investigator-storage" }
 # Published core; no path/git dependency to a sibling checkout.
 hodei-authz = { workspace = true }
 

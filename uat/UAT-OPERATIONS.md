@@ -709,3 +709,76 @@ El tipo se comprueba sobre el programa completo del frontend
 que deja fuera a los tests es un type-check que no comprueba. La
 configuración del tooling (`vite`, `vitest` y `playwright`) se comprueba
 también, en su propio programa (`tsconfig.node.json`).
+
+# INVESTIGACIÓN — la consulta de investigación de un artefacto
+
+## I1. Qué afirma
+
+Afirma que existe una **consulta de investigación** que responde a una
+pregunta sobre un artefacto con lo que el servicio sabe de él, y que el
+informe se puede comprobar. Las reglas, una por una:
+
+- **La investigación es una lectura.** No promueve, no cambia una política,
+  no aprueba una excepción y no escribe una decisión. La superficie tiene
+  un método, y ese método solo lee.
+- **El orden de las puertas es el contrato.** El principal se verifica, la
+  cuenta sale del principal verificado, y Cedar decide sobre el sujeto con
+  su propia acción (`Artifacts::Action::"Investigate"`). Lo que se rechaza
+  en cualquiera de esos pasos **no lee nada**: no se abre un blob, no se
+  consulta el grafo.
+- **El sujeto de otra cuenta no está.** Se esconde tras el mismo `404` que
+  el sujeto que no existe, y no se evalúa.
+- **El informe dice lo que sostiene cada afirmación.** Cada hallazgo lleva
+  sus citas, su clase y su estado de verificación, y el manifiesto de las
+  lecturas lleva el digest de lo que se leyó, no su contenido.
+- **Sin modelo, la pregunta se declara sin responder.** Los hallazgos son
+  los que calculan las herramientas, y lo que no se sabe se dice que no se
+  sabe. No hay ninguna API comercial en el camino de la petición.
+- **Lo que no cabe en el presupuesto se declara omitido.** La cobertura
+  dice cuántos hechos se quedaron fuera, y la petición solo puede acortar
+  el límite del despliegue, nunca ampliarlo.
+- **El tenant del grafo lo declara quien escribe la evidencia.** Es una
+  convención del productor, y por eso la plantilla
+  (`investigation.graph_tenant_template`) es configuración. Un grafo
+  escrito bajo otro nombre no tiene relaciones que mostrar, y el informe
+  lo dice en vez de inventarlas.
+
+## I2. Qué se ha medido
+
+| Prueba | Qué comprueba |
+| --- | --- |
+| `tests/hsp88_investigation_query.rs` | La consulta autorizada devuelve el informe con su sujeto, sus hallazgos, su cobertura y su manifiesto; lo que no está autenticado, lo que es de otra cuenta, lo que no es un artefacto, lo que no es un HRN y lo que no tiene permiso **no llega a leer nada**; una pregunta más larga que el límite se rechaza; la petición solo acota el presupuesto; la superficie no tiene otros métodos; un despliegue que no la declara no la monta; el informe cita la evidencia con su digest; lo que no cabe se declara omitido; y sin modelo la pregunta se declara sin responder. |
+| `crates/hodei-investigator/tests/deterministic_contract.rs` | El dominio sin modelo: los hechos que calculan las herramientas, las incertidumbres que se declaran, el manifiesto que lleva el informe y la traza que dice que no hubo modelo. |
+
+## I3. La superficie
+
+| Ruta | Qué hace |
+| --- | --- |
+| `POST /api/v1/investigations` | La investigación de un artefacto. El cuerpo nombra el sujeto (un HRN canónico de artefacto) y, si se quiere, la pregunta; la respuesta es el informe versionado del investigador. |
+
+La superficie está **cerrada por defecto**: se abre con
+`security.investigation_api_enabled = true`, y un bundle que no declara
+`Artifacts::Action::"Investigate"` impide arrancar el despliegue. El
+límite de la pregunta y el presupuesto de la lectura son los del
+despliegue (`investigation.max_question_length`, `investigation.max_evidence`,
+`investigation.max_relations`, `investigation.max_bytes`).
+
+## I4. Lo que no se promete
+
+- **La investigación no decide nada.** El informe describe; la confianza
+  se sigue decidiendo en la política de confianza y en el motor de
+  políticas, no aquí.
+- **La investigación no sustituye a la cápsula ni al detalle del
+  activo.** Son tres lecturas de la misma evidencia con tres preguntas
+  distintas, y ninguna sustituye a las otras.
+- **Sin modelo no hay respuesta a la pregunta.** Hay hallazgos y hay
+  incertidumbres; la pregunta, sin responder.
+- **Un despliegue sin evidencia no inventa evidencia.** El informe dice
+  que no hay nada, con la cobertura que lo declara.
+
+## I5. Cómo se ejecuta
+
+```bash
+cargo test --test hsp88_investigation_query
+cargo test -p hodei-investigator --test deterministic_contract
+```

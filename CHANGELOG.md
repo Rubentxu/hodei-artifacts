@@ -43,6 +43,25 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- La **investigación de un artefacto** (`POST /api/v1/investigations`): una
+  consulta de **solo lectura** que explica lo que el servicio sabe de un
+  artefacto, qué sostiene cada afirmación, qué falta y qué se quedó fuera
+  por el presupuesto. El cuerpo nombra el sujeto --un HRN canónico de
+  artefacto-- y, si se quiere, la pregunta; la respuesta es el informe del
+  investigador: versionado, con las citas de cada afirmación y con el
+  manifiesto de lo que se leyó, con sus digests. **Funciona sin modelo**: los
+  hallazgos son los que calculan las herramientas y la pregunta se declara
+  **sin responder**, porque una respuesta que finge haberla respondido es
+  una fabricación. La superficie es opcional
+  (`security.investigation_api_enabled`) y pide su propia acción de Cedar
+  (`Artifacts::Action::"Investigate"`), que un bundle que no declara impide
+  arrancar: sin esa acción, un despliegue que monta la superficie no podría
+  decidir. Lo que no está autenticado, lo que es de otra cuenta y lo que no
+  tiene permiso **se rechaza antes de leer nada**, y lo que no cabe en el
+  presupuesto se **declara omitido** en vez de truncarse en silencio. No hay
+  ningún camino que promueva, que cambie una política, que apruebe una
+  excepción o que escriba una decisión: la superficie tiene un método, y ese
+  método solo lee.
 - La **consola del catálogo** (`frontend/src/features/console/`): las personas
   ven los repositorios de su cuenta, buscan en lo que hay y miran el detalle
   de cada activo --digest, tamaño, versiones, origen y perfil de

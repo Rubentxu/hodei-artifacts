@@ -104,6 +104,7 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 | Repositorios del catálogo: listar y crear | `GET|POST /api/v1/catalog/repositories` | `tests/hsp114_console_contract.rs` |
 | Capacidades: qué formatos y modalidades se pueden crear | `GET /api/v1/capabilities` | `tests/hsp114_console_contract.rs` |
 | Consola del catálogo: repositorios, búsqueda, detalle, promoción y retirada | `frontend/src/features/console/` | `frontend/src/features/console/__tests__/`, `frontend/tests/e2e/` · `uat/UAT-OPERATIONS.md` |
+| Investigación de un artefacto: informe con citas, cobertura y manifiesto de lecturas | `POST /api/v1/investigations` | `tests/hsp88_investigation_query.rs`, `crates/hodei-investigator/tests/deterministic_contract.rs` |
 
 ### 3.2 Experimentales
 
@@ -1092,6 +1093,70 @@ tampoco.
 La decision esta escrita en
 `ADR-013-simulation-forks-are-overlays-not-copies.md`, que es el mecanismo
 que acepta el SPIKE-008.
+
+## 10-duodecies. La investigación: una lectura que explica (M8)
+
+Una investigación es **la respuesta a una pregunta sobre un artefacto, con
+las citas de lo que la sostiene**. No es una decisión: describe. Y describe
+con tres cosas que se pueden comprobar: el enunciado, la evidencia que lo
+sostiene y el estado de su verificación.
+
+La superficie vive en `src/investigation.rs` (el puerto y los adaptadores) y
+en `src/handlers/investigation.rs` (la frontera HTTP), y el dominio que
+calcula los hallazgos vive en `crates/hodei-investigator`.
+
+### El orden de las puertas
+
+El orden es el contrato, y es el mismo que el de las demás superficies de
+la API:
+
+1. el **principal** se verifica;
+2. la **cuenta** sale del principal verificado, y el sujeto de otra cuenta
+   se esconde tras el mismo `404` que el que no existe;
+3. **Cedar** decide sobre el sujeto, con su propia acción
+   (`Artifacts::Action::"Investigate"`, sobre `Artifacts::Artifact`); una
+   decisión que no se pudo tomar no es un permiso;
+4. solo entonces se **lee**.
+
+Lo que se rechaza en cualquiera de los tres primeros pasos **no lee nada**:
+la prueba lo cuenta (`tests/hsp88_investigation_query.rs`), porque una
+puerta que se cierra después de leer no es una puerta.
+
+### Sin modelo: la incertidumbre se declara
+
+El servicio sirve la investigación **sin modelo**: los hallazgos son los que
+calculan las herramientas —las relaciones del grafo y la evidencia del
+sujeto—, y la pregunta se declara **sin responder**. Sin modelo nadie
+contesta, y una respuesta que finge haberla contestado es una fabricación.
+
+Por eso la superficie no tiene ninguna API comercial en su camino de
+petición, y por eso un despliegue sin proveedor responde lo mismo que uno
+con el: con hallazgos deterministas y con las incertidumbres declaradas.
+
+### El presupuesto se declara, no se trunca
+
+Lo que no cabe en el presupuesto **se omite y se declara** (`coverage`), con
+cuántos hechos se quedaron fuera. La petición solo puede **acortar** el
+presupuesto del despliegue, nunca ampliarlo: el límite que manda es el del
+despliegue.
+
+### El tenant del grafo es una convención del que escribe
+
+El grafo guarda sus filas bajo el tenant que las posee, y ese tenant lo
+declara **quien entrega la evidencia**, no este servicio. Por eso la
+plantilla del tenant (`investigation.graph_tenant_template`) es
+configuración: `{account}` y `{region}` son las dos cosas que cambian de
+una cuenta a otra. Un despliegue cuyo productor nombra el tenant de otra
+manera lo dice; un grafo escrito bajo otro nombre simplemente no tiene
+relaciones que mostrar, y el informe lo dice en vez de inventarlas.
+
+### Lo que la superficie NO hace
+
+No hay ningún camino que promueva, que cambie una política, que apruebe una
+excepción o que escriba una decisión. La superficie tiene **un método**, y
+ese método solo lee. El modelo —cuando lo haya— tampoco tiene por dónde
+actuar: su texto se comprueba antes de publicarse, y lo que no se sabe se
+dice que no se sabe.
 
 ## 11. El nucleo no depende de mecanismos concretos
 
