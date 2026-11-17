@@ -37,6 +37,11 @@ pub struct OciFailure {
     /// que no puede, y se queda ahi. El reto es lo que convierte un
     /// "no" en un "asi se hace".
     challenge: Option<String>,
+    /// Los segundos de `Retry-After`, para la saturacion de subidas.
+    ///
+    /// La cuenta no hace nada mal: hace demasiado a la vez. El estado
+    /// sin el consejo seria un "no" sin puerta de vuelta.
+    retry_after: Option<u64>,
 }
 
 impl OciFailure {
@@ -48,6 +53,7 @@ impl OciFailure {
             status: StatusCode::NOT_FOUND,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -59,6 +65,7 @@ impl OciFailure {
             status: StatusCode::NOT_FOUND,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -70,6 +77,7 @@ impl OciFailure {
             status: StatusCode::NOT_FOUND,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -81,6 +89,7 @@ impl OciFailure {
             status: StatusCode::BAD_REQUEST,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -92,6 +101,7 @@ impl OciFailure {
             status: StatusCode::BAD_REQUEST,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -103,6 +113,7 @@ impl OciFailure {
             status: StatusCode::BAD_REQUEST,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -120,6 +131,7 @@ impl OciFailure {
             status: StatusCode::RANGE_NOT_SATISFIABLE,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -131,6 +143,7 @@ impl OciFailure {
             status: StatusCode::NOT_FOUND,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -142,6 +155,7 @@ impl OciFailure {
             status: StatusCode::BAD_REQUEST,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -153,6 +167,7 @@ impl OciFailure {
             status: StatusCode::NOT_FOUND,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -164,6 +179,7 @@ impl OciFailure {
             status: StatusCode::BAD_REQUEST,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -182,6 +198,7 @@ impl OciFailure {
             status: StatusCode::BAD_REQUEST,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -193,6 +210,7 @@ impl OciFailure {
             status: StatusCode::METHOD_NOT_ALLOWED,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -204,6 +222,7 @@ impl OciFailure {
             status: StatusCode::FORBIDDEN,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -215,6 +234,7 @@ impl OciFailure {
             status: StatusCode::UNAUTHORIZED,
             range: None,
             challenge: None,
+            retry_after: None,
         }
     }
 
@@ -226,6 +246,40 @@ impl OciFailure {
             status: StatusCode::SERVICE_UNAVAILABLE,
             range: None,
             challenge: None,
+            retry_after: None,
+        }
+    }
+
+    /// La cuota de almacenamiento de la cuenta no da para más.
+    ///
+    /// El codigo del dialecto es `SIZE_INVALID`: el cliente manda mas
+    /// bytes de los que la cuenta puede tener, y es lo mas cerca que el
+    /// protocolo dice de un `413`. Reenviar lo mismo mas tarde no cambia
+    /// nada, y por eso no lleva `Retry-After`.
+    pub fn storage_over_quota(message: impl Into<String>) -> Self {
+        Self {
+            code: "SIZE_INVALID",
+            message: message.into(),
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            range: None,
+            challenge: None,
+            retry_after: None,
+        }
+    }
+
+    /// La cuenta ya tiene tantas subidas en curso como puede.
+    ///
+    /// `TOO_MANY_REQUESTS` es el codigo que el propio protocolo reserva
+    /// para esto, y el `Retry-After` es la mitad honesta del "no": los
+    /// mismos bytes valen dentro de un momento.
+    pub fn too_many_requests(message: impl Into<String>, retry_after_secs: u64) -> Self {
+        Self {
+            code: "TOO_MANY_REQUESTS",
+            message: message.into(),
+            status: StatusCode::TOO_MANY_REQUESTS,
+            range: None,
+            challenge: None,
+            retry_after: Some(retry_after_secs),
         }
     }
 
@@ -299,6 +353,13 @@ impl IntoResponse for OciFailure {
             // El rango que hay ahora: un cliente cuyo trozo no encaja
             // necesita saber por donde seguir.
             response.headers_mut().insert(header::RANGE, value);
+        }
+        if let Some(seconds) = self.retry_after
+            && let Ok(value) = axum::http::HeaderValue::from_str(&seconds.to_string())
+        {
+            // Cuando volver: la saturacion es temporal, y un 429 sin
+            // consejo es un no sin puerta de vuelta.
+            response.headers_mut().insert(header::RETRY_AFTER, value);
         }
         response
     }
@@ -378,6 +439,16 @@ mod tests {
             ),
             (OciFailure::denied("x"), StatusCode::FORBIDDEN, "DENIED"),
             (
+                OciFailure::storage_over_quota("x"),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "SIZE_INVALID",
+            ),
+            (
+                OciFailure::too_many_requests("x", 1),
+                StatusCode::TOO_MANY_REQUESTS,
+                "TOO_MANY_REQUESTS",
+            ),
+            (
                 OciFailure::unauthorized(),
                 StatusCode::UNAUTHORIZED,
                 "UNAUTHORIZED",
@@ -395,5 +466,25 @@ mod tests {
     fn the_envelope_carries_the_code() {
         let response = OciFailure::blob_upload_unknown("no such upload").into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// La saturacion dice cuando volver: un `429` sin `Retry-After` es
+    /// un no sin puerta de vuelta, y el consejo es la mitad del no.
+    #[test]
+    fn the_saturation_carries_the_advice_to_come_back() {
+        let response = OciFailure::too_many_requests("x", 7).into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .map(|value| value.as_bytes()),
+            Some(b"7".as_slice())
+        );
+        // Y el 413 de cuota no lo lleva: volver mas tarde no hace la
+        // cuenta mas grande.
+        let over = OciFailure::storage_over_quota("x").into_response();
+        assert_eq!(over.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(over.headers().get(header::RETRY_AFTER).is_none());
     }
 }

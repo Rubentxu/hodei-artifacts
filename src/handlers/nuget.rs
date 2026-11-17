@@ -620,7 +620,14 @@ async fn publish(
     let (id, version) = (declared.id.clone(), declared.version.clone());
 
     let asset_path = nuget::package_asset_path(&id, &version);
-    let (digest, length) = write_the_content(state, Body::from(payload), None, None).await?;
+    let (digest, length) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(payload),
+        None,
+        None,
+    )
+    .await?;
 
     // Una version ya publicada es para siempre: el mismo digest es el eco
     // de una publicacion interrumpida, un digest distinto es un 409 que

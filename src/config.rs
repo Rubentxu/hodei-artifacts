@@ -265,6 +265,73 @@ fn the_default_trust_policy_id() -> String {
     "default".to_string()
 }
 
+/// The per-account quotas.
+///
+/// Not saying is not saying zero: every limit here is an `Option`, and
+/// a deployment that writes nothing runs exactly as it ran before
+/// quotas existed. A limit that is not written is a limit that is not
+/// enforced, and that decision belongs to the operator, in the open.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaConfig {
+    /// The most bytes one account may have stored.
+    ///
+    /// Default: none (unlimited).
+    #[serde(default)]
+    pub max_stored_bytes_per_account: Option<u64>,
+    /// The most uploads of one account in flight at the same time.
+    ///
+    /// Default: none (unlimited).
+    #[serde(default)]
+    pub max_concurrent_uploads_per_account: Option<usize>,
+    /// The seconds `Retry-After` carries when the concurrency gate
+    /// refuses. A `0` here would be a `Retry-After` that says "now",
+    /// which is not a hint, so the minimum is one.
+    ///
+    /// Default: 1.
+    #[serde(default = "the_default_quota_retry_after_secs")]
+    pub retry_after_secs: u64,
+}
+
+fn the_default_quota_retry_after_secs() -> u64 {
+    1
+}
+
+impl Default for QuotaConfig {
+    fn default() -> Self {
+        Self {
+            max_stored_bytes_per_account: None,
+            max_concurrent_uploads_per_account: None,
+            retry_after_secs: the_default_quota_retry_after_secs(),
+        }
+    }
+}
+
+impl QuotaConfig {
+    /// Check that the values of the quota configuration make sense.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.max_stored_bytes_per_account == Some(0) {
+            return Err(ConfigError::Message(
+                "Invalid quota configuration: max_stored_bytes_per_account of zero is not a quota, it is a shutdown; say nothing instead".to_string(),
+            ));
+        }
+        if self.retry_after_secs == 0 {
+            return Err(ConfigError::Message(
+                "Invalid quota configuration: retry_after_secs must be at least one second, and 0 was given".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The same decision in the language of the ledger.
+    pub fn the_limits(&self) -> crate::quota::QuotaLimits {
+        crate::quota::QuotaLimits {
+            max_stored_bytes_per_account: self.max_stored_bytes_per_account,
+            max_concurrent_uploads_per_account: self.max_concurrent_uploads_per_account,
+            retry_after_secs: self.retry_after_secs,
+        }
+    }
+}
+
 /// The egress of the remote proxy: where the service may fetch from.
 ///
 /// A proxy repository names an upstream, but the repository configuration
@@ -416,6 +483,11 @@ pub struct AppConfig {
     /// The egress of the remote proxy.
     #[serde(default)]
     pub proxy: ProxyConfig,
+
+    /// The per-account quotas: what one account may store and how much
+    /// it may do at once.
+    #[serde(default)]
+    pub quota: QuotaConfig,
 
     /// Database configuration
     pub database: DatabaseConfig,
@@ -846,6 +918,7 @@ impl AppConfig {
         self.logging.validate()?;
         self.content.validate()?;
         self.investigation.validate()?;
+        self.quota.validate()?;
         Ok(())
     }
 

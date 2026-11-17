@@ -35,6 +35,7 @@ pub mod oci;
 pub mod openapi;
 pub mod openpgp;
 pub mod proxy;
+pub mod quota;
 pub mod raw;
 pub mod recovery;
 pub mod repository;

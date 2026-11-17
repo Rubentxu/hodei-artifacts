@@ -98,3 +98,18 @@ max_concurrent = 8
 # explicit 503. A repository can go offline by itself with proxy.cache.offline;
 # this switch is the operator's and wins.
 offline = false
+
+[quota]
+# Per-account rate-shaping on the upload surfaces. The ledger is in
+# memory: a restart forgets it, and it is a gate, not a billing book.
+# Unset means unlimited, and an unlimited deployment behaves exactly
+# as it did before quotas existed.
+# The most bytes one account may have stored. Content the store already
+# holds counts once. A refusal is a 413 without Retry-After: sending
+# again later changes nothing.
+# max_stored_bytes_per_account = 10737418240
+# The most uploads one account may have in flight at once, OCI sessions
+# included. A refusal is a 429 carrying Retry-After.
+# max_concurrent_uploads_per_account = 8
+# The seconds those Retry-After headers advise.
+# retry_after_secs = 60

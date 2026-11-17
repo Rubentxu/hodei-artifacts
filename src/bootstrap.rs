@@ -402,6 +402,20 @@ pub async fn bootstrap(
         std::time::Duration::from_secs(config.security.oci_upload_ttl_secs),
         config.security.oci_max_concurrent_uploads,
     )));
+    // El libro mayor de las cuotas: los limites que dice la
+    // configuracion, compartidos por toda peticion y toda sesion. Un
+    // despliegue que no dice cuotas obtiene un libro sin limites, que
+    // admite todo y es exactamente lo que dijo.
+    let app_state = app_state.with_quota(config.quota.the_limits());
+    if config.quota.max_stored_bytes_per_account.is_some()
+        || config.quota.max_concurrent_uploads_per_account.is_some()
+    {
+        info!(
+            max_stored_bytes_per_account = ?config.quota.max_stored_bytes_per_account,
+            max_concurrent_uploads_per_account = ?config.quota.max_concurrent_uploads_per_account,
+            "the account quotas are in force"
+        );
+    }
     let app_state = configure_production_security(app_state, config)?;
     // La investigacion se cablea DESPUES de la seguridad de produccion:
     // el autorizador que la investigation usa es el que el deployment

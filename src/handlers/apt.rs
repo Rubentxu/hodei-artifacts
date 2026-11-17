@@ -565,13 +565,25 @@ async fn upload(
     let record_path = apt::record_path_for(asset_path);
 
     // 1. Los bytes del .deb, conmutados antes del catalogo.
-    let (deb_digest, deb_size) =
-        write_the_content(state, Body::from(body.to_vec()), None, None).await?;
+    let (deb_digest, deb_size) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(body.to_vec()),
+        None,
+        None,
+    )
+    .await?;
     let record = apt::packages_record(&control, asset_path, deb_size, &deb_digest.value);
     let record_bytes = record.into_bytes();
     // 2. Los bytes de la ficha.
-    let (record_digest, record_size) =
-        write_the_content(state, Body::from(record_bytes.clone()), None, None).await?;
+    let (record_digest, record_size) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(record_bytes.clone()),
+        None,
+        None,
+    )
+    .await?;
 
     let existing_deb = the_current_asset(state, context, &repository.repo_key, asset_path).await?;
     let existing_record =

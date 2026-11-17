@@ -42,6 +42,13 @@ pub struct UploadSession {
     id: String,
     /// La escritura en curso del almacen de contenido.
     writer: Box<dyn BlobWriteSession>,
+    /// La reserva de la cuota que admitio esta subida.
+    ///
+    /// Vive **aqui** y no en la peticion porque la subida vive aqui y no
+    /// en la peticion: la reserva de una sesion abandonada o caducada
+    /// vuelve al libro mayor cuando la sesion muere, y lo que una sesion
+    /// commitea se asienta al cerrarse.
+    ticket: crate::quota::QuotaTicket,
     /// Cuando se toco por ultima vez.
     last_seen: Instant,
 }
@@ -60,6 +67,25 @@ impl UploadSession {
     /// El escritor de la sesion, para escribir y para cerrar.
     pub fn the_writer(&mut self) -> &mut Box<dyn BlobWriteSession> {
         &mut self.writer
+    }
+
+    /// El escritor y la reserva, juntos y prestados sin pelearse.
+    ///
+    /// Escribir un trozo necesita tomar los dos a la vez: el escritor
+    /// para el byte y la cuota para pincharlo **antes** de escribirlo.
+    /// Son campos distintos, y la toma prestada lo dice en el tipo.
+    pub fn the_writer_and_ticket(
+        &mut self,
+    ) -> (
+        &mut Box<dyn BlobWriteSession>,
+        &mut crate::quota::QuotaTicket,
+    ) {
+        (&mut self.writer, &mut self.ticket)
+    }
+
+    /// Asienta la reserva contra lo que el almacén ganó al commitear.
+    pub fn settle(&mut self, stored_new_bytes: u64) {
+        self.ticket.settle(stored_new_bytes);
     }
 
     /// Anota que la sesion se ha tocado.
@@ -116,11 +142,16 @@ impl UploadRegistry {
     ///
     /// El identificador es un UUID: lo que el cliente recibe en el
     /// `Location` y lo que devuelve en cada peticion siguiente.
+    ///
+    /// La cuota ya decidio antes de llamar: el `ticket` es la reserva
+    /// que la subida trae consigo, y la sesion la conserva hasta que se
+    /// asienta al commitear o se suelta al morir.
     pub async fn open(
         &self,
         account: &str,
         repository: &str,
         writer: Box<dyn BlobWriteSession>,
+        ticket: crate::quota::QuotaTicket,
     ) -> Result<Arc<tokio::sync::Mutex<UploadSession>>, OciFailure> {
         let mut sessions = self.lock();
         // Las sesiones caducadas se van antes de contar: un registro que
@@ -139,6 +170,7 @@ impl UploadRegistry {
         let session = Arc::new(tokio::sync::Mutex::new(UploadSession {
             id: id.clone(),
             writer,
+            ticket,
             last_seen: Instant::now(),
         }));
         sessions.insert(
@@ -244,6 +276,14 @@ mod tests {
     use super::*;
     use hodei_hub::blob::{BlobStore, InMemoryBlobStore};
 
+    /// Una reserva de un libro mayor sin limites: las pruebas de
+    /// sesiones prueban sesiones, no cuotas.
+    fn an_unlimited_ticket() -> crate::quota::QuotaTicket {
+        crate::quota::QuotaLedger::new(crate::quota::QuotaLimits::default())
+            .begin("acme", None)
+            .expect("an unlimited ledger admits everything")
+    }
+
     /// Una sesion que es de otra cuenta no existe para esta.
     #[tokio::test]
     async fn a_session_of_another_account_does_not_exist() {
@@ -254,6 +294,7 @@ mod tests {
                 "acme",
                 "releases",
                 store.begin().await.expect("the session"),
+                an_unlimited_ticket(),
             )
             .await
             .expect("the session opens");
@@ -280,6 +321,7 @@ mod tests {
                 "acme",
                 "releases",
                 store.begin().await.expect("the session"),
+                an_unlimited_ticket(),
             )
             .await
             .expect("the session opens");
@@ -307,6 +349,7 @@ mod tests {
                 "acme",
                 "releases",
                 store.begin().await.expect("the session"),
+                an_unlimited_ticket(),
             )
             .await
             .expect("the session opens");
@@ -334,6 +377,7 @@ mod tests {
                     "acme",
                     "releases",
                     store.begin().await.expect("the session"),
+                    an_unlimited_ticket(),
                 )
                 .await
                 .expect("the session opens");
@@ -343,6 +387,7 @@ mod tests {
                 "acme",
                 "releases",
                 store.begin().await.expect("the session"),
+                an_unlimited_ticket(),
             )
             .await
         {

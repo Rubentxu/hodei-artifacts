@@ -176,6 +176,14 @@ pub struct AppState {
     /// opaque and its scope is the verified account, so a session of
     /// another account is a session that does not exist.
     pub(crate) uploads: Arc<crate::oci::uploads::UploadRegistry>,
+    /// The quota ledger: what every account has reserved and stored.
+    ///
+    /// It lives here for the same reason the upload registry does: the
+    /// reservation of an upload survives its request, and two uploads
+    /// that arrive at once must be decided against the **same** state.
+    /// A deployment that says nothing about quotas gets the ledger of
+    /// no limits, which admits everything and is exactly what it said.
+    pub(crate) quota: Arc<crate::quota::QuotaLedger>,
     /// La clave con la que el hub firma la metadata de los repositorios
     /// de sistema: el `Release.gpg` de apt y el `repomd.xml.asc` de yum.
     pub(crate) metadata_signer: Arc<crate::openpgp::MetadataSigner>,
@@ -295,6 +303,9 @@ impl AppState {
             proxy_plane: None,
             trust_plane: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
+            quota: Arc::new(crate::quota::QuotaLedger::new(
+                crate::quota::QuotaLimits::default(),
+            )),
             metadata_signer: Arc::new(crate::openpgp::bootstrap_signer()),
             max_body_size: 10 * 1024 * 1024,
             identity,
@@ -359,6 +370,9 @@ impl AppState {
             proxy_plane: None,
             trust_plane: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
+            quota: Arc::new(crate::quota::QuotaLedger::new(
+                crate::quota::QuotaLimits::default(),
+            )),
             metadata_signer: Arc::new(crate::openpgp::bootstrap_signer()),
             max_body_size: 10 * 1024 * 1024,
             identity: Identity::system(),
@@ -505,6 +519,16 @@ impl AppState {
     /// alive at once-- are a decision of the deployment, not of the code.
     pub fn with_uploads(mut self, uploads: Arc<crate::oci::uploads::UploadRegistry>) -> Self {
         self.uploads = uploads;
+        self
+    }
+
+    /// Set the quotas of the deployment.
+    ///
+    /// The limits are the deployment's decision, said in configuration;
+    /// the ledger is shared by every request and every session, because
+    /// a quota decided per request would be a quota with a race.
+    pub fn with_quota(mut self, limits: crate::quota::QuotaLimits) -> Self {
+        self.quota = Arc::new(crate::quota::QuotaLedger::new(limits));
         self
     }
 
