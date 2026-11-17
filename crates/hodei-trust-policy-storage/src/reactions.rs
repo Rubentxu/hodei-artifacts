@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hodei_catalog::TrustLedger;
 use hodei_reactive::reactions::{DecisionRequester, Reevaluation};
 use hodei_trust_policy::context::TrustContext;
 use hodei_trust_policy::gate::AuthorizationResult;
@@ -39,6 +40,11 @@ pub struct PromotionDecisionRequester {
     service: Arc<PromotionService>,
     store: Arc<dyn DecisionStore>,
     contexts: Arc<dyn TrustContextSource>,
+    /// The book the grants live in. A reevaluation that denies has to
+    /// take back what the denied decision granted; without a book the
+    /// adapter can record the truth but not enforce it, and it says so
+    /// instead of pretending.
+    ledger: Option<Arc<dyn TrustLedger>>,
     policy_id: String,
     distribution: String,
     principal: String,
@@ -58,10 +64,18 @@ impl PromotionDecisionRequester {
             service,
             store,
             contexts,
+            ledger: None,
             policy_id: policy_id.into(),
             distribution: distribution.into(),
             principal: principal.into(),
         }
+    }
+
+    /// The adapter that can also enforce its decision: the book where
+    /// the grants of the promoted decisions live.
+    pub fn with_ledger(mut self, ledger: Arc<dyn TrustLedger>) -> Self {
+        self.ledger = Some(ledger);
+        self
     }
 
     /// The account of a subject.
@@ -116,6 +130,15 @@ impl DecisionRequester for PromotionDecisionRequester {
             .map(|decision| decision.id.as_str().to_string())
             .unwrap_or_else(|| format!("reevaluation:{}", request.subject));
 
+        // The decision that was in force and had a real effect: if the
+        // reevaluation refuses, it is the concession of this one that has
+        // to be taken back. Recorded before the account moves away.
+        let superseded_applied = previous
+            .first()
+            .filter(|decision| decision.applied)
+            .map(|decision| decision.id.as_str().to_string());
+        let the_account = account.clone();
+
         let id = DecisionId::new(format!(
             "dec-{}:{}",
             request.reason_label(),
@@ -158,7 +181,41 @@ impl DecisionRequester for PromotionDecisionRequester {
                 "the reevaluation of {} did not produce a decision",
                 request.subject
             )),
-            _ => Ok(id.as_str().to_string()),
+            hodei_trust_policy::promotion::PromotionOutcome::Failed(
+                hodei_trust_policy::promotion::PromotionFailure::Refused,
+            ) => {
+                // The truth changed and the new truth refuses: the
+                // concession of the refused decision has to be taken
+                // back now, or the serving path would keep serving
+                // bytes under a decision that no longer holds.
+                if let Some(previous_id) = superseded_applied {
+                    let ledger = self.ledger.as_ref().ok_or_else(|| {
+                        format!(
+                            "the reevaluation of {} refuses decision {previous_id} but there is no ledger to revoke it",
+                            request.subject
+                        )
+                    })?;
+                    ledger
+                        .revoke_decision_for_account(
+                            &the_account,
+                            &previous_id,
+                            &format!("reevaluation:{}", request.reason_label()),
+                            &format!("{} reevaluated at {}", request.reason_label(), request.at),
+                            request.at,
+                        )
+                        .await
+                        .map_err(|error| {
+                            format!(
+                                "the reevaluation of {} could not revoke {previous_id}: {error}",
+                                request.subject
+                            )
+                        })?;
+                }
+                Ok(id.as_str().to_string())
+            }
+            hodei_trust_policy::promotion::PromotionOutcome::Promoted => {
+                Ok(id.as_str().to_string())
+            }
         }
     }
 }

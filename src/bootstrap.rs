@@ -265,7 +265,9 @@ pub async fn bootstrap(
             .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
         let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
         let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
-        let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> = catalog.clone();
+        let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> = Arc::new(
+            crate::trust::cache::CachedTrustLedger::with_default_ttl(catalog.clone()),
+        );
         let provenance_ledger: Arc<dyn hodei_catalog::ProvenanceLedger> = catalog.clone();
         // The search is the same catalog with another question: there is
         // no separate index to synchronise, and that is why what the

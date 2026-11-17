@@ -19,11 +19,15 @@
 //!   digest, y ese no hereda nada.
 //! - Lo que no se admite responde como **inexistente**, no como
 //!   prohibido: un 403 diria que el contenido existe.
-//! - No hay cache. Cada peticion lee el libro, de modo que una revocacion
-//!   se ve en la peticion siguiente.
+//! - No hay cache de negativos: cada `NoGranted`, cada fallo y cada
+//!   ausencia de libro se vuelven a preguntar en la peticion siguiente.
+//!   Las concesiones activas si se cachean —con expiracion e
+//!   invalidacion por revocacion— en [`cache::CachedTrustLedger`], que
+//!   envuelve al libro en el arranque del servicio.
 //! - Un libro que falla, o que no esta, **no** es un permiso: el canal
 //!   trusted sin libro responde "no disponible".
 
+pub mod cache;
 pub mod hrn;
 pub mod promotion;
 

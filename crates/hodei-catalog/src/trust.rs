@@ -133,6 +133,22 @@ pub trait TrustLedger: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<u64, CatalogError>;
 
+    /// Revoca todas las concesiones de una decision en toda la cuenta,
+    /// sin saber en que repositorio viven.
+    ///
+    /// Es la revocacion que pide la reevaluacion: la verdad del riesgo
+    /// cambio y la decision que concedio ya no vale, pero quien reevalua
+    /// nombra al sujeto y a su cuenta, no a los repositorios donde aquella
+    /// decision promovio. Devuelve cuantas estaban activas.
+    async fn revoke_decision_for_account(
+        &self,
+        account: &str,
+        decision_id: &str,
+        actor: &str,
+        reason: &str,
+        at: DateTime<Utc>,
+    ) -> Result<u64, CatalogError>;
+
     /// Revoca todas las concesiones de un digest, sea cual sea la decision
     /// que las concedio. Devuelve cuantas estaban activas.
     async fn revoke_digest(

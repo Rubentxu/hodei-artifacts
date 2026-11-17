@@ -17,6 +17,7 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 kernel = { path = "../kernel" }
 chrono = { workspace = true }
+hodei-catalog = { path = "../hodei-catalog" }
 hodei-evidence-storage = { path = "../hodei-evidence-storage" }
 hodei-reactive = { path = "../hodei-reactive" }
 hodei-trust-policy = { path = "../hodei-trust-policy" }
