@@ -23,7 +23,6 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { toast } from '@/shared/utils/notifications-simple';
 import type { PackageType } from '@/shared/types/openapi-generated.types';
-import type { User, Policy } from '@/shared/api/openapi-service';
 
 /**
  * Componente de demostración del API OpenAPI Contract First

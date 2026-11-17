@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { userService } from '../services/userApi';
 import { useNotifications } from '@/shared/stores/ui.store';
-import type { UserProfile, UpdateUserProfile } from '../types/user.types';
+import type { UpdateUserProfile } from '../types/user.types';
 
 const USER_PROFILE_KEY = 'userProfile';
 

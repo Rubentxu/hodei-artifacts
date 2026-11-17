@@ -1,6 +1,7 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import type { InfiniteData } from '@tanstack/react-query';
 import { searchService } from '../services/searchApi';
-import type { SearchFilters } from '../types/search.types';
+import type { SearchFilters, SearchResponse } from '../types/search.types';
 
 const SEARCH_KEY = 'search';
 
@@ -22,9 +23,16 @@ export const useSearchSuggestions = (query: string) => {
 };
 
 export const useInfiniteSearch = (filters: Omit<SearchFilters, 'page'>) => {
-  return useInfiniteQuery({
+  return useInfiniteQuery<
+    SearchResponse,
+    Error,
+    InfiniteData<SearchResponse>,
+    readonly unknown[],
+    number
+  >({
     queryKey: [SEARCH_KEY, 'infinite', filters],
-    queryFn: ({ pageParam = 1 }) =>
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) =>
       searchService.search({ ...filters, page: pageParam }),
     getNextPageParam: (lastPage, allPages) => {
       const loadedCount = allPages.reduce(

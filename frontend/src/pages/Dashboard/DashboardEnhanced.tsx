@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { mockAdapter } from '@/shared/api/mockAdapter';
 import { repositoryServiceMock } from '@/shared/api/mockAdapter';
 import { searchServiceMock } from '@/shared/api/mockAdapter';
 import type { Repository, PackageResult } from '@/shared/types/openapi.types';

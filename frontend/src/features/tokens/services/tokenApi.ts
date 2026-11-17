@@ -5,8 +5,6 @@ import type {
 } from '../types/token.types';
 
 class TokenService {
-  private readonly basePath = '/tokens';
-
   async getTokens(): Promise<ApiToken[]> {
     // const response = await apiClient.get<ApiToken[]>(this.basePath);
     // return response.data;

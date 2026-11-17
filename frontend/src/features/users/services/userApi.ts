@@ -8,8 +8,6 @@ import type {
 } from '../types/user.types';
 
 class UserService {
-  private readonly basePath = '/users';
-
   async getUsers(): Promise<User[]> {
     try {
       // Usar el adaptador para obtener usuarios de servicios mock mejorados

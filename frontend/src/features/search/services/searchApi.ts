@@ -2,8 +2,6 @@ import { mockAdapter } from '@/shared/api/mockAdapter';
 import type { SearchResponse, SearchFilters } from '../types/search.types';
 
 class SearchService {
-  private readonly basePath = '/search';
-
   async search(filters: SearchFilters): Promise<SearchResponse> {
     try {
       // Usar el adaptador para obtener datos de servicios mock mejorados
