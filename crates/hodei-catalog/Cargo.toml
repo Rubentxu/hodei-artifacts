@@ -19,4 +19,7 @@ url = { workspace = true }
 # codecs, a diferencia de los fixtures stored del workspace.
 zip = { version = "3.0.0", default-features = false, features = ["deflate"] }
 flate2 = "1.1.11"
+# dpkg comprime el `control.tar` en xz por defecto: sin liblzma no hay
+# paquete real que se pueda indexar.
+xz2 = "0.1"
 sha2 = { workspace = true }

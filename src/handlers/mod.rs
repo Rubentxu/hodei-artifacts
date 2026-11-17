@@ -7,6 +7,7 @@
 //! - Mapping results to HTTP responses
 //! - Error handling and logging
 
+pub mod apt;
 pub mod capabilities;
 pub mod capsules;
 pub mod cargo;

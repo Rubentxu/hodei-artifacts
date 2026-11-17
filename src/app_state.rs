@@ -176,6 +176,9 @@ pub struct AppState {
     /// opaque and its scope is the verified account, so a session of
     /// another account is a session that does not exist.
     pub(crate) uploads: Arc<crate::oci::uploads::UploadRegistry>,
+    /// La clave con la que el hub firma la metadata de los repositorios
+    /// de sistema: el `Release.gpg` de apt y el `repomd.xml.asc` de yum.
+    pub(crate) metadata_signer: Arc<crate::openpgp::MetadataSigner>,
     /// The largest content this service accepts, in bytes.
     ///
     /// A limit that is not written is a limit that is not enforced, and a
@@ -292,6 +295,7 @@ impl AppState {
             proxy_plane: None,
             trust_plane: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
+            metadata_signer: Arc::new(crate::openpgp::bootstrap_signer()),
             max_body_size: 10 * 1024 * 1024,
             identity,
             admin_authenticator_configured: true,
@@ -355,6 +359,7 @@ impl AppState {
             proxy_plane: None,
             trust_plane: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
+            metadata_signer: Arc::new(crate::openpgp::bootstrap_signer()),
             max_body_size: 10 * 1024 * 1024,
             identity: Identity::system(),
             admin_authenticator_configured: false,

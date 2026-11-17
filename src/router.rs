@@ -445,6 +445,20 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // Debian APT: the pool of `.deb`, the generated `Packages` and
+        // `Release`, its `Release.gpg` and the hub key. Paths are the
+        // format's own and arrive raw to the handler.
+        .route(
+            "/apt/{*target}",
+            axum::routing::get(crate::handlers::apt::handle)
+                .put(crate::handlers::apt::handle)
+                .fallback(crate::handlers::apt::handle)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         // The Go module proxy: `GET {module}/@v/list|.info|.mod|.zip` and
         // `{module}/@latest`, plus the `PUT` of those same paths that
         // publishes into a hosted repository. Module paths carry `!` and

@@ -639,6 +639,16 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the cargo repositories");
     }
 
+    /// Crea repositorios **apt hosted** de la primera cuenta. Cada
+    /// entrada es una clave y su config (`null` si no tiene).
+    pub fn seed_apt(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, apt)| serde_json::json!({ "key": key, "format": "apt", "apt": apt }))
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the apt repositories");
+    }
+
     /// Crea repositorios **go hosted** de la primera cuenta. Cada entrada
     /// es una clave y su config (`null` si no tiene).
     pub fn seed_go(&self, repositories: &[(&str, serde_json::Value)]) {
@@ -2450,6 +2460,10 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::NuGet
             } else if repository["format"].as_str() == Some("helm") {
                 hodei_catalog::RepositoryFormat::Helm
+            } else if repository["format"].as_str() == Some("apt") {
+                hodei_catalog::RepositoryFormat::Apt
+            } else if repository["format"].as_str() == Some("rpm") {
+                hodei_catalog::RepositoryFormat::Rpm
             } else {
                 hodei_catalog::RepositoryFormat::Maven2
             };

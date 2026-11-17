@@ -16,12 +16,17 @@ use thiserror::Error;
 /// inservible, dicho con nombre y razon.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AptError {
+    /// El contenedor `ar` no es un `.deb`: magicos que faltan, un
+    /// tamano que no es numero o un miembro que se sale del archive.
     #[error("the archive is not a valid deb container: {0}")]
     BadArchive(&'static str),
+    /// No hay miembro `control` en el archive: sin el no hay paquete.
     #[error("the control member is missing or unreadable")]
     NoControl,
+    /// Falta un campo obligatorio del `control`: dpkg no lo admite.
     #[error("the control file lacks the required field {0}")]
     MissingField(&'static str),
+    /// El identificador no cabe en una ruta segura del pool.
     #[error("the package identity is not filesystem safe: {0}")]
     BadIdentity(String),
 }
@@ -81,7 +86,9 @@ fn ar_members(bytes: &[u8]) -> Result<Vec<ArMember>, AptError> {
         let end = cursor
             .checked_add(size)
             .filter(|end| *end <= bytes.len())
-            .ok_or(AptError::BadArchive("a member runs past the end of the archive"))?;
+            .ok_or(AptError::BadArchive(
+                "a member runs past the end of the archive",
+            ))?;
         let data = bytes[cursor..end].to_vec();
         cursor = end + (size % 2);
         members.push(ArMember {
@@ -92,32 +99,15 @@ fn ar_members(bytes: &[u8]) -> Result<Vec<ArMember>, AptError> {
     Ok(members)
 }
 
-/// Deshace `gzip` sin dependencias nuevas: el header de 10 bytes, los
-/// campos opcionales que GNU y las versiones de kernel meten ahí, y
-/// luego el bloque `stored` o deflate del cuerpo.
+/// Deshace `gzip`: el `GzDecoder` de flate2 lee el formato completo
+/// (magicos, cabecera con los campos opcionales de GNU, cuerpo y CRC),
+/// asi que aqui solo se comprueba que el miembro sea gzip de verdad.
 fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, AptError> {
-    if bytes.len() < 10 || bytes[0] != 0x1f || bytes[1] != 0x8b || bytes[2] != 8 {
+    if bytes.len() < 2 || bytes[0] != 0x1f || bytes[1] != 0x8b {
         return Err(AptError::BadArchive("the data member is not gzip"));
     }
-    let flags = bytes[3];
-    let mut cursor = 10usize;
-    if flags & 0x04 != 0 {
-        let extra_len = u16::from_le_bytes([bytes[cursor], bytes[cursor + 1]]) as usize;
-        cursor += 2 + extra_len;
-    }
-    for flag in [0x08u8, 0x10] {
-        if flags & flag != 0 {
-            while bytes[cursor] != 0 {
-                cursor += 1;
-            }
-            cursor += 1;
-        }
-    }
-    if flags & 0x02 != 0 {
-        cursor += 2;
-    }
     let mut out = Vec::new();
-    flate2::read::GzDecoder::new(&bytes[cursor..])
+    flate2::read::GzDecoder::new(bytes)
         .read_to_end(&mut out)
         .map_err(|_| AptError::BadArchive("the gzip body does not inflate"))?;
     Ok(out)
@@ -155,7 +145,8 @@ fn tar_member(tar: &[u8], wanted: &str) -> Option<Vec<u8>> {
 }
 
 /// Lee el `control` de un `.deb`: la secuencia de miembros `ar`, el
-/// `control.tar` (con o sin `gzip`) y los campos de cabecera.
+/// `control.tar` (según lo comprima dpkg: plano, gzip o xz) y los
+/// campos de cabecera.
 pub fn read_deb_control(deb: &[u8]) -> Result<DebControl, AptError> {
     let members = ar_members(deb)?;
     let data_member = members
@@ -164,6 +155,12 @@ pub fn read_deb_control(deb: &[u8]) -> Result<DebControl, AptError> {
         .ok_or(AptError::BadArchive("no control.tar member"))?;
     let tar = if data_member.name.ends_with(".gz") {
         gunzip(&data_member.data)?
+    } else if data_member.name.ends_with(".xz") {
+        let mut out = Vec::new();
+        xz2::read::XzDecoder::new(&data_member.data[..])
+            .read_to_end(&mut out)
+            .map_err(|_| AptError::BadArchive("the xz body does not decompress"))?;
+        out
     } else {
         data_member.data.clone()
     };
@@ -215,12 +212,31 @@ fn parse_control(text: &str) -> Result<DebControl, AptError> {
     })
 }
 
+/// Como dpkg comprime el `control.tar` de un `.deb` de prueba: sin
+/// comprimir, gzip o el xz que trae por defecto desde hace décadas.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ControlCompression {
+    Plain,
+    Gz,
+    Xz,
+}
+
 /// Construye un `.deb` de prueba: un contenedor `ar` con un
-/// `debian-binary`, un `control.tar` sin comprimir con el control dado
-/// y un `data.tar.gz` vacio. Solo para pruebas; no es un paquete
-/// instalable, pero apt y nuestro lector lo parsean igual.
+/// `debian-binary`, un `control.tar` con el control dado y el
+/// comprimido pedidos, y un `data.tar.gz` vacio. Solo para pruebas;
+/// no es un paquete instalable, pero apt y nuestro lector lo parsean
+/// igual.
 #[cfg(test)]
 pub(crate) fn build_test_deb(control_text: &str) -> Vec<u8> {
+    build_test_deb_compressed(control_text, ControlCompression::Plain)
+}
+
+#[cfg(test)]
+pub(crate) fn build_test_deb_compressed(
+    control_text: &str,
+    compression: ControlCompression,
+) -> Vec<u8> {
     fn ar_header(name: &str, size: usize) -> Vec<u8> {
         let mut header = format!("{name:<16}0           0     0     644      {size:<10}`\n");
         if header.len() != 60 {
@@ -246,19 +262,37 @@ pub(crate) fn build_test_deb(control_text: &str) -> Vec<u8> {
     control_tar.extend(vec![0u8; 1024]); // dos bloques de cero de cierre
     let mut data_tar = vec![0u8; 1024];
     {
-        use flate2::write::GzEncoder;
         use flate2::Compression;
+        use flate2::write::GzEncoder;
         use std::io::Write;
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(&data_tar).unwrap();
         data_tar = encoder.finish().unwrap();
     }
+    let (control_name, control_body) = match compression {
+        ControlCompression::Plain => ("control.tar", control_tar.clone()),
+        ControlCompression::Gz => {
+            use flate2::Compression;
+            use flate2::write::GzEncoder;
+            use std::io::Write;
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(&control_tar).unwrap();
+            ("control.tar.gz", encoder.finish().unwrap())
+        }
+        ControlCompression::Xz => {
+            use std::io::Write;
+            use xz2::write::XzEncoder;
+            let mut encoder = XzEncoder::new(Vec::new(), 6);
+            encoder.write_all(&control_tar).unwrap();
+            ("control.tar.xz", encoder.finish().unwrap())
+        }
+    };
 
     let mut deb = Vec::new();
     deb.extend_from_slice(b"!<arch>\n");
     for (name, body) in [
         ("debian-binary", b"2.0\n".to_vec()),
-        ("control.tar", control_tar),
+        (control_name, control_body),
         ("data.tar.gz", data_tar),
     ] {
         deb.extend_from_slice(&ar_header(name, body.len()));
@@ -303,14 +337,17 @@ pub fn packages_record(control: &DebControl, pool_path: &str, size: u64, sha256:
     record
 }
 
-/// La cabecera `Release` del dist: el origen, la componente y los
-/// ficheros de indice con su suma y su tamanho, tal y como los
+/// La cabecera `Release` del dist: el origen, la suite y la codename
+/// (igual que el dist pedido: apt avisa si no coinciden), la componente
+/// y los ficheros de indice con su suma y su tamanho, tal y como los
 /// verifica `apt`. Solo SHA256: es lo que `apt-ftparchive` emite por
 /// defecto hoy y lo unico que apt exige. Los indices ya estan
 /// renderizados; aqui solo se pintan las filas.
-pub fn release_header(date: &str, indexes: &[(&str, &[u8])]) -> String {
+pub fn release_header(dist: &str, date: &str, indexes: &[(&str, &[u8])]) -> String {
     let mut out = String::new();
     out.push_str("Origin: Hodei\n");
+    out.push_str(&format!("Suite: {dist}\n"));
+    out.push_str(&format!("Codename: {dist}\n"));
     out.push_str(&format!("Date: {date}\n"));
     out.push_str(&format!("Architectures: {}\n", ARCHITECTURES.join(" ")));
     out.push_str("Components: main\nSHA256:\n");
@@ -346,6 +383,127 @@ pub fn pool_path_for(package: &str, version: &str, architecture: &str) -> Result
     Ok(format!("pool/main/{package}/{candidate}"))
 }
 
+/// El sufijo con el que un binario del pool guarda su registro de
+/// indice: los bytes del `.deb` y su ficha `Packages` son dos assets
+/// inmutables, y la ficha es lo que se lee para ensamblar el indice.
+pub fn record_path_for(pool_path: &str) -> String {
+    format!("{pool_path}.record")
+}
+
+/// Las rutas que la superficie apt sabe servir, ya interpretadas. La
+/// componente es siempre `main`: es la que declara `Release` y la que
+/// pintan los registros; una distribucion con mas componentes es
+/// materia del proxy, no del hosted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Route {
+    /// El binario en si, en `pool/main/{package}/{archivo}.deb`. La
+    /// ruta completa es lo que se valida contra el control: el pool no
+    /// admite archivos que no declaren ser lo que dicen sus bytes.
+    Pool {
+        /// La ruta del binario dentro del repositorio.
+        path: String,
+    },
+    /// El indice de una arquitectura de una distribucion.
+    Packages {
+        /// La distribucion: `stable`, `trixie`...
+        dist: String,
+        /// La arquitectura del indice pedido.
+        architecture: String,
+    },
+    /// La cabecera firmada de una distribucion.
+    Release {
+        /// La distribucion de la cabecera.
+        dist: String,
+    },
+    /// La firma separada de esa cabecera: `Release.gpg`.
+    ReleaseSignature {
+        /// La distribucion firmada.
+        dist: String,
+    },
+    /// La clave publica del hub en armored, el `signed-by` de apt.
+    Key,
+}
+
+impl Route {
+    /// Interpreta el resto de `/apt/{repositorio}/...`, crudo: apt no
+    /// escapa nombres, y un `%` aqui es un nombre imposible.
+    pub fn parse(rest: &str) -> Result<Route, AptError> {
+        if rest == "key.asc" {
+            return Ok(Route::Key);
+        }
+        if let Some(path) = rest.strip_prefix("pool/") {
+            if !path.ends_with(".deb")
+                || path.is_empty()
+                || path.contains("..")
+                || !path.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric()
+                        || matches!(byte, b'.' | b'/' | b'+' | b'-' | b'_' | b'~' | b':')
+                })
+            {
+                return Err(AptError::BadIdentity(rest.to_string()));
+            }
+            return Ok(Route::Pool {
+                path: format!("pool/{path}"),
+            });
+        }
+        // Todo lo demas cuelga de dists/{dist}/. El nombre de la
+        // distribucion es un identificador: sin barras ni puntos.
+        let dist_part = rest
+            .strip_prefix("dists/")
+            .ok_or_else(|| AptError::BadIdentity(rest.to_string()))?;
+        let (dist, tail) = dist_part
+            .split_once('/')
+            .ok_or(AptError::BadIdentity(rest.to_string()))?;
+        if dist.is_empty()
+            || dist.contains("..")
+            || dist.contains('/')
+            || !dist
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+        {
+            return Err(AptError::BadIdentity(dist.to_string()));
+        }
+        match tail {
+            "Release" => Ok(Route::Release {
+                dist: dist.to_string(),
+            }),
+            "Release.gpg" => Ok(Route::ReleaseSignature {
+                dist: dist.to_string(),
+            }),
+            _ => {
+                // apt siempre pide el indice con su componente:
+                // `main/binary-{arch}/Packages`. La variante sin
+                // componente tambien se acepta: es la forma monolítica
+                // que alguna herramienta usa y el hosted solo tiene
+                // `main`. Otra componente es una ruta imposible.
+                let index = tail
+                    .strip_prefix("main/")
+                    .unwrap_or(tail)
+                    .strip_prefix("binary-")
+                    .and_then(|arch| arch.strip_suffix("/Packages"))
+                    .ok_or_else(|| AptError::BadIdentity(tail.to_string()))?;
+                if index.is_empty()
+                    || !index
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                {
+                    return Err(AptError::BadIdentity(index.to_string()));
+                }
+                Ok(Route::Packages {
+                    dist: dist.to_string(),
+                    architecture: index.to_string(),
+                })
+            }
+        }
+    }
+
+    /// La fecha `Date:` de `Release` en el formato que apt parsea con
+    /// strptime: RFC 1123 con la zona dicha en letras, no en numero.
+    pub fn release_date(moment: &chrono::DateTime<chrono::Utc>) -> String {
+        moment.format("%a, %d %b %Y %H:%M:%S UTC").to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +526,20 @@ mod tests {
         build_test_deb(FULL_CONTROL)
     }
 
+    /// El dpkg real comprime el `control.tar` en gzip o en xz: si el
+    /// lector no abre esos formatos, un `.deb` construido por la distro
+    /// no se puede publicar.
+    #[test]
+    fn a_compressed_control_tar_still_yields_its_control() {
+        for compression in [ControlCompression::Gz, ControlCompression::Xz] {
+            let deb = build_test_deb_compressed(FULL_CONTROL, compression);
+            let control = read_deb_control(&deb)
+                .unwrap_or_else(|error| panic!("the {compression:?} control must parse: {error}"));
+            assert_eq!(control.package, "hello-hodei");
+            assert_eq!(control.depends.as_deref(), Some("libc6 (>= 2.34)"));
+        }
+    }
+
     #[test]
     fn a_deb_container_loses_its_control() {
         let control = read_deb_control(&full_deb()).expect("the control parses");
@@ -378,7 +550,11 @@ mod tests {
         assert_eq!(control.section.as_deref(), Some("utils"));
         // La descripcion es el campo completo con sus continuaciones.
         assert!(control.description.starts_with("A tiny hello package\n"));
-        assert!(control.description.contains(" This is the long description line."));
+        assert!(
+            control
+                .description
+                .contains(" This is the long description line.")
+        );
         assert!(control.description.ends_with(" And the final one."));
     }
 
@@ -421,8 +597,16 @@ mod tests {
     #[test]
     fn the_release_lists_the_indexes_with_sha256() {
         let index = b"Package: hello-hodei\n\n";
-        let release = release_header("Tue, 17 Nov 2026 18:00:00 UTC", &[("main/binary-amd64/Packages", index)]);
-        assert!(release.starts_with("Origin: Hodei\nDate: Tue, 17 Nov 2026 18:00:00 UTC\n"));
+        let release = release_header(
+            "stable",
+            "Tue, 17 Nov 2026 18:00:00 UTC",
+            &[("main/binary-amd64/Packages", index)],
+        );
+        // Suite y Codename tienen que decir el dist pedido: si no,
+        // apt suelta un `Conflicting distribution` en cada update.
+        assert!(release.starts_with(
+            "Origin: Hodei\nSuite: stable\nCodename: stable\nDate: Tue, 17 Nov 2026 18:00:00 UTC\n"
+        ));
         assert!(release.contains("Components: main\nSHA256:\n"));
         let expected = format!("{:x}", sha2::Sha256::digest(index));
         assert!(release.contains(&format!(
@@ -443,6 +627,72 @@ mod tests {
         // Las versiones debianas legitimas con `+` y `~` pasan.
         assert!(pool_path_for("pkg", "1:2.3+dfsg~b1", "arm64").is_ok());
     }
+
+    #[test]
+    fn the_routes_are_the_apt_urls() {
+        assert_eq!(
+            Route::parse("dists/stable/binary-amd64/Packages").unwrap(),
+            Route::Packages {
+                dist: "stable".into(),
+                architecture: "amd64".into()
+            }
+        );
+        // La forma que apt siempre usa: con la componente delante.
+        assert_eq!(
+            Route::parse("dists/stable/main/binary-arm64/Packages").unwrap(),
+            Route::Packages {
+                dist: "stable".into(),
+                architecture: "arm64".into()
+            }
+        );
+        assert_eq!(
+            Route::parse("dists/stable/Release").unwrap(),
+            Route::Release {
+                dist: "stable".into()
+            }
+        );
+        assert_eq!(
+            Route::parse("dists/stable/Release.gpg").unwrap(),
+            Route::ReleaseSignature {
+                dist: "stable".into()
+            }
+        );
+        assert_eq!(Route::parse("key.asc").unwrap(), Route::Key);
+        assert_eq!(
+            Route::parse("pool/main/hello/hello_1.0.0_amd64.deb").unwrap(),
+            Route::Pool {
+                path: "pool/main/hello/hello_1.0.0_amd64.deb".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_route_cannot_escape_or_be_nonsense() {
+        // No hay componente que valga, ni path traversal, ni rutas sueltas.
+        assert!(Route::parse("dists/stable/other/Packages").is_err());
+        assert!(Route::parse("pool/../etc/passwd").is_err());
+        assert!(Route::parse("pool/main/x/no-extension").is_err());
+        assert!(Route::parse("dists/st..able/Release").is_err());
+        assert!(Route::parse("dists/").is_err());
+        assert!(Route::parse("index.html").is_err());
+    }
+
+    #[test]
+    fn the_record_hangs_from_the_binary_it_describes() {
+        assert_eq!(
+            record_path_for("pool/main/hello/hello_1.0.0_amd64.deb"),
+            "pool/main/hello/hello_1.0.0_amd64.deb.record"
+        );
+    }
+
+    #[test]
+    fn the_release_date_is_what_apt_strptimes() {
+        let moment = chrono::DateTime::parse_from_rfc3339("2026-11-17T18:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(
+            Route::release_date(&moment),
+            "Tue, 17 Nov 2026 18:00:00 UTC"
+        );
+    }
 }
-
-
