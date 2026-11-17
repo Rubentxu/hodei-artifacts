@@ -7,7 +7,9 @@
 //! - Mapping results to HTTP responses
 //! - Error handling and logging
 
+pub mod capabilities;
 pub mod capsules;
+pub mod catalog_repositories;
 pub mod gc;
 pub mod health;
 pub mod iam;
@@ -186,6 +188,23 @@ pub(crate) fn the_one_value(raw: Option<&str>, key: &str) -> Option<String> {
         found = Some(value);
     }
     found
+}
+
+/// The body of an error.
+///
+/// The **kind** is what a client needs to tell one failure from another:
+/// a permission that was refused, a thing that is not there, a thing
+/// that is broken, and a decision that could not be taken are four
+/// different answers, and a client that cannot tell them apart says
+/// "nothing here" for all of them. A corrupt row and an authorizer that
+/// could not decide are both a `500`, and the status alone cannot tell
+/// them apart.
+///
+/// The message is for the person who reads the log. It never names a
+/// resource of another account: the answer to a thing that is not there
+/// is the same whether it is not there or it belongs to somebody else.
+pub(crate) fn error_body(kind: &str, message: &str) -> String {
+    serde_json::json!({ "error": kind, "message": message }).to_string()
 }
 
 /// The text of a percent-encoded value.

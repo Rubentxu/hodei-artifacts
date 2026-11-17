@@ -35,6 +35,11 @@ servers:
     description: Servidor de staging
   - url: http://localhost:8080/v2
     description: Desarrollo local
+  - url: http://localhost:8080
+    description: >
+      Desarrollo local, sin versión en la base. Es el servidor que
+      sirve la API que cuelga de `/api/v1`, que es donde están los
+      caminos de la consola del catálogo.
 
 security:
   - ApiKeyAuth: []
@@ -65,6 +70,11 @@ tags:
     description: User management and authorization policies
   - name: Policies
     description: Policy management for ABAC
+  - name: catalog
+    description: >
+      La consola del catálogo: los repositorios de la cuenta, lo que se
+      puede crear, la búsqueda, el detalle de un activo y las
+      promociones al canal de confianza.
 
 paths:
   $ref: ./paths/index.yaml

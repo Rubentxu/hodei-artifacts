@@ -14,6 +14,9 @@ import { PoliciesPage } from '@/pages/settings/policies';
 import { OpenAPIDemoPage } from '@/pages/OpenAPIDemoPage';
 import Artifacts from '@/pages/Artifacts/Artifacts';
 import PoliciesSimple from '@/pages/Policies/PoliciesSimple';
+import ConsoleRepositoriesPage from '@/pages/console/ConsoleRepositoriesPage';
+import ConsoleBrowsePage from '@/pages/console/ConsoleBrowsePage';
+import ConsolePackagePage from '@/pages/console/ConsolePackagePage';
 
 import { MainLayout } from '@/components/templates/MainLayout';
 
@@ -68,6 +71,22 @@ export const router = createBrowserRouter([
       {
         path: '/openapi-demo',
         element: <OpenAPIDemoPage />,
+      },
+      {
+        // The console of the catalog: the repositories, the browser of
+        // the assets and the detail of each one.
+        path: '/console/repositories',
+        element: <ConsoleRepositoriesPage />,
+      },
+      {
+        path: '/console/browse',
+        element: <ConsoleBrowsePage />,
+      },
+      {
+        // The path of the asset is a wildcard: the slashes are part of
+        // the name of the content inside the repository.
+        path: '/console/packages/:repository/*',
+        element: <ConsolePackagePage />,
       },
     ],
   },

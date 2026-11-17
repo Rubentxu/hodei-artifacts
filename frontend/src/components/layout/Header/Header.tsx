@@ -1,4 +1,4 @@
-import React from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/shared/stores/auth.store';
 import { Button } from '@/components/ui/Button';
 
@@ -44,6 +44,21 @@ const Header = () => {
               <a href="/users" className="text-gray-600 hover:text-gray-900">
                 Users
               </a>
+              {/* The console of the catalog. It is a route of the
+                  application and not a link to another document: the
+                  console keeps the state of what is being looked at. */}
+              <Link
+                to="/console/repositories"
+                className="text-gray-600 hover:text-gray-900"
+              >
+                Repositories of the catalog
+              </Link>
+              <Link
+                to="/console/browse"
+                className="text-gray-600 hover:text-gray-900"
+              >
+                Browse
+              </Link>
             </nav>
           </div>
 

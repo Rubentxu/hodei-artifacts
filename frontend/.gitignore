@@ -27,11 +27,7 @@ dist-ssr
 playwright-report/
 test-screenshots/
 test-results/
-tests/
 *.png
-test-*.js
-test-*.ts
-playwright.config.js
 test-e2e.js
 test-esm.js
 test-integration*.js
@@ -41,7 +37,8 @@ test-simple.js
 # The test lane is part of the project: the runner's configuration, the setup
 # files and the tests are tracked. The rules that used to ignore them meant
 # that a new test file was silently untracked, and a test that is not in the
-# repository is a test nobody runs.
+# repository is a test nobody runs. Only the directories where the runner
+# leaves its reports are ignored.
 
 # Report files
 ARREGLOS_FINALES.md
@@ -59,6 +56,5 @@ coverage/
 .nyc_output/
 
 # E2E test artifacts
-e2e/
 playwright-report/
 test-results/

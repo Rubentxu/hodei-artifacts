@@ -77,7 +77,7 @@ export const useAuthStore = create<AuthState>()(
       clearError: () => set({ error: null }),
     }),
     {
-      name: STORAGE_KEYS.AUTH,
+      name: STORAGE_KEYS.AUTH_TOKEN,
       partialize: state => ({
         user: state.user,
         token: state.token,

@@ -1,0 +1,319 @@
+# Los caminos de la consola del catálogo.
+#
+# Son los caminos que el servicio sirve de verdad: la API cuelga de
+# `/api/v1`, y aquí está lo que la consola del catálogo usa de ella.
+#
+# Los caminos vienen con el prefijo real y no con el de la convención
+# antigua del contrato (`/v1`, `/v2`): un consumidor que los use tiene
+# que llegar a la superficie que existe.
+catalogRepositories:
+  get:
+    tags: [catalog]
+    summary: Listar los repositorios de la cuenta
+    description: >
+      Los repositorios de la cuenta del principal verificado que puede
+      leer, y no uno más. Un repositorio de otra cuenta no está en la
+      lista, y su nombre no se adivina: decir que existe es decir que
+      es de alguien.
+    operationId: listCatalogRepositories
+    responses:
+      '200':
+        description: Los repositorios que el principal puede leer.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogRepositoryList' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '403':
+        description: La credencial no es válida o el permiso no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '500':
+        description: No se pudo decidir, o lo guardado no se pudo leer.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+  post:
+    tags: [catalog]
+    summary: Crear un repositorio del catálogo
+    description: >
+      La modalidad tiene que ser una de las que el formato sirve. Una
+      modalidad que el formato no sirve se rechaza con un 400, antes de
+      escribir nada.
+    operationId: createCatalogRepository
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '../components/schemas/console.yaml#/CreateCatalogRepositoryRequest' }
+    responses:
+      '201':
+        description: El repositorio creado.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogRepository' }
+      '400':
+        description: El nombre o la modalidad no valen.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '403':
+        description: El permiso de crear no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '409':
+        description: Ya hay un repositorio con ese nombre.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '500':
+        description: No se pudo decidir, o lo guardado no se pudo leer.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+
+capabilities:
+  get:
+    tags: [catalog]
+    summary: Saber qué se puede crear
+    description: >
+      Los formatos que el servicio sirve y las modalidades que cada uno
+      sirve. Un cliente que ofrece lo que hay aquí no ofrece un
+      repositorio que no puede funcionar.
+    operationId: getCapabilities
+    responses:
+      '200':
+        description: Los formatos y sus modalidades.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/Capabilities' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+
+catalogSearch:
+  get:
+    tags: [catalog]
+    summary: Buscar en el catálogo
+    description: >
+      La búsqueda se acota a la cuenta del principal verificado. El total
+      es `null` cuando hay más coincidencias de las que se cuentan.
+    operationId: searchCatalog
+    parameters:
+      - name: repository
+        in: query
+        schema: { type: string }
+        description: El repositorio donde se busca.
+      - name: package
+        in: query
+        schema: { type: string }
+        description: El nombre del paquete.
+      - name: version
+        in: query
+        schema: { type: string }
+        description: La versión del paquete.
+      - name: digest
+        in: query
+        schema: { type: string }
+        description: El digest del contenido, con su algoritmo.
+      - name: tag
+        in: query
+        schema: { type: string }
+      - name: attribute
+        in: query
+        schema: { type: string }
+        description: Un atributo con su nombre y su valor, como `format=pypi`.
+      - name: text
+        in: query
+        schema: { type: string }
+        description: Texto libre dentro del activo.
+      - name: limit
+        in: query
+        schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      - name: offset
+        in: query
+        schema: { type: integer, minimum: 0, default: 0 }
+    responses:
+      '200':
+        description: La página de resultados.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogSearchPage' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '500':
+        description: No se pudo decidir, o lo guardado no se pudo leer.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '503':
+        description: El catálogo no está disponible.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+
+catalogPackage:
+  parameters:
+    - name: repository
+      in: path
+      required: true
+      schema: { type: string }
+      description: El repositorio donde vive el activo.
+    - name: path
+      in: path
+      required: true
+      schema: { type: string }
+      description: >
+        El camino del activo dentro del repositorio. Lleva sus barras
+        dentro, porque el camino es lo que nombra el contenido.
+  get:
+    tags: [catalog]
+    summary: El detalle de un activo
+    description: >
+      Qué es el activo: el digest que nombra los bytes, cuántos bytes
+      tiene, la versión con la que se publicó, de dónde viene, qué dice
+      la evidencia y qué se ha decidido sobre él. La confianza viene de
+      la concesión y no de la ausencia de hallazgos.
+    operationId: getCatalogPackage
+    responses:
+      '200':
+        description: El detalle del activo.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogPackage' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '403':
+        description: El permiso de descargar no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '404':
+        description: No hay nada ahí, o no es de esta cuenta.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '500':
+        description: No se pudo decidir, o lo guardado no se pudo leer.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+
+promotions:
+  post:
+    tags: [catalog]
+    summary: Promover un contenido al canal de confianza
+    description: >
+      La promoción cambia lo que el repositorio sirve a todo el que
+      lo lee, y por eso la pide quien la hace y no se deshace desde
+      lejos.
+    operationId: promoteAsset
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '../components/schemas/console.yaml#/PromoteRequest' }
+    responses:
+      '200':
+        description: El contenido ha sido promovido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/PromoteResponse' }
+      '400':
+        description: El cuerpo no es válido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '403':
+        description: El permiso de promover no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '404':
+        description: No hay nada ahí, o no es de esta cuenta.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '422':
+        description: La política de confianza no lo permite.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '503':
+        description: El catálogo o el registro de decisiones no está disponible.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+
+promotionsRevoke:
+  post:
+    tags: [catalog]
+    summary: Retirar una concesión
+    description: >
+      El contenido deja de servirse como de confianza. El repositorio lo
+      conserva, pero nadie puede leerlo como de confianza.
+    operationId: revokePromotion
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '../components/schemas/console.yaml#/RevokeRequest' }
+    responses:
+      '200':
+        description: La concesión ha sido retirada.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/RevokeResponse' }
+      '400':
+        description: El cuerpo no es válido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '401':
+        description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '403':
+        description: El permiso de retirar no está concedido.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '404':
+        description: No hay nada ahí, o no es de esta cuenta.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '422':
+        description: La política de confianza no lo permite.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '503':
+        description: El catálogo o el registro de decisiones no está disponible.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }

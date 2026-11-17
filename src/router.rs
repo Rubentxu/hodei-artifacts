@@ -439,6 +439,22 @@ fn repository_v1_routes(app_state: AppState) -> Router {
                 .post(crate::handlers::repositories::create_repository),
         )
         .route("/capsules", get(crate::handlers::capsules::get_capsule))
+        // The repositories of the catalog: the ones that hold content, and
+        // the way they behave. They live under their own path because
+        // `/repositories` is the registry of repositories, which is a
+        // different thing: a name and a description, without content.
+        .route(
+            "/catalog/repositories",
+            get(crate::handlers::catalog_repositories::list_repositories)
+                .post(crate::handlers::catalog_repositories::create_repository),
+        )
+        // What can be created. The console offers the modalities that the
+        // API serves, and it learns them here instead of keeping a table
+        // of its own.
+        .route(
+            "/capabilities",
+            get(crate::handlers::capabilities::get_capabilities),
+        )
         // The search of the catalog and the detail of a package. They
         // answer with the account of the verified principal and with the
         // repositories that principal can read, and not one byte more.

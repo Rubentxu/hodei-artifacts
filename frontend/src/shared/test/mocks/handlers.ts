@@ -104,7 +104,7 @@ export const handlers = [
   }),
 
   http.post('/api/auth/register', async ({ request }) => {
-    const { username, email, password } = (await request.json()) as any;
+    const { username, email } = (await request.json()) as any;
 
     const newUser = {
       id: (mockUsers.length + 1).toString(),

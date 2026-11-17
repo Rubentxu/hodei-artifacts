@@ -1,4 +1,9 @@
 # Mapa de paths: referencia a archivos por operación
+#
+# La consola del catálogo cuelga de `/api/v1`, que es donde el servicio
+# monta la API. Los caminos vienen con el prefijo real para que quien
+# los use llegue a la superficie que existe.
+#
 # v1 core
 /v1/repositories: { $ref: './repositories.yaml#/repositoriesRoot' }
 /v1/repositories/{id}: { $ref: './repositories.yaml#/repositoryById' }
@@ -24,3 +29,12 @@
 # v2 auth
 /auth/tokens: { $ref: './auth.yaml#/tokens' }
 /auth/tokens/{tokenId}: { $ref: './auth.yaml#/tokenById' }
+
+# La consola del catálogo: los repositorios, lo que se puede crear, la
+# búsqueda, el detalle de un activo y las promociones.
+/api/v1/catalog/repositories: { $ref: './console.yaml#/catalogRepositories' }
+/api/v1/capabilities: { $ref: './console.yaml#/capabilities' }
+/api/v1/search: { $ref: './console.yaml#/catalogSearch' }
+/api/v1/packages/{repository}/{path}: { $ref: './console.yaml#/catalogPackage' }
+/api/v1/promotions: { $ref: './console.yaml#/promotions' }
+/api/v1/promotions/revoke: { $ref: './console.yaml#/promotionsRevoke' }

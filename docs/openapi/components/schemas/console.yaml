@@ -1,0 +1,347 @@
+# Los esquemas de la consola del catálogo.
+#
+# Son las formas que el servicio responde de verdad: las que la consola
+# lee y las que un cliente de la API recibe. El nombre de cada campo es
+# el del servicio, porque un cliente que renombra lo que la API dice
+# acaba discrepando con ella.
+CatalogRepository:
+  type: object
+  required: [name, format, mode, channel]
+  properties:
+    name:
+      type: string
+      description: El nombre del repositorio dentro de la cuenta.
+      maxLength: 128
+    format:
+      type: string
+      description: El formato del contenido que guarda.
+      enum: [raw, oci, maven2, npm, pypi, cargo, nuget, go, helm, apt, rpm]
+    mode:
+      type: string
+      description: Cómo se comporta.
+      enum: [hosted, proxy, group]
+    channel:
+      type: string
+      description: El canal por el que se sirve.
+      enum: [open, trusted]
+
+CatalogRepositoryList:
+  type: object
+  required: [repositories]
+  properties:
+    repositories:
+      type: array
+      description: Los repositorios que el principal puede leer.
+      items: { $ref: './console.yaml#/CatalogRepository' }
+
+CreateCatalogRepositoryRequest:
+  type: object
+  required: [name, format, mode]
+  properties:
+    name:
+      type: string
+      description: El nombre del repositorio dentro de la cuenta.
+      maxLength: 128
+    format:
+      type: string
+      enum: [raw, oci, maven2, npm, pypi, cargo, nuget, go, helm, apt, rpm]
+    mode:
+      type: string
+      enum: [hosted, proxy, group]
+    description:
+      type: string
+    region:
+      type: string
+    settings:
+      type: object
+      description: 'Los ajustes de la modalidad: el upstream de un proxy, los miembros de un grupo.'
+      additionalProperties: true
+
+FormatCapability:
+  type: object
+  required: [name, modes]
+  properties:
+    name:
+      type: string
+      enum: [raw, oci, maven2, npm, pypi, cargo, nuget, go, helm, apt, rpm]
+    modes:
+      type: array
+      description: Las modalidades que el formato sirve.
+      items:
+        type: string
+        enum: [hosted, proxy, group]
+
+Capabilities:
+  type: object
+  required: [formats]
+  properties:
+    formats:
+      type: array
+      items: { $ref: './console.yaml#/FormatCapability' }
+
+CatalogDigest:
+  type: object
+  required: [algorithm, value]
+  properties:
+    algorithm:
+      type: string
+    value:
+      type: string
+
+CatalogSearchHit:
+  type: object
+  required:
+    [repository, format, asset_path, package_name, package_version, digest, size_bytes, trust_state, updated_at]
+  properties:
+    repository:
+      type: string
+    format:
+      type: string
+      enum: [raw, oci, maven2, npm, pypi, cargo, nuget, go, helm, apt, rpm]
+    asset_path:
+      type: string
+    package_name:
+      type: string
+    package_version:
+      type: string
+    digest: { $ref: './console.yaml#/CatalogDigest' }
+    size_bytes:
+      type: integer
+      format: int64
+    trust_state:
+      type: string
+      enum: [quarantined, trusted]
+    updated_at:
+      type: string
+      format: date-time
+
+CatalogSearchPage:
+  type: object
+  required: [more, limit, offset, results]
+  properties:
+    total:
+      type: integer
+      format: int64
+      nullable: true
+      description: >
+        Cuántos hay en total, cuando se pudieron contar. Es `null` cuando
+        hay más coincidencias de las que se cuentan: hay más, y cuánto
+        no se dice porque contarlo costaría lo que recorrer el catálogo
+        entero. Un total que no se ha contado no es un total.
+    more:
+      type: boolean
+      description: Si hay más resultados después de la página.
+    limit:
+      type: integer
+    offset:
+      type: integer
+    results:
+      type: array
+      items: { $ref: './console.yaml#/CatalogSearchHit' }
+
+CatalogBlob:
+  type: object
+  required: [digest, scope, size_bytes, updated_at]
+  properties:
+    digest: { $ref: './console.yaml#/CatalogDigest' }
+    scope:
+      type: string
+      enum: [global, account_partitioned]
+    size_bytes:
+      type: integer
+      format: int64
+    updated_at:
+      type: string
+      format: date-time
+
+CatalogPublished:
+  type: object
+  required: [package_name, package_version, digest, size_bytes, published_at]
+  properties:
+    package_name:
+      type: string
+    package_version:
+      type: string
+    digest: { $ref: './console.yaml#/CatalogDigest' }
+    size_bytes:
+      type: integer
+      format: int64
+    published_at:
+      type: string
+      format: date-time
+
+CatalogReferrer:
+  type: object
+  required: [asset_path, digest, size_bytes, subject]
+  properties:
+    asset_path:
+      type: string
+    digest: { $ref: './console.yaml#/CatalogDigest' }
+    size_bytes:
+      type: integer
+      format: int64
+    subject: { $ref: './console.yaml#/CatalogDigest' }
+
+CatalogLineage:
+  type: object
+  required: [referrers]
+  properties:
+    subject:
+      $ref: './console.yaml#/CatalogDigest'
+    referrers:
+      type: array
+      items: { $ref: './console.yaml#/CatalogReferrer' }
+
+CatalogDecision:
+  type: object
+  required: [decision_id, actor, granted_at]
+  properties:
+    decision_id:
+      type: string
+    actor:
+      type: string
+    granted_at:
+      type: string
+      format: date-time
+
+CatalogTrust:
+  type: object
+  required: [state]
+  properties:
+    state:
+      type: string
+      enum: [quarantined, trusted]
+    decision:
+      $ref: './console.yaml#/CatalogDecision'
+
+CatalogTrustDimension:
+  type: object
+  required: [name, state]
+  properties:
+    name:
+      type: string
+    state:
+      type: string
+      description: >
+        El estado de la dimensión. Es una palabra y no una bandera: "no
+        hay evidencia" no es "la evidencia está y se sostiene", y una
+        bandera no los distingue.
+    evidence:
+      type: array
+      items: { type: object, additionalProperties: true }
+    reason:
+      type: string
+
+CatalogTrustProfile:
+  type: object
+  required: [subject, dimensions]
+  properties:
+    subject:
+      type: object
+      additionalProperties: true
+    dimensions:
+      type: array
+      items: { $ref: './console.yaml#/CatalogTrustDimension' }
+
+CatalogCapsule:
+  type: object
+  required: [subject, version, content_hash, profile]
+  properties:
+    subject:
+      type: string
+    version:
+      type: string
+    content_hash:
+      type: string
+    profile: { $ref: './console.yaml#/CatalogTrustProfile' }
+
+CatalogPackage:
+  type: object
+  required:
+    [repository, asset_path, package_name, package_version, digest, size_bytes, updated_at, blob, published, lineage, capsule, trust]
+  properties:
+    repository:
+      type: string
+    asset_path:
+      type: string
+    package_name:
+      type: string
+    package_version:
+      type: string
+    digest: { $ref: './console.yaml#/CatalogDigest' }
+    size_bytes:
+      type: integer
+      format: int64
+    updated_at:
+      type: string
+      format: date-time
+    blob: { $ref: './console.yaml#/CatalogBlob' }
+    published: { $ref: './console.yaml#/CatalogPublished' }
+    lineage: { $ref: './console.yaml#/CatalogLineage' }
+    capsule: { $ref: './console.yaml#/CatalogCapsule' }
+    trust: { $ref: './console.yaml#/CatalogTrust' }
+
+PromoteRequest:
+  type: object
+  required: [repository, path, digest]
+  properties:
+    repository:
+      type: string
+    path:
+      type: string
+    digest:
+      type: string
+      description: El digest canónico del contenido, con su algoritmo.
+
+PromoteResponse:
+  type: object
+  required: [promoted, decision_id, digest, granted]
+  properties:
+    promoted:
+      type: boolean
+    decision_id:
+      type: string
+    digest:
+      type: string
+    granted:
+      type: array
+      items: { type: string }
+
+RevokeRequest:
+  type: object
+  required: [repository, reason]
+  properties:
+    repository:
+      type: string
+    digest:
+      type: string
+      description: El contenido cuya concesión se retira. Exactamente uno de digest o decision_id.
+    decision_id:
+      type: string
+      description: La decisión cuya concesión se retira. Exactamente uno de digest o decision_id.
+    reason:
+      type: string
+      description: El motivo, que se guarda con la retirada.
+
+RevokeResponse:
+  type: object
+  required: [revoked]
+  properties:
+    revoked:
+      type: integer
+      format: int64
+
+CatalogError:
+  type: object
+  required: [error, message]
+  properties:
+    error:
+      type: string
+      description: >
+        La clase del fallo. Distingue lo que la consola tiene que decir
+        de otra manera: un permiso denegado no es una ausencia, y lo que
+        está guardado no se puede leer tampoco es una ausencia.
+      enum:
+        [unauthenticated, permission, absence, invalid, conflict, corruption, indeterminate, unavailable]
+    message:
+      type: string

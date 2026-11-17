@@ -1,0 +1,26 @@
+{
+  /**
+   * El programa de tipos de la consola.
+   *
+   * Comprueba la consola y lo que usa. El resto del frontend heredado
+   * tiene errores de tipos que nadie hamirado desde que dejó de
+   * comprobarlo, y corregirlos todos de golpe es un trabajo aparte: este
+   * programa deja el trabajo a medias sin dejar de comprobar lo que la
+   * consola necesita.
+   *
+   * Los alias son los de `vite.config.ts` y los de `tsconfig.app.json`:
+   * un programa que resolviera los imports de otra manera comprobaría
+   * otro grafo de módulos que el que se despliega.
+   */
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.console.tsbuildinfo"
+  },
+  "include": [
+    "src/features/console/**/*",
+    "src/pages/console/**/*",
+    "src/vite-env.d.ts",
+    "src/shared/test/setup.ts"
+  ],
+  "exclude": []
+}

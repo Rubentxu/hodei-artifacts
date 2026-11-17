@@ -47,7 +47,7 @@ use hodei_catalog::{
 use hodei_evidence::ContentDigest;
 
 use crate::app_state::AppState;
-use crate::handlers::{Authentication, the_context, the_query_values};
+use crate::handlers::{Authentication, error_body, the_context, the_query_values};
 
 /// What can fail in a search.
 #[derive(Debug)]
@@ -58,6 +58,8 @@ pub enum SearchApiError {
     BadRequest(String),
     /// The catalog could not answer.
     Unavailable,
+    /// What is stored cannot be read.
+    Corrupt,
     /// Something failed inside.
     Internal,
 }
@@ -65,15 +67,22 @@ pub enum SearchApiError {
 impl IntoResponse for SearchApiError {
     fn into_response(self) -> Response {
         let (status, body) = match self {
-            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".to_string()),
-            Self::BadRequest(reason) => (StatusCode::BAD_REQUEST, reason),
+            Self::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                error_body("unauthenticated", "unauthorized"),
+            ),
+            Self::BadRequest(reason) => (StatusCode::BAD_REQUEST, error_body("invalid", &reason)),
             Self::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                "the search is not available".to_string(),
+                error_body("unavailable", "the search is not available"),
+            ),
+            Self::Corrupt => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_body("corruption", "what is stored cannot be read"),
             ),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "internal error".to_string(),
+                error_body("indeterminate", "internal error"),
             ),
         };
         let mut response = (status, body).into_response();
@@ -325,6 +334,10 @@ fn the_catalog_error(error: CatalogError) -> SearchApiError {
     match error {
         CatalogError::InvalidRequest { detail } => SearchApiError::BadRequest(detail),
         CatalogError::Unavailable { .. } => SearchApiError::Unavailable,
+        // A corrupt row is not a failure of the search: it is a failure of
+        // what is stored, and it is worth telling apart from a decision
+        // that could not be taken.
+        CatalogError::Corrupt { .. } => SearchApiError::Corrupt,
         _ => SearchApiError::Internal,
     }
 }

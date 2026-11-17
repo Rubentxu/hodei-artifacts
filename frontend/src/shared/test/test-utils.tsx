@@ -9,13 +9,8 @@ const createTestQueryClient = () =>
     defaultOptions: {
       queries: {
         retry: false,
-        cacheTime: 0,
+        gcTime: 0,
       },
-    },
-    logger: {
-      log: console.log,
-      warn: console.warn,
-      error: () => {},
     },
   });
 

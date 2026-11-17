@@ -43,6 +43,25 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- La **consola del catálogo** (`frontend/src/features/console/`): las personas
+  ven los repositorios de su cuenta, buscan en lo que hay y miran el detalle
+  de cada activo --digest, tamaño, versiones, origen y perfil de
+  confianza--, descargan los bytes y promoten o retiran una concesión. La
+  consola no guarda su propia tabla de formatos: lo que se puede crear sale
+  de `GET /api/v1/capabilities`, y una modalidad que el formato no sirve no
+  se ofrece. Las cuatro respuestas que se parecen --permiso denegado,
+  ausencia, lo que está guardado y no se puede leer, y lo que no se ha
+  podido decidir-- se dicen de cuatro maneras, porque el cuerpo de la API
+  las distingue y una consola que las iguala miente sobre tres. Las
+  acciones que cambian lo que se sirve a todo el que lee el repositorio
+  preguntan antes, y la retirada pide el motivo.
+- Los **repositorios del catálogo** (`GET|POST /api/v1/catalog/repositories`)
+  y las **capacidades** (`GET /api/v1/capabilities`): la lista nombra sólo
+  los repositorios de la cuenta que el principal puede leer, con su formato,
+  su modalidad y su canal, y la creación rechaza con un `400` la modalidad
+  que el formato no sirve, un proxy sin upstream y un grupo sin miembros.
+  Una decisión que no se puede tomar responde `500` con su clase, y no una
+  lista vacía.
 - La **búsqueda del catálogo** (`GET /api/v1/search`) y la **vista de
   detalle de un paquete** (`GET /api/v1/packages/{repository}/{*path}`): la
   primera busca por repositorio, paquete, versión, digest, etiqueta,
@@ -240,6 +259,21 @@ Cambios que todavia no estan en una release. El formato sigue
   responder con un error de servidor.
 - Un schema que no declara ni un tipo de entidad ni una accion ya no rechaza
   las peticiones: un schema que no dice nada no puede rechazar nada.
+- El **almacenamiento de la sesion** del frontend usaba una clave que no
+  existe (`STORAGE_KEYS.AUTH`), de modo que el estado de la autenticacion se
+  guardaba bajo la clave literal `"undefined"`. La sesion ahora se guarda
+  bajo `hodei-auth-token`, que es la clave que el frontend ya declaraba,
+  y el token sobrevive a una recarga.
+- El **`type-check` del frontend comprobaba nada**: `tsc --noEmit` con el
+  `tsconfig.json` de raız, que no tiene ficheros, no mira un solo fichero.
+  Ahora hay un programa de tipos propio para la consola
+  (`frontend/tsconfig.console.json`) que comprueba la consola y lo que usa,
+  y la etapa de frontend de la CI lo ejecuta. El resto del frontend
+  heredado tiene errores de tipos que nadie ha corregido desde que dejo de
+  comprobarse, y corregirlos todos de golpe es un trabajo aparte.
+- El **`build` del frontend no compilaba**: un fichero muerto con JSX en un
+  `.ts` rompia el analizador. El fichero se ha borrado --no lo importaba
+  nadie-- y el build vuelve a hacer su trabajo.
 
 ## [0.2.0] - 2026-10-24
 

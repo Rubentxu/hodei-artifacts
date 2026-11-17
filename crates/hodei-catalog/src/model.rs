@@ -96,6 +96,66 @@ impl RepositoryFormat {
             _ => None,
         }
     }
+
+    /// The modalities that this format serves in this release.
+    ///
+    /// A format is a way of storing content; whether the release knows to
+    /// serve it in a given modality is a fact of the release, and it is
+    /// written here, in one place, so that nobody has to answer the
+    /// question twice and answer it differently.
+    ///
+    /// The raw surface, and the npm and PyPI ones that ride on it, serve
+    /// the three modalities: what a client publishes, what a proxy brings
+    /// from its upstream, and what a group composes of its members. The
+    /// OCI surface serves only the hosted one: a push is a write, and a
+    /// write lands where the client publishes.
+    ///
+    /// The formats that are declared but not served yet —cargo, nuget,
+    /// go, helm, apt and rpm— have no modality at all: a repository of
+    /// one of them can be declared, and it waits for its turn.
+    pub fn serves_modes(&self) -> &'static [RepositoryMode] {
+        match self {
+            RepositoryFormat::Raw
+            | RepositoryFormat::Maven2
+            | RepositoryFormat::Npm
+            | RepositoryFormat::PyPi => &[
+                RepositoryMode::Hosted,
+                RepositoryMode::Proxy,
+                RepositoryMode::Group,
+            ],
+            RepositoryFormat::Oci => &[RepositoryMode::Hosted],
+            RepositoryFormat::Cargo
+            | RepositoryFormat::NuGet
+            | RepositoryFormat::Go
+            | RepositoryFormat::Helm
+            | RepositoryFormat::Apt
+            | RepositoryFormat::Rpm => &[],
+        }
+    }
+
+    /// Whether this format can be declared in that modality.
+    ///
+    /// The answer is the one of [`RepositoryFormat::serves_modes`], and it
+    /// is asked in one place: a format that does not serve a modality
+    /// cannot be declared in it.
+    pub fn supports(&self, mode: &RepositoryMode) -> bool {
+        self.serves_modes().contains(mode)
+    }
+
+    /// The formats that this release serves, in the order they are named.
+    ///
+    /// The formats that are declared but not served yet are not here: a
+    /// repository of one of them can be declared, and it waits for its
+    /// turn. This list is what a client asks to know what it can create.
+    pub fn served() -> &'static [RepositoryFormat] {
+        &[
+            RepositoryFormat::Raw,
+            RepositoryFormat::Oci,
+            RepositoryFormat::Maven2,
+            RepositoryFormat::Npm,
+            RepositoryFormat::PyPi,
+        ]
+    }
 }
 
 /// Como se comporta un repositorio respecto del exterior.

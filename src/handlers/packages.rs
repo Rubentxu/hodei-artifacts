@@ -37,7 +37,7 @@ use hodei_evidence::application::capsule::CapsuleAssembler;
 
 use crate::app_state::AppState;
 use crate::handlers::capsules::CapsuleView;
-use crate::handlers::{Authentication, the_context};
+use crate::handlers::{Authentication, error_body, the_context};
 
 /// What can fail when the detail of a package is asked for.
 #[derive(Debug)]
@@ -52,6 +52,8 @@ pub enum PackageApiError {
     BadRequest,
     /// The catalog or the grant ledger could not answer.
     Unavailable,
+    /// What is stored cannot be read.
+    Corrupt,
     /// Something failed inside.
     Internal,
 }
@@ -59,12 +61,28 @@ pub enum PackageApiError {
 impl IntoResponse for PackageApiError {
     fn into_response(self) -> Response {
         let (status, body) = match self {
-            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
-            Self::NotFound => (StatusCode::NOT_FOUND, "not found"),
-            Self::BadRequest => (StatusCode::BAD_REQUEST, "bad request"),
-            Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
-            Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal error"),
+            Self::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                error_body("unauthenticated", "unauthorized"),
+            ),
+            Self::Forbidden => (StatusCode::FORBIDDEN, error_body("permission", "forbidden")),
+            Self::NotFound => (StatusCode::NOT_FOUND, error_body("absence", "not found")),
+            Self::BadRequest => (
+                StatusCode::BAD_REQUEST,
+                error_body("invalid", "bad request"),
+            ),
+            Self::Unavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                error_body("unavailable", "unavailable"),
+            ),
+            Self::Corrupt => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_body("corruption", "what is stored cannot be read"),
+            ),
+            Self::Internal => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_body("indeterminate", "internal error"),
+            ),
         };
         let mut response = (status, body).into_response();
         if status == StatusCode::UNAUTHORIZED {
@@ -355,6 +373,10 @@ fn the_catalog_error(error: CatalogError) -> PackageApiError {
         CatalogError::Denied { .. } => PackageApiError::Forbidden,
         CatalogError::InvalidRequest { .. } => PackageApiError::BadRequest,
         CatalogError::Unavailable { .. } => PackageApiError::Unavailable,
+        // A corrupt row is not a failure of the request: it is a failure
+        // of what is stored, and it is worth telling apart from a
+        // decision that could not be taken.
+        CatalogError::Corrupt { .. } => PackageApiError::Corrupt,
         _ => PackageApiError::Internal,
     }
 }

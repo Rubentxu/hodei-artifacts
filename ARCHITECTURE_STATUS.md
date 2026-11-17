@@ -101,12 +101,15 @@ el código se trae de aquí y el crate viejo se elimina con su línea.
 | OCI: compatibilidad con clientes reales | la suite oficial de la distribution-spec | `tests/oci_e2e_contract.rs` · `uat/UAT-OCI.md` |
 | Búsqueda del catálogo: filtros, paginación y aislamiento por cuenta | `GET /api/v1/search` | `crates/hodei-catalog-storage/tests/hsp113_search_contract.rs`, `tests/hsp113_search_e2e.rs` |
 | Detalle de un paquete: blob, metadatos, lineage, cápsula y decisión | `GET /api/v1/packages/{repository}/{path}` | `tests/hsp113_search_e2e.rs` |
+| Repositorios del catálogo: listar y crear | `GET|POST /api/v1/catalog/repositories` | `tests/hsp114_console_contract.rs` |
+| Capacidades: qué formatos y modalidades se pueden crear | `GET /api/v1/capabilities` | `tests/hsp114_console_contract.rs` |
+| Consola del catálogo: repositorios, búsqueda, detalle, promoción y retirada | `frontend/src/features/console/` | `frontend/src/features/console/__tests__/`, `frontend/tests/e2e/` · `uat/UAT-OPERATIONS.md` |
 
 ### 3.2 Experimentales
 
 | Capacidad | Por qué es experimental |
 | --- | --- |
-| Frontend (`frontend/`) | Tiene componentes, páginas y 37 pruebas de componente que ahora sí se ejecutan, pero llama a un contrato OpenAPI que describe superficies que el backend actual no expone: usuarios, búsqueda, artefactos y tokens. Su navegación no está alineada con la API viva. |
+| Frontend (`frontend/`) | La **consola del catálogo** (`frontend/src/features/console/`) habla con la API viva y está medida de extremo a extremo contra el servicio de verdad. El resto del frontend sigue llamando a un contrato OpenAPI que describe superficies que el backend actual no expone: usuarios, búsqueda, artefactos y tokens. Su navegación no está alineada con la API viva. El tipo se comprueba sobre el programa de la consola (`frontend/tsconfig.console.json`), no sobre todo el árbol: el frontend heredado tiene errores de tipos que nadie ha corregido desde que dejó de comprobarse. |
 | Playground de políticas | Admite varias gramáticas de acción y está por detrás de la superficie administrativa. |
 
 ### 3.3 Planificadas — en el roadmap, sin implementar

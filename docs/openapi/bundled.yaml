@@ -34,6 +34,9 @@ servers:
     description: Servidor de staging
   - url: http://localhost:8080/v2
     description: Desarrollo local
+  - url: http://localhost:8080
+    description: |
+      Desarrollo local, sin versión en la base. Es el servidor que sirve la API que cuelga de `/api/v1`, que es donde están los caminos de la consola del catálogo.
 security:
   - ApiKeyAuth: []
   - BasicAuth: []
@@ -62,6 +65,9 @@ tags:
     description: User management and authorization policies
   - name: Policies
     description: Policy management for ABAC
+  - name: catalog
+    description: |
+      La consola del catálogo: los repositorios de la cuenta, lo que se puede crear, la búsqueda, el detalle de un activo y las promociones al canal de confianza.
 paths:
   /v1/repositories:
     get:
@@ -805,6 +811,358 @@ paths:
           $ref: '#/components/responses/NotFound'
       security:
         - BasicAuth: []
+  /api/v1/catalog/repositories:
+    get:
+      tags:
+        - catalog
+      summary: Listar los repositorios de la cuenta
+      description: |
+        Los repositorios de la cuenta del principal verificado que puede leer, y no uno más. Un repositorio de otra cuenta no está en la lista, y su nombre no se adivina: decir que existe es decir que es de alguien.
+      operationId: listCatalogRepositories
+      responses:
+        '200':
+          description: Los repositorios que el principal puede leer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogRepositoryList'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '403':
+          description: La credencial no es válida o el permiso no está concedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '500':
+          description: No se pudo decidir, o lo guardado no se pudo leer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+    post:
+      tags:
+        - catalog
+      summary: Crear un repositorio del catálogo
+      description: |
+        La modalidad tiene que ser una de las que el formato sirve. Una modalidad que el formato no sirve se rechaza con un 400, antes de escribir nada.
+      operationId: createCatalogRepository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCatalogRepositoryRequest'
+      responses:
+        '201':
+          description: El repositorio creado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogRepository'
+        '400':
+          description: El nombre o la modalidad no valen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '403':
+          description: El permiso de crear no está concedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '409':
+          description: Ya hay un repositorio con ese nombre.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '500':
+          description: No se pudo decidir, o lo guardado no se pudo leer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+  /api/v1/capabilities:
+    get:
+      tags:
+        - catalog
+      summary: Saber qué se puede crear
+      description: |
+        Los formatos que el servicio sirve y las modalidades que cada uno sirve. Un cliente que ofrece lo que hay aquí no ofrece un repositorio que no puede funcionar.
+      operationId: getCapabilities
+      responses:
+        '200':
+          description: Los formatos y sus modalidades.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capabilities'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+  /api/v1/search:
+    get:
+      tags:
+        - catalog
+      summary: Buscar en el catálogo
+      description: |
+        La búsqueda se acota a la cuenta del principal verificado. El total es `null` cuando hay más coincidencias de las que se cuentan.
+      operationId: searchCatalog
+      parameters:
+        - name: repository
+          in: query
+          schema:
+            type: string
+          description: El repositorio donde se busca.
+        - name: package
+          in: query
+          schema:
+            type: string
+          description: El nombre del paquete.
+        - name: version
+          in: query
+          schema:
+            type: string
+          description: La versión del paquete.
+        - name: digest
+          in: query
+          schema:
+            type: string
+          description: El digest del contenido, con su algoritmo.
+        - name: tag
+          in: query
+          schema:
+            type: string
+        - name: attribute
+          in: query
+          schema:
+            type: string
+          description: Un atributo con su nombre y su valor, como `format=pypi`.
+        - name: text
+          in: query
+          schema:
+            type: string
+          description: Texto libre dentro del activo.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: La página de resultados.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogSearchPage'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '500':
+          description: No se pudo decidir, o lo guardado no se pudo leer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '503':
+          description: El catálogo no está disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+  /api/v1/packages/{repository}/{path}:
+    parameters:
+      - name: repository
+        in: path
+        required: true
+        schema:
+          type: string
+        description: El repositorio donde vive el activo.
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: |
+          El camino del activo dentro del repositorio. Lleva sus barras dentro, porque el camino es lo que nombra el contenido.
+    get:
+      tags:
+        - catalog
+      summary: El detalle de un activo
+      description: |
+        Qué es el activo: el digest que nombra los bytes, cuántos bytes tiene, la versión con la que se publicó, de dónde viene, qué dice la evidencia y qué se ha decidido sobre él. La confianza viene de la concesión y no de la ausencia de hallazgos.
+      operationId: getCatalogPackage
+      responses:
+        '200':
+          description: El detalle del activo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogPackage'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '403':
+          description: El permiso de descargar no está concedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '404':
+          description: No hay nada ahí, o no es de esta cuenta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '500':
+          description: No se pudo decidir, o lo guardado no se pudo leer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+  /api/v1/promotions:
+    post:
+      tags:
+        - catalog
+      summary: Promover un contenido al canal de confianza
+      description: |
+        La promoción cambia lo que el repositorio sirve a todo el que lo lee, y por eso la pide quien la hace y no se deshace desde lejos.
+      operationId: promoteAsset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteRequest'
+      responses:
+        '200':
+          description: El contenido ha sido promovido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromoteResponse'
+        '400':
+          description: El cuerpo no es válido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '403':
+          description: El permiso de promover no está concedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '404':
+          description: No hay nada ahí, o no es de esta cuenta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '422':
+          description: La política de confianza no lo permite.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '503':
+          description: El catálogo o el registro de decisiones no está disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+  /api/v1/promotions/revoke:
+    post:
+      tags:
+        - catalog
+      summary: Retirar una concesión
+      description: |
+        El contenido deja de servirse como de confianza. El repositorio lo conserva, pero nadie puede leerlo como de confianza.
+      operationId: revokePromotion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeRequest'
+      responses:
+        '200':
+          description: La concesión ha sido retirada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevokeResponse'
+        '400':
+          description: El cuerpo no es válido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '403':
+          description: El permiso de retirar no está concedido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '404':
+          description: No hay nada ahí, o no es de esta cuenta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '422':
+          description: La política de confianza no lo permite.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '503':
+          description: El catálogo o el registro de decisiones no está disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -1387,3 +1745,477 @@ components:
           type: string
           format: date-time
           nullable: true
+    CatalogRepository:
+      type: object
+      required:
+        - name
+        - format
+        - mode
+        - channel
+      properties:
+        name:
+          type: string
+          description: El nombre del repositorio dentro de la cuenta.
+          maxLength: 128
+        format:
+          type: string
+          description: El formato del contenido que guarda.
+          enum:
+            - raw
+            - oci
+            - maven2
+            - npm
+            - pypi
+            - cargo
+            - nuget
+            - go
+            - helm
+            - apt
+            - rpm
+        mode:
+          type: string
+          description: Cómo se comporta.
+          enum:
+            - hosted
+            - proxy
+            - group
+        channel:
+          type: string
+          description: El canal por el que se sirve.
+          enum:
+            - open
+            - trusted
+    CatalogRepositoryList:
+      type: object
+      required:
+        - repositories
+      properties:
+        repositories:
+          type: array
+          description: Los repositorios que el principal puede leer.
+          items:
+            $ref: '#/components/schemas/CatalogRepository'
+    CatalogError:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: |
+            La clase del fallo. Distingue lo que la consola tiene que decir de otra manera: un permiso denegado no es una ausencia, y lo que está guardado no se puede leer tampoco es una ausencia.
+          enum:
+            - unauthenticated
+            - permission
+            - absence
+            - invalid
+            - conflict
+            - corruption
+            - indeterminate
+            - unavailable
+        message:
+          type: string
+    CreateCatalogRepositoryRequest:
+      type: object
+      required:
+        - name
+        - format
+        - mode
+      properties:
+        name:
+          type: string
+          description: El nombre del repositorio dentro de la cuenta.
+          maxLength: 128
+        format:
+          type: string
+          enum:
+            - raw
+            - oci
+            - maven2
+            - npm
+            - pypi
+            - cargo
+            - nuget
+            - go
+            - helm
+            - apt
+            - rpm
+        mode:
+          type: string
+          enum:
+            - hosted
+            - proxy
+            - group
+        description:
+          type: string
+        region:
+          type: string
+        settings:
+          type: object
+          description: 'Los ajustes de la modalidad: el upstream de un proxy, los miembros de un grupo.'
+          additionalProperties: true
+    FormatCapability:
+      type: object
+      required:
+        - name
+        - modes
+      properties:
+        name:
+          type: string
+          enum:
+            - raw
+            - oci
+            - maven2
+            - npm
+            - pypi
+            - cargo
+            - nuget
+            - go
+            - helm
+            - apt
+            - rpm
+        modes:
+          type: array
+          description: Las modalidades que el formato sirve.
+          items:
+            type: string
+            enum:
+              - hosted
+              - proxy
+              - group
+    Capabilities:
+      type: object
+      required:
+        - formats
+      properties:
+        formats:
+          type: array
+          items:
+            $ref: '#/components/schemas/FormatCapability'
+    CatalogDigest:
+      type: object
+      required:
+        - algorithm
+        - value
+      properties:
+        algorithm:
+          type: string
+        value:
+          type: string
+    CatalogSearchHit:
+      type: object
+      required:
+        - repository
+        - format
+        - asset_path
+        - package_name
+        - package_version
+        - digest
+        - size_bytes
+        - trust_state
+        - updated_at
+      properties:
+        repository:
+          type: string
+        format:
+          type: string
+          enum:
+            - raw
+            - oci
+            - maven2
+            - npm
+            - pypi
+            - cargo
+            - nuget
+            - go
+            - helm
+            - apt
+            - rpm
+        asset_path:
+          type: string
+        package_name:
+          type: string
+        package_version:
+          type: string
+        digest:
+          $ref: '#/components/schemas/CatalogDigest'
+        size_bytes:
+          type: integer
+          format: int64
+        trust_state:
+          type: string
+          enum:
+            - quarantined
+            - trusted
+        updated_at:
+          type: string
+          format: date-time
+    CatalogSearchPage:
+      type: object
+      required:
+        - more
+        - limit
+        - offset
+        - results
+      properties:
+        total:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Cuántos hay en total, cuando se pudieron contar. Es `null` cuando hay más coincidencias de las que se cuentan: hay más, y cuánto no se dice porque contarlo costaría lo que recorrer el catálogo entero. Un total que no se ha contado no es un total.
+        more:
+          type: boolean
+          description: Si hay más resultados después de la página.
+        limit:
+          type: integer
+        offset:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogSearchHit'
+    CatalogBlob:
+      type: object
+      required:
+        - digest
+        - scope
+        - size_bytes
+        - updated_at
+      properties:
+        digest:
+          $ref: '#/components/schemas/CatalogDigest'
+        scope:
+          type: string
+          enum:
+            - global
+            - account_partitioned
+        size_bytes:
+          type: integer
+          format: int64
+        updated_at:
+          type: string
+          format: date-time
+    CatalogPublished:
+      type: object
+      required:
+        - package_name
+        - package_version
+        - digest
+        - size_bytes
+        - published_at
+      properties:
+        package_name:
+          type: string
+        package_version:
+          type: string
+        digest:
+          $ref: '#/components/schemas/CatalogDigest'
+        size_bytes:
+          type: integer
+          format: int64
+        published_at:
+          type: string
+          format: date-time
+    CatalogReferrer:
+      type: object
+      required:
+        - asset_path
+        - digest
+        - size_bytes
+        - subject
+      properties:
+        asset_path:
+          type: string
+        digest:
+          $ref: '#/components/schemas/CatalogDigest'
+        size_bytes:
+          type: integer
+          format: int64
+        subject:
+          $ref: '#/components/schemas/CatalogDigest'
+    CatalogLineage:
+      type: object
+      required:
+        - referrers
+      properties:
+        subject:
+          $ref: '#/components/schemas/CatalogDigest'
+        referrers:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogReferrer'
+    CatalogTrustDimension:
+      type: object
+      required:
+        - name
+        - state
+      properties:
+        name:
+          type: string
+        state:
+          type: string
+          description: |
+            El estado de la dimensión. Es una palabra y no una bandera: "no hay evidencia" no es "la evidencia está y se sostiene", y una bandera no los distingue.
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        reason:
+          type: string
+    CatalogTrustProfile:
+      type: object
+      required:
+        - subject
+        - dimensions
+      properties:
+        subject:
+          type: object
+          additionalProperties: true
+        dimensions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogTrustDimension'
+    CatalogCapsule:
+      type: object
+      required:
+        - subject
+        - version
+        - content_hash
+        - profile
+      properties:
+        subject:
+          type: string
+        version:
+          type: string
+        content_hash:
+          type: string
+        profile:
+          $ref: '#/components/schemas/CatalogTrustProfile'
+    CatalogDecision:
+      type: object
+      required:
+        - decision_id
+        - actor
+        - granted_at
+      properties:
+        decision_id:
+          type: string
+        actor:
+          type: string
+        granted_at:
+          type: string
+          format: date-time
+    CatalogTrust:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          enum:
+            - quarantined
+            - trusted
+        decision:
+          $ref: '#/components/schemas/CatalogDecision'
+    CatalogPackage:
+      type: object
+      required:
+        - repository
+        - asset_path
+        - package_name
+        - package_version
+        - digest
+        - size_bytes
+        - updated_at
+        - blob
+        - published
+        - lineage
+        - capsule
+        - trust
+      properties:
+        repository:
+          type: string
+        asset_path:
+          type: string
+        package_name:
+          type: string
+        package_version:
+          type: string
+        digest:
+          $ref: '#/components/schemas/CatalogDigest'
+        size_bytes:
+          type: integer
+          format: int64
+        updated_at:
+          type: string
+          format: date-time
+        blob:
+          $ref: '#/components/schemas/CatalogBlob'
+        published:
+          $ref: '#/components/schemas/CatalogPublished'
+        lineage:
+          $ref: '#/components/schemas/CatalogLineage'
+        capsule:
+          $ref: '#/components/schemas/CatalogCapsule'
+        trust:
+          $ref: '#/components/schemas/CatalogTrust'
+    PromoteRequest:
+      type: object
+      required:
+        - repository
+        - path
+        - digest
+      properties:
+        repository:
+          type: string
+        path:
+          type: string
+        digest:
+          type: string
+          description: El digest canónico del contenido, con su algoritmo.
+    PromoteResponse:
+      type: object
+      required:
+        - promoted
+        - decision_id
+        - digest
+        - granted
+      properties:
+        promoted:
+          type: boolean
+        decision_id:
+          type: string
+        digest:
+          type: string
+        granted:
+          type: array
+          items:
+            type: string
+    RevokeRequest:
+      type: object
+      required:
+        - repository
+        - reason
+      properties:
+        repository:
+          type: string
+        digest:
+          type: string
+          description: El contenido cuya concesión se retira. Exactamente uno de digest o decision_id.
+        decision_id:
+          type: string
+          description: La decisión cuya concesión se retira. Exactamente uno de digest o decision_id.
+        reason:
+          type: string
+          description: El motivo, que se guarda con la retirada.
+    RevokeResponse:
+      type: object
+      required:
+        - revoked
+      properties:
+        revoked:
+          type: integer
+          format: int64

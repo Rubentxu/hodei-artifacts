@@ -42,9 +42,20 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       host: true,
       strictPort: true,
-      open: true,
+      // The browser opens itself on a development machine and stays
+      // closed when something else drives the server, which is what the
+      // end-to-end test does.
+      open: env.VITE_OPEN !== 'false',
       proxy: {
         '/api': {
+          target: env.VITE_API_BASE_URL || 'http://localhost:8080',
+          changeOrigin: true,
+          secure: false,
+        },
+        // The content surface is not under `/api`: the protocol says the
+        // bytes are at the root of the service, and the console downloads
+        // them from where they live.
+        '/repository': {
           target: env.VITE_API_BASE_URL || 'http://localhost:8080',
           changeOrigin: true,
           secure: false,

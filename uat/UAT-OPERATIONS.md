@@ -574,3 +574,137 @@ cargo run --release -p hodei-catalog-storage --bin search_benchmark
 La última orden es la medición a escala, y se toma **a mano**: sembrar cien
 mil assets lleva minutos, y la pipeline no paga eso en cada push. Su
 tamaño se puede cambiar con `HODEI_SEARCH_ASSETS`.
+
+# CONSOLE — la consola del catálogo
+
+**Tarea:** HSP-114 (HAR-20) · **Servicio medido:** `hodei-artifacts 0.2.0` ·
+**Frontend medido:** `frontend 0.0.0`
+
+## C1. Qué afirma
+
+Afirma que existe una **consola** que habla con el catálogo de verdad, y
+que lo que enseña es lo que el servicio dice. Las reglas, una por una:
+
+- **La consola no tiene su propia tabla de formatos.** Los formatos y las
+  modalidades que se ofrecen salen de `GET /api/v1/capabilities`, que es
+  el servicio diciendo qué sirve. Una tabla propia sería una segunda
+  verdad, y la segunda verdad se desincroniza: el error se vería al
+  mandar el formulario, cuando ya no tiene arreglo.
+- **Una modalidad que el formato no sirve no se ofrece.** El OCI sirve
+  `hosted` y nada más; el raw, el Maven 2, el npm y el PyPI sirven las
+  tres. La API lo rechaza con un `400` antes de escribir nada, y la
+  consola no llega a esa situación porque no lo ofrece.
+- **La lista es la de la cuenta, y es la que se puede leer.** Cedar decide
+  repositorio por repositorio, y lo que no se puede leer no sale ni
+  cuenta. Un repositorio de otra cuenta no está en la lista y su nombre
+  no se adivina: decir que existe es decir que es de alguien.
+- **Las cuatro respuestas que se parecen se distinguen.** Un permiso
+  denegado, una ausencia, lo que está guardado y no se puede leer, y lo
+  que no se ha podido decidir son cuatro cosas distintas, y la consola
+  las dice de cuatro maneras. La API las distingue en el cuerpo
+  (`{"error": "...", "message": "..."}`), y el cuerpo es lo que la
+  consola lee antes de mirar el estado.
+- **La ausencia no dice de quién era.** El detalle de un activo que es de
+  otra cuenta es el mismo `404` que el de uno que no existe, y la consola
+  no lo convierte en otra cosa: dice "no hay nada aquí", que es lo único
+  que se puede decir sin contar de más.
+- **La confianza sale de la concesión.** Un activo sin concesión está en
+  cuarentena, y la consola lo dice en cuarentena. La decisión que se
+  muestra es la **viva**: una concesión retirada no es una concesión, y
+  el activo vuelve a estar en cuarentena.
+- **Las acciones que cambian lo que se sirve piden antes.** Promover un
+  activo al canal de confianza y retirar una concesión cambian lo que ve
+  todo el que lee el repositorio, y ninguna de las dos se deshace desde
+  lejos. La consola pregunta, dice qué va a pasar, y la retirada pide el
+  motivo, que se guarda con ella.
+- **El perfil de confianza es una lectura, no un veredicto.** Las
+  dimensiones se muestran una por una con su estado. Una dimensión sin
+  evidencia **no** es una dimensión satisfecha, y la consola no la
+  enseña como si lo fuera.
+- **La descarga va a la superficie de contenido con la credencial de la
+  persona.** Los bytes no salen por la API, y el enlace no lleva el token
+  dentro: el token en una URL acaba en el historial de un navegador.
+- **El total que no se ha contado no se dice.** Cuando la búsqueda
+  responde `total: null` y `more: true`, la consola dice que hay más, y
+  no dice cuántos. Un "0 resultados" sobre una página llena sería una
+  mentira.
+
+## C2. Qué se ha medido
+
+| Prueba | Qué comprueba |
+| --- | --- |
+| `tests/hsp114_console_contract.rs` | La superficie del backend: la lista nombra sólo lo que el principal puede leer, dice el formato, la modalidad y el canal, la cuenta ajena no sale, una decisión que no se puede tomar responde `500` con `error: "indeterminate"` y no una lista vacía, la creación se hace en la modalidad que el formato sirve, el formato que no la sirve se rechaza con `400`, un proxy sin upstream y un grupo sin miembros se rechazan, la creación sin permiso responde `403`, y las capacidades dicen qué se puede crear. |
+| `frontend/src/features/console/__tests__/api/errors.test.ts` | El traductor de fallos: la corrupción y la indeterminación se distinguen aunque las dos sean un `500`, el cuerpo manda sobre el estado, el estado es el plan B, y el mensaje nunca nombra un repositorio, una cuenta o un principal. |
+| `frontend/src/features/console/__tests__/components/RepositoryCreateDialog.test.tsx` | El formulario guiado por las capacidades: sólo ofrece los formatos que el servicio sirve, las modalidades son las del formato elegido, el proxy pide su upstream, y lo que se manda es lo que la API acepta. |
+| `frontend/src/features/console/__tests__/components/BrowseView.test.tsx` | El navegador: un total que no se ha contado se dice como "más de N" y nunca como cero, y los cuatro fallos se dicen como son. |
+| `frontend/src/features/console/__tests__/components/PackageDetailView.test.tsx` | El detalle: el digest, el tamaño, la versión y el origen se enseñan; la promoción no llama a la API hasta que se confirma, y la retirada pide un motivo antes de poder continuar. |
+| `frontend/tests/e2e/console.spec.ts` | La consola contra el **servicio de verdad**: el mismo binario, el mismo bundle de Cedar y el mismo catálogo que un despliegue, sembrado por la propia API. La lista, las modalidades ofrecidas, la búsqueda, el detalle, la confirmación de la retirada y la descarga de los bytes. |
+| `frontend/tests/e2e/accessibility.spec.ts` | El teclado y los nombres: cada campo de la búsqueda tiene nombre, la búsqueda se puede pedir sin ratón, el diálogo toma el foco y se cierra con escape, y los repositorios se alcanzan con el teclado. |
+
+### El fixture
+
+El fixture de la consola (`frontend/tests/e2e/fixture/`) levanta el
+servicio de verdad con el bundle de ejemplo del repositorio
+(`config/examples/`), con un almacén y un catálogo de usar y tirar, y
+**siembra los datos por la API**: crea el repositorio, publica el activo
+por la superficie de contenido y lo promueve. Sembrar por la API y no
+escribiendo en la base es lo que hace que la prueba mida la consola y no
+la siembra.
+
+El fixture anuncia su disponibilidad cuando el catálogo está sembrado, y
+no cuando el proceso está en pie: una prueba que empieza contra un
+catálogo a medio sembrar mide la siembra.
+
+## C3. La superficie
+
+| Ruta | Qué hace |
+| --- | --- |
+| `GET /api/v1/catalog/repositories` | Los repositorios de la cuenta que el principal puede leer, con su formato, su modalidad y su canal. |
+| `POST /api/v1/catalog/repositories` | La creación de un repositorio del catálogo. El nombre, el formato y la modalidad son obligatorios; los ajustes son los de la modalidad (el upstream de un proxy, los miembros de un grupo). |
+| `GET /api/v1/capabilities` | Los formatos que el servicio sirve y las modalidades de cada uno. No hace falta credencial de contenido, pero sí la credencial de la superficie. |
+| `GET /api/v1/search` | La página de resultados (ver S3). |
+| `GET /api/v1/packages/{repository}/{*path}` | El detalle de un activo (ver S3). |
+| `POST /api/v1/promotions` | La promoción de un activo al canal de confianza. |
+| `POST /api/v1/promotions/revoke` | La retirada de una concesión, por digest o por decisión, con su motivo. |
+| `GET /repository/{repository}/{*path}` | Los bytes. La consola los pide con la credencial de la persona y se los da al navegador. |
+
+La consola vive en tres rutas del propio frontend: `/console/repositories`,
+`/console/browse` y `/console/packages/{repository}/{*path}`.
+
+## C4. Lo que no se promete
+
+- **La consola no es una superficie de administración.** No hay gestión de
+  usuarios, de políticas ni de tokens: la consola es del catálogo, y lo
+  que no es del catálogo no está.
+- **La consola no crea lo que la API no sirve.** Y la lista de formatos
+  que ofrece es la del despliegue: si el servicio no sirve el npm, la
+  consola no lo ofrece, y no se puede forzar por el navegador.
+- **La consola no dice más de lo que la API dice.** No cuenta por su
+  cuenta, no ordena por relevancia y no inventa un total. Lo que no se
+  sabe, no se dice.
+- **La consola no sustituye a la CLI.** Los clientes de Maven, npm, pip y
+  OCI siguen hablando con sus superficies; la consola es para las personas.
+- **El perfil de confianza se lee como está.** Las dimensiones que no
+  tienen evidencia se enseñan con su estado y su motivo, y la consola no
+  los resume en una nota.
+- **Lo que la consola no puede leer, no lo enseña.** Y lo que no puede
+  leer no lo enseña tampoco como un hueco: si la decisión no se pudo
+  tomar, la consola lo dice, porque un hueco y una ausencia son cosas
+  distintas.
+
+## C5. Cómo se ejecuta
+
+```bash
+cargo test --test hsp114_console_contract
+cd frontend && npm test
+cd frontend && npm run type-check
+cd frontend && npx playwright test
+```
+
+La prueba de extremo a extremo levanta el servicio de verdad y el servidor
+de desarrollo, y necesita el binario construido (`cargo build --bin
+hodei-artifacts-api`) y el navegador (`npx playwright install chromium`).
+El tipo se comprueba sobre el programa de la consola
+(`tsconfig.console.json`), que es el de la consola y lo que usa: el
+frontend heredado tiene errores de tipos que nadie ha corregido desde que
+dejó de comprobarse, y corregirlos todos de golpe es un trabajo aparte.

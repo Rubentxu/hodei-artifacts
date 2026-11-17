@@ -170,6 +170,7 @@ pipeline {
                         "--test hsp109_maven_contract",
                         "--test hsp113_search_contract",
                         "--test hsp113_search_e2e",
+                        "--test hsp114_console_contract",
                     ).joinToString(" ")
                 )
             }
@@ -366,6 +367,13 @@ pipeline {
                     sh("npm ci --ignore-scripts")
                     sh("npm test")
                     sh("npm run type-check")
+                    // La consola contra el servicio de verdad. El binario
+                    // lo construye la etapa de validacion, y el navegador
+                    // se instala aqui porque `npm ci --ignore-scripts` no
+                    // lo descarga. La instalacion no hace nada cuando el
+                    // navegador ya esta.
+                    sh("npx playwright install chromium")
+                    sh("npx playwright test")
                 }
             }
         }
