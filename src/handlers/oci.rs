@@ -371,12 +371,28 @@ fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure> {
         Some(media_type) => Err(OciFailure::manifest_unknown(format!(
             "the registry does not serve {media_type}"
         ))),
-        // Un manifiesto sin `mediaType` no se sabe que es: el registro
-        // sirve los tipos que conoce, y un manifiesto que no se
-        // identifica no se sirve.
-        None => Err(OciFailure::manifest_unknown(
-            "the manifest does not declare its media type",
-        )),
+        // Un manifiesto puede **omitir** su `mediaType`: el media-spec
+        // dice que entonces se infiere, y `helm push` lo omite. La
+        // inferencia es estructural y solo usa tipos que este registro
+        // sirve: un JSON con `manifests` es un indice, cualquier otro es
+        // un manifiesto de imagen. No hay reetiquetado de un tipo
+        // declarado: aqui no hay nada declarado que contradecir.
+        None => {
+            let kind = serde_json::from_slice::<serde_json::Value>(bytes)
+                .ok()
+                .and_then(|manifest| {
+                    manifest
+                        .get("manifests")
+                        .and_then(|value| value.as_array())
+                        .map(|_| "application/vnd.oci.image.index.v1+json")
+                })
+                .unwrap_or("application/vnd.oci.image.manifest.v1+json");
+            debug_assert!(
+                SUPPORTED_MANIFESTS.contains(&kind),
+                "the inferred types must stay in the subset this registry serves"
+            );
+            Ok(kind.to_string())
+        }
     }
 }
 

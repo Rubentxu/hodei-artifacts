@@ -724,9 +724,9 @@ async fn put_manifest(
         )));
     };
 
-    // Y la cabecera tiene que coincidir con el `mediaType` del cuerpo:
-    // el manifiesto dice de que es, y la cabecera es lo que el cliente
-    // pidio.
+    // Y la cabecera tiene que coincidir con el `mediaType` del cuerpo
+    // cuando el cuerpo lo lleva: el manifiesto dice de que es, y la
+    // cabecera es lo que el cliente pidio.
     let manifest = serde_json::from_slice::<serde_json::Value>(&body).map_err(|error| {
         OciFailure::manifest_invalid(format!("the manifest is not readable: {error}"))
     })?;
@@ -736,12 +736,12 @@ async fn put_manifest(
                 "the manifest declares {declared} and the request declares {declared_type}"
             )));
         }
-        None => {
-            return Err(OciFailure::manifest_invalid(
-                "the manifest does not declare its media type",
-            ));
-        }
-        _ => {}
+        // El media-spec permite **omitir** el `mediaType` y heredarlo de
+        // la cabecera: `helm push` lo omite. La cabecera ya se exijo
+        // arriba y ya se compruebo que es un tipo que este registro
+        // publica, asi que el manifiesto si declara su tipo: lo declara
+        // en la peticion. Un `helm pull` posterior lo confirma.
+        None | Some(_) => {}
     }
 
     // El digest: si la referencia es un digest, tiene que ser el de los

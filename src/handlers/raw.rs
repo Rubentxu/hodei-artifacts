@@ -107,16 +107,15 @@ pub enum RawApiError {
     Internal,
 }
 
-impl IntoResponse for RawApiError {
-    fn into_response(self) -> Response {
-        // La longitud del contenido se mira antes de gastar el error: la
-        // respuesta a un rango que no se puede servir la lleva en una
-        // cabecera, no en el cuerpo.
-        let unsatisfiable = match &self {
-            Self::RangeNotSatisfiable(length) => Some(*length),
-            _ => None,
-        };
-        let (status, body) = match self {
+impl RawApiError {
+    /// El estado y el motivo de este error.
+    ///
+    /// Las superficies de protocolo (cargo, go, pypi) responden en JSON
+    /// pero no pueden **rebajar** el estado: un `405` que llega como `400`
+    /// es un cliente que no sabe qué volvió a intentar. El veredicto es
+    /// uno solo para todas las superficies.
+    pub(crate) fn the_verdict(&self) -> (StatusCode, String) {
+        match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".to_string()),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden".to_string()),
             Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
@@ -136,7 +135,7 @@ impl IntoResponse for RawApiError {
             Self::Conflict(reason) => (StatusCode::CONFLICT, reason.to_string()),
             Self::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
-                "the raw surface is not available".to_string(),
+                "the surface is not available".to_string(),
             ),
             Self::NotImplemented(reason) => (StatusCode::NOT_IMPLEMENTED, reason.to_string()),
             Self::MethodNotAllowed(reason) => (StatusCode::METHOD_NOT_ALLOWED, reason.to_string()),
@@ -150,7 +149,20 @@ impl IntoResponse for RawApiError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error".to_string(),
             ),
+        }
+    }
+}
+
+impl IntoResponse for RawApiError {
+    fn into_response(self) -> Response {
+        // La longitud del contenido se mira antes de gastar el error: la
+        // respuesta a un rango que no se puede servir la lleva en una
+        // cabecera, no en el cuerpo.
+        let unsatisfiable = match &self {
+            Self::RangeNotSatisfiable(length) => Some(*length),
+            _ => None,
         };
+        let (status, body) = self.the_verdict();
         let mut response = (status, body).into_response();
         if status == StatusCode::UNAUTHORIZED {
             response

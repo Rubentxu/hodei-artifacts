@@ -12,6 +12,7 @@ pub mod capsules;
 pub mod cargo;
 pub mod catalog_repositories;
 pub mod gc;
+pub mod go;
 pub mod health;
 pub mod iam;
 pub mod investigation;
