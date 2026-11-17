@@ -30,6 +30,7 @@ pub mod gc;
 pub mod handlers;
 pub mod iam_backfill;
 pub mod investigation;
+pub mod migration;
 pub mod oci;
 pub mod openapi;
 pub mod openpgp;

@@ -331,6 +331,16 @@ fn admin_v1_routes(app_state: AppState) -> Router {
         .route("/gc/holds/release", post(crate::handlers::gc::release_hold))
         // Integrity scrub of the registry: read-only, its own resource.
         .route("/scrub", get(crate::handlers::scrub::report))
+        // Migration from Nexus/Artifactory: inventory and import, both
+        // read-only on the origin.
+        .route(
+            "/migrations/inventory",
+            post(crate::handlers::migration::inventory),
+        )
+        .route(
+            "/migrations/import",
+            post(crate::handlers::migration::import),
+        )
         // Playground routes
         .route(
             "/playground/evaluate",
