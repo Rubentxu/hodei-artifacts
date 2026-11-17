@@ -32,7 +32,7 @@ describe('Button', () => {
     rerender(<Button size="lg">Large</Button>);
     expect(screen.getByRole('button')).toBeInTheDocument();
 
-    rerender(<Button size="icon">Icon</Button>);
+    rerender(<Button size="md">Medium</Button>);
     expect(screen.getByRole('button')).toBeInTheDocument();
   });
 
@@ -67,15 +67,10 @@ describe('Button', () => {
     expect(button).toHaveClass('custom-class');
   });
 
-  it('renders as child when asChild prop is true', () => {
-    render(
-      <Button asChild>
-        <a href="/test">Link Button</a>
-      </Button>
-    );
+  it('renders its children inside the button', () => {
+    render(<Button>Save</Button>);
 
-    const link = screen.getByRole('link', { name: /link button/i });
-    expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute('href', '/test');
+    const button = screen.getByRole('button', { name: /save/i });
+    expect(button).toHaveTextContent('Save');
   });
 });

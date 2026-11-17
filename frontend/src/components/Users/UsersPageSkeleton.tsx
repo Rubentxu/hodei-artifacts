@@ -10,9 +10,8 @@ const UsersPageSkeleton: React.FC = () => {
       <PageHeader
         title={<Skeleton className="h-8 w-64" />}
         subtitle={<Skeleton className="h-5 w-96" />}
-      >
-        <Skeleton className="h-10 w-32" /> {/* Add User Button */}
-      </PageHeader>
+        actions={<Skeleton className="h-10 w-32" />}
+      />
 
       {/* Card Skeleton */}
       <Card>

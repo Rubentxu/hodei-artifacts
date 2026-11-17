@@ -1,7 +1,12 @@
 import type { ErrorInfo, ReactNode } from 'react';
-import React, { Component } from 'react';
+import { Component } from 'react';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+} from '@/components/ui/Card';
 
 interface Props {
   children: ReactNode;
@@ -26,7 +31,7 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Error caught by boundary:', error, errorInfo);
 
-    // Enviar error a servicio de monitoreo
+    // Report the error to the monitoring service
     if (import.meta.env.PROD) {
       // Sentry.captureException(error, { extra: errorInfo })
     }
@@ -45,12 +50,12 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="flex items-center justify-center min-h-screen p-4">
           <Card className="max-w-md">
-            <Card.Header>
+            <CardHeader>
               <h2 className="text-lg font-semibold text-red-600">
                 Something went wrong
               </h2>
-            </Card.Header>
-            <Card.Body>
+            </CardHeader>
+            <CardContent>
               <p className="text-gray-600 mb-4">
                 An unexpected error occurred. Please try refreshing the page.
               </p>
@@ -64,12 +69,12 @@ export class ErrorBoundary extends Component<Props, State> {
                   </pre>
                 </details>
               )}
-            </Card.Body>
-            <Card.Footer>
+            </CardContent>
+            <CardFooter>
               <Button onClick={this.handleReset} className="w-full">
                 Try Again
               </Button>
-            </Card.Footer>
+            </CardFooter>
           </Card>
         </div>
       );

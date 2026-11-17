@@ -1,8 +1,8 @@
-import { useNotificationStore } from '@/shared/stores';
+import { useNotifications } from '@/shared/stores';
 import { Toast } from './Toast';
 
 export const ToastContainer = () => {
-  const { notifications, removeNotification } = useNotificationStore();
+  const { notifications, removeNotification } = useNotifications();
 
   return (
     <div

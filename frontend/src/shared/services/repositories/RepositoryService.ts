@@ -17,7 +17,11 @@ import type { RepositoryPort } from './ports/RepositoryPort';
  * Implementa la lógica de negocio específica del dominio
  */
 export class RepositoryService {
-  constructor(private readonly repositoryPort: RepositoryPort) {}
+  private readonly repositoryPort: RepositoryPort;
+
+  constructor(repositoryPort: RepositoryPort) {
+    this.repositoryPort = repositoryPort;
+  }
 
   /**
    * Obtiene lista paginada de repositorios con filtros aplicados
@@ -245,21 +249,4 @@ export class RepositoryService {
       }
     }
   }
-}
-
-/**
- * Interfaz para el puerto de repositorio (adaptador)
- * Define el contrato que deben implementar los adaptadores de datos
- */
-export interface RepositoryPort {
-  buscarRepositorios(
-    filtros: RepositoryFilters
-  ): Promise<PaginatedResponse<Repository>>;
-  obtenerRepositorio(id: string): Promise<Repository>;
-  crearRepositorio(datos: CreateRepositoryRequest): Promise<Repository>;
-  actualizarRepositorio(
-    id: string,
-    datos: UpdateRepositoryRequest
-  ): Promise<Repository>;
-  eliminarRepositorio(id: string): Promise<void>;
 }

@@ -8,13 +8,11 @@ import type { UserPort } from '../ports/UserPort';
 import type {
   CreateUserCommand,
   CreateUserResponse,
-  UpdateUserAttributesCommand,
   UpdateUserAttributesResponse,
   ListUsersParams,
   UserAttributesParams,
   UpdateUserAttributesBody,
 } from '@/shared/types/openapi-generated.types';
-import { openAPIClient } from '@/shared/api/openapi-client';
 
 /**
  * Adaptador que implementa UserPort usando el cliente OpenAPI
@@ -23,7 +21,7 @@ export class OpenAPIUserAdapter implements UserPort {
   /**
    * List all users
    */
-  async listUsers(params: ListUsersParams): Promise<CreateUserResponse[]> {
+  async listUsers(_params: ListUsersParams): Promise<CreateUserResponse[]> {
     try {
       // Note: Current OpenAPI doesn't have a GET endpoint for listing users
       // This is a placeholder implementation

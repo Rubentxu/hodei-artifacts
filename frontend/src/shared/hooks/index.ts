@@ -12,6 +12,9 @@ export {
   useRepositoryService,
 } from './repositories/index';
 
+// Policy hooks (Clean Code architecture)
+export { usePolicyService } from './policies/usePolicyService';
+
 // Search hooks (Clean Code architecture)
 export {
   useSearchPackages,

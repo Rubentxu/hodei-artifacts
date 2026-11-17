@@ -52,10 +52,11 @@ describe('Input', () => {
   });
 
   it('renders with error state', () => {
-    render(<Input placeholder="Error" error />);
+    render(<Input placeholder="Error" error="This field is required" />);
 
     const input = screen.getByPlaceholderText('Error');
     expect(input).toBeInTheDocument();
+    expect(screen.getByText('This field is required')).toBeInTheDocument();
   });
 
   it('applies custom className', () => {
@@ -97,10 +98,10 @@ describe('Input', () => {
     const { rerender } = render(<Input placeholder="Default size" />);
     expect(screen.getByPlaceholderText('Default size')).toBeInTheDocument();
 
-    rerender(<Input placeholder="Small size" size="sm" />);
+    rerender(<Input placeholder="Small size" inputSize="sm" />);
     expect(screen.getByPlaceholderText('Small size')).toBeInTheDocument();
 
-    rerender(<Input placeholder="Large size" size="lg" />);
+    rerender(<Input placeholder="Large size" inputSize="lg" />);
     expect(screen.getByPlaceholderText('Large size')).toBeInTheDocument();
   });
 
@@ -125,16 +126,18 @@ describe('Input', () => {
     expect(handleKeyUp).toHaveBeenCalledTimes(1);
   });
 
-  it('renders with prefix and suffix slots when provided', () => {
+  it('renders with the icon slots when provided', () => {
     render(
       <Input
         placeholder="With slots"
-        prefix={<span data-testid="prefix">$</span>}
-        suffix={<span data-testid="suffix">USD</span>}
+        leftIcon={<span data-testid="prefix">$</span>}
+        rightIcon={<span data-testid="suffix">USD</span>}
       />
     );
 
     expect(screen.getByPlaceholderText('With slots')).toBeInTheDocument();
+    expect(screen.getByTestId('prefix')).toBeInTheDocument();
+    expect(screen.getByTestId('suffix')).toBeInTheDocument();
   });
 
   it('maintains proper accessibility attributes', () => {

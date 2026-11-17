@@ -13,10 +13,7 @@ import {
 import type {
   Repository,
   PackageResult,
-  SearchResults,
   TokenResponse,
-  CreateUserResponse,
-  CreatePolicyResponse,
   PackageType,
   NpmPackageMetadata,
 } from '@/shared/types/openapi-generated.types';
@@ -43,7 +40,7 @@ import {
   type User,
   type Policy,
 } from '@/shared/api/openapi-service';
-import { API_CONSTANTS, ERROR_MESSAGES } from '@/shared/api/openapi-service';
+import { API_CONSTANTS } from '@/shared/api/openapi-service';
 
 // ===== TIPOS DE HOOKS =====
 
@@ -432,7 +429,7 @@ export function useUpdatePolicy() {
   return useMutation({
     mutationFn: ({ id, policy }: { id: string; policy: UpdatePolicyData }) =>
       policyService.update(id, policy),
-    onSuccess: (_, variables) => {
+    onSuccess: (_, _variables) => {
       queryClient.invalidateQueries({ queryKey: ['policies'] });
     },
   });
@@ -548,7 +545,7 @@ export function useLoadingState<T>(
  * Hook para paginación infinita
  */
 export function useInfiniteQuery<T>(
-  queryKey: string[],
+  _queryKey: string[],
   fetchFunction: (page: number) => Promise<{ items: T[]; hasMore: boolean }>,
   options?: { enabled?: boolean }
 ) {

@@ -46,7 +46,7 @@ const mockArtifacts = [
 export const artifactServiceMock = {
   async uploadArtifact(
     repositoryId: string,
-    file: File
+    _file: File
   ): Promise<ArtifactUploadResponse> {
     await new Promise(resolve => setTimeout(resolve, 1000)); // Simular upload
 

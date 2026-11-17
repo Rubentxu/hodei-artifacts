@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import type { ApiError } from '@/shared/types';
 
-interface FileUploadProps {
+export interface FileUploadProps {
   repositoryId: string;
   path?: string;
   onUploadComplete?: (artifact: any) => void;

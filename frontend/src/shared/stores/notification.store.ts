@@ -1,7 +1,7 @@
 import { useNotifications } from './ui.store';
 
 export const notificationService = {
-  success: (title: string, message?: string, duration?: number) => {
+  success: (title: string, message?: string, _duration?: number) => {
     const { showSuccess } = useNotifications();
     showSuccess(title, message);
   },

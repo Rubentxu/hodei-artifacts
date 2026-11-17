@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Spinner';
 import { useCreateRepository } from '@/shared/hooks/repositories';
-import type { RepositoryType, CreateRepositoryRequest } from '@/shared/types';
+import type { RepositoryType } from '@/shared/types';
 
 interface CreateRepositoryModalProps {
   isOpen: boolean;
@@ -11,17 +11,23 @@ interface CreateRepositoryModalProps {
   onSuccess?: () => void;
 }
 
+interface RepositoryFormData {
+  name: string;
+  description: string;
+  type: RepositoryType;
+  isPublic: boolean;
+}
+
 export const CreateRepositoryModal = ({
   isOpen,
   onClose,
   onSuccess,
 }: CreateRepositoryModalProps) => {
-  const [formData, setFormData] = useState<CreateRepositoryRequest>({
+  const [formData, setFormData] = useState<RepositoryFormData>({
     name: '',
     description: '',
     type: 'maven',
     isPublic: true,
-    configuration: {},
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -87,7 +93,13 @@ export const CreateRepositoryModal = ({
     }
 
     try {
-      await createRepositoryMutation.mutateAsync(formData);
+      await createRepositoryMutation.mutateAsync({
+        name: formData.name,
+        description: formData.description,
+        type: formData.type,
+        isPublic: formData.isPublic,
+        visibility: formData.isPublic ? 'public' : 'private',
+      });
 
       // Reset form
       setFormData({
@@ -95,7 +107,6 @@ export const CreateRepositoryModal = ({
         description: '',
         type: 'maven',
         isPublic: true,
-        configuration: {},
       });
       setErrors({});
 
@@ -110,8 +121,8 @@ export const CreateRepositoryModal = ({
   };
 
   const handleInputChange = (
-    field: keyof CreateRepositoryRequest,
-    value: any
+    field: keyof RepositoryFormData,
+    value: RepositoryFormData[keyof RepositoryFormData]
   ) => {
     setFormData(prev => ({ ...prev, [field]: value }));
 
@@ -132,7 +143,6 @@ export const CreateRepositoryModal = ({
         description: '',
         type: 'maven',
         isPublic: true,
-        configuration: {},
       });
       setErrors({});
       onClose();

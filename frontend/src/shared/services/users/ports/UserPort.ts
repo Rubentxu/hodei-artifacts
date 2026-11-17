@@ -7,7 +7,6 @@
 import type {
   CreateUserCommand,
   CreateUserResponse,
-  UpdateUserAttributesCommand,
   UpdateUserAttributesResponse,
   ListUsersParams,
   UserAttributesParams,
