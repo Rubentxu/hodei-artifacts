@@ -287,14 +287,17 @@ impl World {
             }])),
             self.policies.clone(),
         ));
-        Arc::new(PromotionDecisionRequester::new(
-            service,
-            self.store.clone(),
-            Arc::new(EmptyContextSource),
-            "production",
-            "production",
-            "system",
-        ))
+        Arc::new(
+            PromotionDecisionRequester::new(
+                service,
+                self.store.clone(),
+                Arc::new(EmptyContextSource),
+                "production",
+                "production",
+                "system",
+            )
+            .with_ledger(Arc::new(RecordingLedger::default())),
+        )
     }
 
     /// El runtime planificado sobre SU outbox y SU registro de
@@ -317,6 +320,80 @@ impl World {
         );
         runtime.register_planned(Arc::new(PlannedExceptionExpiryReaction::new()), executor);
         runtime
+    }
+}
+
+/// El libro de la migracion: sin base detras, cumple su parte de la
+/// reevaluacion —dejar pasar la revocacion— y recuerda lo que le retiraron,
+/// para que el test pueda nombrarlo.
+#[derive(Default)]
+struct RecordingLedger {
+    revoked: Mutex<Vec<(String, String)>>,
+}
+
+#[async_trait::async_trait]
+impl hodei_catalog::TrustLedger for RecordingLedger {
+    async fn grant(
+        &self,
+        _grants: &[hodei_catalog::TrustGrant],
+    ) -> Result<(), hodei_catalog::CatalogError> {
+        Ok(())
+    }
+
+    async fn revoke_decision(
+        &self,
+        _account: &str,
+        _repository: &str,
+        _decision_id: &str,
+        _actor: &str,
+        _reason: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<u64, hodei_catalog::CatalogError> {
+        Ok(0)
+    }
+
+    async fn revoke_decision_for_account(
+        &self,
+        account: &str,
+        decision_id: &str,
+        _actor: &str,
+        _reason: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<u64, hodei_catalog::CatalogError> {
+        self.revoked
+            .lock()
+            .expect("el registro no esta envenenado")
+            .push((account.to_string(), decision_id.to_string()));
+        Ok(1)
+    }
+
+    async fn revoke_digest(
+        &self,
+        _account: &str,
+        _repository: &str,
+        _digest: &hodei_evidence::ContentDigest,
+        _actor: &str,
+        _reason: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<u64, hodei_catalog::CatalogError> {
+        Ok(0)
+    }
+
+    async fn active_grant(
+        &self,
+        _account: &str,
+        _repository: &str,
+        _digest: &hodei_evidence::ContentDigest,
+    ) -> Result<Option<hodei_catalog::TrustGrant>, hodei_catalog::CatalogError> {
+        Ok(None)
+    }
+
+    async fn grants_of(
+        &self,
+        _account: &str,
+        _repository: &str,
+    ) -> Result<Vec<hodei_catalog::TrustGrant>, hodei_catalog::CatalogError> {
+        Ok(Vec::new())
     }
 }
 
@@ -771,4 +848,95 @@ async fn a_crash_is_resumed_without_duplicates() {
         .expect("las decisiones se leen");
     assert_eq!(cases.len(), 1, "el caso sigue siendo UNO");
     assert_eq!(decisions.len(), 1, "la decision sigue siendo UNA");
+}
+
+// ---------------------------------------------------------------------------
+// El libro de la reevaluacion: lo que niega, lo retira.
+// ---------------------------------------------------------------------------
+
+/// El servicio de la reevaluacion directa, sin ejecutor por en medio.
+fn the_direct_service(world: &World) -> Arc<PromotionService> {
+    Arc::new(PromotionService::new(
+        world.store.clone(),
+        Arc::new(StaticPromotionTargets::new(vec![PromotionTarget {
+            distribution: "production".to_string(),
+            account: ACCOUNT.to_string(),
+        }])),
+        world.policies.clone(),
+    ))
+}
+
+/// La reevaluacion que trae una vulnerabilidad critica alcanzable.
+fn the_cve_reevaluation(at: DateTime<Utc>) -> hodei_reactive::reactions::Reevaluation {
+    hodei_reactive::reactions::Reevaluation::new(
+        SUBJECT,
+        hodei_reactive::reactions::ReasonCode::VulnerabilityImpacted,
+        at,
+    )
+    .with_advisory(ADVISORY)
+}
+
+/// Una reevaluacion que niega retira la concesion de la decision que
+/// sustituyo: la decision es un hecho escrito, y sin libro el escrito no
+/// se cumple.
+#[tokio::test]
+async fn a_refused_reevaluation_takes_back_the_concession_it_replaces() {
+    let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+    let world = World::build(tmp.path()).await;
+    let now = Utc::now();
+    let prior = world.the_prior_allow(now).await;
+
+    let ledger = Arc::new(RecordingLedger::default());
+    let requester = PromotionDecisionRequester::new(
+        the_direct_service(&world),
+        world.store.clone(),
+        Arc::new(EmptyContextSource),
+        "production",
+        "production",
+        "system",
+    )
+    .with_ledger(ledger.clone());
+
+    let new_id = requester
+        .request_reevaluation(the_cve_reevaluation(now))
+        .await
+        .expect("con libro, la negativa es una decision tomada");
+    assert!(
+        new_id.starts_with("dec-vulnerability"),
+        "la decision nueva se nombra por su razon: {new_id}"
+    );
+
+    let revoked = ledger
+        .revoked
+        .lock()
+        .expect("el registro no esta envenenado");
+    assert_eq!(
+        *revoked,
+        vec![(ACCOUNT.to_string(), prior.as_str().to_string())],
+        "la reevaluacion retiro la concesion de la decision sustituida"
+    );
+}
+
+/// Y sin libro lo dice, no lo finge: una reevaluacion que no puede aplicar
+/// su negativa no es una reevaluacion.
+#[tokio::test]
+async fn a_refused_reevaluation_without_a_ledger_refuses_to_pretend() {
+    let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
+    let world = World::build(tmp.path()).await;
+    let now = Utc::now();
+    world.the_prior_allow(now).await;
+
+    let requester = PromotionDecisionRequester::new(
+        the_direct_service(&world),
+        world.store.clone(),
+        Arc::new(EmptyContextSource),
+        "production",
+        "production",
+        "system",
+    );
+    let error = requester
+        .request_reevaluation(the_cve_reevaluation(now))
+        .await
+        .expect_err("sin libro no hay revocacion que aplicar");
+    assert!(error.contains("no ledger"), "{error}");
 }

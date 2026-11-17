@@ -151,6 +151,33 @@ impl TrustLedger for SurrealCatalogStore {
         Ok(revoked.len() as u64)
     }
 
+    async fn revoke_decision_for_account(
+        &self,
+        account: &str,
+        decision_id: &str,
+        actor: &str,
+        reason: &str,
+        at: DateTime<Utc>,
+    ) -> Result<u64, CatalogError> {
+        let mut response = self
+            .db
+            .query(format!(
+                "UPDATE trust_grant SET revoked_at = $at, revoked_by = $actor, \
+                 revoke_reason = $reason \
+                 WHERE account = $account AND decision_id = $decision \
+                 AND {LIVE_GRANT} RETURN AFTER"
+            ))
+            .bind(("at", Datetime::from(at)))
+            .bind(("actor", actor.to_string()))
+            .bind(("reason", reason.to_string()))
+            .bind(("account", account.to_string()))
+            .bind(("decision", decision_id.to_string()))
+            .await
+            .map_err(unavailable)?;
+        let revoked: Vec<Row> = response.take(0).map_err(unavailable)?;
+        Ok(revoked.len() as u64)
+    }
+
     async fn revoke_digest(
         &self,
         account: &str,

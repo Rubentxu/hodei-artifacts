@@ -160,6 +160,80 @@ impl TrustContextSource for TheContextSource {
     }
 }
 
+/// El libro que recuerda las revocaciones: la reevaluacion no se limita a
+/// escribir la verdad nueva, tiene que retirar lo que la decision negada
+/// concedio. Sin libro, el adaptador se niega —y el UAT lo demuestra.
+#[derive(Default)]
+struct RecordingLedger {
+    revoked: Mutex<Vec<(String, String)>>,
+}
+
+#[async_trait::async_trait]
+impl hodei_catalog::TrustLedger for RecordingLedger {
+    async fn grant(
+        &self,
+        _grants: &[hodei_catalog::TrustGrant],
+    ) -> Result<(), hodei_catalog::CatalogError> {
+        Ok(())
+    }
+
+    async fn revoke_decision(
+        &self,
+        _account: &str,
+        _repository: &str,
+        _decision_id: &str,
+        _actor: &str,
+        _reason: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<u64, hodei_catalog::CatalogError> {
+        Ok(0)
+    }
+
+    async fn revoke_decision_for_account(
+        &self,
+        account: &str,
+        decision_id: &str,
+        _actor: &str,
+        _reason: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<u64, hodei_catalog::CatalogError> {
+        self.revoked
+            .lock()
+            .expect("el registro no esta envenenado")
+            .push((account.to_string(), decision_id.to_string()));
+        Ok(1)
+    }
+
+    async fn revoke_digest(
+        &self,
+        _account: &str,
+        _repository: &str,
+        _digest: &hodei_evidence::ContentDigest,
+        _actor: &str,
+        _reason: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<u64, hodei_catalog::CatalogError> {
+        Ok(0)
+    }
+
+    async fn active_grant(
+        &self,
+        _account: &str,
+        _repository: &str,
+        _digest: &hodei_evidence::ContentDigest,
+    ) -> Result<Option<hodei_catalog::TrustGrant>, hodei_catalog::CatalogError> {
+        Ok(None)
+    }
+
+    async fn grants_of(
+        &self,
+        _account: &str,
+        _repository: &str,
+    ) -> Result<Vec<hodei_catalog::TrustGrant>, hodei_catalog::CatalogError> {
+        Ok(Vec::new())
+    }
+}
+
 /// El mundo de la UAT: la base de datos, el grafo y las decisiones.
 struct World {
     #[allow(dead_code)]
@@ -437,14 +511,18 @@ async fn m6_uat_01_a_new_cve_supersedes_the_prior_allow() {
             ])),
             world.policies.clone(),
         ));
-        let requester = Arc::new(PromotionDecisionRequester::new(
-            service,
-            world.store.clone(),
-            Arc::new(TheContextSource { exposed: true }),
-            "production",
-            "production",
-            "system",
-        ));
+        let ledger = Arc::new(RecordingLedger::default());
+        let requester = Arc::new(
+            PromotionDecisionRequester::new(
+                service,
+                world.store.clone(),
+                Arc::new(TheContextSource { exposed: true }),
+                "production",
+                "production",
+                "system",
+            )
+            .with_ledger(ledger.clone()),
+        );
         runtime.register(Arc::new(VulnerabilityReaction::new(
             radius,
             world.cases.clone(),
@@ -513,6 +591,19 @@ async fn m6_uat_01_a_new_cve_supersedes_the_prior_allow() {
             newest.request.correlation_id,
             prior.as_str(),
             "la decision nueva dice cual sustituye"
+        );
+
+        // Y la concesi\xf3n de la decision sustituida fue retirada del
+        // libro: lo que la verdad nueva niega deja de poder servirse.
+        let revoked = ledger
+            .revoked
+            .lock()
+            .expect("el registro esta sano")
+            .clone();
+        assert_eq!(
+            revoked,
+            vec![(ACCOUNT.to_string(), prior.as_str().to_string())],
+            "la reevaluacion revoca la decision negada en la cuenta del sujeto"
         );
 
         Ok(())
