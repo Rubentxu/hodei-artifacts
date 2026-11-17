@@ -243,6 +243,19 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Fixed
 
+- El **type-check del frontend comprueba el frontend entero**. El programa
+  de la consola (`frontend/tsconfig.console.json`) se queda corto: 121
+  errores de tipos en 63 ficheros vivían fuera de él, y nadie los veía.
+  Ahora `npm run type-check` mira el programa completo
+  (`frontend/tsconfig.app.json`), **los ficheros de prueba incluidos**, y no
+  informa de ningún error. El programa de la consola, que ya no hacía falta,
+  se retira.
+- Los errores que había no eran solo unused: `zod` se importaba sin estar
+  declarado en `package.json`, y el fichero que lo importa no se podía
+  ni siquiera cargar. `zod` está declarado y bloqueado.
+- La etapa de frontend de la CI, el `build` y el hook de `pre-push`
+  ejecutan ahora el mismo programa, el completo: lo que se comprueba en un
+  sitio se comprueba en todos.
 - La **lista del registro de repositorios** sirve lo que el contrato
   promete. `GET /api/v1/repositories` sin `hrn` respondía `400` a todo lo
   que no nombrara un repositorio, y el contrato declaraba una lista con
