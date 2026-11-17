@@ -470,13 +470,25 @@ async fn upload(
     let record_path = yum::record_path_for(asset_path);
 
     // 1. Los bytes del .rpm, conmutados antes del catalogo.
-    let (rpm_digest, rpm_size) =
-        write_the_content(state, Body::from(body.to_vec()), None, None).await?;
+    let (rpm_digest, rpm_size) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(body.to_vec()),
+        None,
+        None,
+    )
+    .await?;
     let record = yum::package_record(&metadata, asset_path, rpm_size, &rpm_digest.value);
     let record_bytes = record.into_bytes();
     // 2. Los bytes de la ficha.
-    let (record_digest, record_size) =
-        write_the_content(state, Body::from(record_bytes.clone()), None, None).await?;
+    let (record_digest, record_size) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(record_bytes.clone()),
+        None,
+        None,
+    )
+    .await?;
 
     let existing_rpm = the_current_asset(state, context, &repository.repo_key, asset_path).await?;
     let existing_record =

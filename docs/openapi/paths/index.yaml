@@ -36,6 +36,7 @@
 # búsqueda, el detalle de un activo y las promociones.
 /api/v1/catalog/repositories: { $ref: './console.yaml#/catalogRepositories' }
 /api/v1/capabilities: { $ref: './console.yaml#/capabilities' }
+/api/v1/account/usage: { $ref: './console.yaml#/accountUsage' }
 /api/v1/search: { $ref: './console.yaml#/catalogSearch' }
 /api/v1/packages/{repository}/{path}: { $ref: './console.yaml#/catalogPackage' }
 /api/v1/promotions: { $ref: './console.yaml#/promotions' }

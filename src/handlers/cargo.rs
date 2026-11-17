@@ -520,8 +520,14 @@ async fn publish(
     let line_bytes = serde_json::to_vec(&line).expect("a line serializes");
 
     // 1. Los bytes del .crate, conmutados antes del catalogo.
-    let (crate_digest, crate_length) =
-        write_the_content(state, Body::from(new.file.to_vec()), None, None).await?;
+    let (crate_digest, crate_length) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(new.file.to_vec()),
+        None,
+        None,
+    )
+    .await?;
     publish_asset(
         context,
         writer.as_ref(),
@@ -539,8 +545,14 @@ async fn publish(
     .await?;
 
     // 2. La linea de indice, inmutable como su version.
-    let (doc_digest, doc_length) =
-        write_the_content(state, Body::from(line_bytes), None, None).await?;
+    let (doc_digest, doc_length) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(line_bytes),
+        None,
+        None,
+    )
+    .await?;
     publish_asset(
         context,
         writer.as_ref(),

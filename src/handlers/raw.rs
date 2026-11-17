@@ -84,6 +84,9 @@ pub enum RawApiError {
     RangeNotSatisfiable(u64),
     /// El contenido es más grande de lo que se admite.
     PayloadTooLarge,
+    /// La cuota de la cuenta dice que no: más bytes de los que puede
+    /// almacenar, o más subidas en curso de las que puede tener.
+    Quota(crate::quota::QuotaRefusal),
     /// Hay algo en esa dirección y no se puede sustituir.
     Conflict(&'static str),
     /// La superficie no está montada: no hay catalogo ni almacén.
@@ -132,6 +135,21 @@ impl RawApiError {
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "the content is larger than this service accepts".to_string(),
             ),
+            Self::Quota(refusal) => match refusal {
+                // Sending it again later does not make the account
+                // smaller: this is a 413, and the client must send less.
+                crate::quota::QuotaRefusal::StorageOver { .. } => (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "the content would take this account past its stored quota".to_string(),
+                ),
+                // The bytes are not the problem: too many uploads are in
+                // flight at once, and the same bytes are fine a moment
+                // later. That is what 429 with Retry-After says.
+                crate::quota::QuotaRefusal::UploadsSaturated { .. } => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "this account already has as many uploads in flight as it may have".to_string(),
+                ),
+            },
             Self::Conflict(reason) => (StatusCode::CONFLICT, reason.to_string()),
             Self::Unavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -151,6 +169,20 @@ impl RawApiError {
             ),
         }
     }
+
+    /// Los segundos de `Retry-After` que lleva este error, si lleva.
+    ///
+    /// Solo la saturacion los lleva: es el unico no que se arregla
+    /// volviendo. Las superficies que construyen su respuesta propio
+    /// (npm, pypi) leen el consejo aqui en vez de inventarlo.
+    pub(crate) fn the_retry_after(&self) -> Option<u64> {
+        match self {
+            Self::Quota(crate::quota::QuotaRefusal::UploadsSaturated { retry_after_secs }) => {
+                Some(*retry_after_secs)
+            }
+            _ => None,
+        }
+    }
 }
 
 impl IntoResponse for RawApiError {
@@ -162,8 +194,18 @@ impl IntoResponse for RawApiError {
             Self::RangeNotSatisfiable(length) => Some(*length),
             _ => None,
         };
+        // La negativa por saturacion es la unica que lleva `Retry-After`:
+        // el cliente no hace nada mal, hace demasiado a la vez, y el
+        // honesto consejo es cuando volver. Un `StorageOver` no lo
+        // lleva, porque volver mas tarde no cambia la cuenta.
+        let retry_after = self.the_retry_after();
         let (status, body) = self.the_verdict();
         let mut response = (status, body).into_response();
+        if let Some(seconds) = retry_after
+            && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
+        {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
         if status == StatusCode::UNAUTHORIZED {
             response
                 .headers_mut()
@@ -460,7 +502,14 @@ pub async fn publish(
         Some((file, _)) => super::maven::the_file_body(file, request.into_body()).await?,
         None => request.into_body(),
     };
-    let (digest, length) = write_the_content(&state, body, declared, refuse_replacement).await?;
+    let (digest, length) = write_the_content(
+        &state,
+        context.account().as_str(),
+        body,
+        declared,
+        refuse_replacement,
+    )
+    .await?;
 
     let publication = Publication {
         repository: target.repository.clone(),
@@ -1515,13 +1564,24 @@ async fn the_content_of(
 /// cuando esa dirección publica una vez. Si lo que llega no es eso, la
 /// escritura se aborta: no queda ni un byte en el almacén, y el cliente
 /// recibe un conflicto en vez de un contenido que no se publico.
+///
+/// La cuota de `account` manda **antes** que el disco: la entrada se
+/// reserva en el libro mayor antes de escribir un byte, y cada trozo se
+/// pincha al llegar. Si el libro mayor dice que no a mitad de cuerpo, la
+/// escritura se aborta y la reserva vuelve: lo que no se admitió no se
+/// almacena, ni siquiera a medias.
 pub(super) async fn write_the_content(
     state: &AppState,
+    account: &str,
     body: Body,
     declared: Option<ContentDigest>,
     refuse_replacement: Option<&ContentDigest>,
 ) -> Result<(ContentDigest, u64), RawApiError> {
     let store = the_content_store(state)?;
+    let mut ticket = state
+        .quota
+        .begin(account, None)
+        .map_err(RawApiError::Quota)?;
     let mut session = store
         .begin()
         .await
@@ -1540,6 +1600,13 @@ pub(super) async fn write_the_content(
             // fallar más tarde por disco.
             let _ = session.abort().await;
             return Err(RawApiError::PayloadTooLarge);
+        }
+        // El trozo se pincha en el libro mayor **antes** de escribirse:
+        // la cuota se aplica antes de almacenar, no después de haber
+        // almacenado ya lo que sobra.
+        if let Err(refusal) = ticket.admit(length) {
+            let _ = session.abort().await;
+            return Err(RawApiError::Quota(refusal));
         }
         hasher.update(&chunk);
         session
@@ -1572,6 +1639,13 @@ pub(super) async fn write_the_content(
         ));
     }
 
+    // Lo que el almacén gana con esta subida es lo que la cuenta paga:
+    // contenido que ya estaba no añade ni un byte. Se comprueba antes
+    // del commit, porque después del commit siempre está.
+    let already_had = store
+        .exists(&found)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
     let digest = session
         .commit(CommitExpectation {
             digest: found.clone(),
@@ -1579,6 +1653,7 @@ pub(super) async fn write_the_content(
         })
         .await
         .map_err(|error| the_blob_error(&error))?;
+    ticket.settle(if already_had { 0 } else { length });
     Ok((digest, length))
 }
 

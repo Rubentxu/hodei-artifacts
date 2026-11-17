@@ -138,6 +138,16 @@ impl Failure {
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "the content is larger than this service accepts".into(),
                 ),
+                RawApiError::Quota(refusal) => match refusal {
+                    crate::quota::QuotaRefusal::StorageOver { .. } => (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "the content would take this account past its stored quota".into(),
+                    ),
+                    crate::quota::QuotaRefusal::UploadsSaturated { .. } => (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "this account already has as many uploads in flight as it may have".into(),
+                    ),
+                },
                 RawApiError::Conflict(reason) => (StatusCode::CONFLICT, (*reason).into()),
                 RawApiError::Unavailable => (
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -200,6 +210,15 @@ impl IntoResponse for Failure {
     fn into_response(self) -> Response {
         let (status, message) = self.status_and_message();
         let mut response = (status, message).into_response();
+        // El consejo de cuando volver viaja con la negativa por
+        // saturacion, tambien en esta superficie: el veredicto es uno
+        // solo, y la cabecera no es un detalle del transporte crudo.
+        if let Self::Raw(error) = &self
+            && let Some(seconds) = error.the_retry_after()
+            && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
+        {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
         response.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("text/plain; charset=utf-8"),
@@ -1084,7 +1103,14 @@ where
         }
         let bytes = serde_json::to_vec(&document.to_value(&the_files_base(&repository.repo_key)))
             .map_err(|_| RawApiError::Internal)?;
-        let (digest, length) = write_the_content(state, Body::from(bytes), None, None).await?;
+        let (digest, length) = write_the_content(
+            state,
+            context.account().as_str(),
+            Body::from(bytes),
+            None,
+            None,
+        )
+        .await?;
         let publication = Publication {
             repository: repository.repo_key.clone(),
             asset_path: project.as_str().to_string(),
@@ -1193,7 +1219,14 @@ async fn upload(
     // deja el contenido publicado y invisible.
     the_index_fits(state, context, repository, &upload.project, &entry).await?;
 
-    let (digest, length) = write_the_content(state, Body::from(bytes), None, None).await?;
+    let (digest, length) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(bytes),
+        None,
+        None,
+    )
+    .await?;
     let (_, writer) = the_catalog(state)?;
     let publication = Publication {
         repository: repository.repo_key.clone(),

@@ -546,6 +546,11 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
             "/capabilities",
             get(crate::handlers::capabilities::get_capabilities),
         )
+        // What the account has and what it may have. The quota says no
+        // on the upload surfaces, and it says why here: a gate that
+        // refuses without saying what it holds is a mystery, not a
+        // contract. Only the caller's own ledger is readable.
+        .route("/account/usage", get(crate::handlers::quota::get_usage))
         // The search of the catalog and the detail of a package. They
         // answer with the account of the verified principal and with the
         // repositories that principal can read, and not one byte more.

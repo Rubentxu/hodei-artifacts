@@ -952,6 +952,33 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogError'
+  /api/v1/account/usage:
+    get:
+      tags:
+        - catalog
+      summary: Saber qué tiene y qué puede la propia cuenta
+      description: |
+        El libro de cuotas de la cuenta del principal verificado: los bytes almacenados, los reservados por subidas en curso, las subidas activas y los topes del despliegue. No hay parámetro de cuenta ni ruta ajena: los números de otra cuenta no son de quien llama, y por eso no se pueden pedir.
+      operationId: getAccountUsage
+      responses:
+        '200':
+          description: El estado del libro propio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountUsage'
+        '401':
+          description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '503':
+          description: El servicio no puede responder.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
   /api/v1/search:
     get:
       tags:
@@ -2092,6 +2119,62 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/FormatCapability'
+    QuotaLimits:
+      type: object
+      required:
+        - max_stored_bytes_per_account
+        - max_concurrent_uploads_per_account
+        - retry_after_secs
+      properties:
+        max_stored_bytes_per_account:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            El tope de bytes almacenados por cuenta. Es `null` cuando el despliegue no declaró tope: sin límite dicho, el contrato no inventa uno.
+        max_concurrent_uploads_per_account:
+          type: integer
+          nullable: true
+          description: |
+            El tope de subidas simultáneas por cuenta, `null` cuando no se declaró.
+        retry_after_secs:
+          type: integer
+          description: |
+            Los segundos que dice `Retry-After` cuando la saturación responde `429`.
+    AccountUsage:
+      type: object
+      required:
+        - account
+        - stored_bytes
+        - in_flight_bytes
+        - active_uploads
+        - limits
+        - note
+      properties:
+        account:
+          type: string
+          description: |
+            La cuenta del principal verificado. No hay parámetro de cuenta: lo que se lee es el propio libro, y nadie más.
+        stored_bytes:
+          type: integer
+          format: int64
+          description: |
+            Los bytes almacenados por esta cuenta. El contenido repetido cuenta una vez: lo que el almacén ya tenía no se cobra dos veces.
+        in_flight_bytes:
+          type: integer
+          format: int64
+          description: Los bytes reservados por las subidas en curso.
+        active_uploads:
+          type: integer
+          format: int64
+          description: |
+            Las subidas con puesto reservado, incluidas las sesiones OCI abiertas que viven entre peticiones.
+        limits:
+          $ref: '#/components/schemas/QuotaLimits'
+        note:
+          type: string
+          description: |
+            Lo que el libro es: memoria, para dar forma al tráfico, y no contabilidad. Un contrato honesto también dice eso.
     CatalogDigest:
       type: object
       required:

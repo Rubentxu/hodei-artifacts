@@ -114,6 +114,16 @@ impl Failure {
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "the content is larger than this service accepts".into(),
                 ),
+                RawApiError::Quota(refusal) => match refusal {
+                    crate::quota::QuotaRefusal::StorageOver { .. } => (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "the content would take this account past its stored quota".into(),
+                    ),
+                    crate::quota::QuotaRefusal::UploadsSaturated { .. } => (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "this account already has as many uploads in flight as it may have".into(),
+                    ),
+                },
                 RawApiError::Conflict(reason) => (StatusCode::CONFLICT, (*reason).into()),
                 RawApiError::Unavailable => (
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -155,6 +165,15 @@ impl IntoResponse for Failure {
     fn into_response(self) -> Response {
         let (status, message) = self.status_and_message();
         let mut response = (status, axum::Json(json!({ "error": message }))).into_response();
+        // El consejo de cuando volver viaja con la negativa por
+        // saturacion, tambien en esta superficie: el veredicto es uno
+        // solo, y la cabecera no es un detalle del transporte crudo.
+        if let Self::Raw(error) = &self
+            && let Some(seconds) = error.the_retry_after()
+            && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
+        {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
         if status == StatusCode::UNAUTHORIZED {
             response
                 .headers_mut()
@@ -537,7 +556,14 @@ where
         }
         let bytes =
             serde_json::to_vec(&Value::Object(packument)).map_err(|_| RawApiError::Internal)?;
-        let (digest, length) = write_the_content(state, Body::from(bytes), None, None).await?;
+        let (digest, length) = write_the_content(
+            state,
+            context.account().as_str(),
+            Body::from(bytes),
+            None,
+            None,
+        )
+        .await?;
         let publication = Publication {
             repository: repository.repo_key.clone(),
             asset_path: name.full().to_string(),
@@ -701,7 +727,14 @@ async fn publish_version(
     }
 
     // 1. El tarball, como contenido inmutable en su propia ruta.
-    let (digest, length) = write_the_content(state, Body::from(bytes.clone()), None, None).await?;
+    let (digest, length) = write_the_content(
+        state,
+        context.account().as_str(),
+        Body::from(bytes.clone()),
+        None,
+        None,
+    )
+    .await?;
     let (_, writer) = the_catalog(state)?;
     let publication = Publication {
         repository: repository.repo_key.clone(),

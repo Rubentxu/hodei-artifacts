@@ -177,6 +177,15 @@ async fn start_upload(
 
     // La sesion: el cliente recibe el `Location` y sigue escribiendo en
     // el.
+    //
+    // La cuota admite la sesion **antes** de que exista: abrir una
+    // subida cuando la cuenta ya tiene las que puede tener es un no sin
+    // tocar el disco. El ticket vive con la sesion, y la reserva vuelve
+    // al libro mayor si la sesion muere sin commitear.
+    let ticket = state
+        .quota
+        .begin(context.account().as_str(), None)
+        .map_err(the_quota_refusal)?;
     let store = the_content_store(&state)?;
     let writer = store
         .begin()
@@ -184,7 +193,7 @@ async fn start_upload(
         .map_err(|error| the_blob_error(&error))?;
     let session = state
         .uploads
-        .open(context.account().as_str(), &name, writer)
+        .open(context.account().as_str(), &name, writer, ticket)
         .await?;
     let id = session.lock().await.the_id().to_string();
     let location = the_location_of_upload(&name, &id);
@@ -324,11 +333,21 @@ async fn the_monolithic(
 ) -> Result<Response, OciFailure> {
     let declared = the_digest_of_reference(declared)?;
     let store = the_content_store(state)?;
+    let mut ticket = state
+        .quota
+        .begin(context.account().as_str(), the_declared_size(headers))
+        .map_err(the_quota_refusal)?;
     let mut writer = store
         .begin()
         .await
         .map_err(|error| the_blob_error(&error))?;
-    let length = write_the_body(writer.as_mut(), body, state.max_body_size as u64).await?;
+    let length = write_the_body(
+        writer.as_mut(),
+        body,
+        state.max_body_size as u64,
+        &mut ticket,
+    )
+    .await?;
 
     let found = writer.the_digest();
     if found.value != declared {
@@ -339,6 +358,13 @@ async fn the_monolithic(
             "the content does not match the declared digest",
         ));
     }
+    // Lo que el almacén gana es lo que la cuenta paga: un blob que ya
+    // estaba no añade ni un byte. Se mira antes del commit, porque
+    // después del commit siempre está.
+    let already_had = store
+        .exists(&found)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
     let digest = writer
         .commit(CommitExpectation {
             digest: found.clone(),
@@ -346,6 +372,7 @@ async fn the_monolithic(
         })
         .await
         .map_err(|error| the_blob_error(&error))?;
+    ticket.settle(if already_had { 0 } else { length });
 
     publish_blob(state, context, name, &digest, length, headers).await?;
 
@@ -434,10 +461,12 @@ async fn append_chunk(
         .with_range(the_range_header(written)));
     }
 
+    let (writer, ticket) = session.the_writer_and_ticket();
     let length = write_the_body(
-        session.the_writer().as_mut(),
+        writer.as_mut(),
         request.into_body(),
         state.max_body_size as u64,
+        ticket,
     )
     .await?;
 
@@ -627,10 +656,12 @@ async fn close_upload(
     }
 
     // El ultimo trozo puede venir en el `PUT` que cierra.
+    let (writer, ticket) = session.the_writer_and_ticket();
     let last = write_the_body(
-        session.the_writer().as_mut(),
+        writer.as_mut(),
         request.into_body(),
         state.max_body_size as u64,
+        ticket,
     )
     .await?;
     let length = already + last;
@@ -647,6 +678,14 @@ async fn close_upload(
             "the content does not match the declared digest",
         ));
     }
+    // Lo que el almacén gana es lo que la cuenta paga: una capa que ya
+    // estaba empujada por otro no añade bytes. Se mira antes del
+    // commit, y se asienta en cuanto el blob existe: lo que el catálogo
+    // publique después es otra transacción, y los bytes ya están.
+    let already_had = the_content_store(&state)?
+        .exists(&found)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
     let digest = session
         .the_writer()
         .commit(CommitExpectation {
@@ -655,6 +694,7 @@ async fn close_upload(
         })
         .await
         .map_err(|error| the_blob_error(&error))?;
+    session.settle(if already_had { 0 } else { length });
     drop(session);
     state.uploads.remove(&id);
 
@@ -700,8 +740,19 @@ async fn put_manifest(
         &repository,
     )?;
 
+    // La cuota decide antes de leer: un manifiesto que no cabe no se
+    // lee siquiera. Si el cliente no declaro longitud, el cuerpo se
+    // pincha contra el libro mayor en cuanto llega entero.
+    let mut ticket = state
+        .quota
+        .begin(context.account().as_str(), the_declared_size(&headers))
+        .map_err(the_quota_refusal)?;
+
     // Los bytes del manifiesto, tal cual.
     let body = read_the_body(request.into_body(), state.max_body_size as u64).await?;
+    if let Err(refusal) = ticket.admit(body.len() as u64) {
+        return Err(the_quota_refusal(refusal));
+    }
 
     // El tipo de medio lo declara la cabecera, y tiene que ser del
     // subconjunto que este registro publica.
@@ -789,12 +840,18 @@ async fn put_manifest(
         }
     }
 
-    // Los bytes, tal cual.
+    // Los bytes, tal cual. Lo que el almacén gana es lo que la cuenta
+    // paga: el mismo manifiesto dos veces no ocupa dos veces.
     let store = the_content_store(&state)?;
+    let already_had = store
+        .exists(&digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
     store
         .put(&body)
         .await
         .map_err(|error| the_blob_error(&error))?;
+    ticket.settle(if already_had { 0 } else { body.len() as u64 });
 
     // La etiqueta: la referencia es una etiqueta, o el cliente pide
     // etiquetas con `?tag=`. Las dos cosas pueden a la vez.
@@ -1184,13 +1241,19 @@ fn the_hexadecimal_digest(digest: &str) -> Result<String, OciFailure> {
 /// el cliente puede declarar cual va a ser, y si no declara ninguno, el
 /// servidor lo calcula sobre lo que llega. En los dos casos, el commit
 /// comprueba que lo publicado es exactamente lo declarado.
+///
+/// Cada trozo se pincha en el libro mayor **antes** de escribirse, sobre
+/// el total acumulado de la sesion: la cuota se aplica antes de
+/// almacenar, no despues de haber almacenado ya lo que sobraba.
 async fn write_the_body(
     writer: &mut dyn BlobWriteSession,
     body: Body,
     limit: u64,
+    ticket: &mut crate::quota::QuotaTicket,
 ) -> Result<u64, OciFailure> {
     let mut stream = body.into_data_stream();
     let mut length: u64 = 0;
+    let base = writer.bytes_written();
     while let Some(chunk) = stream.next().await {
         let chunk =
             chunk.map_err(|_| OciFailure::blob_upload_invalid("the body could not be read"))?;
@@ -1204,12 +1267,45 @@ async fn write_the_body(
                 "the content is larger than the {limit} bytes this service accepts"
             )));
         }
+        if let Err(refusal) = ticket.admit(base + length) {
+            let _ = writer.abort().await;
+            return Err(the_quota_refusal(refusal));
+        }
         writer
             .append(&chunk)
             .await
             .map_err(|error| the_blob_error(&error))?;
     }
     Ok(length)
+}
+
+/// La longitud que declaro el cliente, si declaro alguna.
+///
+/// Es el `Content-Length`, y solo vale si es un numero: una cabecera
+/// rara no es una promesa, es ruido, y el libro mayor se queda sin
+/// declarado y pincha el cuerpo trozo a trozo.
+fn the_declared_size(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()
+}
+
+/// La negativa de la cuota, dicha en el dialecto de la distribucion.
+fn the_quota_refusal(refusal: crate::quota::QuotaRefusal) -> OciFailure {
+    match refusal {
+        crate::quota::QuotaRefusal::StorageOver { .. } => OciFailure::storage_over_quota(
+            "the content would take this account past its stored quota",
+        ),
+        crate::quota::QuotaRefusal::UploadsSaturated { retry_after_secs } => {
+            OciFailure::too_many_requests(
+                "this account already has as many uploads in flight as it may have",
+                retry_after_secs,
+            )
+        }
+    }
 }
 
 /// Lee el cuerpo entero.
