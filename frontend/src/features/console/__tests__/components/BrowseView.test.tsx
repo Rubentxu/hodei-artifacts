@@ -7,7 +7,7 @@
  * read sends somebody looking for a package that is there.
  */
 
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse, delay } from 'msw';
 import { screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
@@ -31,6 +31,24 @@ const theHit = {
 };
 
 describe('BrowseView', () => {
+  it('does not say that there are no results while the search is on its way', async () => {
+    server.use(
+      http.get('/api/v1/search', async () => {
+        await delay('infinite');
+        return HttpResponse.json({});
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <BrowseView />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Searching…')).toBeInTheDocument();
+    expect(screen.queryByText(/0 results/)).not.toBeInTheDocument();
+  });
+
   it('says that there are more when the total was not counted', async () => {
     server.use(
       http.get('/api/v1/search', () =>

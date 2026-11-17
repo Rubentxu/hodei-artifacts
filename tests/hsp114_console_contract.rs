@@ -24,8 +24,9 @@ use hodei_authz::{
     IndeterminateReason, PrincipalAuthenticator, PrincipalClaims, PrincipalId,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogReader, CatalogWriter, DigestScope, RepositoryConfig,
-    RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
+    AllowAllAuthorizer, CatalogError, CatalogReader, CatalogSearch, CatalogWriter, DigestScope,
+    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
+    search::{SearchPage, SearchQuery},
 };
 use hodei_catalog_storage::SurrealCatalogStore;
 use serde_json::{Value, json};
@@ -115,6 +116,39 @@ impl AuthorizerPort for IndeterminateAuthorizer {
     }
 }
 
+/// A catalog whose rows cannot be read.
+///
+/// It is what a repository written by a release that knew a format this
+/// one does not looks like: the row is there, and it cannot be read.
+struct CorruptCatalog;
+
+#[async_trait]
+impl CatalogSearch for CorruptCatalog {
+    async fn repositories(
+        &self,
+        _principal_account: &str,
+    ) -> Result<Vec<RepositoryDescriptor>, CatalogError> {
+        Err(CatalogError::corrupt(
+            "repository",
+            READABLE,
+            "the repository declares a format this release does not know: quilt",
+        ))
+    }
+
+    async fn search(
+        &self,
+        _principal_account: &str,
+        _repositories: &[RepositoryDescriptor],
+        _query: &SearchQuery,
+    ) -> Result<SearchPage, CatalogError> {
+        Err(CatalogError::corrupt(
+            "catalog",
+            ACCOUNT,
+            "the catalog cannot be read",
+        ))
+    }
+}
+
 /// A repository of the catalog.
 fn descriptor(account: &str, key: &str, format: RepositoryFormat) -> RepositoryDescriptor {
     RepositoryDescriptor {
@@ -129,9 +163,27 @@ fn descriptor(account: &str, key: &str, format: RepositoryFormat) -> RepositoryD
     }
 }
 
+/// A repository of the catalog that is served only with a concession.
+fn a_guarded_descriptor(account: &str, key: &str) -> RepositoryDescriptor {
+    let mut descriptor = descriptor(account, key, RepositoryFormat::Raw);
+    descriptor.config.config_settings = json!({ "trust": { "serve": "trusted" } });
+    descriptor
+}
+
 /// The application with a real catalog behind it.
 async fn app_with(
     authorizer: Arc<dyn AuthorizerPort>,
+) -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
+    app_with_search(authorizer, None).await
+}
+
+/// The application with the catalog that is asked for.
+///
+/// Without one, the catalog is the real one. With one, it is the catalog
+/// that is broken, so that what the console says about it can be measured.
+async fn app_with_search(
+    authorizer: Arc<dyn AuthorizerPort>,
+    searcher: Option<Arc<dyn CatalogSearch>>,
 ) -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let db = Surreal::new::<RocksDb>(tmp.path().join("db"))
@@ -169,7 +221,10 @@ async fn app_with(
             Arc::new(hodei_artifacts_api::repository::InMemoryRepositoryReader::empty()),
         )
         .with_catalog(store.clone(), store.clone())
-        .with_catalog_search(store.clone())
+        .with_catalog_search(match searcher {
+            Some(searcher) => searcher,
+            None => store.clone(),
+        })
         .with_trust_ledger(store.clone());
 
     (build_router(state, &config), store, tmp)
@@ -277,6 +332,38 @@ async fn the_list_says_the_format_the_modality_and_the_channel() {
     assert_eq!(repository["format"], "pypi");
     assert_eq!(repository["mode"], "hosted");
     assert_eq!(repository["channel"], "open");
+}
+
+#[tokio::test]
+async fn the_channel_of_a_repository_that_needs_a_concession_is_the_trusted_one() {
+    let (app, store, _tmp) = app().await;
+    store
+        .create_repository(ACCOUNT, a_guarded_descriptor(ACCOUNT, READABLE))
+        .await
+        .expect("the repository is created");
+
+    let response = app
+        .oneshot(request(
+            "GET",
+            "/api/v1/catalog/repositories",
+            "alice",
+            None,
+        ))
+        .await
+        .expect("the response");
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("the body"),
+    )
+    .expect("json");
+
+    let repository = &body["repositories"][0];
+    assert_eq!(repository["name"], READABLE);
+    assert_eq!(
+        repository["channel"], "trusted",
+        "the channel goes on the wire with the name it is read with"
+    );
 }
 
 #[tokio::test]
@@ -483,5 +570,49 @@ async fn the_capabilities_say_what_can_be_created() {
     assert!(
         formats.iter().all(|format| format["name"] != "cargo"),
         "a format that this release does not serve is not offered"
+    );
+}
+
+#[tokio::test]
+async fn the_capabilities_ask_for_the_credential_of_the_surface() {
+    let (app, _store, _tmp) = app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/capabilities")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("the response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn a_catalog_that_cannot_be_read_is_not_an_empty_list() {
+    let (app, _store, _tmp) = app_with_search(cedar(), Some(Arc::new(CorruptCatalog))).await;
+
+    let response = app
+        .oneshot(request(
+            "GET",
+            "/api/v1/catalog/repositories",
+            "alice",
+            None,
+        ))
+        .await
+        .expect("the response");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("the body"),
+    )
+    .expect("json");
+
+    assert_eq!(
+        body["error"], "corruption",
+        "what cannot be read is corruption and not indeterminacy"
     );
 }

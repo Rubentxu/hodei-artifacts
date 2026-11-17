@@ -37,6 +37,11 @@ catalogRepositories:
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '503':
+        description: El catálogo no está disponible.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
   post:
     tags: [catalog]
     summary: Crear un repositorio del catálogo
@@ -81,6 +86,11 @@ catalogRepositories:
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '503':
+        description: El catálogo no está disponible.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
 
 capabilities:
   get:
@@ -99,6 +109,11 @@ capabilities:
             schema: { $ref: '../components/schemas/console.yaml#/Capabilities' }
       '401':
         description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '503':
+        description: El servicio no puede responder.
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
@@ -153,6 +168,11 @@ catalogSearch:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogSearchPage' }
       '401':
         description: La credencial no es válida.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '400':
+        description: El filtro no es uno que el servicio entienda.
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
@@ -211,8 +231,18 @@ catalogPackage:
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '400':
+        description: El camino o el digest no son los que el servicio entiende.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
       '500':
         description: No se pudo decidir, o lo guardado no se pudo leer.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '503':
+        description: El catálogo o el registro de decisiones no está disponible.
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
@@ -257,8 +287,18 @@ promotions:
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
+      '409':
+        description: La ruta apunta a otro contenido, y no se promueve lo que el cliente no vio.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
       '422':
         description: La política de confianza no lo permite.
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/console.yaml#/PromotionRefused' }
+      '501':
+        description: Este despliegue no sirve promociones.
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
@@ -307,8 +347,8 @@ promotionsRevoke:
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }
-      '422':
-        description: La política de confianza no lo permite.
+      '501':
+        description: Este despliegue no sirve promociones.
         content:
           application/json:
             schema: { $ref: '../components/schemas/console.yaml#/CatalogError' }

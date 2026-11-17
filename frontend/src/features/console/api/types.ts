@@ -22,9 +22,21 @@ export type RepositoryFormat =
 
 export type RepositoryMode = 'hosted' | 'proxy' | 'group';
 
+/**
+ * The formats that the service serves, and the ones it can create.
+ *
+ * The domain knows more formats than the service serves, and the ones it
+ * does not serve cannot be declared: a repository of one of them would be
+ * a repository that nothing could serve.
+ */
+export type ServedFormat = 'raw' | 'oci' | 'maven2' | 'npm' | 'pypi';
+
 export type ServeChannel = 'open' | 'trusted';
 
 export type TrustState = 'quarantined' | 'trusted';
+
+/** Where the bytes live: with everybody, or with the account. */
+export type DigestScope = 'global' | 'account_partitioned';
 
 export interface ContentDigest {
   algorithm: string;
@@ -46,7 +58,7 @@ export interface RepositoryList {
 
 /** What a format admits. */
 export interface FormatCapability {
-  name: RepositoryFormat;
+  name: ServedFormat;
   modes: RepositoryMode[];
 }
 
@@ -86,7 +98,7 @@ export interface SearchPage {
 /** Where the bytes are. */
 export interface BlobView {
   digest: ContentDigest;
-  scope: string;
+  scope: DigestScope;
   size_bytes: number;
   updated_at: string;
 }
@@ -145,7 +157,8 @@ export interface TrustDimension {
 export interface HrnView {
   partition: string;
   service: string;
-  region: string;
+  /** The region is not there when the resource is global. */
+  region?: string;
   account_id: string;
   resource_type: string;
   resource_id: string;
@@ -192,9 +205,8 @@ export interface PromotionResult {
 /** The body of a creation of a repository. */
 export interface CreateRepositoryBody {
   name: string;
-  format: RepositoryFormat;
+  format: ServedFormat;
   mode: RepositoryMode;
-  description?: string;
   region?: string;
   settings?: Record<string, unknown>;
 }

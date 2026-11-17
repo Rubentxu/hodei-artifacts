@@ -244,7 +244,7 @@ impl CatalogSearch for SurrealCatalogStore {
                 continue;
             }
 
-            if ServeChannel::of(&repository.config) == ServeChannel::TrustedOnly {
+            if ServeChannel::of(&repository.config) == ServeChannel::Trusted {
                 // A repository served on the trusted channel shows only
                 // what is granted.
                 let (rows, complete) = self

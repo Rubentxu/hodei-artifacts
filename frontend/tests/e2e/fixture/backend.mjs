@@ -15,9 +15,8 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,14 +26,30 @@ import {
   theDigest,
   theRepository,
 } from './seed.mjs';
-import { theAudience, theIssuer, theSecret, theToken } from './token.mjs';
+import {
+  theAudience,
+  theIssuer,
+  theSecret,
+  theToken,
+  theTokenPath,
+} from './token.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** The root of the repository, where the service and its bundle live. */
 const repositoryRoot = resolve(here, '..', '..', '..', '..');
 
+/**
+ * Where the fixture works.
+ *
+ * It is under `target/`, which is not in the repository, and not in the
+ * temporary directory of the system: a fixture that dies without being
+ * asked to stop leaves its data behind, and the next run has to find it
+ * and take it away instead of seeding next to it.
+ */
+const workingDirectory = join(repositoryRoot, 'target', 'e2e', 'fixture');
+
 /** The port the service listens on. */
-const port = Number(process.env.HODEI_FIXTURE_PORT ?? 18787);
+const port = Number(process.env.HODEI_FIXTURE_PORT ?? 18887);
 /** The address the service listens on. */
 const address = `http://127.0.0.1:${port}`;
 /**
@@ -187,7 +202,10 @@ const main = async () => {
     );
   }
 
-  const directory = mkdtempSync(join(tmpdir(), 'hodei-console-fixture-'));
+  const directory = workingDirectory;
+  rmSync(directory, { recursive: true, force: true });
+  mkdirSync(directory, { recursive: true });
+  mkdirSync(dirname(theTokenPath), { recursive: true });
   const readiness = theReadiness();
   const service = spawn(binary, [], {
     cwd: repositoryRoot,
@@ -232,6 +250,7 @@ const main = async () => {
     service.kill('SIGTERM');
     readiness.server.close();
     rmSync(directory, { recursive: true, force: true });
+    rmSync(theTokenPath, { force: true });
   };
   process.on('SIGTERM', () => {
     stop();
@@ -241,9 +260,19 @@ const main = async () => {
     stop();
     process.exit(0);
   });
+  // A fixture that dies without being asked to stop still takes its data
+  // and its token with it.
+  process.on('exit', () => {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(theTokenPath, { force: true });
+  });
 
   await waitFor(service);
   await seed();
+  // The token is signed before the fixture says it is ready: a test that
+  // reads a token that is not there yet is a test that fails for the
+  // wrong reason.
+  writeFileSync(theTokenPath, theToken(), { mode: 0o600 });
   readiness.announce();
   console.log(`the fixture of the console is ready at ${address}`);
 };

@@ -498,7 +498,7 @@ async fn the_search_filters_by_the_attributes_of_the_repository() {
             "acme",
             &repositories,
             &SearchQuery::new().with_attribute(RepositoryAttribute::Channel(
-                hodei_catalog::ServeChannel::TrustedOnly,
+                hodei_catalog::ServeChannel::Trusted,
             )),
         )
         .await

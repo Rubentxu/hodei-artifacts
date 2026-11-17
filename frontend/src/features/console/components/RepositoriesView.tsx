@@ -126,7 +126,7 @@ const RepositoryCard = ({ repository }: RepositoryCardProps) => (
       <CardContent className="flex flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
           <Link
-            to={`/console/packages/${encodeURIComponent(repository.name)}`}
+            to={`/console/browse?repository=${encodeURIComponent(repository.name)}`}
             className="flex items-center gap-2 text-base font-semibold text-gray-900 hover:text-blue-700"
           >
             <Package className="h-4 w-4 text-gray-500" aria-hidden="true" />

@@ -150,7 +150,10 @@ export const BrowseView = () => {
 
       {search.error && <FailureNotice failure={failureOf(search.error)} />}
 
-      {!search.error && (
+      {/* The page says nothing about how much there is until it has
+          asked: a summary that says "0 results" while the search is on
+          its way is a summary that says something that is not known. */}
+      {!search.error && search.data && (
         <Card>
           <CardContent className="flex flex-col gap-3">
             <TheSummary

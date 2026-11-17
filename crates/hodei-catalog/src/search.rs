@@ -555,7 +555,7 @@ mod tests {
         let attribute = RepositoryAttribute::Format(RepositoryFormat::PyPi);
         assert_eq!(attribute.name(), "format");
         assert_eq!(attribute.value(), "pypi");
-        let attribute = RepositoryAttribute::Channel(ServeChannel::TrustedOnly);
+        let attribute = RepositoryAttribute::Channel(ServeChannel::Trusted);
         assert_eq!(attribute.name(), "channel");
         assert_eq!(attribute.value(), "trusted");
     }

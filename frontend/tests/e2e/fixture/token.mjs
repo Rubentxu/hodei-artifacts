@@ -7,12 +7,30 @@
  * secret lives in the fixture and in the environment of the service, and
  * it never reaches the command line of a process that another one can
  * read.
+ *
+ * The secret is made when the fixture starts, and it is not written in
+ * the repository: a secret that is in the repository is a secret that
+ * anybody with the repository can sign a token with, and this one signs
+ * an administrator of the example account. What the tests read is the
+ * token that the fixture already signed, from the file the fixture
+ * leaves.
  */
 
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/** The root of the repository, where the service and its bundle live. */
+const repositoryRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  '..'
+);
 
 /** The secret the service verifies with. */
-export const theSecret = 'console-fixture-secret-long-enough';
+export const theSecret = randomBytes(32).toString('hex');
 
 /** Who issues the token. */
 export const theIssuer = 'https://issuer.example';
@@ -53,3 +71,16 @@ export const theToken = (expiresInSeconds = 3600) => {
     .digest('base64url');
   return `${header}.${payload}.${signature}`;
 };
+
+/**
+ * Where the fixture leaves the token it signed.
+ *
+ * The tests read the token from here, and not from a signer of their own:
+ * the secret is in the fixture, and the token is what the tests need.
+ */
+export const theTokenPath = resolve(
+  repositoryRoot,
+  'target',
+  'e2e',
+  'token.txt'
+);

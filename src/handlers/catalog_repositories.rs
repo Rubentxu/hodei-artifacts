@@ -35,6 +35,7 @@ use hodei_catalog::{
     CatalogError, DigestScope, GroupConfig, RepositoryConfig, RepositoryDescriptor,
     RepositoryFormat, RepositoryMode, ServeChannel, UpstreamConfig, repository_hrn,
 };
+use kernel::Hrn;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -44,6 +45,13 @@ use crate::handlers::{Authentication, correlation_id, error_body, record_audit, 
 
 /// The longest name a repository can have.
 const MAX_NAME: usize = 128;
+
+/// The region a repository has when the caller does not say one.
+///
+/// The region is part of the canonical name of the repository, and it is
+/// the region of the deployment: the caller does not choose it, and the
+/// service says which one it is.
+const DEFAULT_REGION: &str = "eu";
 
 /// What can fail in the repositories of the catalog.
 #[derive(Debug)]
@@ -58,6 +66,8 @@ pub enum CatalogRepositoryError {
     BadRequest(String),
     /// There is already a repository with that name.
     Conflict,
+    /// What is stored cannot be read.
+    Corrupt,
     /// Something failed inside.
     Internal,
     /// The catalog could not answer.
@@ -75,6 +85,10 @@ impl IntoResponse for CatalogRepositoryError {
             Self::NotFound => (StatusCode::NOT_FOUND, error_body("absence", "not found")),
             Self::BadRequest(reason) => (StatusCode::BAD_REQUEST, error_body("invalid", &reason)),
             Self::Conflict => (StatusCode::CONFLICT, error_body("conflict", "conflict")),
+            Self::Corrupt => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_body("corruption", "what is stored cannot be read"),
+            ),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 error_body("indeterminate", "internal error"),
@@ -124,9 +138,6 @@ pub struct CreateRepositoryBody {
     pub format: RepositoryFormat,
     /// How it will behave.
     pub mode: RepositoryMode,
-    /// The description of the repository.
-    #[serde(default)]
-    pub description: Option<String>,
     /// The region of the repository.
     #[serde(default)]
     pub region: Option<String>,
@@ -214,8 +225,16 @@ pub async fn create_repository(
     }
     let config = the_config(&body)?;
 
-    let region = body.region.as_deref().unwrap_or("global");
+    let region = body.region.as_deref().unwrap_or(DEFAULT_REGION);
     let hrn = repository_hrn("hodei", "artifacts", region, account, name);
+    // The canonical name has to be a name this release can read. A region
+    // that does not go on the wire is a bad request, and not a failure
+    // inside: the caller said something that cannot be a repository.
+    if Hrn::from_string(&hrn.to_string()).is_none() {
+        return Err(CatalogRepositoryError::BadRequest(
+            "the region of the repository is not valid".to_string(),
+        ));
+    }
     let action = crate::actions::create_repository();
     let outcome =
         match state
@@ -387,6 +406,7 @@ fn the_catalog_error(error: CatalogError) -> CatalogRepositoryError {
     match error {
         CatalogError::InvalidRequest { detail } => CatalogRepositoryError::BadRequest(detail),
         CatalogError::Conflict { .. } => CatalogRepositoryError::Conflict,
+        CatalogError::Corrupt { .. } => CatalogRepositoryError::Corrupt,
         CatalogError::Unavailable { .. } => CatalogRepositoryError::Unavailable,
         _ => CatalogRepositoryError::Internal,
     }

@@ -7,7 +7,7 @@
  * thing that is missing, and what is stored cannot be read is neither.
  */
 
-import { AlertTriangle, Lock, SearchX, ServerCrash, WifiOff } from 'lucide-react';
+import { AlertTriangle, Lock, SearchX, ServerCrash, ShieldAlert, WifiOff } from 'lucide-react';
 
 import type { Failure, FailureKind } from '../api/errors';
 
@@ -20,6 +20,7 @@ const TITLES: Record<FailureKind, string> = {
   corruption: 'What is stored cannot be read',
   indeterminate: 'The decision could not be taken',
   unavailable: 'The service cannot answer right now',
+  refused: 'The trust policy did not allow it',
 };
 
 const ICONS: Record<FailureKind, typeof Lock> = {
@@ -31,6 +32,7 @@ const ICONS: Record<FailureKind, typeof Lock> = {
   corruption: ServerCrash,
   indeterminate: ServerCrash,
   unavailable: WifiOff,
+  refused: ShieldAlert,
 };
 
 export interface FailureNoticeProps {

@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/Modal';
 
 import { failureOf } from '../api/errors';
-import type { RepositoryFormat, RepositoryMode } from '../api/types';
+import type { RepositoryMode, ServedFormat } from '../api/types';
 import { useCapabilities, useCreateRepository } from '../hooks/useConsole';
 import { FailureNotice } from './FailureNotice';
 
@@ -57,6 +57,22 @@ const MODE_LABELS: Record<string, string> = {
   group: 'Group — what is asked for is looked for in the members',
 };
 
+/**
+ * The name of the upstream, out of the name of the repository.
+ *
+ * The upstream has its own rules for its name —lowercase letters, digits,
+ * dashes and underscores, and sixty-four characters at most— and the
+ * repository has others. The name that the upstream reads is made out of
+ * the one of the repository, so that a repository called `MyLibs` can be
+ * declared instead of refused with a rule about upstreams.
+ */
+const theUpstreamId = (name: string): string =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .slice(0, 64);
+
 export const RepositoryCreateDialog = ({
   open,
   onClose,
@@ -64,7 +80,7 @@ export const RepositoryCreateDialog = ({
   const capabilities = useCapabilities();
   const create = useCreateRepository();
   const [name, setName] = useState('');
-  const [format, setFormat] = useState<RepositoryFormat | ''>('');
+  const [format, setFormat] = useState<ServedFormat | ''>('');
   const [mode, setMode] = useState<RepositoryMode | ''>('');
   const [upstreamUrl, setUpstreamUrl] = useState('');
   const [upstreamScopes, setUpstreamScopes] = useState('');
@@ -84,7 +100,7 @@ export const RepositoryCreateDialog = ({
     if (mode === 'proxy') {
       settings.proxy = {
         upstream: {
-          id: name.trim(),
+          id: theUpstreamId(name),
           url: upstreamUrl.trim(),
           scopes: upstreamScopes
             .split(',')
@@ -109,7 +125,6 @@ export const RepositoryCreateDialog = ({
         name: name.trim(),
         format,
         mode,
-        region: 'eu',
         settings,
       });
       onClose();
@@ -142,7 +157,7 @@ export const RepositoryCreateDialog = ({
             <select
               value={format}
               onChange={event => {
-                setFormat(event.target.value as RepositoryFormat);
+                setFormat(event.target.value as ServedFormat);
                 setMode('');
               }}
               className="rounded-md border border-gray-300 px-3 py-2 text-sm"
@@ -182,6 +197,7 @@ export const RepositoryCreateDialog = ({
                 value={upstreamUrl}
                 onChange={event => setUpstreamUrl(event.target.value)}
                 placeholder="https://registry.example.org/"
+                helperText={`The upstream is named "${theUpstreamId(name)}".`}
               />
               <Input
                 label="Scopes"

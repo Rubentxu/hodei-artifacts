@@ -6,10 +6,20 @@
  * changes what the service serves.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { expect, test, type Page } from '@playwright/test';
 
 import { theAssetPath, theDigest, theRepository } from './fixture/seed.mjs';
-import { theToken } from './fixture/token.mjs';
+import { theTokenPath } from './fixture/token.mjs';
+
+/**
+ * The token that the fixture signed.
+ *
+ * The secret is in the fixture and not in the repository, so the token is
+ * read from the file the fixture leaves, and not signed here.
+ */
+const theTokenOfTheFixture = () => readFileSync(theTokenPath, 'utf8').trim();
 
 /**
  * Signs the browser in.
@@ -31,7 +41,7 @@ const signIn = async (page: Page) => {
         version: 0,
       })
     );
-  }, theToken());
+  }, theTokenOfTheFixture());
 };
 
 test.describe('the console of the catalog', () => {

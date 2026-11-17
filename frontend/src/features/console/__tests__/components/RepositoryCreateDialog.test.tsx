@@ -73,6 +73,51 @@ describe('RepositoryCreateDialog', () => {
     expect(screen.queryByLabelText('Members')).not.toBeInTheDocument();
   });
 
+  it('names the upstream the way the upstream reads it', async () => {
+    const user = userEvent.setup();
+    let created: unknown = null;
+    server.use(
+      http.post('/api/v1/catalog/repositories', async ({ request }) => {
+        created = await request.json();
+        return HttpResponse.json(
+          {
+            name: 'MyLibs',
+            format: 'raw',
+            mode: 'proxy',
+            channel: 'open',
+          },
+          { status: 201 }
+        );
+      })
+    );
+
+    render(<RepositoryCreateDialog open onClose={() => {}} />);
+
+    await screen.findByRole('option', { name: 'Raw' });
+    await user.selectOptions(screen.getByRole('combobox'), 'raw');
+    await user.click(screen.getByRole('radio', { name: /Proxy/ }));
+    await user.type(await screen.findByLabelText('Name'), 'MyLibs');
+    await user.type(screen.getByLabelText('Upstream'), 'https://registry.example.org/');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() =>
+      expect(created).toEqual({
+        name: 'MyLibs',
+        format: 'raw',
+        mode: 'proxy',
+        settings: {
+          proxy: {
+            upstream: {
+              id: 'mylibs',
+              url: 'https://registry.example.org/',
+              scopes: [],
+            },
+          },
+        },
+      })
+    );
+  });
+
   it('creates what the API accepts', async () => {
     const user = userEvent.setup();
     let created: unknown = null;
@@ -103,7 +148,6 @@ describe('RepositoryCreateDialog', () => {
         name: 'releases',
         format: 'npm',
         mode: 'hosted',
-        region: 'eu',
         settings: {},
       })
     );

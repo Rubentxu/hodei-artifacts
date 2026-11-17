@@ -265,12 +265,15 @@ Cambios que todavia no estan en una release. El formato sigue
   bajo `hodei-auth-token`, que es la clave que el frontend ya declaraba,
   y el token sobrevive a una recarga.
 - El **`type-check` del frontend comprobaba nada**: `tsc --noEmit` con el
-  `tsconfig.json` de raız, que no tiene ficheros, no mira un solo fichero.
+  `tsconfig.json` de raíz, que no tiene ficheros, no mira un solo fichero.
   Ahora hay un programa de tipos propio para la consola
   (`frontend/tsconfig.console.json`) que comprueba la consola y lo que usa,
-  y la etapa de frontend de la CI lo ejecuta. El resto del frontend
-  heredado tiene errores de tipos que nadie ha corregido desde que dejo de
-  comprobarse, y corregirlos todos de golpe es un trabajo aparte.
+  y la etapa de frontend de la CI lo ejecuta. El `build` también: antes
+  `tsc -b` recorría el árbol entero y ahora comprueba el programa de la
+  consola, porque el frontend heredado tiene errores de tipos que nadie ha
+  corregido desde que dejó de comprobarse —121 errores en 63 ficheros, que
+  hacen que `tsc -b` no pase—. Corregirlos todos de golpe es un trabajo
+  aparte (HSP-133), y mientras tanto el `build` vuelve a poder hacerse.
 - El **`build` del frontend no compilaba**: un fichero muerto con JSX en un
   `.ts` rompia el analizador. El fichero se ha borrado --no lo importaba
   nadie-- y el build vuelve a hacer su trabajo.

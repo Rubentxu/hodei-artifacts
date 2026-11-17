@@ -63,11 +63,9 @@ pub enum Lookup {
 pub fn verdict(channel: ServeChannel, lookup: Lookup) -> Result<(), Admission> {
     match (channel, lookup) {
         (ServeChannel::Open, _) => Ok(()),
-        (ServeChannel::TrustedOnly, Lookup::Granted) => Ok(()),
-        (ServeChannel::TrustedOnly, Lookup::NotGranted) => Err(Admission::Hidden),
-        (ServeChannel::TrustedOnly, Lookup::Failed | Lookup::NoLedger) => {
-            Err(Admission::Unavailable)
-        }
+        (ServeChannel::Trusted, Lookup::Granted) => Ok(()),
+        (ServeChannel::Trusted, Lookup::NotGranted) => Err(Admission::Hidden),
+        (ServeChannel::Trusted, Lookup::Failed | Lookup::NoLedger) => Err(Admission::Unavailable),
     }
 }
 
@@ -140,9 +138,9 @@ mod tests {
 
     #[test]
     fn the_trusted_channel_serves_only_an_explicit_grant() {
-        assert_eq!(verdict(ServeChannel::TrustedOnly, Lookup::Granted), Ok(()));
+        assert_eq!(verdict(ServeChannel::Trusted, Lookup::Granted), Ok(()));
         assert_eq!(
-            verdict(ServeChannel::TrustedOnly, Lookup::NotGranted),
+            verdict(ServeChannel::Trusted, Lookup::NotGranted),
             Err(Admission::Hidden)
         );
     }
@@ -151,7 +149,7 @@ mod tests {
     fn an_unknown_state_is_never_a_permission() {
         for lookup in [Lookup::Failed, Lookup::NoLedger] {
             assert_eq!(
-                verdict(ServeChannel::TrustedOnly, lookup),
+                verdict(ServeChannel::Trusted, lookup),
                 Err(Admission::Unavailable),
                 "{lookup:?}"
             );

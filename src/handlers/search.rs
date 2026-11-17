@@ -208,7 +208,7 @@ pub async fn get_search(
     if state.trust_ledger.is_none()
         && permitted
             .iter()
-            .any(|repository| ServeChannel::of(&repository.config) == ServeChannel::TrustedOnly)
+            .any(|repository| ServeChannel::of(&repository.config) == ServeChannel::Trusted)
     {
         return Err(SearchApiError::Unavailable);
     }

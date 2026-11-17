@@ -10,9 +10,15 @@
  * The dialog keeps the keyboard out of the way of the people who use it:
  * the focus goes inside when it opens, it stays inside while it is open,
  * and the escape key closes it without confirming anything.
+ *
+ * The Enter key is left to the element that has the focus. A button does
+ * with the Enter key what a button does, so the one that cancels cancels
+ * and the one that confirms confirms. A dialog that confirms with the
+ * Enter key wherever the focus happens to be is a dialog that promotes a
+ * content because somebody pressed the key while writing a reason.
  */
 
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 
 import { Button } from '@/components/ui/Button';
 import {
@@ -55,24 +61,21 @@ export const ConfirmDialog = ({
   onClose,
 }: ConfirmDialogProps) => {
   const content = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const focusable = content.current?.querySelector<HTMLElement>(
-      'button:not([disabled]), input, textarea, select, [href]'
-    );
-    focusable?.focus();
-  }, [open]);
+  const confirms = useRef<HTMLButtonElement>(null);
 
   return (
     <Modal open={open} onOpenChange={(next: boolean) => !next && onClose()}>
       <ModalContent
         ref={content}
-        onKeyDown={event => {
-          if (event.key === 'Enter' && !disabled && !pending) {
-            event.preventDefault();
-            onConfirm();
-          }
+        onOpenAutoFocus={event => {
+          // The focus goes to the field when there is one: it is what the
+          // person has to fill in. Without a field, the focus goes to the
+          // button that confirms, and not to the one that cancels.
+          event.preventDefault();
+          const field = content.current?.querySelector<HTMLElement>(
+            'input, textarea, select'
+          );
+          (field ?? confirms.current)?.focus();
         }}
       >
         <ModalHeader>
@@ -87,6 +90,7 @@ export const ConfirmDialog = ({
             Cancel
           </Button>
           <Button
+            ref={confirms}
             variant={destructive ? 'destructive' : 'primary'}
             onClick={onConfirm}
             isLoading={pending}

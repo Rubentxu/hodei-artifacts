@@ -15,7 +15,7 @@ CatalogRepository:
     format:
       type: string
       description: El formato del contenido que guarda.
-      enum: [raw, oci, maven2, npm, pypi, cargo, nuget, go, helm, apt, rpm]
+      enum: [raw, oci, maven2, npm, pypi]
     mode:
       type: string
       description: Cómo se comporta.
@@ -44,12 +44,14 @@ CreateCatalogRepositoryRequest:
       maxLength: 128
     format:
       type: string
-      enum: [raw, oci, maven2, npm, pypi, cargo, nuget, go, helm, apt, rpm]
+      description: >
+        El formato del contenido que guarda. Un formato que este despliegue
+        no sirve se rechaza con un 400: el servicio no publicaría lo que
+        se le pidiera guardar.
+      enum: [raw, oci, maven2, npm, pypi]
     mode:
       type: string
       enum: [hosted, proxy, group]
-    description:
-      type: string
     region:
       type: string
     settings:
@@ -63,7 +65,7 @@ FormatCapability:
   properties:
     name:
       type: string
-      enum: [raw, oci, maven2, npm, pypi, cargo, nuget, go, helm, apt, rpm]
+      enum: [raw, oci, maven2, npm, pypi]
     modes:
       type: array
       description: Las modalidades que el formato sirve.
@@ -97,7 +99,7 @@ CatalogSearchHit:
       type: string
     format:
       type: string
-      enum: [raw, oci, maven2, npm, pypi, cargo, nuget, go, helm, apt, rpm]
+      enum: [raw, oci, maven2, npm, pypi]
     asset_path:
       type: string
     package_name:
@@ -330,6 +332,20 @@ RevokeResponse:
     revoked:
       type: integer
       format: int64
+
+PromotionRefused:
+  type: object
+  required: [promoted, reasons]
+  properties:
+    promoted:
+      type: boolean
+      description: >
+        No se promovió. La política de confianza no lo permite, y esto no
+        es un fallo del servicio: es una decisión, con sus razones.
+    reasons:
+      type: array
+      description: Por qué no.
+      items: { type: string }
 
 CatalogError:
   type: object

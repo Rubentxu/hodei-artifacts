@@ -13,6 +13,8 @@ import * as api from '../api/consoleApi';
 import type { SearchParams } from '../api/consoleApi';
 
 const KEYS = {
+  /** Everything the console asks for. */
+  root: ['console'],
   repositories: ['console', 'repositories'],
   capabilities: ['console', 'capabilities'],
   search: (params: SearchParams) => ['console', 'search', params],
@@ -85,7 +87,10 @@ export const usePromote = () => {
       digest: string;
     }) => api.promote(repository, path, digest),
     onSuccess: () => {
-      client.invalidateQueries();
+      // The console's own queries, and not the whole application: a
+      // promotion does not change what the rest of the frontend asks
+      // for.
+      client.invalidateQueries({ queryKey: KEYS.root });
     },
   });
 };
@@ -96,7 +101,10 @@ export const useRevoke = () => {
   return useMutation({
     mutationFn: api.revoke,
     onSuccess: () => {
-      client.invalidateQueries();
+      // The console's own queries, and not the whole application: a
+      // revocation does not change what the rest of the frontend asks
+      // for.
+      client.invalidateQueries({ queryKey: KEYS.root });
     },
   });
 };

@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
-use crate::handlers::{bearer_token, correlation_id, record_audit};
+use crate::handlers::{bearer_token, correlation_id, error_body, record_audit};
 use crate::trust::hrn::artifact_hrn;
 use crate::trust::promotion::{TRUSTED_DISTRIBUTION, digests_covered};
 
@@ -48,6 +48,7 @@ pub enum PromotionApiError {
     Conflict,
     NotImplemented,
     Unavailable,
+    Corrupt,
     /// La politica rechazo la promocion; lleva las razones.
     Refused(Vec<String>),
 }
@@ -55,13 +56,29 @@ pub enum PromotionApiError {
 impl IntoResponse for PromotionApiError {
     fn into_response(self) -> Response {
         let (status, body) = match self {
-            Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
-            Self::NotFound => (StatusCode::NOT_FOUND, "not found"),
-            Self::BadRequest => (StatusCode::BAD_REQUEST, "bad request"),
-            Self::Conflict => (StatusCode::CONFLICT, "conflict"),
-            Self::NotImplemented => (StatusCode::NOT_IMPLEMENTED, "not implemented"),
-            Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            Self::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                error_body("unauthenticated", "unauthorized"),
+            ),
+            Self::Forbidden => (StatusCode::FORBIDDEN, error_body("permission", "forbidden")),
+            Self::NotFound => (StatusCode::NOT_FOUND, error_body("absence", "not found")),
+            Self::BadRequest => (
+                StatusCode::BAD_REQUEST,
+                error_body("invalid", "the request is not valid"),
+            ),
+            Self::Conflict => (StatusCode::CONFLICT, error_body("conflict", "conflict")),
+            Self::NotImplemented => (
+                StatusCode::NOT_IMPLEMENTED,
+                error_body("unavailable", "this deployment does not serve promotions"),
+            ),
+            Self::Unavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                error_body("unavailable", "the promotions are not available"),
+            ),
+            Self::Corrupt => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_body("corruption", "what is stored cannot be read"),
+            ),
             Self::Refused(reasons) => {
                 let body = serde_json::json!({ "promoted": false, "reasons": reasons });
                 return (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response();
@@ -155,6 +172,7 @@ async fn body_of<T: serde::de::DeserializeOwned>(
 fn catalog_error(error: &CatalogError) -> PromotionApiError {
     match error {
         CatalogError::Missing { .. } => PromotionApiError::NotFound,
+        CatalogError::Corrupt { .. } => PromotionApiError::Corrupt,
         _ => PromotionApiError::Unavailable,
     }
 }

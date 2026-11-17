@@ -28,7 +28,8 @@ export type FailureKind =
   | 'conflict'
   | 'corruption'
   | 'indeterminate'
-  | 'unavailable';
+  | 'unavailable'
+  | 'refused';
 
 /** A failure, with what the console says about it. */
 export interface Failure {
@@ -49,6 +50,7 @@ const MESSAGES: Record<FailureKind, string> = {
   corruption: 'What is stored cannot be read.',
   indeterminate: 'The decision could not be taken.',
   unavailable: 'The service cannot answer right now.',
+  refused: 'The trust policy did not allow it.',
 };
 
 /** The kind of a status, when the body does not say one. */
@@ -58,8 +60,9 @@ const BY_STATUS: Record<number, FailureKind> = {
   403: 'permission',
   404: 'absence',
   409: 'conflict',
-  422: 'invalid',
+  422: 'refused',
   500: 'indeterminate',
+  501: 'unavailable',
   502: 'indeterminate',
   503: 'unavailable',
   504: 'unavailable',
@@ -93,6 +96,23 @@ export const failureOf = (error: unknown): Failure => {
     message: MESSAGES[kind],
     status,
   };
+};
+
+/**
+ * The reasons of a refusal, when the API gave them.
+ *
+ * A promotion that the trust policy does not allow comes with the reasons
+ * why, and the console shows them: a refusal without its reasons sends the
+ * person looking for a mistake that is not theirs.
+ */
+export const theReasonsOf = (error: unknown): string[] => {
+  const response = theResponse(error);
+  if (!response) return [];
+  const data = response.data;
+  if (typeof data !== 'object' || data === null) return [];
+  const reasons = (data as { reasons?: unknown }).reasons;
+  if (!Array.isArray(reasons)) return [];
+  return reasons.filter((reason): reason is string => typeof reason === 'string');
 };
 
 /** The kind that the body declares, when it declares one. */

@@ -844,6 +844,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogError'
+        '503':
+          description: El catálogo no está disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
     post:
       tags:
         - catalog
@@ -894,6 +900,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogError'
+        '503':
+          description: El catálogo no está disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
   /api/v1/capabilities:
     get:
       tags:
@@ -911,6 +923,12 @@ paths:
                 $ref: '#/components/schemas/Capabilities'
         '401':
           description: La credencial no es válida.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '503':
+          description: El servicio no puede responder.
           content:
             application/json:
               schema:
@@ -978,6 +996,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogSearchPage'
+        '400':
+          description: El filtro no es uno que el servicio entienda.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
         '401':
           description: La credencial no es válida.
           content:
@@ -1025,6 +1049,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogPackage'
+        '400':
+          description: El camino o el digest no son los que el servicio entiende.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
         '401':
           description: La credencial no es válida.
           content:
@@ -1045,6 +1075,12 @@ paths:
                 $ref: '#/components/schemas/CatalogError'
         '500':
           description: No se pudo decidir, o lo guardado no se pudo leer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
+        '503':
+          description: El catálogo o el registro de decisiones no está disponible.
           content:
             application/json:
               schema:
@@ -1094,8 +1130,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogError'
+        '409':
+          description: La ruta apunta a otro contenido, y no se promueve lo que el cliente no vio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogError'
         '422':
           description: La política de confianza no lo permite.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromotionRefused'
+        '501':
+          description: Este despliegue no sirve promociones.
           content:
             application/json:
               schema:
@@ -1151,8 +1199,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogError'
-        '422':
-          description: La política de confianza no lo permite.
+        '501':
+          description: Este despliegue no sirve promociones.
           content:
             application/json:
               schema:
@@ -1766,12 +1814,6 @@ components:
             - maven2
             - npm
             - pypi
-            - cargo
-            - nuget
-            - go
-            - helm
-            - apt
-            - rpm
         mode:
           type: string
           description: Cómo se comporta.
@@ -1829,26 +1871,20 @@ components:
           maxLength: 128
         format:
           type: string
+          description: |
+            El formato del contenido que guarda. Un formato que este despliegue no sirve se rechaza con un 400: el servicio no publicaría lo que se le pidiera guardar.
           enum:
             - raw
             - oci
             - maven2
             - npm
             - pypi
-            - cargo
-            - nuget
-            - go
-            - helm
-            - apt
-            - rpm
         mode:
           type: string
           enum:
             - hosted
             - proxy
             - group
-        description:
-          type: string
         region:
           type: string
         settings:
@@ -1869,12 +1905,6 @@ components:
             - maven2
             - npm
             - pypi
-            - cargo
-            - nuget
-            - go
-            - helm
-            - apt
-            - rpm
         modes:
           type: array
           description: Las modalidades que el formato sirve.
@@ -1926,12 +1956,6 @@ components:
             - maven2
             - npm
             - pypi
-            - cargo
-            - nuget
-            - go
-            - helm
-            - apt
-            - rpm
         asset_path:
           type: string
         package_name:
@@ -2192,6 +2216,21 @@ components:
           type: string
         granted:
           type: array
+          items:
+            type: string
+    PromotionRefused:
+      type: object
+      required:
+        - promoted
+        - reasons
+      properties:
+        promoted:
+          type: boolean
+          description: |
+            No se promovió. La política de confianza no lo permite, y esto no es un fallo del servicio: es una decisión, con sus razones.
+        reasons:
+          type: array
+          description: Por qué no.
           items:
             type: string
     RevokeRequest:

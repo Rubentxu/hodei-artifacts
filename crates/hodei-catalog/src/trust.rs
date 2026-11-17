@@ -34,7 +34,7 @@ pub enum ServeChannel {
     /// Se sirve lo publicado, con independencia de la confianza.
     Open,
     /// Solo se sirve un digest con una concesion activa.
-    TrustedOnly,
+    Trusted,
 }
 
 impl ServeChannel {
@@ -50,7 +50,7 @@ impl ServeChannel {
         };
         match trust.get("serve").and_then(|serve| serve.as_str()) {
             Some("open") => Self::Open,
-            _ => Self::TrustedOnly,
+            _ => Self::Trusted,
         }
     }
 
@@ -58,7 +58,7 @@ impl ServeChannel {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Open => "open",
-            Self::TrustedOnly => "trusted",
+            Self::Trusted => "trusted",
         }
     }
 
@@ -71,7 +71,7 @@ impl ServeChannel {
     pub fn parse(text: &str) -> Option<Self> {
         match text {
             "open" => Some(Self::Open),
-            "trusted" => Some(Self::TrustedOnly),
+            "trusted" => Some(Self::Trusted),
             _ => None,
         }
     }
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn the_trusted_channel_is_declared_by_name() {
         let trusted = config(json!({ "trust": { "serve": "trusted" } }));
-        assert_eq!(ServeChannel::of(&trusted), ServeChannel::TrustedOnly);
+        assert_eq!(ServeChannel::of(&trusted), ServeChannel::Trusted);
         let open = config(json!({ "trust": { "serve": "open" } }));
         assert_eq!(ServeChannel::of(&open), ServeChannel::Open);
     }
@@ -198,7 +198,7 @@ mod tests {
         ] {
             assert_eq!(
                 ServeChannel::of(&config(settings.clone())),
-                ServeChannel::TrustedOnly,
+                ServeChannel::Trusted,
                 "{settings}"
             );
         }
@@ -207,12 +207,21 @@ mod tests {
     #[test]
     fn a_channel_is_read_from_its_own_name() {
         assert_eq!(ServeChannel::parse("open"), Some(ServeChannel::Open));
-        assert_eq!(
-            ServeChannel::parse("trusted"),
-            Some(ServeChannel::TrustedOnly)
-        );
+        assert_eq!(ServeChannel::parse("trusted"), Some(ServeChannel::Trusted));
         for bad in ["", "OPEN", "everybody", "open "] {
             assert_eq!(ServeChannel::parse(bad), None, "{bad:?} is not a channel");
         }
+    }
+
+    #[test]
+    fn a_channel_goes_on_the_wire_with_the_name_it_is_read_with() {
+        assert_eq!(
+            serde_json::to_string(&ServeChannel::Open).expect("json"),
+            "\"open\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ServeChannel::Trusted).expect("json"),
+            "\"trusted\""
+        );
     }
 }

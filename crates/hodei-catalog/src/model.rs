@@ -144,9 +144,10 @@ impl RepositoryFormat {
 
     /// The formats that this release serves, in the order they are named.
     ///
-    /// The formats that are declared but not served yet are not here: a
-    /// repository of one of them can be declared, and it waits for its
-    /// turn. This list is what a client asks to know what it can create.
+    /// The formats that this release does not serve yet are not here, and
+    /// they cannot be declared either: a repository of one of them would
+    /// be a repository that nothing could serve. This list is what a
+    /// client asks to know what it can create.
     pub fn served() -> &'static [RepositoryFormat] {
         &[
             RepositoryFormat::Raw,

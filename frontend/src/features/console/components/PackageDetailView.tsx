@@ -25,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Spinner';
 
-import { failureOf } from '../api/errors';
+import { failureOf, theReasonsOf } from '../api/errors';
 import { downloadAsset } from '../api/consoleApi';
 import type { TrustState } from '../api/types';
 import {
@@ -132,6 +132,18 @@ export const PackageDetailView = ({
           <Badge variant={TRUST_VARIANT[asset.trust.state]}>
             {TRUST_LABELS[asset.trust.state]}
           </Badge>
+          {/* While the detail is being asked again, what is on the
+              screen is what was true a moment ago, and the console says
+              so instead of letting it look like the truth. */}
+          {detail.isFetching && (
+            <span
+              className="flex items-center gap-2 text-xs text-gray-500"
+              role="status"
+            >
+              <Spinner />
+              Updating…
+            </span>
+          )}
           <Button
             variant="outline"
             onClick={download}
@@ -305,6 +317,13 @@ export const PackageDetailView = ({
           granted as trusted.
         </p>
         {promote.error && <FailureNotice failure={failureOf(promote.error)} />}
+        {theReasonsOf(promote.error).length > 0 && (
+          <ul className="list-disc space-y-1 pl-5 text-sm text-red-700">
+            {theReasonsOf(promote.error).map(reason => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        )}
       </ConfirmDialog>
 
       <ConfirmDialog

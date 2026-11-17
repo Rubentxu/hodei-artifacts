@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { failureOf } from '../../api/errors';
+import { failureOf, theReasonsOf } from '../../api/errors';
 
 /** The error of a request that failed with a status and a body. */
 const failed = (status: number, data: unknown): unknown => ({
@@ -69,5 +69,37 @@ describe('failureOf', () => {
 
     expect(absence.message).not.toMatch(/repository|account|principal/i);
     expect(permission.message).not.toMatch(/repository|account|principal/i);
+  });
+
+  it('tells a refusal of the trust policy apart from a request that was not understood', () => {
+    const refused = failureOf(failed(422, { promoted: false, reasons: [] }));
+
+    expect(refused.kind).toBe('refused');
+    expect(refused.message).not.toBe(failureOf(failed(400, {})).message);
+  });
+
+  it('says that the service is not there when the deployment does not serve it', () => {
+    expect(failureOf(failed(501, {})).kind).toBe('unavailable');
+  });
+});
+
+describe('theReasonsOf', () => {
+  it('gives the reasons of a refusal', () => {
+    const reasons = theReasonsOf(
+      failed(422, { promoted: false, reasons: ['the signature does not hold'] })
+    );
+
+    expect(reasons).toEqual(['the signature does not hold']);
+  });
+
+  it('has no reasons when the answer is not a refusal', () => {
+    expect(theReasonsOf(failed(404, { error: 'absence' }))).toEqual([]);
+    expect(theReasonsOf(new Error('the network is down'))).toEqual([]);
+  });
+
+  it('ignores the reasons that are not text', () => {
+    expect(theReasonsOf(failed(422, { reasons: ['a reason', 7] }))).toEqual([
+      'a reason',
+    ]);
   });
 });

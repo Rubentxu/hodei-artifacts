@@ -50,7 +50,14 @@ const thePackage = {
     version: '1',
     content_hash: 'b'.repeat(64),
     profile: {
-      subject: 'hrn:hodei:artifacts:eu:acme:repository/libs',
+      subject: {
+        partition: 'hodei',
+        service: 'artifacts',
+        region: 'eu',
+        account_id: 'acme',
+        resource_type: 'repository',
+        resource_id: 'libs',
+      },
       dimensions: [
         { name: 'integrity', state: 'verified', evidence: [] },
         { name: 'signature_state', state: 'missing', evidence: [] },
