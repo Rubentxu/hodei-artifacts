@@ -64,11 +64,10 @@ pub fn normalize_decisions(decisions: &[DecisionChange]) -> Vec<DecisionChange> 
 /// Un ciclo es un conjunto de relaciones que se pisan entre si: A llega a
 /// B y B vuelve a A.
 ///
-/// Y solo se declaran los ciclos que tocan una relacion **HIPOTETICA**: un
-/// ciclo que ya estaba en el mundo real no lo introduce la simulacion, y
-/// declararlo seria echarle la culpa a la hipotesis. Lo que la
-/// simulacion introduce es lo que declara.
-pub fn the_cycles_of(overlay: &[RelationFact], hypothetical: &[String]) -> Vec<Cycle> {
+/// Y son TODOS los ciclos, sin filtrar: el filtro de los que introduce
+/// la hipotetica es otra funcion, porque son dos preguntas distintas y
+/// una sola funcion que las mezcla no se puede probar.
+pub fn the_cycles_of(overlay: &[RelationFact]) -> Vec<Cycle> {
     let mut edges: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for relation in overlay {
         edges
@@ -104,15 +103,29 @@ pub fn the_cycles_of(overlay: &[RelationFact], hypothetical: &[String]) -> Vec<C
 
     let mut found: Vec<Cycle> = Vec::new();
     for cycle in cycles {
-        if !cycle.iter().any(|identity| hypothetical.contains(identity)) {
-            continue;
-        }
         found.push(Cycle {
             subjects: the_subjects_of_all(&cycle, overlay),
             relations: cycle,
         });
     }
     found
+}
+
+/// Los ciclos que la HIPOTETICA introduce.
+///
+/// Un ciclo que ya estaba en el mundo real no lo introduce la
+/// simulacion, y declararlo seria echarle la culpa a la hipotetica. Lo
+/// que la simulacion introduce es lo que declara.
+pub fn the_cycles_introduced_by(overlay: &[RelationFact], hypothetical: &[String]) -> Vec<Cycle> {
+    the_cycles_of(overlay)
+        .into_iter()
+        .filter(|cycle| {
+            cycle
+                .relations
+                .iter()
+                .any(|identity| hypothetical.contains(identity))
+        })
+        .collect()
 }
 
 /// Los duplicados: las identidades que se dicen mas de una vez.
@@ -261,4 +274,225 @@ fn visit(
 
     path.pop();
     on_the_path.remove(node);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hodei_evidence::domain::graph::RelationType;
+    use hodei_evidence::domain::read_set::{ReadSet, ReadStamp};
+
+    /// El sujeto de las pruebas.
+    fn artefact() -> Hrn {
+        Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
+    }
+
+    /// El componente de las pruebas.
+    fn component() -> Hrn {
+        Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1").expect("un HRN")
+    }
+
+    /// Otro componente de las pruebas.
+    fn other_component() -> Hrn {
+        Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2").expect("un HRN")
+    }
+
+    /// La relacion de un componente a otro.
+    fn depends_on(from: &Hrn, to: &Hrn) -> RelationFact {
+        RelationFact::new(RelationType::DependsOn, from.clone(), to.clone())
+    }
+
+    /// Un grafo SIN ciclo: una cadena de dependencias.
+    fn the_chain() -> Vec<RelationFact> {
+        vec![
+            depends_on(&artefact(), &component()),
+            depends_on(&component(), &other_component()),
+        ]
+    }
+
+    /// Un grafo con DOS ciclos que se tocan.
+    fn the_two_cycles() -> Vec<RelationFact> {
+        vec![
+            depends_on(&artefact(), &component()),
+            depends_on(&component(), &artefact()),
+            depends_on(&component(), &other_component()),
+            depends_on(&other_component(), &component()),
+        ]
+    }
+
+    /// Un grafo SIN ciclo no declara ningun ciclo.
+    #[test]
+    fn an_acyclic_graph_declares_no_cycle() {
+        let cycles = the_cycles_of(&the_chain());
+        assert!(
+            cycles.is_empty(),
+            "una cadena de dependencias no es un ciclo: {:?}",
+            cycles
+        );
+    }
+
+    /// Un grafo con dos ciclos que se tocan declara LOS DOS.
+    ///
+    /// Y no uno: un recorrido que encuentra el primer ciclo y se calla
+    /// es un recorrido que no ha mirado el resto.
+    #[test]
+    fn a_graph_with_two_cycles_declares_both() {
+        let cycles = the_cycles_of(&the_two_cycles());
+        assert_eq!(cycles.len(), 2, "los dos ciclos: {:?}", cycles);
+        for cycle in &cycles {
+            assert!(
+                cycle.relations.len() >= 2,
+                "un ciclo tiene al menos dos relaciones: {:?}",
+                cycle
+            );
+            assert!(
+                !cycle.subjects.is_empty(),
+                "y dice a quien le llega: {:?}",
+                cycle
+            );
+        }
+    }
+
+    /// Una dependencia de uno consigo mismo es un ciclo.
+    #[test]
+    fn a_self_dependency_is_a_cycle() {
+        let relations = vec![depends_on(&artefact(), &artefact())];
+        let cycles = the_cycles_of(&relations);
+        assert_eq!(cycles.len(), 1, "la vuelta a si mismo: {:?}", cycles);
+    }
+
+    /// Solo se declaran los ciclos que la hipotetica INTRODUCE.
+    ///
+    /// Un ciclo que ya estaba en el mundo real no es culpa de la
+    /// simulacion, y declararlo seria echarle la culpa a la hipotetica.
+    #[test]
+    fn only_the_cycles_that_the_hypothesis_introduces_are_declared() {
+        let mut relations = the_two_cycles();
+        // La hipotetica anade una relacion que NO cierra ningun ciclo.
+        let added = depends_on(&artefact(), &other_component());
+        let hypothetical = vec![added.identity()];
+        relations.push(added);
+
+        assert!(
+            the_cycles_introduced_by(&relations, &hypothetical).is_empty(),
+            "los ciclos del mundo real no los introduce la hipotetica"
+        );
+    }
+
+    /// Y un ciclo que la hipotetica CIERRA si se declara.
+    #[test]
+    fn the_cycle_that_the_hypothesis_closes_is_declared() {
+        let mut relations = the_chain();
+        let added = depends_on(&other_component(), &artefact());
+        let hypothetical = vec![added.identity()];
+        relations.push(added);
+
+        let cycles = the_cycles_introduced_by(&relations, &hypothetical);
+        assert_eq!(
+            cycles.len(),
+            1,
+            "la vuelta que cierra la hipotetica: {:?}",
+            cycles
+        );
+    }
+
+    /// La misma relacion dicha dos veces es UN duplicado, y la que repite
+    /// lo que ya esta en el mundo tambien.
+    #[test]
+    fn the_duplicates_are_declared() {
+        let observed = vec![depends_on(&artefact(), &component())];
+        let added = vec![
+            depends_on(&artefact(), &other_component()),
+            depends_on(&artefact(), &other_component()),
+            depends_on(&artefact(), &component()),
+        ];
+
+        let duplicates = the_duplicates_of(&added, &observed);
+        assert_eq!(duplicates.len(), 2, "los dos duplicados: {duplicates:?}");
+        assert!(
+            duplicates.contains(&depends_on(&artefact(), &other_component()).identity()),
+            "la relacion repetida: {duplicates:?}"
+        );
+        assert!(
+            duplicates.contains(&depends_on(&artefact(), &component()).identity()),
+            "y la que ya estaba en el mundo: {duplicates:?}"
+        );
+    }
+
+    /// Una hipotetica que SUSTITUYE no es un duplicado: es otra cosa.
+    #[test]
+    fn a_hypothesis_that_replaces_is_not_a_duplicate() {
+        let observed = vec![depends_on(&artefact(), &component())];
+        let added = vec![depends_on(&artefact(), &other_component())];
+
+        assert!(
+            the_duplicates_of(&added, &observed).is_empty(),
+            "sustituir no es repetir"
+        );
+    }
+
+    /// Anadir y sustituir la misma relacion a la vez es una
+    /// contradiccion.
+    #[test]
+    fn the_contradictions_are_declared() {
+        let added = vec![depends_on(&artefact(), &other_component())];
+        let removed = vec![depends_on(&artefact(), &other_component())];
+
+        assert_eq!(
+            the_contradictions_of(&added, &removed),
+            vec![depends_on(&artefact(), &other_component()).identity()],
+            "la contradiccion se declara"
+        );
+    }
+
+    /// Las relaciones normalizadas no tienen duplicados, y de dos
+    /// relaciones con la misma identidad gana la que lleva la evidencia
+    /// MAS PEQUENA.
+    #[test]
+    fn the_normalized_relations_have_no_duplicates() {
+        let first = depends_on(&artefact(), &component()).with_evidence("evd-2");
+        let second = depends_on(&artefact(), &component()).with_evidence("evd-1");
+
+        let normalized = normalize_relations(&[first.clone(), second.clone()]);
+
+        assert_eq!(
+            normalized.len(),
+            1,
+            "la misma relacion es una: {normalized:?}"
+        );
+        assert_eq!(
+            normalized[0].evidence,
+            Some("evd-1".to_string()),
+            "y gana la evidencia mas pequena: {normalized:?}"
+        );
+    }
+
+    /// Y el orden de las relaciones normalizadas no depende del orden de
+    /// entrada.
+    #[test]
+    fn the_normalized_relations_do_not_depend_on_the_order() {
+        let one = depends_on(&artefact(), &component());
+        let other = depends_on(&component(), &other_component());
+
+        assert_eq!(
+            normalize_relations(&[one.clone(), other.clone()]),
+            normalize_relations(&[other, one]),
+            "el orden de entrada no cambia el resultado"
+        );
+    }
+
+    /// El manifiesto canonico no depende del orden en que se leyo.
+    #[test]
+    fn the_manifest_does_not_depend_on_the_order_of_the_reads() {
+        let mut first = ReadSet::empty();
+        first.read(ReadStamp::relation("depends_on|a|b", "evd-1"));
+        first.read(ReadStamp::evidence("evd-1", "sha256:aaa"));
+
+        let mut second = ReadSet::empty();
+        second.read(ReadStamp::evidence("evd-1", "sha256:aaa"));
+        second.read(ReadStamp::relation("depends_on|a|b", "evd-1"));
+
+        assert_eq!(first.manifest(), second.manifest());
+        assert_eq!(first.fingerprint(), second.fingerprint());
+    }
 }

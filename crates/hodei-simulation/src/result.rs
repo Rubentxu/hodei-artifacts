@@ -526,7 +526,7 @@ fn the_conflicts_of(
     let hypothetical: Vec<String> = added.iter().map(RelationFact::identity).collect();
 
     let mut conflicts: Vec<Conflict> = Vec::new();
-    for cycle in compare::the_cycles_of(overlay, &hypothetical) {
+    for cycle in compare::the_cycles_introduced_by(overlay, &hypothetical) {
         conflicts.push(Conflict {
             kind: ConflictKind::Cycle,
             detail: format!(
