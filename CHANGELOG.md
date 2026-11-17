@@ -51,6 +51,22 @@ Cambios que todavia no estan en una release. El formato sigue
 
 ### Added
 
+- La **investigación contrafactual** (`hodei-counterfactual`, informe
+  `CounterfactualReport` versión `1.0.0`): explicar por qué algo fue bloqueado
+  y qué habría pasado de otro modo, **sin ejecutar nada**. Compone las dos
+  autoridades vigentes —la investigación (M8) y la simulación (M7)— sin crear
+  una tercera verdad: cada enunciado del informe lleva su **etiqueta
+  epistémica** (`verified`, `observed`, `hypothetical`, `inference`,
+  `recommendation`, `unknown`) y su **origen** (`deterministic-verifier`,
+  `model`, `policy-engine`, `counterfactual`), de modo que una recomendación
+  nunca se atribuye al motor de políticas y una hipótesis nunca se publica
+  como hecho. El **sello** de las dos mitades debe ser coherente: si los
+  manifiestos de lectura discrepan en una fuente compartida, el informe se
+  rechaza. Los rechazos —hipótesis de otra cuenta, caducada, base obsoleto,
+  sello incoherente— son **cerrados y estériles**: no filtran nombres ni
+  sujetos y no gastan lecturas, porque la simulación se comprueba antes de
+  investigar. Nada se escribe: el grafo y la posición declarada del ledger
+  quedan iguales antes y después del contrafáctico.
 - El **resultado versionado de una simulación** (`SimulationResult`, versión
   `1.0.0`): el contrato de *fuera* de la simulación. Separa **lo observado**
   de **lo hipotético** —una hipótesis no se publica como hecho del grafo—,
