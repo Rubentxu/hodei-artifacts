@@ -16,15 +16,12 @@ import type {
   NpmPackageMetadata,
   NpmPublishRequest,
   NpmPublishResponse,
-  PythonPackageUpload,
   TokenRequest,
   TokenResponse,
   TokenInfo,
   CreateUserCommand,
   CreateUserResponse,
-  UpdateUserAttributesCommand,
   UpdateUserAttributesResponse,
-  CreatePolicyCommand,
   CreatePolicyResponse,
   UploadResponse,
   Error as ApiError,
@@ -33,11 +30,9 @@ import type {
   SearchArtifactsParams,
   DownloadMavenParams,
   GetNpmPackageParams,
-  PublishNpmBody,
   DownloadNpmTarballParams,
   GetPypiSimpleParams,
   DownloadPypiPackageParams,
-  UploadPypiBody,
   ListTokensParams,
   TokenParams,
   ListUsersParams,
@@ -46,12 +41,10 @@ import type {
   ListPoliciesParams,
   CreatePolicyBody,
   PackageType,
-  ArtifactStatus,
 } from '@/shared/types/openapi-generated.types';
 
 // ===== CONFIGURACIÓN DEL CLIENTE =====
 const API_BASE_URL = 'http://localhost:8080/v2';
-const API_VERSION = 'v2.1.0';
 
 // Interfaz para el cliente API
 export interface OpenAPIClient {
@@ -527,7 +520,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
   }
 
   async publishNpmPackage(
-    params: GetNpmPackageParams,
+    _params: GetNpmPackageParams,
     body: NpmPublishRequest
   ): Promise<NpmPublishResponse> {
     await this.mockDelay(400);
@@ -629,7 +622,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   // ===== AUTHENTICATION =====
 
-  async listTokens(params?: ListTokensParams): Promise<TokenResponse[]> {
+  async listTokens(_params?: ListTokensParams): Promise<TokenResponse[]> {
     await this.mockDelay(200);
 
     return [
@@ -702,7 +695,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
 
   // ===== USERS =====
 
-  async listUsers(params?: ListUsersParams): Promise<CreateUserResponse[]> {
+  async listUsers(_params?: ListUsersParams): Promise<CreateUserResponse[]> {
     await this.mockDelay(250);
 
     return [
@@ -746,7 +739,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
   }
 
   async getUserAttributes(
-    params: UserAttributesParams
+    _params: UserAttributesParams
   ): Promise<Record<string, any>> {
     await this.mockDelay(200);
 
@@ -776,7 +769,7 @@ class OpenAPIClientImpl implements OpenAPIClient {
   // ===== POLICIES =====
 
   async listPolicies(
-    params?: ListPoliciesParams
+    _params?: ListPoliciesParams
   ): Promise<CreatePolicyResponse[]> {
     await this.mockDelay(200);
 

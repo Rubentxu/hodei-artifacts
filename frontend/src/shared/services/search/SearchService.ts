@@ -242,11 +242,3 @@ export class SearchService {
       .slice(0, 5);
   }
 }
-
-/**
- * Puerto (interfaz) para el adaptador de búsqueda
- * Define el contrato que deben implementar los adaptadores de datos
- */
-export interface SearchPort {
-  buscarArtifatos(params: SearchArtifactsParams): Promise<SearchResults>;
-}

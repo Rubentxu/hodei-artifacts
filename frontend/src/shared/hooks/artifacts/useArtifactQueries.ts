@@ -4,10 +4,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
-import type {
-  ArtifactUploadResponse,
-  PresignedUrlResponse,
-} from '@/shared/types/openapi-generated.types';
+import type { PresignedUrlResponse } from '@/shared/types/openapi-generated.types';
 import { useArtifactService } from './useArtifactService';
 import { ARTIFACT_QUERY_KEYS } from './artifactQueryKeys';
 

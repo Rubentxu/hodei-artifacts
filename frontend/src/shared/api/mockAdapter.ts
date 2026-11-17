@@ -2,13 +2,7 @@ import { repositoryServiceMock } from './mock/repositoryService.mock';
 import { searchServiceMock } from './mock/searchService.mock';
 import { authServiceMock } from './mock/authService.mock';
 import { artifactServiceMock } from './mock/artifactService.mock';
-import type {
-  Repository,
-  RepositoryListResponse,
-  SearchResults,
-  PackageResult,
-  SearchQuery,
-} from '@/shared/types/openapi.types';
+import type { SearchQuery } from '@/shared/types/openapi.types';
 
 // Adaptador para mantener compatibilidad con APIs existentes mientras se migran a servicios mock mejorados
 

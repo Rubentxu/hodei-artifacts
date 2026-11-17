@@ -688,7 +688,7 @@ class UserServiceImpl implements UserService {
 class PolicyServiceImpl implements PolicyService {
   async getAll(): Promise<Policy[]> {
     try {
-      const policies = await openAPIClient.listPolicies();
+      await openAPIClient.listPolicies();
       // Por ahora, usar datos mock ya que el endpoint de políticas no está implementado
       const mockPolicies: CreatePolicyResponse[] = [
         {
@@ -745,7 +745,7 @@ class PolicyServiceImpl implements PolicyService {
     }
   }
 
-  async update(id: string, policy: UpdatePolicyData): Promise<Policy> {
+  async update(_id: string, policy: UpdatePolicyData): Promise<Policy> {
     try {
       // Nota: El API actual no tiene un endpoint PUT para políticas
       // Esto es una simulación que crea una nueva política

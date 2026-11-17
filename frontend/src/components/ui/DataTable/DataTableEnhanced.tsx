@@ -5,15 +5,11 @@ import {
   Search,
   Filter,
   Download,
-  Eye,
-  Edit,
-  Trash2,
   MoreVertical,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card } from '@/components/ui/Card';
-import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/shared/utils/cn';
 
 export interface DataTableColumn<T> {

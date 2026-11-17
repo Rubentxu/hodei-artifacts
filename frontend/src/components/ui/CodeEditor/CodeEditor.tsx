@@ -39,7 +39,8 @@ const CodeEditor = ({
     highlight(code, languages[language], language)
       .split('\n')
       .map(
-        (line, i) => `<span class='editor-line-number'>${i + 1}</span>${line}`
+        (line: string, i: number) =>
+          `<span class='editor-line-number'>${i + 1}</span>${line}`
       )
       .join('\n');
 
@@ -57,7 +58,7 @@ const CodeEditor = ({
           ...style,
         }}
       />
-      <style jsx>{`
+      <style>{`
         .code-editor-container {
           position: relative;
           min-height: 100px;

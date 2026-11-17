@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { ApiResponse } from './types';
+import type { ApiResponse } from '@/shared/types';
 
 export interface SearchFilters {
   query?: string;

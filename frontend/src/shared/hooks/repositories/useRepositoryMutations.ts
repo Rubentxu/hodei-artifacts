@@ -74,7 +74,7 @@ export function useUpdateRepository() {
         `El repositorio "${updatedRepository.name}" se ha actualizado exitosamente`
       );
     },
-    onError: (error, variables) => {
+    onError: (error, _variables) => {
       showError('Error al actualizar repositorio', error.message);
     },
   });

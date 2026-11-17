@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -15,6 +15,8 @@ import type {
   UpdateRepository,
   RepositoryType,
 } from '@/features/repositories/types/repository.types';
+
+type RepositoryFormValues = NewRepository & UpdateRepository;
 
 interface RepositoryFormProps {
   repository?: Repository;
@@ -33,7 +35,7 @@ const RepositoryForm = ({
     reset,
     control,
     formState: { errors },
-  } = useForm<NewRepository | UpdateRepository>({
+  } = useForm<RepositoryFormValues>({
     defaultValues: repository ?? {
       name: '',
       description: '',

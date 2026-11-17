@@ -28,7 +28,7 @@ export class ArtifactService {
   async uploadArtifact(
     file: File,
     metadata: Record<string, any>,
-    repositoryId?: string
+    _repositoryId?: string
   ): Promise<ArtifactUploadResponse> {
     if (!file) {
       throw new Error('File is required');
@@ -141,9 +141,6 @@ export class ArtifactService {
       '.zip', // PyPI
     ];
 
-    const extension = file.name
-      .toLowerCase()
-      .substring(file.name.lastIndexOf('.'));
     if (!allowedExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
       errors.push(
         `File type not allowed. Valid extensions: ${allowedExtensions.join(', ')}`

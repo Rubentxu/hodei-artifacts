@@ -8,7 +8,7 @@ export const toast = {
   success: (message: string) => {
     console.log(`✅ SUCCESS: ${message}`);
     // También podemos usar alert para demostraciones visuales
-    if (typeof window !== 'undefined' && window.alert) {
+    if (typeof window !== 'undefined') {
       // No usar alert en producción, solo para demo
       setTimeout(() => alert(`✅ Success: ${message}`), 100);
     }
@@ -16,7 +16,7 @@ export const toast = {
 
   error: (message: string) => {
     console.error(`❌ ERROR: ${message}`);
-    if (typeof window !== 'undefined' && window.alert) {
+    if (typeof window !== 'undefined') {
       setTimeout(() => alert(`❌ Error: ${message}`), 100);
     }
   },
@@ -29,17 +29,3 @@ export const toast = {
     console.warn(`⚠️ WARNING: ${message}`);
   },
 };
-
-// Hook simple que no hace nada pero mantiene la interfaz
-export function useNotifications() {
-  return {
-    notifications: [],
-    removeNotification: () => {},
-    clear: () => {},
-  };
-}
-
-// Componente vacío para mantener compatibilidad
-export function NotificationContainer(): null {
-  return null;
-}

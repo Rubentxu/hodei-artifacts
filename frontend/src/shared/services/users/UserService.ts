@@ -190,7 +190,7 @@ export class UserService {
   /**
    * Check if email is in use (simulation)
    */
-  async isEmailInUse(email: string): Promise<boolean> {
+  async isEmailInUse(_email: string): Promise<boolean> {
     // In a real implementation, this would query the database
     // For now, we simulate it's not in use
     return false;
@@ -199,7 +199,7 @@ export class UserService {
   /**
    * Check if username is in use (simulation)
    */
-  async isUsernameInUse(username: string): Promise<boolean> {
+  async isUsernameInUse(_username: string): Promise<boolean> {
     // In a real implementation, this would query the database
     // For now, we simulate it's not in use
     return false;
