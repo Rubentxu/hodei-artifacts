@@ -97,6 +97,8 @@ pipeline {
                         "--test reactive_contract",
                         "--test simulation_contract",
                         "--test base_contract",
+                        "--test hsp92_result_contract",
+                        "--test hsp92_conformance",
                         "--test m7_uat",
                         "--test investigator_contract",
                         "--test deterministic_contract",
@@ -177,6 +179,7 @@ pipeline {
                         "--test hsp88_investigation_query",
                         "--test hsp89_investigation_freshness",
                         "--test freshness_storage",
+                        "--test hsp92_surreal_conformance",
                     ).joinToString(" ")
                 )
             }

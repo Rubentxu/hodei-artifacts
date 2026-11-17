@@ -33,6 +33,21 @@ use crate::diff::{DecisionChange, SimulationDiff, StructuralDiff};
 use crate::fork::SimulationFork;
 use crate::hypothetical::RelationFact;
 use crate::ports::{DecisionEvaluator, SimulationGraph};
+use crate::result::SimulationResult;
+
+/// La simulacion hecha: el diff y lo que se leyo.
+///
+/// Lo que se leyo no va en el diff --el diff habla de lo que aparece y
+/// de lo que desaparece-- pero si va en el resultado, que separa lo
+/// observado de lo hipotetico.
+struct TheSimulation {
+    /// El diff de la simulacion.
+    diff: SimulationDiff,
+    /// Las relaciones que se leyeron del grafo real.
+    observed: Vec<RelationFact>,
+    /// Cuantas relaciones tiene la cuenta: lo que dice la cobertura.
+    relations_in_the_account: usize,
+}
 
 /// Por que no se pudo simular.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +162,39 @@ impl SimulationService {
         fork: &SimulationFork,
         now: DateTime<Utc>,
     ) -> Result<SimulationDiff, SimulationError> {
+        Ok(self.the_simulation(fork, now).await?.diff)
+    }
+
+    /// Simula y devuelve el **resultado**: el contrato versionado.
+    ///
+    /// El resultado es el diff mas lo que el diff no dice: que se ha
+    /// observado, que se ha hipotetizado, que politicas intervinieron,
+    /// que se ha cubierto y que conflictos tiene el escenario. Y viaja
+    /// sin objetos de politica: solo con sus sellos.
+    pub async fn simulate_result(
+        &self,
+        fork: &SimulationFork,
+        now: DateTime<Utc>,
+    ) -> Result<SimulationResult, SimulationError> {
+        let simulation = self.the_simulation(fork, now).await?;
+        Ok(SimulationResult::of(
+            &simulation.diff,
+            fork,
+            &simulation.observed,
+            simulation.relations_in_the_account,
+        ))
+    }
+
+    /// La simulacion hecha: el diff y lo que se leyo.
+    ///
+    /// El diff no lleva las relaciones observadas --solo las que aparecen
+    /// y las que desaparecen-- y el resultado si las lleva: por eso el
+    /// recorrido se queda con las dos cosas.
+    async fn the_simulation(
+        &self,
+        fork: &SimulationFork,
+        now: DateTime<Utc>,
+    ) -> Result<TheSimulation, SimulationError> {
         // 1. Los limites, antes de nada.
         fork.check_the_limits(now).map_err(|error| match error {
             crate::SimulationError::TooLarge(message) => SimulationError::TooLarge(message),
@@ -371,10 +419,14 @@ impl SimulationService {
             });
         }
 
-        Ok(SimulationDiff {
-            structural,
-            decisions,
-            base,
+        Ok(TheSimulation {
+            diff: SimulationDiff {
+                structural,
+                decisions,
+                base,
+            },
+            observed: real,
+            relations_in_the_account: relations_before,
         })
     }
 

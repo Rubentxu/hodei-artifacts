@@ -7,8 +7,10 @@
 //! VERSION del grafo que lee: una simulacion que no dice sobre que
 //! generacion del mundo se calculo no se puede auditar.
 
+pub mod conformance;
 pub mod evaluator;
 
+pub use conformance::SurrealConformance;
 pub use evaluator::CapsuleDecisionEvaluator;
 
 use std::sync::Arc;

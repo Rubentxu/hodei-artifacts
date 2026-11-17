@@ -58,19 +58,42 @@
 //! Una simulacion es un recurso, y un recurso sin limite se come la
 //! maquina. Los limites son **declarados** --cuantos hechos, cuantos
 //! sujetos, cuanto vive-- y se comprueban **antes** de hacer nada.
+//!
+//! # El contrato versionado
+//!
+//! El diff es el interior de la simulacion. El **resultado** es el
+//! contrato de fuera: lo que recibe un consumidor, y por eso esta
+//! versionado, separa lo observado de lo hipotetico, dice que se ha
+//! cubierto y que no, y declara los conflictos del escenario en vez de
+//! esconderlos.
+//!
+//! Y el contrato viaja **sin objetos de politica**: lo que viaja es el
+//! sello de la politica --su identificador y su version--, porque un
+//! contrato que arrastra el objeto entero deja de ser portable.
 
 #![forbid(unsafe_code)]
 
 pub mod base;
+pub mod compare;
+pub mod conformance;
 pub mod diff;
 pub mod fork;
 pub mod hypothetical;
+pub mod memory;
 pub mod ports;
+pub mod result;
 pub mod service;
 
 pub use base::{SimulationBase, the_seal_of};
+pub use compare::{CanonicalDiff, normalize_decisions, normalize_relations};
+pub use conformance::{ConformanceReport, ConformanceWorld, Fixture, ScenarioResult, run_suite};
 pub use diff::{DecisionChange, SimulationDiff, StructuralDiff, TheDecision};
 pub use fork::{Checkpoint, SimulationFork, SimulationLimits};
 pub use hypothetical::{Hypothetical, HypotheticalClaim, RelationFact, SimulationTag};
+pub use memory::{InMemoryConformance, InMemoryDecisions, InMemoryGraph};
 pub use ports::{DecisionEvaluator, SimulationGraph};
+pub use result::{
+    BaseStamp, Conflict, ConflictKind, Coverage, EvidenceStamp, Hypothesis, HypothesisKind,
+    ObservedState, Omission, PolicyStamp, SIMULATION_RESULT_VERSION, SimulationResult, SourceStamp,
+};
 pub use service::{SimulationError, SimulationService};
