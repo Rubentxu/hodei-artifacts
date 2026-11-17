@@ -99,6 +99,7 @@ pipeline {
                         "--test base_contract",
                         "--test m7_uat",
                         "--test investigator_contract",
+                        "--test deterministic_contract",
                         "--test m8_uat",
                         "--test hub_contract",
                         "--test m9_uat",
