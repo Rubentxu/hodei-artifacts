@@ -40,14 +40,32 @@ pub struct ExportReport {
     pub withheld: Vec<Withheld>,
     /// Los bytes de blobs que lleva el paquete.
     pub blob_bytes: u64,
+    /// La capsula OCI escrita junto al paquete, o `None` si el firmante
+    /// no estaba configurado. El paquete se escribe siempre: la capsula
+    /// es lo que se puede dejar de producir, nunca lo que se corrompe.
+    pub capsule: Option<CapsuleReport>,
+}
+
+/// La capsula de un export: donde quedo, que digest tiene y con que
+/// clave se firmo su manifiesto.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CapsuleReport {
+    pub layout: std::path::PathBuf,
+    pub image_digest: String,
+    pub signer: String,
 }
 
 /// Exporta el repositorio proxy `repository` de `account` como paquete en
 /// `to`.
 ///
+/// Con `signer` escrito además como capsula OCI bajo `to/oci` (véase
+/// [`super::capsule`]); sin signer el paquete se exporta igual y la
+/// capsula brilla por su ausencia explicita.
+///
 /// La cuenta opera como principal de sus propias lecturas: la exportacion
 /// es una operacion de operador, y el decisor que se inyecte es el que
 /// dice si puede ver el repositorio.
+#[allow(clippy::too_many_arguments)]
 pub async fn export(
     reader: &dyn CatalogReader,
     ledger: &dyn ProvenanceLedger,
@@ -56,6 +74,7 @@ pub async fn export(
     account: &str,
     repository: &str,
     to: &Path,
+    signer: Option<&crate::openpgp::MetadataSigner>,
 ) -> Result<ExportReport, BundleError> {
     let descriptor = reader.repository(account, repository).await?;
     if descriptor.mode != RepositoryMode::Proxy {
@@ -213,10 +232,27 @@ pub async fn export(
         ))
     })?;
 
+    // La capsula se escribe **despues** de publicar el paquete: un
+    // firmante que falta o una clave rota no pueden dejar a medias lo
+    // que ya es verificable por si mismo. Sin firmante no hay capsula,
+    // y el export sigue siendo un export.
+    let capsule = match signer {
+        Some(signer) => {
+            let report = super::capsule::export_capsule(to, &to.join("oci"), signer)?;
+            Some(CapsuleReport {
+                layout: report.layout_dir,
+                image_digest: report.image_digest,
+                signer: signer.fingerprint_hex(),
+            })
+        }
+        None => None,
+    };
+
     Ok(ExportReport {
         path: to.to_path_buf(),
         exported: manifest.assets.len(),
         withheld: manifest.withheld.clone(),
         blob_bytes: manifest.blob_bytes(),
+        capsule,
     })
 }

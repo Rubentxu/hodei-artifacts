@@ -34,6 +34,12 @@ pub enum OpenPgpError {
     NotASecretKey,
     #[error("the signature could not be computed: {0}")]
     Signing(String),
+    #[error("the armored text is not a readable OpenPGP signature")]
+    NotASignature,
+    #[error("the armored text is not a readable OpenPGP public key")]
+    NotAPublicKey,
+    #[error("the signature does not hold over these bytes with this key: {0}")]
+    Verification(String),
 }
 
 /// La clave con la que el hub firma la metadata de los repositorios de
@@ -130,6 +136,24 @@ impl MetadataSigner {
             .to_armored_string(pgp::composed::ArmorOptions::default())
             .map(String::into_bytes)
             .map_err(|error| OpenPgpError::Signing(error.to_string()))
+    }
+    /// Comprueba una firma separada en blindado sobre los bytes exactos
+    /// que se le den, contra una clave publica en blindado. Es la cara
+    /// inversa de `sign_detached`, y la necesita quien recibe un paquete
+    /// por aire: allà no hay `gpgv`, pero si los mismos tipos.
+    pub fn verify_detached(
+        data: &[u8],
+        signature_armor: &[u8],
+        public_key_asc: &str,
+    ) -> Result<(), OpenPgpError> {
+        let (signature, _) =
+            DetachedSignature::from_armor_single(std::io::Cursor::new(signature_armor.to_vec()))
+                .map_err(|_| OpenPgpError::NotASignature)?;
+        let (key, _) = SignedPublicKey::from_armor_single(std::io::Cursor::new(public_key_asc))
+            .map_err(|_| OpenPgpError::NotAPublicKey)?;
+        signature
+            .verify(&key.primary_key, data)
+            .map_err(|error| OpenPgpError::Verification(error.to_string()))
     }
 }
 

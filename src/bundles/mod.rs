@@ -18,10 +18,12 @@
 //! - Un paquete nunca lleva credenciales: el manifiesto no guarda URLs de
 //!   configuracion, y los recibos ya nacen sin secretos.
 
+pub mod capsule;
 pub mod export;
 pub mod import;
 pub mod manifest;
 
+pub use capsule::{CapsuleExport, CapsuleVerification, TrustState, export_capsule, verify_capsule};
 pub use export::{ExportReport, export};
 pub use import::{ImportReport, Mapping, import, read_manifest};
 pub use manifest::{
