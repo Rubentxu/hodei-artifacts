@@ -574,12 +574,16 @@ async fn the_capabilities_say_what_can_be_created() {
     );
     assert_eq!(of("go")["modes"], json!(["hosted", "proxy"]));
     assert_eq!(of("nuget")["modes"], json!(["hosted", "proxy"]));
-    for unserved in ["helm", "apt", "rpm"] {
-        assert!(
-            formats.iter().all(|format| format["name"] != unserved),
-            "a format that this release does not serve is not offered: {unserved}"
-        );
-    }
+    assert_eq!(
+        of("apt")["modes"],
+        json!(["hosted"]),
+        "the distro client installs from what this hub publishes"
+    );
+    assert_eq!(of("rpm")["modes"], json!(["hosted"]));
+    assert!(
+        formats.iter().all(|format| format["name"] != "helm"),
+        "a format that this release does not serve is not offered: helm"
+    );
 }
 
 #[tokio::test]

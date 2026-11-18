@@ -126,6 +126,9 @@ pipeline {
                         "--test hsp93_counterfactual",
                         "--test hsp116_parity_suite",
                         "--test hsp118_bundle_contract",
+                        "--test hsp123_migration_pure",
+                        "--test hsp124_quota_pure",
+                        "--test hsp126_capsule_oci",
                     ).joinToString(" ")
                 )
             }
@@ -229,6 +232,18 @@ pipeline {
                         "--test hsp116_s3_bench",
                         "--test hsp119_cargo_e2e",
                         "--test hsp119_cargo_cli",
+                        "--test hsp120_dotnet_client",
+                        "--test hsp120_nuget_e2e",
+                        "--test hsp121_go_client",
+                        "--test hsp121_go_e2e",
+                        "--test hsp121_helm_oci",
+                        "--test hsp122_apt_client",
+                        "--test hsp122_apt_e2e",
+                        "--test hsp122_yum_client",
+                        "--test hsp122_yum_e2e",
+                        "--test hsp123_migration_e2e",
+                        "--test hsp124_quota_e2e",
+                        "--test hsp125_replication_spike",
                     ).joinToString(" ")
                 )
                 sh(
