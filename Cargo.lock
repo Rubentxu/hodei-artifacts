@@ -3325,6 +3325,9 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
  "axum",
  "base64 0.22.1",
  "bytes",
@@ -3342,6 +3345,7 @@ dependencies = [
  "hodei-evidence-storage",
  "hodei-hrn",
  "hodei-hub",
+ "hodei-hub-s3",
  "hodei-iam",
  "hodei-investigator",
  "hodei-investigator-storage",

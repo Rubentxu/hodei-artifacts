@@ -63,3 +63,22 @@ cas_path = "./data/hodei.cas"
 # is in progress its file is locked by the process that writes it, and a
 # locked file is not removed.
 staging_max_age_secs = 3600
+# Which store the content actually lives in: "filesystem" (the default,
+# the directory above) or "s3" (the table below). There is no fallback
+# between them: a deployment that chooses s3 never reads nor writes
+# cas_path, and an object store that is configured but unreachable stops
+# the boot instead of quietly keeping its content somewhere else. A
+# production deployment on S3 says it here, on purpose.
+# backend = "s3"
+# The object store, required for backend = "s3". Credentials are never
+# here: they come from the SDK's own chain -- environment, shared config,
+# IAM role -- so no key can end up in a TOML file, a log line or an audit
+# record. The bucket is a resource of the deployment, and the identity
+# that uses it is the one the platform gives the service, with the
+# minimum policy that lets it read and write that bucket and nothing else.
+# [content.s3]
+# bucket = "hodei-content"
+# region = "eu-west-1"
+# tls defaults to true, and a real object store over tls = false would
+# carry the SDK's credentials in the clear.
+# tls = true

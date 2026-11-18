@@ -233,10 +233,64 @@ pub async fn bootstrap(
         // The content store comes first: the probe over it is what the
         // catalog needs to be able to tell a healthy record from a
         // broken one.
-        let content = Arc::new(
-            FileBlobStore::new(&config.content.cas_path)
-                .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
-        );
+        //
+        // Which store it is depends on the deployment, not on the
+        // request: the catalog rows name a digest, and a digest has to
+        // live in one place. The chosen backend is the only one ever
+        // consulted -- an S3 deployment never reads nor writes
+        // `cas_path` -- and a backend that is configured but
+        // unreachable stops the boot instead of falling back to the
+        // directory, because content that silently lives in two places
+        // is content the GC deletes as garbage and the health probe
+        // reports as fine.
+        let chosen = the_content_store(config).await?;
+        let content: Arc<dyn hodei_hub::blob::BlobStore> = chosen.as_blob();
+        // The staging that an interrupted upload leaves behind is an
+        // artifact of the directory backend: the object store has no
+        // visible-but-unpublished file, so there is nothing to clean and
+        // no reason to look at `cas_path` at all.
+        //
+        // The staging of a write **in progress** is not touched: the file
+        // is locked by the process that is writing it, and a locked file
+        // is not removed. The age is only the margin of prudence, not the
+        // criterion: an old file of an upload that stopped writing is
+        // still a live upload, and taking it away breaks it.
+        //
+        // And a staging that could not be removed is not a reason to not
+        // start: it is a problem of disk, and the service has work to do.
+        if let Some(directory) = chosen.filesystem_staging() {
+            match directory
+                .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs))
+            {
+                Ok(cleanup) => {
+                    if cleanup.removed > 0 {
+                        warn!(
+                            removed = cleanup.removed,
+                            "the staging of interrupted uploads was removed at the boot"
+                        );
+                    }
+                    if cleanup.alive > 0 {
+                        info!(
+                            alive = cleanup.alive,
+                            "the staging of the uploads in progress was left alone at the boot"
+                        );
+                    }
+                    for (path, reason) in &cleanup.failed {
+                        warn!(
+                            %reason,
+                            path = %path.display(),
+                            "the staging of an interrupted upload could not be removed at the boot"
+                        );
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        %error,
+                        "the staging could not be read at the boot; the interrupted uploads stay"
+                    );
+                }
+            }
+        }
         // The catalog does not decide again what the HTTP boundary already
         // decided with Cedar. Its queries are already scoped to the
         // verified account, so the isolation between accounts does not
@@ -274,61 +328,17 @@ pub async fn bootstrap(
         // search promises is what there is.
         let searcher: Arc<dyn hodei_catalog::CatalogSearch> = catalog.clone();
         let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
-        // The staging that an interrupted upload leaves behind is cleaned
-        // here, at the boot. It is never published -- the catalog write
-        // never happened -- but it is a file, and a process that dies
-        // mid-upload leaves one behind every time.
-        //
-        // The staging of a write **in progress** is not touched: the file
-        // is locked by the process that is writing it, and a locked file
-        // is not removed. The age is only the margin of prudence, not the
-        // criterion: an old file of an upload that stopped writing is
-        // still a live upload, and taking it away breaks it.
-        //
-        // And a staging that could not be removed is not a reason to not
-        // start: it is a problem of disk, and the service has work to do.
-        match content
-            .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs))
-        {
-            Ok(cleanup) => {
-                if cleanup.removed > 0 {
-                    warn!(
-                        removed = cleanup.removed,
-                        "the staging of interrupted uploads was removed at the boot"
-                    );
-                }
-                if cleanup.alive > 0 {
-                    info!(
-                        alive = cleanup.alive,
-                        "the staging of the uploads in progress was left alone at the boot"
-                    );
-                }
-                for (path, reason) in &cleanup.failed {
-                    warn!(
-                        %reason,
-                        path = %path.display(),
-                        "the staging of an interrupted upload could not be removed at the boot"
-                    );
-                }
-            }
-            Err(error) => {
-                warn!(
-                    %error,
-                    "the staging could not be read at the boot; the interrupted uploads stay"
-                );
-            }
-        }
         // The garbage collection reads the roots from the same catalog and
         // reclaims from the same store; it is the only thing that deletes
         // bytes. If the store cannot reclaim, the surface stays closed.
         let scrub = crate::recovery::Scrubber::new(
             ledger.clone(),
-            content.clone() as Arc<dyn hodei_hub::BlobStore>,
+            content.clone(),
             Duration::from_secs(config.content.gc_grace_secs),
         );
         let gc = crate::gc::GcService::new(
             ledger,
-            content.clone() as Arc<dyn hodei_hub::BlobStore>,
+            content.clone(),
             Duration::from_secs(config.content.gc_grace_secs),
         );
         // The promotion: the decisions live in the same engine as the
@@ -438,6 +448,154 @@ pub async fn bootstrap(
     );
 
     Ok(app_state)
+}
+
+/// The store of content the deployment chose, with the operations that
+/// only one of the two backends has.
+///
+/// The catalog rows name a digest, and a digest has to live in exactly one
+/// place: both consumers of the bytes --the probe and the garbage
+/// collection-- must not decide again what the configuration already
+/// decided. The shared part of the two backends is the `Arc<dyn
+/// BlobStore>`; the staging of an interrupted upload is an artifact of
+/// the directory implementation and has no meaning over an object store,
+/// so it travels discriminated instead of hidden behind the trait.
+enum ChosenContentStore {
+    Filesystem(Arc<FileBlobStore>),
+    S3(Arc<hodei_hub_s3::S3BlobStore>),
+}
+
+impl ChosenContentStore {
+    /// The store every consumer --probe, scrub, GC, raw and OCI-- is
+    /// given. It is the only view of the content the service ever uses.
+    fn as_blob(&self) -> Arc<dyn hodei_hub::blob::BlobStore> {
+        match self {
+            Self::Filesystem(store) => store.clone(),
+            Self::S3(store) => store.clone(),
+        }
+    }
+
+    /// The boot-time cleanup of the directory staging, if the chosen
+    /// backend is the directory. There is nothing to clean over S3: a
+    /// multipart upload that was never completed is not visible as an
+    /// object, and its orphaned parts are the object store's own problem
+    /// (and its own bill), which the bucket's lifecycle rules address.
+    fn filesystem_staging(&self) -> Option<&FileBlobStore> {
+        match self {
+            Self::Filesystem(store) => Some(store.as_ref()),
+            Self::S3(_) => None,
+        }
+    }
+}
+
+/// Build the store of content the configuration names.
+///
+/// There is no fallback between backends, in either direction. The table
+/// was already validated by `ContentConfig::validate`; what this adds is
+/// the part that can only be done by touching the infrastructure: the
+/// bucket must answer before the service says it is up, because content
+/// that silently lives in two places is content the GC deletes as
+/// garbage and the health probe reports as fine.
+///
+/// Credentials are never read from the configuration: the SDK's own
+/// provider chain --environment, shared config, IAM role-- is the only
+/// source, so no key can end up in a TOML file, a log line or an audit
+/// record. The default chain has no timeout of its own and a deployment
+/// without a bucket policy could hang the boot inside a retry loop, so
+/// the check itself carries one bounded deadline; a bucket that does not
+/// answer in time is an unreachable bucket, and unreachable is an error.
+async fn the_content_store(config: &AppConfig) -> Result<ChosenContentStore, BootstrapError> {
+    use crate::config::ContentBackend;
+    match config.content.backend {
+        ContentBackend::Filesystem => {
+            let store = FileBlobStore::new(&config.content.cas_path)
+                .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+            Ok(ChosenContentStore::Filesystem(Arc::new(store)))
+        }
+        ContentBackend::S3 => {
+            let table = config
+                .content
+                .s3
+                .as_ref()
+                // `ContentConfig::validate` refuses this combination
+                // already; if we are here with no table, something
+                // bypassed the validation, and the honest answer is the
+                // same explicit error, not a panic.
+                .ok_or_else(|| {
+                    BootstrapError::Security(
+                        "backend = \"s3\" requires the [content.s3] table with a bucket; \
+                         there is no fallback to the filesystem"
+                            .to_string(),
+                    )
+                })?;
+            let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+            if let Some(region) = table.region.as_deref() {
+                loader = loader.region(aws_config::Region::new(region.to_string()));
+            }
+            let sdk = loader.load().await;
+            let scheme = if table.tls { "https" } else { "http" };
+            let mut builder = aws_sdk_s3::config::Builder::from(&sdk)
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest());
+            if let Some(endpoint) = table.endpoint.as_deref() {
+                // The endpoint may be given whole --with its scheme--
+                // or as a bare `host[:port]`, which is what the table
+                // documents. The scheme of `tls` only prefixes what
+                // does not already have one; an operator who wrote
+                // https:// and tls = false said the more specific
+                // thing, and that is what is obeyed.
+                let url = if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+                    endpoint.to_string()
+                } else {
+                    format!("{scheme}://{endpoint}")
+                };
+                builder = builder.endpoint_url(url);
+                // The stores that are not AWS S3 --MinIO, LocalStack,
+                // Ceph-- expect the bucket in the path, not in the DNS
+                // name of the host. Against real AWS this is harmless
+                // only for compatibility; the configuration declares the
+                // endpoint precisely when it is not AWS, and an operator
+                // pointing a custom endpoint expects path style.
+                builder = builder.force_path_style(true);
+            }
+            let client = aws_sdk_s3::Client::from_conf(builder.build());
+            let store = hodei_hub_s3::S3BlobStore::new(
+                client.clone(),
+                hodei_hub_s3::S3BlobConfig::new(table.bucket.clone()),
+            )
+            .map_err(|error| {
+                BootstrapError::Initialization(format!(
+                    "the content store of bucket {:?} was declared with values it cannot serve: {error:?}",
+                    table.bucket
+                ))
+            })?;
+            // The preflight. `head_bucket` is the cheapest call that
+            // says both "the credentials work" and "the bucket exists".
+            let reachable = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                client.head_bucket().bucket(table.bucket.clone()).send(),
+            )
+            .await;
+            match reachable {
+                Ok(Ok(_response)) => {}
+                // The bucket is there but not ours --403 says that more
+                // often than 404, which is why both are distinguished--:
+                // still an error, never a fallback.
+                Ok(Err(error)) => {
+                    return Err(BootstrapError::Initialization(format!(
+                        "the content bucket {:?} cannot be used: {}",
+                        table.bucket, error
+                    )));
+                }
+                Err(_elapsed) => {
+                    return Err(BootstrapError::Initialization(format!(
+                        "the content bucket {:?} did not answer within 10 seconds",
+                        table.bucket
+                    )));
+                }
+            }
+            Ok(ChosenContentStore::S3(Arc::new(store)))
+        }
+    }
 }
 
 /// Configure the production JWT authenticator and Cedar authorizer when the

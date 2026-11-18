@@ -195,6 +195,71 @@ pub struct ContentConfig {
     /// Default: 86400 seconds (one day).
     #[serde(default = "the_default_gc_grace_secs")]
     pub gc_grace_secs: u64,
+    /// Where the content actually lives: the local directory named by
+    /// `cas_path`, or an S3-compatible object store.
+    ///
+    /// There is **no fallback** between them. A deployment that chooses
+    /// S3 never writes a byte to `cas_path`: if the object store is not
+    /// reachable, the service refuses to boot rather than quietly keep
+    /// its content somewhere else. Choosing one backend and silently
+    /// using the other would split the content in two places, and a blob
+    /// that lives in the wrong one is a blob the GC will delete as
+    /// garbage and the catalog will report as healthy.
+    ///
+    /// Default: `filesystem`.
+    #[serde(default)]
+    pub backend: ContentBackend,
+    /// How to reach the object store when the backend is `s3`.
+    ///
+    /// Ignored -- and it should be absent -- when the backend is
+    /// `filesystem`. Credentials are **never** here: they come from the
+    /// SDK's own provider chain (environment, shared config, IAM role),
+    /// so no key can end up in a TOML file, a log line or an audit
+    /// record.
+    #[serde(default)]
+    pub s3: Option<S3ContentConfig>,
+}
+
+/// Which store of content the deployment uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentBackend {
+    /// A directory on the local filesystem, named by `cas_path`.
+    #[default]
+    Filesystem,
+    /// An S3-compatible object store, named by the `s3` table.
+    S3,
+}
+
+/// The object store the content lives in when the backend is `s3`.
+///
+/// No credential field, on purpose (see [`ContentConfig::s3`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct S3ContentConfig {
+    /// The bucket that holds the blobs. Required.
+    pub bucket: String,
+    /// A custom endpoint, for S3-compatible stores that are not AWS S3.
+    ///
+    /// Default: the AWS endpoint for the region.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// The region of the bucket.
+    ///
+    /// Default: the SDK resolves it from the environment or the shared
+    /// config.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// Whether to talk to the endpoint over TLS.
+    ///
+    /// Default: true. Turning it off is for a local store behind no
+    /// proxy; against a real object store it would send the credentials
+    /// the SDK chain provides in the clear.
+    #[serde(default = "the_default_s3_tls")]
+    pub tls: bool,
+}
+
+fn the_default_s3_tls() -> bool {
+    true
 }
 
 impl ContentConfig {
@@ -218,7 +283,21 @@ impl ContentConfig {
                 self.gc_grace_secs
             )));
         }
-        Ok(())
+        // A backend chosen is a backend that has to be configured. The
+        // service does not fall back to the directory when the table is
+        // missing: content split across two stores is content lost, and
+        // the choice must be made on purpose, in the configuration.
+        match (self.backend, self.s3.as_ref()) {
+            (ContentBackend::S3, None) => Err(ConfigError::Message(
+                "Invalid content configuration: backend = \"s3\" requires the [content.s3] table with a bucket; there is no fallback to the filesystem".to_string(),
+            )),
+            (ContentBackend::S3, Some(table)) if table.bucket.trim().is_empty() => {
+                Err(ConfigError::Message(
+                    "Invalid content configuration: [content.s3].bucket cannot be empty".to_string(),
+                ))
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -228,6 +307,8 @@ impl Default for ContentConfig {
             cas_path: the_default_cas_path(),
             staging_max_age_secs: the_default_staging_max_age_secs(),
             gc_grace_secs: the_default_gc_grace_secs(),
+            backend: ContentBackend::default(),
+            s3: None,
         }
     }
 }
@@ -1568,6 +1649,151 @@ mod tests {
         assert!(
             error.to_string().contains("not a directory"),
             "the error must say what is wrong with the storage: {error}"
+        );
+    }
+
+    /// The content table read as the service would read it from a TOML.
+    fn the_content_from(toml: &str) -> ContentConfig {
+        let built = ::config::Config::builder()
+            .add_source(::config::File::from_str(toml, ::config::FileFormat::Toml))
+            .build()
+            .expect("the table is valid TOML");
+        built
+            .get::<ContentConfig>("content")
+            .expect("the table deserializes into the content configuration")
+    }
+
+    /// A deployment that says nothing keeps what it had: the directory.
+    /// The backend is a decision of the deployment, and the default of
+    /// the configuration is the backend of every deployment so far.
+    #[test]
+    fn the_backend_of_a_table_that_says_nothing_is_the_directory() {
+        let content = the_content_from("[content]\ncas_path = \"/srv/cas\"\n");
+        assert_eq!(content.backend, ContentBackend::Filesystem);
+        assert_eq!(content.s3, None);
+        content.validate().expect("the directory needs no table");
+    }
+
+    /// The chosen backend is read from the table, with its whole shape.
+    #[test]
+    fn the_s3_backend_is_read_with_its_bucket_and_its_reach() {
+        let content = the_content_from(
+            r#"
+[content]
+backend = "s3"
+[content.s3]
+bucket = "hodei-content"
+endpoint = "s3.eu-west-1.amazonaws.com"
+region = "eu-west-1"
+"#,
+        );
+        assert_eq!(content.backend, ContentBackend::S3);
+        let table = content.s3.as_ref().expect("the table was given");
+        assert_eq!(table.bucket, "hodei-content");
+        assert_eq!(
+            table.endpoint.as_deref(),
+            Some("s3.eu-west-1.amazonaws.com")
+        );
+        assert_eq!(table.region.as_deref(), Some("eu-west-1"));
+        // TLS is on unless the deployment says otherwise: turning it
+        // off is the dangerous direction, so the safe one is the default.
+        assert!(table.tls, "tls defaults to on");
+        content.validate().expect("a full table is a valid choice");
+    }
+
+    /// AC1 of the backend selection, from the configuration side:
+    /// choosing S3 without saying which bucket is refused, and the
+    /// refusal names the absence -- there is no fallback to hide behind.
+    #[test]
+    fn choosing_s3_without_its_table_is_refused_not_falled_back() {
+        let content = the_content_from("[content]\nbackend = \"s3\"\n");
+        assert_eq!(content.backend, ContentBackend::S3);
+        let error = content
+            .validate()
+            .expect_err("s3 without a bucket cannot boot");
+        let said = error.to_string();
+        assert!(
+            said.contains("no fallback"),
+            "the error must say there is no fallback: {said}"
+        );
+    }
+
+    /// The table can be present and still not name anything: an empty
+    /// bucket is the same split of the content in two places, only
+    /// noisier. It is refused with the same clarity.
+    #[test]
+    fn an_s3_table_without_a_bucket_is_refused() {
+        let content = the_content_from(
+            r#"
+[content]
+backend = "s3"
+[content.s3]
+bucket = "  "
+"#,
+        );
+        let error = content
+            .validate()
+            .expect_err("a bucket of spaces is no bucket");
+        assert!(
+            error.to_string().contains("bucket"),
+            "the error must name the field: {error}"
+        );
+    }
+
+    /// An absent table under a directory backend is fine even if it
+    /// would be nonsense: the deployment chose the directory, and the
+    /// s3 table it did not choose stays ignored.
+    #[test]
+    fn the_s3_table_under_a_directory_backend_does_no_harm() {
+        let content = the_content_from(
+            r#"
+[content]
+backend = "filesystem"
+[content.s3]
+bucket = "hodei-content"
+"#,
+        );
+        content
+            .validate()
+            .expect("the directory does not care about a table it will not use");
+    }
+
+    /// The documented env override reaches the new discriminator. The
+    /// value is not a string the code has to special-case: it is the
+    /// same lowercase name the TOML uses, parsed by the same serde.
+    #[test]
+    fn the_backend_can_be_chosen_by_the_environment() {
+        let mut given = overrides();
+        given.insert("HODEI_CONTENT__BACKEND".to_string(), "s3".to_string());
+        // The full config validation runs inside `build_config`, and an
+        // s3 backend without its table has to refuse the boot -- which
+        // is the same proof, from the other side: the override was read.
+        let refused = build_config(environment_source().source(Some(given.clone())))
+            .expect_err("s3 chosen by env without a table must refuse the boot");
+        assert!(
+            refused.to_string().contains("no fallback"),
+            "the refusal is the backend one: {refused}"
+        );
+        given.insert(
+            "HODEI_CONTENT__S3__BUCKET".to_string(),
+            "hodei-content".to_string(),
+        );
+        let config = build_config(environment_source().source(Some(given)))
+            .expect("s3 with a bucket is a bootable choice");
+        assert_eq!(
+            config.content.backend,
+            ContentBackend::S3,
+            "HODEI_CONTENT__BACKEND must select the object store"
+        );
+        assert_eq!(
+            config
+                .content
+                .s3
+                .as_ref()
+                .expect("the env table was built")
+                .bucket,
+            "hodei-content",
+            "HODEI_CONTENT__S3__BUCKET must reach the table"
         );
     }
 }

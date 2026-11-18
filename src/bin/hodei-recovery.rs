@@ -36,7 +36,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use hodei_artifacts_api::bundles::{self, Mapping};
-use hodei_artifacts_api::config::AppConfig;
+use hodei_artifacts_api::config::{AppConfig, ContentBackend};
 use hodei_artifacts_api::recovery::{self, RecoveryError, ScrubReport};
 use serde::Serialize;
 
@@ -216,12 +216,42 @@ fn parse_options() -> Result<Options, String> {
 }
 
 /// What the command works on, from the flags and the service configuration.
+///
+/// The content side is discriminated by the backend the service
+/// configuration declares, not by what `--cas` happens to name. This
+/// command works on the *live* store the service uses; when that store is
+/// an object store, taking it apart by pointing `--cas` at a local
+/// directory would read or write content that is not the deployment's --
+/// a split-brain of the very kind the backend choice forbids. The honest
+/// answer for an S3 deployment is that recovery over the object store is
+/// not implemented here, not that it operates somewhere else.
 struct Target {
     db: String,
-    cas: PathBuf,
+    /// The directory of content, when the deployment chose the directory.
+    /// It is `None` when the configuration says S3 -- even if `--cas`
+    /// named a directory, because that directory is not the live content
+    /// of this deployment and operating on it would be the split-brain
+    /// the backend choice forbids.
+    cas: Option<PathBuf>,
     namespace: String,
     database: String,
     grace: Duration,
+}
+
+impl Target {
+    /// The live content directory, or the explicit refusal of a backend
+    /// this command cannot serve yet.
+    fn the_cas(&self) -> Result<&Path, RecoveryError> {
+        self.cas.as_deref().ok_or_else(|| {
+            RecoveryError::Invalid(
+                "recovery over the S3 backend is not available: this command only works on the \
+                 content directory the service names, and the configuration chose backend = \
+                 \"s3\"; operate on the object store with its own tools until bundle recovery \
+                 over S3 exists"
+                    .to_string(),
+            )
+        })
+    }
 }
 
 fn target(options: &Options) -> Result<Target, String> {
@@ -236,17 +266,34 @@ fn target(options: &Options) -> Result<Target, String> {
             AppConfig::default()
         }
     };
+    let cas = match config.content.backend {
+        ContentBackend::Filesystem => Some(PathBuf::from(
+            options
+                .cas
+                .clone()
+                .unwrap_or_else(|| config.content.cas_path.clone()),
+        )),
+        ContentBackend::S3 => {
+            // A `--cas` under an S3 backend is a mistake worth saying
+            // out loud: the flag looks like it redirects the command,
+            // and it must not. Without the flag, the command still
+            // refuses later with the unavailable message.
+            if options.cas.is_some() {
+                return Err(
+                    "--cas names a directory, but the configuration chose backend = \"s3\"; \
+                     this command does not operate on the object store yet"
+                        .to_string(),
+                );
+            }
+            None
+        }
+    };
     Ok(Target {
         db: options
             .db
             .clone()
             .unwrap_or_else(|| config.rocksdb.path.clone()),
-        cas: PathBuf::from(
-            options
-                .cas
-                .clone()
-                .unwrap_or_else(|| config.content.cas_path.clone()),
-        ),
+        cas,
         namespace: options
             .namespace
             .clone()
@@ -313,13 +360,40 @@ async fn run(options: &Options) -> Result<ExitCode, RecoveryError> {
     }
 
     let target = target(options).map_err(RecoveryError::Invalid)?;
+    // The refusal of an S3 backend happens before the database is
+    // opened: a command that will not run should not even take the
+    // lock of the registry it is going to leave alone. Under the
+    // directory backend `target.cas` is always some, so `None` is
+    // exactly the deployments this command cannot serve.
+    if target.cas.is_none()
+        && matches!(
+            &options.command,
+            Command::Backup { .. }
+                | Command::Restore { .. }
+                | Command::Scrub
+                | Command::Repair { .. }
+                | Command::BundleExport { .. }
+                | Command::BundleImport { .. }
+        )
+    {
+        // `the_cas` says it in the only words that matter here: under
+        // the directory backend it is always Some, so reaching the
+        // error below means the deployment chose S3.
+        target.the_cas()?;
+    }
     match &options.command {
         Command::Verify { .. } => unreachable!("handled above"),
         Command::Backup { to } => {
             let db =
                 recovery::open_database(&target.db, &target.namespace, &target.database).await?;
-            let report =
-                recovery::backup(&db, &target.cas, to, &target.namespace, &target.database).await?;
+            let report = recovery::backup(
+                &db,
+                target.the_cas()?,
+                to,
+                &target.namespace,
+                &target.database,
+            )
+            .await?;
             if options.json {
                 print_json(&report);
             } else {
@@ -345,7 +419,7 @@ async fn run(options: &Options) -> Result<ExitCode, RecoveryError> {
         Command::Restore { from } => {
             let db =
                 recovery::open_database(&target.db, &target.namespace, &target.database).await?;
-            let report = recovery::restore(&db, from, &target.cas, target.grace).await?;
+            let report = recovery::restore(&db, from, target.the_cas()?, target.grace).await?;
             if options.json {
                 print_json(&report);
             } else {
@@ -364,7 +438,8 @@ async fn run(options: &Options) -> Result<ExitCode, RecoveryError> {
         Command::Scrub => {
             let db =
                 recovery::open_database(&target.db, &target.namespace, &target.database).await?;
-            let scrubber = recovery::backup::scrubber_for(&db, &target.cas, target.grace).await?;
+            let scrubber =
+                recovery::backup::scrubber_for(&db, target.the_cas()?, target.grace).await?;
             let report = scrubber.run().await?;
             if options.json {
                 print_json(&report);
@@ -383,9 +458,10 @@ async fn run(options: &Options) -> Result<ExitCode, RecoveryError> {
             // The backup is checked whole before a single byte is taken
             // from it: a damaged backup must not repair anything.
             recovery::verify(from).await?;
-            let scrubber = recovery::backup::scrubber_for(&db, &target.cas, target.grace).await?;
+            let scrubber =
+                recovery::backup::scrubber_for(&db, target.the_cas()?, target.grace).await?;
             let before = scrubber.run().await?;
-            let repair = recovery::repair_from_backup(&target.cas, from, &before).await?;
+            let repair = recovery::repair_from_backup(target.the_cas()?, from, &before).await?;
             let after = scrubber.run().await?;
             if options.json {
                 print_json(&serde_json::json!({
@@ -556,7 +632,7 @@ async fn bundle_targets(
         db,
         Arc::new(hodei_catalog::AllowAllAuthorizer),
     );
-    let blobs = hodei_hub::blob::FileBlobStore::new(&target.cas)
+    let blobs = hodei_hub::blob::FileBlobStore::new(target.the_cas()?)
         .map_err(|error| RecoveryError::Store(error.to_string()))?;
     Ok((store, blobs))
 }
