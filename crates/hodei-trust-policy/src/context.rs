@@ -73,6 +73,13 @@ pub struct RiskFacts {
     pub vex_accepted: u32,
     /// Whether the risk could be established at all.
     pub established: bool,
+    /// The version of the risk feed the facts were read from.
+    ///
+    /// The decision says which version of the risk it was measured
+    /// against, and the replay needs it: without the version, a verdict
+    /// could not be reproduced against the feed it actually saw.
+    #[serde(default)]
+    pub risk_version: u64,
 }
 
 impl Default for RiskFacts {
@@ -83,6 +90,7 @@ impl Default for RiskFacts {
             exposure: Exposure::Unknown,
             vex_accepted: 0,
             established: false,
+            risk_version: 0,
         }
     }
 }

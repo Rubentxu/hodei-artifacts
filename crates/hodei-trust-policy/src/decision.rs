@@ -99,6 +99,12 @@ pub struct TrustDecision {
     pub capsule_hash: Option<String>,
     /// The identifiers of the evidence that was used.
     pub evidence_ids: Vec<String>,
+    /// The version of the risk the decision was measured against.
+    ///
+    /// The decision says which policy and which evidence it read, and a
+    /// replay that did not know the version of the risk feed would be a
+    /// replay against a world that is not the one that was judged.
+    pub risk_version: u64,
     /// The moment the decision was made.
     pub decided_at: DateTime<Utc>,
 }
@@ -195,6 +201,7 @@ pub fn evaluate(context: &TrustContext, policy: &TrustPolicy) -> TrustDecision {
         schema_version: policy.schema_version.clone(),
         capsule_hash: context.capsule_hash.clone(),
         evidence_ids: context.evidence_ids.clone(),
+        risk_version: context.risk.risk_version,
         decided_at: context.assembled_at,
     }
 }
@@ -230,6 +237,14 @@ fn read(kind: &RequirementKind, context: &TrustContext) -> Reading {
                 Reading {
                     satisfied: false,
                     reason: Some(ReasonCode::RiskReachableCriticalVulnerability),
+                }
+            // The absence of criticals is a fact about the world, and a
+            // world the feed never looked at does not grant it: UNKNOWN
+            // is not zero.
+            } else if !context.risk.established {
+                Reading {
+                    satisfied: false,
+                    reason: Some(ReasonCode::RiskUnknown),
                 }
             } else {
                 Reading {

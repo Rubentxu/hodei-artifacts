@@ -52,6 +52,13 @@ pub struct DecisionRow {
     pub policy_version: String,
     /// The hash of the capsule it was measured against.
     pub capsule_hash: Option<String>,
+    /// The version of the risk feed the decision was measured against.
+    ///
+    /// Written with `#[serde(default)]` because rows decided before this
+    /// link existed are honest rows that simply did not carry it: their
+    /// risk version is zero, the same answer the feed of nobody is.
+    #[serde(default)]
+    pub risk_version: u64,
     /// Whether the promotion had an effect.
     pub applied: bool,
     /// The moment the decision was made.
@@ -94,6 +101,7 @@ fn row_from(decision: &PromotionDecision) -> DecisionRow {
             .collect(),
         policy_version: decision.trust.policy_version.clone(),
         capsule_hash: decision.trust.capsule_hash.clone(),
+        risk_version: decision.trust.risk_version,
         applied: decision.applied,
         decided_at: decision.decided_at,
         decision: serde_json::to_value(decision).unwrap_or(serde_json::Value::Null),

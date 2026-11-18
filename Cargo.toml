@@ -192,6 +192,8 @@ hodei-catalog-storage = { path = "crates/hodei-catalog-storage" }
 # confianza y el almacen duradero de sus decisiones.
 hodei-trust-policy = { path = "crates/hodei-trust-policy" }
 hodei-trust-policy-storage = { path = "crates/hodei-trust-policy-storage" }
+# Los hechos de riesgo de la promocion: la lectura del grafo de impacto.
+hodei-risk-storage = { path = "crates/hodei-risk-storage" }
 # El almacén de contenido por digest: el CAS donde viven los bytes.
 hodei-hub = { path = "crates/hodei-hub" }
 # El investigador: el dominio de la explicacion con citas, y su

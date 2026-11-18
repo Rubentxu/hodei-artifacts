@@ -208,6 +208,37 @@ impl<C: Connection> SurrealImpactView<C> {
         response.take(0).map_err(|error| error.to_string())
     }
 
+    /// The rows of the view that reach ONE subject of ONE account.
+    ///
+    /// The tenant is part of the question and not a filter added after:
+    /// asking for another account's subject answers with the same empty
+    /// it would answer for a subject that exists and is clean.
+    pub async fn rows_reaching(
+        &self,
+        tenant: &Hrn,
+        subject: &Hrn,
+    ) -> Result<Vec<ImpactRow>, String> {
+        let mut response = self
+            .graph
+            .db()
+            .query(
+                "SELECT * FROM type::table($table) WHERE tenant = $tenant AND subject = $subject",
+            )
+            .bind(("table", IMPACT_TABLE))
+            .bind(("tenant", tenant.to_string()))
+            .bind(("subject", subject.to_string()))
+            .await
+            .map_err(|error| error.to_string())?;
+        response.take(0).map_err(|error| error.to_string())
+    }
+
+    /// The version the ledger has said for one account: the answer of
+    /// "up to where could the view know the truth" that travels with the
+    /// facts read from it.
+    pub async fn said_version(&self, tenant: &Hrn) -> Result<u64, String> {
+        self.deltas.version_of(tenant).await
+    }
+
     /// The record id of one route.
     fn route_id(tenant: &str, advisory: &str) -> surrealdb::sql::Thing {
         let key = escape_id(&format!("{tenant}|{advisory}"));

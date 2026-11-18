@@ -3346,6 +3346,7 @@ dependencies = [
  "hodei-investigator",
  "hodei-investigator-storage",
  "hodei-policies",
+ "hodei-risk-storage",
  "hodei-trust-policy",
  "hodei-trust-policy-storage",
  "jsonwebtoken",

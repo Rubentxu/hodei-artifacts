@@ -110,6 +110,12 @@ pub struct AppState {
     /// the evidence is read through a port and not through a concrete
     /// store.
     pub(crate) evidence_reader: Arc<dyn EvidenceReader>,
+    /// The facts of risk the promotion decision measures against.
+    ///
+    /// It is a port and not a store: a deployment without the impact
+    /// graph answers with UNMEASURED facts, and the policy that requires
+    /// the risk does not grant on them.
+    pub(crate) risk_facts: Arc<dyn hodei_risk_storage::subject_risk::RiskFactsReader>,
     pub(crate) audit_sink: Arc<dyn AuditSink>,
     /// The catalog: repositories, assets, versions and references.
     ///
@@ -292,6 +298,7 @@ impl AppState {
             repository_reader,
             repository_writer,
             evidence_reader: Arc::new(EmptyEvidenceReader),
+            risk_facts: Arc::new(crate::risk_facts::UnmeasuredRiskFacts),
             audit_sink,
             catalog_reader: None,
             catalog_writer: None,
@@ -359,6 +366,7 @@ impl AppState {
             repository_reader,
             repository_writer,
             evidence_reader: Arc::new(EmptyEvidenceReader),
+            risk_facts: Arc::new(crate::risk_facts::UnmeasuredRiskFacts),
             audit_sink,
             catalog_reader: None,
             catalog_writer: None,
@@ -427,6 +435,16 @@ impl AppState {
     /// Set the limits of the investigation.
     pub fn with_investigation_limits(mut self, limits: crate::config::InvestigationConfig) -> Self {
         self.investigation_limits = limits;
+        self
+    }
+
+    /// Set the reader of the risk facts, once the deployment has an
+    /// impact graph to read them from.
+    pub fn with_risk_facts(
+        mut self,
+        risk_facts: Arc<dyn hodei_risk_storage::subject_risk::RiskFactsReader>,
+    ) -> Self {
+        self.risk_facts = risk_facts;
         self
     }
 

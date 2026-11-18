@@ -90,6 +90,7 @@ impl PromotionService {
                         schema_version: crate::POLICY_SCHEMA_VERSION.to_string(),
                         capsule_hash: context.capsule_hash.clone(),
                         evidence_ids: context.evidence_ids.clone(),
+                        risk_version: context.risk.risk_version,
                         decided_at,
                     },
                     context,

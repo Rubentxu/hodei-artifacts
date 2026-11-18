@@ -14,6 +14,7 @@ use hodei_evidence::domain::graph::{GraphChangeSet, RelationType};
 use hodei_evidence::ports::graph::{GraphQuery, GraphWriter};
 pub mod impact_view;
 pub mod reactions;
+pub mod subject_risk;
 
 use hodei_risk::case::{BlastRadius, SubjectDepth};
 use hodei_risk::ports::RiskRelationError;

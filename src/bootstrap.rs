@@ -422,6 +422,7 @@ pub async fn bootstrap(
     // declara, y cablearla antes seria cablear el de reserva --el que
     // deniega todo-- por error de orden.
     let app_state = wire_the_investigation(app_state, config, &schema_storage)?;
+    let app_state = wire_the_risk_facts(app_state, config, &schema_storage);
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
             "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"
@@ -608,8 +609,38 @@ fn wire_the_investigation(
         .with_investigation_limits(config.investigation.clone()))
 }
 
-/// SurrealDB adapter for schema storage
+/// Los hechos de riesgo de la promocion, leidos del grafo de impacto.
 ///
+/// La vista materializada y el registro de deltas son los mismos que ya
+/// usan las reacciones: no hay un segundo evaluador ni un almacen nuevo.
+/// El catalogo de severidades esta vacio hasta que un feed lo llene, y
+/// eso es honesto: sin severidad conocida los hechos NO se establecen, y
+/// la politica que los exige no concede.
+fn wire_the_risk_facts(
+    state: AppState,
+    config: &AppConfig,
+    schema_storage: &Arc<SurrealSchemaAdapter>,
+) -> AppState {
+    use hodei_risk_storage::impact_view::SurrealImpactView;
+    use hodei_risk_storage::subject_risk::{AdvisoryCatalog, EmptyCatalog, SurrealRiskFacts};
+    let catalog: Arc<dyn AdvisoryCatalog> = match config.trust.risk_catalog_file.as_deref() {
+        Some(path) => match crate::risk_facts::load_risk_catalog(path) {
+            Ok(catalog) => Arc::new(catalog),
+            Err(error) => {
+                tracing::warn!("{error}: the risk facts will stay UNKNOWN");
+                Arc::new(EmptyCatalog)
+            }
+        },
+        None => Arc::new(EmptyCatalog),
+    };
+    let db = Arc::new(schema_storage.db().clone());
+    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
+    let deltas = Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(db));
+    let view = SurrealImpactView::new(graph, deltas);
+    state.with_risk_facts(Arc::new(SurrealRiskFacts::new(view, catalog)))
+}
+
+/// SurrealDB adapter for schema storage///
 /// This adapter implements the SchemaStoragePort trait for SurrealDB with RocksDB.
 #[derive(Clone)]
 pub struct SurrealSchemaAdapter {
