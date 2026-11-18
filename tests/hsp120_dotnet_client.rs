@@ -87,6 +87,13 @@ impl Client {
             .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
             .env("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "1")
             .env("DOTNET_NOLOGO", "1")
+            // Nada de demonios heredando descriptores: `pack` y `build`
+            // levantan VBCSCompiler y nodos de MSBuild que sobreviven al
+            // hijo y se quedan con el pipe de la salida del paso, de modo
+            // que el transcript del gate nunca ve el EOF.
+            .env("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1")
+            .env("MSBUILDDISABLENODEREUSE", "1")
+            .env("UseSharedCompilation", "false")
             // La cache de paquetes del cliente, aqui dentro: la prueba
             // puede exigir que el paquete haya bajado del hub, y no
             // encontrarlo ya en la cache del operador.
@@ -158,7 +165,10 @@ fn the_real_dotnet_client_pushes_and_restores_with_the_digest_preserved() {
             "    <PackageId>Sample.Cli.Pkg</PackageId>\n    <Version>1.0.0</Version>\n    <Authors>Hodei</Authors>\n  </PropertyGroup>",
         );
     std::fs::write(&csproj, edited).expect("the csproj is rewritten");
-    client.run(&proj.join("CliPkg"), &["pack", "-c", "Release"]);
+    client.run(
+        &proj.join("CliPkg"),
+        &["pack", "-c", "Release", "-p:UseSharedCompilation=false"],
+    );
     let nupkg = glob_nupkg(&proj.join("CliPkg").join("bin/Release"));
     let pushed_bytes = std::fs::read(&nupkg).expect("the packed nupkg");
 
@@ -238,7 +248,13 @@ fn the_real_dotnet_client_pushes_and_restores_with_the_digest_preserved() {
     //    paquete servido por el hub.
     client.run(
         &consumer.join("Consumer"),
-        &["build", "-c", "Release", "--no-restore"],
+        &[
+            "build",
+            "-c",
+            "Release",
+            "--no-restore",
+            "-p:UseSharedCompilation=false",
+        ],
     );
 }
 
