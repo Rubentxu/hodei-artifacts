@@ -19,8 +19,19 @@
 //!   aqui —concesion o revocacion— barre las entradas que toca. Una
 //!   revocacion por esta instancia se nota en la peticion siguiente,
 //!   como cuando no habia cache.
+//! - **Generacion contra lecturas en vuelo**: cada escritura sube un
+//!   contador *antes* de tocar el libro, y una lectura cuyo libro
+//!   respondio despues de ese salto no inserta su foto: una revocacion
+//!   confirmada no puede quedar tapada por la insercion tardia de una
+//!   lectura que empezo antes, ni una reconcesion enterrada por la foto
+//!   vieja. El limite: una escritura concurrente cuesta como mucho una
+//!   lectura extra al libro, nunca un permiso viejo. Una descarga ya
+//!   iniciada se sirve con la concesion que admitio su peticion —la
+//!   revocacion corta las peticiones nuevas, no las que ya vuelan—,
+//!   exactamente como sin cache.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -53,6 +64,11 @@ pub struct CachedTrustLedger {
     inner: std::sync::Arc<dyn TrustLedger>,
     ttl: Duration,
     admitted: Mutex<HashMap<Key, Entry>>,
+    /// El contador que sube toda escritura antes de tocar el libro. Una
+    /// lectura en vuelo que vio una generacion distinta de la actual
+    /// cuando el libro le respondio no inserta su foto: puede estar
+    /// obsoleta —la revocacion o la reconcesion ya es firme—.
+    generation: AtomicU64,
 }
 
 impl CachedTrustLedger {
@@ -62,6 +78,7 @@ impl CachedTrustLedger {
             inner,
             ttl,
             admitted: Mutex::new(HashMap::new()),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -97,6 +114,10 @@ impl CachedTrustLedger {
 #[async_trait]
 impl TrustLedger for CachedTrustLedger {
     async fn grant(&self, grants: &[TrustGrant]) -> Result<(), CatalogError> {
+        // Primero la generacion, luego el libro: una lectura que empezo
+        // antes de este punto ya no podra insertar su foto vieja cuando
+        // el libro le responda.
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.inner.grant(grants).await?;
         // La concesion nueva —o la decision nueva que re-concede algo
         // revocado— invalida su clave: lo que la cache guardaba era la
@@ -117,6 +138,7 @@ impl TrustLedger for CachedTrustLedger {
         reason: &str,
         at: DateTime<Utc>,
     ) -> Result<u64, CatalogError> {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         let revoked = self
             .inner
             .revoke_decision(account, repository, decision_id, actor, reason, at)
@@ -138,6 +160,7 @@ impl TrustLedger for CachedTrustLedger {
         reason: &str,
         at: DateTime<Utc>,
     ) -> Result<u64, CatalogError> {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         let revoked = self
             .inner
             .revoke_decision_for_account(account, decision_id, actor, reason, at)
@@ -157,6 +180,7 @@ impl TrustLedger for CachedTrustLedger {
         reason: &str,
         at: DateTime<Utc>,
     ) -> Result<u64, CatalogError> {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         let revoked = self
             .inner
             .revoke_digest(account, repository, digest, actor, reason, at)
@@ -187,6 +211,7 @@ impl TrustLedger for CachedTrustLedger {
         {
             return Ok(Some(grant));
         }
+        let gen_before = self.generation.load(Ordering::SeqCst);
         let grant = self
             .inner
             .active_grant(account, repository, digest, at)
@@ -196,13 +221,23 @@ impl TrustLedger for CachedTrustLedger {
         // una revocacion hecha en otra instancia o un libro que vuelve a
         // vivir deben poder negarse —y conceder— en la peticion siguiente.
         if let Some(active) = grant.as_ref().filter(|grant| grant.is_active_at(at)) {
-            self.fresh().insert(
-                key,
-                Entry {
-                    grant: active.clone(),
-                    expires_at: Instant::now() + self.ttl,
-                },
-            );
+            // Sujetando el mapa se compara la generacion: si el libro
+            // respondio despues de que alguna escritura subiera el
+            // contador, su foto puede estar obsoleta y no se inserta.
+            // O bien el revoker barre despues de nuestra insercion, o
+            // nosotros no llegamos a hacerla; en ningún caso queda un
+            // permiso viejo en la cache. Cuesta como mucho una lectura
+            // extra al libro, nunca un falso admisible.
+            let mut map = self.fresh();
+            if gen_before == self.generation.load(Ordering::SeqCst) {
+                map.insert(
+                    key,
+                    Entry {
+                        grant: active.clone(),
+                        expires_at: Instant::now() + self.ttl,
+                    },
+                );
+            }
         }
         Ok(grant)
     }
@@ -530,6 +565,285 @@ mod tests {
                 .expect("con ttl cero nada es fresco");
         }
         assert_eq!(fake.the_reads(), 2, "el ttl expirado iguala al libro vivo");
+    }
+
+    /// El libro que se deja bloquear dentro de la lectura, para fijar la
+    /// carrera entre una lectura iniciada antes de la revocacion y su
+    /// insercion posterior.
+    struct BlockyLedger {
+        grants: tokio::sync::Mutex<Vec<TrustGrant>>,
+        entered: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+
+    impl BlockyLedger {
+        fn new(grants: Vec<TrustGrant>) -> Self {
+            Self {
+                grants: tokio::sync::Mutex::new(grants),
+                entered: tokio::sync::Mutex::new(None),
+                release: tokio::sync::Mutex::new(None),
+            }
+        }
+
+        /// Arma una barrera: la proxima lectura avisa y espera.
+        async fn arm(
+            &self,
+        ) -> (
+            tokio::sync::oneshot::Receiver<()>,
+            tokio::sync::oneshot::Sender<()>,
+        ) {
+            let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+            *self.entered.lock().await = Some(entered_tx);
+            *self.release.lock().await = Some(release_rx);
+            (entered_rx, release_tx)
+        }
+    }
+
+    #[async_trait]
+    impl TrustLedger for BlockyLedger {
+        async fn grant(&self, grants: &[TrustGrant]) -> Result<(), CatalogError> {
+            *self.grants.lock().await = grants.to_vec();
+            Ok(())
+        }
+
+        async fn revoke_decision(
+            &self,
+            account: &str,
+            _repository: &str,
+            decision_id: &str,
+            _actor: &str,
+            _reason: &str,
+            at: DateTime<Utc>,
+        ) -> Result<u64, CatalogError> {
+            let mut revoked = 0;
+            for grant in self.grants.lock().await.iter_mut() {
+                if grant.account == account
+                    && grant.decision_id == decision_id
+                    && grant.revoked_at.is_none()
+                {
+                    grant.revoked_at = Some(at);
+                    revoked += 1;
+                }
+            }
+            Ok(revoked)
+        }
+
+        async fn revoke_decision_for_account(
+            &self,
+            account: &str,
+            decision_id: &str,
+            actor: &str,
+            reason: &str,
+            at: DateTime<Utc>,
+        ) -> Result<u64, CatalogError> {
+            self.revoke_decision(account, "trusted-repo", decision_id, actor, reason, at)
+                .await
+        }
+
+        async fn revoke_digest(
+            &self,
+            _account: &str,
+            _repository: &str,
+            digest: &ContentDigest,
+            _actor: &str,
+            _reason: &str,
+            at: DateTime<Utc>,
+        ) -> Result<u64, CatalogError> {
+            let mut revoked = 0;
+            for grant in self.grants.lock().await.iter_mut() {
+                if &grant.digest == digest && grant.revoked_at.is_none() {
+                    grant.revoked_at = Some(at);
+                    revoked += 1;
+                }
+            }
+            Ok(revoked)
+        }
+
+        async fn active_grant(
+            &self,
+            _account: &str,
+            _repository: &str,
+            digest: &ContentDigest,
+            at: DateTime<Utc>,
+        ) -> Result<Option<TrustGrant>, CatalogError> {
+            // La foto se toma **antes** de la barrera: una lectura del
+            // libro iniciada antes de la revocacion ve el estado que
+            // habia cuando empezo, y el problema es donde la envoltora
+            // con cache inserta esa foto tardia.
+            let snapshot = {
+                let grants = self.grants.lock().await;
+                grants
+                    .iter()
+                    .find(|grant| &grant.digest == digest && grant.is_active_at(at))
+                    .cloned()
+            };
+            if let Some(sender) = self.entered.lock().await.take() {
+                let _ = sender.send(());
+                if let Some(waiter) = self.release.lock().await.take() {
+                    let _ = waiter.await;
+                }
+            }
+            Ok(snapshot)
+        }
+
+        async fn grants_of(
+            &self,
+            _account: &str,
+            _repo: &str,
+        ) -> Result<Vec<TrustGrant>, CatalogError> {
+            Ok(self.grants.lock().await.clone())
+        }
+    }
+
+    /// AC1: la carrera reproducida con barreras deterministas. Una
+    /// lectura iniciada **antes** de la revocacion no puede reabrir la
+    /// concesion en la cache despues de su confirmacion.
+    #[tokio::test]
+    async fn a_read_started_before_a_confirmed_revoke_never_admits_again() {
+        let digest = the_digest_of("revoked mid-read");
+        let book = std::sync::Arc::new(BlockyLedger::new(vec![a_grant(&digest)]));
+        let cached = std::sync::Arc::new(CachedTrustLedger::new(
+            book.clone(),
+            Duration::from_secs(60),
+        ));
+
+        let (entered, release) = book.arm().await;
+        let reader = {
+            let cached = cached.clone();
+            let digest = digest.clone();
+            tokio::spawn(async move {
+                cached
+                    .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                    .await
+            })
+        };
+        entered.await.expect("the read reached the book");
+
+        cached
+            .revoke_digest(
+                "acme",
+                "trusted-repo",
+                &digest,
+                "gatekeeper",
+                "CVE-2026-0001",
+                Utc::now(),
+            )
+            .await
+            .expect("the revoke is confirmed while the read is in flight");
+        release.send(()).expect("the blocked read is released");
+
+        let in_flight = reader.await.expect("the reader task finished");
+        assert!(
+            in_flight.expect("the in-flight read answered").is_some(),
+            "la peticion en vuelo se atiende con su snapshot"
+        );
+
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("the next query goes to the book")
+                .is_none(),
+            "AC1: ninguna consulta iniciada tras la confirmacion reabre la concesion vieja"
+        );
+    }
+
+    /// La misma carrera con una re-concesion: una concesion nueva escrita
+    /// durante la lectura vieja no puede quedar tapada por la insercion
+    /// tardia de la decision anterior.
+    #[tokio::test]
+    async fn a_regrant_written_mid_read_is_not_buried_by_the_stale_insert() {
+        let digest = the_digest_of("regranted mid-read");
+        let book = std::sync::Arc::new(BlockyLedger::new(vec![a_grant(&digest)]));
+        let cached = std::sync::Arc::new(CachedTrustLedger::new(
+            book.clone(),
+            Duration::from_secs(60),
+        ));
+
+        let (entered, release) = book.arm().await;
+        let reader = {
+            let cached = cached.clone();
+            let digest = digest.clone();
+            tokio::spawn(async move {
+                cached
+                    .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                    .await
+            })
+        };
+        entered.await.expect("the read reached the book");
+
+        let mut fresh = a_grant(&digest);
+        fresh.decision_id = "dec-2".to_string();
+        cached
+            .grant(&[fresh])
+            .await
+            .expect("the regrant lands mid-read");
+        release.send(()).expect("the blocked read is released");
+        reader
+            .await
+            .expect("the reader task finished")
+            .expect("the in-flight read answered");
+
+        let found = cached
+            .active_grant("acme", "trusted-repo", &digest, Utc::now())
+            .await
+            .expect("the ledger answers");
+        assert_eq!(
+            found.expect("the fresh grant admits").decision_id,
+            "dec-2",
+            "la decision nueva no queda enterrada por la insercion vieja"
+        );
+    }
+
+    /// AC3: la revocacion de una cuenta no desmonta las entradas ni el
+    /// progreso de las lecturas en vuelo de otra cuenta.
+    #[tokio::test]
+    async fn revoking_one_account_leaves_another_in_flight_untouched() {
+        let mine = a_grant(&the_digest_of("mine"));
+        let mut theirs = a_grant(&the_digest_of("theirs"));
+        theirs.account = "globex".to_string();
+        let book = std::sync::Arc::new(BlockyLedger::new(vec![mine, theirs.clone()]));
+        let cached = std::sync::Arc::new(CachedTrustLedger::new(
+            book.clone(),
+            Duration::from_secs(60),
+        ));
+
+        let (entered, release) = book.arm().await;
+        let theirs_digest = theirs.digest.clone();
+        let reader = {
+            let cached = cached.clone();
+            let theirs_digest = theirs_digest.clone();
+            tokio::spawn(async move {
+                cached
+                    .active_grant("globex", "trusted-repo", &theirs_digest, Utc::now())
+                    .await
+            })
+        };
+        entered.await.expect("the globex read is in flight");
+
+        cached
+            .revoke_decision(
+                "acme",
+                "trusted-repo",
+                "dec-1",
+                "gatekeeper",
+                "policy",
+                Utc::now(),
+            )
+            .await
+            .expect("the acme revoke is confirmed");
+        release.send(()).expect("the globex read is released");
+        let _ = reader.await.expect("the reader task finished");
+
+        assert!(
+            cached
+                .active_grant("globex", "trusted-repo", &theirs_digest, Utc::now())
+                .await
+                .expect("globex still admitted")
+                .is_some(),
+            "AC3: revocar en acme no invalida a globex"
+        );
     }
 
     /// AC2, y la separacion que el contrato exige: la cache acorta el

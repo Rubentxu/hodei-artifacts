@@ -129,6 +129,7 @@ pipeline {
                         "--test hsp123_migration_pure",
                         "--test hsp124_quota_pure",
                         "--test hsp126_capsule_oci",
+                        "--test hsp134_risk_facts",
                     ).joinToString(" ")
                 )
             }
@@ -186,6 +187,7 @@ pipeline {
                         "--test hsp89_investigation_freshness",
                         "--test freshness_storage",
                         "--test hsp92_surreal_conformance",
+                        "--test hsp134_risk_facts_e2e",
                     ).joinToString(" ")
                 )
             }
@@ -244,6 +246,7 @@ pipeline {
                         "--test hsp123_migration_e2e",
                         "--test hsp124_quota_e2e",
                         "--test hsp125_replication_spike",
+                        "--test hsp135_vigencia_e2e",
                     ).joinToString(" ")
                 )
                 sh(
