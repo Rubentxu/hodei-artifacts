@@ -320,4 +320,45 @@ mod tests {
         assert!(!facts.established);
         assert_eq!(facts.version, 0);
     }
+
+    #[tokio::test]
+    async fn a_subject_of_another_account_produces_no_facts_and_no_information() {
+        use hodei_evidence_storage::SurrealGraphStore;
+        use hodei_evidence_storage::surreal::delta::SurrealRelationDeltaLedger;
+
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::Mem>(())
+            .await
+            .expect("the in-memory database opens");
+        db.use_ns("hodei")
+            .use_db("risk")
+            .await
+            .expect("the namespace");
+        let db = Arc::new(db);
+        let reader = SurrealRiskFacts::new(
+            SurrealImpactView::new(
+                Arc::new(SurrealGraphStore::new(db.clone())),
+                Arc::new(SurrealRelationDeltaLedger::new(db)),
+            ),
+            Arc::new(EmptyCatalog),
+        );
+        let tenant =
+            Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:artifact/acme/app-sha256-aa")
+                .expect("the tenant hrn parses");
+        let foreign =
+            Hrn::from_string("hrn:hodei:artifacts:eu-west-1:other:artifact/other/app-sha256-bb")
+                .expect("the foreign hrn parses");
+        let facts = reader
+            .risk_facts(&tenant, &foreign)
+            .await
+            .expect("the stranger is answered");
+        assert!(
+            !facts.established,
+            "a stranger is answered with the same unknown anyone else gets"
+        );
+        assert_eq!(
+            facts.version, 0,
+            "no version of the tenant's feed is claimed"
+        );
+        assert_eq!(facts.advisories_reaching, 0, "no row of the tenant leaks");
+    }
 }
