@@ -28,7 +28,7 @@ use hodei_evidence::ContentDigest;
 use hodei_evidence::application::capsule::CapsuleAssembler;
 use hodei_trust_policy::{
     AuthorizationResult, DecisionId, PromotionFailure, PromotionOutcome, PromotionRequest,
-    RiskFacts, TrustContext,
+    TrustContext,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,8 +49,9 @@ pub enum PromotionApiError {
     NotImplemented,
     Unavailable,
     Corrupt,
-    /// La politica rechazo la promocion; lleva las razones.
-    Refused(Vec<String>),
+    /// La politica rechazo la promocion; lleva las razones y la version
+    /// del riesgo contra la que se midio.
+    Refused(Vec<String>, u64),
 }
 
 impl IntoResponse for PromotionApiError {
@@ -79,8 +80,12 @@ impl IntoResponse for PromotionApiError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 error_body("corruption", "what is stored cannot be read"),
             ),
-            Self::Refused(reasons) => {
-                let body = serde_json::json!({ "promoted": false, "reasons": reasons });
+            Self::Refused(reasons, risk_version) => {
+                let body = serde_json::json!({
+                    "promoted": false,
+                    "reasons": reasons,
+                    "risk_version": risk_version,
+                });
                 return (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response();
             }
         };
@@ -109,6 +114,8 @@ pub struct PromoteResponse {
     pub decision_id: String,
     pub digest: String,
     pub granted: Vec<String>,
+    /// The version of the risk feed the decision was measured against.
+    pub risk_version: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -269,11 +276,24 @@ pub async fn promote(
         .map_err(|_| PromotionApiError::Unavailable)?;
     let now = Utc::now();
     let capsule = CapsuleAssembler::new().assemble(&subject, &evidence, now);
-    // Limite documentado: no hay hechos de riesgo en esta ruta; un
-    // requisito que los exija queda indeterminado, no cumplido.
+    // Los hechos de riesgo salen del grafo de impacto: que alcanza a este
+    // sujeto y hasta que version del registro. Si el grafo no puede
+    // establecerlos --sin cobertura, vista atrasada, severidad desconocida
+    // o fallo de lectura-- la respuesta es UNKNOWN, y una politica que
+    // exige el riesgo no concede sobre UNKNOWN.
+    let risk_facts = match state.investigation_limits.the_graph_tenant(&subject) {
+        Some(tenant) => match state.risk_facts.risk_facts(&tenant, &subject).await {
+            Ok(facts) => facts,
+            Err(error) => {
+                tracing::warn!(%error, "the risk facts could not be read: the decision will say UNKNOWN");
+                hodei_risk_storage::subject_risk::SubjectFacts::unknown()
+            }
+        },
+        None => hodei_risk_storage::subject_risk::SubjectFacts::unknown(),
+    };
     let trust_context = TrustContext::builder(&capsule)
         .with_digest(digest.to_string())
-        .with_risk(RiskFacts::default())
+        .with_risk(crate::risk_facts::to_trust_facts(&risk_facts))
         .assembled_at(now)
         .build();
 
@@ -345,7 +365,7 @@ pub async fn promote(
                         .collect()
                 })
                 .unwrap_or_default();
-            return Err(PromotionApiError::Refused(reasons));
+            return Err(PromotionApiError::Refused(reasons, risk_facts.version));
         }
     }
 
@@ -388,6 +408,7 @@ pub async fn promote(
             .iter()
             .map(|digest| format!("{}:{}", digest.algorithm, digest.value))
             .collect(),
+        risk_version: risk_facts.version,
     }))
 }
 

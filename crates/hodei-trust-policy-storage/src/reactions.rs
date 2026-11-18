@@ -266,6 +266,7 @@ impl TrustContextSource for EmptyContextSource {
                 exposure: hodei_trust_policy::context::Exposure::Internal,
                 vex_accepted: 0,
                 established: critical_reachable > 0,
+                risk_version: 0,
             },
             exceptions: Vec::new(),
             evidence_ids: Vec::new(),

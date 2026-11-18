@@ -83,6 +83,7 @@ fn clean_context(subject: &str, at: DateTime<Utc>) -> TrustContext {
         risk: hodei_trust_policy::context::RiskFacts {
             established: true,
             exposure: hodei_trust_policy::context::Exposure::Internal,
+            risk_version: 0,
             ..hodei_trust_policy::context::RiskFacts::default()
         },
         exceptions: Vec::new(),

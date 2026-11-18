@@ -130,6 +130,7 @@ fn complete_context() -> TrustContext {
             exposure: Exposure::Internal,
             vex_accepted: 0,
             established: true,
+            risk_version: 0,
         })
         .build()
 }
@@ -246,6 +247,7 @@ fn the_context_is_versioned_and_the_evaluation_is_deterministic() {
             exposure: Exposure::Internal,
             vex_accepted: 0,
             established: true,
+            risk_version: 0,
         })
         .build();
     assert_eq!(

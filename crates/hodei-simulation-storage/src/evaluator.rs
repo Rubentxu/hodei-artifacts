@@ -109,7 +109,10 @@ impl CapsuleDecisionEvaluator {
         RiskFacts {
             critical_known: critical as u32,
             critical_reachable: critical as u32,
-            established: critical > 0,
+            // The hypothetical feed was consulted for this subject and
+            // answered: whatever it did not name is an established zero,
+            // never UNKNOWN. Only the real reader can fail to establish.
+            established: true,
             ..RiskFacts::default()
         }
     }

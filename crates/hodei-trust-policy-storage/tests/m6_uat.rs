@@ -130,6 +130,7 @@ fn exposed_context(subject: &str, at: DateTime<Utc>) -> TrustContext {
             established: true,
             exposure: hodei_trust_policy::context::Exposure::Internal,
             vex_accepted: 0,
+            risk_version: 0,
         },
         exceptions: Vec::new(),
         evidence_ids: Vec::new(),

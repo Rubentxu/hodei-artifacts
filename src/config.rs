@@ -245,6 +245,16 @@ pub struct TrustConfig {
     /// Default: none.
     #[serde(default)]
     pub policy_file: Option<String>,
+    /// A JSON object file mapping advisory HRN to severity
+    /// (`"critical"` or `"other"`): the minimum catalog that lets the
+    /// risk facts say which of the advisories reaching a subject block
+    /// it. Without it no severity is known, no risk is established, and
+    /// a policy that demands the risk grants nothing -- UNKNOWN is not
+    /// zero.
+    ///
+    /// Default: none.
+    #[serde(default)]
+    pub risk_catalog_file: Option<String>,
     /// The identifier under which the policy is activated and requested.
     ///
     /// Default: `default`.
@@ -256,6 +266,7 @@ impl Default for TrustConfig {
     fn default() -> Self {
         Self {
             policy_file: None,
+            risk_catalog_file: None,
             policy_id: the_default_trust_policy_id(),
         }
     }
