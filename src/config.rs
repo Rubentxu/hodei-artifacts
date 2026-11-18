@@ -260,6 +260,16 @@ pub struct TrustConfig {
     /// Default: `default`.
     #[serde(default = "the_default_trust_policy_id")]
     pub policy_id: String,
+    /// Ceiling, in seconds, of the validity of a newly issued trust
+    /// grant. The grant lives until the earliest expiry the decision
+    /// demanded (an applied exception), but never past this ceiling:
+    /// past it the bytes have to pass a new decision before the trusted
+    /// channel keeps serving them. A deployment that wants slower
+    /// revalidation raises it; nothing runs the channel unbounded.
+    ///
+    /// Default: 86400 (one day). Minimum: 1.
+    #[serde(default = "the_default_grant_max_validity_secs")]
+    pub grant_max_validity_secs: u64,
 }
 
 impl Default for TrustConfig {
@@ -268,12 +278,17 @@ impl Default for TrustConfig {
             policy_file: None,
             risk_catalog_file: None,
             policy_id: the_default_trust_policy_id(),
+            grant_max_validity_secs: the_default_grant_max_validity_secs(),
         }
     }
 }
 
 fn the_default_trust_policy_id() -> String {
     "default".to_string()
+}
+
+fn the_default_grant_max_validity_secs() -> u64 {
+    86_400
 }
 
 /// The per-account quotas.

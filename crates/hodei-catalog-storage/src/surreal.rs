@@ -154,7 +154,15 @@ use crate::audit_outbox::{AuditRow, SurrealAuditOutbox, audit_outbox_id};
 /// the path at the end, and without it two assets of the same package and
 /// version tie, and the order of the rows is not total. Those databases
 /// get the two indexes redefined at the boot.
-pub const SCHEMA_VERSION: i64 = 10;
+///
+/// Version 11 gives the trust grants their **validity**: the subject the
+/// decision evaluated, the policy version that decided, the capsule hash
+/// and the risk version that were consulted, and the moment the grant
+/// stops being worthy of trust. The five fields are optional on the row
+/// and mandatory on the answer: a grant written before this contract has
+/// no declared validity, and a grant without validity is not served --
+/// history kept, channel closed, until a new promotion revalidates it.
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// The version whose indexes of the assets did not end in the path.
 ///
@@ -189,9 +197,20 @@ const WRITE_ATTEMPTS: usize = 4;
 ///
 /// It is written once because the rule is one: a revoked grant is
 /// revoked. The rule itself lives in the domain, in
-/// [`hodei_catalog::TrustGrant::is_active`], and this is its form in the
-/// queries of the database.
+/// [`hodei_catalog::TrustGrant::is_active_at`], and this is its form in
+/// the queries that count revocations.
 pub(crate) const LIVE_GRANT: &str = "revoked_at IS NONE";
+
+/// The condition of an **admissible** grant: live, and with its validity
+/// still unbroken at the asked hour.
+///
+/// A row from before the validity contract has `valid_until` NONE, and
+/// NONE never compares greater than an hour: the row is excluded, which
+/// is exactly the fail-closed migration the contract asks for. The rest
+/// of the validity rule lives in the domain, in
+/// [`hodei_catalog::TrustGrant::is_active_at`], and a grant written
+/// through the service always carries the whole metadata.
+pub(crate) const ADMISSIBLE_GRANT: &str = "revoked_at IS NONE AND valid_until > $at";
 
 /// El esquema del catálogo.
 ///
@@ -343,6 +362,14 @@ DEFINE FIELD IF NOT EXISTS granted_at ON trust_grant TYPE datetime;
 DEFINE FIELD IF NOT EXISTS revoked_at ON trust_grant TYPE option<datetime>;
 DEFINE FIELD IF NOT EXISTS revoked_by ON trust_grant TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS revoke_reason ON trust_grant TYPE option<string>;
+-- La vigencia de la concesion. Optionales en la fila porque las filas de
+-- antes del contrato no la llevan: siguen siendo historia, y el canal
+-- trusted no las sirve hasta que una promocion nueva las revalide.
+DEFINE FIELD IF NOT EXISTS subject ON trust_grant TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS policy_version ON trust_grant TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS capsule_hash ON trust_grant TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS risk_version ON trust_grant TYPE option<int>;
+DEFINE FIELD IF NOT EXISTS valid_until ON trust_grant TYPE option<datetime>;
 DEFINE INDEX IF NOT EXISTS trust_grant_digest ON trust_grant FIELDS account, repository, digest_algorithm, digest;
 DEFINE INDEX IF NOT EXISTS trust_grant_decision ON trust_grant FIELDS account, repository, decision_id;
 

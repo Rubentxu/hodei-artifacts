@@ -380,18 +380,48 @@ pub async fn promote(
     )
     .await;
 
+    // AC1 y AC3: la concesion se emite desde la decision autorizada y
+    // persistida, y solo se publica si su instantanea sigue vigente. Si
+    // entre la decision y aqui se activo otra version de la politica, la
+    // decision esta obsoleta y ninguna concesion se publica. Y al
+    // emitirse desde ella, lo que el grant promete como sujeto,
+    // politica, evidencia y riesgo es lo que de verdad se decidio, no lo
+    // que trajo el cliente.
+    let decision = plane
+        .service()
+        .decision(&decision_id)
+        .await
+        .map_err(|_| {
+            audit(AuditResult::Failed);
+            PromotionApiError::Unavailable
+        })?
+        .ok_or_else(|| {
+            audit(AuditResult::Failed);
+            PromotionApiError::Unavailable
+        })?;
+    if plane.active_policy_version().as_deref() != Some(decision.trust.policy_version.as_str()) {
+        audit(AuditResult::Failed);
+        return Err(PromotionApiError::Conflict);
+    }
+    let valid_until = plane.validity_of(&decision, now);
+
     let grants: Vec<TrustGrant> = covered
         .iter()
         .map(|covered| TrustGrant {
             account: account.clone(),
             repository: body.repository.clone(),
             digest: covered.clone(),
-            decision_id: decision_id.as_str().to_string(),
+            decision_id: decision.id.as_str().to_string(),
             actor: actor.clone(),
             granted_at: now,
             revoked_at: None,
             revoked_by: None,
             revoke_reason: None,
+            subject: Some(decision.request.subject.clone()),
+            policy_version: Some(decision.trust.policy_version.clone()),
+            capsule_hash: decision.trust.capsule_hash.clone(),
+            risk_version: Some(decision.trust.risk_version),
+            valid_until: Some(valid_until),
         })
         .collect();
     if ledger.grant(&grants).await.is_err() {

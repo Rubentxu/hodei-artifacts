@@ -154,7 +154,7 @@ pub async fn export(
         };
 
         let decision = trust
-            .active_grant(account, repository, &asset.digest)
+            .active_grant(account, repository, &asset.digest, Utc::now())
             .await?
             .map(|grant| DecisionEvidence {
                 decision_id: grant.decision_id,

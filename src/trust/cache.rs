@@ -170,17 +170,32 @@ impl TrustLedger for CachedTrustLedger {
         account: &str,
         repository: &str,
         digest: &ContentDigest,
+        at: DateTime<Utc>,
     ) -> Result<Option<TrustGrant>, CatalogError> {
         let key = Self::key(account, repository, digest);
-        if let Some(entry) = self.fresh().get(&key) {
-            return Ok(Some(entry.grant.clone()));
+        // La cache acorta el viaje, no la vida de la concesion: una
+        // entrada solo sirve si la vigencia del grant que guarda sigue
+        // en pie **a la hora preguntada**. El ttl dice cada cuanto se
+        // vuelve al libro; `valid_until` dice hasta cuando vale lo que
+        // el libro dijo. Son dos relojes distintos, y manda el de la
+        // vigencia.
+        if let Some(grant) = self
+            .fresh()
+            .get(&key)
+            .filter(|entry| entry.grant.is_active_at(at))
+            .map(|entry| entry.grant.clone())
+        {
+            return Ok(Some(grant));
         }
-        let grant = self.inner.active_grant(account, repository, digest).await?;
-        // Solo la afirmacion se cachea: la ausencia y el fallo del libro
-        // se vuelven a preguntar siempre, porque una revocacion hecha en
-        // otra instancia o un libro que vuelve a vivir deben poder
-        // negarse —y conceder— en la peticion siguiente.
-        if let Some(active) = grant.as_ref().filter(|grant| grant.is_active()) {
+        let grant = self
+            .inner
+            .active_grant(account, repository, digest, at)
+            .await?;
+        // Solo la afirmacion **vigente** se cachea: la ausencia, el fallo
+        // del libro y lo caducado se vuelven a preguntar siempre, porque
+        // una revocacion hecha en otra instancia o un libro que vuelve a
+        // vivir deben poder negarse —y conceder— en la peticion siguiente.
+        if let Some(active) = grant.as_ref().filter(|grant| grant.is_active_at(at)) {
             self.fresh().insert(
                 key,
                 Entry {
@@ -238,6 +253,11 @@ mod tests {
             revoked_at: None,
             revoked_by: None,
             revoke_reason: None,
+            subject: Some("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app".to_string()),
+            policy_version: Some("1.0.0".to_string()),
+            capsule_hash: Some("sha256:capsule".to_string()),
+            risk_version: Some(0),
+            valid_until: Some(Utc::now() + chrono::Duration::hours(1)),
         }
     }
 
@@ -315,6 +335,7 @@ mod tests {
             _account: &str,
             _repository: &str,
             digest: &ContentDigest,
+            at: DateTime<Utc>,
         ) -> Result<Option<TrustGrant>, CatalogError> {
             self.reads.fetch_add(1, Ordering::SeqCst);
             Ok(self
@@ -322,7 +343,7 @@ mod tests {
                 .lock()
                 .await
                 .iter()
-                .find(|grant| &grant.digest == digest && grant.is_active())
+                .find(|grant| &grant.digest == digest && grant.is_active_at(at))
                 .cloned())
         }
 
@@ -349,10 +370,10 @@ mod tests {
 
         for _ in 0..3 {
             let grant = cached
-                .active_grant("acme", "trusted-repo", &digest)
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
                 .await
                 .expect("la cache responde");
-            assert!(grant.expect("hay concesion").is_active());
+            assert!(grant.expect("hay concesion").is_active_at(Utc::now()));
         }
         assert_eq!(fake.the_reads(), 1, "dos de tres lecturas fueron por cache");
     }
@@ -367,7 +388,7 @@ mod tests {
 
         assert!(
             cached
-                .active_grant("acme", "trusted-repo", &digest)
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
                 .await
                 .expect("la primera concede")
                 .is_some()
@@ -387,7 +408,7 @@ mod tests {
 
         assert!(
             cached
-                .active_grant("acme", "trusted-repo", &digest)
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
                 .await
                 .expect("la segunda pregunta")
                 .is_none(),
@@ -406,7 +427,7 @@ mod tests {
 
         for digest in [&first, &second] {
             cached
-                .active_grant("acme", "trusted-repo", digest)
+                .active_grant("acme", "trusted-repo", digest, Utc::now())
                 .await
                 .expect("ambos concedidos");
         }
@@ -425,7 +446,7 @@ mod tests {
         for digest in [&first, &second] {
             assert!(
                 cached
-                    .active_grant("acme", "trusted-repo", digest)
+                    .active_grant("acme", "trusted-repo", digest, Utc::now())
                     .await
                     .expect("la cache vuelve al libro")
                     .is_none()
@@ -445,7 +466,7 @@ mod tests {
 
         assert!(
             cached
-                .active_grant("acme", "trusted-repo", &old_bytes)
+                .active_grant("acme", "trusted-repo", &old_bytes, Utc::now())
                 .await
                 .expect("lo viejo esta concedido")
                 .is_some()
@@ -453,7 +474,7 @@ mod tests {
 
         assert!(
             cached
-                .active_grant("acme", "trusted-repo", &new_bytes)
+                .active_grant("acme", "trusted-repo", &new_bytes, Utc::now())
                 .await
                 .expect("lo nuevo se pregunta al libro")
                 .is_none(),
@@ -472,7 +493,7 @@ mod tests {
         for _ in 0..2 {
             assert!(
                 cached
-                    .active_grant("acme", "trusted-repo", &digest)
+                    .active_grant("acme", "trusted-repo", &digest, Utc::now())
                     .await
                     .expect("el libro dice que no")
                     .is_none()
@@ -486,7 +507,7 @@ mod tests {
             .expect("promocion ajena");
         assert!(
             cached
-                .active_grant("acme", "trusted-repo", &digest)
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
                 .await
                 .expect("la promocion se sirve")
                 .is_some()
@@ -504,10 +525,41 @@ mod tests {
 
         for _ in 0..2 {
             cached
-                .active_grant("acme", "trusted-repo", &digest)
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
                 .await
                 .expect("con ttl cero nada es fresco");
         }
         assert_eq!(fake.the_reads(), 2, "el ttl expirado iguala al libro vivo");
+    }
+
+    /// AC2, y la separacion que el contrato exige: la cache acorta el
+    /// viaje, no alarga la vida. Una entrada con ttl de una hora no
+    /// sirve un grant cuya vigencia caduco.
+    #[tokio::test]
+    async fn the_cache_does_not_extend_the_validity_of_a_grant() {
+        let digest = the_digest_of("short lived admission");
+        let mut grant = a_grant(&digest);
+        grant.valid_until = Some(Utc::now() + chrono::Duration::minutes(5));
+        let fake = std::sync::Arc::new(FakeLedger::new(vec![grant]));
+        let cached = CachedTrustLedger::new(fake.clone(), Duration::from_secs(3600));
+
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("viva, se sirve")
+                .is_some()
+        );
+
+        let later = Utc::now() + chrono::Duration::hours(1);
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, later)
+                .await
+                .expect("caducada, el libro lo dice")
+                .is_none(),
+            "la cache no presta vida a un grant caducado"
+        );
+        assert_eq!(fake.the_reads(), 2, "y la caducidad se comprueba de nuevo");
     }
 }

@@ -13,12 +13,23 @@
 //! mueve apunta a otro digest, y ese digest no hereda nada: la decision de
 //! ayer sobre `sha256:X` no dice nada sobre `sha256:Y`.
 //!
+//! # Que dice una concesion de si misma
+//!
+//! Cada concesion nueva lleva la **vigencia** con la que nacio: el sujeto
+//! evaluado, la version de la politica que decidio, el hash de la capsula
+//! de evidencia y la version del riesgo que se consultaron, y el momento
+//! hasta el que es digna de fe (`valid_until`). Con eso una concesion se
+//! puede auditar y revalidar sin volver a preguntar al pasado; sin eso
+//! **no es activa**: las filas escritas antes de este contrato siguen en
+//! la base como historia, pero el canal trusted no las sirve hasta que una
+//! promocion nueva las revalide. Fallar cerrado es la migracion.
+//!
 //! # Por que se lee en vivo
 //!
-//! No hay cache de decisiones. Cada peticion al canal trusted pregunta al
-//! libro, de modo que una revocacion tiene efecto en la peticion
-//! siguiente, y cualquier error del libro es un error: **nunca** se
-//! convierte en un permiso.
+//! Cada peticion al canal trusted pregunta al libro **con el reloj de
+//! ahora**: una revocacion tiene efecto en la peticion siguiente, una
+//! vigencia caducada deja de servir sin que nadie la revoque, y cualquier
+//! error del libro es un error: **nunca** se convierte en un permiso.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -78,6 +89,11 @@ impl ServeChannel {
 }
 
 /// La concesion de un digest dentro de un repositorio, por una decision.
+///
+/// La concesion **no duplica** a la decision: la nombra con su
+/// `decision_id` y conserva solo los cinco datos que hacen falta para
+/// juzgar su vigencia hoy. Todo lo demas —los motivos, los requisitos, el
+/// desenlace— se lee de la decision persistida.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustGrant {
     /// La cuenta propietaria del repositorio.
@@ -98,12 +114,42 @@ pub struct TrustGrant {
     pub revoked_by: Option<String>,
     /// Por que se revoco.
     pub revoke_reason: Option<String>,
+    /// El sujeto (HRN) que la decision evaluo, si la concesion lleva
+    /// vigencia. Una concesion anterior a este contrato no lo lleva.
+    #[serde(default)]
+    pub subject: Option<String>,
+    /// La version de la politica con la que se decidio, si la concesion
+    /// lleva vigencia.
+    #[serde(default)]
+    pub policy_version: Option<String>,
+    /// El hash de la capsula de evidencia consultada, si la decision la
+    /// tuvo. Identifica la evidencia sin duplicarla: el detalle vive en la
+    /// decision persistida.
+    #[serde(default)]
+    pub capsule_hash: Option<String>,
+    /// La version del registro de riesgo que se consulto, si se consulto
+    /// con vigencia. Cero es un valor honesto: el registro de nadie.
+    #[serde(default)]
+    pub risk_version: Option<u64>,
+    /// Hasta cuando es digna de fe esta concesion, si la lleva. Sin
+    /// vigencia declarada no hay concesion activa: es el lado cerrado de
+    /// la migracion.
+    #[serde(default)]
+    pub valid_until: Option<DateTime<Utc>>,
 }
 
 impl TrustGrant {
-    /// Si la concesion sigue en vigor.
-    pub fn is_active(&self) -> bool {
+    /// Si la concesion sigue en vigor **a las `now`**.
+    ///
+    /// Tres condiciones y ninguna caridad: no estar revocada, llevar la
+    /// vigencia completa (la version de la politica que decidio) y no
+    /// haber caducado. Una concesion sin vigencia —escrita antes de este
+    /// contrato o a medias— no es activa: sin prueba de vigencia no se
+    /// sirve, y revalidarla es promocionar de nuevo.
+    pub fn is_active_at(&self, now: DateTime<Utc>) -> bool {
         self.revoked_at.is_none()
+            && self.policy_version.is_some()
+            && self.valid_until.is_some_and(|until| until > now)
     }
 }
 
@@ -161,12 +207,18 @@ pub trait TrustLedger: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<u64, CatalogError>;
 
-    /// Una concesion activa de ese digest en ese repositorio, si la hay.
+    /// Una concesion activa de ese digest en ese repositorio **a las
+    /// `at`**, si la hay.
+    ///
+    /// La hora es un parametro, no una trampa interna: quien pregunta
+    /// decide cual es el ahora, y asi el reloj se puede inyectar en una
+    /// prueba. El libro sin filtros responde la vigencia como la guarda.
     async fn active_grant(
         &self,
         account: &str,
         repository: &str,
         digest: &ContentDigest,
+        at: DateTime<Utc>,
     ) -> Result<Option<TrustGrant>, CatalogError>;
 
     /// Todas las concesiones de un repositorio, activas o revocadas.
@@ -181,7 +233,96 @@ pub trait TrustLedger: Send + Sync {
 mod tests {
     use super::*;
     use crate::DigestScope;
+    use chrono::Duration;
     use serde_json::json;
+
+    fn a_grant(now: DateTime<Utc>) -> TrustGrant {
+        TrustGrant {
+            account: "acme".to_string(),
+            repository: "raw".to_string(),
+            digest: ContentDigest::of_bytes(b"the bytes"),
+            decision_id: "dec-1".to_string(),
+            actor: "promoter".to_string(),
+            granted_at: now,
+            revoked_at: None,
+            revoked_by: None,
+            revoke_reason: None,
+            subject: Some("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app".to_string()),
+            policy_version: Some("1.0.0".to_string()),
+            capsule_hash: Some("sha256:cap".to_string()),
+            risk_version: Some(7),
+            valid_until: Some(now + Duration::hours(1)),
+        }
+    }
+
+    #[test]
+    fn a_grant_with_full_validity_is_active_until_it_expires() {
+        let now = Utc::now();
+        let grant = a_grant(now);
+        assert!(grant.is_active_at(now));
+        assert!(
+            grant.is_active_at(now + Duration::minutes(59)),
+            "inside the horizon the promise still holds"
+        );
+        assert!(
+            !grant.is_active_at(now + Duration::hours(1)),
+            "valid_until is exclusive: at the deadline the grant is over"
+        );
+        assert!(!grant.is_active_at(now + Duration::hours(2)));
+    }
+
+    #[test]
+    fn a_revocation_ends_the_validity_it_has() {
+        let now = Utc::now();
+        let mut grant = a_grant(now);
+        grant.revoked_at = Some(now);
+        assert!(!grant.is_active_at(now));
+    }
+
+    /// AC de migracion: la vigencia no se presume. Sin version de politica
+    /// o sin `valid_until` no hay concesion activa, por muy limpia que
+    /// este el resto de la fila.
+    #[test]
+    fn a_grant_without_declared_validity_is_never_active() {
+        let now = Utc::now();
+        let mut no_version = a_grant(now);
+        no_version.policy_version = None;
+        assert!(!no_version.is_active_at(now));
+
+        let mut no_horizon = a_grant(now);
+        no_horizon.valid_until = None;
+        assert!(!no_horizon.is_active_at(now));
+
+        let mut legacy = a_grant(now);
+        legacy.subject = None;
+        legacy.capsule_hash = None;
+        legacy.risk_version = None;
+        legacy.policy_version = None;
+        legacy.valid_until = None;
+        assert!(
+            !legacy.is_active_at(now),
+            "a row from before the contract stays out of trusted until revalidated"
+        );
+    }
+
+    #[test]
+    fn the_validity_fields_are_optional_on_the_wire() {
+        let mut legacy = serde_json::to_value(a_grant(Utc::now())).expect("a grant serializes");
+        let fields = legacy.as_object_mut().expect("a grant is an object");
+        for name in [
+            "subject",
+            "policy_version",
+            "capsule_hash",
+            "risk_version",
+            "valid_until",
+        ] {
+            fields.remove(name);
+        }
+        let grant: TrustGrant = serde_json::from_value(legacy).expect("it parses");
+        assert!(grant.policy_version.is_none());
+        assert!(grant.valid_until.is_none());
+        assert!(!grant.is_active_at(Utc::now()));
+    }
 
     fn config(settings: serde_json::Value) -> RepositoryConfig {
         let mut config = RepositoryConfig::new(DigestScope::Global);

@@ -348,6 +348,9 @@ pub async fn bootstrap(
             decisions,
             policies,
             config.trust.policy_id.clone(),
+            chrono::Duration::seconds(i64::from(
+                u32::try_from(config.trust.grant_max_validity_secs.max(1)).unwrap_or(u32::MAX),
+            )),
         ));
         // The egress policy comes from the service configuration, never
         // from a repository: an empty list means no outbound request.

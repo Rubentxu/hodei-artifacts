@@ -1,8 +1,10 @@
 //! El libro de las concesiones de confianza sobre la base del catalogo.
 //!
 //! Una fila por (cuenta, repositorio, digest, decision). La consulta de
-//! "esta concedido" mira filas **activas** y nada mas: no hay cache, de
-//! modo que una revocacion se ve en la lectura siguiente.
+//! "esta concedido" mira filas **admisibles**: sin revocar y con la
+//! vigencia sin romper a la hora preguntada. Las filas anteriores al
+//! contrato de vigencia no la llevan, y ahi se quedan: historia viva del
+//! libro, fuera del canal trusted hasta que una promocion las revalide.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -11,7 +13,7 @@ use hodei_evidence::ContentDigest;
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::{Datetime, Thing};
 
-use super::{LIVE_GRANT, SurrealCatalogStore, composite_id, digest_of};
+use super::{ADMISSIBLE_GRANT, LIVE_GRANT, SurrealCatalogStore, composite_id, digest_of};
 
 fn unavailable(error: impl ToString) -> CatalogError {
     CatalogError::unavailable(error.to_string())
@@ -47,6 +49,11 @@ struct NewRow {
     decision_id: String,
     actor: String,
     granted_at: Datetime,
+    subject: Option<String>,
+    policy_version: Option<String>,
+    capsule_hash: Option<String>,
+    risk_version: Option<i64>,
+    valid_until: Option<Datetime>,
 }
 
 impl NewRow {
@@ -65,6 +72,11 @@ impl NewRow {
             decision_id: grant.decision_id.clone(),
             actor: grant.actor.clone(),
             granted_at: Datetime::from(grant.granted_at),
+            subject: grant.subject.clone(),
+            policy_version: grant.policy_version.clone(),
+            capsule_hash: grant.capsule_hash.clone(),
+            risk_version: grant.risk_version.map(|version| version as i64),
+            valid_until: grant.valid_until.map(Datetime::from),
         }
     }
 }
@@ -82,6 +94,16 @@ struct Row {
     revoked_at: Option<Datetime>,
     revoked_by: Option<String>,
     revoke_reason: Option<String>,
+    #[serde(default)]
+    subject: Option<String>,
+    #[serde(default)]
+    policy_version: Option<String>,
+    #[serde(default)]
+    capsule_hash: Option<String>,
+    #[serde(default)]
+    risk_version: Option<i64>,
+    #[serde(default)]
+    valid_until: Option<Datetime>,
 }
 
 impl Row {
@@ -96,12 +118,23 @@ impl Row {
             revoked_at: self.revoked_at.map(|at| at.0),
             revoked_by: self.revoked_by,
             revoke_reason: self.revoke_reason,
+            subject: self.subject,
+            policy_version: self.policy_version,
+            capsule_hash: self.capsule_hash,
+            // Un riesgo negativo no existe: lo que la base no sepa decir
+            // se lee como ausencia, no como permiso.
+            risk_version: self
+                .risk_version
+                .filter(|version| *version >= 0)
+                .map(|version| version as u64),
+            valid_until: self.valid_until.map(|at| at.0),
         })
     }
 }
 
 const COLUMNS: &str = "account, repository, digest_algorithm, digest, decision_id, actor, \
-                       granted_at, revoked_at, revoked_by, revoke_reason";
+                       granted_at, revoked_at, revoked_by, revoke_reason, subject, \
+                       policy_version, capsule_hash, risk_version, valid_until";
 
 #[async_trait]
 impl TrustLedger for SurrealCatalogStore {
@@ -214,6 +247,7 @@ impl TrustLedger for SurrealCatalogStore {
         account: &str,
         repository: &str,
         digest: &ContentDigest,
+        at: DateTime<Utc>,
     ) -> Result<Option<TrustGrant>, CatalogError> {
         let mut response = self
             .db
@@ -221,12 +255,13 @@ impl TrustLedger for SurrealCatalogStore {
                 "SELECT {COLUMNS} FROM trust_grant \
                  WHERE account = $account AND repository = $repository \
                  AND digest_algorithm = $algorithm AND digest = $digest \
-                 AND {LIVE_GRANT} LIMIT 1"
+                 AND {ADMISSIBLE_GRANT} LIMIT 1"
             ))
             .bind(("account", account.to_string()))
             .bind(("repository", repository.to_string()))
             .bind(("algorithm", digest.algorithm.to_string()))
             .bind(("digest", digest.value.clone()))
+            .bind(("at", Datetime::from(at)))
             .await
             .map_err(unavailable)?;
         let rows: Vec<Row> = response.take(0).map_err(unavailable)?;

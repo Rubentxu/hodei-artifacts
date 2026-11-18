@@ -273,7 +273,10 @@ pub async fn get_package(
     // The decision: the live grant of the ledger. What is not
     // granted is quarantined, and it is not deduced from the evidence.
     let decision = the_decision(&state, account, &repository, &asset.digest).await?;
-    let state_of_trust = if decision.as_ref().is_some_and(|grant| grant.is_active()) {
+    let state_of_trust = if decision
+        .as_ref()
+        .is_some_and(|grant| grant.is_active_at(Utc::now()))
+    {
         TrustState::Trusted
     } else {
         TrustState::Quarantined
@@ -350,7 +353,7 @@ async fn the_decision(
         return Ok(None);
     };
     ledger
-        .active_grant(account, repository, digest)
+        .active_grant(account, repository, digest, Utc::now())
         .await
         .map_err(|_| PackageApiError::Unavailable)
 }
