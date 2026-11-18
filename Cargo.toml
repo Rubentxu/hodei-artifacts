@@ -196,6 +196,13 @@ hodei-trust-policy-storage = { path = "crates/hodei-trust-policy-storage" }
 hodei-risk-storage = { path = "crates/hodei-risk-storage" }
 # El almacén de contenido por digest: el CAS donde viven los bytes.
 hodei-hub = { path = "crates/hodei-hub" }
+# El mismo almacén sobre un object store S3-compatible: el backend que
+# el arranque productivo elige por configuracion (HAE-05). El SDK va
+# aqui porque es bootstrap quien construye el cliente con la cadena de
+# credenciales del entorno.
+hodei-hub-s3 = { path = "crates/hodei-hub-s3" }
+aws-config = "1"
+aws-sdk-s3 = "1"
 # El investigador: el dominio de la explicacion con citas, y su
 # recuperador sobre el grafo y la evidencia. La superficie de
 # investigacion los sirve; no reescribe nada de lo que hacen.
@@ -273,6 +280,10 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 hodei-hrn = "0.2.1"
+# Las pruebas de arranque sobre S3 observan el cubo desde fuera del
+# servicio, con credenciales fijas de LocalStack: el tipo de credenciales
+# del SDK, no un proveedor de produccion.
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
 # Los fixtures de PyPI (un wheel y un sdist) se construyen aqui: un zip y
 # un tar con gzip, sin depender de una herramienta de Python. El zip va sin
 # codecs: el fixture se escribe *stored*, que no necesita ninguno.

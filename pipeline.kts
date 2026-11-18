@@ -247,6 +247,7 @@ pipeline {
                         "--test hsp124_quota_e2e",
                         "--test hsp125_replication_spike",
                         "--test hsp135_vigencia_e2e",
+                        "--test hsp138_s3_arranque_e2e",
                     ).joinToString(" ")
                 )
                 sh(

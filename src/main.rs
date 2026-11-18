@@ -69,10 +69,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         validate_schemas: config.schema.validate,
     };
 
-    let app_state = bootstrap(&config, bootstrap_config).await.map_err(|e| {
-        eprintln!("Bootstrap failed: {}", e);
-        std::process::exit(1);
-    })?;
+    // The failure of the boot is reported and returned, not exited from:
+    // `std::process::exit` tears the process down while the runtime's
+    // worker threads are still alive, and whatever library holds a live
+    // connection at that moment can abort on the way out -- a core dump
+    // over an error the operator was told about in words is not a clean
+    // refusal. Propagating lets the runtime shut its workers down first,
+    // and the process still ends with a failing status.
+    let app_state = match bootstrap(&config, bootstrap_config).await {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("Bootstrap failed: {error}");
+            return Err(error.to_string().into());
+        }
+    };
 
     // 4. Build Axum router
     let app = build_router(app_state, &config);
