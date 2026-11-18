@@ -83,6 +83,18 @@ impl TrustPlane {
         &self.policy_id
     }
 
+    /// El registro de politicas del plano.
+    ///
+    /// Es una manija mas sobre el MISMO estado interior: el ciclo
+    /// reactivo (HSP-137) necesita un segundo `PromotionService` --el
+    /// primero no es clonable-- que decida contra la politica que esta
+    /// activo ahora, exactamente la que la promocion publica usa. Clonar
+    /// el registro comparte el interior: una politica activada despues
+    /// se ve desde las dos mitades.
+    pub fn registry(&self) -> PolicyRegistry {
+        self.registry.clone()
+    }
+
     /// La version de la politica que decide **ahora**.
     ///
     /// Es la segunda mitad del compare-and-set de la promocion: la

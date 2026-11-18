@@ -163,6 +163,14 @@ pub struct AppState {
     /// Optional: without it the promotion routes answer `501` and nothing
     /// is ever granted, so a trusted channel stays empty.
     pub(crate) trust_plane: Option<Arc<crate::trust::promotion::TrustPlane>>,
+    /// El ciclo reactivo CVE: admision de advisories, reevaluacion y
+    /// barrido de vigencias (HSP-137).
+    ///
+    /// Optional, and fail-closed: a deployment without it answers `501`
+    /// on the advisory entry and never reevaluates on its own -- a
+    /// concession revoked by a CVE is revoked by the promotion path, not
+    /// invented here.
+    pub(crate) reactor: Option<Arc<crate::trust::reaction::VulnerabilityReactor>>,
     /// The investigation of a subject.
     ///
     /// Optional, and fail-closed: a deployment without the evidence and
@@ -309,6 +317,7 @@ impl AppState {
             trust_ledger: None,
             proxy_plane: None,
             trust_plane: None,
+            reactor: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             quota: Arc::new(crate::quota::QuotaLedger::new(
                 crate::quota::QuotaLimits::default(),
@@ -377,6 +386,7 @@ impl AppState {
             trust_ledger: None,
             proxy_plane: None,
             trust_plane: None,
+            reactor: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             quota: Arc::new(crate::quota::QuotaLedger::new(
                 crate::quota::QuotaLimits::default(),
@@ -497,6 +507,15 @@ impl AppState {
     /// Inject the promotion service.
     pub fn with_trust_plane(mut self, plane: Arc<crate::trust::promotion::TrustPlane>) -> Self {
         self.trust_plane = Some(plane);
+        self
+    }
+
+    /// Inject the reactive cycle of the CVE.
+    pub fn with_reactor(
+        mut self,
+        reactor: Arc<crate::trust::reaction::VulnerabilityReactor>,
+    ) -> Self {
+        self.reactor = Some(reactor);
         self
     }
 

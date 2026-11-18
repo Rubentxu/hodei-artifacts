@@ -329,6 +329,13 @@ fn admin_v1_routes(app_state: AppState) -> Router {
             get(crate::handlers::gc::list_holds).post(crate::handlers::gc::place_hold),
         )
         .route("/gc/holds/release", post(crate::handlers::gc::release_hold))
+        // El ciclo reactivo CVE: la admision de un advisory es su propia
+        // resource para el gate, porque quien la tiene puede apagar el
+        // canal trusted de un artefacto (HSP-137).
+        .route(
+            "/advisories/accept",
+            post(crate::handlers::advisories::accept),
+        )
         // Integrity scrub of the registry: read-only, its own resource.
         .route("/scrub", get(crate::handlers::scrub::report))
         // Migration from Nexus/Artifactory: inventory and import, both

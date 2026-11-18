@@ -351,6 +351,19 @@ pub struct TrustConfig {
     /// Default: 86400 (one day). Minimum: 1.
     #[serde(default = "the_default_grant_max_validity_secs")]
     pub grant_max_validity_secs: u64,
+    /// Intervalo, en segundos, del barrido que reevalúa las concesiones
+    /// cuya vigencia se agotó o cuya política ya no es la activa, y del
+    /// consumo de deltas que materializa la vista de impacto (HSP-137).
+    ///
+    /// El camino de servicio ya rechaza la concesión vencida
+    /// (HSP-135); el barrido es lo que hace que la verdad se reevalúe
+    /// y se escriba, no solo que se note al leer. `0` desactiva el
+    /// bucle: el ciclo sigue vivo por la entrada de advisories y el
+    /// `resume` de arranque.
+    ///
+    /// Default: 60.
+    #[serde(default = "the_default_trust_sweep_interval_secs")]
+    pub sweep_interval_secs: u64,
 }
 
 impl Default for TrustConfig {
@@ -360,6 +373,7 @@ impl Default for TrustConfig {
             risk_catalog_file: None,
             policy_id: the_default_trust_policy_id(),
             grant_max_validity_secs: the_default_grant_max_validity_secs(),
+            sweep_interval_secs: the_default_trust_sweep_interval_secs(),
         }
     }
 }
@@ -370,6 +384,10 @@ fn the_default_trust_policy_id() -> String {
 
 fn the_default_grant_max_validity_secs() -> u64 {
     86_400
+}
+
+fn the_default_trust_sweep_interval_secs() -> u64 {
+    60
 }
 
 /// The per-account quotas.

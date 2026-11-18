@@ -446,6 +446,11 @@ pub async fn bootstrap(
     // deniega todo-- por error de orden.
     let app_state = wire_the_investigation(app_state, config, &schema_storage)?;
     let app_state = wire_the_risk_facts(app_state, config, &schema_storage);
+    // El ciclo reactivo CVE se cablea al final: necesita el plano de
+    // confianza, el libro mayor y los hechos de riesgo ya montados. Sin
+    // plano no hay ciclo: la entrada de advisories responde 501 y el
+    // despliegue sigue sirviendo como antes de este módulo.
+    let app_state = wire_the_reactor(app_state, config, &schema_storage).await?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
             "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"
@@ -797,6 +802,65 @@ fn wire_the_risk_facts(
     let deltas = Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(db));
     let view = SurrealImpactView::new(graph, deltas);
     state.with_risk_facts(Arc::new(SurrealRiskFacts::new(view, catalog)))
+}
+
+/// El ciclo reactivo CVE: la composition root de `VulnerabilityReactor`.
+///
+/// Solo existe si el plano de confianza existe: sin politicas ni
+/// decisiones no hay nada que reevaluar, y un ciclo que decide por su
+/// cuenta seria un segundo plano de confianza disfrazado. El `resume`
+/// corre ANTES de abrir el estado al trafico: es lo que hace que un
+/// `kill -9` a mitad de un efecto converja al reiniciar, y correrlo
+/// despues dejaria una ventana en la que el servicio sirve con los
+/// intents del crash aun dichos y no perseguidos.
+async fn wire_the_reactor(
+    state: AppState,
+    config: &AppConfig,
+    schema_storage: &Arc<SurrealSchemaAdapter>,
+) -> Result<AppState, BootstrapError> {
+    let (Some(plane), Some(ledger)) = (state.trust_plane.clone(), state.trust_ledger.clone())
+    else {
+        return Ok(state);
+    };
+    let db = Arc::new(schema_storage.db().clone());
+    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
+    let deltas = Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(db));
+    let view = hodei_risk_storage::impact_view::SurrealImpactView::new(graph.clone(), deltas);
+    let reactor = Arc::new(crate::trust::reaction::VulnerabilityReactor::new(
+        Arc::new(schema_storage.db().clone()),
+        graph,
+        view,
+        plane,
+        ledger,
+        state.evidence_reader.clone(),
+        state.risk_facts.clone(),
+        config.investigation.clone(),
+    ));
+    let resume = reactor.resume(chrono::Utc::now()).await;
+    // El barrido periodico: la vigencia que caduca y la politica que se
+    // sustituyen se reevaluan aqui, no al servir (el camino de servicio
+    // ya rechaza la concesion vencida desde HSP-135; el barrido es lo
+    // que escribe la verdad nueva). `0` desactiva el bucle.
+    if config.trust.sweep_interval_secs > 0 {
+        let sweeper = reactor.clone();
+        let interval = Duration::from_secs(config.trust.sweep_interval_secs);
+        tokio::spawn(async move {
+            let mut clock = tokio::time::interval(interval);
+            clock.tick().await;
+            loop {
+                clock.tick().await;
+                let now = chrono::Utc::now();
+                if let Err(error) = sweeper.sweep_stale_grants(now).await {
+                    tracing::warn!(%error, "the validity sweep could not run");
+                }
+                if let Err(error) = sweeper.reconcile_impact_view().await {
+                    tracing::warn!(%error, "the impact view could not be reconciled");
+                }
+            }
+        });
+    }
+    resume.map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+    Ok(state.with_reactor(reactor))
 }
 
 /// SurrealDB adapter for schema storage///
