@@ -1,6 +1,6 @@
 //! El almacen de contenido sobre un Object Store que habla S3.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,12 +9,30 @@ use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
-use hodei_hub::blob::{BlobError, BlobStore, BlobWriteSession, CommitExpectation, ReadPolicy};
+use hodei_hub::blob::{
+    BlobError, BlobStore, BlobWriteSession, CommitExpectation, ReadPolicy, StagingCleanup,
+};
 use hodei_hub::reclaim::{BlobReclaim, Reclaimed, StoredBlob};
 use sha2::{Digest, Sha256};
 
 /// El prefijo bajo el que vive el contenido dentro del cubo.
 const BLOB_PREFIX: &str = "blobs";
+
+/// El prefijo bajo el que vive el staging: las subidas multiples en
+/// curso y los restos que un fallo dejo entre el complete y la copia.
+const STAGING_PREFIX: &str = "staging";
+
+/// La clave bajo la que el almacen estampa el digest del objeto. El ETag
+/// no sirve —en un multipart no es el sha256 del cuerpo—, y una publicacion
+/// que no se distingue de un resto ajeno obliga a releer para deduplicar.
+/// El sello es una ayuda para no reescribir lo que ya esta bien; lo que
+/// manda, cuando hay que decidir en serio, son los bytes.
+const DIGEST_METADATA: &str = "hodei-sha256";
+
+/// Hasta donde merece la pena releer un preexistente sin sello para
+/// comprobar si es el contenido: por encima de esto, la lectura entera
+/// cuesta mas que la copia que se quiere evitar, y se repara escribiendo.
+const MAX_VERIFY_ON_STAMP_MISS: u64 = 64 * 1024 * 1024;
 
 /// Lo que el constructor del almacen declaro mal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +164,332 @@ impl S3BlobStore {
     fn unavailable(operation: &str, detail: impl std::fmt::Display) -> BlobError {
         BlobError::Unavailable(format!("the object store failed to {operation}: {detail}"))
     }
+
+    /// La cabecera cruda de una clave, con `None` si no esta. Es el HEAD
+    /// que la decision de no-sobrescritura necesita, y distingue "no
+    /// esta" de "no puedo mirar" —lo segundo no se maquilla de lo primero.
+    async fn head_key(
+        &self,
+        key: &str,
+    ) -> Result<Option<aws_sdk_s3::operation::head_object::HeadObjectOutput>, BlobError> {
+        match self
+            .client
+            .head_object()
+            .bucket(&self.config.bucket)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(head) => Ok(Some(head)),
+            Err(error) if is_not_found(&error) => Ok(None),
+            Err(error) => Err(Self::unavailable("look up the content", error)),
+        }
+    }
+
+    /// Que hacer cuando un PUT o una copia condicionada rechaza escribir
+    /// porque la clave ya existe. Es el punto donde el CAS se juega su
+    /// palabra: lo que hay ahi puede ser exactamente el contenido (una
+    /// deduplicacion legitima, no se toca) o puede ser otra cosa (un
+    /// resto truncado, un objeto plantado por fuera, corruption). Lo
+    /// primero se informa; lo segundo **no se presenta como dedupe**:
+    /// se repara escribiendo el contenido bueno por la via normal.
+    ///
+    /// La comprobacion empieza por el sello de metadatos —barata, un
+    /// HEAD—, y solo si el preexistente no lleva sello (fue escrito por
+    /// otra mano y su procedencia no consta) se leen los bytes, con el
+    /// techo de `MAX_VERIFY_ON_STAMP_MISS`: por encima, releer cuesta
+    /// mas que reescribir, y la reparacion por escritura sale gratis
+    /// sea lo que sea lo que habia. Un preexistente verificado como
+    /// bueno y sin sello se renueva con sello: la siguiente publicacion
+    /// deduplica por HEAD, no por lectura.
+    async fn settle_a_refused_write(
+        &self,
+        digest: &ContentDigest,
+        bytes: Option<&[u8]>,
+        repair: impl std::future::Future<Output = Result<(), BlobError>> + Send,
+    ) -> Result<(), BlobError> {
+        let key = self.the_key_of(digest);
+        let Some(head) = self.head_key(&key).await? else {
+            // El preexistente se fue entre el rechazo y el HEAD: la
+            // ventana del concurrente. Reparar (escribir) es el camino
+            // correcto —nadie ha publicado el contenido todavia.
+            return repair.await;
+        };
+        match the_stamp_of(&head) {
+            // Con sello propio, la identidad del contenido la garantiza
+            // quien lo escribio verificandolo antes de sellar.
+            Some(stamped) if stamped == *digest => return Ok(()),
+            Some(_) => {
+                // Lleva el sello de OTRO digest en la clave de este: la
+                // clave y el contenido discrepan. Se repara escribiendo
+                // lo que se envio; quien llame y quiera el veredicto de
+                // integridad, que pregunte despues con `verify`.
+                return repair.await;
+            }
+            None => {}
+        }
+        // Sin sello: no consta que sea lo que dice la clave.
+        let length = head.content_length.unwrap_or(0).max(0) as u64;
+        let cheap_to_check = length <= MAX_VERIFY_ON_STAMP_MISS;
+        if let Some(expected) = bytes.filter(|_| cheap_to_check) {
+            if self.read(digest, None).await?.as_slice() == expected {
+                // Es el contenido. Se estampa sin mover un byte: la
+                // copia sobre si misma con directiva REPLACE de
+                // metadatos es la unica reescritura del objeto que no
+                // necesita subir el cuerpo otra vez.
+                self.client
+                    .copy_object()
+                    .bucket(&self.config.bucket)
+                    .key(&key)
+                    .copy_source(format!("{}/{}", self.config.bucket, key))
+                    .metadata_directive(aws_sdk_s3::types::MetadataDirective::Replace)
+                    .set_metadata(Some(S3BlobStore::the_stamp_map(digest)))
+                    .send()
+                    .await
+                    .map_err(|error| Self::unavailable("stamp the verified blob", error))?;
+                return Ok(());
+            }
+            return repair.await;
+        }
+        // O no tenemos los bytes (la via de la sesion) o el objeto es
+        // grande: verificar es mas caro que reparar, y la reparacion es
+        // segura —la autoridad del CAS es el digest de lo que se envia.
+        repair.await
+    }
+
+    /// El mapa de metadatos que sella un objeto con su digest.
+    fn the_stamp_map(digest: &ContentDigest) -> HashMap<String, String> {
+        let mut items = HashMap::new();
+        items.insert(DIGEST_METADATA.to_string(), digest.value.clone());
+        items
+    }
+
+    /// Un PUT con la condicion que el backend ofrece. Con `only_if_absent`
+    /// el servidor rechaza (412) si la clave ya existe —la escritura
+    /// condicional medida en AC4—; sin ella es el PUT normal de siempre.
+    /// En ambas formas el objeto sale sellado con su digest: la condicion
+    /// de no-sobrescritura solo vale si despues hay con que probar que lo
+    /// que hay es lo que se publico.
+    ///
+    /// El error viaja encajado: el `SdkError` del PUT pesa cientos de
+    /// bytes, y esta funcion se llama en el camino caliente de cada
+    /// publicacion —el Result ancho costaria mas moverlo que el error
+    /// que describe. Quien solo mira el codigo (`is_precondition_failed`)
+    /// ni lo nota.
+    async fn conditional_put(
+        &self,
+        digest: &ContentDigest,
+        bytes: &[u8],
+        only_if_absent: bool,
+    ) -> Result<
+        (),
+        Box<aws_sdk_s3::error::SdkError<aws_sdk_s3::operation::put_object::PutObjectError>>,
+    > {
+        let mut request = self
+            .client
+            .put_object()
+            .bucket(&self.config.bucket)
+            .key(self.the_key_of(digest))
+            .content_md5(Self::content_md5(bytes))
+            .set_metadata(Some(Self::the_stamp_map(digest)))
+            .body(ByteStream::from(bytes.to_vec()));
+        if only_if_absent {
+            request = request.if_none_match("*");
+        }
+        request.send().await.map(|_| ()).map_err(Box::new)
+    }
+
+    /// El segado del staging: los restos que un fallo o un proceso
+    /// matado dejaron entre el `create` y la publicacion, en el cubo
+    /// S3. Es el equivalente del `clean_expired_staging` del almacen de
+    /// ficheros, y cumple su misma palabra: **no toca una subida viva**.
+    ///
+    /// Aqui la prueba de vida es mas fuerte que el lock del fichero:
+    /// una sesion abandona sin abortar dejo su `upload_id` en el
+    /// almacén, y lo que la distingue de una subida en curso es que
+    /// nadie escribe en ella. Se pide la fecha del ultimo trozo subido
+    /// (y la del propio `create` si no hay trozos), y solo lo que lleva
+    /// mas de `max_age` sin un byte nuevo es un resto: se aborta. El
+    /// abort es el unico borrado —un multipart a medias no es un
+    /// objeto, y sus trozos no se listan como tales; no hay nada que
+    /// `list_blobs` pueda ver y el recolector pueda reclamar.
+    ///
+    /// Un fallo puntual abortando **no** es un fallo del segado: se
+    /// cuenta y se sigue, igual que en el directorio, porque lo que no
+    /// se pudo borrar hoy se vuelve a intentar en el arranque de
+    /// manana. Y un `upload_id` sin fecha util tampoco se toca: sin
+    /// reloj no hay mayoria de edad, y borrar a ciegas es peor que
+    /// dejar.
+    pub async fn clean_staging(&self, max_age: Duration) -> Result<StagingCleanup, BlobError> {
+        let mut cleanup = StagingCleanup::default();
+        let mut key_marker: Option<String> = None;
+        let mut upload_marker: Option<String> = None;
+        loop {
+            let mut request = self
+                .client
+                .list_multipart_uploads()
+                .bucket(&self.config.bucket)
+                .prefix(format!("{STAGING_PREFIX}/"))
+                .max_uploads(1000);
+            if let Some(marker) = &key_marker {
+                request = request.key_marker(marker);
+            }
+            if let Some(marker) = &upload_marker {
+                request = request.upload_id_marker(marker);
+            }
+            let page = request
+                .send()
+                .await
+                .map_err(|error| Self::unavailable("list the staging uploads", error))?;
+            for upload in page.uploads() {
+                let (Some(key), Some(upload_id)) = (upload.key(), upload.upload_id()) else {
+                    continue;
+                };
+                // La clave tiene que ser de este almacen: `staging/<pid>-…`.
+                // Cualquier otra cosa bajo el prefijo no es nuestra y no
+                // se toca —la misma regla que `list_blobs` con las claves.
+                if !is_a_staging_key(key) {
+                    continue;
+                }
+                let age = self
+                    .the_age_of_the_upload(key, upload_id, upload.initiated())
+                    .await?;
+                let Some(age) = age else { continue };
+                if age < max_age {
+                    // Demasiado joven para ser un resto: puede estar
+                    // escribiendo alguien ahora mismo.
+                    cleanup.alive += 1;
+                    continue;
+                }
+                match self
+                    .client
+                    .abort_multipart_upload()
+                    .bucket(&self.config.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .send()
+                    .await
+                {
+                    Ok(_) => cleanup.removed += 1,
+                    // El upload se fue entre el listado y el abort:
+                    // alguien (el dueno, o el Drop de su sesion) lo
+                    // cerro. No es un fallo, y no se cuenta.
+                    Err(error) if is_not_found(&error) => {}
+                    Err(error) => cleanup.failed.push((key.to_string(), error.to_string())),
+                }
+            }
+            if page.is_truncated() != Some(true) {
+                break;
+            }
+            key_marker = page.next_key_marker.map(|value| value.to_string());
+            upload_marker = page.next_upload_id_marker.map(|value| value.to_string());
+            if key_marker.is_none() {
+                break;
+            }
+        }
+        // Los objetos de staging que quedaron entre el complete y la
+        // copia de una publicacion interrumpida: un objeto normal bajo
+        // el prefijo, ya sin upload_id, que nadie lista como blob y que
+        // nadie va a leer nunca. Su fecha es `Last-Modified`.
+        let mut token: Option<String> = None;
+        loop {
+            let mut request = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.config.bucket)
+                .prefix(format!("{STAGING_PREFIX}/"))
+                .max_keys(1000);
+            if let Some(token) = &token {
+                request = request.continuation_token(token.clone());
+            }
+            let page = request
+                .send()
+                .await
+                .map_err(|error| Self::unavailable("list the staging objects", error))?;
+            for object in page.contents() {
+                let (Some(key), Some(age)) = (object.key(), Self::age_of(object.last_modified()))
+                else {
+                    continue;
+                };
+                if !is_a_staging_key(key) || age < max_age {
+                    continue;
+                }
+                match self
+                    .client
+                    .delete_object()
+                    .bucket(&self.config.bucket)
+                    .key(key)
+                    .send()
+                    .await
+                {
+                    Ok(_) => cleanup.removed += 1,
+                    Err(error) if is_not_found(&error) => {}
+                    Err(error) => cleanup.failed.push((key.to_string(), error.to_string())),
+                }
+            }
+            if page.is_truncated() != Some(true) {
+                break;
+            }
+            token = page.next_continuation_token.map(|value| value.to_string());
+            if token.is_none() {
+                break;
+            }
+        }
+        Ok(cleanup)
+    }
+
+    /// La edad de una subida: la mas reciente entre su creacion y su
+    /// ultimo trozo. Una sesion viva actualiza el reloj con cada
+    /// `upload_part`, y por eso una subida de horas de `create` pero de
+    /// minutos de trozo no es un resto.
+    async fn the_age_of_the_upload(
+        &self,
+        key: &str,
+        upload_id: &str,
+        initiated: Option<&aws_smithy_types::DateTime>,
+    ) -> Result<Option<Duration>, BlobError> {
+        let mut ages: Vec<Duration> = Self::age_of(initiated).into_iter().collect();
+        let mut part_marker: Option<String> = None;
+        loop {
+            let mut request = self
+                .client
+                .list_parts()
+                .bucket(&self.config.bucket)
+                .key(key)
+                .upload_id(upload_id)
+                .max_parts(1000);
+            if let Some(marker) = &part_marker {
+                request = request.part_number_marker(marker.clone());
+            }
+            let page = match request.send().await {
+                Ok(page) => page,
+                // La subida se cerro entre el listado y la pregunta:
+                // ya no existe, no es un resto que segar.
+                Err(error) if is_not_found(&error) => return Ok(Some(Duration::ZERO)),
+                Err(error) => {
+                    return Err(Self::unavailable(
+                        "list the parts of a staging upload",
+                        error,
+                    ));
+                }
+            };
+            ages.extend(
+                page.parts()
+                    .iter()
+                    .filter_map(|part| Self::age_of(part.last_modified())),
+            );
+            if page.is_truncated() != Some(true) {
+                break;
+            }
+            part_marker = page.next_part_number_marker.map(|value| value.to_string());
+            if part_marker.is_none() {
+                break;
+            }
+        }
+        // Sin ninguna fecha util, no se decide: la edad desconocida no
+        // es mayoria de edad.
+        Ok(ages.into_iter().min())
+    }
 }
 
 /// Si el error de servicio dice que el contenido no esta.
@@ -156,26 +500,94 @@ fn is_not_found(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorMetadata>) 
     )
 }
 
+/// Si el error de servicio es la precondicion de no-sobrescritura: el
+/// objeto ya estaba cuando el PUT condicionado intento crearlo.
+fn is_precondition_failed(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorMetadata>) -> bool {
+    matches!(
+        ProvideErrorMetadata::code(error),
+        Some("PreconditionFailed")
+    )
+}
+
+/// Si la clave es una escritura en curso de este almacen.
+///
+/// El patron lo pone `new_staging_key`: `staging/<pid>-<nanos:x>-<counter:x>`,
+/// el mismo del almacen de ficheros sin el `.part`. Una clave con otra
+/// forma bajo el prefijo del staging no es de este almacen: no se lista,
+/// no se aborta y no se cuenta —podria ser el staging de otra aplicacion
+/// compartiendo el cubo, y borrar lo ajeno no entra en el contrato.
+fn is_a_staging_key(key: &str) -> bool {
+    let Some(stem) = key.strip_prefix(&format!("{STAGING_PREFIX}/")) else {
+        return false;
+    };
+    let mut parts = stem.split('-');
+    let (Some(pid), Some(nanos), Some(counter), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    !pid.is_empty()
+        && pid.bytes().all(|byte| byte.is_ascii_digit())
+        && !nanos.is_empty()
+        && nanos.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && !counter.is_empty()
+        && counter.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// El sello de digest que este almacen estampa en cada objeto, o `None`
+/// si el objeto no lleva sello —un preexistente de otra mano, un resto
+/// que aun no se escribia con condicion.
+fn the_stamp_of(
+    head: &aws_sdk_s3::operation::head_object::HeadObjectOutput,
+) -> Option<ContentDigest> {
+    let name = head
+        .metadata()
+        .and_then(|items| items.get(DIGEST_METADATA))?
+        .to_ascii_lowercase();
+    if name.len() == 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Some(ContentDigest::sha256(name))
+    } else {
+        None
+    }
+}
+
 #[async_trait::async_trait]
 impl BlobStore for S3BlobStore {
     async fn put(&self, bytes: &[u8]) -> Result<ContentDigest, BlobError> {
         let digest = ContentDigest::of_bytes(bytes);
         // En un CAS la clave es el digest del contenido que se envia, asi
-        // que publicar dos veces el mismo contenido escribe los mismos
-        // bytes en la misma clave: no es un error y no guarda dos veces.
-        // La unica comprobacion que aporta el almacen de ficheros —que el
-        // blob viejo no sea un resto truncado— la sustituye aqui el HEAD
-        // que hace el llamante cuando le importa.
-        self.client
-            .put_object()
-            .bucket(&self.config.bucket)
-            .key(self.the_key_of(&digest))
-            .content_md5(Self::content_md5(bytes))
-            .body(ByteStream::from(bytes.to_vec()))
-            .send()
-            .await
-            .map_err(|error| Self::unavailable("store the content", error))?;
-        Ok(digest)
+        // que publicar dos veces el mismo contenido no es un error y no
+        // guarda dos veces. Lo que la escritura condicionada aporta sobre
+        // la simple es la garantia de que el objeto que ya estaba **es**
+        // el contenido: el PUT solo entra si la clave esta libre, y si el
+        // servidor la rechaza, `settle_a_refused_write` comprueba el
+        // preexistente en vez de dar por bueno un HEAD. Lo que no cuadra
+        // se repara, nunca se deduplica.
+        match self.conditional_put(&digest, bytes, true).await {
+            Ok(()) => Ok(digest),
+            Err(error) if is_precondition_failed(&error) => {
+                // El `bytes.to_vec()` solo se paga en el camino del
+                // rechazo, que en un CAS sano es la excepcion (un
+                // preexistente sin sello o corrupto), no la dedupe.
+                let owned = bytes.to_vec();
+                let repair = {
+                    let digest = digest.clone();
+                    async move {
+                        self.conditional_put(&digest, &owned, false)
+                            .await
+                            .map_err(|error| Self::unavailable("repair the content", error))
+                    }
+                };
+                self.settle_a_refused_write(&digest, Some(bytes), repair)
+                    .await?;
+                Ok(digest)
+            }
+            Err(error) => Err(Self::unavailable("store the content", error)),
+        }
     }
 
     async fn get(&self, digest: &ContentDigest) -> Result<Vec<u8>, BlobError> {
@@ -497,20 +909,35 @@ impl S3BlobWriteSession {
     /// es server-side: los bytes no vuelven a pasar por el proceso. Y el
     /// staging se borra justo despues: lo que no se borro lo caduca el
     /// ciclo de vida del cubo, nunca el recolector de blobs.
-    async fn publish(&self, target: &str) -> Result<(), BlobError> {
+    ///
+    /// La copia va con la condicion de no-sobrescritura que el backend
+    /// ofrezca (medida, HSP-139: `If-None-Match: *` sobre el destino en
+    /// RustFS y en LocalStack; si un backend no la soporta, el backend
+    /// degrada a la copia sin condicion —deduplicar por contenido sigue
+    /// siendo cierto, dejar de pisar no—). El 412 no es un fallo: dos
+    /// sesiones concurrentes del mismo contenido es exactamente el caso
+    /// que la condicion resuelve, y el perdedor comprueba al ganador con
+    /// el mismo criterio honesto que la via `put`.
+    async fn publish(&self, target: &str, digest: &ContentDigest) -> Result<(), BlobError> {
         if self.completed.is_empty() {
             // Ni un byte: no hay nada que completar, y S3 no admite
             // subidas multiples vacias. El contenido vacio se publica
-            // con un PUT normal, que es atomico por contrato.
-            self.client
+            // con un PUT normal, condicionado como el resto.
+            let answer = self
+                .client
                 .put_object()
                 .bucket(&self.config.bucket)
                 .key(target)
+                .set_metadata(Some(S3BlobStore::the_stamp_map(digest)))
+                .if_none_match("*")
                 .body(ByteStream::from_static(&[]))
                 .send()
-                .await
-                .map_err(|error| S3BlobStore::unavailable("publish the empty content", error))?;
-            return Ok(());
+                .await;
+            return match answer {
+                Ok(_) => Ok(()),
+                Err(error) if is_precondition_failed(&error) => Ok(()),
+                Err(error) => Err(S3BlobStore::unavailable("publish the empty content", error)),
+            };
         }
         let mut parts = self.completed.clone();
         parts.sort_by_key(CompletedPart::part_number);
@@ -528,19 +955,48 @@ impl S3BlobWriteSession {
             .await
             .map_err(|error| S3BlobStore::unavailable("complete the upload", error))?;
         let copied = if self.written > MAX_SIMPLE_COPY {
-            self.copy_as_multipart(target).await
+            self.copy_as_multipart(target, digest, true).await
         } else {
             // La copia es server-side: los bytes no vuelven a pasar por
-            // el proceso.
-            self.client
+            // el proceso, y solo entra si el destino esta libre.
+            match self
+                .client
                 .copy_object()
                 .bucket(&self.config.bucket)
                 .key(target)
                 .copy_source(format!("{}/{}", self.config.bucket, self.staging_key))
+                .set_metadata(Some(S3BlobStore::the_stamp_map(digest)))
+                .metadata_directive(aws_sdk_s3::types::MetadataDirective::Replace)
+                .if_none_match("*")
                 .send()
                 .await
-                .map(|_| ())
-                .map_err(|error| S3BlobStore::unavailable("publish the blob", error))
+            {
+                Ok(_) => Ok(true),
+                Err(error) if is_precondition_failed(&error) => Ok(false),
+                Err(error) => Err(S3BlobStore::unavailable("publish the blob", error)),
+            }
+        };
+        let copied = match copied {
+            // El camino normal: la copia entro, o el fallo ya esta dicho.
+            Ok(true) => Ok(()),
+            // Alguien publico primero. Que sea ESTE contenido lo
+            // comprueba la misma decision honesta que la via `put`:
+            // sello, o lectura; lo que no cuadre, se repara. Aqui no
+            // tenemos los bytes en el proceso —estan en el almacén,
+            // bajo la clave de staging ya completada—, asi que la
+            // reparacion es volver a copiar sin condicion. La vista del
+            // store es barata (el cliente es un Arc) y comparte la
+            // barrera: quien llama sostiene el gate desde el commit.
+            Ok(false) => {
+                let store = S3BlobStore {
+                    client: self.client.clone(),
+                    config: self.config.clone(),
+                    gate: self.gate.clone(),
+                };
+                let repair = self.copy_unconditioned(target, digest);
+                store.settle_a_refused_write(digest, None, repair).await
+            }
+            Err(error) => Err(error),
         };
         let staging_cleanup = self
             .client
@@ -554,17 +1010,54 @@ impl S3BlobWriteSession {
         staging_cleanup.map(|_| ())
     }
 
+    /// La copia server-side sin la condicion: el camino de la reparacion
+    /// de una publicacion, cuando el preexistente no es el contenido.
+    async fn copy_unconditioned(
+        &self,
+        target: &str,
+        digest: &ContentDigest,
+    ) -> Result<(), BlobError> {
+        if self.written > MAX_SIMPLE_COPY {
+            return self
+                .copy_as_multipart(target, digest, false)
+                .await
+                .map(|_| ());
+        }
+        self.client
+            .copy_object()
+            .bucket(&self.config.bucket)
+            .key(target)
+            .copy_source(format!("{}/{}", self.config.bucket, self.staging_key))
+            .set_metadata(Some(S3BlobStore::the_stamp_map(digest)))
+            .metadata_directive(aws_sdk_s3::types::MetadataDirective::Replace)
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(|error| S3BlobStore::unavailable("repair the published blob", error))
+    }
+
     /// Copiar un objeto de mas de cinco gigabytes: `CopyObject` no llega
     /// alli, asi que la copia se hace trozo a trozo, con ranges sobre la
     /// clave de staging. Es lo mismo que hace el desplegador maduro con
     /// s3-sr-copy y aqui no puede ser un paso externo: el commit es o todo
     /// o nada.
-    async fn copy_as_multipart(&self, target: &str) -> Result<(), BlobError> {
+    ///
+    /// La condicion de no-sobrescritura va sobre el `Complete`: el
+    /// destino no existe hasta que la copia multiple cierra, que es el
+    /// punto atomico que S3 promete. Devuelve si la copia escribio:
+    /// `false` es el 412, el "ya estaba" que el llamante resuelve.
+    async fn copy_as_multipart(
+        &self,
+        target: &str,
+        digest: &ContentDigest,
+        only_if_absent: bool,
+    ) -> Result<bool, BlobError> {
         let created = self
             .client
             .create_multipart_upload()
             .bucket(&self.config.bucket)
             .key(target)
+            .set_metadata(Some(S3BlobStore::the_stamp_map(digest)))
             .send()
             .await
             .map_err(|error| S3BlobStore::unavailable("open the copy upload", error))?;
@@ -622,7 +1115,8 @@ impl S3BlobWriteSession {
             }
             start = end + 1;
         }
-        self.client
+        let mut request = self
+            .client
             .complete_multipart_upload()
             .bucket(&self.config.bucket)
             .key(target)
@@ -631,11 +1125,15 @@ impl S3BlobWriteSession {
                 CompletedMultipartUpload::builder()
                     .set_parts(Some(parts))
                     .build(),
-            )
-            .send()
-            .await
-            .map_err(|error| S3BlobStore::unavailable("finish the copy", error))?;
-        Ok(())
+            );
+        if only_if_absent {
+            request = request.if_none_match("*");
+        }
+        match request.send().await {
+            Ok(_) => Ok(true),
+            Err(error) if only_if_absent && is_precondition_failed(&error) => Ok(false),
+            Err(error) => Err(S3BlobStore::unavailable("finish the copy", error)),
+        }
     }
 }
 
@@ -699,7 +1197,7 @@ impl BlobWriteSession for S3BlobWriteSession {
         // Desde aqui hasta publicar, el recolector no puede borrar nada.
         let barrier = self.gate.lock().await;
         let target = blob_key(&found);
-        let outcome = self.publish(&target).await;
+        let outcome = self.publish(&target, &found).await;
         drop(barrier);
         self.open = false;
         outcome?;

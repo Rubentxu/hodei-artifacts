@@ -23,6 +23,10 @@ use hodei_hub_s3::{S3BlobConfig, S3BlobStore};
 
 const IMAGE: &str = "localstack/localstack:4.14";
 
+/// Contra que banco corre el informe de capacidades: la etiqueta fija,
+/// que es la version del servidor de pruebas.
+pub const VERSION_NOTE: &str = "localstack/localstack:4.14";
+
 /// Cuanto se le da a LocalStack para servir S3 desde que se lanza o se
 /// hereda en marcha. En una maquina cargada, el arranque no cabe en un
 /// minuto: se espera el doble de lo razonable y aun se falla a la vista.

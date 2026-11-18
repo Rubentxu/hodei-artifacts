@@ -380,7 +380,9 @@ impl FileBlobStore {
                 Err(_) => match std::fs::OpenOptions::new().read(true).open(&entry.path) {
                     Ok(file) => file,
                     Err(error) => {
-                        cleanup.failed.push((entry.path.clone(), error.to_string()));
+                        cleanup
+                            .failed
+                            .push((entry.path.display().to_string(), error.to_string()));
                         continue;
                     }
                 },
@@ -392,7 +394,9 @@ impl FileBlobStore {
                     continue;
                 }
                 Err(std::fs::TryLockError::Error(error)) => {
-                    cleanup.failed.push((entry.path.clone(), error.to_string()));
+                    cleanup
+                        .failed
+                        .push((entry.path.display().to_string(), error.to_string()));
                     continue;
                 }
             }
@@ -400,7 +404,9 @@ impl FileBlobStore {
                 Ok(()) => cleanup.removed += 1,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
-                    cleanup.failed.push((entry.path.clone(), error.to_string()));
+                    cleanup
+                        .failed
+                        .push((entry.path.display().to_string(), error.to_string()));
                 }
             }
         }
@@ -436,16 +442,19 @@ fn is_a_staging_file(name: &str) -> bool {
 /// La limpieza **no** falla: un fichero que no se pudo borrar se cuenta y
 /// se avisa, y el almacen sigue sirviendo. Lo que se necesita para
 /// contarlo es esto.
+///
+/// Compartido por los dos backends: para el de ficheros el identificador
+/// es la ruta; para el de objetos, la clave. Ambas se muestran igual.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StagingCleanup {
-    /// Cuantos ficheros se eliminaron.
+    /// Cuantos restos se eliminaron.
     pub removed: usize,
-    /// Cuantos ficheros habia que estan escribiendo ahora mismo.
+    /// Cuantos restos habia que estan escribiendo ahora mismo.
     ///
     /// Son de subidas vivas: no se tocan.
     pub alive: usize,
-    /// Los ficheros que no se pudieron borrar, con su motivo.
-    pub failed: Vec<(PathBuf, String)>,
+    /// Los restos que no se pudieron borrar, con su motivo.
+    pub failed: Vec<(String, String)>,
 }
 
 /// Una escritura en curso en el almacen de fichero.

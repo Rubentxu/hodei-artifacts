@@ -232,6 +232,8 @@ pipeline {
                         "--test hsp116_localstack_fidelity",
                         "--test hsp116_s3_contract",
                         "--test hsp116_s3_bench",
+                        "--test hsp139_localstack_conformance",
+                        "--test hsp139_rustfs_conformance",
                         "--test hsp119_cargo_e2e",
                         "--test hsp119_cargo_cli",
                         "--test hsp120_dotnet_client",
