@@ -128,10 +128,7 @@ pub async fn accept(
         )
     })?;
     let reader = state.catalog_reader.as_ref().ok_or_else(|| {
-        AdvisoryApiError::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "the catalog is not available",
-        )
+        AdvisoryApiError::new(StatusCode::NOT_IMPLEMENTED, "the catalog is not available")
     })?;
 
     // El repositorio da la region del tenant del grafo, la MISMA_region

@@ -511,7 +511,10 @@ impl AppState {
     }
 
     /// Inject the reactive cycle of the CVE.
-    pub fn with_reactor(mut self, reactor: Arc<crate::trust::reaction::VulnerabilityReactor>) -> Self {
+    pub fn with_reactor(
+        mut self,
+        reactor: Arc<crate::trust::reaction::VulnerabilityReactor>,
+    ) -> Self {
         self.reactor = Some(reactor);
         self
     }

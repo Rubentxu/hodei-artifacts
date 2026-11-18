@@ -56,8 +56,8 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use kernel::Hrn;
 use serde::Serialize;
-use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
+use surrealdb::engine::local::Db;
 
 use hodei_catalog::TrustLedger;
 use hodei_evidence::application::capsule::CapsuleAssembler;
@@ -82,17 +82,17 @@ use hodei_risk_storage::blast_radius;
 use hodei_risk_storage::impact_view::SurrealImpactView;
 use hodei_risk_storage::reactions::SurrealSecurityCaseStore;
 use hodei_risk_storage::subject_risk::RiskFactsReader;
+use hodei_trust_policy::PromotionService;
 use hodei_trust_policy::context::TrustContext;
 use hodei_trust_policy::ports::DecisionStore;
-use hodei_trust_policy::PromotionService;
+use hodei_trust_policy_storage::SurrealDecisionStore;
 use hodei_trust_policy_storage::intents::SurrealIntentStore;
 use hodei_trust_policy_storage::reactions::{PromotionDecisionRequester, TrustContextSource};
-use hodei_trust_policy_storage::SurrealDecisionStore;
 
 use crate::config::InvestigationConfig;
 use crate::evidence::EvidenceReader;
 use crate::risk_facts::to_trust_facts;
-use crate::trust::promotion::{TrustPlane, TrustedChannelTargets, TRUSTED_DISTRIBUTION};
+use crate::trust::promotion::{TRUSTED_DISTRIBUTION, TrustPlane, TrustedChannelTargets};
 
 /// Por qué el ciclo no pudo recorrer un tramo.
 ///
@@ -500,7 +500,10 @@ impl PlanningBehavior for PlannedPolicyDriftReaction {
         else {
             return Ok(Plan::default());
         };
-        let Some(subjects) = event.payload.get("subjects").and_then(|value| value.as_array())
+        let Some(subjects) = event
+            .payload
+            .get("subjects")
+            .and_then(|value| value.as_array())
         else {
             return Ok(Plan::default());
         };
@@ -585,8 +588,11 @@ impl VulnerabilityReactor {
             Arc::new(plane.registry()),
         ));
         let radius = Arc::new(GraphBlastRadius::new(graph.clone(), limits.clone()));
-        let contexts: Arc<dyn TrustContextSource> =
-            Arc::new(ContextFromEvidence::new(evidence, risk_facts, limits.clone()));
+        let contexts: Arc<dyn TrustContextSource> = Arc::new(ContextFromEvidence::new(
+            evidence,
+            risk_facts,
+            limits.clone(),
+        ));
         let requester: Arc<dyn DecisionRequester> = Arc::new(
             PromotionDecisionRequester::new(
                 requester_service,
@@ -604,8 +610,8 @@ impl VulnerabilityReactor {
             requester,
         ));
 
-        let mut runtime = ReactiveRuntime::new(intents.clone(), Default::default())
-            .with_tenant(COMPOSITION_MARK);
+        let mut runtime =
+            ReactiveRuntime::new(intents.clone(), Default::default()).with_tenant(COMPOSITION_MARK);
         runtime.with_outbox(intents as Arc<dyn IntentOutbox>);
         runtime.register_planned(
             Arc::new(PlannedVulnerabilityReaction::new(radius)),
@@ -1077,4 +1083,236 @@ fn digest_of_row(row: &StaleGrantRow) -> Result<ContentDigest, String> {
         return Err("the grant names a digest that is not well formed".to_string());
     }
     Ok(digest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hrn(text: &str) -> Hrn {
+        Hrn::from_string(text).expect("a canonical HRN")
+    }
+
+    fn subject() -> Hrn {
+        hrn(
+            "hrn:hodei:artifacts:eu:acme:artifact/releases-sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        )
+    }
+
+    fn scope(event: &Event) -> ReadScope {
+        ReadScope {
+            tenant: COMPOSITION_MARK.to_string(),
+            origin: hodei_reactive::intent::EventOrigin::new(event.id.clone(), Vec::new()),
+            at: event.happened_at,
+        }
+    }
+
+    // --- sanitize: the lossy name keeps identity, sheds the syntax. ---
+
+    #[test]
+    fn two_different_inputs_do_not_share_a_sanitized_name() {
+        assert_ne!(
+            sanitize("hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-a"),
+            sanitize("hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-b"),
+            "a collision here would say two advisories as one event"
+        );
+    }
+
+    #[test]
+    fn the_sanitized_name_keeps_only_what_an_id_can_carry() {
+        let name = sanitize("hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-0001");
+        assert!(!name.contains(':'));
+        assert!(!name.contains('/'));
+        assert!(name.contains("GHSA-0001"));
+    }
+
+    // --- digest_of_subject: the subject's tail is the concession's key. ---
+
+    #[test]
+    fn the_digest_is_read_back_from_the_subject_it_was_stamped_in() {
+        let digest = ContentDigest::of_bytes(b"a body");
+        let subject = crate::trust::hrn::artifact_hrn("eu", "acme", "releases", &digest);
+        let read = digest_of_subject(&subject).expect("the subject names a digest");
+        assert_eq!(read, format!("sha256:{}", digest.value));
+    }
+
+    #[test]
+    fn a_subject_whose_tail_has_no_algorithm_dash_is_an_error_not_a_guess() {
+        // The shape the cycle writes is `artifact/<repo>/<alg>-<hex>`; a
+        // resource whose last segment carries no dash names no digest,
+        // and reading one would be inventing the concession's key.
+        let stranger = hrn("hrn:hodei:artifacts:eu:acme:artifact/releases");
+        assert!(digest_of_subject(&stranger).is_err());
+    }
+
+    // --- delta_of_row: a row that does not parse is skipped, not fatal. ---
+
+    fn row(kind: &str) -> hodei_evidence_storage::DeltaRow {
+        hodei_evidence_storage::DeltaRow {
+            seq: 1,
+            kind: kind.to_string(),
+            tenant: "hrn:hodei:artifacts:eu:acme:artifact/acme".to_string(),
+            relation: "affected_by".to_string(),
+            from: subject().to_string(),
+            to: "hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-0001".to_string(),
+            evidence: "ev-1".to_string(),
+            cause: "c".to_string(),
+            observed_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn the_three_known_kinds_round_trip_and_anything_else_is_skipped() {
+        assert!(delta_of_row(&row("added")).is_some());
+        assert!(delta_of_row(&row("removed")).is_some());
+        assert!(delta_of_row(&row("support_changed")).is_some());
+        assert!(
+            delta_of_row(&row("exploded")).is_none(),
+            "an unknown kind must not stop a long pass"
+        );
+        let broken = row("added");
+        let broken = hodei_evidence_storage::DeltaRow {
+            tenant: "not-an-hrn".to_string(),
+            ..broken
+        };
+        assert!(delta_of_row(&broken).is_none());
+    }
+
+    // --- the planners: the pass in the key is what lets time be said twice. ---
+
+    #[tokio::test]
+    async fn a_lapse_without_a_pass_is_skipped_and_a_lapse_says_one_intent_with_the_pass_in_its_key()
+     {
+        let event = Event::new(
+            "evt-expiry-x",
+            EventKind::ExceptionExpired,
+            serde_json::json!({ "subject": subject().to_string() }),
+            Utc::now(),
+        );
+        let planner = PlannedGrantExpiryReaction;
+        assert!(
+            matches!(planner.guard(&event), GuardOutcome::Skip(_)),
+            "a lapse without a pass cannot be deduplicated by key"
+        );
+
+        let named = Event::new(
+            "evt-expiry-y",
+            EventKind::ExceptionExpired,
+            serde_json::json!({ "subject": subject().to_string(), "pass": "2900000" }),
+            Utc::now(),
+        );
+        assert!(matches!(planner.guard(&named), GuardOutcome::Pass));
+        let plan = planner
+            .plan(&named, &scope(&named))
+            .await
+            .expect("the plan is said");
+        assert_eq!(plan.intents.len(), 1);
+        assert!(
+            plan.intents[0].idempotency_key.contains("2900000"),
+            "the pass belongs in the key: without it the second lapse of a subject would be suppressed forever"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lapse_that_names_a_non_canonical_subject_is_refused_where_the_reason_can_be_named() {
+        let event = Event::new(
+            "evt-expiry-z",
+            EventKind::ExceptionExpired,
+            serde_json::json!({ "subject": "app-1.0.0", "pass": "1" }),
+            Utc::now(),
+        );
+        let error = PlannedGrantExpiryReaction
+            .plan(&event, &scope(&event))
+            .await
+            .expect_err("a stranger's subject is refused, not planned");
+        assert!(
+            !error.retryable,
+            "a bad HRN is a bad input: retrying it would retry the same mistake"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_drift_planner_says_one_intent_per_named_subject_and_refuses_a_stranger() {
+        let one = subject();
+        let event = Event::new(
+            "evt-drift",
+            EventKind::VulnerabilityAccepted,
+            serde_json::json!({
+                "policy_version": "2",
+                "subjects": [one.to_string()],
+            }),
+            Utc::now(),
+        );
+        let planner = PlannedPolicyDriftReaction;
+        assert!(matches!(planner.guard(&event), GuardOutcome::Pass));
+        let plan = planner
+            .plan(&event, &scope(&event))
+            .await
+            .expect("the drift is planned");
+        assert_eq!(plan.intents.len(), 1);
+        assert!(plan.intents[0].idempotency_key.contains(":drift:"));
+
+        let polluted = Event::new(
+            "evt-drift-bad",
+            EventKind::VulnerabilityAccepted,
+            serde_json::json!({
+                "policy_version": "2",
+                "subjects": ["not-an-hrn"],
+            }),
+            Utc::now(),
+        );
+        assert!(
+            PlannedPolicyDriftReaction
+                .plan(&polluted, &scope(&polluted))
+                .await
+                .is_err()
+        );
+
+        let empty = Event::new(
+            "evt-drift-empty",
+            EventKind::VulnerabilityAccepted,
+            serde_json::json!({ "policy_version": "2", "subjects": [] }),
+            Utc::now(),
+        );
+        assert!(
+            matches!(
+                PlannedPolicyDriftReaction.guard(&empty),
+                GuardOutcome::Skip(_)
+            ),
+            "a drift that reaches nobody is not this behaviour's to answer"
+        );
+    }
+
+    // --- GraphBlastRadius: the identity gate, before any read. ---
+
+    #[tokio::test]
+    async fn the_radius_refuses_a_stranger_before_reading_the_graph() {
+        // The gate is a property of the adapter's contract, and it is
+        // exercised without a seeded graph: nothing is asked, nothing is
+        // reached. An adapter whose gate needs a live store could not
+        // be tested where it matters -- the account that does not match.
+        let scratch: Surreal<Db> = Surreal::new::<surrealdb::engine::local::Mem>(())
+            .await
+            .expect("an in-memory scratch store");
+        let radius = GraphBlastRadius {
+            graph: Arc::new(hodei_evidence_storage::SurrealGraphStore::new(Arc::new(
+                scratch,
+            ))),
+            limits: InvestigationConfig::default(),
+        };
+        let advisory = hrn("hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-0001").to_string();
+        assert!(radius.impacted("", &advisory).await.is_err());
+        assert!(radius.impacted("other", &advisory).await.is_err());
+        assert!(radius.impacted("acme", "not-an-hrn").await.is_err());
+    }
+
+    // --- the admission's own shape: what the cycle answers. ---
+
+    #[test]
+    fn a_displayed_reactor_error_names_the_truce_it_broke() {
+        let text = ReactorError::BadRequest("the document is unreadable".to_string()).to_string();
+        assert!(text.contains("unreadable"));
+        let text = ReactorError::Unavailable("the graph did not answer".to_string()).to_string();
+        assert!(text.contains("not answer") || text.contains("did not answer"));
+    }
 }
