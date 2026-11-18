@@ -5,7 +5,6 @@
 //! informe llevan la nota de versión del banco que los produjo: un
 //! informe sin "contra qué" no es un informe.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use aws_sdk_s3::Client;
@@ -42,17 +41,25 @@ pub async fn a_store_with_parts(client: &Client, bucket: &str, part_size: usize)
 /// AC1: N publicadores concurrentes del mismo contenido convergen a un
 /// objeto íntegro y a una sola referencia por digest, sobre el multipart
 /// real: dos uploads a la vez contra la misma clave de destino.
+///
+/// Cada publicador trae su **propio almacén**, no uno compartido: el
+/// semáforo de memoria vive en el almacén, y si todos usáramos el mismo
+/// la concurrencia real se colapsaría en una fila ordenada por ese
+/// semáforo. Dos almacenes sobre el mismo cliente son dos procesos que
+/// publican a la vez sin coordinación ninguna entre ellos —que es
+/// exactamente lo que se quiere medir.
 pub async fn ac1_concurrent_publishers(client: &Client, bucket: &str) {
-    let store = Arc::new(a_store_with_parts(client, bucket, 5 * 1024 * 1024).await);
     let bytes = the_bulk(7, 13 * 1024 * 1024);
     let expectation = CommitExpectation::of(&bytes);
 
     let mut tasks = Vec::new();
     for _ in 0..6 {
-        let store = store.clone();
+        let client = client.clone();
+        let bucket = bucket.to_string();
         let bytes = bytes.clone();
         let expectation = expectation.clone();
         tasks.push(tokio::spawn(async move {
+            let store = a_store_with_parts(&client, &bucket, 5 * 1024 * 1024).await;
             let mut session = store.begin().await.expect("la sesion abre");
             for chunk in bytes.chunks(4 * 1024 * 1024) {
                 session.append(chunk).await.expect("el trozo entra");
@@ -68,6 +75,7 @@ pub async fn ac1_concurrent_publishers(client: &Client, bucket: &str) {
     }
 
     let digest = ContentDigest::of_bytes(&bytes);
+    let store = a_store_with_parts(client, bucket, 5 * 1024 * 1024).await;
     store.verify(&digest).await.expect("el objeto esta integro");
     assert_eq!(
         store.length(&digest).await.expect("la longitud"),
@@ -87,9 +95,18 @@ pub async fn ac1_concurrent_publishers(client: &Client, bucket: &str) {
     );
 }
 
-/// AC1 (mitad dura): el reintento tras una respuesta perdida. El
-/// llamante que no sabe si su `complete` aterrizó necesita que al cabo
-/// haya UN objeto con SUS bytes, existiera ya o no.
+/// AC1 (mitad de reintento): publicar el mismo contenido tres veces
+/// seguidas deja UN objeto con SUS bytes, existiera ya o no.
+///
+/// Lo que este test **no** hace, dicho con todas las letras: no
+/// inyecta la perdida del `complete` en la red. La respuesta perdida
+/// del enunciado se modela por su efecto observable —un llamante que
+/// reintenta sin saber—, y lo que se prueba es la idempotencia del
+/// reintento sobre la clave de destino. La carrera real la mide el
+/// test de concurrencia de arriba; aqui lo que se fija es que el
+/// tercer intento sobre un objeto ya sellado no escribe una segunda
+/// referencia ni toca la primera. Un fallo del servidor inyectado por
+/// proxy es deuda registrada, no una garantia que este test prometa.
 pub async fn ac1_lost_ack_retry(client: &Client, bucket: &str) {
     let store = a_store_with_parts(client, bucket, 5 * 1024 * 1024).await;
     let bytes = the_bulk(31, 6 * 1024 * 1024);
@@ -169,6 +186,32 @@ pub async fn ac2_corrupt_is_never_dedupe(client: &Client, bucket: &str) {
         store.length(&digest).await.expect("la longitud"),
         bytes.len() as u64,
         "AC2: la segunda publicacion no escribio otra cosa"
+    );
+
+    // La rama vacía del publish, comprobada igual que la demás. El
+    // contenido vacío no sube multipart, asi que su publicacion es un
+    // PUT condicionado y su 412 tiene que pasar por el mismo criterio
+    // honesto: si en la clave del digest vacío hay otra cosa, eso no
+    // es el vacío y se repara —no se da por publicado.
+    let empty = ContentDigest::of_bytes(b"");
+    let empty_key = store.the_key_of(&empty);
+    client
+        .put_object()
+        .bucket(bucket)
+        .key(&empty_key)
+        .body(the_bulk(99, 2048).into())
+        .send()
+        .await
+        .expect("el cuerpo ajeno se planta en la clave del vacio");
+    let mut session = store.begin().await.expect("la sesion vacia abre");
+    session
+        .commit(CommitExpectation::of(b""))
+        .await
+        .expect("AC2: publicar el vacio sobre el preexistente ajeno repara");
+    assert_eq!(
+        store.get(&empty).await.expect("el vacio se lee"),
+        Vec::<u8>::new(),
+        "AC2: la clave del vacio contiene vacio, no lo que se planto"
     );
 }
 

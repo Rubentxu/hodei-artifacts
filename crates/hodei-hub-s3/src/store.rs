@@ -202,6 +202,18 @@ impl S3BlobStore {
     /// sea lo que sea lo que habia. Un preexistente verificado como
     /// bueno y sin sello se renueva con sello: la siguiente publicacion
     /// deduplica por HEAD, no por lectura.
+    ///
+    /// La precondicion de confianza del sello hay que decirla con todas
+    /// las letras: **el sello vale porque lo estampa quien verifico
+    /// antes de escribir**, y eso solo lo garantizan los almacenes de
+    /// este crate. Un cubo compartido con manos que escribes metadata
+    /// a su antojo —otro servicio, un `aws s3 cp` con `--metadata`, un
+    /// operador con acceso— puede plantar un sello mentiroso y esta
+    /// decision lo aceptaria sin releer. La topologia soportada es el
+    /// cubo exclusivo de este servicio (la que Hodei despliega); si al
+    /// gun dia un backend multiinquilino entra en el contrato, el sello
+    /// pasa a ser una optimizacion sospechosa y esto exige lectura
+    /// siempre —lo decide quien despliega, no un refactor.
     async fn settle_a_refused_write(
         &self,
         digest: &ContentDigest,
@@ -351,9 +363,24 @@ impl S3BlobStore {
                 if !is_a_staging_key(key) {
                     continue;
                 }
-                let age = self
+                // La edad puede no poder pedirse —un 500 del servidor,
+                // una subida que se cierra justo mientras la miramos.
+                // La palabra del segado es que un fallo puntual **no**
+                // aborta la pasada: se cuenta, como el abort que falla,
+                // y se sigue con la siguiente subida. Perder una subida
+                // vieja hoy es un inconveniente; no segar nada porque un
+                // `ListParts` tuvo un mal día sería desobedecer el
+                // contrato de esta función.
+                let age = match self
                     .the_age_of_the_upload(key, upload_id, upload.initiated())
-                    .await?;
+                    .await
+                {
+                    Ok(age) => age,
+                    Err(error) => {
+                        cleanup.failed.push((key.to_string(), error.to_string()));
+                        continue;
+                    }
+                };
                 let Some(age) = age else { continue };
                 if age < max_age {
                     // Demasiado joven para ser un resto: puede estar
@@ -516,6 +543,12 @@ fn is_precondition_failed(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorM
 /// forma bajo el prefijo del staging no es de este almacen: no se lista,
 /// no se aborta y no se cuenta —podria ser el staging de otra aplicacion
 /// compartiendo el cubo, y borrar lo ajeno no entra en el contrato.
+///
+/// El discriminador es formal, no de propiedad: otra aplicacion que
+/// eligiera el mismo patron por casualidad veria abortadas sus subidas
+/// viejas. Es la misma precondicion que el sello de digest —el cubo es
+/// de este servicio—, y con pid y nanos el empate real exige un reloj y
+/// un numero de proceso identicos en dos maquinas contra el mismo cubo.
 fn is_a_staging_key(key: &str) -> bool {
     let Some(stem) = key.strip_prefix(&format!("{STAGING_PREFIX}/")) else {
         return false;
@@ -935,7 +968,37 @@ impl S3BlobWriteSession {
                 .await;
             return match answer {
                 Ok(_) => Ok(()),
-                Err(error) if is_precondition_failed(&error) => Ok(()),
+                Err(error) if is_precondition_failed(&error) => {
+                    // Alguien publico antes en esta clave, y aqui la
+                    // asimetria con la via `put` no tiene defensa: el
+                    // 412 de un cuerpo vacio se comprueba con el mismo
+                    // criterio honesto que cualquier otro rechazo. Con
+                    // las bytes sabidas —vacías— la comprobacion es la
+                    // mas barata posible, y reparar es repetir el PUT
+                    // sin condicion.
+                    let store = S3BlobStore {
+                        client: self.client.clone(),
+                        config: self.config.clone(),
+                        gate: self.gate.clone(),
+                    };
+                    let repair = async {
+                        self.client
+                            .put_object()
+                            .bucket(&self.config.bucket)
+                            .key(target)
+                            .set_metadata(Some(S3BlobStore::the_stamp_map(digest)))
+                            .body(ByteStream::from_static(&[]))
+                            .send()
+                            .await
+                            .map(|_| ())
+                            .map_err(|error| {
+                                S3BlobStore::unavailable("repair the empty content", error)
+                            })
+                    };
+                    store
+                        .settle_a_refused_write(digest, Some(&[]), repair)
+                        .await
+                }
                 Err(error) => Err(S3BlobStore::unavailable("publish the empty content", error)),
             };
         }
@@ -1131,7 +1194,24 @@ impl S3BlobWriteSession {
         }
         match request.send().await {
             Ok(_) => Ok(true),
-            Err(error) if only_if_absent && is_precondition_failed(&error) => Ok(false),
+            Err(error) if only_if_absent && is_precondition_failed(&error) => {
+                // El destino ya estaba: la copia no hizo falta. Pero el
+                // multipart que abrimos **sobre la clave de destino**
+                // sigue vivo en el servidor, y su clave no es de
+                // staging —el segado no la mira y `list_blobs` no la
+                // ve—. Se aborta aqui, antes de ceder el veredicto al
+                // llamante; dejarla seria cambiar una carrera
+                // inocua por una fuga permanente de trozos pagados.
+                let _ = self
+                    .client
+                    .abort_multipart_upload()
+                    .bucket(&self.config.bucket)
+                    .key(target)
+                    .upload_id(&upload_id)
+                    .send()
+                    .await;
+                Ok(false)
+            }
             Err(error) => Err(S3BlobStore::unavailable("finish the copy", error)),
         }
     }
