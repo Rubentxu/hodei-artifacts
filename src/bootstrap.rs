@@ -245,50 +245,60 @@ pub async fn bootstrap(
         // reports as fine.
         let chosen = the_content_store(config).await?;
         let content: Arc<dyn hodei_hub::blob::BlobStore> = chosen.as_blob();
-        // The staging that an interrupted upload leaves behind is an
-        // artifact of the directory backend: the object store has no
-        // visible-but-unpublished file, so there is nothing to clean and
-        // no reason to look at `cas_path` at all.
+        // The staging that an interrupted upload leaves behind is not a
+        // reason to not start, and it is not left to rot either. The
+        // directory backend removes the files no one is writing; the
+        // object store aborts the multipart uploads whose last part is
+        // older than the margin, and drops the completed-but-never-
+        // published staging objects (HSP-139: an incomplete multipart is
+        // invisible to `list_blobs` but not free -- it is billed and it
+        // is the one piece of garbage the bucket would never reclaim).
         //
-        // The staging of a write **in progress** is not touched: the file
-        // is locked by the process that is writing it, and a locked file
-        // is not removed. The age is only the margin of prudence, not the
-        // criterion: an old file of an upload that stopped writing is
-        // still a live upload, and taking it away breaks it.
+        // The staging of a write **in progress** is not touched: a locked
+        // file is not removed, and an upload whose last part is younger
+        // than the margin stays alone. The age is only the margin of
+        // prudence, not the criterion: an old upload that is still being
+        // written is a live upload, and taking it away breaks it.
         //
         // And a staging that could not be removed is not a reason to not
-        // start: it is a problem of disk, and the service has work to do.
-        if let Some(directory) = chosen.filesystem_staging() {
-            match directory
-                .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs))
-            {
-                Ok(cleanup) => {
-                    if cleanup.removed > 0 {
-                        warn!(
-                            removed = cleanup.removed,
-                            "the staging of interrupted uploads was removed at the boot"
-                        );
-                    }
-                    if cleanup.alive > 0 {
-                        info!(
-                            alive = cleanup.alive,
-                            "the staging of the uploads in progress was left alone at the boot"
-                        );
-                    }
-                    for (path, reason) in &cleanup.failed {
-                        warn!(
-                            %reason,
-                            path = %path.display(),
-                            "the staging of an interrupted upload could not be removed at the boot"
-                        );
-                    }
-                }
-                Err(error) => {
+        // start: it is a problem of disk or of the object store, and the
+        // service has work to do.
+        let cleanup = match chosen {
+            ChosenContentStore::Filesystem(ref directory) => directory
+                .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs)),
+            ChosenContentStore::S3(ref store) => {
+                store
+                    .clean_staging(Duration::from_secs(config.content.staging_max_age_secs))
+                    .await
+            }
+        };
+        match cleanup {
+            Ok(cleanup) => {
+                if cleanup.removed > 0 {
                     warn!(
-                        %error,
-                        "the staging could not be read at the boot; the interrupted uploads stay"
+                        removed = cleanup.removed,
+                        "the staging of interrupted uploads was removed at the boot"
                     );
                 }
+                if cleanup.alive > 0 {
+                    info!(
+                        alive = cleanup.alive,
+                        "the staging of the uploads in progress was left alone at the boot"
+                    );
+                }
+                for (path, reason) in &cleanup.failed {
+                    warn!(
+                        %reason,
+                        path,
+                        "the staging of an interrupted upload could not be removed at the boot"
+                    );
+                }
+            }
+            Err(error) => {
+                warn!(
+                    %error,
+                    "the staging could not be read at the boot; the interrupted uploads stay"
+                );
             }
         }
         // The catalog does not decide again what the HTTP boundary already
@@ -451,15 +461,15 @@ pub async fn bootstrap(
 }
 
 /// The store of content the deployment chose, with the operations that
-/// only one of the two backends has.
+/// each backend implements on its own type.
 ///
 /// The catalog rows name a digest, and a digest has to live in exactly one
 /// place: both consumers of the bytes --the probe and the garbage
 /// collection-- must not decide again what the configuration already
 /// decided. The shared part of the two backends is the `Arc<dyn
-/// BlobStore>`; the staging of an interrupted upload is an artifact of
-/// the directory implementation and has no meaning over an object store,
-/// so it travels discriminated instead of hidden behind the trait.
+/// BlobStore>`; the staging cleanup travels discriminated because each
+/// implementation decides what "abandoned" means with its own primitives
+/// --a lock on a file, the age of the last part of a multipart upload.
 enum ChosenContentStore {
     Filesystem(Arc<FileBlobStore>),
     S3(Arc<hodei_hub_s3::S3BlobStore>),
@@ -472,18 +482,6 @@ impl ChosenContentStore {
         match self {
             Self::Filesystem(store) => store.clone(),
             Self::S3(store) => store.clone(),
-        }
-    }
-
-    /// The boot-time cleanup of the directory staging, if the chosen
-    /// backend is the directory. There is nothing to clean over S3: a
-    /// multipart upload that was never completed is not visible as an
-    /// object, and its orphaned parts are the object store's own problem
-    /// (and its own bill), which the bucket's lifecycle rules address.
-    fn filesystem_staging(&self) -> Option<&FileBlobStore> {
-        match self {
-            Self::Filesystem(store) => Some(store.as_ref()),
-            Self::S3(_) => None,
         }
     }
 }

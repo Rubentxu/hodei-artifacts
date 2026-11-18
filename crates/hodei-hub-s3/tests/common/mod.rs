@@ -8,7 +8,9 @@
 // Los binarios de test comparten este modulo: cada uno usa una parte.
 #![allow(dead_code)]
 
+pub mod conformity;
 pub mod localstack;
+pub mod rustfs;
 
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_hub::blob::{BlobError, BlobStore, CommitExpectation, ReadPolicy};
