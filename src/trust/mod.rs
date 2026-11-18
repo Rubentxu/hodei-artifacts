@@ -30,6 +30,7 @@
 pub mod cache;
 pub mod hrn;
 pub mod promotion;
+pub mod reaction;
 
 use std::collections::HashSet;
 

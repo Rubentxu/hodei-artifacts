@@ -9,6 +9,7 @@
 
 pub mod apt;
 
+pub mod advisories;
 pub mod capabilities;
 pub mod capsules;
 pub mod cargo;

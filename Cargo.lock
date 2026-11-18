@@ -3350,6 +3350,8 @@ dependencies = [
  "hodei-investigator",
  "hodei-investigator-storage",
  "hodei-policies",
+ "hodei-reactive",
+ "hodei-risk",
  "hodei-risk-storage",
  "hodei-trust-policy",
  "hodei-trust-policy-storage",
