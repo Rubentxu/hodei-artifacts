@@ -614,6 +614,11 @@ async fn the_grant_marks_the_content_and_the_revocation_takes_it_away() {
             revoked_at: None,
             revoked_by: None,
             revoke_reason: None,
+            subject: None,
+            policy_version: Some("1.0.0".to_string()),
+            capsule_hash: None,
+            risk_version: None,
+            valid_until: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
         }])
         .await
         .expect("the grant");
@@ -864,6 +869,11 @@ async fn the_trusted_channel_only_shows_what_is_granted() {
             revoked_at: None,
             revoked_by: None,
             revoke_reason: None,
+            subject: None,
+            policy_version: Some("1.0.0".to_string()),
+            capsule_hash: None,
+            risk_version: None,
+            valid_until: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
         }])
         .await
         .expect("the grant");
@@ -1204,6 +1214,11 @@ async fn the_trusted_channel_comes_out_in_the_order_of_the_query() {
                 revoked_at: None,
                 revoked_by: None,
                 revoke_reason: None,
+                subject: None,
+                policy_version: Some("1.0.0".to_string()),
+                capsule_hash: None,
+                risk_version: None,
+                valid_until: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
             }])
             .await
             .expect("the grant");
@@ -1239,6 +1254,11 @@ async fn two_decisions_that_grant_the_same_content_serve_it_once() {
                 revoked_at: None,
                 revoked_by: None,
                 revoke_reason: None,
+                subject: None,
+                policy_version: Some("1.0.0".to_string()),
+                capsule_hash: None,
+                risk_version: None,
+                valid_until: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
             }])
             .await
             .expect("the grant");

@@ -380,6 +380,11 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
             revoked_at: None,
             revoked_by: None,
             revoke_reason: None,
+            subject: None,
+            policy_version: Some("1.0.0".to_string()),
+            capsule_hash: None,
+            risk_version: None,
+            valid_until: Some(Utc::now() + chrono::Duration::hours(1)),
         }])
         .await
         .expect("the grant is written");

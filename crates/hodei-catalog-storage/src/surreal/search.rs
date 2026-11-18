@@ -126,6 +126,7 @@
 use std::collections::HashSet;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use hodei_catalog::search::{MAX_COUNTED, RepositoryAttribute, SearchHit, SearchPage, SearchQuery};
 use hodei_catalog::{
     CatalogError, CatalogSearch, RepositoryDescriptor, RepositoryFormat, ServeChannel, TrustLedger,
@@ -133,8 +134,9 @@ use hodei_catalog::{
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use surrealdb::sql::Datetime;
 
-use super::{AssetRow, LIVE_GRANT, RepositoryRow, SurrealCatalogStore, algorithm_of};
+use super::{AssetRow, RepositoryRow, SurrealCatalogStore, algorithm_of};
 
 /// How many repositories may share a tag.
 ///
@@ -146,9 +148,21 @@ const MAX_TAG_TARGETS: usize = 64;
 /// The row of a grant.
 #[derive(Debug, Clone, Deserialize)]
 struct GrantRow {
+    digest_algorithm: String,
+    digest: String,
+}
+
+/// A grant row read for the trust state of a page: the triple plus the
+/// half of the validity the row can say without the whole grant.
+#[derive(Debug, Clone, Deserialize)]
+struct ValidityRow {
     repository: String,
     digest_algorithm: String,
     digest: String,
+    #[serde(default)]
+    policy_version: Option<String>,
+    #[serde(default)]
+    valid_until: Option<Datetime>,
 }
 
 /// The coordinates a tag points at.
@@ -491,11 +505,12 @@ impl SurrealCatalogStore {
         Ok((rows, true))
     }
 
-    /// The live grants of a repository.
+    /// The admissible grants of a repository.
     ///
-    /// Only **live** grants: a revoked one is revoked, and what is
-    /// revoked is not served. They come from the ledger of the trust, so
-    /// the rule of what is live is written once and not twice.
+    /// Only **admissible** grants: a revoked one is revoked, an expired
+    /// one has stopped being worthy of trust, and one without declared
+    /// validity has never been proven. They come from the ledger of the
+    /// trust, so the rule of what is live is written once and not twice.
     ///
     /// One grant per **digest**: the book holds a row per decision, and
     /// two decisions can grant the same digest. The content is served
@@ -506,11 +521,12 @@ impl SurrealCatalogStore {
         principal_account: &str,
         repository: &str,
     ) -> Result<Vec<GrantRow>, CatalogError> {
+        let now = Utc::now();
         let grants = self.grants_of(principal_account, repository).await?;
         let mut seen: HashSet<(String, String)> = HashSet::new();
         let mut rows: Vec<GrantRow> = Vec::new();
         for grant in grants {
-            if !grant.is_active() {
+            if !grant.is_active_at(now) {
                 continue;
             }
             let algorithm = algorithm_of(&grant.digest);
@@ -521,7 +537,6 @@ impl SurrealCatalogStore {
                 continue;
             }
             rows.push(GrantRow {
-                repository: grant.repository,
                 digest_algorithm: algorithm,
                 digest: value,
             });
@@ -556,7 +571,7 @@ impl SurrealCatalogStore {
         Ok(rows)
     }
 
-    /// The live grants of the assets of the page.
+    /// The admissible grants of the assets of the page.
     ///
     /// The question is about triples (repository, algorithm, digest), and
     /// each triple is an exact lookup in the
@@ -565,8 +580,10 @@ impl SurrealCatalogStore {
     /// sometimes returns zero rows with that form, and a grant that is
     /// not read is a trust that is unknown.
     ///
-    /// Only **live** grants are counted: a revoked one is revoked, and
-    /// the state that is read is the current one.
+    /// Only **admissible** grants are counted: a revoked one is revoked,
+    /// an expired one no longer says anything about the bytes, and a row
+    /// without declared validity has never been proven -- the state that
+    /// is read is the current one.
     async fn the_grants(
         &self,
         principal_account: &str,
@@ -598,8 +615,8 @@ impl SurrealCatalogStore {
         }
         conditions.push(format!("({})", triples.join(" OR ")));
         let sql = format!(
-            "SELECT repository, digest_algorithm, digest FROM trust_grant \
-             WHERE {} AND {LIVE_GRANT}",
+            "SELECT repository, digest_algorithm, digest, policy_version, valid_until \
+             FROM trust_grant WHERE {} AND revoked_at IS NONE",
             conditions.join(" AND ")
         );
         let mut response = self
@@ -608,11 +625,18 @@ impl SurrealCatalogStore {
             .bind(bindings)
             .await
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        let rows: Vec<GrantRow> = response
+        let rows: Vec<ValidityRow> = response
             .take(0)
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let now = Utc::now();
         Ok(rows
             .into_iter()
+            // La regla de la vigencia es la del dominio; aqui se aplica
+            // la mitad que la fila puede decir sin el grant entero.
+            .filter(|row| {
+                row.policy_version.is_some()
+                    && row.valid_until.as_ref().is_some_and(|until| until.0 > now)
+            })
             .map(|row| (row.repository, row.digest_algorithm, row.digest))
             .collect())
     }

@@ -385,6 +385,7 @@ impl hodei_catalog::TrustLedger for RecordingLedger {
         _account: &str,
         _repository: &str,
         _digest: &hodei_evidence::ContentDigest,
+        _at: chrono::DateTime<chrono::Utc>,
     ) -> Result<Option<hodei_catalog::TrustGrant>, hodei_catalog::CatalogError> {
         Ok(None)
     }

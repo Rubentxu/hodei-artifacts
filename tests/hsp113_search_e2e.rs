@@ -618,6 +618,11 @@ async fn the_grant_is_the_decision_that_says_it_is_trusted() {
             revoked_at: None,
             revoked_by: None,
             revoke_reason: None,
+            subject: None,
+            policy_version: Some("1.0.0".to_string()),
+            capsule_hash: None,
+            risk_version: None,
+            valid_until: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
         }])
         .await
         .expect("the grant");
@@ -918,6 +923,11 @@ async fn the_trusted_channel_does_not_show_what_has_no_grant() {
             revoked_at: None,
             revoked_by: None,
             revoke_reason: None,
+            subject: None,
+            policy_version: Some("1.0.0".to_string()),
+            capsule_hash: None,
+            risk_version: None,
+            valid_until: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
         }])
         .await
         .expect("the grant");

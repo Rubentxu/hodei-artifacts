@@ -33,6 +33,7 @@ pub mod promotion;
 
 use std::collections::HashSet;
 
+use chrono::Utc;
 use hodei_catalog::{RepositoryDescriptor, ServeChannel};
 use hodei_evidence::ContentDigest;
 
@@ -86,14 +87,17 @@ pub async fn admit(
     }
     let lookup = match state.trust_ledger.as_ref() {
         None => Lookup::NoLedger,
-        Some(ledger) => match ledger
-            .active_grant(account, &repository.repo_key, digest)
-            .await
-        {
-            Ok(Some(grant)) if grant.is_active() => Lookup::Granted,
-            Ok(_) => Lookup::NotGranted,
-            Err(_) => Lookup::Failed,
-        },
+        Some(ledger) => {
+            let now = Utc::now();
+            match ledger
+                .active_grant(account, &repository.repo_key, digest, now)
+                .await
+            {
+                Ok(Some(grant)) if grant.is_active_at(now) => Lookup::Granted,
+                Ok(_) => Lookup::NotGranted,
+                Err(_) => Lookup::Failed,
+            }
+        }
     };
     verdict(channel, lookup)
 }
@@ -111,6 +115,7 @@ pub async fn servable(
         return Ok(None);
     }
     let ledger = state.trust_ledger.as_ref().ok_or(Admission::Unavailable)?;
+    let now = Utc::now();
     let grants = ledger
         .grants_of(account, &repository.repo_key)
         .await
@@ -118,7 +123,7 @@ pub async fn servable(
     Ok(Some(
         grants
             .into_iter()
-            .filter(|grant| grant.is_active())
+            .filter(|grant| grant.is_active_at(now))
             .map(|grant| grant.digest.value)
             .collect(),
     ))
