@@ -433,6 +433,27 @@ impl Deployment {
         assert!(status.success(), "the catalog could not be seeded");
     }
 
+    /// Siembra el catálogo declarando **sustituibles** los repositorios
+    /// listados: su `config_settings.raw.replace` es `allow`, y publicar
+    /// en una dirección ocupada es un reemplazo y no un 409.
+    ///
+    /// La política no se puede pedir por HTTP: la decide quien opera el
+    /// despliegue al sembrar, igual que el canal de confianza.
+    pub fn seed_with_replacement(&self, replace: &[&str]) {
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env("HODEI_SEED_REPLACE", replace.join(","))
+            .status()
+            .expect("the seeder runs");
+        assert!(status.success(), "the catalog could not be seeded");
+    }
+
     /// Reconfigura un repositorio proxy ya sembrado: sustituye su
     /// `config_settings.proxy` y sube la version de su configuracion.
     ///
@@ -2229,18 +2250,20 @@ pub fn seed_if_asked() {
     let extra: Vec<&str> = extra.split(',').filter(|one| !one.is_empty()).collect();
     let trusted = std::env::var("HODEI_SEED_TRUSTED").unwrap_or_default();
     let trusted: Vec<&str> = trusted.split(',').filter(|one| !one.is_empty()).collect();
+    let replace = std::env::var("HODEI_SEED_REPLACE").unwrap_or_default();
+    let replace: Vec<&str> = replace.split(',').filter(|one| !one.is_empty()).collect();
     let proxies = std::env::var("HODEI_SEED_PROXY")
         .ok()
         .and_then(|raw| {
             serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw).ok()
         })
         .unwrap_or_default();
-    seed_the_catalog_with(&db.to_string_lossy(), &extra, &trusted, &proxies);
+    seed_the_catalog_with(&db.to_string_lossy(), &extra, &trusted, &proxies, &replace);
 }
 
 /// Siembra el catálogo con un repositorio por cuenta.
 pub fn seed_the_catalog(path: &str, extra: &[&str], trusted: &[&str]) {
-    seed_the_catalog_with(path, extra, trusted, &serde_json::Map::new());
+    seed_the_catalog_with(path, extra, trusted, &serde_json::Map::new(), &[]);
 }
 
 /// Siembra el catálogo y, ademas, un repositorio proxy por cada upstream.
@@ -2249,6 +2272,7 @@ pub fn seed_the_catalog_with(
     extra: &[&str],
     trusted: &[&str],
     proxies: &serde_json::Map<String, serde_json::Value>,
+    replace: &[&str],
 ) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -2278,6 +2302,9 @@ pub fn seed_the_catalog_with(
             let mut settings = serde_json::Map::new();
             if account == FIRST_ACCOUNT && trusted.contains(&key) {
                 settings.insert("trust".into(), serde_json::json!({ "serve": "trusted" }));
+            }
+            if account == FIRST_ACCOUNT && replace.contains(&key) {
+                settings.insert("raw".into(), serde_json::json!({ "replace": "allow" }));
             }
             let mode = match proxies.get(key) {
                 Some(upstream) if account == FIRST_ACCOUNT => {
