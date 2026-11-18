@@ -29,7 +29,7 @@
 //!
 //! Exit codes: 0 sound, 1 the check found damage, 2 the command failed.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,8 +42,9 @@ use serde::Serialize;
 
 const USAGE: &str = "usage: hodei-recovery [--db PATH] [--cas PATH] [--namespace NAME] \
 [--database NAME] [--grace-secs N] [--json] <backup --to DIR | verify DIR | restore --from DIR | \
-scrub | repair --from DIR | bundle export --to DIR --account ACC --repository KEY | \
-bundle import --from DIR --account ACC --repository KEY [--allow-mapping] [--overwrite]>";
+scrub | repair --from DIR | bundle export --to DIR --account ACC --repository KEY [--signing-key KEY.ASC] | \
+bundle import --from DIR --account ACC --repository KEY [--allow-mapping] [--overwrite] | \
+capsule verify --from DIR --key PUBLIC.ASC>";
 
 enum Command {
     Backup {
@@ -64,6 +65,12 @@ enum Command {
         account: String,
         repository: String,
     },
+    /// Lee la capsula OCI de un paquete exportado y dice si la firma del
+    /// manifiesto de imagen corresponde a la clave dada y a esta capsula.
+    CapsuleVerify {
+        from: PathBuf,
+        key: PathBuf,
+    },
     BundleImport {
         from: PathBuf,
         account: String,
@@ -80,6 +87,7 @@ struct Options {
     database: Option<String>,
     grace_secs: Option<u64>,
     json: bool,
+    signing_key: Option<PathBuf>,
     command: Command,
 }
 
@@ -97,6 +105,8 @@ fn parse_options() -> Result<Options, String> {
     let mut name: Option<String> = None;
     let mut to = None;
     let mut from = None;
+    let mut signing_key: Option<PathBuf> = None;
+    let mut verify_key: Option<PathBuf> = None;
     let mut positional = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -122,6 +132,14 @@ fn parse_options() -> Result<Options, String> {
             "--json" => json = true,
             "--to" => to = Some(PathBuf::from(args.next().ok_or("--to needs a path")?)),
             "--from" => from = Some(PathBuf::from(args.next().ok_or("--from needs a path")?)),
+            "--signing-key" => {
+                signing_key = Some(PathBuf::from(
+                    args.next().ok_or("--signing-key needs a path")?,
+                ));
+            }
+            "--key" => {
+                verify_key = Some(PathBuf::from(args.next().ok_or("--key needs a path")?));
+            }
             "--help" | "-h" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -146,6 +164,15 @@ fn parse_options() -> Result<Options, String> {
         Some("repair") => Command::Repair {
             from: from.ok_or("repair needs --from DIR")?,
         },
+        Some("capsule") => {
+            if args.next().as_deref() != Some("verify") {
+                return Err("capsule needs verify".to_string());
+            }
+            Command::CapsuleVerify {
+                from: from.ok_or("capsule verify needs --from DIR")?,
+                key: verify_key.ok_or("capsule verify needs --key PUBLIC.ASC")?,
+            }
+        }
         Some("bundle") => {
             let account = account
                 .clone()
@@ -183,6 +210,7 @@ fn parse_options() -> Result<Options, String> {
         database,
         grace_secs,
         json,
+        signing_key,
         command,
     })
 }
@@ -387,13 +415,35 @@ async fn run(options: &Options) -> Result<ExitCode, RecoveryError> {
             repository,
         } => {
             let (store, blobs) = bundle_targets(&target).await?;
-            let report =
-                bundles::export(&store, &store, &store, &blobs, account, repository, to).await?;
+            let signer = options
+                .signing_key
+                .as_deref()
+                .map(load_or_create_signer)
+                .transpose()?;
+            let report = bundles::export(
+                &store,
+                &store,
+                &store,
+                &blobs,
+                account,
+                repository,
+                to,
+                signer.as_ref(),
+            )
+            .await?;
             if options.json {
                 print_json(&report);
             } else {
+                let capsule_note = match &report.capsule {
+                    Some(capsule) => format!(
+                        ", capsule at {} signed by {}",
+                        capsule.layout.display(),
+                        capsule.signer
+                    ),
+                    None => ", no capsule (pass --signing-key)".to_string(),
+                };
                 println!(
-                    "bundle written to {}: {} paths, {} bytes of blobs",
+                    "bundle written to {}: {} paths, {} bytes of blobs{capsule_note}",
                     report.path.display(),
                     report.exported,
                     report.blob_bytes
@@ -401,6 +451,30 @@ async fn run(options: &Options) -> Result<ExitCode, RecoveryError> {
                 for withheld in &report.withheld {
                     println!("  withheld {}: {}", withheld.asset_path, withheld.reason);
                 }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::CapsuleVerify { from, key } => {
+            let armored = std::fs::read_to_string(key)
+                .map_err(|error| RecoveryError::Invalid(format!("the key: {error}")))?;
+            let signer = hodei_artifacts_api::openpgp::MetadataSigner::from_armor(&armored)
+                .map_err(|error| RecoveryError::Invalid(error.to_string()))?;
+            let report = bundles::verify_capsule(&from.join("oci"), &signer)
+                .map_err(|error| RecoveryError::Bundle(error.to_string()))?;
+            if options.json {
+                print_json(&serde_json::json!({
+                    "image": report.image.annotations.get("hodei.capsule"),
+                    "entries": report.capsule.entries.len(),
+                    "withheld": report.capsule.withheld.len(),
+                    "signer": report.signer,
+                }));
+            } else {
+                println!(
+                    "capsule of {} entries ({} withheld), signed by {}",
+                    report.capsule.entries.len(),
+                    report.capsule.withheld.len(),
+                    report.signer
+                );
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -441,6 +515,26 @@ async fn run(options: &Options) -> Result<ExitCode, RecoveryError> {
             Ok(ExitCode::SUCCESS)
         }
     }
+}
+
+/// The signing key a capsule export works on: an armored secret key in
+/// `path`, created and stored there on first use. A key is not a
+/// throwaway: the capsule is verified later against its public half.
+fn load_or_create_signer(
+    path: &Path,
+) -> Result<hodei_artifacts_api::openpgp::MetadataSigner, RecoveryError> {
+    if let Ok(armored) = std::fs::read_to_string(path) {
+        return hodei_artifacts_api::openpgp::MetadataSigner::from_armor(&armored)
+            .map_err(|error| RecoveryError::Invalid(error.to_string()));
+    }
+    let signer = hodei_artifacts_api::openpgp::MetadataSigner::generate(env!("CARGO_PKG_NAME"))
+        .map_err(|error| RecoveryError::Invalid(error.to_string()))?;
+    let armored = signer
+        .to_armor()
+        .map_err(|error| RecoveryError::Invalid(error.to_string()))?;
+    std::fs::write(path, armored)
+        .map_err(|error| RecoveryError::Store(format!("the key: {error}")))?;
+    Ok(signer)
 }
 
 /// The catalog and the content store a bundle command works on.
