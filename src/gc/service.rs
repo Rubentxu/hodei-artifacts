@@ -17,10 +17,16 @@
 //!    y se confirma despues; el evento de auditoria sale al confirmar.
 //! 5. **Una sola pasada a la vez**, y cada borrado vuelve a comprobar la
 //!    edad bajo la barrera del almacen.
+//! 6. **El dry-run comparte censo.** Un plano del almacen vale lo mismo
+//!    para veinte peticiones que para una, y calcularlo veinte veces a la
+//!    vez no es mas fresco: es veinte grafos completos apilados en
+//!    memoria y en disco. Lo que borra --el barrido y el scrub-- toma
+//!    siempre su propio censo, al momento.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use hodei_catalog::{
@@ -83,6 +89,15 @@ pub(crate) enum ManifestReads {
     Lenient,
 }
 
+/// La ventana maxima de validez del plano compartido del dry-run: un
+/// plano viejo por treinta segundos es un plano informado, no un plano
+/// roto; un plano viejo por horas no es un plano.
+const PLAN_CACHE_MAX_TTL: Duration = Duration::from_secs(30);
+
+/// El ultimo plano del dry-run: la generacion con la que se calculo, el
+/// instante en que se publico y el plano compartido.
+type CachedPlan = (u64, Instant, Arc<Plan>);
+
 /// La recoleccion de basura del almacen.
 pub struct GcService {
     ledger: Arc<dyn ContentLedger>,
@@ -91,6 +106,21 @@ pub struct GcService {
     /// Una sola pasada a la vez: dos barridos concurrentes escribirian
     /// dos marcas y se pisarian el rastro.
     gate: Mutex<()>,
+    /// Cuanto vale un plano del dry-run: lo que mande la gracia, cortado
+    /// por el maximo. Con una gracia de milisegundos el plano no puede
+    /// valer mas que ella, porque envejece dentro de su propia ventana.
+    plan_ttl: Duration,
+    /// El plano compartido. Se lee, se escribe y se tira sin sostener el
+    /// cerrojo a traves de un `await`: lo que tarda un censo se sostiene
+    /// con [`Self::plan_flight`], y aqui solo se mira y se publica.
+    plan_cache: Mutex<Option<CachedPlan>>,
+    /// El vuelo unico: quien calcula un censo lo sostiene; los demas
+    /// esperan aqui detras y entran al cache para recoger el resultado.
+    plan_flight: Mutex<()>,
+    /// La generacion del mundo. Cada mutacion que cambia lo que el plan
+    /// diria --retenciones, barridos-- la rompe, y un plano de una
+    /// generacion muerta no se sirve jamas.
+    plan_generation: AtomicU64,
 }
 
 impl GcService {
@@ -108,6 +138,10 @@ impl GcService {
             store,
             grace,
             gate: Mutex::new(()),
+            plan_ttl: grace.min(PLAN_CACHE_MAX_TTL),
+            plan_cache: Mutex::new(None),
+            plan_flight: Mutex::new(()),
+            plan_generation: AtomicU64::new(0),
         })
     }
 
@@ -121,9 +155,44 @@ impl GcService {
     }
 
     /// El plan de ahora: el dry-run. No escribe ni borra nada.
-    pub async fn dry_run(&self) -> Result<Plan, GcError> {
+    ///
+    /// The plan is shared within a freshness window and computed by one
+    /// census at a time: concurrent callers wait on the census instead of
+    /// piling full graphs into memory and disk. A result computed while
+    /// the world changed (the generation moved under it) is returned but
+    /// never cached. Sweep and scrub never come through here: what
+    /// deletes always takes its own fresh census.
+    pub async fn dry_run(&self) -> Result<Arc<Plan>, GcError> {
+        // Lock order, always the same here and in the invalidation:
+        // flight first, cache second. Nothing else ever takes the flight.
+        let _flight = self.plan_flight.lock().await;
+        let generation = self.plan_generation.load(Ordering::Acquire);
+        let cached = self.plan_cache.lock().await.clone();
+        if let Some((cached_generation, at, plan)) = cached
+            && cached_generation == generation
+            && at.elapsed() < self.plan_ttl
+        {
+            return Ok(plan);
+        }
         let (plan, _) = self.census().await?;
+        let plan = Arc::new(plan);
+        let mut cache = self.plan_cache.lock().await;
+        if self.plan_generation.load(Ordering::Acquire) == generation {
+            *cache = Some((generation, Instant::now(), plan.clone()));
+        }
         Ok(plan)
+    }
+
+    /// Drops the shared plan: the next dry-run computes a fresh census.
+    ///
+    /// Called after anything that changes what the plan would say. When
+    /// a census is in flight the generation moves anyway, so the in-flight
+    /// result is returned but not cached.
+    fn invalidate_plan_cache(&self) {
+        self.plan_generation.fetch_add(1, Ordering::AcqRel);
+        if let Ok(mut cache) = self.plan_cache.try_lock() {
+            *cache = None;
+        }
     }
 
     /// El censo y el plan que sale de el.
@@ -351,6 +420,9 @@ impl GcService {
         self.ledger
             .complete_run(&run.id, deleted, bytes_freed, Utc::now())
             .await?;
+        // The world changed bytes: the shared plan of the dry-run is
+        // stale from here on, whatever this pass deleted.
+        self.invalidate_plan_cache();
 
         Ok(SweepReport {
             run_id: run.id,
@@ -409,12 +481,17 @@ impl GcService {
             expires_at,
         };
         self.ledger.place_hold(&hold).await?;
+        self.invalidate_plan_cache();
         Ok(hold)
     }
 
     /// Libera una retencion. Devuelve si existia.
     pub async fn release_hold(&self, id: &str) -> Result<bool, GcError> {
-        Ok(self.ledger.release_hold(id).await?)
+        let released = self.ledger.release_hold(id).await?;
+        if released {
+            self.invalidate_plan_cache();
+        }
+        Ok(released)
     }
 }
 
