@@ -33,8 +33,12 @@ def main():
     out.append("## Siembra medida")
     for r in d["replicas"]:
         s = r["seeds"]
-        out.append(f"- Réplica {r['replica']}: {s['catalog_assets']:,} assets en {fmt(s['catalog_bulk_seconds'],1)} s; "
-                   f"{s['evidence']:,} evidencias en {fmt(s['evidence_seconds'],1)} s")
+        if s.get("mode") == "reused":
+            out.append(f"- Réplica {r['replica']}: semilla REUTILIZADA desde `{s['seed_dir']}` "
+                       f"(montaje {fmt(s['mount_seconds'],1)} s; fingerprint `{s['manifest']['profile_fingerprint'][:12]}`)")
+        else:
+            out.append(f"- Réplica {r['replica']}: {s['catalog_assets']:,} assets en {fmt(s['catalog_bulk_seconds'],1)} s; "
+                       f"{s['evidence']:,} evidencias en {fmt(s['evidence_seconds'],1)} s")
     out.append("")
     out.append("## Workloads (agregado de réplicas)")
     out.append("")
