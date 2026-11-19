@@ -264,6 +264,15 @@ pipeline {
                         // idempotente y los rechazos de esquema
                         // incompatible contra el mismo Zero+Alpha.
                         "--test hsp183_identity_it",
+                        // Prueba de guardas transaccionales (HSP-184):
+                        // sin HODEI_GRAPH_IT_ENDPOINT se salta a si
+                        // misma (exit 0); con la variable corre la
+                        // carrera de dos clientes por la misma revision
+                        // de tag, la serializacion de diez escritores
+                        // por la guarda comun del ambito, la
+                        // convergencia de identidad y la repeticion sin
+                        // duplicar efecto tras un ACK perdido.
+                        "--test hsp184_guards_it",
                     ).joinToString(" ")
                 )
                 sh(
