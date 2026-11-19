@@ -1,0 +1,198 @@
+# Dgraph quorum topology (3 Zero + 3 Alpha, replica factor 3) for HSP-180.
+#
+# Extends the single-node air-gap manifest in compose.yaml (HSP-177) to the
+# quorum topology required by doc-20 ([HGS] Contrato de almacenamiento
+# Graph-First): TLS on every link, ACL, and an explicit replica factor.
+#
+# Provenance and guarantees:
+# - Image pinned by tag AND digest (same index digest as compose.yaml;
+#   the amd64 manifest digest is aa5f08f685dc0349aa6e40c75f3b114532fe45bad7ec281d2250413b55e02baa).
+# - Network `internal: true`: no egress from any node (air-gap kept).
+# - `--replicas 3` on every Zero: EXPLICIT replica factor 3 for data groups
+#   (v25.5.1 flag; the group members confirm it at runtime: alpha logs print
+#   "Setting conf state to voters:1 voters:2 voters:3").
+# - `--tls internal-port=true`: TLS on the internal (inter-node) gRPC port
+#   AND on the external HTTP/gRPC ports. The node certificate (node.crt) is
+#   issued by `dgraph cert` with SANs for all six node DNS names, so every
+#   inter-node and client connection is verified (no -k needed off-loopback).
+#   Each node also presents a client cert (client-auth-type=VERIFYIFGIVEN),
+#   so inter-node traffic is mutual TLS.
+# - ACL enabled with a locally generated HMAC secret file
+#   (secrets/hmac-secret, gitignored): guardian login + JWT on every request.
+# - Telemetry disabled (`--telemetry "reports=false"`).
+#
+# TLS material is generated with the image itself (no host tooling):
+#   ./gen-certs.sh   # creates tls/{ca.crt,node.crt,client.*,...}
+# The HMAC secret is generated locally:
+#   head -c 32 /dev/urandom > secrets/hmac-secret
+#
+# The UAT recorded in target/uat ran the equivalent raw podman commands;
+# the mapping is 1:1 (see README.md).
+
+name: hodei-dgraph-quorum
+
+services:
+  zero-1:
+    image: docker.io/dgraph/dgraph:v25.5.1@sha256:aa5f08f685dc0349aa6e40c75f3b114532fe45bad7ec281d2250413b55e02baa
+    container_name: dgraph-zero-1
+    hostname: dgraph-zero-1
+    restart: "no"
+    command: >
+      dgraph zero --my=dgraph-zero-1:5080 --replicas 3 --wal=/dgraph-data/zero
+      --raft "idx=1"
+      --telemetry "reports=false"
+      --tls "ca-cert=/dgraph/tls/ca.crt; server-cert=/dgraph/tls/node.crt; server-key=/dgraph/tls/node.key; client-cert=/dgraph/tls/client.hodei-client.crt; client-key=/dgraph/tls/client.hodei-client.key; internal-port=true"
+    volumes:
+      - dgraph-quorum-zero-1-wal:/dgraph-data/zero
+      - ./tls:/dgraph/tls:ro,z
+    ports:
+      # HTTP admin/introspection (6080) published to loopback only.
+      - "127.0.0.1:6081:6080"
+    networks:
+      - quorum
+
+  zero-2:
+    image: docker.io/dgraph/dgraph:v25.5.1@sha256:aa5f08f685dc0349aa6e40c75f3b114532fe45bad7ec281d2250413b55e02baa
+    container_name: dgraph-zero-2
+    hostname: dgraph-zero-2
+    restart: "no"
+    depends_on:
+      - zero-1
+    command: >
+      dgraph zero --my=dgraph-zero-2:5080 --replicas 3 --wal=/dgraph-data/zero
+      --peer dgraph-zero-1:5080 --raft "idx=2"
+      --telemetry "reports=false"
+      --tls "ca-cert=/dgraph/tls/ca.crt; server-cert=/dgraph/tls/node.crt; server-key=/dgraph/tls/node.key; client-cert=/dgraph/tls/client.hodei-client.crt; client-key=/dgraph/tls/client.hodei-client.key; internal-port=true"
+    volumes:
+      - dgraph-quorum-zero-2-wal:/dgraph-data/zero
+      - ./tls:/dgraph/tls:ro,z
+    ports:
+      - "127.0.0.1:6082:6080"
+    networks:
+      - quorum
+
+  zero-3:
+    image: docker.io/dgraph/dgraph:v25.5.1@sha256:aa5f08f685dc0349aa6e40c75f3b114532fe45bad7ec281d2250413b55e02baa
+    container_name: dgraph-zero-3
+    hostname: dgraph-zero-3
+    restart: "no"
+    depends_on:
+      - zero-1
+    command: >
+      dgraph zero --my=dgraph-zero-3:5080 --replicas 3 --wal=/dgraph-data/zero
+      --peer dgraph-zero-1:5080 --raft "idx=3"
+      --telemetry "reports=false"
+      --tls "ca-cert=/dgraph/tls/ca.crt; server-cert=/dgraph/tls/node.crt; server-key=/dgraph/tls/node.key; client-cert=/dgraph/tls/client.hodei-client.crt; client-key=/dgraph/tls/client.hodei-client.key; internal-port=true"
+    volumes:
+      - dgraph-quorum-zero-3-wal:/dgraph-data/zero
+      - ./tls:/dgraph/tls:ro,z
+    ports:
+      - "127.0.0.1:6083:6080"
+    networks:
+      - quorum
+
+  alpha-1:
+    image: docker.io/dgraph/dgraph:v25.5.1@sha256:aa5f08f685dc0349aa6e40c75f3b114532fe45bad7ec281d2250413b55e02baa
+    container_name: dgraph-alpha-1
+    hostname: dgraph-alpha-1
+    restart: "no"
+    depends_on:
+      - zero-1
+      - zero-2
+      - zero-3
+    command: >
+      dgraph alpha --my=dgraph-alpha-1:7080
+      --zero=dgraph-zero-1:5080,dgraph-zero-2:5080,dgraph-zero-3:5080
+      --postings=/dgraph-data/p --wal=/dgraph-data/w
+      --acl "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256"
+      --telemetry "reports=false"
+      --tls "ca-cert=/dgraph/tls/ca.crt; server-cert=/dgraph/tls/node.crt; server-key=/dgraph/tls/node.key; client-cert=/dgraph/tls/client.hodei-client.crt; client-key=/dgraph/tls/client.hodei-client.key; internal-port=true"
+    volumes:
+      - dgraph-quorum-alpha-1-data:/dgraph-data
+      - dgraph-quorum-backups:/dgraph-backups
+      - ./tls:/dgraph/tls:ro,z
+      # `z` relabels the secret for SELinux hosts (Fedora); without it the
+      # alpha fails to read the file with "permission denied".
+      - ./secrets/hmac-secret:/dgraph/secrets/hmac-secret:ro,z
+    ports:
+      # HTTPS (8080) and TLS-gRPC (9080) published to loopback only.
+      - "127.0.0.1:8081:8080"
+      - "127.0.0.1:9081:9080"
+    networks:
+      - quorum
+
+  alpha-2:
+    image: docker.io/dgraph/dgraph:v25.5.1@sha256:aa5f08f685dc0349aa6e40c75f3b114532fe45bad7ec281d2250413b55e02baa
+    container_name: dgraph-alpha-2
+    hostname: dgraph-alpha-2
+    restart: "no"
+    depends_on:
+      - zero-1
+      - zero-2
+      - zero-3
+    command: >
+      dgraph alpha --my=dgraph-alpha-2:7080
+      --zero=dgraph-zero-1:5080,dgraph-zero-2:5080,dgraph-zero-3:5080
+      --postings=/dgraph-data/p --wal=/dgraph-data/w
+      --acl "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256"
+      --telemetry "reports=false"
+      --tls "ca-cert=/dgraph/tls/ca.crt; server-cert=/dgraph/tls/node.crt; server-key=/dgraph/tls/node.key; client-cert=/dgraph/tls/client.hodei-client.crt; client-key=/dgraph/tls/client.hodei-client.key; internal-port=true"
+    volumes:
+      - dgraph-quorum-alpha-2-data:/dgraph-data
+      - dgraph-quorum-backups:/dgraph-backups
+      - ./tls:/dgraph/tls:ro,z
+      - ./secrets/hmac-secret:/dgraph/secrets/hmac-secret:ro,z
+    ports:
+      - "127.0.0.1:8082:8080"
+      - "127.0.0.1:9082:9080"
+    networks:
+      - quorum
+
+  alpha-3:
+    image: docker.io/dgraph/dgraph:v25.5.1@sha256:aa5f08f685dc0349aa6e40c75f3b114532fe45bad7ec281d2250413b55e02baa
+    container_name: dgraph-alpha-3
+    hostname: dgraph-alpha-3
+    restart: "no"
+    depends_on:
+      - zero-1
+      - zero-2
+      - zero-3
+    command: >
+      dgraph alpha --my=dgraph-alpha-3:7080
+      --zero=dgraph-zero-1:5080,dgraph-zero-2:5080,dgraph-zero-3:5080
+      --postings=/dgraph-data/p --wal=/dgraph-data/w
+      --acl "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256"
+      --telemetry "reports=false"
+      --tls "ca-cert=/dgraph/tls/ca.crt; server-cert=/dgraph/tls/node.crt; server-key=/dgraph/tls/node.key; client-cert=/dgraph/tls/client.hodei-client.crt; client-key=/dgraph/tls/client.hodei-client.key; internal-port=true"
+    volumes:
+      - dgraph-quorum-alpha-3-data:/dgraph-data
+      - dgraph-quorum-backups:/dgraph-backups
+      - ./tls:/dgraph/tls:ro,z
+      - ./secrets/hmac-secret:/dgraph/secrets/hmac-secret:ro,z
+    ports:
+      - "127.0.0.1:8083:8080"
+      - "127.0.0.1:9083:9080"
+    networks:
+      - quorum
+
+networks:
+  quorum:
+    name: dgraph-quorum
+    driver: bridge
+    internal: true
+
+volumes:
+  dgraph-quorum-zero-1-wal:
+    name: dgraph-quorum-zero-1-wal
+  dgraph-quorum-zero-2-wal:
+    name: dgraph-quorum-zero-2-wal
+  dgraph-quorum-zero-3-wal:
+    name: dgraph-quorum-zero-3-wal
+  dgraph-quorum-alpha-1-data:
+    name: dgraph-quorum-alpha-1-data
+  dgraph-quorum-alpha-2-data:
+    name: dgraph-quorum-alpha-2-data
+  dgraph-quorum-alpha-3-data:
+    name: dgraph-quorum-alpha-3-data
+  dgraph-quorum-backups:
+    name: dgraph-quorum-backups
