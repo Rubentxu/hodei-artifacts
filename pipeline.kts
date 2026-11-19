@@ -148,6 +148,7 @@ pipeline {
                         "--test admin_surface",
                         "--test atomic_projection",
                         "--test audit_events",
+                        "--test backend_selection_failclosed",
                         "--test http_contract",
                         "--test iam_account_index",
                         "--test iam_audit",
