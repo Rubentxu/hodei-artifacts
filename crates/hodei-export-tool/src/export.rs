@@ -107,6 +107,17 @@ pub struct ExportRun {
 ///
 /// It captures the frontier itself; see [`export_with_frontier`] when the
 /// frontier was captured earlier by an operator probe.
+///
+/// # Scope of the stable-frontier contract
+///
+/// The frontier tripwire only proves a stable source when the connection
+/// is the **embedded engine this tool opens** (the module doc's quiesce
+/// guarantee: the directory lock means the service cannot have written).
+/// Any `Connection` is accepted by the signature, but against a network
+/// server the contract does not hold: a writer that UPDATEs a row in
+/// place -- changing its content without adding or removing one -- moves
+/// no row count and no ledger head, so the frontier matches and the run
+/// finishes over a torn snapshot without ever noticing.
 pub async fn export<C: Connection>(
     db: &Surreal<C>,
     config: &ExportConfig,
@@ -126,6 +137,16 @@ pub async fn export<C: Connection>(
 /// the two-phase operator flow -- probe the frontier, check quiesce, then
 /// export against the probed frontier -- and it is what lets a test
 /// rehearse a writer committing between the probe and the first batch.
+///
+/// # Scope of the stable-frontier contract
+///
+/// The guarantee the frontier carries is only sound against the
+/// **embedded engine** (RocksDb) the export binary opens: there, the
+/// directory lock makes a concurrent writer impossible. The signature
+/// accepts any `Connection`, but against a network server a writer that
+/// UPDATEs a row in place -- rewriting its content without moving any row
+/// count or the ledger head -- stays invisible to the before/after
+/// frontier check, and the run would present a torn snapshot as finished.
 pub async fn export_with_frontier<C: Connection>(
     db: &Surreal<C>,
     config: &ExportConfig,

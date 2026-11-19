@@ -53,6 +53,20 @@ pub const PROGRESS_FILE: &str = ".progress.json";
 /// (runs, holds, tombstones), not registry semantics, and the target
 /// recomputes them. `catalog_schema` is excluded too: the target declares
 /// its own schema versioning.
+///
+/// The evidence tables (`evidence`, `evidence_subject`,
+/// `evidence_external`) are excluded as well, for a different and
+/// temporary reason: the evidence of a record is **not reconstructible
+/// from the `event_ledger` yet** -- the put of evidence still writes its
+/// batch (record, index entry, subject pairs) without appending anything
+/// to the ledger (HSP-185 pending) -- so an export that carried them
+/// without a way to re-derive them would present evidence the manifest
+/// cannot vouch for as derived content. Whether the evidence travels
+/// through its own vertical (with its own manifest and frontier) or
+/// enters `EXPORTED_TABLES` once it is ledger-backed is a decision
+/// pending on the product owner (HSP-188). Until either lands, an export
+/// of this list is an export of the registry semantics, not of the
+/// evidence.
 pub const EXPORTED_TABLES: &[(&str, &[&str])] = &[
     ("catalog_repository", &["account", "repo_key"]),
     (
