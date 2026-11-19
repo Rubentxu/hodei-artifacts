@@ -44,9 +44,22 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod generated;
+pub mod identity;
 pub mod port;
+pub mod schema;
 
 pub use client::GraphClient;
 pub use config::{GraphClientConfig, GraphLoginCredentials, GraphTlsConfig};
 pub use error::{GraphClientError, GraphConfigError, GraphConfigLoadError};
-pub use port::{DqlResponse, GraphHealthPort, GraphQueryPort, GraphReadiness};
+pub use identity::{
+    CanonicalHrn, IDENTITY_TYPE, IdentityError, IdentityRecord, IdentityStore, KEY_SEPARATOR,
+    Tenant, identity_digest, identity_key,
+};
+pub use port::{
+    DqlResponse, GraphHealthPort, GraphMutationBlock, GraphMutationPort, GraphQueryPort,
+    GraphReadiness, GraphUpsertTransaction,
+};
+pub use schema::{
+    BootDecision, HodeiSchema, PredicateSpec, SCHEMA_VERSION, SchemaBootError, SchemaBootReport,
+    decide_boot, ensure_ready, hodei_schema, verify_predicates, write_schema_meta,
+};

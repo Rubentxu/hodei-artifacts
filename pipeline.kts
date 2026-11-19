@@ -257,6 +257,13 @@ pipeline {
                         // misma (exit 0); con la variable corre los tres
                         // escenarios contra el Zero+Alpha con ACL y TLS.
                         "--test dgraph_it",
+                        // Prueba de identidad HRN y esquema versionado
+                        // (HSP-183): sin HODEI_GRAPH_IT_ENDPOINT se salta
+                        // a si misma (exit 0); con la variable corre la
+                        // convergencia de upserts concurrentes, el arranque
+                        // idempotente y los rechazos de esquema
+                        // incompatible contra el mismo Zero+Alpha.
+                        "--test hsp183_identity_it",
                     ).joinToString(" ")
                 )
                 sh(

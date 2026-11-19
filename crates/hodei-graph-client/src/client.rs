@@ -27,7 +27,9 @@ use crate::config::GraphClientConfig;
 use crate::error::{GraphClientError, TlsMaterialInvalidReason};
 use crate::generated as api;
 use crate::generated::dgraph_client::DgraphClient;
-use crate::port::{DqlResponse, GraphHealthPort, GraphQueryPort, GraphReadiness};
+use crate::port::{
+    DqlResponse, GraphHealthPort, GraphMutationPort, GraphQueryPort, GraphReadiness,
+};
 
 /// gRPC metadata key Dgraph v25.5.1 reads the access JWT from
 /// (`x/x.go`: `md.Get("accessJwt")`). `X-Dgraph-AccessToken` is the
@@ -245,6 +247,27 @@ impl GraphClient {
         Ok(response.into_inner().tag)
     }
 
+    /// Runs one schema alteration. Unlike DQL queries, alterations go
+    /// through the dedicated `Alter` RPC carrying an `api::Operation`.
+    async fn perform_alter(&self, schema_dql: &str) -> Result<(), GraphClientError> {
+        let mut client = DgraphClient::new(self.channel.clone());
+        let response = client
+            .alter(Self::authenticated(
+                self.access_token.as_deref(),
+                tonic::Request::new(api::Operation {
+                    schema: schema_dql.to_owned(),
+                    ..Default::default()
+                }),
+            ))
+            .await
+            .map_err(|status| GraphClientError::Request {
+                phase: "alter",
+                source: status,
+            })?;
+        let _ = response.into_inner();
+        Ok(())
+    }
+
     /// Whether a login has been performed in this client.
     pub fn is_logged_in(&self) -> bool {
         self.access_token.is_some()
@@ -309,6 +332,88 @@ impl GraphHealthPort for GraphClient {
 impl GraphQueryPort for GraphClient {
     async fn execute_dql(&self, query: &str) -> Result<DqlResponse, GraphClientError> {
         GraphClient::execute_dql(self, query).await
+    }
+}
+
+/// Detects the server's uniqueness conflict: a transaction that would
+/// write a second edge over the same key of a predicate marked `@upsert`
+/// is aborted by the server. Dgraph v25 surfaces it as the gRPC status
+/// `Aborted` with "Transaction has been aborted. Please retry" (older
+/// builds spell it `ErrIndexingConflict`); matching both here turns the
+/// server text into the typed error callers retry on. Within the upsert
+/// phase an abort is always retryable: the transaction is atomic, so a
+/// retry re-runs the query and revalidates by construction.
+fn is_upsert_conflict(status: &tonic::Status) -> bool {
+    if status.code() == tonic::Code::Aborted {
+        return true;
+    }
+    let detail = status.message().to_ascii_lowercase();
+    detail.contains("errindexingconflict")
+        || detail.contains("conflict")
+        || detail.contains("has been aborted")
+}
+
+#[async_trait::async_trait]
+impl GraphMutationPort for GraphClient {
+    async fn upsert(
+        &self,
+        transaction: crate::port::GraphUpsertTransaction,
+    ) -> Result<DqlResponse, GraphClientError> {
+        let mutations = transaction
+            .blocks
+            .into_iter()
+            .map(|block| api::Mutation {
+                // On the wire the condition must be a full condition
+                // clause starting with `@if(` (or `@filter(`); the port's
+                // DTO carries the bare condition and this is the one
+                // place the wrapper is added.
+                cond: block
+                    .cond
+                    .map(|condition| format!("@if({condition})"))
+                    .unwrap_or_default(),
+                set_nquads: block.set_nquads.into(),
+                del_nquads: block.delete_nquads.into(),
+                ..Default::default()
+            })
+            .collect();
+        let request = api::Request {
+            query: transaction.query,
+            mutations,
+            commit_now: transaction.commit_now,
+            read_only: false,
+            ..Default::default()
+        };
+        let mut client = DgraphClient::new(self.channel.clone());
+        let response = client
+            .query(Self::authenticated(
+                self.access_token.as_deref(),
+                tonic::Request::new(request),
+            ))
+            .await
+            .map_err(|status| {
+                if is_upsert_conflict(&status) {
+                    GraphClientError::UpsertConflict {
+                        detail: status.message().to_owned(),
+                    }
+                } else {
+                    GraphClientError::Request {
+                        phase: "upsert",
+                        source: status,
+                    }
+                }
+            })?;
+        let inner = response.into_inner();
+        let json = serde_json::from_slice::<serde_json::Value>(&inner.json).map_err(|error| {
+            GraphClientError::Request {
+                phase: "upsert-json",
+                source: tonic::Status::internal(error.to_string()),
+            }
+        })?;
+        Ok(DqlResponse { json })
+    }
+
+    async fn alter_schema(&self, schema_dql: &str) -> Result<(), GraphClientError> {
+        self.perform_alter(schema_dql).await
     }
 }
 
