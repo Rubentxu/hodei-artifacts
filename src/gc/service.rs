@@ -157,11 +157,11 @@ impl GcService {
     /// El plan de ahora: el dry-run. No escribe ni borra nada.
     ///
     /// The plan is shared within a freshness window and computed by one
-    /// census at a time: concurrent callers pile up on the census lock
-    /// instead of piling full graphs into memory and disk. A result
-    /// computed while the world changed (the generation moved under it)
-    /// is returned but never cached. Sweep and scrub never come through
-    /// here: what deletes always takes its own fresh census.
+    /// census at a time: concurrent callers wait on the census instead of
+    /// piling full graphs into memory and disk. A result computed while
+    /// the world changed (the generation moved under it) is returned but
+    /// never cached. Sweep and scrub never come through here: what
+    /// deletes always takes its own fresh census.
     pub async fn dry_run(&self) -> Result<Arc<Plan>, GcError> {
         // Lock order, always the same here and in the invalidation:
         // flight first, cache second. Nothing else ever takes the flight.
