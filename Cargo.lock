@@ -3357,6 +3357,7 @@ dependencies = [
  "hodei-trust-policy-storage",
  "jsonwebtoken",
  "kernel",
+ "libc",
  "md-5 0.10.6",
  "pgp",
  "rand 0.8.8",
