@@ -25,6 +25,7 @@ members = [
     "crates/hodei-catalog",
     "crates/hodei-catalog-storage",
     "crates/hodei-audit",
+    "crates/hodei-export-tool",
     "crates/hodei-investigator",
     "crates/hodei-investigator-storage",
     "crates/hodei-simulation",
