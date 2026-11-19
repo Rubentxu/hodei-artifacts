@@ -1,5 +1,9 @@
 //! La cache del repositorio proxy (HSP-107 / HAR-13), contra el wire.
 //!
+//! La superficie que ejercita es la del formato **raw**: el upstream
+//! sirve bytes opacos y la cache los guarda y los vuelve a servir con
+//! sus validadores, que es lo que la cache de un proxy raw promete.
+//!
 //! El servicio es un proceso de verdad con catalogo, almacen de bytes y
 //! Cedar reales. El upstream es un servidor local que este fichero
 //! controla: cambia lo que sirve, deja de contestar, tarda, y apunta las

@@ -46,6 +46,7 @@
 
 pub mod apt;
 pub mod cargo;
+pub mod conformance;
 pub mod error;
 pub mod gc;
 pub mod gomod;
@@ -62,6 +63,10 @@ pub mod search;
 pub mod trust;
 pub mod yum;
 
+pub use conformance::{
+    Accreditation, AuditFailure, ConformanceCell, EvidenceMismatch, PROFILE_VERSION, accredits,
+    audit, cell as conformance_cell, matrix as conformance_matrix, refuses, served_pairs,
+};
 pub use error::CatalogError;
 pub use gc::{
     ContentHold, ContentLedger, ContentRoot, DeletionState, GcDeletion, GcRun, HoldScope, RootKind,
