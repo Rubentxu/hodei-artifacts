@@ -32,9 +32,13 @@
 //!
 //! The indexes are declared on the tables of the graph projection, and on
 //! the tables of the rebuild projection, because the rebuild answers the
-//! same questions on the same tables. A table that does not exist yet is
-//! created by the declaration itself, so the command may run before the
-//! service has ever written a graph.
+//! same questions on the same tables. The table of the subject entries of
+//! the evidence is declared with them: the trust capsule reads the
+//! evidence of one subject from that table, and the index that pairs the
+//! account with the subject is what keeps that read bounded by the
+//! evidence of the subject and not by the size of the evidence. A table
+//! that does not exist yet is created by the declaration itself, so the
+//! command may run before the service has ever written a graph.
 
 use std::process::ExitCode;
 
@@ -78,8 +82,12 @@ fn parse_options() -> Result<Options, String> {
 /// The tables the graph holds, and the indexes each one needs.
 ///
 /// The names and the fields are the ones the storage crate declares, so
-/// there is one place that says what the graph indexes on.
-use hodei_evidence_storage::surreal::graph::{GRAPH_INDEXES, declare_index_statement};
+/// there is one place that says what the graph indexes on. The table of
+/// the subject entries of the evidence is declared with them: the read
+/// the trust capsule leans on is bounded by the index that pairs the
+/// account with the subject, and without it the pair table would be
+/// filtered row by row.
+use hodei_evidence_storage::{EVIDENCE_INDEXES, GRAPH_INDEXES, declare_index_statement};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -150,7 +158,7 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    for (table, fields) in GRAPH_INDEXES {
+    for (table, fields) in GRAPH_INDEXES.iter().chain(EVIDENCE_INDEXES.iter()) {
         let statement = declare_index_statement(table, fields);
         match db.query(&statement).await {
             Ok(response) => match response.check() {
@@ -167,6 +175,6 @@ async fn main() -> ExitCode {
         }
     }
 
-    println!("the indexes of the graph are in place in {namespace}/{database}");
+    println!("the indexes of the evidence are in place in {namespace}/{database}");
     ExitCode::SUCCESS
 }

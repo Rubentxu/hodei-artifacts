@@ -17,13 +17,15 @@ pub mod surreal;
 pub use authenticator::{HmacEnvelopeAuthenticator, ProducerCredentials};
 pub use content_store::InMemoryContentStore;
 pub use surreal::{
-    ACTIVE_PROJECTION, CHECKPOINT_TABLE, EVIDENCE_TABLE, EvidenceRow, LEDGER_TABLE, LedgerRecord,
-    REBUILD_PROJECTION, SurrealEventLedger, SurrealEvidenceStore, SurrealGraphStore,
-    SurrealProjectionCheckpoints,
+    ACTIVE_PROJECTION, CHECKPOINT_TABLE, EVIDENCE_SUBJECT_TABLE, EVIDENCE_TABLE, EvidenceRow,
+    LEDGER_TABLE, LedgerRecord, REBUILD_PROJECTION, SubjectRow, SurrealEventLedger,
+    SurrealEvidenceStore, SurrealGraphStore, SurrealProjectionCheckpoints, the_subject_pair_read,
+    the_subject_records_read,
 };
 
 pub use surreal::delta::{DELTA_TABLE, DeltaRow, SurrealRelationDeltaLedger};
 pub use surreal::graph::{GRAPH_INDEXES, declare_index_statement};
+pub use surreal::{EVIDENCE_INDEXES, declare_indexes};
 
 /// How many times a write is tried when the transaction of the loser could
 /// not commit.

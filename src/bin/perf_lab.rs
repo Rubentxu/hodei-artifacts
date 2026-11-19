@@ -1789,6 +1789,17 @@ async fn seed_evidence(db: &str, cas: &str, count: usize) -> Result<f64, String>
         .await
         .map_err(|e| e.to_string())?;
 
+    // The capsule read answers its subject from the pair table the store
+    // writes with every record: without the index that pairs the account
+    // with the subject, that read filters the pair table row by row, and
+    // the workload would measure the catalog, not the subject. The seed
+    // declares the same indexes the operator command declares, in its own
+    // process, so the service reads a bounded subject read against the
+    // seeded database.
+    hodei_evidence_storage::declare_indexes(&engine)
+        .await
+        .map_err(|e| e.to_string())?;
+
     // The evidence store of the domain needs a *writing* content store;
     // the CAS-backed adapter of the investigation surface only reads --
     // the service never publishes through it. The seed writes the bytes
