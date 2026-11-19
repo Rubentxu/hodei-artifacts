@@ -565,6 +565,80 @@ pub fn the_guard_fetch() -> &'static str {
     "SELECT digest FROM $guard_id"
 }
 
+/// The read that lists the assets of one account and repository whose
+/// path falls in the prefix range, as the statement the reader sends.
+///
+/// The path is served as a half-open range (`asset_path >= $prefix AND
+/// asset_path < $prefix_end`), never as a function call: the planner
+/// cannot bind `string::starts_with(asset_path, $prefix)` to the
+/// `(account, repository, asset_path)` index, so it answers with a
+/// full-table scan (`Iterate Table`, measured with 2,000 distractor
+/// rows) and every read would pay the size of the catalog -- which is
+/// what the PyPI simple index would do on every `GET /pypi/` root.
+/// With the range the planner iterates the index with both equalities
+/// and the path range, so the cost is the rows of the answer, not the
+/// rows of the table.
+///
+/// An empty prefix has no upper bound: every path starts with it, so
+/// the statement carries only the account and repository equalities
+/// (the index still serves them, in path order). The same holds for the
+/// degenerate prefix whose every character is the highest scalar: it
+/// too ranges over every path.
+///
+/// Exposed so the regression test pins the statements the code actually
+/// sends instead of a copy of them.
+pub fn the_assets_under_read(prefix: &str) -> &'static str {
+    if the_prefix_end(prefix).is_none() {
+        "SELECT account, repository, asset_path, package_name, package_version, \
+         digest_algorithm, digest, size_bytes, subject, updated_at FROM catalog_asset \
+         WHERE account = $account AND repository = $repository \
+         ORDER BY asset_path LIMIT $limit"
+    } else {
+        "SELECT account, repository, asset_path, package_name, package_version, \
+         digest_algorithm, digest, size_bytes, subject, updated_at FROM catalog_asset \
+         WHERE account = $account AND repository = $repository \
+         AND asset_path >= $prefix AND asset_path < $prefix_end \
+         ORDER BY asset_path LIMIT $limit"
+    }
+}
+
+/// The smallest string that sorts after every string that starts with
+/// the prefix, or `None` when no such string exists (the empty prefix,
+/// and the degenerate prefix of highest characters: every path starts
+/// with them, so the range has no upper bound).
+///
+/// The successor of the last character -- its scalar value advanced by
+/// one -- sorts after every string that extends the prefix: the first
+/// byte where they differ belongs to the prefix, and that byte is
+/// smaller than the successor's byte at the same position. A successor
+/// that re-encodes into more bytes (at a UTF-8 block boundary) keeps the
+/// argument: its lead byte is greater than the lead byte of the last
+/// character. The scalar after the surrogate block is the successor of
+/// `U+D7FF`; the highest scalar has none, and the answer is then the
+/// successor of the string without it.
+///
+/// Exposed so the regression test pins the bound the code actually
+/// computes instead of a copy of it.
+pub fn the_prefix_end(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        let successor = match char::from_u32(u32::from(last) + 1) {
+            Some(next) => Some(next),
+            // `last` is `U+D7FF`: the next scalar sits behind the
+            // surrogate block.
+            None if last == '\u{D7FF}' => Some('\u{E000}'),
+            // `last` is `U+10FFFF`: it has no successor.
+            None => None,
+        };
+        if let Some(next) = successor {
+            let mut end: String = chars.iter().collect();
+            end.push(next);
+            return Some(end);
+        }
+    }
+    None
+}
+
 /// El almacén del catálogo sobre SurrealDB.
 #[derive(Clone)]
 pub struct SurrealCatalogStore {
@@ -1254,20 +1328,24 @@ impl CatalogReader for SurrealCatalogStore {
         ))
         .await?;
 
-        // Un limite mas que el maximo: si llega, la lista no esta completa
-        // y se dice en vez de devolverla.
-        let mut response = self
+        // One more than the maximum: if the read reaches it, the list is
+        // not complete and the error says so instead of returning it.
+        // The prefix is served as a half-open range the index carries;
+        // a prefix with no upper bound reads through the account and
+        // repository equalities alone.
+        let upper = the_prefix_end(prefix);
+        let mut statement = self
             .db
-            .query(
-                "SELECT account, repository, asset_path, package_name, package_version, \
-                 digest_algorithm, digest, size_bytes, subject, updated_at FROM catalog_asset \
-                 WHERE account = $account AND repository = $repository \
-                 AND string::starts_with(asset_path, $prefix) ORDER BY asset_path LIMIT $limit",
-            )
+            .query(the_assets_under_read(prefix))
             .bind(("account", principal_account.to_string()))
             .bind(("repository", repository.to_string()))
-            .bind(("prefix", prefix.to_string()))
-            .bind(("limit", (hodei_catalog::MAX_ASSETS_UNDER + 1) as i64))
+            .bind(("limit", (hodei_catalog::MAX_ASSETS_UNDER + 1) as i64));
+        if let Some(end) = upper {
+            statement = statement
+                .bind(("prefix", prefix.to_string()))
+                .bind(("prefix_end", end));
+        }
+        let mut response = statement
             .await
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
         let rows: Vec<AssetRow> = response
