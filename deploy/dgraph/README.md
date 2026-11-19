@@ -51,6 +51,70 @@ podman run -d --name dgraph-alpha --hostname dgraph-alpha --network dgraph-airga
 On SELinux hosts (Fedora) the secret bind-mount needs the `z` relabel or the
 alpha fails with "permission denied" while reading the ACL secret.
 
+## Quorum topology (HSP-180): 3 Zero + 3 Alpha, RF3, TLS, ACL
+
+`compose-quorum.yaml` extends this deployment to the quorum topology required
+by doc-20: three Zero + three Alpha with an explicit replica factor of 3
+(`--replicas 3` on every Zero), TLS on the internal (inter-node) gRPC port
+AND on the external client ports (`--tls internal-port=true`), mutual TLS
+between nodes (each node also presents a client cert), ACL with the same
+local HMAC secret, closed network, and telemetry off.
+
+```sh
+cd deploy/dgraph
+./gen-certs.sh                                # dgraph cert via the pinned image; SANs cover the 6 node names
+head -c 32 /dev/urandom > secrets/hmac-secret
+podman compose -f compose-quorum.yaml up -d   # or the raw podman commands in target/uat/01-topology-boot.log
+```
+
+TLS notes verified in UAT (v25.5.1):
+
+- `--tls` does NOT accept a `dir=` option (unlike older guides). Valid
+  options: `ca-cert, server-cert, server-key, client-cert, client-key,
+  server-name, client-auth-type, use-system-ca, internal-port`; use absolute
+  paths inside the container.
+- Zero joining nodes need distinct `--raft "idx=N"`; two nodes with the
+  default `idx=1` fail with `REUSE_RAFTID`.
+- `dgraph cert --nodes a,b,c` issues ONE `node.crt` with SANs for all listed
+  names; separate client certs need an explicit `dgraph cert --client <name>`.
+- HTTP `/mutate` commits only with `?commitNow=true`; without it the
+  transaction stays pending and later admin ops fail with "Pending
+  transactions found".
+- Guardian login is `POST /login` (not `/admin`), payload `userid`/`password`,
+  loopback-only unless `--security whitelist` is set. Access JWT header is
+  `X-Dgraph-AccessToken`.
+- Loopback admin calls use `curl -k` in the UAT because the issued node cert
+  SANs cover the node DNS names, not 127.0.0.1. All cross-node and
+  host-client calls verify the cert against the SANs (CA + client cert).
+
+Quorum behaviour verified in UAT (functional, no benchmarks):
+
+- Killing the Zero leader and the Alpha leader: re-election in seconds
+  (zero-2 leader at term 4, alpha-3 leader), all confirmed commits readable,
+  new writes commit under the remaining 2/3 quorum.
+- With a single Zero alive (no Zero quorum): writes and reads block (hang,
+  client timeout) — fail-closed, no silent loss, no stale reads observed.
+- Recovery: restarting the stopped nodes restores full service; writes that
+  timed out during the no-quorum window committed once quorum returned
+  (their UIDs appear after recovery) — a timed-out write must be reconciled
+  by operation ID, never assumed failed (doc-20: "ACK perdido se reconcilia
+  por operation ID; jamas exito inferido").
+- Backup/restore: `POST /admin` GraphQL `backup(destination: dir)` from the
+  group leader; offline `dgraph restore -p <parent> -l <dir>` writes
+  `p<groupId>` under the target dir — point a fresh Alpha at that dir
+  directly (`--postings=.../p1`). If the fresh Zero is not reachable by the
+  restore process (e.g. TLS-only Zero and a restore without `--tls`), the
+  timestamp must be assigned manually afterwards:
+  `GET /assign?num=<restoreVersion>&what=timestamps` on the Zero.
+- Known limitation (NOT solved here): bootstrapping a NEW RF3 alpha group
+  from restored postings with empty WALs deadlocks in `hasPeer` ("Unable to
+  reach leader in group 1") even when started sequentially. The restore was
+  therefore functionally proven against a new single-Alpha cluster (RF1,
+  HSP-177 flow). Restoring into alphas that KEEP their WAL (production
+  procedure) is the follow-up (see target/uat/08-summary.md).
+
+Full UAT evidence and findings: `target/uat/` (gitignored, local).
+
 ## Notes for the next integration slice (HSP-180+)
 
 - The access JWT header in v25 is `X-Dgraph-AccessToken` (not
