@@ -1,0 +1,79 @@
+# Dgraph Zero+Alpha for the Hodei air-gap UAT (HSP-177).
+#
+# Why this manifest exists:
+# - The image is pinned by tag AND digest. The digest is the multi-arch
+#   index digest resolved from the Docker Hub registry API at UAT time
+#   (2026-11-19); pulling by digest makes the artifact immutable and
+#   auditable for later provenance checks.
+# - The network is `internal: true`: netavark routes no traffic outside
+#   the podman network, so Zero and Alpha run with no egress at all
+#   (air-gap requirement of HSP-177 / doc-20).
+# - Telemetry is explicitly disabled. Dgraph v25 defaults
+#   `--telemetry "reports=true"`, which attempts outbound calls on
+#   startup; in an air-gapped deployment that is neither wanted nor
+#   allowed, so it is turned off on both servers.
+# - ACL is enabled on Alpha with a locally generated HMAC secret file
+#   (deploy/dgraph/secrets/hmac-secret, gitignored): every DQL and admin
+#   request must then present a guardian JWT, and there is no commercial
+#   license to configure anywhere (Dgraph v25 removed enterprise
+#   licensing; `dgraph license` no longer exists).
+#
+# The UAT recorded in target/uat ran the equivalent of this manifest with
+# raw podman commands (podman network/volume/run); the mapping is 1:1:
+# podman network create --internal dgraph-airgap
+# podman volume create dgraph-{zero,alpha}-data dgraph-backups
+# podman run ... (commands mirrored below, see README.md)
+
+name: hodei-dgraph-airgap
+
+services:
+  zero:
+    image: docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb
+    container_name: dgraph-zero
+    hostname: dgraph-zero
+    restart: "no"
+    command: dgraph zero --my=dgraph-zero:5080 --wal=/dgraph-data/zero --telemetry "reports=false"
+    volumes:
+      - dgraph-zero-data:/dgraph-data
+    networks:
+      - airgap
+
+  alpha:
+    image: docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb
+    container_name: dgraph-alpha
+    hostname: dgraph-alpha
+    restart: "no"
+    depends_on:
+      - zero
+    command: >
+      dgraph alpha --my=dgraph-alpha:7080 --zero=dgraph-zero:5080
+      --postings=/dgraph-data/p --wal=/dgraph-data/w
+      --acl "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256"
+      --telemetry "reports=false"
+    volumes:
+      - dgraph-alpha-data:/dgraph-data
+      - dgraph-backups:/dgraph-backups
+      # `z` relabels the secret for SELinux hosts (Fedora); without it the
+      # alpha fails to read the file with "permission denied".
+      - ./secrets/hmac-secret:/dgraph/secrets/hmac-secret:ro,z
+    ports:
+      # Published to loopback only: the air-gap property is about egress
+      # from the containers, not about local introspection from the host.
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9080:9080"
+    networks:
+      - airgap
+
+networks:
+  airgap:
+    name: dgraph-airgap
+    driver: bridge
+    internal: true
+
+volumes:
+  dgraph-zero-data:
+    name: dgraph-zero-data
+  dgraph-alpha-data:
+    name: dgraph-alpha-data
+  dgraph-backups:
+    name: dgraph-backups
