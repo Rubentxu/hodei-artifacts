@@ -46,6 +46,10 @@ pub(super) enum Step {
     Hit,
     /// El miembro dijo con certeza que no la tiene.
     Miss,
+    /// El miembro no se consulto: la reserva de namespaces del grupo lo
+    /// deja fuera para esta ruta. Queda en el rastro porque la negativa se
+    /// explica, no se disimula.
+    Deny,
     /// El miembro fallo: la resolucion se detuvo ahi.
     Error,
 }
@@ -55,6 +59,7 @@ impl Step {
         match self {
             Self::Hit => "hit",
             Self::Miss => "miss",
+            Self::Deny => "deny",
             Self::Error => "error",
         }
     }
@@ -254,6 +259,66 @@ pub(super) async fn the_leaves(
         .collect()
 }
 
+/// Lo que un grupo deja pasar de sus hojas para **una ruta**: las hojas
+/// que se consultan y los miembros proxy que la reserva de namespaces del
+/// grupo denego.
+///
+/// La reserva vive en la configuracion del grupo y se consulta siempre,
+/// antes de mirar que tiene cada miembro: una ruta reservada no se sirve
+/// desde ningun upstream publico del grupo, ni del primero ni del ultimo,
+/// y un upstream caido no la convierte en fallback. Los miembros hosted
+/// son la fuente interna y no los toca la reserva.
+///
+/// La politica del grupo, si no se entiende, no degrada a "sin reserva":
+/// es un grupo mal configurado y no se resuelve a medias.
+pub(super) async fn the_governed_leaves(
+    state: &AppState,
+    context: &VerifiedContext,
+    group: &RepositoryDescriptor,
+    asset_path: &str,
+) -> Result<
+    (
+        Vec<RepositoryDescriptor>,
+        Vec<String>,
+        Option<hodei_catalog::Judgement>,
+    ),
+    RawApiError,
+> {
+    let leaves = the_leaves(state, context, group).await?;
+    let Some(policy) = super::raw::the_namespace_policy(&group.config)? else {
+        return Ok((leaves, Vec::new(), None));
+    };
+    let judgement = policy.judge(group.format, asset_path);
+    if !judgement.is_reserved() {
+        return Ok((leaves, Vec::new(), None));
+    }
+    let mut consulted = Vec::with_capacity(leaves.len());
+    let mut denied = Vec::new();
+    for member in leaves {
+        if member.mode == RepositoryMode::Proxy {
+            denied.push(member.repo_key.clone());
+        } else {
+            consulted.push(member);
+        }
+    }
+    Ok((consulted, denied, Some(judgement)))
+}
+
+/// La explicacion de una negativa por reserva a nivel de grupo: la regla
+/// que aplico y los miembros que quedaron fuera.
+pub(super) fn the_group_reservation_explanation(
+    group: &RepositoryDescriptor,
+    judgement: &hodei_catalog::Judgement,
+    denied: &[String],
+) -> RawApiError {
+    tracing::warn!(
+        group = %group.repo_key,
+        denied = ?denied,
+        "a reserved namespace is not served from the public members of the group"
+    );
+    RawApiError::ReservedNamespace(super::raw::the_reservation_explanation(judgement, denied))
+}
+
 /// El miembro se lee como se leeria por su ruta directa: esta release solo
 /// sirve el ambito global.
 pub(super) fn global_only(member: &RepositoryDescriptor) -> Result<(), RawApiError> {
@@ -277,7 +342,14 @@ async fn resolve(
     // Un proxy sin red y sin copia no la tiene a su alcance: se sigue con el
     // siguiente miembro. Si ninguno la sirve, ese es el error.
     let mut offline: Option<RawApiError> = None;
-    for member in the_leaves(state, context, group).await? {
+    // Los miembros que la reserva del grupo dejo fuera: con ellos, la
+    // negativa final se explica en lugar de parecer un simple 404.
+    let (leaves, denied, judgement) =
+        the_governed_leaves(state, context, group, asset_path).await?;
+    for key in &denied {
+        trail.push((key.clone(), Step::Deny));
+    }
+    for member in leaves {
         let key = member.repo_key.clone();
         if let Err(error) = global_only(&member) {
             trail.push((key, Step::Error));
@@ -320,6 +392,14 @@ async fn resolve(
                 return Err(error);
             }
         }
+    }
+    if !denied.is_empty()
+        && offline.is_none()
+        && let Some(judgement) = judgement
+    {
+        return Err(the_group_reservation_explanation(
+            group, &judgement, &denied,
+        ));
     }
     Err(offline.unwrap_or(RawApiError::NotFound))
 }
