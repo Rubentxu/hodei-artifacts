@@ -445,7 +445,10 @@ pub fn audit(
     }
     if let Some(missing) = expected.difference(&found).next() {
         return Err(AuditFailure::Coverage {
-            detail: format!("the cell {}/{} is missing from the matrix", missing.0, missing.1),
+            detail: format!(
+                "the cell {}/{} is missing from the matrix",
+                missing.0, missing.1
+            ),
         });
     }
     for (format, mode) in served {
