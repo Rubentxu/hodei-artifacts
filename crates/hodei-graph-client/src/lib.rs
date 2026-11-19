@@ -6,8 +6,12 @@
 //!   Dgraph client API of v25, vendored as `protos/api.proto`;
 //! - TLS with an explicit CA (no system-store fallback), optional mutual
 //!   TLS and an optional server-name override;
-//! - the ACL login (JWT) with `LoginRequest`, tokens sent in the v25
-//!   `x-dgraph-accesstoken` header;
+//! - the ACL login (JWT) with `LoginRequest`: the login returns the
+//!   `accessJwt` and every request carries it as gRPC metadata under the
+//!   `accessjwt` key (what Dgraph's Go client reads with
+//!   `md.Get("accessJwt")`). The `X-Dgraph-AccessToken` header belongs to
+//!   the *HTTP* surface of Dgraph, a different channel; it does not apply
+//!   to gRPC;
 //! - a readiness probe (`ready`) that performs the whole chain against a
 //!   real server: connect, login, version check and one DQL round-trip;
 //! - one DQL query port; nothing else. No ORM, no mutation surface, no
