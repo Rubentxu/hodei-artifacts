@@ -1013,7 +1013,11 @@ struct Replica {
 }
 
 impl Replica {
-    fn new(stamp: &str, index: usize, keep: bool) -> Result<Self, String> {
+    /// `seed` is `Some` when the run mounts a persistent seed instead of
+    /// growing one: the seed's db and cas are copied (reflinked where
+    /// the filesystem supports it) into the replica directory, which is
+    /// then a private snapshot the run may dirty freely.
+    fn new(stamp: &str, index: usize, keep: bool, seed: Option<&Path>) -> Result<Self, String> {
         let root = Path::new("target/perf-lab")
             .join(stamp)
             .join(format!("replica-{index}"));
@@ -1031,8 +1035,13 @@ impl Replica {
         };
         std::fs::write(&me.policy, lab_policy()).map_err(|e| e.to_string())?;
         std::fs::write(&me.schema, lab_schema()).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(&me.db).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(&me.cas).map_err(|e| e.to_string())?;
+        match seed {
+            Some(dir) => copy_seed(dir, &root)?,
+            None => {
+                std::fs::create_dir_all(&me.db).map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(&me.cas).map_err(|e| e.to_string())?;
+            }
+        }
         Ok(me)
     }
 
@@ -1286,6 +1295,318 @@ async fn create(
 
 const SEARCH_REPOSITORIES: usize = 4;
 const VERSIONS_PER_PACKAGE: usize = 4;
+
+// ──────────────────────────────────────────────────────────────────────
+// The persistent seed (HSP-172)
+//
+// The heavy seeds (a million catalog rows, twenty thousand envelopes)
+// are a property of the corpus, not of the run: the same profile with
+// the same generator must produce byte-identical database rows and
+// CAS blobs every time. Re-seeding them per replica, per invocation,
+// turned every bug found by the lab into a detour of minutes. The seed
+// is therefore a first-class artifact: `perf_lab seed --profile P`
+// builds it once under `target/perf-lab/seed-P`, and
+// `perf_lab run --reuse-seed` copies it per replica instead of
+// re-growing it.
+//
+// The copy is reflink-aware (`cp -a --reflink=auto`): on the lab's
+// btrfs a copy shares extents and costs milliseconds; elsewhere it
+// degrades to a real copy and still saves the seed itself.
+//
+// Reuse is never silent. The sidecar `seed.json` carries the
+// fingerprint of the profile, the counts it seeded, the generator
+// version and the hashes of the policy and the schema. `--reuse-seed`
+// validates all of it BEFORE the first measurement and refuses to run
+// on a seed that is missing, obsolete, truncated or structurally
+// wrong, with the reason in the error. A lab that quietly re-seeds to
+// "just work" is a lab whose numbers no longer say what seeded them.
+// ──────────────────────────────────────────────────────────────────────
+
+/// The shape of everything this binary's seeds write. Bump whenever the
+/// bytes or rows a seed produces change shape: the sidecar then refuses
+/// the seeds an older generator left behind instead of measuring an
+/// unknown corpus.
+const SEED_GENERATOR_VERSION: &str = "hsp-172-v1";
+
+/// The upstream port a seed stores in the proxy repository. No traffic
+/// ever reaches it: every replica that mounts a seed retargets the
+/// proxy to its own live upstream before the service starts.
+const SEED_PROXY_PLACEHOLDER_PORT: u16 = 1;
+
+/// The stable home of a profile's seed. Outside the per-run stamp
+/// directory on purpose: it survives runs.
+fn seed_dir(profile_name: &str) -> PathBuf {
+    Path::new("target/perf-lab").join(format!("seed-{profile_name}"))
+}
+
+/// The sidecar that makes a seed directory auditable.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SeedManifest {
+    generator_version: String,
+    profile: String,
+    profile_fingerprint: String,
+    catalog_assets: usize,
+    evidence: usize,
+    policy_hash: String,
+    schema_hash: String,
+    created_at: String,
+}
+
+impl SeedManifest {
+    fn of(profile: &Profile) -> Self {
+        Self {
+            generator_version: SEED_GENERATOR_VERSION.to_string(),
+            profile: profile.name.to_string(),
+            profile_fingerprint: profile.fingerprint(),
+            catalog_assets: profile.catalog_assets,
+            evidence: profile.evidence,
+            policy_hash: hex_digest(lab_policy().as_bytes()),
+            schema_hash: hex_digest(lab_schema().as_bytes()),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
+    /// The reasons this manifest does not license a reuse of `profile`.
+    /// Empty means the seed is exactly what the run is about to assume.
+    fn mismatches(&self, profile: &Profile) -> Vec<String> {
+        let mut reasons = Vec::new();
+        if self.generator_version != SEED_GENERATOR_VERSION {
+            reasons.push(format!(
+                "generator version {} != {}",
+                self.generator_version, SEED_GENERATOR_VERSION
+            ));
+        }
+        if self.profile_fingerprint != profile.fingerprint() {
+            reasons.push(format!(
+                "profile fingerprint {} != {} (the seed was grown for a different load)",
+                &self.profile_fingerprint[..12],
+                &profile.fingerprint()[..12]
+            ));
+        }
+        if self.catalog_assets != profile.catalog_assets {
+            reasons.push(format!(
+                "catalog rows seeded {} != {}",
+                self.catalog_assets, profile.catalog_assets
+            ));
+        }
+        if self.evidence != profile.evidence {
+            reasons.push(format!(
+                "evidence seeded {} != {}",
+                self.evidence, profile.evidence
+            ));
+        }
+        if self.policy_hash != hex_digest(lab_policy().as_bytes()) {
+            reasons.push(
+                "the authorization policy of the seed is not the one this run would deploy"
+                    .to_string(),
+            );
+        }
+        if self.schema_hash != hex_digest(lab_schema().as_bytes()) {
+            reasons.push("the schema of the seed is not the one this run would deploy".to_string());
+        }
+        reasons
+    }
+}
+
+/// Grows the persistent seed of a profile: repository rows, the bulk
+/// catalog and the evidence envelopes, directly on the database, then
+/// the sidecar LAST. A crash before the sidecar leaves no manifest to
+/// validate, which is exactly the state `validate_seed` refuses.
+async fn build_seed(profile: &Profile) -> Result<PathBuf, String> {
+    let dir = seed_dir(profile.name);
+    if dir.join("seed.json").exists() {
+        return Err(format!(
+            "a seed for profile '{}' already exists at {}; delete it to re-grow",
+            profile.name,
+            dir.display()
+        ));
+    }
+    let db = dir.join("db");
+    let cas = dir.join("cas");
+    std::fs::create_dir_all(&db).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&cas).map_err(|e| e.to_string())?;
+
+    // The manifest is only written once every child succeeded, so its
+    // presence is the completeness marker of the whole seed.
+    run_seed_at(
+        &db,
+        &cas,
+        "--seed-repos",
+        &[(
+            "HODEI_PERF_UPSTREAM",
+            SEED_PROXY_PLACEHOLDER_PORT.to_string(),
+        )],
+    )?;
+    let started = std::time::Instant::now();
+    run_seed_at(
+        &db,
+        &cas,
+        "--seed-catalog",
+        &[("HODEI_PERF_ASSETS", profile.catalog_assets.to_string())],
+    )?;
+    println!(
+        "seed catalog: {} assets in {:.1} s",
+        profile.catalog_assets,
+        started.elapsed().as_secs_f64()
+    );
+    let started = std::time::Instant::now();
+    run_seed_at(
+        &db,
+        &cas,
+        "--seed-evidence",
+        &[("HODEI_PERF_EVIDENCE", profile.evidence.to_string())],
+    )?;
+    println!(
+        "seed evidence: {} envelopes in {:.1} s",
+        profile.evidence,
+        started.elapsed().as_secs_f64()
+    );
+
+    let manifest = SeedManifest::of(profile);
+    let text = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("seed.json"), text).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Why this seed may not be reused, or the seed directory itself.
+fn validate_seed(profile: &Profile) -> Result<PathBuf, String> {
+    let dir = seed_dir(profile.name);
+    let manifest_path = dir.join("seed.json");
+    let text = std::fs::read_to_string(&manifest_path).map_err(|_| {
+        format!(
+            "no readable seed.json under {} ({}): the seed was never grown, \
+             its growth was interrupted, or it was cleared. Run \
+             'perf_lab seed --profile {}' first; --reuse-seed never re-seeds silently",
+            dir.display(),
+            if dir.exists() {
+                "directory exists"
+            } else {
+                "directory missing"
+            },
+            profile.name
+        )
+    })?;
+    let manifest: SeedManifest = serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "the seed sidecar {} is corrupt: {e}",
+            manifest_path.display()
+        )
+    })?;
+    let reasons = manifest.mismatches(profile);
+    if !reasons.is_empty() {
+        return Err(format!(
+            "the seed at {} is obsolete for profile '{}': {}",
+            dir.display(),
+            profile.name,
+            reasons.join("; ")
+        ));
+    }
+    // Structural sanity: a RocksDB directory without CURRENT is not a
+    // database, and an empty CAS is not a content store. The manifest
+    // can be honest about a directory someone half-deleted; the files
+    // cannot.
+    if !dir.join("db").join("CURRENT").exists() {
+        return Err(format!(
+            "the seed at {} is incomplete: db/CURRENT is missing, the database \
+             there is not a closed RocksDB instance",
+            dir.display()
+        ));
+    }
+    let db_entries = std::fs::read_dir(dir.join("db"))
+        .map_err(|e| format!("the seed db is unreadable: {e}"))?
+        .count();
+    if db_entries < 2 {
+        return Err(format!(
+            "the seed at {} is incomplete: the db directory holds {db_entries} entries",
+            dir.display()
+        ));
+    }
+    if !dir.join("cas").is_dir() {
+        return Err(format!(
+            "the seed at {} is incomplete: the cas directory is missing",
+            dir.display()
+        ));
+    }
+    Ok(dir)
+}
+
+/// Runs one of the internal seed modes against fixed directories. The
+/// same child protocol `Replica::run_seed_child` uses, available before
+/// any replica exists.
+fn run_seed_at(db: &Path, cas: &Path, mode: &str, extra: &[(&str, String)]) -> Result<(), String> {
+    let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+    command.arg(mode);
+    command.env("HODEI_PERF_DB", db);
+    command.env("HODEI_PERF_CAS", cas);
+    for (name, value) in extra {
+        command.env(name, value);
+    }
+    let status = command
+        .status()
+        .map_err(|e| format!("the seed child {mode}: {e}"))?;
+    if !status.success() {
+        return Err(format!("the seed child {mode} failed with {status}"));
+    }
+    Ok(())
+}
+
+/// Copies the seed's database and content store into a fresh replica
+/// directory. Reflink first: sharing extents is what makes the copy
+/// nearly free on the lab's filesystem, and `auto` degrades to a real
+/// copy where reflinks do not exist.
+fn copy_seed(seed: &Path, replica_root: &Path) -> Result<(), String> {
+    for name in ["db", "cas"] {
+        let status = Command::new("cp")
+            .arg("-a")
+            .arg("--reflink=auto")
+            .arg(seed.join(name))
+            .arg(replica_root.join(name))
+            .status()
+            .map_err(|e| format!("the seed copy of {name}: {e}"))?;
+        if !status.success() {
+            return Err(format!("the seed copy of {name} failed with {status}"));
+        }
+    }
+    Ok(())
+}
+
+/// Points the seeded proxy repository at the replica's live upstream.
+/// The seed carries a placeholder URL it could not know; retargeting is
+/// one document update with the service stopped, and without it every
+/// proxy read of a reused seed would fail against a closed port.
+async fn retarget_proxy(db: &str, upstream_port: u16) -> Result<(), String> {
+    let engine = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(db.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+    engine
+        .use_ns("hodei")
+        .use_db("artifacts")
+        .await
+        .map_err(|e| e.to_string())?;
+    let store = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
+        engine.clone(),
+        Arc::new(hodei_catalog::AllowAllAuthorizer),
+    );
+    let proxy = serde_json::json!({
+        "upstream": {
+            "id": "lab",
+            "url": format!("http://127.0.0.1:{upstream_port}/"),
+            "scopes": ["/"],
+            "max_bytes": 4194304,
+        },
+        "cache": {},
+    });
+    let mut config = hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
+    config.config_settings = serde_json::json!({ "proxy": proxy });
+    use hodei_catalog::CatalogWriter;
+    store
+        .update_config(ACCOUNT, "lab-proxy", config)
+        .await
+        .map_err(|e| format!("retarget lab-proxy: {e}"))?;
+    drop(store);
+    drop(engine);
+    Ok(())
+}
 
 #[derive(Debug, Serialize)]
 struct AssetRow {
@@ -2339,33 +2660,62 @@ async fn run_replica(
     index: usize,
     profile: &Profile,
     keep: bool,
+    seed: Option<&Path>,
 ) -> Result<serde_json::Value, String> {
-    let mut replica = Replica::new(stamp, index, keep)?;
+    let mut replica = Replica::new(stamp, index, keep, seed)?;
     let proxy_body = Arc::new(corpus(65_536, 0));
     let upstream = Upstream::start(Arc::clone(&proxy_body));
     let upstream_before = upstream.hits();
 
-    // Seeds: children with the service stopped (the database directory
-    // is owned by one process).
-    replica.run_seed_child(
-        "--seed-repos",
-        &[("HODEI_PERF_UPSTREAM", upstream.port.to_string())],
-    )?;
-    let catalog_seconds = {
-        let started = std::time::Instant::now();
-        replica.run_seed_child(
-            "--seed-catalog",
-            &[("HODEI_PERF_ASSETS", profile.catalog_assets.to_string())],
-        )?;
-        started.elapsed().as_secs_f64()
-    };
-    let evidence_seconds = {
-        let started = std::time::Instant::now();
-        replica.run_seed_child(
-            "--seed-evidence",
-            &[("HODEI_PERF_EVIDENCE", profile.evidence.to_string())],
-        )?;
-        started.elapsed().as_secs_f64()
+    let seed_json = match seed {
+        // A mounted seed: the corpus is already there, but the proxy
+        // repository names the placeholder port of the build, not this
+        // replica's live upstream. Retarget it with the service still
+        // stopped, then measure.
+        Some(dir) => {
+            let started = std::time::Instant::now();
+            let manifest_text = std::fs::read_to_string(dir.join("seed.json"))
+                .map_err(|e| format!("the seed manifest: {e}"))?;
+            retarget_proxy(&replica.db.to_string_lossy(), upstream.port).await?;
+            serde_json::json!({
+                "mode": "reused",
+                "seed_dir": dir.display().to_string(),
+                "manifest": serde_json::from_str::<serde_json::Value>(&manifest_text)
+                    .unwrap_or(serde_json::Value::Null),
+                "mount_seconds": round3(started.elapsed().as_secs_f64()),
+            })
+        }
+        // A fresh seed: children with the service stopped (the database
+        // directory is owned by one process).
+        None => {
+            replica.run_seed_child(
+                "--seed-repos",
+                &[("HODEI_PERF_UPSTREAM", upstream.port.to_string())],
+            )?;
+            let catalog_seconds = {
+                let started = std::time::Instant::now();
+                replica.run_seed_child(
+                    "--seed-catalog",
+                    &[("HODEI_PERF_ASSETS", profile.catalog_assets.to_string())],
+                )?;
+                started.elapsed().as_secs_f64()
+            };
+            let evidence_seconds = {
+                let started = std::time::Instant::now();
+                replica.run_seed_child(
+                    "--seed-evidence",
+                    &[("HODEI_PERF_EVIDENCE", profile.evidence.to_string())],
+                )?;
+                started.elapsed().as_secs_f64()
+            };
+            serde_json::json!({
+                "mode": "seeded",
+                "catalog_assets": profile.catalog_assets,
+                "catalog_bulk_seconds": round3(catalog_seconds),
+                "evidence": profile.evidence,
+                "evidence_seconds": round3(evidence_seconds),
+            })
+        }
     };
 
     replica.start(upstream.port)?;
@@ -2409,12 +2759,7 @@ async fn run_replica(
 
     let value = serde_json::json!({
         "replica": index,
-        "seeds": {
-            "catalog_assets": profile.catalog_assets,
-            "catalog_bulk_seconds": round3(catalog_seconds),
-            "evidence": profile.evidence,
-            "evidence_seconds": round3(evidence_seconds),
-        },
+        "seeds": seed_json,
         "workloads": results,
         "driver_invalid_workloads": invalid,
         "permission_probe": probe,
@@ -2732,11 +3077,12 @@ struct RunArgs {
     replicas: usize,
     out: PathBuf,
     keep: bool,
+    reuse_seed: bool,
 }
 
 fn parse_args() -> Result<Option<RunArgs>, String> {
     let argv: Vec<String> = std::env::args().collect();
-    if argv.iter().any(|a| a.starts_with("--seed")) {
+    if argv.iter().any(|a| a.starts_with("--seed-")) {
         return Ok(None); // seed child mode
     }
     if argv.len() > 1 && argv[1] == "run" {
@@ -2745,6 +3091,7 @@ fn parse_args() -> Result<Option<RunArgs>, String> {
             replicas: 5,
             out: PathBuf::from("target/uat"),
             keep: false,
+            reuse_seed: false,
         };
         let mut i = 2;
         while i < argv.len() {
@@ -2769,6 +3116,7 @@ fn parse_args() -> Result<Option<RunArgs>, String> {
                     args.out = PathBuf::from(argv.get(i).ok_or("--out needs a value")?);
                 }
                 "--keep" => args.keep = true,
+                "--reuse-seed" => args.reuse_seed = true,
                 other => return Err(format!("unknown option {other}")),
             }
             i += 1;
@@ -2823,24 +3171,59 @@ async fn the_main() -> Result<(), String> {
         _ => {}
     }
 
+    // ── The persistent seed command (HSP-172) ────────────────────────
+    if mode == "seed" {
+        let profile_name = argv
+            .iter()
+            .position(|a| a == "--profile")
+            .and_then(|i| argv.get(i + 1))
+            .cloned()
+            .unwrap_or_else(|| "lab".to_string());
+        let profile = Profile::parse(&profile_name)?;
+        let dir = build_seed(&profile).await?;
+        println!(
+            "seed for profile '{}' ready at {} (fingerprint {})",
+            profile.name,
+            dir.display(),
+            profile.fingerprint()
+        );
+        return Ok(());
+    }
+
     let Some(args) = parse_args()? else {
         eprintln!(
-            "usage: perf_lab run [--profile smoke|lab|full] [--replicas N] [--out DIR] [--keep]\n\
-             seed modes are internal: --seed-repos / --seed-catalog / --seed-evidence"
+            "usage: perf_lab run [--profile smoke|lab|full] [--replicas N] [--out DIR] [--keep] [--reuse-seed]\n\
+             usage: perf_lab seed [--profile smoke|lab|full]\n\
+             seed child modes are internal: --seed-repos / --seed-catalog / --seed-evidence"
         );
         return Err("no run arguments".into());
     };
     let profile = Profile::parse(&args.profile)?;
+
+    // With --reuse-seed the seed is validated BEFORE any measurement and
+    // the run refuses to start on a seed that is absent, obsolete or
+    // corrupt. It never falls back to re-seeding: silently growing a
+    // different corpus than the operator thinks they measured is the
+    // false green this flag exists to make impossible.
+    let seed_home: Option<PathBuf> = if args.reuse_seed {
+        Some(validate_seed(&profile)?)
+    } else {
+        None
+    };
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     let started_at = chrono::Utc::now().to_rfc3339();
     let command = std::env::args().collect::<Vec<_>>().join(" ");
 
     println!(
-        "perf_lab: profile={} replicas={} catalog_assets={} evidence={}",
+        "perf_lab: profile={} replicas={} catalog_assets={} evidence={} seed={}",
         profile.name,
         profile.replicas_label(args.replicas),
         profile.catalog_assets,
-        profile.evidence
+        profile.evidence,
+        match &seed_home {
+            Some(dir) => format!("reused from {}", dir.display()),
+            None => "grown per replica".to_string(),
+        }
     );
 
     let ctx = RunContext {
@@ -2855,7 +3238,7 @@ async fn the_main() -> Result<(), String> {
     let mut failures = Vec::new();
     for index in 1..=args.replicas {
         println!("── replica {index}/{}", args.replicas);
-        match run_replica(&stamp, index, &profile, args.keep).await {
+        match run_replica(&stamp, index, &profile, args.keep, seed_home.as_deref()).await {
             Ok(value) => replicas.push(value),
             Err(error) => {
                 eprintln!("replica {index} failed: {error}");
@@ -3034,6 +3417,81 @@ mod tests {
     }
 
     #[test]
+    fn the_seed_manifest_refuses_a_seed_grown_for_another_load() {
+        // AC#2 as a unit: every property the seed promises is checked,
+        // and each violation names itself.
+        let lab = Profile::parse("lab").expect("lab");
+        let manifest = SeedManifest::of(&lab);
+        assert!(
+            manifest.mismatches(&lab).is_empty(),
+            "a fresh manifest is honest"
+        );
+
+        let mut bigger = lab.clone();
+        bigger.catalog_assets += 1;
+        assert!(!manifest.mismatches(&bigger).is_empty());
+
+        let other = Profile::parse("smoke").expect("smoke");
+        assert!(!manifest.mismatches(&other).is_empty());
+
+        let mut stale = manifest.clone();
+        stale.generator_version = "older-generator".into();
+        assert!(
+            stale
+                .mismatches(&lab)
+                .iter()
+                .any(|r| r.contains("generator"))
+        );
+    }
+
+    #[test]
+    fn validate_seed_says_exactly_why_a_seed_is_unusable() {
+        // A profile name of its own so the test cannot collide with a
+        // real seed directory.
+        let mut probe = Profile::parse("smoke").expect("smoke");
+        probe.name = "hsp172-unit";
+        let dir = seed_dir(probe.name);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // Absent: the run must explain, not silently re-grow.
+        let error = validate_seed(&probe).expect_err("no seed exists yet");
+        assert!(error.contains("never grown"), "{error}");
+
+        // A manifest that lies about the generator is corrupt-useful:
+        // still a refusal with the reason.
+        std::fs::create_dir_all(dir.join("db")).expect("db dir");
+        std::fs::create_dir_all(dir.join("cas")).expect("cas dir");
+        std::fs::write(dir.join("db").join("CURRENT"), "MANIFEST-000001\n").expect("CURRENT");
+        let stale = SeedManifest {
+            generator_version: "hsp-172-v0".into(),
+            ..SeedManifest::of(&probe)
+        };
+        std::fs::write(
+            dir.join("seed.json"),
+            serde_json::to_string(&stale).expect("manifest serializes"),
+        )
+        .expect("sidecar");
+        let error = validate_seed(&probe).expect_err("an older generator is obsolete");
+        assert!(error.contains("obsolete"), "{error}");
+
+        // Honest manifest, but the database is not closed: incomplete.
+        std::fs::remove_file(dir.join("db").join("CURRENT")).expect("drop CURRENT");
+        std::fs::write(
+            dir.join("seed.json"),
+            serde_json::to_string(&SeedManifest::of(&probe)).expect("manifest"),
+        )
+        .expect("sidecar");
+        let error = validate_seed(&probe).expect_err("a db without CURRENT is not a database");
+        assert!(error.contains("incomplete"), "{error}");
+
+        // Everything in place: reuse is licensed.
+        std::fs::write(dir.join("db").join("CURRENT"), "MANIFEST-000001\n").expect("CURRENT");
+        std::fs::write(dir.join("db").join("000001.log"), "").expect("a db entry");
+        assert!(validate_seed(&probe).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_incremental_snapshot_is_valid_json_after_one_replica() {
         // The regression the snapshot exists for: a long run killed
         // mid-way must leave on disk what it already measured. One
@@ -3062,6 +3520,7 @@ mod tests {
             replicas: 5,
             out: dir.path().to_path_buf(),
             keep: false,
+            reuse_seed: false,
         };
         let ctx = RunContext {
             profile: &profile,
