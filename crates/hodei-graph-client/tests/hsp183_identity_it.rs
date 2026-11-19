@@ -729,3 +729,99 @@ async fn ac3_typed_fixture_demonstrates_declared_cardinalities() {
     );
     eprintln!("ac3: cardinalities 1 and 3, reverse edges and the CAS guard demonstrated");
 }
+
+/// AC#3, second half (the HSP-184 repair): a burst of ten concurrent
+/// writers bumping the revision of the SAME aggregate advances it
+/// EXACTLY ten times. The CAS revalidates INSIDE the transaction (the
+/// `iv` variable is filtered by the expected revision in the
+/// transaction's own snapshot): a pre-read overtaken by a concurrent
+/// commit writes nothing and retries, and two writers that revalidated
+/// the same revision conflict on the `@upsert` index of the revision.
+/// The old pattern — writing the next revision read OUTSIDE the
+/// transaction — is a no-op without conflict when the value already
+/// exists, and a burst of ten left the aggregate behind (the HSP-184
+/// measurement); exactly ten here is the proof the repair works.
+#[tokio::test]
+async fn ac3_ten_concurrent_writers_advance_the_revision_exactly_ten() {
+    let _serial = SERIAL.lock().await;
+    let Some(client) = client_or_skip().await else {
+        return;
+    };
+    let store = Arc::new(
+        IdentityStore::open(client.clone())
+            .await
+            .expect("the store must open on a validated schema"),
+    );
+    let nonce = nonce();
+    let tenant = Tenant::new("tenant-bump").expect("valid tenant");
+    let hrn = fixture_hrn("tenant-bump", "eve", &nonce);
+    let record = store
+        .ensure_identity(&tenant, &hrn, "eve")
+        .await
+        .expect("the bumped identity");
+    assert_eq!(record.revision, 0, "the aggregate starts at revision 0");
+    let key_literal = record.key.as_str();
+
+    // Ten writers, all spawned at once; each one advances the aggregate
+    // EXACTLY once, retrying its own advance on a CAS rejection (the
+    // advance semantic: apply on top of whatever committed meanwhile).
+    let mut handles = Vec::new();
+    for index in 0..10 {
+        let store = store.clone();
+        let tenant = tenant.clone();
+        let hrn = hrn.clone();
+        handles.push(tokio::spawn(async move {
+            loop {
+                let current = store
+                    .find_identity(&tenant, &hrn)
+                    .await
+                    .expect("the read-back must work")
+                    .expect("the aggregate exists");
+                match store
+                    .rename_identity(&tenant, &hrn, current.revision, &format!("eve-{index}"))
+                    .await
+                {
+                    Ok(record) => return record,
+                    Err(IdentityError::CasRejected { .. }) => continue,
+                    Err(other) => panic!("unexpected error: {other}"),
+                }
+            }
+        }));
+    }
+    let mut wins = Vec::new();
+    for handle in handles {
+        wins.push(handle.await.expect("the task must not panic"));
+    }
+    assert_eq!(wins.len(), 10, "every writer committed exactly one advance");
+
+    // Exactly one identity node, at EXACTLY revision 10: no lost update,
+    // no double win, no silent overwrite.
+    assert_eq!(
+        count_nodes_by_key(&client, &record.key).await,
+        1,
+        "exactly one identity node"
+    );
+    let final_state = store
+        .find_identity(&tenant, &hrn)
+        .await
+        .expect("the final read")
+        .expect("the aggregate exists");
+    assert_eq!(
+        final_state.revision, 10,
+        "ten concurrent writers must advance the revision EXACTLY ten times"
+    );
+    // The graph agrees, read straight from the server.
+    let query = format!(
+        "{{ q(func: eq(hodei.identity.key, \"{key_literal}\")) {{ hodei.identity.revision }} }}"
+    );
+    let response = client.execute_dql(&query).await.expect("the raw read");
+    assert_eq!(
+        response.json["q"][0]["hodei.identity.revision"].as_u64(),
+        Some(10),
+        "the server itself reports revision 10"
+    );
+    eprintln!(
+        "ac3: 10 concurrent CAS writers advanced {} from revision 0 to EXACTLY {}",
+        record.key, final_state.revision
+    );
+}
