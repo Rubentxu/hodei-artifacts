@@ -43,8 +43,8 @@ pub struct SweepRequest {
 pub struct DryRunResponse {
     /// Always `true`: nothing was deleted.
     pub dry_run: bool,
-    /// What a sweep would do now.
-    pub plan: Plan,
+    /// What a sweep would do now. Shared with the plan endpoint's cache.
+    pub plan: Arc<Plan>,
 }
 
 /// The answer of a sweep that did delete.
@@ -283,7 +283,7 @@ fn audit(
 pub async fn plan(
     State(state): State<AppState>,
     Extension(_context): Extension<VerifiedContext>,
-) -> Result<Json<Plan>, GcApiError> {
+) -> Result<Json<Arc<Plan>>, GcApiError> {
     let service = service(&state)?;
     Ok(Json(service.dry_run().await?))
 }
