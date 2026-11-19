@@ -457,6 +457,19 @@ fn spread_pct(values: &[f64]) -> f64 {
     round3((highest - lowest) / middle * 100.0)
 }
 
+/// The spread, or null when there is nothing to spread.
+///
+/// A run-to-run spread needs at least two replicas; reporting 0.0 for
+/// one replica would claim a perfectly steady measurement and a budget
+/// calibrated against noise that was never measured. This says null.
+fn spread_pct_opt(values: &[f64]) -> serde_json::Value {
+    if values.len() < 2 {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!(spread_pct(values))
+    }
+}
+
 /// Whether the driver invalidated its own measurement.
 ///
 /// The emission lag is compared against the requested spacing: a run
@@ -2486,15 +2499,21 @@ fn aggregate(replicas: &[serde_json::Value]) -> serde_json::Value {
             .filter(|r| r["driver_saturated"] == serde_json::json!(true))
             .filter_map(|r| r["name"].as_str())
             .collect();
+        let p95s: Vec<f64> = runs
+            .iter()
+            .filter_map(|r| scalar_of(r, "latency_ms.p95.value_ms"))
+            .collect();
         let entry = serde_json::json!({
             "replicas_with_samples": runs.len(),
             "p50_ms_median": if p50s.is_empty() { serde_json::Value::Null } else { serde_json::json!(round3(median(&p50s))) },
-            "p95_ms_median": if runs.is_empty() { serde_json::Value::Null } else { serde_json::json!(round3(median(&runs.iter().filter_map(|r| scalar_of(r, "latency_ms.p95.value_ms")).collect::<Vec<f64>>()))) },
+            "p95_ms_median": if p95s.is_empty() { serde_json::Value::Null } else { serde_json::json!(round3(median(&p95s))) },
             "p99_ms_median": if p99s.is_empty() { serde_json::json!(null) } else { serde_json::json!(round3(median(&p99s))) },
             "p99_note": if p99s.is_empty() { "no replica reached 1000 samples for this workload" } else { "" },
-            "p99_spread_pct": spread_pct(&p99s),
+            // A spread under two replicas is not a measurement: say null
+            // rather than the 0.0 of a perfectly steady run.
+            "p99_spread_pct": spread_pct_opt(&p99s),
             "throughput_rps_median": if rps.is_empty() { serde_json::Value::Null } else { serde_json::json!(round3(median(&rps))) },
-            "throughput_spread_pct": spread_pct(&rps),
+            "throughput_spread_pct": spread_pct_opt(&rps),
             "errors_total": errors,
             "timeouts_total": timeouts,
             "saturated_replicas": saturated.len(),
@@ -2517,10 +2536,17 @@ fn budget_of(aggregate: &serde_json::Value) -> serde_json::Value {
     let mut worst_rps_spread = 0.0f64;
     if let Some(map) = aggregate.as_object() {
         for (name, entry) in map {
-            let p99_spread = entry["p99_spread_pct"].as_f64().unwrap_or(0.0);
-            let rps_spread = entry["throughput_spread_pct"].as_f64().unwrap_or(0.0);
-            worst_p99_spread = worst_p99_spread.max(p99_spread);
-            worst_rps_spread = worst_rps_spread.max(rps_spread);
+            // A null spread means the noise was not measurable (fewer
+            // than two replicas): the budget says so instead of
+            // claiming it covers a noise it never saw.
+            let p99_spread = entry["p99_spread_pct"].as_f64();
+            let rps_spread = entry["throughput_spread_pct"].as_f64();
+            worst_p99_spread = worst_p99_spread.max(p99_spread.unwrap_or(0.0));
+            worst_rps_spread = worst_rps_spread.max(rps_spread.unwrap_or(0.0));
+            let covers = match (p99_spread, rps_spread) {
+                (Some(p99), Some(rps)) => serde_json::json!(p99 <= 10.0 && rps <= 5.0),
+                _ => serde_json::Value::Null,
+            };
             per_workload.insert(
                 name.clone(),
                 serde_json::json!({
@@ -2530,7 +2556,7 @@ fn budget_of(aggregate: &serde_json::Value) -> serde_json::Value {
                     "noise_rps_spread_pct": rps_spread,
                     "budget_p99_increase_pct": 10.0,
                     "budget_throughput_drop_pct": 5.0,
-                    "budget_covers_noise": p99_spread <= 10.0 && rps_spread <= 5.0,
+                    "budget_covers_noise": covers,
                 }),
             );
         }
@@ -2669,7 +2695,14 @@ fn build_report(
 fn write_report(path: &Path, report: &serde_json::Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.part");
-    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    {
+        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        file.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        // The measurement survives a host restart, not just a kill: the
+        // pages must be on the platter before the rename that makes the
+        // snapshot the official file.
+        file.sync_all().map_err(|e| e.to_string())?;
+    }
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
@@ -2832,7 +2865,13 @@ async fn the_main() -> Result<(), String> {
         if !replicas.is_empty() {
             match write_incremental_snapshot(&ctx, &replicas, &failures) {
                 Ok(path) => println!("partial snapshot: {}", path.display()),
-                Err(error) => eprintln!("snapshot could not be written: {error}"),
+                Err(error) => {
+                    // The snapshot is the protection: without it, the
+                    // replicas that follow are hours of measurement
+                    // with nothing on disk to keep if they are cut
+                    // short. Stop now instead of gambling.
+                    return Err(format!("snapshot after replica {index} failed: {error}"));
+                }
             }
         }
     }
@@ -2851,12 +2890,16 @@ async fn the_main() -> Result<(), String> {
     println!("\nworkload                        p50 ms    p99 ms    rps      spread p99 %");
     if let Some(map) = report["aggregate"].as_object() {
         for (name, entry) in map {
+            let spread = match entry["p99_spread_pct"].as_f64() {
+                Some(v) => format!("{v:.1}"),
+                None => "-".to_string(),
+            };
             println!(
-                "{name:<30}{:<10}{:<10}{:<9}{:.1}",
+                "{name:<30}{:<10}{:<10}{:<9}{}",
                 entry["p50_ms_median"].to_string(),
                 entry["p99_ms_median"].to_string(),
                 entry["throughput_rps_median"].to_string(),
-                entry["p99_spread_pct"].as_f64().unwrap_or(0.0)
+                spread
             );
         }
     }
@@ -3039,6 +3082,17 @@ mod tests {
         // not an invented zero.
         assert_eq!(
             report["aggregate"]["raw-write-1kib"]["p99_ms_median"],
+            serde_json::Value::Null
+        );
+        // One replica measures no run-to-run noise: the budget must not
+        // claim it covers a noise that was never taken (the false green
+        // a 0.0 spread would print).
+        assert_eq!(
+            report["aggregate"]["raw-write-1kib"]["throughput_spread_pct"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            report["baseline_and_budget"]["per_workload"]["raw-write-1kib"]["budget_covers_noise"],
             serde_json::Value::Null
         );
         // Renaming leaves no .part behind.
