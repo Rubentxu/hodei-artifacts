@@ -308,8 +308,16 @@ fn table_iter(
 /// Reads one batch of a table, by keyset pagination.
 ///
 /// The first batch of a table has no `$after`; the rest continue strictly
-/// after the last id read. The query is `ORDER BY id ASC LIMIT $n`: the
-/// work per batch is what the limit says, not what the table has.
+/// after the last id read. The query is `ORDER BY id ASC LIMIT $n`.
+///
+/// COST WARNING (measured, `tests/hsp179_keyset_plan.rs`, SurrealDB 2.7):
+/// the planner does NOT seek on record-id predicates — both batch forms
+/// plan `Iterate Table` with no range bound, so every batch walks the
+/// whole table and a full export is quadratic in rows per table. Correct
+/// under quiesce, expensive on big corpora; the replacement strategy
+/// (range on a real indexed field, or record-id ranges once EXPLAIN
+/// proves they seek) is a decision recorded for the import slice
+/// (HSP-210).
 async fn read_batch<C: Connection>(
     db: &Surreal<C>,
     table: &str,
