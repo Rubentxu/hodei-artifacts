@@ -1,12 +1,11 @@
-//! El dry-run comparte censo (HSP-174): ni veinte censos por veinte
-//! peticiones, ni veinte planes apilados en memoria.
+//! The dry-run shares its census: not twenty censuses for twenty
+//! requests, and not twenty stacked graphs.
 //!
-//! El almacen y el libro son mocks contadores: cuentan cuantas veces el
-//! servicio mira el mundo. Lo que se prueba es la contabilidad, no el
-//! veredicto --el veredicto ya lo prueban los tests del servicio sobre un
-//! almacen real--; aqui se prueba que N lecturas del plan valen UN censo
-//! mientras el mundo no cambia, y que lo que borra se niega a leer un
-//! plano compartido.
+//! The store and the ledger are counting mocks: they count how often the
+//! service looks at the world. What is proven here is the accounting, not
+//! the verdict --the verdict belongs to the service tests over a real
+//! store--; here, N reads of the plan cost ONE census while the world has
+//! not changed, and what deletes refuses to read a shared plan.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -161,9 +160,8 @@ impl ContentLedger for Ledger {
     }
 }
 
-/// El almacen contador. `slow` se suena en cada listado para que las
-/// llamadas concurrentes se apilen de verdad y no se solapen por
-/// casualidad.
+/// The counting store. `slow` sleeps on every listing so that concurrent
+/// calls really pile up instead of overlapping by accident.
 struct Store {
     counters: Arc<Counters>,
     slow: Duration,
@@ -245,8 +243,8 @@ fn service(roots: Vec<ContentRoot>, slow: Duration, grace: Duration) -> (Arc<Cou
     (counters, service)
 }
 
-/// N lecturas del plan, un censo: mientras el mundo no cambia y la
-/// ventana no caduca, el listado del almacen se pide una sola vez.
+/// N reads of the plan, one census: while the world does not change and
+/// the window has not expired, the store listing is asked once.
 #[tokio::test]
 async fn repeated_dry_runs_share_one_census() {
     let (counters, service) = service(vec![root('a')], Duration::ZERO, GRACE);
@@ -259,8 +257,8 @@ async fn repeated_dry_runs_share_one_census() {
     assert_eq!(counters.holds.load(Ordering::SeqCst), 1);
 }
 
-/// Diez peticiones concurrentes, un vuelo: mientras una lee el mundo,
-/// las demas esperan y recogen el mismo plano --no diez grafos apilados.
+/// Ten concurrent requests, one flight: while one reads the world, the
+/// others wait and collect the same plan --not ten stacked graphs.
 #[tokio::test]
 async fn concurrent_dry_runs_take_flight_together() {
     let (counters, service) = service(vec![root('a')], Duration::from_millis(150), GRACE);
@@ -282,8 +280,8 @@ async fn concurrent_dry_runs_take_flight_together() {
     );
 }
 
-/// Lo que cambia el mundo se nota en el siguiente plano: la retencion
-/// invalida el compartido y el censo se vuelve a pedir.
+/// What changes the world shows in the next plan: a hold invalidates the
+/// shared one and the census runs again.
 #[tokio::test]
 async fn a_placed_hold_invalidates_the_shared_plan() {
     let (counters, service) = service(vec![root('a')], Duration::ZERO, GRACE);
@@ -312,8 +310,8 @@ async fn a_placed_hold_invalidates_the_shared_plan() {
     );
 }
 
-/// Lo que borra no comparte plano: el barrido toma su propio censo y el
-/// plan siguiente vuelve a mirar el mundo.
+/// What deletes shares no plan: the sweep takes its own censuses and the
+/// next dry-run looks at the world again.
 #[tokio::test]
 async fn the_sweep_never_reads_the_shared_plan() {
     let (counters, service) = service(vec![root('a')], Duration::ZERO, GRACE);
@@ -334,8 +332,8 @@ async fn the_sweep_never_reads_the_shared_plan() {
     );
 }
 
-/// La ventana caduca: con una gracia de un milisegundo el plano no puede
-/// vivir mas que ella, y dos lecturas separadas son dos censos.
+/// The expired window: with a one-millisecond grace a plan cannot outlive
+/// it, and two separated reads are two censuses.
 #[tokio::test]
 async fn an_expired_window_censuses_again() {
     let (counters, service) = service(vec![root('a')], Duration::ZERO, Duration::from_millis(1));
