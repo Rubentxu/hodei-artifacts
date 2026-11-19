@@ -9,8 +9,15 @@
 //! compared against it without guessing.
 //!
 //! ```text
-//! perf_lab run --profile lab --replicas 5 --out target/uat
+//! perf_lab seed --profile lab
+//! perf_lab run --profile lab --replicas 5 --out target/uat --reuse-seed
 //! ```
+//!
+//! The heavy seed (a million catalog rows, twenty thousand evidence
+//! envelopes) is a property of the corpus, not of the run: `perf_lab
+//! seed` grows it once under `target/perf-lab/seed-<profile>` with a
+//! validated sidecar, and `--reuse-seed` mounts it per replica. Without
+//! the flag every replica grows its own, as it always did.
 //!
 //! # Method
 //!
