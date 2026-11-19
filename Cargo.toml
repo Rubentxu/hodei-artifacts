@@ -32,6 +32,7 @@ members = [
     "crates/hodei-counterfactual",
     "crates/hodei-hub-s3",
     "crates/hodei-spike-ladybug",
+    "crates/hodei-graph-client",
     ".",
 ]
 exclude = [
