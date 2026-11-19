@@ -68,7 +68,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256, Sha512};
 
@@ -1514,8 +1514,10 @@ async fn seed_evidence(db: &str, cas: &str, count: usize) -> Result<f64, String>
                 "hrn:hodei:iam:eu:{ACCOUNT}:User/{USER}"
             ))
             .expect("the tenant of the lab is a valid HRN"),
-            subject_refs: vec![kernel::Hrn::from_string(&artifact_hrn(index % 50))
-                .expect("the subject of the lab is a valid HRN")],
+            subject_refs: vec![
+                kernel::Hrn::from_string(&artifact_hrn(index % 50))
+                    .expect("the subject of the lab is a valid HRN"),
+            ],
             evidence_type: hodei_evidence::EvidenceType::Provenance,
             schema_uri: None,
             schema_version: None,
@@ -2596,16 +2598,23 @@ fn declared_skips(profile: &Profile) -> Vec<serde_json::Value> {
 /// is valid JSON whose aggregates may be null: the first replica of a
 /// workload under a thousand samples has no p99 by construction, and a
 /// snapshot must not lie about it with a fake zero.
+/// The run as the report sees it: everything that stays the same from
+/// the first snapshot to the final report.
+struct RunContext<'a> {
+    profile: &'a Profile,
+    args: &'a RunArgs,
+    command: &'a str,
+    stamp: &'a str,
+    started_at: &'a str,
+}
+
 fn build_report(
-    profile: &Profile,
-    replicas_requested: usize,
+    ctx: &RunContext,
     replicas: &[serde_json::Value],
     failures: &[serde_json::Value],
-    command: &str,
-    stamp: &str,
-    started_at: &str,
     report_state: &str,
 ) -> serde_json::Value {
+    let profile = ctx.profile;
     let aggregate = aggregate(replicas);
     let budget = budget_of(&aggregate);
     let cas_probe = Path::new("target/perf-lab");
@@ -2617,19 +2626,19 @@ fn build_report(
             "tool": "perf_lab",
             "version": env!("CARGO_PKG_VERSION"),
             "commit": the_commit(),
-            "command": command,
+            "command": ctx.command,
             "profile": profile.name,
-            "replicas_requested": replicas_requested,
+            "replicas_requested": ctx.args.replicas,
             "replicas_completed": replicas.len(),
             "report_state": report_state,
-            "stamp": stamp,
-            "started_at": started_at,
+            "stamp": ctx.stamp,
+            "started_at": ctx.started_at,
             "snapshot_at": now,
             "finished_at": if report_state == "complete" { serde_json::json!(now) } else { serde_json::Value::Null },
         },
         "declarations": {
             "replication": {
-                "mode": format!("{} replicas of the RUN, each on a fresh database and a fresh content store", replicas_requested),
+                "mode": format!("{} replicas of the RUN, each on a fresh database and a fresh content store", ctx.args.replicas),
                 "justification": "the embedded RocksDB directory is locked by the single process that holds it (src/bootstrap.rs), and the HSP-125 spike measured the host contention that several services sharing one machine would create: five CONCURRENT services would measure the contention, not the service. Five replicas of the whole run give the run-to-run noise the budget has to cover."
             },
             "limits": {
@@ -2669,27 +2678,13 @@ fn write_report(path: &Path, report: &serde_json::Value) -> Result<(), String> {
 /// measuring when a watchdog killed a run that wrote its report only at
 /// the end; that must not happen to a long run again.
 fn write_incremental_snapshot(
-    out: &Path,
-    stamp: &str,
-    profile: &Profile,
-    replicas_requested: usize,
-    command: &str,
-    started_at: &str,
+    ctx: &RunContext,
     replicas: &[serde_json::Value],
     failures: &[serde_json::Value],
 ) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
-    let path = out.join(format!("perf-lab-{stamp}.json"));
-    let report = build_report(
-        profile,
-        replicas_requested,
-        replicas,
-        failures,
-        command,
-        stamp,
-        started_at,
-        "partial",
-    );
+    std::fs::create_dir_all(&ctx.args.out).map_err(|e| e.to_string())?;
+    let path = ctx.args.out.join(format!("perf-lab-{}.json", ctx.stamp));
+    let report = build_report(ctx, replicas, failures, "partial");
     write_report(&path, &report)?;
     Ok(path)
 }
@@ -2815,6 +2810,14 @@ async fn the_main() -> Result<(), String> {
         profile.evidence
     );
 
+    let ctx = RunContext {
+        profile: &profile,
+        args: &args,
+        command: &command,
+        stamp: &stamp,
+        started_at: &started_at,
+    };
+
     let mut replicas = Vec::new();
     let mut failures = Vec::new();
     for index in 1..=args.replicas {
@@ -2827,16 +2830,7 @@ async fn the_main() -> Result<(), String> {
             }
         }
         if !replicas.is_empty() {
-            match write_incremental_snapshot(
-                &args.out,
-                &stamp,
-                &profile,
-                args.replicas,
-                &command,
-                &started_at,
-                &replicas,
-                &failures,
-            ) {
+            match write_incremental_snapshot(&ctx, &replicas, &failures) {
                 Ok(path) => println!("partial snapshot: {}", path.display()),
                 Err(error) => eprintln!("snapshot could not be written: {error}"),
             }
@@ -2846,16 +2840,7 @@ async fn the_main() -> Result<(), String> {
         return Err("every replica failed; there is no measurement".into());
     }
 
-    let report = build_report(
-        &profile,
-        args.replicas,
-        &replicas,
-        &failures,
-        &command,
-        &stamp,
-        &started_at,
-        "complete",
-    );
+    let report = build_report(&ctx, &replicas, &failures, "complete");
 
     std::fs::create_dir_all(&args.out).map_err(|e| e.to_string())?;
     let path = args.out.join(format!("perf-lab-{stamp}.json"));
@@ -2952,10 +2937,11 @@ mod tests {
         assert!(Profile::parse("smoke").is_ok());
         assert!(Profile::parse("lab").is_ok());
         let full = Profile::parse("full").expect("full exists");
-        assert!(full
-            .points
-            .iter()
-            .any(|p| p.big && p.bytes == 1_073_741_824));
+        assert!(
+            full.points
+                .iter()
+                .any(|p| p.big && p.bytes == 1_073_741_824)
+        );
         assert!(full.catalog_assets >= 1_000_000);
         let lab = Profile::parse("lab").expect("lab exists");
         assert!(!lab.points.iter().any(|p| p.big));
@@ -3028,17 +3014,20 @@ mod tests {
         });
         let dir = tempfile::tempdir().expect("tempdir");
         let profile = Profile::parse("smoke").expect("smoke");
-        let path = write_incremental_snapshot(
-            dir.path(),
-            "test-stamp",
-            &profile,
-            5,
-            "perf_lab run --test",
-            "2026-11-19T00:00:00+00:00",
-            &[replica],
-            &[],
-        )
-        .expect("the snapshot writes");
+        let args = RunArgs {
+            profile: "smoke".into(),
+            replicas: 5,
+            out: dir.path().to_path_buf(),
+            keep: false,
+        };
+        let ctx = RunContext {
+            profile: &profile,
+            args: &args,
+            command: "perf_lab run --test",
+            stamp: "test-stamp",
+            started_at: "2026-11-19T00:00:00+00:00",
+        };
+        let path = write_incremental_snapshot(&ctx, &[replica], &[]).expect("the snapshot writes");
         let text = std::fs::read_to_string(&path).expect("the snapshot is readable");
         let report: serde_json::Value =
             serde_json::from_str(&text).expect("a partial snapshot is valid JSON");
