@@ -19,8 +19,8 @@ pub use content_store::InMemoryContentStore;
 pub use surreal::{
     ACTIVE_PROJECTION, CHECKPOINT_TABLE, EVIDENCE_SUBJECT_TABLE, EVIDENCE_TABLE, EvidenceRow,
     LEDGER_TABLE, LedgerRecord, REBUILD_PROJECTION, SubjectRow, SurrealEventLedger,
-    SurrealEvidenceStore, SurrealGraphStore, SurrealProjectionCheckpoints, the_subject_pair_read,
-    the_subject_records_read,
+    SurrealEvidenceStore, SurrealGraphStore, SurrealProjectionCheckpoints,
+    the_evidence_put_statement, the_subject_pair_read, the_subject_records_read,
 };
 
 pub use surreal::delta::{DELTA_TABLE, DeltaRow, SurrealRelationDeltaLedger};

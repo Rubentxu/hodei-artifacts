@@ -12,7 +12,7 @@ pub mod ledger;
 
 pub use evidence_store::{
     EVIDENCE_SUBJECT_TABLE, EVIDENCE_TABLE, EvidenceRow, SubjectRow, SurrealEvidenceStore,
-    the_subject_pair_read, the_subject_records_read,
+    the_evidence_put_statement, the_subject_pair_read, the_subject_records_read,
 };
 pub use graph::{
     ACTIVE_PROJECTION, CHECKPOINT_TABLE, GRAPH_INDEXES, REBUILD_PROJECTION, SurrealGraphStore,

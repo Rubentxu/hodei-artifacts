@@ -64,6 +64,31 @@ pub fn the_subject_records_read() -> &'static str {
     "SELECT * FROM $ids"
 }
 
+/// The statement that writes one record of evidence, its external index
+/// entry and its subject pairs, as one batch.
+///
+/// In SurrealDB every statement commits by itself, so an unwrapped batch
+/// does not have one frontier of commit: a crash between statements would
+/// leave the index naming a record that is not there, or a record without
+/// the entries its subjects walk. The batch is wrapped in `BEGIN
+/// TRANSACTION` / `COMMIT TRANSACTION`, so it all lands or none of it
+/// does -- and when one statement fails, the transaction aborts and
+/// nothing of the batch is left behind. Exposed so the contract test
+/// asserts on exactly the statement the store sends, instead of
+/// restating it.
+pub fn the_evidence_put_statement(subjects: usize) -> String {
+    let mut sql = String::from("BEGIN TRANSACTION;\n");
+    sql.push_str("UPSERT $id CONTENT $content;\n");
+    sql.push_str("UPSERT $index_id CONTENT $index;\n");
+    for position in 0..subjects {
+        sql.push_str(&format!(
+            "UPSERT $pair_{position}_id CONTENT $pair_{position};\n"
+        ));
+    }
+    sql.push_str("COMMIT TRANSACTION;\n");
+    sql
+}
+
 /// The entry of the external index, as it is stored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexRow {
@@ -218,16 +243,9 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
                     )
                 })
                 .collect();
-            let mut query =
-                String::from("UPSERT $id CONTENT $content; UPSERT $index_id CONTENT $index");
-            for position in 0..subjects.len() {
-                query.push_str(&format!(
-                    "; UPSERT $pair_{position}_id CONTENT $pair_{position}"
-                ));
-            }
             let mut statement = self
                 .db
-                .query(query)
+                .query(the_evidence_put_statement(subjects.len()))
                 .bind(("id", Self::record_id(evidence.id().as_str())))
                 .bind(("content", row.clone()))
                 .bind((
