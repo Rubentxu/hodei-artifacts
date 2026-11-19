@@ -722,7 +722,15 @@ async fn group_metadata(
     // Un proxy sin red y sin copia no tiene nada que aportar: se sigue con
     // el siguiente. Si al final nadie sirvio, ese es el error.
     let mut offline: Option<RawApiError> = None;
-    for member in super::raw_group::the_leaves(state, context, group).await? {
+    // La reserva de namespaces del grupo se consulta antes de preguntar a
+    // sus miembros: los que dejo fuera quedan en el rastro, y sus upstreams
+    // no aportan versiones aunque tengan mas.
+    let (leaves, denied, judgement) =
+        super::raw_group::the_governed_leaves(state, context, group, metadata_path).await?;
+    for key in &denied {
+        trail.push((key.clone(), Step::Deny));
+    }
+    for member in leaves {
         let key = member.repo_key.clone();
         match the_piece(state, context, &member, level, metadata_path, correlation).await {
             Ok(Some(piece)) => {
@@ -748,6 +756,14 @@ async fn group_metadata(
         && let Some(error) = offline
     {
         return Err(error);
+    }
+    if pieces.is_empty()
+        && !denied.is_empty()
+        && let Some(judgement) = judgement
+    {
+        return Err(super::raw_group::the_group_reservation_explanation(
+            group, &judgement, &denied,
+        ));
     }
     let MetadataLevel::Artifact {
         group_id,
@@ -800,6 +816,8 @@ async fn group_file_checksum(
     let resolution =
         super::raw_group::the_group_asset(state, context, group, subject_path, correlation).await;
     trail.extend(resolution.trail.iter().cloned());
+    // El recorrido del grupo ya aplico la reserva de namespaces: los
+    // miembros que dejo fuera aparecen en el rastro como `deny`.
     let won = resolution.outcome?;
     crate::trust::admit(
         state,

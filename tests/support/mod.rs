@@ -475,6 +475,29 @@ impl Deployment {
         assert!(status.success(), "the repository could not be reconfigured");
     }
 
+    /// Reconfigura un repositorio ya sembrado: le pone (o le quita, con
+    /// `null`) la politica de namespaces y sube la version de su
+    /// configuracion.
+    ///
+    /// Lo hace un proceso que acaba enseguida y con el servicio parado: la
+    /// base la bloquea el proceso que la abre. Es la revision de politica
+    /// que una resolucion previa incompatible tiene que respetar.
+    pub fn reconfigure_namespaces(&self, key: &str, namespaces: serde_json::Value) {
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env("HODEI_RECONFIG_KEY", key)
+            .env("HODEI_RECONFIG_NAMESPACES", namespaces.to_string())
+            .status()
+            .expect("the reconfigurer runs");
+        assert!(status.success(), "the namespaces could not be reconfigured");
+    }
+
     /// Crea repositorios de **grupo** de la primera cuenta, en el orden
     /// dado (un grupo anidado se declara despues de los suyos). Cada uno es
     /// una clave y la lista ordenada de sus miembros.
@@ -820,6 +843,27 @@ impl Deployment {
             .status()
             .expect("the seeder runs");
         assert!(status.success(), "{what} could not be seeded");
+    }
+
+    /// Siembra repositorios de la primera cuenta con ajustes libres.
+    ///
+    /// Cada entrada es el JSON que `seed_the_maven` entiende: `key`,
+    /// `format` (`raw`, `npm`, `pypi`, `maven2`...), `proxy` (si es proxy),
+    /// `namespaces` (la politica de reserva, si la declara) y los ajustes
+    /// propios del formato (`maven`, `npm`, `pypi`). Es la puerta que usan
+    /// las suites que mezclan formato y reserva sin multiplicar sembradores.
+    pub fn seed_repositories(&self, entries: &[serde_json::Value]) {
+        self.run_the_seeder(
+            "HODEI_SEED_MAVEN",
+            entries.to_vec(),
+            "the free-form repositories",
+        );
+    }
+
+    /// Siembra grupos de la primera cuenta a partir de entradas libres:
+    /// `key`, `members` y la `namespaces` que declaren.
+    pub fn seed_groups_raw(&self, groups: &[serde_json::Value]) {
+        self.run_the_seeder("HODEI_SEED_GROUPS", groups.to_vec(), "the free-form groups");
     }
 
     /// Cambia los miembros de un grupo ya sembrado: la version de su
@@ -2241,6 +2285,11 @@ pub fn seed_if_asked() {
         return;
     }
     if let Ok(key) = std::env::var("HODEI_RECONFIG_KEY") {
+        if let Ok(namespaces) = std::env::var("HODEI_RECONFIG_NAMESPACES") {
+            let namespaces = serde_json::from_str(&namespaces).expect("the new namespaces parse");
+            reconfigure_the_namespaces(&db.to_string_lossy(), &key, namespaces);
+            return;
+        }
         let proxy = std::env::var("HODEI_RECONFIG_PROXY").expect("the new proxy settings");
         let proxy = serde_json::from_str(&proxy).expect("the new proxy settings parse");
         reconfigure_the_proxy(&db.to_string_lossy(), &key, proxy);
@@ -2387,6 +2436,50 @@ fn reconfigure_the_proxy(path: &str, key: &str, proxy: serde_json::Value) {
     });
 }
 
+/// Cambia la politica de namespaces de un repositorio sembrado: la version
+/// de su configuracion sube, y una resolucion previa incompatible deja de
+/// valer.
+fn reconfigure_the_namespaces(path: &str, key: &str, namespaces: serde_json::Value) {
+    use hodei_catalog::{CatalogReader, CatalogWriter};
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime");
+    runtime.block_on(async {
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path)
+            .await
+            .expect("rocksdb");
+        db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+        let store = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
+            db.clone(),
+            std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
+        );
+        store.initialize().await.expect("initialize");
+        let current = store
+            .repository(FIRST_ACCOUNT, key)
+            .await
+            .expect("the repository exists");
+        let mut config = current.config;
+        let mut settings = match config.config_settings {
+            serde_json::Value::Object(settings) => settings,
+            _ => serde_json::Map::new(),
+        };
+        // `null` quita la politica: reservar deja de estar reservado.
+        if namespaces.is_null() {
+            settings.remove("namespaces");
+        } else {
+            settings.insert("namespaces".into(), namespaces);
+        }
+        config.config_settings = serde_json::Value::Object(settings);
+        store
+            .update_config(FIRST_ACCOUNT, key, config)
+            .await
+            .expect("the configuration is updated");
+        drop(store);
+        drop(db);
+    });
+}
+
 /// Crea grupos de la primera cuenta, en orden.
 fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
     use hodei_catalog::CatalogWriter;
@@ -2408,8 +2501,12 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
             let key = group["key"].as_str().expect("the key");
             let mut config =
                 hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
-            config.config_settings =
-                serde_json::json!({ "group": { "members": group["members"] } });
+            let mut settings = serde_json::json!({ "group": { "members": group["members"] } });
+            // La reserva de namespaces de un grupo, si la suite la declara.
+            if !group["namespaces"].is_null() {
+                settings["namespaces"] = group["namespaces"].clone();
+            }
+            config.config_settings = settings;
             store
                 .create_repository(
                     FIRST_ACCOUNT,
@@ -2485,7 +2582,15 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 // El canal de confianza es un ajuste del repositorio.
                 settings.insert("trust".into(), serde_json::json!({ "serve": "trusted" }));
             }
-            let format = if repository["format"].as_str() == Some("npm") {
+            // La reserva de namespaces es un ajuste del repositorio: la
+            // suite que la declara la escribe al sembrar, como el resto de
+            // ajustes que no tienen ruta HTTP.
+            if !repository["namespaces"].is_null() {
+                settings.insert("namespaces".into(), repository["namespaces"].clone());
+            }
+            let format = if repository["format"].as_str() == Some("raw") {
+                hodei_catalog::RepositoryFormat::Raw
+            } else if repository["format"].as_str() == Some("npm") {
                 hodei_catalog::RepositoryFormat::Npm
             } else if repository["format"].as_str() == Some("pypi") {
                 hodei_catalog::RepositoryFormat::PyPi
