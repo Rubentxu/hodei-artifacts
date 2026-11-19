@@ -1421,6 +1421,17 @@ async fn build_seed(profile: &Profile) -> Result<PathBuf, String> {
             dir.display()
         ));
     }
+    // No manifest but a non-empty db: the previous growth died halfway.
+    // Growing on top would fail inside the children with a stranger
+    // error ("repository already exists"); say what this state is.
+    if std::fs::read_dir(dir.join("db")).is_ok_and(|mut e| e.next().is_some()) {
+        return Err(format!(
+            "{} holds database files but no seed.json: an interrupted growth. \
+             Delete the directory and run 'perf_lab seed --profile {}' again",
+            dir.display(),
+            profile.name
+        ));
+    }
     let db = dir.join("db");
     let cas = dir.join("cas");
     std::fs::create_dir_all(&db).map_err(|e| e.to_string())?;
