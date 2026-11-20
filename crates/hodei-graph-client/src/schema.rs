@@ -47,7 +47,14 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// conflict key per scope (`hodei.guard.*`) and the once-only operation
 /// marker (`hodei.operation.*`), both `@upsert` guarded so the server
 /// itself forces the conflict between concurrent writers.
-pub const SCHEMA_VERSION: u64 = 2;
+///
+/// v3 adds the sequenced evidence ledger: one event node per stream
+/// position (`hodei.ledger.*`), whose composite key is `@upsert` guarded
+/// so the server itself refuses two writers claiming the same position.
+/// The head of a stream is not a stored row but the revision of the
+/// stream's guard ([`crate::guard`]): an append demands the exact
+/// revision its position sequenced at, so the guard IS the sequence.
+pub const SCHEMA_VERSION: u64 = 3;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -392,6 +399,137 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // HSP-185: the sequenced evidence ledger. One node per
+            // stream position; the composite key (`digest#position`) is
+            // exact-indexed and `@upsert`, so the server itself refuses
+            // two nodes claiming the same position. The head of the
+            // stream is the guard's revision, not a stored row.
+            spec(
+                "hodei.ledger.key",
+                "hodei.ledger.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.ledger.stream_id",
+                "hodei.ledger.stream_id: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.position",
+                "hodei.ledger.position: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.event_id",
+                "hodei.ledger.event_id: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.tenant_hrn",
+                "hodei.ledger.tenant_hrn: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.event_type",
+                "hodei.ledger.event_type: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.schema_version",
+                "hodei.ledger.schema_version: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.occurred_at",
+                "hodei.ledger.occurred_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.recorded_at",
+                "hodei.ledger.recorded_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.producer",
+                "hodei.ledger.producer: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.correlation_id",
+                "hodei.ledger.correlation_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.causation_id",
+                "hodei.ledger.causation_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.idempotency_key",
+                "hodei.ledger.idempotency_key: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.payload",
+                "hodei.ledger.payload: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -413,6 +551,12 @@ pub fn hodei_schema() -> HodeiSchema {
                 .to_owned(),
             "type HodeiOperation {\n  hodei.operation.id\n  hodei.operation.scope\n  \
              hodei.operation.result\n  hodei.operation.committed_at\n}"
+                .to_owned(),
+            "type HodeiLedgerEvent {\n  hodei.ledger.key\n  hodei.ledger.stream_id\n  \
+             hodei.ledger.position\n  hodei.ledger.event_id\n  hodei.ledger.tenant_hrn\n  \
+             hodei.ledger.event_type\n  hodei.ledger.schema_version\n  hodei.ledger.occurred_at\n  \
+             hodei.ledger.recorded_at\n  hodei.ledger.producer\n  hodei.ledger.correlation_id\n  \
+             hodei.ledger.causation_id\n  hodei.ledger.idempotency_key\n  hodei.ledger.payload\n}"
                 .to_owned(),
         ],
     )
@@ -829,7 +973,11 @@ fn rfc3339_now() -> String {
 /// quotes, backslashes and control characters. Keys, HRNs and digests
 /// are built from safe charsets, but the escaping is uniform so no
 /// caller-side string can inject DQL.
-pub(crate) fn dql_string(value: &str) -> String {
+/// Escapes a Rust string as a DQL string literal: quoted, with the
+/// backslash, quote and control characters DQL reserves escaped. The
+/// helpers that build upsert transactions and the ledger adapters of
+/// consumers use it, so the escaping is done in exactly one place.
+pub fn dql_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for character in value.chars() {
