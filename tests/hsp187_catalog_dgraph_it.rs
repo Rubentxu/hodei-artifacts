@@ -42,8 +42,8 @@ use hodei_authz::{
 };
 use hodei_catalog::{
     AllowAllAuthorizer, AssetRecord, BlobReference, CatalogReader, CatalogWriter, DigestScope,
-    MutableTag, PackageCoordinates, PackageVersion, Publication, RepositoryConfig,
-    RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
+    PackageCoordinates, PackageVersion, Publication, RepositoryConfig, RepositoryDescriptor,
+    RepositoryFormat, RepositoryMode, repository_hrn,
 };
 use hodei_catalog_storage::{DgraphAuditOutbox, DgraphCatalogStore, SurrealCatalogStore};
 use hodei_evidence::ContentDigest;
@@ -1047,7 +1047,34 @@ async fn the_dgraph_reads_match_the_surreal_reference_for_the_same_state() {
     assert_eq!(dgraph_reference.repository, surreal_reference.repository);
     assert_eq!(dgraph_reference.asset_path, surreal_reference.asset_path);
 
-    // Lo que el slice no sirve, lo dice: las etiquetas no están portadas.
-    let tags: Vec<MutableTag> = dgraph.tags(&account, repo).await.expect("no tags");
-    assert!(tags.is_empty(), "the raw slice serves no mutable tags");
+    // La etiqueta mutable se mueve en las dos, y las dos dicen lo mismo:
+    // la misma etiqueta apunta a la misma versión en los dos motores.
+    let dgraph_tag = dgraph
+        .move_tag(&account, repo, "stable", dgraph_asset.coordinates.clone())
+        .await
+        .expect("dgraph tag");
+    let surreal_tag = surreal
+        .move_tag(&account, repo, "stable", surreal_asset.coordinates.clone())
+        .await
+        .expect("surreal tag");
+    assert_eq!(dgraph_tag.account, surreal_tag.account);
+    assert_eq!(dgraph_tag.repository, surreal_tag.repository);
+    assert_eq!(dgraph_tag.tag_name, surreal_tag.tag_name);
+    assert_eq!(dgraph_tag.coordinates, surreal_tag.coordinates);
+
+    let dgraph_tag_read = dgraph
+        .tag(&account, repo, "stable")
+        .await
+        .expect("dgraph tag read");
+    let surreal_tag_read = surreal
+        .tag(&account, repo, "stable")
+        .await
+        .expect("surreal tag read");
+    assert_eq!(dgraph_tag_read.coordinates, surreal_tag_read.coordinates);
+
+    let dgraph_tags = dgraph.tags(&account, repo).await.expect("dgraph tags");
+    let surreal_tags = surreal.tags(&account, repo).await.expect("surreal tags");
+    assert_eq!(dgraph_tags.len(), surreal_tags.len());
+    assert_eq!(dgraph_tags.len(), 1);
+    assert_eq!(dgraph_tags[0].coordinates, surreal_tags[0].coordinates);
 }

@@ -21,10 +21,16 @@
 //! escritura nueva, y un evento que dice "publicado" sobre lo que ya
 //! estaba no añade ningún hecho.
 //!
-//! El slice es **Raw**: repository, asset, versión, referencia y outbox.
-//! Lo que otro formato necesita (etiquetas mutables, reconfiguración de
-//! repositorios, vistas derivadas) no está portado aquí y lo dice con un
-//! error tipado en vez de fingir que lo sirve.
+//! El slice de etiquetas mutables (el de los registros OCI) va sobre la
+//! misma frontera: la guarda por clave de etiqueta es la que hace que dos
+//! escritores que mueven la misma etiqueta se serialicen — el commit que
+//! el grafo arbitra en último lugar gana, y ninguno pierde su hecho. La
+//! reentrega del mismo movimiento (misma etiqueta, misma versión) relee el
+//! resultado comprometido: idempotencia por hecho, no por suerte.
+//!
+//! Lo que el slice NO sirve todavía (reconfiguración de repositorios,
+//! vistas derivadas) lo dice con un error tipado en vez de fingir que lo
+//! sirve.
 
 use std::sync::Arc;
 
@@ -62,6 +68,8 @@ pub const VERSION_TYPE: &str = "CatalogVersion";
 pub const REFERENCE_TYPE: &str = "CatalogReference";
 /// El tipo de grafo de una fila del outbox de auditoría.
 pub const OUTBOX_TYPE: &str = "CatalogAuditOutbox";
+/// El tipo de grafo de una etiqueta mutable.
+pub const TAG_TYPE: &str = "CatalogTag";
 
 /// Versión del esquema **propio** del catálogo sobre Dgraph. Va aparte del
 /// esquema versionado del grafo (`hodei-graph-client`, v7): este slice
@@ -203,6 +211,20 @@ pub fn catalog_schema_dql() -> String {
         ("hodei.catalog.outbox.lease_until", "datetime", ""),
         ("hodei.catalog.outbox.last_error", "string", ""),
         ("hodei.catalog.outbox.delivered_at", "datetime", ""),
+        // El slice de etiquetas mutables (OCI): la clave lleva el upsert
+        // para que dos escritores que mueven la misma etiqueta peleen por
+        // el índice y no por la fila.
+        ("hodei.catalog.tag.key", "string", "@index(exact) @upsert"),
+        ("hodei.catalog.tag.account", "string", "@index(exact)"),
+        ("hodei.catalog.tag.repository", "string", "@index(exact)"),
+        ("hodei.catalog.tag.tag_name", "string", "@index(exact)"),
+        ("hodei.catalog.tag.package_name", "string", "@index(exact)"),
+        (
+            "hodei.catalog.tag.package_version",
+            "string",
+            "@index(exact)",
+        ),
+        ("hodei.catalog.tag.updated_at", "datetime", ""),
     ] {
         ddl.push_str(predicate);
         ddl.push_str(": ");
@@ -243,6 +265,11 @@ pub fn catalog_schema_dql() -> String {
             "outbox",
             "key tenant actor correlation_id action resource digest result \
              occurred_at state attempts lease_owner lease_until last_error delivered_at",
+        ),
+        (
+            TAG_TYPE,
+            "tag",
+            "key account repository tag_name package_name package_version updated_at",
         ),
     ] {
         ddl.push_str(&format!("type {name} {{\n"));
@@ -296,6 +323,16 @@ pub fn version_key(
     )
 }
 
+/// La clave compuesta de una etiqueta mutable.
+pub fn tag_key(account: &str, repository: &str, tag_name: &str) -> String {
+    format!(
+        "{}|{}|t|{}",
+        key_part(account),
+        key_part(repository),
+        key_part(tag_name)
+    )
+}
+
 /// El sujeto de la guarda de una publicación: el camino del asset dentro
 /// de la cuenta. Dos escritores de la misma ruta —de donde venga el
 /// código— derivan el mismo sujeto y por eso se pelean por la misma
@@ -309,6 +346,22 @@ fn asset_guard_scope(
         GuardKind::CatalogAsset,
         account,
         &format!("asset/{repository}/{asset_path}"),
+    )
+}
+
+/// El sujeto de la guarda de una etiqueta: la clave de la etiqueta dentro
+/// de la cuenta. Dos escritores que mueven la misma etiqueta —a la misma
+/// versión o a versiones distintas— se pelean por ESTA guarda, y el commit
+/// que el grafo arbitra en último lugar es el que gana.
+fn tag_guard_scope(
+    account: &str,
+    repository: &str,
+    tag_name: &str,
+) -> Result<GuardScope, CatalogError> {
+    scope_of(
+        GuardKind::Tag,
+        account,
+        &format!("tag/{repository}/{tag_name}"),
     )
 }
 
@@ -384,6 +437,31 @@ fn repository_operation_id(descriptor: &RepositoryDescriptor) -> OperationId {
     hasher.update([0]);
     hasher.update(descriptor.config.config_settings.to_string().as_bytes());
     let id = format!("repo-{:x}", hasher.finalize());
+    OperationId::new(&id).expect("a sha256-derived operation id is always valid")
+}
+
+/// El identificador de operación determinista de un movimiento de
+/// etiqueta: la misma etiqueta movida a la MISMA versión es el mismo hecho
+/// (el reintento tras el timeout relee el resultado comprometido), y la
+/// misma etiqueta movida a OTRA versión es otro hecho (el último commit
+/// gana, y ambos quedan aplicados en el orden en que el grafo los arbitró).
+fn tag_operation_id(
+    account: &str,
+    repository: &str,
+    tag_name: &str,
+    coordinates: &PackageCoordinates,
+) -> OperationId {
+    let mut hasher = Sha256::new();
+    hasher.update(account.as_bytes());
+    hasher.update([0]);
+    hasher.update(repository.as_bytes());
+    hasher.update([0]);
+    hasher.update(tag_name.as_bytes());
+    hasher.update([0]);
+    hasher.update(coordinates.package_name.as_bytes());
+    hasher.update([0]);
+    hasher.update(coordinates.package_version.as_bytes());
+    let id = format!("tag-{:x}", hasher.finalize());
     OperationId::new(&id).expect("a sha256-derived operation id is always valid")
 }
 
@@ -735,6 +813,57 @@ impl ReferenceRow {
             trust_state: self.trust_state,
             updated_at: self.updated_at,
         }
+    }
+}
+
+/// La fila de una etiqueta mutable tal como está en el grafo.
+struct TagRow {
+    account: String,
+    repository: String,
+    tag_name: String,
+    package_name: String,
+    package_version: String,
+    updated_at: DateTime<Utc>,
+}
+
+impl TagRow {
+    fn from_node(node: &serde_json::Value) -> Result<Self, CatalogError> {
+        Ok(Self {
+            account: node_text(node, "hodei.catalog.tag.account")?,
+            repository: node_text(node, "hodei.catalog.tag.repository")?,
+            tag_name: node_text(node, "hodei.catalog.tag.tag_name")?,
+            package_name: node_text(node, "hodei.catalog.tag.package_name")?,
+            package_version: node_text(node, "hodei.catalog.tag.package_version")?,
+            updated_at: node_time(node, "hodei.catalog.tag.updated_at")?,
+        })
+    }
+
+    /// La etiqueta, con la identidad comprobada contra lo que la clave
+    /// dice que son: una fila que no lleva la identidad que su clave nombra
+    /// no es una respuesta, es una corrupción.
+    fn into_tag(
+        self,
+        account: &str,
+        repository: &str,
+        tag_name: &str,
+    ) -> Result<MutableTag, CatalogError> {
+        if self.account != account || self.repository != repository || self.tag_name != tag_name {
+            return Err(CatalogError::corrupt(
+                "tag",
+                format!("{account}/{repository}/{tag_name}"),
+                "the row does not carry the identity its key names",
+            ));
+        }
+        Ok(MutableTag {
+            account: self.account,
+            repository: self.repository,
+            tag_name: self.tag_name,
+            coordinates: PackageCoordinates {
+                package_name: self.package_name,
+                package_version: self.package_version,
+            },
+            updated_at: self.updated_at,
+        })
     }
 }
 
@@ -1185,6 +1314,49 @@ fn reference_create_nquads(
     )
 }
 
+/// La fila de una etiqueta que nace: la versión a la que apunta ya existe
+/// (el llamante lo comprueba), y el índice @upsert de la clave hace que una
+/// creación repetida no duplique la fila.
+fn tag_create_nquads(
+    account: &str,
+    repository: &str,
+    tag_name: &str,
+    coordinates: &PackageCoordinates,
+    now: &str,
+) -> String {
+    format!(
+        "_:tn <dgraph.type> \"{TAG_TYPE}\" .\n\
+         _:tn <hodei.catalog.tag.key> {key} .\n\
+         _:tn <hodei.catalog.tag.account> {account} .\n\
+         _:tn <hodei.catalog.tag.repository> {repository} .\n\
+         _:tn <hodei.catalog.tag.tag_name> {name} .\n\
+         _:tn <hodei.catalog.tag.package_name> {package} .\n\
+         _:tn <hodei.catalog.tag.package_version> {version} .\n\
+         _:tn <hodei.catalog.tag.updated_at> \"{now}\" .\n",
+        key = dql_string(&tag_key(account, repository, tag_name)),
+        account = dql_string(account),
+        repository = dql_string(repository),
+        name = dql_string(tag_name),
+        package = dql_string(&coordinates.package_name),
+        version = dql_string(&coordinates.package_version),
+        now = now,
+    )
+}
+
+/// El movimiento de la fila de la etiqueta: solo cambia la versión a la
+/// que apunta y el momento. Ni la versión ni el asset ni el referrer se
+/// tocan: la etiqueta es una referencia, no el contenido.
+fn tag_move_nquads(coordinates: &PackageCoordinates, now: &str) -> String {
+    format!(
+        "uid(tn) <hodei.catalog.tag.package_name> {package} .\n\
+         uid(tn) <hodei.catalog.tag.package_version> {version} .\n\
+         uid(tn) <hodei.catalog.tag.updated_at> \"{now}\" .\n",
+        package = dql_string(&coordinates.package_name),
+        version = dql_string(&coordinates.package_version),
+        now = now,
+    )
+}
+
 /// La fila de un repositorio que nace.
 fn repository_create_nquads(descriptor: &RepositoryDescriptor, now: &str) -> String {
     format!(
@@ -1620,6 +1792,39 @@ impl DgraphCatalogStore {
         .and_then(|row| row)
     }
 
+    /// La fila de una etiqueta por su clave, sin autorizar: la identidad
+    /// (cuenta, repositorio, nombre) se comprueba contra la fila, para que
+    /// una clave que apunta a otro dueño no cruce cuentas.
+    async fn the_tag_row(
+        &self,
+        account: &str,
+        repository: &str,
+        tag_name: &str,
+    ) -> Result<Option<TagRow>, CatalogError> {
+        let query = format!(
+            "{{ q(func: eq(hodei.catalog.tag.key, {})) {{ \
+             hodei.catalog.tag.account \
+             hodei.catalog.tag.repository \
+             hodei.catalog.tag.tag_name \
+             hodei.catalog.tag.package_name \
+             hodei.catalog.tag.package_version \
+             hodei.catalog.tag.updated_at }} }}",
+            dql_string(&tag_key(account, repository, tag_name)),
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        single_row(
+            response.json.get("q"),
+            "tag",
+            format!("{account}/{repository}/{tag_name}"),
+        )
+        .map(|node| node.map(|node| TagRow::from_node(&node)).transpose())
+        .and_then(|row| row)
+    }
+
     /// El evento de auditoría de una publicación. El **tenant** es la
     /// cuenta verificada del principal, no la que dice la publicación.
     fn the_publication_event(
@@ -2029,7 +2234,10 @@ impl CatalogReader for DgraphCatalogStore {
             tag_name,
         ))
         .await?;
-        Err(CatalogError::missing("tag", tag_name.to_string()))
+        self.the_tag_row(principal_account, repository, tag_name)
+            .await?
+            .ok_or_else(|| CatalogError::missing("tag", tag_name.to_string()))?
+            .into_tag(principal_account, repository, tag_name)
     }
 
     async fn reference(
@@ -2068,9 +2276,40 @@ impl CatalogReader for DgraphCatalogStore {
             repository,
         ))
         .await?;
-        // El slice Raw no sirve etiquetas mutables: la lista honesta es la
-        // vacía, no una etiqueta que no existe.
-        Ok(Vec::new())
+        // La lista es una lectura del repositorio, y el orden es el del
+        // nombre: el que lista etiquetas las lista en un orden que no
+        // cambia de una llamada a la siguiente.
+        let query = format!(
+            "{{ q(func: eq(hodei.catalog.tag.account, {}), orderasc: hodei.catalog.tag.tag_name) \
+             @filter(eq(hodei.catalog.tag.repository, {})) \
+             {{ \
+             hodei.catalog.tag.account \
+             hodei.catalog.tag.repository \
+             hodei.catalog.tag.tag_name \
+             hodei.catalog.tag.package_name \
+             hodei.catalog.tag.package_version \
+             hodei.catalog.tag.updated_at }} }}",
+            dql_string(principal_account),
+            dql_string(repository),
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let nodes = response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut tags = Vec::with_capacity(nodes.len());
+        for node in &nodes {
+            let row = TagRow::from_node(node)?;
+            let tag_name = row.tag_name.clone();
+            tags.push(row.into_tag(principal_account, repository, &tag_name)?);
+        }
+        Ok(tags)
     }
 
     async fn referrers(
@@ -2550,7 +2789,7 @@ impl CatalogWriter for DgraphCatalogStore {
         principal_account: &str,
         repository: &str,
         tag_name: &str,
-        _coordinates: PackageCoordinates,
+        coordinates: PackageCoordinates,
     ) -> Result<MutableTag, CatalogError> {
         self.decide(&AccessRequest::tag(
             principal_account,
@@ -2559,9 +2798,112 @@ impl CatalogWriter for DgraphCatalogStore {
             tag_name,
         ))
         .await?;
-        Err(CatalogError::invalid(
-            "the dgraph raw slice does not serve mutable tags",
-        ))
+
+        if tag_name.trim().is_empty() {
+            return Err(CatalogError::invalid("the name of the tag is empty"));
+        }
+
+        // El repositorio tiene que existir y aceptar escrituras de
+        // cliente: una etiqueta es una escritura de cliente aunque el
+        // contenido al que apunta ya esté.
+        let row = self
+            .the_repository_row(principal_account, repository)
+            .await?
+            .ok_or_else(|| CatalogError::missing("repository", repository.to_string()))?;
+        if row.account != principal_account || row.repo_key != repository {
+            return Err(CatalogError::corrupt(
+                "repository",
+                repository.to_string(),
+                "the row does not carry the identity its key names",
+            ));
+        }
+        let mode = RepositoryMode::parse(&row.mode).ok_or_else(|| {
+            CatalogError::corrupt(
+                "repository",
+                repository.to_string(),
+                "the mode is not a mode",
+            )
+        })?;
+        if !mode.accepts_client_writes() {
+            return Err(CatalogError::invalid(
+                "this repository does not accept tags from a client",
+            ));
+        }
+
+        // La etiqueta apunta a una versión que exista. Las versiones no se
+        // borran, así que esta comprobación no se queda vieja.
+        self.the_version_row(principal_account, repository, &coordinates)
+            .await?
+            .ok_or_else(|| {
+                CatalogError::missing(
+                    "version",
+                    format!(
+                        "{repository}/{}@{}",
+                        coordinates.package_name, coordinates.package_version
+                    ),
+                )
+            })?;
+
+        let guard = tag_guard_scope(principal_account, repository, tag_name)?;
+        let operation = tag_operation_id(principal_account, repository, tag_name, &coordinates);
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let effect = GuardedEffect {
+            query_lines: vec![format!(
+                "tn as var(func: eq(hodei.catalog.tag.key, {}))",
+                dql_string(&tag_key(principal_account, repository, tag_name)),
+            )],
+            set_nquads: String::new(),
+            recorded_result: "moved".to_owned(),
+        };
+        // El mismo bloque sirve para crear y para mover: si la fila ya
+        // está, el índice la encuentra y el uid(tn) la reescribe; si no
+        // está, el nodo nace con su clave, que el @upsert mantiene única.
+        let _outcome = self
+            .guards
+            .execute_guarded_composite(
+                &guard,
+                &operation,
+                RevisionDemand::Advance,
+                effect,
+                &|current| {
+                    let gate = parent_gate(current);
+                    vec![
+                        GraphMutationBlock::set_if(
+                            format!("{gate} AND eq(len(tn), 0)"),
+                            tag_create_nquads(
+                                principal_account,
+                                repository,
+                                tag_name,
+                                &coordinates,
+                                &now,
+                            ),
+                        ),
+                        GraphMutationBlock::set_if(
+                            format!("{gate} AND eq(len(tn), 1)"),
+                            tag_move_nquads(&coordinates, &now),
+                        ),
+                    ]
+                },
+            )
+            .await
+            .map_err(the_guard_error)?;
+
+        // La etiqueta se lee por dentro: la escritura ya se autorizó, y
+        // releer por el camino público exigiría un permiso de lectura que
+        // el que mueve la etiqueta no tiene por qué tener.
+        //
+        // Un marcador en replay no dice nada del ESTADO actual: una
+        // reentrega que llega despues de que otro commit movió la etiqueta
+        // es un hecho ya dicho al que otro hecho ganó — eso es el último
+        // commit gana, no una corrupción. Lo que se devuelve es lo que el
+        // grafo dice ahora.
+        let written = self
+            .the_tag_row(principal_account, repository, tag_name)
+            .await?
+            .ok_or_else(|| {
+                CatalogError::unavailable("the tag was written and then it was not there")
+            })?;
+        written.into_tag(principal_account, repository, tag_name)
     }
 
     async fn move_asset(
