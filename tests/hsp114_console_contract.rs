@@ -590,8 +590,10 @@ async fn the_capabilities_say_what_can_be_created() {
     assert_eq!(of("npm")["modes"], json!(["hosted", "proxy", "group"]));
     assert_eq!(
         of("cargo")["modes"],
-        json!(["hosted"]),
-        "the sparse index serves what cargo reads and what cargo publishes"
+        json!(["hosted", "proxy"]),
+        "the sparse index serves what cargo reads, what cargo publishes \
+         and what the upstream brings; the group waits for a proven \
+         index composition"
     );
     assert_eq!(
         of("go")["modes"],
