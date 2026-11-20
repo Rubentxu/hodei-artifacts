@@ -252,6 +252,38 @@ pipeline {
                         "--test hsp135_vigencia_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
+                        // Prueba contra Dgraph real (HSP-181): sin
+                        // HODEI_GRAPH_IT_ENDPOINT la suite se salta a si
+                        // misma (exit 0); con la variable corre los tres
+                        // escenarios contra el Zero+Alpha con ACL y TLS.
+                        "--test dgraph_it",
+                        // Prueba de identidad HRN y esquema versionado
+                        // (HSP-183): sin HODEI_GRAPH_IT_ENDPOINT se salta
+                        // a si misma (exit 0); con la variable corre la
+                        // convergencia de upserts concurrentes, el arranque
+                        // idempotente y los rechazos de esquema
+                        // incompatible contra el mismo Zero+Alpha.
+                        "--test hsp183_identity_it",
+                        // Prueba de guardas transaccionales (HSP-184):
+                        // sin HODEI_GRAPH_IT_ENDPOINT se salta a si
+                        // misma (exit 0); con la variable corre la
+                        // carrera de dos clientes por la misma revision
+                        // de tag, la serializacion de diez escritores
+                        // por la guarda comun del ambito, la
+                        // convergencia de identidad y la repeticion sin
+                        // duplicar efecto tras un ACK perdido.
+                        "--test hsp184_guards_it",
+                        // Prueba del ledger de evidencia secuenciado
+                        // (HSP-185): sin HODEI_GRAPH_IT_ENDPOINT se salta
+                        // a si misma (exit 0); con la variable reproduce
+                        // el contrato del ledger sobre el grafo
+                        // (durabilidad tras cerrar el escritor, chequeo
+                        // optimista de version, reentrega una sola vez,
+                        // cursor sin saltos ni repeticiones, conflicto
+                        // entre dos clientes) y la carrera de dos
+                        // clientes con ACK perdido contra el mismo
+                        // Zero+Alpha.
+                        "--test hsp185_ledger_it",
                     ).joinToString(" ")
                 )
                 sh(

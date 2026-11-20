@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }
+hex = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
+hodei-graph-client = { path = "../hodei-graph-client" }
 hmac = "0.12"
 kernel = { path = "../kernel" }
 serde = { workspace = true }
