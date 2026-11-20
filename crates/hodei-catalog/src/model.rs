@@ -54,6 +54,13 @@ pub enum RepositoryFormat {
     Apt,
     /// RPM, con creación de repositorios.
     Rpm,
+    /// Terraform/OpenTofu, como **network mirror** de providers.
+    ///
+    /// La modalidad servida es la de espejo: sirve los documentos del
+    /// protocolo (`index.json`, el índice del provider, el documento de
+    /// versión y los zips) traídos del upstream y guardados tal cual. No es
+    /// un registry de origen ni un module registry: no se publica en él.
+    Terraform,
 }
 
 impl RepositoryFormat {
@@ -71,6 +78,7 @@ impl RepositoryFormat {
             RepositoryFormat::Helm => "helm",
             RepositoryFormat::Apt => "apt",
             RepositoryFormat::Rpm => "rpm",
+            RepositoryFormat::Terraform => "terraform",
         }
     }
 
@@ -93,6 +101,7 @@ impl RepositoryFormat {
             "helm" => Some(Self::Helm),
             "apt" => Some(Self::Apt),
             "rpm" => Some(Self::Rpm),
+            "terraform" => Some(Self::Terraform),
             _ => None,
         }
     }
@@ -148,6 +157,9 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
+            // El mirror de Terraform es proxy y solo proxy: sirve lo que el
+            // upstream tiene, cacheado; no publica y no ensambla grupos.
+            RepositoryFormat::Terraform => &[RepositoryMode::Proxy],
             RepositoryFormat::Helm => &[],
         }
     }
@@ -179,6 +191,7 @@ impl RepositoryFormat {
             RepositoryFormat::NuGet,
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
+            RepositoryFormat::Terraform,
         ]
     }
 
@@ -203,6 +216,7 @@ impl RepositoryFormat {
             RepositoryFormat::Helm,
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
+            RepositoryFormat::Terraform,
         ]
     }
 }
@@ -788,6 +802,7 @@ mod tests {
             RepositoryFormat::Helm,
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
+            RepositoryFormat::Terraform,
         ];
         for format in formats {
             assert_eq!(

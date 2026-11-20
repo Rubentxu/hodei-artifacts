@@ -503,6 +503,20 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // The Terraform/OpenTofu provider network mirror: `GET index.json`,
+        // `{hostname}/{namespace}/{type}/index.json`, `{version}.json` and
+        // the provider zips. Read-only: the mirror protocol has no writes,
+        // and any other method gets the same JSON error as the rest.
+        .route(
+            "/terraform/{*target}",
+            axum::routing::get(crate::handlers::terraform::handle)
+                .fallback(crate::handlers::terraform::handle)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         // The Go module proxy: `GET {module}/@v/list|.info|.mod|.zip` and
         // `{module}/@latest`, plus the `PUT` of those same paths that
         // publishes into a hosted repository. Module paths carry `!` and

@@ -286,6 +286,17 @@ impl CachePolicy {
                     CacheKind::Metadata
                 }
             }
+            RepositoryFormat::Terraform => {
+                // Los zips de providers son inmutables: una version publicada
+                // no cambia de bytes. Los documentos JSON del protocolo
+                // (`index.json`, `index.json` de provider, `{version}.json`)
+                // son revalidables: el upstream publica versiones nuevas.
+                if asset_path.ends_with(".zip") {
+                    CacheKind::Content
+                } else {
+                    CacheKind::Metadata
+                }
+            }
             _ => self.kind_of(asset_path),
         }
     }

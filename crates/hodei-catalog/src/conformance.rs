@@ -487,6 +487,7 @@ fn aliases_of(format: RepositoryFormat) -> &'static [&'static str] {
         RepositoryFormat::Helm => &["helm"],
         RepositoryFormat::Apt => &["apt"],
         RepositoryFormat::Rpm => &["rpm", "yum", "dnf"],
+        RepositoryFormat::Terraform => &["terraform", "tofu", "opentofu"],
     }
 }
 
