@@ -790,3 +790,81 @@ La selección se sustenta en uso real contrastado en el spike:
 - La evidencia completa (score de la cartera, wire logs, incompatibilidades,
   exclusiones y propuesta de tarea) está en
   `target/uat/hsp169/evidencia.md` del worktree del spike.
+
+## HF — repositorios Hugging Face hosted (lectura)
+
+### 1. Qué afirma este contrato
+
+Un repositorio `hf` en modalidad **hosted** es un **hub de modelos en el
+dialecto de lectura de Hugging Face**: `hf download` del CLI `hf`
+(`huggingface_hub` 1.2.3, que habla httpx) resuelve un modelo contra
+Hodei con el cliente real. El dialecto es el que el spike de HSP-169
+verificó contra huggingface.co (ruta HTTP clásica, sin xet) y contra un
+fixture local; la superficie, con `HF_ENDPOINT=http://{hub}/hf/{repo}`:
+
+- `GET /hf/{repo}/api/models/{owner}/{name}/revision/{rev}` — documento
+  de revisión: `id` (el `repo_id`), `sha` (el commit) y `siblings[]`
+  (`rfilename`). El commit es **el digest del listado del snapshot**
+  (`rfilename sha256` ordenado): content-addressed como el CAS que lo
+  sirve, y solo cambia cuando cambia el contenido que declara. Una
+  revisión que no es `main` ni el commit del snapshot es un 404: el
+  catálogo guarda el estado actual, no una historia de ramas.
+- `HEAD /hf/{repo}/{owner}/{name}/resolve/{rev}/{rfilename}` — una `302`
+  con las cabeceras del wire real: `X-Repo-Commit`, `X-Linked-Etag`
+  (el sha256 del fichero, entre comillas), `X-Linked-Size` y una
+  `Location` **relativa** (ruta desde la raíz del servidor, sin scheme ni
+  host — la forma del hub clásico). El cliente solo sigue los redirects
+  relativos; la Location lleva el modelo, el digest y el fichero porque
+  la URL nombra lo que sirve.
+- `HEAD`/`GET {Location}` (`/hf/{repo}/cdn-lfs/{owner}/{name}/{sha256}/
+  {rfilename}`) — la metadata se lee de la respuesta final del redirect y
+  los bytes van **en streaming** desde el CAS, a tramos de 64 KiB, sin
+  buffer completo en memoria: los pesos de un modelo son el artefacto
+  grande típico. El `ETag` de la respuesta es el sha256 del contenido.
+- `GET` del resolve directo: los mismos bytes, sin redirect.
+
+La identidad del blob es su sha256 — etag, nombre de cache del cliente y
+digest del CAS son el mismo valor —: CAS exacto, el mismo encaje que la
+ficha FMT-07 prometió. El servidor no emite `X-Xet-*`, así que el cliente
+cae a la ruta HTTP clásica (decisión del fixture del spike, documentada).
+
+El scoping es el del hub: el cliente lleva el token como
+`Authorization: Bearer`, se verifica como credencial bearer del principal
+y otro principal no ve el repositorio de la cuenta primera. Un modelo del
+catálogo es el conjunto de assets `artifacts/{owner}/{name}/{rfilename}`;
+la escritura no se declara (el upload clásico y el xet quedan fuera) y el
+contenido entra por la siembra del hub.
+
+### 2. Cómo se comprueba
+
+- `tests/hsp218_hf_client.rs`: el cliente **`hf` real** (el del venv de
+  la UAT, fijado por `HF_BIN` y por el assert de versión) descarga un
+  modelo pequeño sembrado, y el sha256 de lo instalado es el etag que la
+  superficie declaró; con el servicio parado, la cache caliente resuelve
+  sin red; otro principal no ve el modelo de la cuenta primera. La
+  gramática vive en `hodei_catalog::hf` (pura, con sus unitarios) y los
+  efectos en `src/handlers/hf.rs`.
+- **Test negativo documentado** (límite del cliente): en la ruta HTTP
+  clásica el CLI **solo verifica el tamaño**, nunca el sha256 declarado
+  en `X-Linked-Etag` — una descarga servida corrupta es ACEPTADA por el
+  cliente real y solo un `sha256sum` externo la detecta (hallazgo del
+  spike, reproducido en la suite con el fixture del spike en modo
+  `CORRUPT=1`). En hosted la garantía de integridad la cubre el **CAS del
+  servidor** (conexión con HSP-105): el almacén no entrega bytes que no
+  son su digest, y el etag que el cliente usa para nombrar su cache es el
+  digest que el CAS verificó al servir.
+
+### 3. Lo que este contrato NO promete
+
+- **No hay escritura.** Ni el upload clásico ni el protocolo xet se
+  declaran: la superficie es de lectura y el contenido entra por la
+  siembra del hub. El dialecto de escritura queda para decisión
+  posterior.
+- **No hay proxy ni group para hf.** El upstream real anuncia xet y
+  entrega por redirects firmados a un CDN: otro dialecto que no se ha
+  probado con cliente.
+- **Una sola revisión servida.** `main` y el commit del snapshot; no hay
+  ramas ni historial de commits en la hosted.
+- **El rigor del cliente es del cliente.** El CLI no verifica el sha256
+  de la descarga (solo el tamaño): es el límite documentado arriba, y el
+  hub lo cubre desde el CAS, no desde el wire.
