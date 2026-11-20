@@ -85,6 +85,10 @@ pub enum GuardKind {
     Ledger,
     /// Projection checkpoint advances over one (consumer, stream).
     Checkpoint,
+    /// Repository creation over one (account, repository key).
+    CatalogRepository,
+    /// Catalog publication over one asset path of a repository.
+    CatalogAsset,
 }
 
 impl GuardKind {
@@ -97,6 +101,8 @@ impl GuardKind {
             GuardKind::Quota => "quota",
             GuardKind::Ledger => "ledger",
             GuardKind::Checkpoint => "checkpoint",
+            GuardKind::CatalogRepository => "catalog-repository",
+            GuardKind::CatalogAsset => "catalog-asset",
         }
     }
 }
