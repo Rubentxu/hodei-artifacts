@@ -151,10 +151,10 @@ impl RepositoryFormat {
     /// from its upstream, and what a group composes of its members. The
     /// OCI surface serves the hosted one, the proxy one and the group one:
     /// an OCI group resolves the reference among its members with the
-    /// precedence declared by its configuration. The cargo one serves only the hosted
-    /// one for now: a push is a write, and a write lands where the client
-    /// publishes. The proxy semantics of cargo need a client-verified
-    /// upstream before they can be declared. The go surface serves the
+    /// precedence declared by its configuration. The cargo one serves the hosted
+    /// one and the proxy one —its sparse index upstream was verified with
+    /// the real client— but not the group: composing an index by package
+    /// across members has not been proven with a client. The go surface serves the
     /// hosted one, the proxy one and the group one: a go group assembles
     /// the union of the versions of its members and resolves a version
     /// from a single member, so the `go.sum` of the client always
@@ -181,7 +181,7 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
-            RepositoryFormat::Cargo => &[RepositoryMode::Hosted],
+            RepositoryFormat::Cargo => &[RepositoryMode::Hosted, RepositoryMode::Proxy],
             RepositoryFormat::Apt => &[
                 RepositoryMode::Hosted,
                 RepositoryMode::Proxy,

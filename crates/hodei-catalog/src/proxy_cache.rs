@@ -297,6 +297,18 @@ impl CachePolicy {
                     CacheKind::Metadata
                 }
             }
+            RepositoryFormat::Cargo => {
+                // The bytes of a .crate are identified by their cksum and do
+                // not change. A crate's index document is metadata the
+                // upstream republishes: a yank rewrites it in place, and the
+                // same goes for the config.json the download template comes
+                // from.
+                if asset_path.ends_with(".crate") {
+                    CacheKind::Content
+                } else {
+                    CacheKind::Metadata
+                }
+            }
             _ => self.kind_of(asset_path),
         }
     }
