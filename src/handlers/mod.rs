@@ -14,6 +14,7 @@ pub mod capabilities;
 pub mod capsules;
 pub mod cargo;
 pub mod catalog_repositories;
+pub mod conan;
 pub mod gc;
 pub mod go;
 pub mod health;

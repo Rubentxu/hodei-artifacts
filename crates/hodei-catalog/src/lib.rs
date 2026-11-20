@@ -46,6 +46,7 @@
 
 pub mod apt;
 pub mod cargo;
+pub mod conan;
 pub mod conformance;
 pub mod error;
 pub mod gc;

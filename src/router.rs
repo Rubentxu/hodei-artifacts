@@ -517,6 +517,25 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // The Conan 2 remote surface: the v2 protocol with revisions
+        // (`GET /v1/ping`, `GET /v2/users/authenticate`, search, snapshots
+        // and the `PUT` of recipe and package files). The path is the
+        // protocol grammar's own, so it arrives raw and the handler is the
+        // one that decodes it.
+        .route(
+            "/conan/{*target}",
+            axum::routing::get(crate::handlers::conan::handle)
+                .head(crate::handlers::conan::handle)
+                .put(crate::handlers::conan::handle)
+                .fallback(crate::handlers::conan::handle)
+                // A conan_package.tgz is a whole package, so the default
+                // limit of `axum` would refuse it before the protocol.
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         // The Go module proxy: `GET {module}/@v/list|.info|.mod|.zip` and
         // `{module}/@latest`, plus the `PUT` of those same paths that
         // publishes into a hosted repository. Module paths carry `!` and

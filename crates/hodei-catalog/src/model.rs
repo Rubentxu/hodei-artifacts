@@ -61,6 +61,14 @@ pub enum RepositoryFormat {
     /// versión y los zips) traídos del upstream y guardados tal cual. No es
     /// un registry de origen ni un module registry: no se publica en él.
     Terraform,
+    /// Conan 2, con recipes y binarios identificados por recipe revision,
+    /// `package_id` y package revision.
+    ///
+    /// La modalidad servida es la hosted: un cliente Conan 2 publica con
+    /// `conan upload` y resuelve con `conan install` contra el remote de
+    /// Hodei. El proxy necesita el dialecto de upstream validado con
+    /// cliente real antes de poder declararse.
+    Conan,
 }
 
 impl RepositoryFormat {
@@ -79,6 +87,7 @@ impl RepositoryFormat {
             RepositoryFormat::Apt => "apt",
             RepositoryFormat::Rpm => "rpm",
             RepositoryFormat::Terraform => "terraform",
+            RepositoryFormat::Conan => "conan",
         }
     }
 
@@ -102,6 +111,7 @@ impl RepositoryFormat {
             "apt" => Some(Self::Apt),
             "rpm" => Some(Self::Rpm),
             "terraform" => Some(Self::Terraform),
+            "conan" => Some(Self::Conan),
             _ => None,
         }
     }
@@ -160,6 +170,11 @@ impl RepositoryFormat {
             // El mirror de Terraform es proxy y solo proxy: sirve lo que el
             // upstream tiene, cacheado; no publica y no ensambla grupos.
             RepositoryFormat::Terraform => &[RepositoryMode::Proxy],
+            // Conan sirve la hosted: el cliente publica lo que ha creado y
+            // resuelve lo que el remote guarda. El proxy necesita el
+            // dialecto de upstream probado con cliente real, y el group
+            // una resolución compuesta probada, antes de poder prometerse.
+            RepositoryFormat::Conan => &[RepositoryMode::Hosted],
             RepositoryFormat::Helm => &[],
         }
     }
@@ -192,6 +207,7 @@ impl RepositoryFormat {
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
             RepositoryFormat::Terraform,
+            RepositoryFormat::Conan,
         ]
     }
 
@@ -217,6 +233,7 @@ impl RepositoryFormat {
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
             RepositoryFormat::Terraform,
+            RepositoryFormat::Conan,
         ]
     }
 }
@@ -803,6 +820,7 @@ mod tests {
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
             RepositoryFormat::Terraform,
+            RepositoryFormat::Conan,
         ];
         for format in formats {
             assert_eq!(

@@ -691,6 +691,18 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the cargo repositories");
     }
 
+    /// Crea repositorios **conan hosted** de la primera cuenta. Cada uno
+    /// es una clave y su config (`null` si no lleva).
+    pub fn seed_conan(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(
+                |(key, conan)| serde_json::json!({ "key": key, "conan": conan, "format": "conan" }),
+            )
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the conan repositories");
+    }
+
     /// Crea repositorios **apt hosted** de la primera cuenta. Cada
     /// entrada es una clave y su config (`null` si no tiene).
     pub fn seed_apt(&self, repositories: &[(&str, serde_json::Value)]) {
@@ -2698,6 +2710,8 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::Apt
             } else if repository["format"].as_str() == Some("rpm") {
                 hodei_catalog::RepositoryFormat::Rpm
+            } else if repository["format"].as_str() == Some("conan") {
+                hodei_catalog::RepositoryFormat::Conan
             } else {
                 hodei_catalog::RepositoryFormat::Maven2
             };

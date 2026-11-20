@@ -148,6 +148,7 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
         (RepositoryFormat::Go, RepositoryMode::Group) => &["hsp232_go_group"],
         (RepositoryFormat::Apt, RepositoryMode::Hosted) => &["hsp122_apt_e2e", "hsp122_apt_client"],
         (RepositoryFormat::Rpm, RepositoryMode::Hosted) => &["hsp122_yum_e2e", "hsp122_yum_client"],
+        (RepositoryFormat::Conan, RepositoryMode::Hosted) => &["hsp159_conan_client"],
         _ => &[],
     }
 }
@@ -488,6 +489,7 @@ fn aliases_of(format: RepositoryFormat) -> &'static [&'static str] {
         RepositoryFormat::Apt => &["apt"],
         RepositoryFormat::Rpm => &["rpm", "yum", "dnf"],
         RepositoryFormat::Terraform => &["terraform", "tofu", "opentofu"],
+        RepositoryFormat::Conan => &["conan"],
     }
 }
 

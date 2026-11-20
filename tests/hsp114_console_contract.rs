@@ -584,6 +584,11 @@ async fn the_capabilities_say_what_can_be_created() {
         "the distro client installs from what this hub publishes"
     );
     assert_eq!(of("rpm")["modes"], json!(["hosted"]));
+    assert_eq!(
+        of("conan")["modes"],
+        json!(["hosted"]),
+        "the conan remote serves what conan publishes and what conan resolves"
+    );
     assert!(
         formats.iter().all(|format| format["name"] != "helm"),
         "a format that this release does not serve is not offered: helm"

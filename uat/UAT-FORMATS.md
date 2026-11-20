@@ -490,3 +490,60 @@ Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
   es `microdnf` (y `apt`+`gpgv` en el lado Debian). El contrato promete
   que la firma servida abre con la clave publicada y que ningún cliente
   que la exige instala con otra clave.
+
+## CONAN — repositorios Conan 2 hosted
+
+### 1. Qué afirma este contrato
+
+Un repositorio `conan` en modalidad **hosted** es un **remote de Conan 2**
+con revisiones: `conan create` construye contra perfiles reales,
+`conan upload` publica contra Hodei y `conan install` resuelve desde él en
+una cache limpia. Lo que el remote preserva es la identidad versionada del
+propio dialecto: la **recipe revision** (`rrev`), el **`package_id`** y la
+**package revision** (`prev`) son segmentos que el servidor conserva
+opacos — nunca derivados del nombre ni igualados a la versión — y los
+binarios de dos `package_id` del mismo recipe viven bajo prefijos de asset
+distintos (`packages/{n}/{v}/{u}/{c}/{rrev}/{pid}/{prev}/{file}`), de modo
+que un `package_id` pide y recibe SUS bytes, no los del otro.
+
+El scoping es el del hub: la credencial del remote se verifica como
+credencial bearer del principal en el authenticate del dialecto
+(`GET /v2/users/authenticate`, Basic de entrada, token de salida), y el
+listing de un principal de otra cuenta no ve lo que no le toca.
+
+### 2. Cómo se comprueba
+
+- `tests/hsp159_conan_client.rs`: el cliente **conan 2.x real** (el del
+  venv de la UAT, fijado por `CONAN_BIN` y por el assert de versión
+  major 2) crea el mismo recipe con **dos perfiles** (opción `flavor`
+  distinta → dos `package_id` de la misma `rrev`), lo sube con
+  `conan upload`, lista el remote (`conan list "ref#*" -r`) y compara que
+  el remote diga las mismas revisiones que la cache local; instala los dos
+  perfiles en caches limpias y comprueba, por `package_id`, que el
+  contenido bajado (el `flavor.txt` de cada binario) es el del perfil y
+  que el sha256 de cada `conan_package.tgz` descargado es el del subido;
+  con el servicio parado, el re-install de la cache caliente funciona sin
+  red, y faltando el binario, el install falla. Otro principal no ve la
+  receta de la cuenta primera.
+- El **dialecto HTTP** (tabla de rutas v2, ping con
+  `X-Conan-Server-Capabilities: revisions`, documentos de revisiones y
+  snapshots) quedó fijado con un **spike contra `conan_server` 1.66** como
+  remote de referencia, detrás de un proxy de registro; la gramática vive
+  en `hodei_catalog::conan` (pura, con sus unitarios) y los efectos en
+  `src/handlers/conan.rs`. La evidencia del spike y de la UAT está en
+  `target/uat/hsp159/evidencia.md`.
+
+### 3. Lo que este contrato NO promete
+
+- **No hay proxy ni group para conan.** El upstream de un proxy conan
+  necesita su dialecto validado con cliente real antes de poder
+  declararse, y la resolución compuesta de un group lo mismo. Solo la
+  hosted está probada y declarada.
+- **No se sirve `DELETE`** (el `conan remove` contra el remote): la
+  superficie hosted mínima no borra revisiones.
+- **La deduplicación `checksum_deploy` no se anuncia.** El ping declara
+  solo `revisions`; la subida es de ficheros completos.
+- **El token del remote es la credencial del hub**, no un JWT emitido por
+  el servidor de conan: el authenticate verifica la contraseña como
+  credencial bearer y la devuelve como token. La semántica de scoping es
+  la del hub, no una tabla de usuarios propia.
