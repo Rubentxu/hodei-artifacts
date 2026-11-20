@@ -737,12 +737,14 @@ async fn lineage_walks_the_native_edges() {
     );
 
     // The reference walks of the Surreal adapter, over the native
-    // traversals. `artifacts_of_build` in the REFERENCE reads the
-    // relations that END at the build and filters Produced — with the
-    // projector's Build -[produced]-> Artifact direction that walk
-    // finds nothing, and the Dgraph port reproduces the reference
-    // walk VERBATIM, quirk included (flagged in the task evidence):
-    // the parity the AC2 asks for is preserved, not improved.
+    // traversals. `artifacts_of_build` reads the relations that START
+    // at the build and filters Produced — the produced relation goes
+    // FROM the build TO the artefact, so the walk answers with what the
+    // build produced. HSP-189 had replicated the reference walk
+    // verbatim, which read the relations that END at the build and
+    // found nothing; HSP-200 corrected the walk in BOTH ports (the
+    // Surreal reference included), so the parity is now parity of a
+    // walk that works, not parity of a quirk.
     let from_repository = store.relations_from(&tenant, &repository).await.unwrap();
     assert!(
         from_repository
@@ -761,13 +763,20 @@ async fn lineage_walks_the_native_edges() {
             .iter()
             .any(|r| r.relation == RelationType::Triggered)
     );
-    let artifacts = store
+    let artifacts = store.artifacts_of_build(&tenant, &build).await.unwrap();
+    assert_eq!(
+        artifacts.len(),
+        1,
+        "the build produced the artefact through the corrected walk"
+    );
+    let repository_artifacts = store
         .artifacts_of_repository(&tenant, &repository)
         .await
         .unwrap();
-    assert!(
-        artifacts.is_empty(),
-        "the reference walk yields nothing for this direction; parity keeps it"
+    assert_eq!(
+        repository_artifacts.len(),
+        1,
+        "the three-hop repository walk reaches the artefact"
     );
     let deployments = store.deployments(&tenant, &artifact).await.unwrap();
     assert_eq!(deployments.len(), 1);

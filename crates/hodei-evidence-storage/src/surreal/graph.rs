@@ -23,8 +23,12 @@
 use super::delta::SurrealRelationDeltaLedger;
 use hodei_evidence::GraphChangeSet;
 use hodei_evidence::domain::delta::RelationDeltaLedger;
+use hodei_evidence::domain::graph::RelationType;
 use hodei_evidence::domain::graph::{GraphNode, GraphRelation, NodeKind};
-use hodei_evidence::ports::graph::{GraphError, GraphQuery, GraphWriter, Lineage};
+use hodei_evidence::ports::graph::{
+    BoundedGraphQuery, BoundedLineage, BoundedTraversal, GraphError, GraphQuery, GraphReadLimits,
+    GraphWriter, Lineage, WalkBudget,
+};
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -711,13 +715,19 @@ impl<C: Connection> GraphQuery for SurrealGraphStore<C> {
     }
 
     /// The artefacts a build produced.
+    ///
+    /// The produced relation goes FROM the build TO the artefact, so the
+    /// walk starts at the build and reads the relations that START at it
+    /// (HSP-200 corrected the walk; HSP-189 had replicated it verbatim
+    /// from this reference, where it found nothing under the projector's
+    /// direction).
     async fn artifacts_of_build(
         &self,
         tenant: &Hrn,
         build: &Hrn,
     ) -> Result<Vec<GraphNode>, GraphError> {
         let mut artifacts = Vec::new();
-        for relation in self.relations_to(tenant, build).await? {
+        for relation in self.relations_from(tenant, build).await? {
             if relation.relation == hodei_evidence::RelationType::Produced {
                 artifacts.extend(
                     self.node_of_kind(tenant, &relation.to, NodeKind::Artifact)
@@ -998,5 +1008,294 @@ impl<C: Connection> hodei_evidence::application::projection::ProjectionCheckpoin
             .check()
             .map_err(|error| GraphError::Rejected(error.to_string()))?;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bounded reads (HSP-200)
+//
+// The reference walk, hop by hop, under the same limits and the same
+// accounting the Dgraph port answers with: one budget decides when the
+// walk stops, the account is a filter on every hop, and the receipt
+// travels with the answer. This is the parity oracle of the bounded
+// reads, over the store the product already runs.
+// ---------------------------------------------------------------------------
+
+#[async_trait::async_trait]
+impl<C: Connection> BoundedGraphQuery for SurrealGraphStore<C> {
+    /// The lineage of an artefact under limits.
+    async fn bounded_lineage(
+        &self,
+        tenant: &Hrn,
+        artifact: &Hrn,
+        limits: &GraphReadLimits,
+    ) -> Result<BoundedLineage, GraphError> {
+        let mut budget = WalkBudget::new(*limits);
+        let mut lineage = Lineage::default();
+
+        budget.round_trip();
+        lineage.artifact = self
+            .node_by_identity(tenant, artifact)
+            .await?
+            .filter(|node| node.kind == NodeKind::Artifact);
+
+        // Hop 1: everything that ends at the artefact is evidence; the
+        // produced ones name its builds. The far nodes are read by their
+        // identity and kind, like the reference lineage reads them.
+        let artifact_hrn = artifact.to_string();
+        if !budget.may_expand() {
+            budget.leave_frontier(1);
+        } else {
+            budget.hop();
+            budget.round_trip();
+            let found = self
+                .relations_where_limited(tenant, "to", &artifact_hrn, budget.edges_remaining())
+                .await?;
+            let keep = budget.admit_edges(found.len());
+            lineage.evidence = found[..keep.min(found.len())].to_vec();
+            let mut builds: Vec<GraphNode> = Vec::new();
+            for relation in &lineage.evidence {
+                if relation.relation != RelationType::Produced {
+                    continue;
+                }
+                if !budget.may_expand() {
+                    break;
+                }
+                budget.round_trip();
+                for build in self
+                    .node_of_kind(tenant, &relation.from, NodeKind::Build)
+                    .await?
+                {
+                    if !builds.iter().any(|held| held.id == build.id) {
+                        builds.push(build);
+                    }
+                }
+            }
+            builds.sort_by_key(|node| node.id.to_string());
+            let _ = budget.admit_nodes(builds.len());
+            if budget.stopped() {
+                budget.leave_frontier(builds.len());
+            }
+
+            // Hop 2: the revisions the builds used or were triggered by.
+            let mut revisions: Vec<GraphNode> = Vec::new();
+            for build in &builds {
+                if !budget.may_expand() {
+                    budget.leave_frontier(
+                        builds.len()
+                            - builds
+                                .iter()
+                                .position(|held| held.id == build.id)
+                                .unwrap_or(0),
+                    );
+                    break;
+                }
+                budget.round_trip();
+                for relation in self.relations_to(tenant, &build.id).await? {
+                    let is_source = relation.relation == RelationType::UsedSource;
+                    let is_trigger = relation.relation == RelationType::Triggered;
+                    if !is_source && !is_trigger {
+                        continue;
+                    }
+                    for revision in self
+                        .node_of_kind(tenant, &relation.from, NodeKind::SourceRevision)
+                        .await?
+                    {
+                        if !revisions.iter().any(|held| held.id == revision.id) {
+                            revisions.push(revision);
+                        }
+                    }
+                }
+            }
+            revisions.sort_by_key(|node| node.id.to_string());
+            let _ = budget.admit_nodes(revisions.len());
+            lineage.revisions = revisions;
+
+            // Hop 3: the repository the revisions belong to.
+            for revision in &lineage.revisions {
+                if !budget.may_expand() {
+                    break;
+                }
+                budget.round_trip();
+                for relation in self.relations_to(tenant, &revision.id).await? {
+                    if relation.relation != RelationType::HasRevision {
+                        continue;
+                    }
+                    if lineage.repository.is_none() {
+                        lineage.repository = self
+                            .node_of_kind(tenant, &relation.from, NodeKind::Repository)
+                            .await?
+                            .into_iter()
+                            .next();
+                    }
+                }
+            }
+
+            // Hop 4: where the artefact is deployed.
+            if budget.may_expand() {
+                budget.hop();
+                budget.round_trip();
+                for relation in self.relations_from(tenant, artifact).await? {
+                    if relation.relation != RelationType::DeployedAs {
+                        continue;
+                    }
+                    lineage.deployments.extend(
+                        self.node_of_kind(tenant, &relation.to, NodeKind::Deployment)
+                            .await?,
+                    );
+                }
+            } else {
+                budget.leave_frontier(1);
+            }
+
+            lineage.builds = builds;
+        }
+
+        Ok(BoundedLineage {
+            lineage,
+            trace: budget.trace(),
+        })
+    }
+
+    /// The dependency graph that starts at a node under limits.
+    async fn bounded_dependencies(
+        &self,
+        tenant: &Hrn,
+        node: &Hrn,
+        limits: &GraphReadLimits,
+    ) -> Result<BoundedTraversal, GraphError> {
+        let mut budget = WalkBudget::new(*limits);
+        let mut out = BoundedTraversal::default();
+
+        budget.round_trip();
+        out.root = self.node_by_identity(tenant, node).await?;
+        let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        visited.insert(node.to_string());
+        let mut frontier: Vec<String> = vec![node.to_string()];
+
+        while !frontier.is_empty() {
+            if !budget.may_expand() {
+                budget.leave_frontier(frontier.len());
+                break;
+            }
+            budget.hop();
+            let mut fresh: std::collections::BTreeMap<String, GraphNode> =
+                std::collections::BTreeMap::new();
+            let mut crossed: Vec<GraphRelation> = Vec::new();
+            for endpoint in &frontier {
+                if !budget.may_expand() {
+                    budget.leave_frontier(frontier.len());
+                    break;
+                }
+                budget.round_trip();
+                let found = self
+                    .relations_where_limited(tenant, "from", endpoint, budget.edges_remaining())
+                    .await?;
+                for relation in found {
+                    crossed.push(relation.clone());
+                    fresh
+                        .entry(relation.to.to_string())
+                        .or_insert_with(|| GraphNode {
+                            id: relation.to.clone(),
+                            tenant_hrn: tenant.clone(),
+                            kind: NodeKind::Component,
+                            attributes: Default::default(),
+                            observed_at: relation.observed_at,
+                        });
+                }
+            }
+            crossed.sort_by_key(|relation| relation.identity());
+            let keep = budget.admit_edges(crossed.len());
+            out.edges
+                .extend(crossed[..keep.min(crossed.len())].to_vec());
+
+            let fresh_list: Vec<GraphNode> = fresh
+                .into_values()
+                .filter(|candidate| !visited.contains(&candidate.id.to_string()))
+                .collect();
+            let admitted = budget.admit_nodes(fresh_list.len()).min(fresh_list.len());
+            let mut next_frontier = Vec::new();
+            for reached in fresh_list[..admitted].iter() {
+                visited.insert(reached.id.to_string());
+                next_frontier.push(reached.id.to_string());
+            }
+            // The stub nodes of the traversal are re-read whole by
+            // whoever consumes it; the traversal itself carries the
+            // identities it reached, so the parity check compares the
+            // graph the two stores agree on.
+            let mut whole = Vec::new();
+            for reached in fresh_list[..admitted].iter() {
+                if !budget.may_expand() {
+                    break;
+                }
+                budget.round_trip();
+                if let Some(found) = self.node_by_identity(tenant, &reached.id).await? {
+                    whole.push(found);
+                }
+            }
+            out.nodes.extend(whole);
+            if budget.stopped() {
+                budget.leave_frontier(fresh_list.len());
+                break;
+            }
+            frontier = next_frontier;
+        }
+        out.trace = budget.trace();
+        Ok(out)
+    }
+}
+
+impl<C: Connection> SurrealGraphStore<C> {
+    /// A node by its identity, whatever kind it is, of an account.
+    async fn node_by_identity(
+        &self,
+        tenant: &Hrn,
+        id: &Hrn,
+    ) -> Result<Option<GraphNode>, GraphError> {
+        let mut response = self
+            .db
+            .query("SELECT * FROM $id")
+            .bind(("id", self.node_id(id)))
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        let rows: Vec<NodeRow> = response
+            .take(0)
+            .map_err(|error| GraphError::Rejected(error.to_string()))?;
+        Ok(rows
+            .iter()
+            .filter(|row| row.tenant_hrn == tenant.to_string())
+            .filter_map(node_of)
+            .next())
+    }
+
+    /// The relations of one end of the frontier, of an account, bounded
+    /// at the engine by the edges the walk may still take.
+    async fn relations_where_limited(
+        &self,
+        tenant: &Hrn,
+        field: &str,
+        value: &str,
+        limit: usize,
+    ) -> Result<Vec<GraphRelation>, GraphError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let query = format!(
+            "SELECT * FROM type::table($table) WHERE tenant_hrn = $tenant AND {field} = $value \
+             AND (status IS NONE OR status = 'asserted') LIMIT $limit"
+        );
+        let mut response = self
+            .db
+            .query(query)
+            .bind(("table", self.relation_table()))
+            .bind(("tenant", tenant.to_string()))
+            .bind(("value", value.to_string()))
+            .bind(("limit", limit as i64))
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        let rows: Vec<RelationRow> = response
+            .take(0)
+            .map_err(|error| GraphError::Rejected(error.to_string()))?;
+        Ok(rows.iter().filter_map(relation_of).collect())
     }
 }
