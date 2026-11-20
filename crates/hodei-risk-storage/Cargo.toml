@@ -10,6 +10,8 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
 hodei-evidence-storage = { path = "../hodei-evidence-storage" }
+hodei-graph-client = { path = "../hodei-graph-client" }
+tracing = { workspace = true }
 hodei-reactive = { path = "../hodei-reactive" }
 hodei-risk = { path = "../hodei-risk" }
 kernel = { path = "../kernel" }
