@@ -284,6 +284,14 @@ pipeline {
                         // clientes con ACK perdido contra el mismo
                         // Zero+Alpha.
                         "--test hsp185_ledger_it",
+                        // Prueba de IAM sobre Dgraph (HSP-186): sin
+                        // HODEI_GRAPH_IT_ENDPOINT se salta; con el perfil
+                        // real valida persistencia y aislamiento tras reconexion.
+                        "--test hsp186_dgraph_iam_it",
+                        // Prueba del EvidenceStore Dgraph (HSP-188): sin
+                        // HODEI_GRAPH_IT_ENDPOINT se salta; con el perfil
+                        // real valida recibos, identidad, scope e integridad CAS.
+                        "--test hsp188_dgraph_evidence_it",
                     ).joinToString(" ")
                 )
                 sh(

@@ -48,18 +48,10 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// marker (`hodei.operation.*`), both `@upsert` guarded so the server
 /// itself forces the conflict between concurrent writers.
 ///
-/// v3 adds the sequenced evidence ledger: one event node per stream
-/// position (`hodei.ledger.*`), whose composite key is `@upsert` guarded
-/// so the server itself refuses two writers claiming the same position.
-/// The head of a stream is not a stored row but the revision of the
-/// stream's guard ([`crate::guard`]): an append demands the exact
-/// revision its position sequenced at, so the guard IS the sequence.
-/// v3 adds the IAM carriers (`hodei.iam.*`): the kind discriminator and
-/// the fields the IAM adapters of `hodei-iam` store on the same
-/// identity nodes (unique key, CAS revision), so policy/user/group
-/// persistence shares the stack's identity, uniqueness and versioning
-/// guarantees instead of inventing a parallel store.
-pub const SCHEMA_VERSION: u64 = 3;
+/// v3 adds the sequenced evidence ledger and IAM carriers. v4 adds
+/// immutable evidence metadata and its producer/external-identity index;
+/// content bytes remain in the existing CAS and are never stored here.
+pub const SCHEMA_VERSION: u64 = 4;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -624,6 +616,105 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            spec(
+                "hodei.evidence.key",
+                "hodei.evidence.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.evidence.tenant",
+                "hodei.evidence.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.producer_id",
+                "hodei.evidence.producer_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.external_id",
+                "hodei.evidence.external_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.type",
+                "hodei.evidence.type: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.content_digest",
+                "hodei.evidence.content_digest: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.account",
+                "hodei.evidence.account: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.subject",
+                "hodei.evidence.subject: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.record",
+                "hodei.evidence.record: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.external_key",
+                "hodei.evidence.external_key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.evidence.external_evidence_id",
+                "hodei.evidence.external_evidence_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -661,6 +752,10 @@ pub fn hodei_schema() -> HodeiSchema {
              hodei.iam.hrn\n  hodei.iam.content\n  hodei.iam.description\n  \
              hodei.iam.email\n  hodei.iam.tags\n  hodei.iam.attachment\n  \
              hodei.iam.created_at\n  hodei.iam.updated_at\n}"
+                .to_owned(),
+            "type HodeiEvidence {\n  hodei.evidence.key\n  hodei.evidence.tenant\n  hodei.evidence.producer_id\n  hodei.evidence.external_id\n  hodei.evidence.type\n  hodei.evidence.content_digest\n  hodei.evidence.account\n  hodei.evidence.subject\n  hodei.evidence.record\n}"
+                .to_owned(),
+            "type HodeiEvidenceExternal {\n  hodei.evidence.external_key\n  hodei.evidence.external_evidence_id\n}"
                 .to_owned(),
         ],
     )

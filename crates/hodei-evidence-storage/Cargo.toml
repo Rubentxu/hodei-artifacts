@@ -22,4 +22,5 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+hodei-hub = { path = "../hodei-hub" }
 hodei-risk-storage = { path = "../hodei-risk-storage" }

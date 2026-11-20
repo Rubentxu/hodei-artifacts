@@ -3504,6 +3504,7 @@ dependencies = [
  "hmac 0.12.1",
  "hodei-evidence",
  "hodei-graph-client",
+ "hodei-hub",
  "hodei-risk-storage",
  "kernel",
  "serde",
