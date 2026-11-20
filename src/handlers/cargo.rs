@@ -12,9 +12,24 @@
 //! and two concurrent publishers cannot overwrite each other because each
 //! one writes its own version.
 //!
-//! The mode served today is **hosted**: the cargo proxy needs an
-//! upstream validated with a real client before it can be declared, and a
-//! repository whose mode is not served cannot even be created.
+//! # Proxy
+//!
+//! A **proxy** cargo repository resolves against the sparse upstream its
+//! configuration declares: a crate's index document is fetched from the
+//! sparse path the client asked for (and served **byte for byte**, without
+//! reordering or rewriting: the order and the cksums are the upstream's) and
+//! the .crate is fetched through the `dl` template the upstream's config.json
+//! declares. The index and the config are **metadata** revalidated by TTL
+//! with the common proxy cache (an upstream yank shows up when the TTL
+//! expires); the .crate is immutable content. The download verifies the
+//! cksum its index line declares: bytes that do not match the index are not
+//! served.
+//!
+//! The proxy **never publishes**: `cargo publish` against it is a 405. And a
+//! name that a **hosted** repository of the account already knows is
+//! reserved: the proxy blocks it and does not fall through to the upstream,
+//! neither from cache nor live: the upstream cannot impersonate what the
+//! hosted one already published.
 
 use axum::{
     body::Body,
@@ -24,15 +39,17 @@ use axum::{
 };
 use hodei_catalog::{
     CatalogError, PackageCoordinates, Publication, RepositoryDescriptor, RepositoryFormat,
+    RepositoryMode,
     cargo::{self, CargoError, Route},
 };
 use hodei_evidence::ContentDigest;
 use serde_json::{Value, json};
+use url::Url;
 
 use super::raw::{
-    RawApiError, apply_cache_headers, apply_common_headers, the_admission_error, the_blob_error,
-    the_catalog, the_content_store, the_context, the_decision, the_publication_error,
-    the_repository_in, write_the_content,
+    ProxyServed, RawApiError, apply_cache_headers, apply_common_headers, the_admission_error,
+    the_blob_error, the_catalog, the_content_store, the_context, the_decision, the_proxy_asset,
+    the_proxy_asset_at, the_publication_error, the_repository_in, write_the_content,
 };
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
@@ -172,20 +189,34 @@ pub async fn handle(
                 crate::actions::download_asset(),
                 &repository,
             )?;
+            // The config.json is ALWAYS this service's, also on a proxy:
+            // the client downloads here, not from the upstream.
             let body = cargo::config_json(&the_base(&origin, &repository_key)?);
             Ok(json_response(StatusCode::OK, &body, None, &correlation))
         }
         (Route::Index { name }, true, _) => {
-            let outcome = read_index(
-                &state,
-                &context,
-                &repository,
-                name,
-                method == Method::HEAD,
-                &headers,
-                &correlation,
-            )
-            .await;
+            let outcome = if repository.mode == RepositoryMode::Proxy {
+                read_proxy_index(
+                    &state,
+                    &context,
+                    &repository,
+                    name,
+                    method == Method::HEAD,
+                    &correlation,
+                )
+                .await
+            } else {
+                read_index(
+                    &state,
+                    &context,
+                    &repository,
+                    name,
+                    method == Method::HEAD,
+                    &headers,
+                    &correlation,
+                )
+                .await
+            };
             record_outcome(
                 &state,
                 &context,
@@ -197,16 +228,29 @@ pub async fn handle(
             outcome
         }
         (Route::Download { name, version }, true, _) => {
-            let asset_path = format!("{name}/-/{name}-{version}.crate");
-            let outcome = read_crate(
-                &state,
-                &context,
-                repository.clone(),
-                &asset_path,
-                method == Method::HEAD,
-                &correlation,
-            )
-            .await;
+            let outcome = if repository.mode == RepositoryMode::Proxy {
+                read_proxy_download(
+                    &state,
+                    &context,
+                    &repository,
+                    name,
+                    version,
+                    method == Method::HEAD,
+                    &correlation,
+                )
+                .await
+            } else {
+                let asset_path = format!("{name}/-/{name}-{version}.crate");
+                read_crate(
+                    &state,
+                    &context,
+                    repository.clone(),
+                    &asset_path,
+                    method == Method::HEAD,
+                    &correlation,
+                )
+                .await
+            };
             record_outcome(
                 &state,
                 &context,
@@ -218,6 +262,12 @@ pub async fn handle(
             outcome
         }
         (Route::Publish, false, true) => {
+            if repository.mode == RepositoryMode::Proxy {
+                return Err(Failure::plain(
+                    StatusCode::METHOD_NOT_ALLOWED,
+                    "a proxy does not publish: the upstream is the only writer",
+                ));
+            }
             publish(&state, &context, &repository, request, &correlation).await
         }
         (Route::Publish, false, _) => {
@@ -638,4 +688,281 @@ fn the_publication_error_ref(error: &CatalogError) -> RawApiError {
         CatalogError::Unavailable { .. } | CatalogError::Corrupt { .. } => RawApiError::Internal,
         other => RawApiError::BadRequest(Box::leak(other.to_string().into_boxed_str())),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Proxy
+// ---------------------------------------------------------------------------
+
+/// El nombre reservado por un hosted de la cuenta, si lo hay.
+///
+/// Un crate que un repositorio cargo **hosted** de la misma cuenta ya
+/// conoce (cualquier asset bajo `{nombre}/`) esta reservado: el proxy no
+/// resuelve su indice ni su descarga contra el upstream, ni vivo ni de la
+/// cache. Un upstream que contestara por un nombre que el hosted ya
+/// publico seria una suplantacion, y el fallback silencioso es justo lo
+/// que esta superficie no hace.
+async fn the_hosted_collision(
+    state: &AppState,
+    account: &str,
+    name: &str,
+) -> Result<Option<String>, Failure> {
+    let search = state
+        .catalog_search
+        .as_ref()
+        .ok_or(RawApiError::Unavailable)?;
+    let reader = state
+        .catalog_reader
+        .as_ref()
+        .ok_or(RawApiError::Unavailable)?;
+    let repositories = search
+        .repositories(account)
+        .await
+        .map_err(|error| Failure::from(the_publication_error_ref(&error)))?;
+    let prefix = format!("{name}/");
+    for repository in repositories {
+        if repository.format != RepositoryFormat::Cargo || repository.mode != RepositoryMode::Hosted
+        {
+            continue;
+        }
+        let known = reader
+            .assets_under(account, &repository.repo_key, &prefix)
+            .await
+            .map_err(|error| Failure::from(the_publication_error_ref(&error)))?;
+        if !known.is_empty() {
+            return Ok(Some(repository.repo_key));
+        }
+    }
+    Ok(None)
+}
+
+/// La reserva se bloquea con un 409 que dice quien la tiene.
+async fn guard_against_hosted(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    name: &str,
+) -> Result<(), Failure> {
+    if let Some(reserved_by) = the_hosted_collision(state, context.account().as_str(), name).await?
+    {
+        return Err(Failure::plain(
+            StatusCode::CONFLICT,
+            &format!(
+                "the crate {name} is reserved by the hosted repository {reserved_by}: \
+                 the proxy does not resolve it from upstream"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// El indice sparse de un crate en un proxy: el documento del upstream,
+/// byte a byte.
+///
+/// El camino que se cachea es el camino sparse determinista del nombre
+/// normalizado: el mismo que el cliente calcula. Lo que el upstream
+/// contesto se sirve tal cual — el orden de versiones y los cksum son del
+/// upstream, y reordenarlos seria reescribir un documento que el cliente
+/// verifica. Es metadata: el TTL la revalida, y un yank del upstream
+/// aparece cuando la revalidacion lo trae.
+async fn read_proxy_index(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    name: &str,
+    head: bool,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    let normalized = cargo::normalize(name)?;
+    guard_against_hosted(state, context, &normalized).await?;
+    let index_path = cargo::Route::index_path(&normalized)?;
+    let served = the_proxy_asset(state, context, repository, &index_path, correlation).await?;
+    serve_proxy_document(state, context, repository, served, head, correlation).await
+}
+
+/// La descarga de una version en un proxy.
+///
+/// La linea de indice del upstream dice el cksum; la plantilla `dl` del
+/// config.json del upstream dice de donde vienen los bytes. La descarga
+/// solo se sirve si el sha256 de los bytes es el que su linea declara: un
+/// upstream que entrega otros bytes no sirve la version, nunca.
+async fn read_proxy_download(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    name: &str,
+    version: &str,
+    head: bool,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    let normalized = cargo::normalize(name)?;
+    guard_against_hosted(state, context, &normalized).await?;
+    let index_path = cargo::Route::index_path(&normalized)?;
+
+    // La linea de la version: sin ella no hay descarga que verificar. La
+    // linea se busca aunque sea un HEAD: la existencia de la version se
+    // comprueba igual.
+    let index = the_proxy_asset(state, context, repository, &index_path, correlation).await?;
+    let bytes = proxy_bytes(state, &index.asset, false).await?;
+    let cksum = the_version_cksum(&bytes, version)?
+        .ok_or_else(|| {
+            Failure::plain(
+                StatusCode::NOT_FOUND,
+                "the version is not in the index of the upstream",
+            )
+        })?
+        .to_lowercase();
+
+    // La plantilla del upstream: donde vive el .crate segun lo que el
+    // propio upstream declara.
+    let upstream = hodei_catalog::UpstreamConfig::of(&repository.config)
+        .ok()
+        .flatten()
+        .ok_or_else(|| Failure::plain(StatusCode::BAD_GATEWAY, "the proxy is not configured"))?;
+    let url = the_upstream_target(
+        state,
+        context,
+        repository,
+        &upstream,
+        &normalized,
+        version,
+        correlation,
+    )
+    .await?;
+
+    let crate_path = format!("{normalized}/-/{normalized}-{version}.crate");
+    let served = the_proxy_asset_at(
+        state,
+        context,
+        repository,
+        &crate_path,
+        Some(url),
+        None,
+        correlation,
+    )
+    .await?;
+    if served.asset.digest.value.to_lowercase() != cksum {
+        tracing::warn!(
+            target: "hodei_artifacts::cargo_proxy",
+            repository = %repository.repo_key,
+            crate = %normalized,
+            version = %version,
+            declared = %cksum,
+            got = %served.asset.digest.value,
+            "the upstream crate does not match the checksum of its index line"
+        );
+        return Err(Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream crate does not match the checksum declared by its index line",
+        ));
+    }
+    serve_proxy_document(state, context, repository, served, head, correlation).await
+}
+
+/// El sha256 que la linea de la version declara en el indice del upstream.
+fn the_version_cksum(index: &[u8], version: &str) -> Result<Option<String>, Failure> {
+    let text = std::str::from_utf8(index)
+        .map_err(|_| Failure::plain(StatusCode::BAD_GATEWAY, "the upstream index is not text"))?;
+    for line in text.lines() {
+        let line: Value = serde_json::from_str(line).map_err(|_| {
+            Failure::plain(
+                StatusCode::BAD_GATEWAY,
+                "the upstream index has an unusable line",
+            )
+        })?;
+        if line["vers"].as_str() == Some(version) {
+            return Ok(line["cksum"]
+                .as_str()
+                .filter(|cksum| !cksum.is_empty())
+                .map(str::to_string));
+        }
+    }
+    Ok(None)
+}
+
+/// La URL de descarga: la plantilla `dl` del upstream, y si el upstream no
+/// declara config.json, la cola que el protocolo appende a la base.
+async fn the_upstream_target(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    upstream: &hodei_catalog::UpstreamConfig,
+    name: &str,
+    version: &str,
+    correlation: &str,
+) -> Result<Url, Failure> {
+    let dl = match the_proxy_asset(state, context, repository, "config.json", correlation).await {
+        Ok(served) => {
+            let bytes = proxy_bytes(state, &served.asset, false).await?;
+            cargo::the_upstream_dl(&serde_json::from_slice(&bytes).map_err(|_| {
+                Failure::plain(StatusCode::BAD_GATEWAY, "the upstream config is not JSON")
+            })?)
+            .map(str::to_string)
+        }
+        Err(_) => None,
+    }
+    .unwrap_or_else(|| upstream.base.to_string());
+    let template = cargo::download_url(&dl, name, version);
+    if let Ok(absolute) = Url::parse(&template) {
+        return Ok(absolute);
+    }
+    upstream
+        .base
+        .join(&template)
+        .map_err(|_| Failure::plain(StatusCode::BAD_GATEWAY, "the upstream dl is not a URL"))
+}
+
+/// Los bytes de un documento servido por el proxy; un HEAD no los lee.
+async fn proxy_bytes(
+    state: &AppState,
+    asset: &hodei_catalog::AssetRecord,
+    head: bool,
+) -> Result<Vec<u8>, Failure> {
+    if head {
+        return Ok(Vec::new());
+    }
+    let store = the_content_store(state)?;
+    Ok(store
+        .get(&asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?
+        .to_vec())
+}
+
+/// Sirve un documento del proxy: la compuerta de confianza, el ETag de su
+/// contenido y el estado de la cache.
+async fn serve_proxy_document(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    served: ProxyServed,
+    head: bool,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    // La compuerta de confianza pasa antes de las condiciones: un 304
+    // diria que el contenido existe.
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        repository,
+        &served.asset.digest,
+    )
+    .await
+    .map_err(the_admission_error)?;
+    let etag = conditional::the_etag(&served.asset.digest);
+    let bytes = proxy_bytes(state, &served.asset, head).await?;
+    let mut response = body_response(
+        StatusCode::OK,
+        bytes,
+        "application/octet-stream",
+        &etag,
+        correlation,
+    );
+    apply_cache_headers(&mut response, &Some((served.status, served.provenance)));
+    if head {
+        let length = served.asset.size_bytes as usize;
+        if let Ok(value) = HeaderValue::from_str(&length.to_string()) {
+            response.headers_mut().insert(header::CONTENT_LENGTH, value);
+        }
+    }
+    Ok(response)
 }
