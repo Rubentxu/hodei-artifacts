@@ -47,7 +47,13 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// conflict key per scope (`hodei.guard.*`) and the once-only operation
 /// marker (`hodei.operation.*`), both `@upsert` guarded so the server
 /// itself forces the conflict between concurrent writers.
-pub const SCHEMA_VERSION: u64 = 2;
+///
+/// v3 adds the IAM carriers (`hodei.iam.*`): the kind discriminator and
+/// the fields the IAM adapters of `hodei-iam` store on the same
+/// identity nodes (unique key, CAS revision), so policy/user/group
+/// persistence shares the stack's identity, uniqueness and versioning
+/// guarantees instead of inventing a parallel store.
+pub const SCHEMA_VERSION: u64 = 3;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -392,6 +398,95 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // IAM carriers (v3): the discriminator plus the fields the
+            // IAM adapters of `hodei-iam` store. The IAM nodes reuse the
+            // identity key (unique, `@upsert`) and the identity revision
+            // (CAS) — there is no second uniqueness or versioning anchor.
+            // `hodei.iam.hrn` is exact-indexed (no `@upsert`): the same
+            // resource HRN under a different tenant key is legal and
+            // must be able to coexist; the tenant|HRN composite stays
+            // the uniqueness anchor.
+            spec(
+                "hodei.iam.kind",
+                "hodei.iam.kind: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.hrn",
+                "hodei.iam.hrn: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.content",
+                "hodei.iam.content: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.description",
+                "hodei.iam.description: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.email",
+                "hodei.iam.email: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.tags",
+                "hodei.iam.tags: [string] .",
+                "string",
+                None,
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.attachment",
+                "hodei.iam.attachment: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.created_at",
+                "hodei.iam.created_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.updated_at",
+                "hodei.iam.updated_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -413,6 +508,16 @@ pub fn hodei_schema() -> HodeiSchema {
                 .to_owned(),
             "type HodeiOperation {\n  hodei.operation.id\n  hodei.operation.scope\n  \
              hodei.operation.result\n  hodei.operation.committed_at\n}"
+                .to_owned(),
+            // The IAM carriers are identity nodes: they keep the composite
+            // key and the CAS revision (the uniqueness and versioning
+            // anchors) and add the IAM payload.
+            "type HodeiIam {\n  hodei.identity.key\n  hodei.identity.hrn\n  \
+             hodei.identity.tenant\n  hodei.identity.digest\n  hodei.identity.name\n  \
+             hodei.identity.revision\n  hodei.identity.created_at\n  hodei.iam.kind\n  \
+             hodei.iam.hrn\n  hodei.iam.content\n  hodei.iam.description\n  \
+             hodei.iam.email\n  hodei.iam.tags\n  hodei.iam.attachment\n  \
+             hodei.iam.created_at\n  hodei.iam.updated_at\n}"
                 .to_owned(),
         ],
     )
@@ -582,7 +687,7 @@ pub struct SchemaBootReport {
 /// More than one metadata node is corruption: the versioning bookkeeping
 /// must be unique, so a duplicate refuses the boot instead of letting
 /// boot pick one silently.
-async fn read_stored_schema(
+pub async fn read_stored_schema(
     client: &GraphClient,
 ) -> Result<Option<(u64, String)>, SchemaBootError> {
     let response = client
@@ -829,7 +934,11 @@ fn rfc3339_now() -> String {
 /// quotes, backslashes and control characters. Keys, HRNs and digests
 /// are built from safe charsets, but the escaping is uniform so no
 /// caller-side string can inject DQL.
-pub(crate) fn dql_string(value: &str) -> String {
+///
+/// Public because the IAM adapters (and any future graph consumer)
+/// compose DQL literals from caller text (policy content, tags, names)
+/// and must not re-implement the escaping.
+pub fn dql_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for character in value.chars() {
