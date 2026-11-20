@@ -7,9 +7,14 @@
 //! the deployment runs.
 
 pub mod evidence_store;
+pub mod graph;
 pub mod ledger;
 
 pub use evidence_store::{
     DgraphEvidenceError, DgraphEvidenceStore, EVIDENCE_EXTERNAL_TYPE, EVIDENCE_TYPE,
+};
+pub use graph::{
+    DgraphGraphStore, GRAPH_NODE_TYPE, GRAPH_RELATION_TYPE, GRAPH_SUPPORT_TYPE, STATUS_ASSERTED,
+    STATUS_UNKNOWN,
 };
 pub use ledger::{DgraphEventLedger, DgraphLedgerError, LEDGER_EVENT_TYPE, LedgerEventRecord};

@@ -51,7 +51,14 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// v3 adds the sequenced evidence ledger and IAM carriers. v4 adds
 /// immutable evidence metadata and its producer/external-identity index;
 /// content bytes remain in the existing CAS and are never stored here.
-pub const SCHEMA_VERSION: u64 = 4;
+///
+/// v5 adds the reified graph projection (`hodei.graph.*`): graph nodes,
+/// reified relations with their asserted/unknown status, one support node
+/// per (relation, evidence) pair, and the two native navigable edges
+/// (`hodei.graph.out` from the source node to the relation,
+/// `hodei.graph.to` from the relation to the target node), both reverse
+/// indexed. Purely additive over v4: nothing is renamed or dropped.
+pub const SCHEMA_VERSION: u64 = 5;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -715,6 +722,189 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // HSP-189: the reified graph projection. Nodes carry their
+            // tenant-scoped identity key (`tenant|HRN`, exact and `@upsert`
+            // so two creators of one node conflict server-side); relations
+            // carry their hashed identity key and their asserted/unknown
+            // status (UNINDEXED on purpose: every writer of one relation
+            // writes the same data key, which is what makes concurrent
+            // writers of the SAME edge abort — the per-edge conflict the
+            // changeset upsert relies on); supports are one node per
+            // (relation, evidence) pair. The two native edges are the
+            // navigable projection: source node -> relation (`out`) and
+            // relation -> target node (`to`), both reverse indexed so
+            // relations_from and relations_to are traversals, never scans.
+            spec(
+                "hodei.graph.node.key",
+                "hodei.graph.node.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.node.tenant",
+                "hodei.graph.node.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.kind",
+                "hodei.graph.node.kind: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.attributes",
+                "hodei.graph.node.attributes: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.observed_at",
+                "hodei.graph.node.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.out",
+                "hodei.graph.out: [uid] @reverse .",
+                "uid",
+                None,
+                true,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.key",
+                "hodei.graph.rel.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.rel.tenant",
+                "hodei.graph.rel.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.type",
+                "hodei.graph.rel.type: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.status",
+                "hodei.graph.rel.status: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.from_hrn",
+                "hodei.graph.rel.from_hrn: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.to_hrn",
+                "hodei.graph.rel.to_hrn: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.evidence",
+                "hodei.graph.rel.evidence: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.observed_at",
+                "hodei.graph.rel.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.to",
+                "hodei.graph.to: uid @reverse .",
+                "uid",
+                None,
+                false,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.supports",
+                "hodei.graph.supports: [uid] @reverse .",
+                "uid",
+                None,
+                true,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.support.key",
+                "hodei.graph.support.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.support.evidence",
+                "hodei.graph.support.evidence: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.support.observed_at",
+                "hodei.graph.support.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -756,6 +946,20 @@ pub fn hodei_schema() -> HodeiSchema {
             "type HodeiEvidence {\n  hodei.evidence.key\n  hodei.evidence.tenant\n  hodei.evidence.producer_id\n  hodei.evidence.external_id\n  hodei.evidence.type\n  hodei.evidence.content_digest\n  hodei.evidence.account\n  hodei.evidence.subject\n  hodei.evidence.record\n}"
                 .to_owned(),
             "type HodeiEvidenceExternal {\n  hodei.evidence.external_key\n  hodei.evidence.external_evidence_id\n}"
+                .to_owned(),
+            // The reified graph projection (v5): nodes, relations and
+            // their supports, with the two native navigable edges.
+            "type HodeiGraphNode {\n  hodei.graph.node.key\n  hodei.graph.node.tenant\n  \
+             hodei.graph.node.kind\n  hodei.graph.node.attributes\n  \
+             hodei.graph.node.observed_at\n  hodei.graph.out\n}"
+                .to_owned(),
+            "type HodeiGraphRelation {\n  hodei.graph.rel.key\n  hodei.graph.rel.tenant\n  \
+             hodei.graph.rel.type\n  hodei.graph.rel.status\n  hodei.graph.rel.from_hrn\n  \
+             hodei.graph.rel.to_hrn\n  hodei.graph.rel.evidence\n  hodei.graph.rel.observed_at\n  \
+             hodei.graph.to\n  hodei.graph.supports\n}"
+                .to_owned(),
+            "type HodeiGraphSupport {\n  hodei.graph.support.key\n  \
+             hodei.graph.support.evidence\n  hodei.graph.support.observed_at\n}"
                 .to_owned(),
         ],
     )
