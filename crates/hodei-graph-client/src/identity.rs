@@ -61,10 +61,18 @@ pub const KEY_SEPARATOR: char = '|';
 pub const IDENTITY_TYPE: &str = "HodeiIdentity";
 
 /// How many attempts a uniqueness upsert may lose before giving up.
-const MAX_ATTEMPTS: usize = 5;
+/// The bound is deliberately higher than the burst size the tests race
+/// with: a burst of N contenders needs up to N serialized rounds before
+/// every caller has won its slot.
+const MAX_ATTEMPTS: usize = 12;
 
 /// Base delay of the retry backoff; it doubles per attempt.
 const RETRY_BASE: Duration = Duration::from_millis(10);
+
+/// The backoff ceiling: under a wide race the exponential schedule would
+/// outgrow the caller's patience, so the delay stops growing here and
+/// the jitter does the desynchronization.
+const RETRY_CAP: Duration = Duration::from_millis(100);
 
 /// Why an identity operation failed.
 #[derive(Debug, thiserror::Error)]
@@ -382,11 +390,21 @@ impl IdentityStore {
     /// The guard is the revision predicate (declared `@upsert`, so
     /// concurrent writers of the aggregate conflict server-side instead
     /// of silently overwriting each other). The loop is the doc-20
-    /// prescription: every attempt **revalidates** (a fresh read decides
-    /// whether the aggregate is still at `expected_revision`), the write
-    /// is the guarded update, conflicts retry with backoff, and the
-    /// outcome is decided by the state after the commit — success is
-    /// never inferred from the transaction merely having committed.
+    /// prescription, with the revalidation the HSP-184 guard measurement
+    /// demanded **inside** the transaction: a fresh pre-read decides the
+    /// typed CAS rejection, but the write itself only lands when the
+    /// transaction's OWN snapshot still shows the expected revision (the
+    /// `iv` variable is filtered by the revision inside the query). A
+    /// pre-read overtaken by a concurrent commit writes NOTHING — the
+    /// block is skipped, which the transaction's own answer reveals —
+    /// and the attempt retries after a fresh read. Writing an
+    /// already-present value is a no-op without conflict on the server,
+    /// which is exactly why a stale value must never be written:
+    /// snapshot isolation is not serialization, so the conflict is
+    /// forced by the `@upsert` index, not hoped for. Conflicts retry
+    /// with bounded, capped, jittered backoff; the outcome is decided by
+    /// the state after the commit — success is never inferred from the
+    /// transaction merely having committed.
     pub async fn rename_identity(
         &self,
         tenant: &Tenant,
@@ -395,9 +413,12 @@ impl IdentityStore {
         new_name: &str,
     ) -> Result<IdentityRecord, IdentityError> {
         let key = identity_key(tenant, hrn);
-        let mut last_conflict: Option<String> = None;
+        let mut last_failure = "no detail".to_owned();
         for attempt in 1..=MAX_ATTEMPTS {
-            // Revalidation: a fresh read of the aggregate decides.
+            // Revalidation hint: a fresh read decides the typed CAS
+            // rejection up front. The read is a hint, not the correctness
+            // mechanism: the transaction below re-checks it against its
+            // own snapshot.
             let Some(current) = self.find_identity(tenant, hrn).await? else {
                 return Err(IdentityError::NotFound { key });
             };
@@ -408,34 +429,59 @@ impl IdentityStore {
                     current_revision: current.revision,
                 });
             }
-            let transaction = self.rename_upsert(&key, expected_revision, new_name);
+            let transaction = Self::rename_upsert(&key, expected_revision, new_name);
             match self.client.upsert(transaction).await {
-                Ok(_) => {}
+                Ok(response) => {
+                    // The transaction's own answer carries the in-transaction
+                    // revision: a block that did not apply committed nothing,
+                    // and must never be reported as success.
+                    let applied = rename_block_applied(&key, &response.json, expected_revision)?;
+                    if !applied {
+                        debug!(
+                            attempt,
+                            %key,
+                            expected = expected_revision,
+                            "the CAS block was skipped: the aggregate moved under the pre-read; revalidating"
+                        );
+                        last_failure = format!(
+                            "the CAS write was skipped: the aggregate moved under the pre-read \
+                             (expected revision {expected_revision})"
+                        );
+                        if let RetryDecision::RetryAfter(delay) = decide_retry(attempt, true) {
+                            sleep(jittered(delay)).await;
+                            continue;
+                        }
+                        break;
+                    }
+                    // The state after the commit decides the answer.
+                    let Some(record) = self.find_identity(tenant, hrn).await? else {
+                        return Err(IdentityError::NotFound { key });
+                    };
+                    if record.revision == expected_revision + 1 {
+                        return Ok(record);
+                    }
+                    return Err(IdentityError::CasRejected {
+                        key,
+                        expected_revision,
+                        current_revision: record.revision,
+                    });
+                }
                 Err(GraphClientError::UpsertConflict { detail }) => {
                     debug!(attempt, %key, %detail, "the CAS update conflicted; revalidating");
-                    last_conflict = Some(detail);
-                    sleep(RETRY_BASE * (1u32 << (attempt - 1))).await;
-                    continue;
+                    last_failure = detail;
+                    if let RetryDecision::RetryAfter(delay) = decide_retry(attempt, true) {
+                        sleep(jittered(delay)).await;
+                        continue;
+                    }
+                    break;
                 }
                 Err(other) => return Err(other.into()),
             }
-            // The state after the commit decides the answer.
-            let Some(record) = self.find_identity(tenant, hrn).await? else {
-                return Err(IdentityError::NotFound { key });
-            };
-            if record.revision == expected_revision + 1 {
-                return Ok(record);
-            }
-            return Err(IdentityError::CasRejected {
-                key,
-                expected_revision,
-                current_revision: record.revision,
-            });
         }
         Err(IdentityError::RetryExhausted {
             key,
             attempts: MAX_ATTEMPTS,
-            last: last_conflict.unwrap_or_else(|| "no detail".to_owned()),
+            last: last_failure,
         })
     }
 
@@ -481,25 +527,29 @@ impl IdentityStore {
         }
     }
 
-    /// The guarded rename write: it applies only when the aggregate
-    /// exists, and writes the name plus the revision the caller already
-    /// revalidated. Two writers that revalidated the same revision
-    /// conflict on the `@upsert` index of `hodei.identity.revision`:
-    /// the server itself decides who advances the aggregate.
-    fn rename_upsert(
-        &self,
-        key: &str,
-        expected_revision: u64,
-        new_name: &str,
-    ) -> GraphUpsertTransaction {
+    /// The guarded rename write, with the revalidation INSIDE the
+    /// transaction: `iv` binds the identity only while its revision is
+    /// still the expected one in the transaction's own snapshot, so a
+    /// pre-read overtaken by a concurrent commit writes nothing; the
+    /// readable `idstate` block carries that in-transaction revision in
+    /// the answer, which is how a skipped block is detected. Two writers
+    /// that revalidated the same revision write the same NEW revision
+    /// value: the `@upsert` index of `hodei.identity.revision` aborts one
+    /// of them — the server itself decides who advances the aggregate.
+    fn rename_upsert(key: &str, expected_revision: u64, new_name: &str) -> GraphUpsertTransaction {
         let key_literal = crate::schema::dql_string(key);
         GraphUpsertTransaction {
-            query: format!("{{ q(func: eq(hodei.identity.key, {key_literal})) {{ u as uid }} }}"),
+            query: format!(
+                "{{ iv as var(func: eq(hodei.identity.key, {key_literal})) \
+                 @filter(eq(hodei.identity.revision, {expected_revision}))\n \
+                 idstate(func: eq(hodei.identity.key, {key_literal})) {{ \
+                 hodei.identity.revision }} }}"
+            ),
             blocks: vec![crate::port::GraphMutationBlock::set_if(
-                "eq(len(u), 1)",
+                "eq(len(iv), 1)",
                 format!(
-                    "uid(u) <hodei.identity.name> {} .\n\
-                     uid(u) <hodei.identity.revision> \"{}\" .\n",
+                    "uid(iv) <hodei.identity.name> {} .\n\
+                     uid(iv) <hodei.identity.revision> \"{}\" .\n",
                     crate::schema::dql_string(new_name),
                     expected_revision + 1,
                 ),
@@ -507,6 +557,69 @@ impl IdentityStore {
             commit_now: true,
         }
     }
+}
+
+/// Whether the guarded rename block actually applied, decided from the
+/// transaction's own answer: the `idstate` named block carries the
+/// in-transaction revision, so a pre-read overtaken by a concurrent
+/// commit is detected as a skipped block (retry), never as success.
+fn rename_block_applied(
+    key: &str,
+    json: &serde_json::Value,
+    expected_revision: u64,
+) -> Result<bool, IdentityError> {
+    let nodes = json
+        .get("idstate")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    match nodes.len() {
+        0 => Ok(false),
+        1 => {
+            let in_tx = nodes[0]
+                .get("hodei.identity.revision")
+                .and_then(serde_json::Value::as_u64);
+            Ok(in_tx == Some(expected_revision))
+        }
+        n => Err(IdentityError::CorruptState {
+            key: key.to_owned(),
+            detail: format!("{n} identity nodes answered the in-transaction check"),
+        }),
+    }
+}
+
+/// The retry decision of the guarded rename loop. Pure, so the bounds
+/// are testable without a server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryDecision {
+    /// Retry after this delay.
+    RetryAfter(Duration),
+    /// Give up with the typed exhaustion error.
+    Exhausted,
+}
+
+/// The retry policy: only the server-forced conflict or the skipped
+/// block is retryable, and only up to [`MAX_ATTEMPTS`], with doubling
+/// backoff capped so a wide race does not outgrow the caller's patience.
+/// Attempt numbers are 1-based; after the last attempt the decision is
+/// exhaustion.
+fn decide_retry(attempt: usize, conflict: bool) -> RetryDecision {
+    if !conflict || attempt >= MAX_ATTEMPTS {
+        return RetryDecision::Exhausted;
+    }
+    let exponential = RETRY_BASE * (1u32 << (attempt - 1));
+    RetryDecision::RetryAfter(exponential.min(RETRY_CAP))
+}
+
+/// A small jitter on top of the policy delay: concurrent losers of one
+/// serialization round must not retry in lockstep, or every round frees
+/// at most one slot and the race degenerates into waves.
+fn jittered(delay: Duration) -> Duration {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    delay + Duration::from_millis((nanos % 21) as u64)
 }
 
 /// Parses one identity out of an upsert/query answer. Refuses duplicated
@@ -787,6 +900,129 @@ mod tests {
         assert_eq!(
             record.key,
             "tenant-a|hrn:hodei:identity:local:tenant-a:account/alice"
+        );
+    }
+
+    /// The in-transaction check decides whether the rename block
+    /// applied: an aggregate still at the expected revision means it
+    /// did; any other state means the pre-read was overtaken and the
+    /// block committed nothing — which must never be reported as
+    /// success.
+    #[test]
+    fn the_in_transaction_check_detects_a_skipped_rename() {
+        let key = "tenant-a|hrn:hodei:identity:local:tenant-a:account/alice";
+        let at_expected = serde_json::json!({
+            "idstate": [ { "hodei.identity.revision": 4 } ]
+        });
+        let moved_on = serde_json::json!({
+            "idstate": [ { "hodei.identity.revision": 7 } ]
+        });
+        let vanished = serde_json::json!({ "idstate": [] });
+        assert!(rename_block_applied(key, &at_expected, 4).expect("parses"));
+        assert!(
+            !rename_block_applied(key, &moved_on, 4).expect("parses"),
+            "a pre-read overtaken by a concurrent commit must NOT report success"
+        );
+        assert!(!rename_block_applied(key, &vanished, 4).expect("parses"));
+        // Two identity nodes answering the same unique key are
+        // corruption, never a decision input.
+        let duplicated = serde_json::json!({
+            "idstate": [
+                { "hodei.identity.revision": 4 },
+                { "hodei.identity.revision": 4 },
+            ]
+        });
+        let error =
+            rename_block_applied(key, &duplicated, 4).expect_err("duplicates are corruption");
+        assert!(
+            matches!(error, IdentityError::CorruptState { .. }),
+            "unexpected: {error}"
+        );
+    }
+
+    /// The rename transaction revalidates the expected revision INSIDE
+    /// the transaction's own snapshot: the `iv` variable is filtered by
+    /// the revision, the readable `idstate` block carries the
+    /// in-transaction state, and the block writes the name plus the next
+    /// revision — the value whose `@upsert` index forces the conflict
+    /// between two writers that revalidated the same revision.
+    #[test]
+    fn the_rename_upsert_revalidates_the_revision_inside_the_transaction() {
+        let transaction = IdentityStore::rename_upsert(
+            "tenant-a|hrn:hodei:identity:local:tenant-a:account/alice",
+            4,
+            "alice-renamed",
+        );
+        assert!(
+            transaction.commit_now,
+            "the CAS write commits now: the answer decides"
+        );
+        assert_eq!(
+            transaction.blocks.len(),
+            1,
+            "one attempt runs exactly one guarded block"
+        );
+        let cond = transaction.blocks[0]
+            .cond
+            .as_deref()
+            .expect("the guarded block is gated");
+        assert!(
+            cond.contains("eq(len(iv), 1)"),
+            "the block must be gated on the IN-TRANSACTION revision matching the pre-read: {cond}"
+        );
+        assert!(
+            transaction.query.contains(
+                "iv as var(func: eq(hodei.identity.key, \"tenant-a|hrn:hodei:identity:local:tenant-a:account/alice\")) @filter(eq(hodei.identity.revision, 4))"
+            ),
+            "the query must revalidate the expected revision inside the transaction: {}",
+            transaction.query
+        );
+        assert!(
+            transaction
+                .query
+                .contains("idstate(func: eq(hodei.identity.key"),
+            "the query must carry the readable in-transaction state: {}",
+            transaction.query
+        );
+        assert!(
+            transaction.blocks[0]
+                .set_nquads
+                .contains("uid(iv) <hodei.identity.revision> \"5\""),
+            "the advance must write the NEW revision value: {}",
+            transaction.blocks[0].set_nquads
+        );
+        assert!(
+            transaction.blocks[0]
+                .set_nquads
+                .contains("uid(iv) <hodei.identity.name> \"alice-renamed\""),
+            "the advance must write the new name: {}",
+            transaction.blocks[0].set_nquads
+        );
+    }
+
+    /// The retry policy is bounded: the server-forced conflict retries
+    /// with doubling backoff up to the attempt limit, and exhaustion is
+    /// the decision at the limit.
+    #[test]
+    fn the_rename_retry_policy_is_bounded_and_backs_off() {
+        let expected_backoffs_ms = [10, 20, 40, 80, 100, 100, 100, 100, 100, 100, 100];
+        for (index, backoff_ms) in expected_backoffs_ms.iter().enumerate() {
+            assert_eq!(
+                decide_retry(index + 1, true),
+                RetryDecision::RetryAfter(Duration::from_millis(*backoff_ms)),
+                "attempt {} must retry after {backoff_ms} ms",
+                index + 1
+            );
+        }
+        assert_eq!(
+            decide_retry(MAX_ATTEMPTS, true),
+            RetryDecision::Exhausted,
+            "after the last attempt the failure is closed, never a silent retry"
+        );
+        assert_eq!(
+            decide_retry(1, false),
+            RetryDecision::Exhausted,
+            "a non-conflict failure is never retried: it surfaces immediately"
         );
     }
 }
