@@ -692,3 +692,36 @@ de otra cuenta ni ve ni publica en un repositorio que no es suyo.
   versión, pero la suite solo publica collections sin dependencias: un
   grafo de dependencias entre collections servidas por el mismo hub no
   está ejercitado.
+
+## TERRAFORM — registry de módulos privado (hosted) — FMT-04
+
+**Tareas:** HSP-158 (HAE-25, registry de módulos privado) sobre el mirror de HSP-157 (HAE-24) · **Servicio medido:** `hodei-artifacts 0.2.0` · **Cliente fijado:** `terraform 1.10.1` (asdf, `.tool-versions` del worktree)
+
+### 1. Qué afirma este contrato
+
+Afirma que **un cliente `terraform` real resuelve e instala un módulo privado por versión** contra un repositorio Terraform **hosted** del hub, con el *module registry protocol v1*: `terraform init` de una fuente `127.0.0.1:PUERTO/hodei/demo/local` con restricción `version` pasa por discovery → índice de versiones → download con `X-Terraform-Get` → go-getter, que baja el tarball y **verifica el `?checksum=sha256:`** contra los bytes recibidos.
+
+Las reglas, una por una:
+
+- **Dos dialectos, una modalidad cada uno.** El formato Terraform sirve dos modalidades y cada una habla su protocolo: **proxy** → *provider network mirror* (HSP-157, `hodei_catalog::terraform`), **hosted** → *module registry protocol v1* (HSP-158, `hodei_catalog::terraform_modules`). La fila de la matriz queda `Terraform → [Proxy, Hosted]`: no es una variante de formato nueva, es el mismo ecosistema con dos contratos, y la modalidad decide el dialecto de la superficie `/terraform/{repositorio}/...`. Un repositorio hosted no sirve rutas de mirror y un proxy no sirve rutas de registry.
+- **Service discovery.** El hub sirve `GET /.well-known/terraform.json` con `{"modules.v1": "/terraform/{repo}/v1/modules/"}`: nombra al **único** registry de módulos de la cuenta de la credencial (0 registries → `404`, varios → `409`, y la config de CLI nombra el repositorio explícito). El CLI pide ese documento **siempre por https** (`terraform-svchost/disco` lo fija): un hub http declara el servicio en la **config de CLI** (`host` + `services`, que es el `ForceHostServices` del disco) — es la vía que ejercita la UAT; con TLS el well-known es alcanzable por el cliente.
+- **Índice de versiones.** `GET /v1/modules/{namespace}/{name}/{system}/versions` con la credencial Bearer del CLI config (`credentials "host" { token }`). El documento lleva `modules[0].versions[]` en orden; el cliente resuelve la restricción semver (las pre-release se ignoran salvo petición exacta, como el cliente hace).
+- **Download autorizado.** `GET /v1/modules/{namespace}/{name}/{system}/{version}/download` responde **`204` sin cuerpo** con `X-Terraform-Get: /terraform/{repo}/artifacts/{ns}/{name}/{sys}/{version}.tar.gz?checksum=sha256:{digest}`. Un valor que empieza por `/` el cliente lo resuelve contra la URL pedida (el propio `registry/client.go` lo permite), y el checksum es el digest del CAS: el cliente verifica los bytes contra el contenido almacenado, no contra una promesa.
+- **Artefacto por netrc.** go-getter **no** lleva la credencial del registry: su HTTP getter lee `~/.netrc` (o `$NETRC`) y manda `Basic`. La superficie del artefacto acepta el Bearer del hub y el **Basic de netrc cuya contraseña es la clave** (el login se ignora). La búsqueda de netrc es por `host:puerto`.
+- **Publicación inmutable.** El CLI no publica módulos: la publicación la define el hub, `POST /terraform/{repo}/publish/{ns}/{name}/{sys}/{version}` con el tarball entero. El hub valida el gzip, calcula el sha256 **al commit** y devuelve el recibo (`201` con namespace/name/system/version/sha256/size_bytes/path). **Re-publicar una versión existente es `409`, también con los mismos bytes** (inmutabilidad por contrato, más estricta que la eco de galaxy); el catálogo rechaza además el contenido distinto en la carrera. Un tarball que no es gzip es `400`.
+- **Acceso.** Misma autorización que el resto de superficies: `401` sin credencial verificable, `403` de Cedar (`UploadAsset`/`DownloadAsset`), `404` para el repositorio de otra cuenta (el init de otra cuenta no encuentra el módulo).
+- **Offline.** El módulo instalado queda en `.terraform/modules` con su manifiesto: el `init` repetido con caché templada **no necesita red** (el instalador reutiliza lo instalado, `initwd/module_install.go`); un init de caché fría sin hub falla. El hub no tiene upstream: todo lo servido sale del CAS.
+
+### 2. Cómo se verificó
+
+- **Suite:** `tests/hsp158_terraform_modules_client.rs` (`TF_CLI`, por defecto `terraform`, fijado a 1.10.x) contra el servicio real del arnés: `terraform init` real con credencial de CLI config y netrc, instalación verificada por el manifiesto (`"Version":"1.0.0"`), re-publicación y mutación rechazadas (`409`), índice con las dos versiones, init por `2.0.0`, init de otra cuenta denegado, offline templado/frío, y el wire de discovery/download/artefacto por socket.
+- **Gramática:** la tabla de rutas y los documentos viven en `hodei_catalog::terraform_modules` (pura, con unitarios de traversal y de documentos); los efectos en `src/handlers/terraform_modules.rs` y el despacho por modalidad en `src/handlers/terraform.rs`.
+- **Dialecto contrastado** contra el código fuente de terraform v1.10.1 (`internal/registry/client.go`, `internal/registry/response/module_versions.go`, `internal/initwd/module_install.go`, `internal/getmodules/getter.go`), `terraform-svchost/disco` y `go-getter` v1.7 (`client.go` y `get_http.go`: checksum por query solo en descarga de archivo, netrc por host con puerto). La evidencia está en `target/uat/hsp158/evidencia.md`.
+
+### 3. Lo que este contrato NO promete
+
+- **No hay provider origin registry.** El discovery devuelve solo `modules.v1`: el registry de providers de origen (AC3 condicional) **no se implementa** y nada no implementado se anuncia. El mirror de providers (HSP-157) sigue siendo la vía de providers.
+- **No hay source `git::` para módulos privados.** El módulo privado se sirve por HTTP con checksum; una fuente git del propio cliente queda fuera por diseño (no se sustituye Git).
+- **El well-known no es alcanzable por el cliente sobre http.** `disco` fija https; el documento existe y está ejercitado por socket, y el cliente real lo usa vía `services` de la config de CLI. Sobre un despliegue con TLS el well-known es el camino natural.
+- **OpenTofu (`tofu`) no está ejercitado.** `tofu` no está instalado en este entorno y no se ha provisionado; el protocolo es el mismo, pero no se declara sin ejecución.
+- **Multi-registry por cuenta en el well-known.** Con más de un registry de módulos por cuenta, el discovery responde `409` y la selección es de la config de CLI; no hay aliasing por host.

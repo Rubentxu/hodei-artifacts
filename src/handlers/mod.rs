@@ -39,6 +39,7 @@ pub mod schemas;
 pub mod scrub;
 pub mod search;
 pub mod terraform;
+pub mod terraform_modules;
 pub mod yum;
 
 use axum::http::{HeaderMap, header};

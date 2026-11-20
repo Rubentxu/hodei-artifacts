@@ -177,9 +177,12 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
-            // El mirror de Terraform es proxy y solo proxy: sirve lo que el
-            // upstream tiene, cacheado; no publica y no ensambla grupos.
-            RepositoryFormat::Terraform => &[RepositoryMode::Proxy],
+            // Terraform habla dos dialectos segun la modalidad: el mirror
+            // de providers es proxy (sirve lo que el upstream tiene,
+            // cacheado; no publica y no ensambla grupos) y el registry de
+            // modulos es hosted (el hub guarda los tarballs que se
+            // publican en el, versionados e inmutables).
+            RepositoryFormat::Terraform => &[RepositoryMode::Proxy, RepositoryMode::Hosted],
             // Conan sirve la hosted: el cliente publica lo que ha creado y
             // resuelve lo que el remote guarda. El proxy necesita el
             // dialecto de upstream probado con cliente real, y el group

@@ -88,6 +88,14 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
     Router::new()
         // Health check endpoints
         .merge(health)
+        // The service discovery the Terraform CLI does at the host root:
+        // the document that names the module registry of the account. The
+        // CLI always fetches it over https, so a plain-http hub declares
+        // the service in its CLI config (`host` + `services`) instead.
+        .route(
+            "/.well-known/terraform.json",
+            get(crate::handlers::terraform_modules::discovery).with_state(app_state.clone()),
+        )
         // API v1 routes
         .nest("/api/v1", api)
         // The raw content surface.

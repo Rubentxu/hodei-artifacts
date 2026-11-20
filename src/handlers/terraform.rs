@@ -98,17 +98,34 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
 
 /// Cualquier peticion de `/terraform/{repositorio}/...`.
 ///
-/// El mirror solo lee: un `PUT` o un `POST` no es una publicacion, es un
-/// metodo que el protocolo no tiene.
+/// La modalidad decide el dialecto: un repositorio **proxy** habla el
+/// protocolo de mirror (aqui) y un **hosted** habla el protocolo de
+/// registry de modulos (delegado en `terraform_modules`). El mirror solo
+/// lee: un `PUT` o un `POST` no es una publicacion, es un metodo que el
+/// protocolo no tiene.
 pub async fn handle(
     State(state): State<AppState>,
     method: Method,
     uri: OriginalUri,
     headers: HeaderMap,
+    request: axum::extract::Request<Body>,
 ) -> Result<Response, Failure> {
+    let (repository_key, rest) = the_split(&uri)?;
+    if hodei_catalog::terraform_modules::is_registry_path(&rest) {
+        // El dialecto del registry responde con su propia forma de error:
+        // su superficie responde completa, y aqui solo se entrega.
+        return Ok(crate::handlers::terraform_modules::handle(
+            State(state),
+            method,
+            headers,
+            request,
+            repository_key,
+            rest,
+        )
+        .await);
+    }
     let context = the_context(&state, &headers).await?;
     let correlation = correlation_id(&headers, &state.identity);
-    let (repository_key, rest) = the_split(&uri)?;
     let route = Route::parse(&rest)?;
     let repository = the_repository_in(
         &state,
@@ -117,6 +134,11 @@ pub async fn handle(
         &[RepositoryFormat::Terraform],
     )
     .await?;
+    // Un repositorio hosted habla el protocolo de registry de modulos, no
+    // este: sus rutas del mirror no existen.
+    if repository.mode != hodei_catalog::RepositoryMode::Proxy {
+        return Err(RawApiError::NotFound.into());
+    }
 
     let reading = method == Method::GET || method == Method::HEAD;
     let outcome = if reading {

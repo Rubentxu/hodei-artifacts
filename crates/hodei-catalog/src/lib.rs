@@ -64,6 +64,7 @@ pub mod proxy_cache;
 pub mod pypi;
 pub mod search;
 pub mod terraform;
+pub mod terraform_modules;
 pub mod trust;
 pub mod yum;
 

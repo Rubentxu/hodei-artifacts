@@ -705,6 +705,24 @@ impl Deployment {
 
     /// Crea repositorios **galaxy hosted** de la primera cuenta. Cada uno
     /// es una clave y su config (`null` si no lleva).
+    /// Crea repositorios **terraform** de la primera cuenta. Cada
+    /// entrada es una clave y su config (`null` si no tiene); con la
+    /// config se crea hosted (registry de modulos) y con `proxy` proxy
+    /// (mirror de providers).
+    pub fn seed_terraform(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, terraform)| {
+                serde_json::json!({ "key": key, "terraform": terraform, "format": "terraform" })
+            })
+            .collect();
+        self.run_the_seeder(
+            "HODEI_SEED_MAVEN",
+            repositories,
+            "the terraform repositories",
+        );
+    }
+
     pub fn seed_galaxy(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -2686,6 +2704,9 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
             if !repository["maven"].is_null() {
                 settings.insert("maven".into(), repository["maven"].clone());
             }
+            if !repository["terraform"].is_null() {
+                settings.insert("terraform".into(), repository["terraform"].clone());
+            }
             if !repository["npm"].is_null() {
                 settings.insert("npm".into(), repository["npm"].clone());
             }
@@ -2726,6 +2747,8 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::Conan
             } else if repository["format"].as_str() == Some("galaxy") {
                 hodei_catalog::RepositoryFormat::Galaxy
+            } else if repository["format"].as_str() == Some("terraform") {
+                hodei_catalog::RepositoryFormat::Terraform
             } else {
                 hodei_catalog::RepositoryFormat::Maven2
             };
