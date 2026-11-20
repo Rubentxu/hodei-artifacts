@@ -3585,6 +3585,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "hodei-graph-client",
  "hodei-policies",
  "kernel",
  "mockall",
