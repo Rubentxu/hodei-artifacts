@@ -53,6 +53,7 @@ pub mod galaxy;
 pub mod gc;
 pub mod gomod;
 pub mod group;
+pub mod hf;
 pub mod maven;
 pub mod model;
 pub mod namespaces;

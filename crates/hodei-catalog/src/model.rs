@@ -77,6 +77,15 @@ pub enum RepositoryFormat {
     /// declara: el upstream real entrega por redirects firmados y no hay
     /// cliente verificado contra el.
     Galaxy,
+    /// Hugging Face, modelos por el dialecto de lectura del hub.
+    ///
+    /// La modalidad servida es la hosted: un cliente `hf` (`huggingface_hub`)
+    /// resuelve con `hf download` contra la superficie del hub de Hodei,
+    /// revision JSON y resolve con redirects relativos hacia el CAS. La
+    /// escritura no se declara: el dialecto de upload clasico y el xet
+    /// quedan fuera de este release, y el contenido entra por la siembra
+    /// del hub.
+    Hf,
 }
 
 impl RepositoryFormat {
@@ -97,6 +106,7 @@ impl RepositoryFormat {
             RepositoryFormat::Terraform => "terraform",
             RepositoryFormat::Conan => "conan",
             RepositoryFormat::Galaxy => "galaxy",
+            RepositoryFormat::Hf => "hf",
         }
     }
 
@@ -122,6 +132,7 @@ impl RepositoryFormat {
             "terraform" => Some(Self::Terraform),
             "conan" => Some(Self::Conan),
             "galaxy" => Some(Self::Galaxy),
+            "hf" => Some(Self::Hf),
             _ => None,
         }
     }
@@ -193,6 +204,12 @@ impl RepositoryFormat {
             // proxy no se declara: el upstream real entrega por redirects
             // firmados, un dialecto que no se ha probado con cliente.
             RepositoryFormat::Galaxy => &[RepositoryMode::Hosted],
+            // Hf sirve la hosted: el cliente lee con `hf download` y el
+            // contenido entra por la siembra del hub. La escritura del
+            // dialecto (upload clasico y xet) no se declara en este
+            // release, y sin escritura no hay proxy ni group que
+            // prometer.
+            RepositoryFormat::Hf => &[RepositoryMode::Hosted],
             RepositoryFormat::Helm => &[],
         }
     }
@@ -227,6 +244,7 @@ impl RepositoryFormat {
             RepositoryFormat::Terraform,
             RepositoryFormat::Conan,
             RepositoryFormat::Galaxy,
+            RepositoryFormat::Hf,
         ]
     }
 

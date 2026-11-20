@@ -580,6 +580,19 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // The Hugging Face surface: the read dialect of the hub (`GET
+        // /api/models/.../revision/...`, the `HEAD` resolve with its
+        // relative `Location` and the streamed blob). Read-only: the
+        // upload of the dialect is not declared in this release, and any
+        // other method gets the same JSON error as the rest. The path is
+        // the protocol grammar's own, so it arrives raw and the handler
+        // is the one that decodes it.
+        .route(
+            "/hf/{*target}",
+            axum::routing::get(crate::handlers::hf::handle)
+                .head(crate::handlers::hf::handle)
+                .fallback(crate::handlers::hf::handle),
+        )
         // The NuGet v3 surface: the service index, the flat container,
         // the registration leaf and the `PUT package/{id}/{version}` that
         // pushes a nupkg. Package ids and versions arrive raw: the

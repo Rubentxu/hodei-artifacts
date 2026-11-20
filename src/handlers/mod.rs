@@ -19,6 +19,7 @@ pub mod galaxy;
 pub mod gc;
 pub mod go;
 pub mod health;
+pub mod hf;
 pub mod iam;
 pub mod investigation;
 mod maven;

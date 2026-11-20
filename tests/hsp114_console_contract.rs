@@ -594,6 +594,11 @@ async fn the_capabilities_say_what_can_be_created() {
         json!(["hosted"]),
         "the galaxy surface serves what ansible-galaxy publishes and what it resolves"
     );
+    assert_eq!(
+        of("hf")["modes"],
+        json!(["hosted"]),
+        "the hf surface serves what hf downloads: the read dialect of the hub, seeded by the hub"
+    );
     assert!(
         formats.iter().all(|format| format["name"] != "helm"),
         "a format that this release does not serve is not offered: helm"
