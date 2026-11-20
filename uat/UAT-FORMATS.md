@@ -725,3 +725,68 @@ Las reglas, una por una:
 - **El well-known no es alcanzable por el cliente sobre http.** `disco` fija https; el documento existe y está ejercitado por socket, y el cliente real lo usa vía `services` de la config de CLI. Sobre un despliegue con TLS el well-known es el camino natural.
 - **OpenTofu (`tofu`) no está ejercitado.** `tofu` no está instalado en este entorno y no se ha provisionado; el protocolo es el mismo, pero no se declara sin ejecución.
 - **Multi-registry por cuenta en el well-known.** Con más de un registry de módulos por cuenta, el discovery responde `409` y la selección es de la config de CLI; no hay aliasing por host.
+
+## FMT-07 — selección de cartera: modelos Hugging Face elegidos, APK runner-up
+
+**Tarea:** HSP-169 (HAE-36). Ficha de selección de cartera, no contrato de
+formato: ningún candidato se sirve todavía (no hay variante
+`RepositoryFormat` ni fila en la matriz).
+
+### Qué afirma esta ficha
+
+De la cartera (APK Alpine, Composer, RubyGems, Pub/Swift, Git LFS,
+VSIX/Open VSX, CRAN/p2, modelos Hugging Face) se elige por necesidad el
+slice de **model artifacts / hub-compatible** (lectura con el CLI `hf` de
+`huggingface_hub`) y se recomienda abrir UNA tarea vertical de hosted.
+**APK Alpine queda como runner-up** (próxima ficha si hay demanda); Git LFS
+y VSIX quedan condicionados por exclusiones de servicio; Composer,
+RubyGems, Pub/Swift y CRAN/p2 sin cliente instalable en el entorno de
+trabajo.
+
+La selección se sustenta en uso real contrastado en el spike:
+
+- **Cliente reproducible.** `huggingface_hub==1.2.3` instala el CLI `hf`
+  por pip en venv (python 3.14) y quedó demostrado contra el remote real y
+  contra un fixture local. Ruby/PHP ausentes en el host; apk es binario
+  estático sin gestor de fijación equivalente.
+- **Esfuerzo de protocolo mínimo.** Lectura = JSON de revision
+  (`/api/models/{repo}/revision/{rev}`) + `HEAD resolve` con
+  `X-Repo-Commit`/`X-Linked-Etag` (sha256)/`X-Linked-Size` + `GET` streaming
+  del blob. Sin firma en el protocolo base; APK exige índice firmado RSA por
+  repo×arch.
+- **Encaje CAS exacto.** El etag del formato ES el sha256 y el cliente nombra
+  sus blobs por sha256: CAS por contenido, el mismo modelo del hub.
+- **Streaming por diseño.** Los pesos de modelos son los artefactos grandes
+  típicos: 256 MiB descargados con RSS acotado en cliente (~99 MB) y
+  servidor (~25 MB), sin buffers completos.
+
+### Evidencia del spike (cliente real 1.2.3)
+
+- **Remote real** (huggingface.co): wire de `hf download prajjwal1/bert-tiny`
+  en dos modos — xet por defecto (302 con metadata + token de
+  `xet-read-token` y CAS nativo invisible a httpx) y ruta HTTP clásica con
+  `HF_HUB_DISABLE_XET=1` (302 con metadata + `GET` del resolve => 200 con
+  los bytes).
+- **Fixture local mínimo**: repo `hodei/spike-model` con `model.safetensors`
+  de 256 MiB y `config.json`; descarga de fichero y de repo completo OK con
+  checksum sha256 verificado (`9f215d17...` == etag == nombre de blob).
+- **Hallazgo de trust**: en la ruta HTTP clásica el cliente solo verifica el
+  TAMAÑO; el sha256 declarado en `X-Linked-Etag` no se verifica en cliente
+  (una descarga servida corrupta fue ACEPTADA por el CLI, detectada solo por
+  `sha256sum` externo). En hosted la garantía de integridad debe venir del
+  CAS del servidor — conexión directa con HSP-105.
+
+### Lo que esta ficha NO promete
+
+- **Ningún formato se sirve.** Sin `RepositoryFormat::HfHub` ni fila en la
+  matriz: la tarea vertical propuesta queda para decisión del supervisor,
+  no creada.
+- **Model inference, Git server y marketplace IDE quedan FUERA** (encargo
+  explícito): el dialecto probado es HTTP puro sin git, sin xet nativo y sin
+  inferencia. El binario/extension de VSIX sí entra en un futuro slice, pero
+  esta ficha no lo abre.
+- **Upload/publish no probado** (solo lectura); el dialecto de escritura
+  clásica y el protocolo xet quedan para decisión posterior.
+- La evidencia completa (score de la cartera, wire logs, incompatibilidades,
+  exclusiones y propuesta de tarea) está en
+  `target/uat/hsp169/evidencia.md` del worktree del spike.
