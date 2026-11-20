@@ -536,6 +536,25 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // The Ansible Galaxy surface: the collections API v3 (`GET /api/`,
+        // collection and version documents, the paginated versions, the
+        // artifact bytes and the `POST` publish form). The path is the
+        // protocol grammar's own, so it arrives raw and the handler is the
+        // one that decodes it.
+        .route(
+            "/galaxy/{*target}",
+            axum::routing::get(crate::handlers::galaxy::handle)
+                .head(crate::handlers::galaxy::handle)
+                .post(crate::handlers::galaxy::handle)
+                .fallback(crate::handlers::galaxy::handle)
+                // A collection tarball is a whole artifact, so the default
+                // limit of `axum` would refuse it before the protocol.
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         // The Go module proxy: `GET {module}/@v/list|.info|.mod|.zip` and
         // `{module}/@latest`, plus the `PUT` of those same paths that
         // publishes into a hosted repository. Module paths carry `!` and

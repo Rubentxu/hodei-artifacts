@@ -703,6 +703,18 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the conan repositories");
     }
 
+    /// Crea repositorios **galaxy hosted** de la primera cuenta. Cada uno
+    /// es una clave y su config (`null` si no lleva).
+    pub fn seed_galaxy(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(
+                |(key, galaxy)| serde_json::json!({ "key": key, "galaxy": galaxy, "format": "galaxy" }),
+            )
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the galaxy repositories");
+    }
+
     /// Crea repositorios **apt hosted** de la primera cuenta. Cada
     /// entrada es una clave y su config (`null` si no tiene).
     pub fn seed_apt(&self, repositories: &[(&str, serde_json::Value)]) {
@@ -2712,6 +2724,8 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::Rpm
             } else if repository["format"].as_str() == Some("conan") {
                 hodei_catalog::RepositoryFormat::Conan
+            } else if repository["format"].as_str() == Some("galaxy") {
+                hodei_catalog::RepositoryFormat::Galaxy
             } else {
                 hodei_catalog::RepositoryFormat::Maven2
             };

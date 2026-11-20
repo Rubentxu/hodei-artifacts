@@ -49,6 +49,7 @@ pub mod cargo;
 pub mod conan;
 pub mod conformance;
 pub mod error;
+pub mod galaxy;
 pub mod gc;
 pub mod gomod;
 pub mod group;

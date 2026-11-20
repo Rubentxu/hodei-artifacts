@@ -605,3 +605,90 @@ La selección se sustenta en uso real contrastado en el spike:
 - La evidencia completa (wire logs, comandos, comparación CAS vs adapter,
   incompatibilidades y propuesta de tarea) está en
   `target/uat/hsp168/evidencia.md` del worktree del spike.
+
+## GALAXY — repositorios Ansible Galaxy hosted
+
+### 1. Qué afirma este contrato
+
+Un repositorio `galaxy` en modalidad **hosted** es un **servidor Ansible
+Galaxy por API v3**: `ansible-galaxy collection publish` publica contra
+Hodei y `ansible-galaxy collection install` / `verify` resuelven y
+comparan contra él con el cliente real (`ansible-core` 2.19). La
+identidad versionada es la del propio dialecto: el **fully qualified
+collection name** `{namespace}.{name}` y la versión, declarados por el
+`MANIFEST.json` que el artefacto lleva dentro (gzip + tar, miembro en la
+raíz) y leídos en el publish. La superficie es la del cliente:
+
+- `GET /galaxy/{repo}/api/` — discovery con `available_versions` (solo
+  `v3`); el cliente llega aquí tras fallar la raíz del servidor, como
+  hace con cualquier Galaxy.
+- `GET /galaxy/{repo}/api/v3/collections/{ns}/{name}/` — documento de la
+  collection, con `created_at`/`updated_at` que el cliente usa para
+  invalidar su cache de respuestas.
+- `GET /galaxy/{repo}/api/v3/collections/{ns}/{name}/versions/` —
+  versiones paginadas al estilo DRF (`meta`, `links.next` absoluto,
+  `data`), con `limit`/`offset` y `next` como ruta absoluta, la única
+  forma que el cliente acepta.
+- `GET .../versions/{version}/` — documento de versión: `download_url`
+  (ruta absoluta), `artifact.sha256`, `metadata.dependencies` y `href`.
+- `GET /galaxy/{repo}/artifact/{sha256}/{file}` — los bytes del
+  artefacto desde el CAS; la URL lleva el digest que el documento
+  declara, y el que se sirve es el mismo: es el que el cliente verifica
+  al bajar (`Mismatch artifact hash with downloaded file` si no
+  coincide).
+- `POST /galaxy/{repo}/api/v3/artifacts/collections/` — publish:
+  multipart con `sha256` y `file`, el fichero en base64 con
+  `Content-Transfer-Encoding` (el dialecto MIME del cliente) y
+  `Authorization: Token` con la credencial del hub. La superficie
+  verifica el sha256 **en el commit**, lee la identidad del
+  `MANIFEST.json`, y contesta la tarea de import que el cliente sondea
+  en `api/v3/imports/collections/{task}/` (aquí síncrona: al leerla ya
+  está `completed`).
+
+El scoping es el del hub: la API key del cliente (`Authorization: Token
+<key>`) se verifica como credencial bearer del principal, y un principal
+de otra cuenta ni ve ni publica en un repositorio que no es suyo.
+
+### 2. Cómo se comprueba
+
+- `tests/hsp217_galaxy_client.rs`: el cliente **ansible-core 2.19 real**
+  (el del venv de la UAT con Python 3.14, fijado por `GALAXY_BIN` y por
+  el assert de versión) construye la collection con
+  `ansible-galaxy collection build`, la publica con `collection publish`
+  (dos veces: la repetición del mismo contenido es un eco, no una
+  reescritura), la instala con `collection install` en un directorio
+  limpio, la compara con `collection verify` ("Successfully verified"),
+  corrompe un fichero del instalado y espera que el `verify` falle, y
+  comprueba que otro principal ni instala ni publica; con el servicio
+  parado, el re-install de la cache caliente no toca la red ("Nothing to
+  do") y un requisito sin servir falla.
+- El **rechazo del artefacto corrupto** va por el cliente real: un
+  tarball cuyo `MANIFEST.json` no es el documento del formato se publica
+  y la superficie lo rechaza con `HTTP Code: 400` sin guardar nada; el
+  artefacto bueno se publica después en su versión libre. El **sha256
+  mentiroso** (los bytes no son los que el formulario declara) va por el
+  socket, porque el cliente real no puede decir esa mentira: la
+  superficie lo rechaza con 400 y el digest mal formado también.
+- La **gramática del dialecto** (tabla de rutas v3, documentos, página
+  DRF, lectura del `MANIFEST.json` dentro del gzip/tar) vive en
+  `hodei_catalog::galaxy` (pura, con sus unitarios) y los efectos en
+  `src/handlers/galaxy.rs`; la derivación es del código del cliente
+  (`ansible/galaxy/api.py` de 2.19.6), el mismo método que fijó conan
+  contra `rest_routes.py`. La evidencia está en
+  `target/uat/hsp217/evidencia.md`.
+
+### 3. Lo que este contrato NO promete
+
+- **No hay proxy para galaxy.** El upstream real (galaxy_ng/Pulp)
+  entrega los artefactos por una cadena de redirects con tokens
+  firmados; un proxy sin cliente verificado contra ese dialecto no se
+  declara.
+- **No hay firma GPG por versión.** Los documentos llevan `signatures:
+  []` y el cliente no ejercita keyring: la firma es otro contrato.
+- **Los roles con la API legacy v1 quedan fuera.** La superficie es de
+  collections v3; `ansible-galaxy role` no la habla.
+- **La resolución de dependencias de una collection** (el
+  `metadata.dependencies` de su manifiesto) se sirve en el documento de
+  versión, pero la suite solo publica collections sin dependencias: un
+  grafo de dependencias entre collections servidas por el mismo hub no
+  está ejercitado.

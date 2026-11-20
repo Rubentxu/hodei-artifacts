@@ -589,6 +589,11 @@ async fn the_capabilities_say_what_can_be_created() {
         json!(["hosted"]),
         "the conan remote serves what conan publishes and what conan resolves"
     );
+    assert_eq!(
+        of("galaxy")["modes"],
+        json!(["hosted"]),
+        "the galaxy surface serves what ansible-galaxy publishes and what it resolves"
+    );
     assert!(
         formats.iter().all(|format| format["name"] != "helm"),
         "a format that this release does not serve is not offered: helm"

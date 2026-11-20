@@ -69,6 +69,14 @@ pub enum RepositoryFormat {
     /// Hodei. El proxy necesita el dialecto de upstream validado con
     /// cliente real antes de poder declararse.
     Conan,
+    /// Ansible Galaxy, collections por API v3.
+    ///
+    /// La modalidad servida es la hosted: un cliente `ansible-galaxy`
+    /// publica con `collection publish` y resuelve con `collection
+    /// install`/`verify` contra la superficie v3 de Hodei. El proxy no se
+    /// declara: el upstream real entrega por redirects firmados y no hay
+    /// cliente verificado contra el.
+    Galaxy,
 }
 
 impl RepositoryFormat {
@@ -88,6 +96,7 @@ impl RepositoryFormat {
             RepositoryFormat::Rpm => "rpm",
             RepositoryFormat::Terraform => "terraform",
             RepositoryFormat::Conan => "conan",
+            RepositoryFormat::Galaxy => "galaxy",
         }
     }
 
@@ -112,6 +121,7 @@ impl RepositoryFormat {
             "rpm" => Some(Self::Rpm),
             "terraform" => Some(Self::Terraform),
             "conan" => Some(Self::Conan),
+            "galaxy" => Some(Self::Galaxy),
             _ => None,
         }
     }
@@ -175,6 +185,11 @@ impl RepositoryFormat {
             // dialecto de upstream probado con cliente real, y el group
             // una resolución compuesta probada, antes de poder prometerse.
             RepositoryFormat::Conan => &[RepositoryMode::Hosted],
+            // Galaxy sirve la hosted: el cliente publica con `collection
+            // publish` y resuelve con `collection install`/`verify`. El
+            // proxy no se declara: el upstream real entrega por redirects
+            // firmados, un dialecto que no se ha probado con cliente.
+            RepositoryFormat::Galaxy => &[RepositoryMode::Hosted],
             RepositoryFormat::Helm => &[],
         }
     }
@@ -208,6 +223,7 @@ impl RepositoryFormat {
             RepositoryFormat::Rpm,
             RepositoryFormat::Terraform,
             RepositoryFormat::Conan,
+            RepositoryFormat::Galaxy,
         ]
     }
 
