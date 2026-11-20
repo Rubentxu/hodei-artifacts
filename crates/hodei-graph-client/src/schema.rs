@@ -67,7 +67,16 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// identity; and the name of the projection every graph record belongs
 /// to, so a rebuild builds into its own namespace while the active one
 /// keeps serving. Purely additive over v5: nothing is renamed or dropped.
-pub const SCHEMA_VERSION: u64 = 6;
+///
+/// v7 adds the impact view of the risk (`hodei.impact.*`): ONE route node
+/// per (tenant, advisory) materialized in the SAME graph the walk reads —
+/// not a second database. The node carries the subjects with their
+/// depths, the path that explains each one, and the route of support
+/// (relation identities, evidences and node endpoints) the walk used, so
+/// a relation delta invalidates ONLY the advisories whose route it
+/// touches, and the watermark says up to which delta version the view is
+/// complete. Purely additive over v6: nothing is renamed or dropped.
+pub const SCHEMA_VERSION: u64 = 7;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -1099,6 +1108,112 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // v7: the impact view of the risk, ONE route node per
+            // (tenant, advisory) in the SAME graph. The key is exact and
+            // `@upsert`: two rebuilds of one advisory meet on the server
+            // and the loser retries on top of whatever committed. The
+            // route lists are exact-indexed so the invalidation of a
+            // relation delta is a lookup by the relation identity, the
+            // evidence or the endpoints the delta moved — never a scan.
+            spec(
+                "hodei.impact.key",
+                "hodei.impact.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.impact.tenant",
+                "hodei.impact.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.advisory",
+                "hodei.impact.advisory: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.route_relation",
+                "hodei.impact.route_relation: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.route_evidence",
+                "hodei.impact.route_evidence: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.route_node",
+                "hodei.impact.route_node: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.subjects",
+                "hodei.impact.subjects: [string] .",
+                "string",
+                None,
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.paths",
+                "hodei.impact.paths: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.deployments",
+                "hodei.impact.deployments: [string] .",
+                "string",
+                None,
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.watermark",
+                "hodei.impact.watermark: int .",
+                "int",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.updated_at",
+                "hodei.impact.updated_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -1168,6 +1283,15 @@ pub fn hodei_schema() -> HodeiSchema {
             "type HodeiDelta {\n  hodei.delta.key\n  hodei.delta.seq\n  hodei.delta.tenant\n  \
              hodei.delta.kind\n  hodei.delta.relation\n  hodei.delta.from\n  hodei.delta.to\n  \
              hodei.delta.evidence\n  hodei.delta.cause\n  hodei.delta.observed_at\n}"
+                .to_owned(),
+            // The impact view (v7): one route node per advisory of one
+            // account, materialized from the authoritative walk of the
+            // SAME graph, invalidated by the deltas of the frontier.
+            "type HodeiImpactRoute {\n  hodei.impact.key\n  hodei.impact.tenant\n  \
+             hodei.impact.advisory\n  hodei.impact.route_relation\n  \
+             hodei.impact.route_evidence\n  hodei.impact.route_node\n  \
+             hodei.impact.subjects\n  hodei.impact.paths\n  hodei.impact.deployments\n  \
+             hodei.impact.watermark\n  hodei.impact.updated_at\n}"
                 .to_owned(),
         ],
     )

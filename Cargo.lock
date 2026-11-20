@@ -3709,6 +3709,7 @@ dependencies = [
  "chrono",
  "hodei-evidence",
  "hodei-evidence-storage",
+ "hodei-graph-client",
  "hodei-reactive",
  "hodei-risk",
  "kernel",
@@ -3717,6 +3718,7 @@ dependencies = [
  "surrealdb",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
