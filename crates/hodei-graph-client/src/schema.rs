@@ -48,6 +48,12 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// marker (`hodei.operation.*`), both `@upsert` guarded so the server
 /// itself forces the conflict between concurrent writers.
 ///
+/// v3 adds the sequenced evidence ledger: one event node per stream
+/// position (`hodei.ledger.*`), whose composite key is `@upsert` guarded
+/// so the server itself refuses two writers claiming the same position.
+/// The head of a stream is not a stored row but the revision of the
+/// stream's guard ([`crate::guard`]): an append demands the exact
+/// revision its position sequenced at, so the guard IS the sequence.
 /// v3 adds the IAM carriers (`hodei.iam.*`): the kind discriminator and
 /// the fields the IAM adapters of `hodei-iam` store on the same
 /// identity nodes (unique key, CAS revision), so policy/user/group
@@ -398,6 +404,137 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // HSP-185: the sequenced evidence ledger. One node per
+            // stream position; the composite key (`digest#position`) is
+            // exact-indexed and `@upsert`, so the server itself refuses
+            // two nodes claiming the same position. The head of the
+            // stream is the guard's revision, not a stored row.
+            spec(
+                "hodei.ledger.key",
+                "hodei.ledger.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.ledger.stream_id",
+                "hodei.ledger.stream_id: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.position",
+                "hodei.ledger.position: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.event_id",
+                "hodei.ledger.event_id: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.tenant_hrn",
+                "hodei.ledger.tenant_hrn: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.event_type",
+                "hodei.ledger.event_type: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.schema_version",
+                "hodei.ledger.schema_version: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.occurred_at",
+                "hodei.ledger.occurred_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.recorded_at",
+                "hodei.ledger.recorded_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.producer",
+                "hodei.ledger.producer: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.correlation_id",
+                "hodei.ledger.correlation_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.causation_id",
+                "hodei.ledger.causation_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.idempotency_key",
+                "hodei.ledger.idempotency_key: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.ledger.payload",
+                "hodei.ledger.payload: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
             // IAM carriers (v3): the discriminator plus the fields the
             // IAM adapters of `hodei-iam` store. The IAM nodes reuse the
             // identity key (unique, `@upsert`) and the identity revision
@@ -508,6 +645,12 @@ pub fn hodei_schema() -> HodeiSchema {
                 .to_owned(),
             "type HodeiOperation {\n  hodei.operation.id\n  hodei.operation.scope\n  \
              hodei.operation.result\n  hodei.operation.committed_at\n}"
+                .to_owned(),
+            "type HodeiLedgerEvent {\n  hodei.ledger.key\n  hodei.ledger.stream_id\n  \
+             hodei.ledger.position\n  hodei.ledger.event_id\n  hodei.ledger.tenant_hrn\n  \
+             hodei.ledger.event_type\n  hodei.ledger.schema_version\n  hodei.ledger.occurred_at\n  \
+             hodei.ledger.recorded_at\n  hodei.ledger.producer\n  hodei.ledger.correlation_id\n  \
+             hodei.ledger.causation_id\n  hodei.ledger.idempotency_key\n  hodei.ledger.payload\n}"
                 .to_owned(),
             // The IAM carriers are identity nodes: they keep the composite
             // key and the CAS revision (the uniqueness and versioning

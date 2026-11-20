@@ -273,6 +273,17 @@ pipeline {
                         // convergencia de identidad y la repeticion sin
                         // duplicar efecto tras un ACK perdido.
                         "--test hsp184_guards_it",
+                        // Prueba del ledger de evidencia secuenciado
+                        // (HSP-185): sin HODEI_GRAPH_IT_ENDPOINT se salta
+                        // a si misma (exit 0); con la variable reproduce
+                        // el contrato del ledger sobre el grafo
+                        // (durabilidad tras cerrar el escritor, chequeo
+                        // optimista de version, reentrega una sola vez,
+                        // cursor sin saltos ni repeticiones, conflicto
+                        // entre dos clientes) y la carrera de dos
+                        // clientes con ACK perdido contra el mismo
+                        // Zero+Alpha.
+                        "--test hsp185_ledger_it",
                     ).joinToString(" ")
                 )
                 sh(
