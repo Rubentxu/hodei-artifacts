@@ -547,3 +547,61 @@ listing de un principal de otra cuenta no ve lo que no le toca.
   el servidor de conan: el authenticate verifica la contraseña como
   credencial bearer y la devuelve como token. La semántica de scoping es
   la del hub, no una tabla de usuarios propia.
+
+## FMT-06 — selección de ecosistema: Ansible Galaxy elegido, Conda aplazado
+
+**Tarea:** HSP-168 (HAE-35). Ficha de selección, no contrato de formato:
+ninguno de los dos ecosistemas se sirve todavía (no hay variante
+`RepositoryFormat` ni fila en la matriz).
+
+### Qué afirma esta ficha
+
+El primer ecosistema adicional con demanda es **Ansible Galaxy**
+(collections, API v3), y se recomienda abrir UNA tarea vertical de hosted.
+**Conda queda aplazado** (KEEP_AS_IS) sin compromiso de implementación.
+
+La selección se sustenta en uso real contrastado en el spike:
+
+- **Audiencia.** El hub ya sirve al consumidor de IaC/automación (mirror de
+  providers Terraform servido, registry privado de modules/providers en
+  backlog); Ansible es la otra pata natural de esa automatización y ningún
+  formato servido lo cubre. Conda solapa con la audiencia Python que PyPI ya
+  atiende en hosted, proxy y group.
+- **Trust.** El artefacto Galaxy es un tarball auto-descripto (MANIFEST.json
+  y FILES.json con sha256 por fichero) y el protocolo verifica el sha256 del
+  artefacto contra la API al instalar; tiene además firma GPG opcional por
+  versión, encaje directo con la línea de políticas de confianza.
+- **Cliente reproducible.** `ansible-core==2.19.6` fija el CLI completo por
+  pip en un venv (python 3.14; el 3.15 del sistema rompe esta versión). El
+  cliente real de Conda exige un binario externo (micromamba/miniconda).
+- **Coste de hosted.** El dialecto Galaxy v3 son documentos JSON derivados
+  del catálogo más un tarball; Conda exige generar `repodata.json` por
+  subdir y servir variantes `.bz2`/`.zst`.
+
+### Evidencia del spike (cliente real 2.19.6)
+
+- **Remote de referencia real** (galaxy.ansible.com, galaxy_ng/Pulp): captura
+  de wire con `ansible-galaxy collection install ansible.posix:2.2.1`
+  anónima: descubrimiento `/api/`, documentos de colección y versiones
+  paginados DRF, artefacto servido por cadena de 302 con `validate_token`
+  hasta un objeto S3 presigned cuya clave es `artifact/{2}/{sha256}` — CAS
+  por contenido, el mismo modelo de blobs del hub.
+- **Fixture local mínimo** en el worktree (127.0.0.1, venv): instalación
+  nativa de `hodei.spike:1.0.0` OK con el dialecto v3 completo; **rechazo
+  nativo de artefacto corrupto** (`Mismatch artifact hash with downloaded
+  file`); **publish nativo** OK con `Authorization: Token`, multipart con
+  fichero base64 y campo `sha256` (verificado), y polling de tarea de
+  import emulada síncrona.
+
+### Lo que esta ficha NO promete
+
+- **Ningún formato se sirve.** Sin variante `RepositoryFormat::Galaxy` ni
+  `::Conda`, sin handler, sin fila en la matriz: la tarea vertical
+  propuesta queda para decisión del supervisor, no creada.
+- **El proxy de Galaxy no está probado**: el upstream real entrega por
+  redirects firmados; no se declara proxy sin cliente verificado contra él.
+- **La firma GPG no se ejercitó** (opcional sin keyring); los roles con la
+  API legacy v1 quedan fuera de alcance.
+- La evidencia completa (wire logs, comandos, comparación CAS vs adapter,
+  incompatibilidades y propuesta de tarea) está en
+  `target/uat/hsp168/evidencia.md` del worktree del spike.
