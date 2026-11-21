@@ -98,7 +98,10 @@ pub fn gc_schema_dql() -> String {
         ("hodei.gc.run.bytes_freed", "int", ""),
         ("hodei.gc.run.marked_at", "datetime", ""),
         ("hodei.gc.run.swept_at", "datetime", ""),
-        ("hodei.gc.run.candidate", "uid", ""),
+        // La marca puede tener N candidatos: el predicado es una LISTA
+        // de uid. Declararlo escalar haria que cada arista nueva pise a
+        // la anterior y la relectura post-commit no vea el rastro.
+        ("hodei.gc.run.candidate", "[uid]", ""),
         // Los candidatos de la marca. La clave compuesta
         // `digest_key|run_id` hace que dos pasadas no se pisen un
         // candidato y que la relectura los ordene de forma estable.
@@ -1097,9 +1100,13 @@ impl DgraphCatalogStore {
         })
     }
 
-    /// La ventana de una familia estrictamente despues del cursor,
-    /// con `first: {window}` y `orderasc: digest` — el idiom de
-    /// paginado del repo, nunca un scan sin cota.
+    /// La ventana de una familia estrictamente despues del cursor:
+    /// `first: {window}` + `orderasc: digest` + `@filter(gt(digest,
+    /// cursor))` — el idiom de paginado del repo, nunca un scan sin
+    /// cota. `after:` no vale aqui: en DQL corta por UID, no por el
+    /// valor del orden. El `has` y el `gt` comparten UN solo
+    /// `@filter` unido por AND: dos filtros en la raiz son "Repeated
+    /// filter at root".
     async fn census_window(
         &self,
         account: &str,
@@ -1109,21 +1116,21 @@ impl DgraphCatalogStore {
     ) -> Result<Vec<CensusRow>, CatalogError> {
         let filter = match cursor {
             Some(digest) => format!(
-                " @filter(gt({}.digest, {}))",
+                "has({}.digest) AND gt({}.digest, {})",
+                family.prefix(),
                 family.prefix(),
                 dql_string(&digest.value)
             ),
-            None => String::new(),
+            None => format!("has({}.digest)", family.prefix()),
         };
         let query = format!(
             "{{ q(func: eq({}.account, {}), orderasc: {}.digest, first: {}) \
-             @filter(has({}.digest)){} {{ \
+             @filter({}) {{ \
              {}.key {}.account {}.repository {}.digest_algorithm {}.digest {} }} }}",
             family.prefix(),
             dql_string(account),
             family.prefix(),
             window,
-            family.prefix(),
             filter,
             family.prefix(),
             family.prefix(),
