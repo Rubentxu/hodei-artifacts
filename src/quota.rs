@@ -70,6 +70,21 @@ pub enum QuotaRefusal {
     UploadsSaturated { retry_after_secs: u64 },
 }
 
+impl std::fmt::Display for QuotaRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StorageOver { .. } => {
+                formatter.write_str("the upload would take the account past its stored limit")
+            }
+            Self::UploadsSaturated { .. } => {
+                formatter.write_str("the account already has as many uploads in flight as it may")
+            }
+        }
+    }
+}
+
+impl std::error::Error for QuotaRefusal {}
+
 /// What one account has, said to its owner and to nobody else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuotaUsage {

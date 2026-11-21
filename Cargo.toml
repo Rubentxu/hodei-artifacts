@@ -195,6 +195,9 @@ hodei-trust-policy = { path = "crates/hodei-trust-policy" }
 hodei-trust-policy-storage = { path = "crates/hodei-trust-policy-storage" }
 # Los hechos de riesgo de la promocion: la lectura del grafo de impacto.
 hodei-risk-storage = { path = "crates/hodei-risk-storage" }
+# El cliente del grafo: el ledger durable de cuota arbitra sus reservas con
+# el mecanismo de guardas G06 que vive aqui.
+hodei-graph-client = { path = "crates/hodei-graph-client" }
 # El dominio del riesgo (lectura OSV, proyeccion al grafo) y el motor
 # reactivo firmado (intents, outbox, executor): el ciclo CVE -> reevalua-
 # cion -> bloqueo se cablea en el arranque sobre ellos, sin motor nuevo

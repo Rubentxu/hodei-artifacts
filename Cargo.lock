@@ -3343,6 +3343,7 @@ dependencies = [
  "hodei-catalog-storage",
  "hodei-evidence",
  "hodei-evidence-storage",
+ "hodei-graph-client",
  "hodei-hrn",
  "hodei-hub",
  "hodei-hub-s3",
