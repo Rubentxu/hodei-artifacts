@@ -303,6 +303,8 @@ async fn a_cut_after_the_mark_is_resumed() {
         deleted: 0,
         bytes_freed: 0,
         swept_at: None,
+        scope: None,
+        generation: None,
     };
     w.ledger.open_run(&run).await.unwrap();
 
@@ -334,6 +336,8 @@ async fn a_cut_between_delete_and_confirm_is_confirmed_once() {
         deleted: 0,
         bytes_freed: 0,
         swept_at: None,
+        scope: None,
+        generation: None,
     };
     w.ledger.open_run(&run).await.unwrap();
     w.ledger
@@ -345,6 +349,7 @@ async fn a_cut_between_delete_and_confirm_is_confirmed_once() {
             account: "acme".to_string(),
             state: DeletionState::Intended,
             at: Utc::now(),
+            marker: None,
         })
         .await
         .unwrap();
@@ -402,6 +407,8 @@ async fn what_is_published_after_the_mark_is_not_deleted() {
         deleted: 0,
         bytes_freed: 0,
         swept_at: None,
+        scope: None,
+        generation: None,
     };
     w.ledger.open_run(&run).await.unwrap();
     w.ledger.state.lock().unwrap().roots = vec![root(RootKind::Asset, "app", "blobs/late", &saved)];

@@ -176,6 +176,7 @@ pipeline {
                         "--test hsp104_gc_ledger_contract",
                         "--test hsp104_gc_service",
                         "--test hsp174_gc_census_cache",
+                        "--test hsp192_gc_coordinated_pass",
                         "--test hsp105_trust_ledger_contract",
                         "--test hsp106_provenance_ledger_contract",
                         "--test hsp108_group_contract",
@@ -293,6 +294,17 @@ pipeline {
                         // real valida recibos, identidad, scope e integridad CAS.
                         "--test hsp188_dgraph_evidence_it",
                     ).joinToString(" ")
+                )
+                // Prueba del libro coordinado de GC (HSP-192): sin
+                // HODEI_GRAPH_IT_ENDPOINT se salta; con el perfil real
+                // ejercita el claim CAS durable, el zombie con lease
+                // vencido, las guardas de referencia en la misma
+                // transaccion y el censo paginado por membresia contra
+                // el mismo Zero+Alpha. Va en comando aparte porque las
+                // claves de GC comparten el alpha con otras slices y
+                // necesita un solo hilo.
+                sh(
+                    "cargo test --workspace --test hsp192_gc_ledger_dgraph_it -- --test-threads=1"
                 )
                 sh(
                     "if [ ! -f target/uat/raw-conformity.md ]; then " +

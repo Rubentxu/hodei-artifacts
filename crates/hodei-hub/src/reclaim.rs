@@ -70,3 +70,97 @@ pub trait BlobReclaim: Send + Sync {
         grace: Duration,
     ) -> Result<Reclaimed, BlobError>;
 }
+
+/// Lo que el almacen dice de una accion condicional sobre una version
+/// exacta de un blob (HSP-192, AC2).
+///
+/// La condicion es la marca de la version que el recolector observo al
+/// marcar: `delete_if_untouched` borra solo si la version actual sigue
+/// siendo la marcada; `quarantine_if_untouched` copia la version marcada
+/// a un nombre NUEVO y solo entonces, bajo la misma condicion, elimina
+/// la clave original. Si la condicion no se cumple, el almacen no toca
+/// nada y lo dice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionalOutcome {
+    /// La version marcada era la vigente: la accion se aplico.
+    Applied {
+        /// Los bytes de la version actuada.
+        length: u64,
+    },
+    /// El blob ya no estaba: otra pasada lo_actuo antes.
+    Gone,
+    /// La version cambio desde la marca: **no se toco nada**. La clave
+    /// original pertenece a quien la reescribio y queda intacta.
+    NotApplied,
+}
+
+/// La marca de una version de blob: lo que identifica "esta version
+/// exacta" para las guardas condicionales.
+///
+/// En un almacén de ficheros es el par (mtime, tamano); en S3 es el
+/// ETag de la ultima version. Dos escrituras concurrentes de distinto
+/// contenido producen marcas distintas; dos escrituras del mismo
+/// contenido pueden producir la misma marca, y eso es aceptable: la
+/// guarda protege contra pisar una version que el recolector no vio,
+/// no contra la reescritura idempotente del mismo byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionMarker {
+    /// La clave opaca del objeto tal como la ve el almacen.
+    pub key: String,
+    /// La marca de la version (ETag, mtime+nano, tamano...).
+    pub marker: String,
+    /// Los bytes de la version.
+    pub length: u64,
+}
+
+/// La capacidad de un object store para **delete condicional seguro**.
+///
+/// El recolector coordinado la exige antes de borrar una marca: si el
+/// almacen no la tiene, la pasada NO borra la clave original —prohibe
+/// su reutilizacion hasta reconciliar— o cuarentena versionando (nombre
+/// nuevo, nunca reescritura). Esta pregunta es la que responde AC2, y
+/// por eso vive en el tipo del almacen, no en una configuracion que se
+/// pueda poner mal.
+#[async_trait]
+pub trait ConditionalBlob: Send + Sync {
+    /// Si este almacen puede borrar o cuarentenar una version exacta
+    /// sin carrera posible con una escritura concurrente.
+    fn supports_conditional_delete(&self) -> bool;
+
+    /// Lee la marca de la version actual del blob, si existe.
+    async fn head_marker(&self, digest: &ContentDigest)
+    -> Result<Option<VersionMarker>, BlobError>;
+
+    /// El nombre versionado de cuarentena de este blob para la pasada
+    /// `run_id`: un nombre NUEVO que la clave original no ocupa, y que
+    /// dos pasadas no comparten. Cada almacen lo deriva a su manera (en
+    /// disco una ruta bajo `quarantine/`, en S3 una clave bajo el
+    /// prefijo `quarantine/`).
+    fn quarantine_key_of(&self, digest: &ContentDigest, run_id: &str) -> String {
+        format!("quarantine/{run_id}/{}", digest.value)
+    }
+
+    /// Borra la clave del blob solo si su version actual sigue marcada
+    /// por `marker`. Nunca borra una version que el recolector no vio.
+    async fn delete_if_untouched(
+        &self,
+        digest: &ContentDigest,
+        marker: &VersionMarker,
+    ) -> Result<ConditionalOutcome, BlobError>;
+
+    /// Cuarentena versionada: copia la version marcada a `quarantine_key`
+    /// (un nombre NUEVO que la clave original no ocupa) y, solo si la
+    /// copia es exacta, elimina la clave original bajo la condicion del
+    /// `marker`.
+    ///
+    /// La cuarentena es la alternativa de AC2 cuando el delete
+    /// condicional no existe o la carrera no se puede cerrar: los bytes
+    /// marcados quedan accesibles bajo el nuevo nombre, y la clave
+    /// original deja de estar controlada por el recolector.
+    async fn quarantine_if_untouched(
+        &self,
+        digest: &ContentDigest,
+        marker: &VersionMarker,
+        quarantine_key: &str,
+    ) -> Result<ConditionalOutcome, BlobError>;
+}
