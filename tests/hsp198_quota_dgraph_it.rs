@@ -410,21 +410,26 @@ async fn a_crash_before_the_consumption_is_repaired_by_the_release() {
     );
 
     // The reconciler, after the lease died: exactly what the dead worker
-    // held comes back, and nothing else moves.
+    // held comes back. The set is asserted by MEMBERSHIP, not by size:
+    // the alpha is shared and a previous aborted run can leave its own
+    // expired tickets, which the global reconciler is right to sweep.
     let released = store
         .release_expired(base + ChronoDuration::seconds(2))
         .await
         .expect("the reconciliation runs");
-    assert_eq!(
-        released.len(),
-        1,
-        "one expired ticket released: {released:?}"
+    let own_key = format!("{}/tickets/dead-worker", ledger_key_of(&tenant, account));
+    assert!(
+        released.contains(&own_key),
+        "the dead worker's ticket is in the released set: {released:?}"
     );
     let freed = store
         .observe(&tenant, account)
         .await
         .expect("the ledger reads");
-    assert_eq!(freed.in_flight, 0, "the dead reservation is back");
+    assert_eq!(
+        freed.in_flight, 0,
+        "the tenant is back to its baseline: {freed:?}"
+    );
     assert_eq!(freed.active, 0);
 
     // The room is real: the same bytes fit again.
