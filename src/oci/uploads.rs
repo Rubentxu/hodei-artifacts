@@ -761,7 +761,7 @@ fn the_expired(sessions: &HashMap<String, Entry>, ttl: Duration) -> Vec<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oci::session_journal::MemoryJournal;
+    use crate::oci::session_journal::{MemoryJournal, SessionJournal};
     use hodei_hub::blob::{BlobStore, InMemoryBlobStore};
 
     /// Una reserva de un libro mayor sin limites: las pruebas de
@@ -894,7 +894,7 @@ mod tests {
     /// vieja: es el `416` que evita duplicar un trozo reenviado.
     #[tokio::test]
     async fn the_cas_refuses_a_stale_writer() {
-        let journal = Arc::new(MemoryJournal::new());
+        let journal: Arc<dyn SessionJournal> = Arc::new(MemoryJournal::new());
         let registry =
             UploadRegistry::with_journal(Duration::from_secs(60), 8, Arc::clone(&journal));
         let store = InMemoryBlobStore::empty();

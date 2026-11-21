@@ -245,6 +245,7 @@ pub const SESSION_TYPE: &str = "HodeiUploadSession";
 pub const SESSION_SCHEMA_DQL: &str = "
 hodei.upload.session.key: string @index(exact) @upsert .
 hodei.upload.session.account: string @index(exact) .
+hodei.upload.session.tenant: string @index(exact) .
 hodei.upload.session.repository: string .
 hodei.upload.session.offset: int .
 hodei.upload.session.handle: string .
@@ -254,6 +255,7 @@ hodei.upload.session.touched_at: int .
 type HodeiUploadSession {
   hodei.upload.session.key
   hodei.upload.session.account
+  hodei.upload.session.tenant
   hodei.upload.session.repository
   hodei.upload.session.offset
   hodei.upload.session.handle
@@ -264,7 +266,10 @@ type HodeiUploadSession {
 ";
 
 /// La autoridad sobre el grafo: el mismo CAS del libro mayor de cuota,
-/// arbitrado por el servidor.
+/// arbitrado por el servidor. Clonable y ligero —el cliente es un `Arc`
+/// y el inquilino un nombre—, porque dos escritores de la misma sesion
+/// son dos tenedores del mismo journal.
+#[derive(Clone)]
 pub struct DgraphJournal {
     client: Arc<GraphClient>,
     tenant: String,
@@ -359,6 +364,7 @@ impl SessionJournal for DgraphJournal {
         let nquads = format!(
             "_:s <dgraph.type> \"{session_type}\" .\n\
              _:s <hodei.upload.session.key> {key} .\n\
+             _:s <hodei.upload.session.tenant> {tenant} .\n\
              _:s <hodei.upload.session.account> {account} .\n\
              _:s <hodei.upload.session.repository> {repository} .\n\
              _:s <hodei.upload.session.offset> \"{offset}\" .\n\
@@ -368,6 +374,7 @@ impl SessionJournal for DgraphJournal {
              _:s <hodei.upload.session.touched_at> \"{touched}\" .\n",
             session_type = SESSION_TYPE,
             key = dql_string(&key),
+            tenant = dql_string(&self.tenant),
             account = dql_string(&record.account),
             repository = dql_string(&record.repository),
             offset = record.offset,
@@ -436,26 +443,58 @@ impl SessionJournal for DgraphJournal {
             )],
             commit_now: true,
         };
-        let response = self
-            .client
-            .upsert(transaction)
-            .await
-            .map_err(|error| JournalError::Unavailable(error.to_string()))?;
-        require_no_errors(&response.json)?;
-        let won = response
-            .json
-            .get("s")
-            .and_then(Value::as_array)
-            .map(|nodes| !nodes.is_empty())
-            .unwrap_or(false);
-        if won {
-            return Ok(expected_version + 1);
+        // Dos transacciones concurrentes sobre el mismo `@upsert` pueden
+        // terminar en **abort por serializacion** del servidor, no en
+        // "perdi el CAS": el abort se reintenta —la revalidacion del
+        // filtro dira luego quien gano—; un fallo que no es abort es el
+        // journal no respondiendo. El veredicto no se lee de la respuesta
+        // del upsert —los `as var` no se proyectan—: se relee el estado
+        // DESPUES del commit, la misma regla probada del libro mayor de
+        // cuota (HSP-171): la transaccion gano si la revision que ella
+        // escribio es la que esta.
+        for attempt in 1..=3 {
+            match self.client.upsert(transaction.clone()).await {
+                Err(error) => {
+                    let text = error.to_string();
+                    let abort = text.contains("aborted")
+                        || text.contains("Aborted")
+                        || text.contains("please retry")
+                        || text.contains("RETRY");
+                    if !abort {
+                        return Err(JournalError::Unavailable(text));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(25 * attempt)).await;
+                }
+                Ok(response) => {
+                    require_no_errors(&response.json)?;
+                    return match self.read(id).await? {
+                        None => Err(JournalError::NoSuchSession { id: id.to_owned() }),
+                        Some(record) if record.closed => {
+                            Err(JournalError::NoSuchSession { id: id.to_owned() })
+                        }
+                        Some(record)
+                            if record.version == expected_version + 1
+                                && record.offset == offset =>
+                        {
+                            Ok(expected_version + 1)
+                        }
+                        // Mi transaccion no escribio o alguien movio la
+                        // autoridad: el `416` del protocolo lleva el
+                        // offset y la revision de verdad.
+                        Some(record) => Err(JournalError::Conflict {
+                            id: id.to_owned(),
+                            offset: record.offset,
+                            revision: record.version,
+                        }),
+                    };
+                }
+            }
         }
-        // El filtro no casó: o la sesion no esta, o esta cerrada, u otro
-        // avance gano. Se relee para decir cual.
+        // El servidor no dejo de abortar: otro escritor tiene la sesion
+        // en una revision que este no alcanzo. Se relee una ultima vez
+        // para decir cuanto.
         match self.read(id).await? {
             None => Err(JournalError::NoSuchSession { id: id.to_owned() }),
-            Some(record) if record.closed => Err(JournalError::NoSuchSession { id: id.to_owned() }),
             Some(record) => Err(JournalError::Conflict {
                 id: id.to_owned(),
                 offset: record.offset,
@@ -491,15 +530,21 @@ impl SessionJournal for DgraphJournal {
         ttl_millis: u64,
     ) -> Result<Vec<SessionRecord>, JournalError> {
         let deadline = now.saturating_sub(ttl_millis);
+        // El barrido esta **acotado al inquilino**: sobre un alpha
+        // compartido, un censo global de sesiones abiertas cerrarlas
+        // sesiones de otros —eso esta prohibido por el contrato del
+        // entorno—. La llave `tenant` es la frontera.
         let response = self
             .client
             .execute_dql(&format!(
-                "{{ q(func: eq(hodei.upload.session.closed, false)) \
-                 @filter(le(hodei.upload.session.touched_at, {deadline})) {{ \
+                "{{ q(func: eq(hodei.upload.session.tenant, {tenant})) \
+                 @filter(eq(hodei.upload.session.closed, false) AND \
+                 le(hodei.upload.session.touched_at, {deadline})) {{ \
                  hodei.upload.session.key hodei.upload.session.account \
                  hodei.upload.session.repository hodei.upload.session.offset \
                  hodei.upload.session.handle hodei.upload.session.version \
                  hodei.upload.session.touched_at }} }}",
+                tenant = dql_string(&self.tenant),
                 deadline = deadline,
             ))
             .await
@@ -544,31 +589,25 @@ impl SessionJournal for DgraphJournal {
                 .await
                 .map_err(|error| JournalError::Unavailable(error.to_string()))?;
             require_no_errors(&closed.json)?;
-            let marked = closed
-                .json
-                .get("s")
-                .and_then(Value::as_array)
-                .map(|nodes| !nodes.is_empty())
-                .unwrap_or(false);
-            if !marked {
-                continue;
-            }
+            // El veredicto se relee, no se lee de la respuesta: el
+            // servidor no proyecta las variables `as var` del upsert.
+            // Una sesion que sigue abierta es una sesion que otro
+            // escritor movio —el filtro no casa— y la decide la proxima
+            // pasada.
             let id = key.rsplit('/').next().unwrap_or(&key).to_owned();
+            let marked = match self.read(&id).await? {
+                Some(record) if record.closed => record,
+                _ => continue,
+            };
             expired.push(SessionRecord {
                 id,
-                account: text_of(&node, "hodei.upload.session.account").unwrap_or_default(),
-                repository: text_of(&node, "hodei.upload.session.repository").unwrap_or_default(),
-                offset: node
-                    .get("hodei.upload.session.offset")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                handle: text_of(&node, "hodei.upload.session.handle").unwrap_or_default(),
-                version,
+                account: marked.account,
+                repository: marked.repository,
+                offset: marked.offset,
+                handle: marked.handle,
+                version: marked.version,
                 closed: true,
-                touched_at_millis: node
-                    .get("hodei.upload.session.touched_at")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
+                touched_at_millis: marked.touched_at_millis,
             });
         }
         Ok(expired)

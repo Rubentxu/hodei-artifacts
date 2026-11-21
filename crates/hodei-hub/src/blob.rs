@@ -990,7 +990,7 @@ impl BlobStore for FileBlobStore {
             .await
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
         if !canonical.starts_with(&staging_dir)
-            || canonical.extension().as_deref() != Some(std::ffi::OsStr::new("part"))
+            || canonical.extension() != Some(std::ffi::OsStr::new("part"))
         {
             return Err(BlobError::Unavailable(
                 "the session handle is not a staging file of this store".to_owned(),
