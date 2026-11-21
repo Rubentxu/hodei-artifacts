@@ -336,6 +336,33 @@ pub fn tag_key(account: &str, repository: &str, tag_name: &str) -> String {
     )
 }
 
+/// The subset of a composite key that a guard subject may carry.
+///
+/// `GuardScope` accepts a narrower charset than [`key_part`]: it forbids
+/// `%`, `+`, `~` and `|`, yet Debian pool paths legitimately carry `+` and
+/// `~` (versions like `1.2+dfsg` or `1.0.0~rc1`), so the apt vertical was
+/// refused on Dgraph while Surreal accepted it. This escapes the forbidden
+/// bytes with `@` as the sentinel (`@` doubles, every forbidden byte
+/// becomes `@XX` with its uppercase hex), so the output always sits inside
+/// the guard charset. The map is injective: a verbatim `@` only ever
+/// appears as `@@`, so no plain string can be confused with an escape and
+/// two different paths never inherit the same guard. Stored composite keys
+/// are unchanged — the escape lives only on the guard subject.
+fn guard_part(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '@' => out.push_str("@@"),
+            '+' => out.push_str("@2B"),
+            '~' => out.push_str("@7E"),
+            '%' => out.push_str("@25"),
+            '|' => out.push_str("@7C"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// El sujeto de la guarda de una publicación: el camino del asset dentro
 /// de la cuenta. Dos escritores de la misma ruta —de donde venga el
 /// código— derivan el mismo sujeto y por eso se pelean por la misma
@@ -348,7 +375,11 @@ fn asset_guard_scope(
     scope_of(
         GuardKind::CatalogAsset,
         account,
-        &format!("asset/{repository}/{asset_path}"),
+        &format!(
+            "asset/{}/{}",
+            guard_part(repository),
+            guard_part(asset_path)
+        ),
     )
 }
 
@@ -3881,5 +3912,68 @@ impl AuditOutbox for DgraphAuditOutbox {
 
     async fn entry(&self, event_id: &str) -> Result<Option<AuditEntry>, AuditError> {
         Ok(self.the_row(event_id).await?.map(|row| row.the_entry()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guard_part_escapes_the_debian_charset() {
+        assert_eq!(guard_part("1.2+dfsg"), "1.2@2Bdfsg");
+        assert_eq!(guard_part("1.0.0~rc1"), "1.0.0@7Erc1");
+        assert_eq!(guard_part("plain/path.deb"), "plain/path.deb");
+        assert_eq!(guard_part("a%b"), "a@25b");
+        assert_eq!(guard_part("a@b"), "a@@b");
+    }
+
+    #[test]
+    fn guard_part_is_injective() {
+        // An escaped byte must not collide with a verbatim one, and two
+        // different escapes must not collide with each other.
+        assert_ne!(guard_part("a+b"), guard_part("a@2B"));
+        assert_ne!(guard_part("a~b"), guard_part("a@7E"));
+        assert_ne!(guard_part("a+b~c"), guard_part("a@2Bb~c"));
+    }
+
+    #[test]
+    fn the_apt_guard_scope_opens_for_debian_versions() {
+        // The regression HSP-195 fixes: a Debian pool path with `+` and `~`
+        // used to be refused by the guard on Dgraph only, while Surreal
+        // accepted it.
+        let scope = asset_guard_scope(
+            "alice",
+            "debian",
+            "pool/main/h/hello_1.0.0~rc1+deb12_amd64.deb",
+        )
+        .expect("a debian version is guardable");
+        assert_eq!(
+            scope.subject(),
+            "asset/debian/pool/main/h/hello_1.0.0@7Erc1@2Bdeb12_amd64.deb"
+        );
+    }
+
+    #[test]
+    fn two_debian_versions_keep_two_distinct_guards() {
+        let left = asset_guard_scope("alice", "debian", "pool/main/h/hello_1.0_amd64.deb").unwrap();
+        let right =
+            asset_guard_scope("alice", "debian", "pool/main/h/hello_1.0~1_amd64.deb").unwrap();
+        assert_ne!(
+            hodei_graph_client::guard::guard_key(&left),
+            hodei_graph_client::guard::guard_key(&right)
+        );
+    }
+
+    #[test]
+    fn keys_still_carry_the_raw_path() {
+        // The escape lives only on the guard subject: the stored composite
+        // key keeps the path verbatim so reads and listings are unchanged.
+        let key = asset_key(
+            "alice",
+            "debian",
+            "pool/main/h/hello_1.0.0~rc1+deb12_amd64.deb",
+        );
+        assert!(key.contains("hello_1.0.0~rc1+deb12_amd64.deb"));
     }
 }
