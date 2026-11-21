@@ -13,8 +13,8 @@ pub mod evaluator;
 
 pub use conformance::SurrealConformance;
 pub use dgraph::{
-    DgraphConformance, DgraphSimulationAnchor, DgraphSimulationGraph, SIMULATION_ANCHOR_TYPE,
-    SIMULATION_SCHEMA_DQL, SimulationAnchor, anchor_key,
+    AnchorError, DgraphConformance, DgraphSimulationAnchor, DgraphSimulationGraph,
+    SIMULATION_ANCHOR_TYPE, SIMULATION_SCHEMA_DQL, SimulationAnchor, anchor_key,
 };
 pub use evaluator::CapsuleDecisionEvaluator;
 
