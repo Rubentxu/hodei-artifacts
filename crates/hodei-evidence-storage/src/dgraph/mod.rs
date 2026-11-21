@@ -6,11 +6,13 @@
 //! the contract proves is the SEMANTICS of each adapter over the engine
 //! the deployment runs.
 
+pub mod delta;
 pub mod evidence_store;
 pub mod frontier;
 pub mod graph;
 pub mod ledger;
 
+pub use delta::DgraphDeltaLedger;
 pub use evidence_store::{
     DgraphEvidenceError, DgraphEvidenceStore, EVIDENCE_EXTERNAL_TYPE, EVIDENCE_TYPE,
 };

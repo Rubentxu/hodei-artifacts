@@ -11,15 +11,27 @@
 //!
 //! Y todo lo que devuelve cabe en el alcance: si no cabe, el
 //! investigador lo rechaza antes de preguntarle al modelo.
+//!
+//! # La fuente es un puerto, no un almacen
+//!
+//! El nucleo del recuperador ([`InvestigationRetriever`]) pregunta a una
+//! [`GraphSource`] la generacion del mundo y las relaciones del sujeto;
+//! no sabe si detras hay Surreal o Dgraph. Eso es lo que hace
+//! **reproducible** el read-set: dos lecturas contra la misma watermark
+//! de la historia de deltas sellan el mismo manifiesto, porque el
+//! manifiesto es funcion del estado y de las claves estables --el
+//! identificador de la evidencia y la identidad de la relacion--, nunca
+//! del orden en que el almacen respondio.
 
 pub mod freshness;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hodei_evidence::domain::graph::NodeKind;
+use hodei_evidence::domain::graph::{GraphRelation, NodeKind};
 use hodei_evidence::ports::graph::GraphQuery;
 use hodei_evidence::ports::{ContentStore, EvidenceStore};
+use hodei_evidence_storage::DgraphGraphStore;
 use hodei_investigator::investigator::{EvidenceRetriever, ReachabilityFacts};
 use hodei_investigator::read_set::{ReadSet, ReadStamp};
 use hodei_investigator::scope::{
@@ -36,13 +48,35 @@ use surrealdb::Connection;
 /// sujeto ANTES de leer nada, y cada recurso que traen los caminos se
 /// autoriza antes de entregarse. Un permiso denegado o un almacen que
 /// no contesta son puertas cerradas, nunca lecturas silenciosas.
+///
+/// Esta variante sirve el grafo Surreal del despliegue;
+/// [`DgraphEvidenceRetriever`] sirve la autoridad del grafo con el
+/// MISMO nucleo, el mismo presupuesto y el mismo read-set.
 pub struct GraphEvidenceRetriever<C: Connection> {
-    evidence: Arc<dyn EvidenceStore>,
-    content: Arc<dyn ContentStore>,
-    graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
-    authorizer: Arc<dyn EvidenceReadAuthorizer>,
-    reachability: Option<Arc<dyn ReachabilityFacts>>,
-    tenant: Hrn,
+    inner: InvestigationRetriever<SurrealSource<C>>,
+}
+
+/// La fuente Surreal: el grafo de la cuenta, con su generacion leida de
+/// la historia de deltas del mismo almacen.
+struct SurrealSource<C: Connection>(Arc<hodei_evidence_storage::SurrealGraphStore<C>>);
+
+#[async_trait]
+impl<C: Connection> GraphSource for SurrealSource<C> {
+    async fn generation(&self, tenant: &Hrn) -> Result<u64, String> {
+        self.0.generation(tenant).await
+    }
+
+    async fn relations_from(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String> {
+        GraphQuery::relations_from(self.0.as_ref(), tenant, node)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn relations_to(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String> {
+        GraphQuery::relations_to(self.0.as_ref(), tenant, node)
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl<C: Connection> GraphEvidenceRetriever<C> {
@@ -53,6 +87,165 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
         evidence: Arc<dyn EvidenceStore>,
         content: Arc<dyn ContentStore>,
         graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
+        authorizer: Arc<dyn EvidenceReadAuthorizer>,
+        tenant: Hrn,
+    ) -> Self {
+        Self {
+            inner: InvestigationRetriever::new(
+                evidence,
+                content,
+                SurrealSource(graph),
+                authorizer,
+                tenant,
+            ),
+        }
+    }
+
+    /// El recuperador que tambien sabe de alcanzabilidad.
+    pub fn with_reachability(mut self, reachability: Arc<dyn ReachabilityFacts>) -> Self {
+        self.inner = self.inner.with_reachability(reachability);
+        self
+    }
+}
+
+#[async_trait]
+impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
+    async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
+        self.inner.retrieve(scope).await
+    }
+}
+
+/// El recuperador sobre la autoridad del grafo.
+///
+/// Es el puerto Dgraph del read-set de investigacion (HSP-206): el MISMO
+/// nucleo que sirve a Surreal --la misma autorizacion previa, el mismo
+/// presupuesto, las mismas claves estables del manifiesto-- contra el
+/// grafo nativo y su historia de deltas. La generacion con la que se
+/// sella la lectura es la watermark de los deltas del tenant, el cursor
+/// que la comprobacion de frescura vuelve a preguntar: por eso dos
+/// lecturas a la misma watermark reproducen el read-set byte a byte.
+pub struct DgraphEvidenceRetriever {
+    inner: InvestigationRetriever<DgraphSource>,
+}
+
+/// La fuente Dgraph: el grafo nativo, con su generacion leida de la
+/// historia de deltas que la frontera proyecto. La historia es el MISMO
+/// puerto que consulta el comprobador de frescura ([`freshness::LedgerFreshness`]):
+/// la watermark con la que se sella el read-set y la watermark contra la
+/// que se comprueba son la misma pregunta al mismo material, y por eso
+/// un retiro de apoyo se ve como stale y no como current falseado.
+pub struct DgraphSource {
+    graph: Arc<DgraphGraphStore>,
+    deltas: Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
+}
+
+impl DgraphSource {
+    /// La fuente sobre el grafo y la historia de deltas de una conexion
+    /// validada.
+    pub fn new(
+        graph: Arc<DgraphGraphStore>,
+        deltas: Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
+    ) -> Self {
+        Self { graph, deltas }
+    }
+}
+
+#[async_trait]
+impl GraphSource for DgraphSource {
+    async fn generation(&self, tenant: &Hrn) -> Result<u64, String> {
+        self.deltas.version_of(tenant).await
+    }
+
+    async fn relations_from(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String> {
+        GraphQuery::relations_from(self.graph.as_ref(), tenant, node)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn relations_to(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String> {
+        GraphQuery::relations_to(self.graph.as_ref(), tenant, node)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl DgraphEvidenceRetriever {
+    /// El recuperador sobre la evidencia, el contenido, el grafo nativo
+    /// y su historia de deltas, con el Authorizer compartido.
+    pub fn new(
+        evidence: Arc<dyn EvidenceStore>,
+        content: Arc<dyn ContentStore>,
+        graph: Arc<DgraphGraphStore>,
+        deltas: Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
+        authorizer: Arc<dyn EvidenceReadAuthorizer>,
+        tenant: Hrn,
+    ) -> Self {
+        Self {
+            inner: InvestigationRetriever::new(
+                evidence,
+                content,
+                DgraphSource::new(graph, deltas),
+                authorizer,
+                tenant,
+            ),
+        }
+    }
+
+    /// El recuperador que tambien sabe de alcanzabilidad.
+    pub fn with_reachability(mut self, reachability: Arc<dyn ReachabilityFacts>) -> Self {
+        self.inner = self.inner.with_reachability(reachability);
+        self
+    }
+}
+
+#[async_trait]
+impl EvidenceRetriever for DgraphEvidenceRetriever {
+    async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
+        self.inner.retrieve(scope).await
+    }
+}
+
+/// Las dos preguntas del read-set al grafo, dicho como puerto.
+///
+/// Un adaptador que no puede contestarlas cierra la lectura: la
+/// generacion que falta no se inventa con cero, y las relaciones que
+/// fallan no se entregan como ausencia. Eso es lo que separa un grafo
+/// mudo de un grafo que declara no tener nada que decir.
+#[async_trait]
+pub trait GraphSource: Send + Sync {
+    /// La version de la historia de deltas del tenant: la watermark
+    /// contra la que se sella y se reproduce el read-set.
+    async fn generation(&self, tenant: &Hrn) -> Result<u64, String>;
+
+    /// Las relaciones que empiezan en el nodo, de la cuenta.
+    async fn relations_from(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String>;
+
+    /// Las relaciones que terminan en el nodo, de la cuenta.
+    async fn relations_to(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String>;
+}
+
+/// El nucleo del recuperador: la lectura sellada sobre una fuente.
+///
+/// Vive separado del adaptador porque la garantida que importa --la
+/// reproduccion del read-set a la misma watermark, el presupuesto
+/// declarado y la puerta cerrada ante el fallo-- es del procedimiento,
+/// no del almacen. Surreal y Dgraph son dos materiales del mismo
+/// procedimiento.
+pub struct InvestigationRetriever<G: GraphSource> {
+    evidence: Arc<dyn EvidenceStore>,
+    content: Arc<dyn ContentStore>,
+    graph: G,
+    authorizer: Arc<dyn EvidenceReadAuthorizer>,
+    reachability: Option<Arc<dyn ReachabilityFacts>>,
+    tenant: Hrn,
+}
+
+impl<G: GraphSource> InvestigationRetriever<G> {
+    /// El nucleo sobre una fuente del grafo y el Authorizer compartido.
+    pub fn new(
+        evidence: Arc<dyn EvidenceStore>,
+        content: Arc<dyn ContentStore>,
+        graph: G,
         authorizer: Arc<dyn EvidenceReadAuthorizer>,
         tenant: Hrn,
     ) -> Self {
@@ -216,11 +409,7 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
     ) -> Result<Vec<ScopedFact>, String> {
         let mut facts = Vec::new();
 
-        let mut relations = self
-            .graph
-            .relations_from(&self.tenant, subject)
-            .await
-            .map_err(|error| error.to_string())?;
+        let mut relations = self.graph.relations_from(&self.tenant, subject).await?;
         relations.extend(
             self.graph
                 .relations_to(&self.tenant, subject)
@@ -276,7 +465,7 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
 }
 
 #[async_trait]
-impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
+impl<G: GraphSource> EvidenceRetriever for InvestigationRetriever<G> {
     async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
         // La autorizacion va ANTES de cualquier lectura: quien pregunta
         // tiene que poder leer el sujeto, y una denegacion o un error
