@@ -474,9 +474,12 @@ async fn a_moved_world_and_a_silent_store_close_the_simulation_per_contract() {
     );
 
     // While the fork sleeps, the world really moves: a delta committed
-    // through the frontier, fresh cause and fresh position.
+    // through the frontier, fresh cause and fresh position. The delta
+    // takes sequence position + 1, so delivery 0 lands the watermark
+    // on 1.
+
     world
-        .commit_a_real_move(1, &fixture.lib_v1, &fixture.lib_v3)
+        .commit_a_real_move(0, &fixture.lib_v1, &fixture.lib_v3)
         .await;
     assert_eq!(
         the_graph.generation().await.expect("live"),
@@ -533,13 +536,15 @@ async fn a_moved_world_and_a_silent_store_close_the_simulation_per_contract() {
     assert!(matches!(error, SimulationError::Unavailable(_)), "{error}");
 
     // A decider that does not answer: incomplete per the contract —
-    // ReadFailed, the decision half of the same rule.
+    // ReadFailed, the decision half of the same rule. The base of this
+    // one is the world AFTER the move: over a stale base the service
+    // refuses before it ever asks a decider.
     let mute_service = SimulationService::new(
         Arc::new(DgraphSimulationGraph::new(
             world.graph.clone(),
             world.deltas.clone(),
             tenant.clone(),
-            anchor.the_anchor(),
+            SimulationAnchor::new(1, the_clock()),
         )),
         Arc::new(FailingEvaluator),
     );
@@ -548,7 +553,7 @@ async fn a_moved_world_and_a_silent_store_close_the_simulation_per_contract() {
             &the_fork(
                 &tenant,
                 "fork-muted",
-                0,
+                1,
                 vec![fixture.artefact.clone()],
                 vec![],
             ),

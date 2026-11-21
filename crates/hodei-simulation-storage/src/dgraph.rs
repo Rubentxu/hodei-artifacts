@@ -75,13 +75,7 @@ use hodei_simulation::ports::{DecisionEvaluator, SimulationGraph};
 
 const MAX_ALTER_ATTEMPTS: usize = 8;
 const ALTER_BACKOFF: Duration = Duration::from_millis(25);
-const MAX_ANCHOR_WRITE_ATTEMPTS: usize = 6;
-/// Dgraph answers an alter before the predicate is known to the
-/// mutation layer: the first write after the DDL slice falls inside the
-/// propagation window and the server refuses the literal in the lexer.
-/// The create-if-absent is idempotent, so the window is crossed with a
-/// bounded sleep, not with a invented fallback.
-const PROPAGATION_BACKOFF: Duration = Duration::from_millis(250);
+const MAX_ANCHOR_WRITE_ATTEMPTS: usize = 3;
 
 /// The Dgraph type of the anchor row. It lives in this adapter's own
 /// namespace: the shared schema of `hodei_graph_client::schema` is not
@@ -113,7 +107,10 @@ pub fn anchor_key(simulation: &str, account: &str) -> String {
 /// - an upsert's `@if` only sees variables declared as `var as var(...)`:
 ///   the existence check is a declared var, not an inline `func:`;
 /// - every composite key passes through `dql_string`: a raw separator
-///   breaks the server's lexer.
+///   breaks the server's lexer;
+/// - scalars ride as quoted literals, like the delta sequence does: the
+///   lexer of this server refuses a bare number in the value position
+///   and the schema coerces the quoted form to the declared type.
 pub fn anchor_upsert(key: &str, snapshot: u64, clock: &DateTime<Utc>) -> GraphUpsertTransaction {
     let literal = dql_string(key);
     GraphUpsertTransaction {
@@ -123,8 +120,9 @@ pub fn anchor_upsert(key: &str, snapshot: u64, clock: &DateTime<Utc>) -> GraphUp
             format!(
                 "_:a <dgraph.type> \"{SIMULATION_ANCHOR_TYPE}\" .\n\
                  _:a <hodei.simulation.anchor.key> {literal} .\n\
-                 _:a <hodei.simulation.anchor.snapshot> {snapshot} .\n\
+                 _:a <hodei.simulation.anchor.snapshot> {} .\n\
                  _:a <hodei.simulation.anchor.clock> {} .\n",
+                dql_string(&snapshot.to_string()),
                 dql_string(&clock.to_rfc3339()),
             ),
         )],
@@ -140,6 +138,27 @@ pub fn anchor_query(key: &str) -> String {
          hodei.simulation.anchor.clock }} }}",
         dql_string(key),
     )
+}
+
+/// The snapshot the anchor row carries: a number, or the digits as text
+/// when the server echoes the stored form. Absence is `None`.
+fn anchor_snapshot_of(row: &serde_json::Value) -> Option<u64> {
+    row.get("hodei.simulation.anchor.snapshot")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+        })
+}
+
+/// The instant the anchor row carries, parsed from any RFC 3339 form:
+/// the server normalizes the offset, so equality is an instant
+/// comparison, not a string one.
+fn anchor_clock_of(row: &serde_json::Value) -> Option<DateTime<Utc>> {
+    row.get("hodei.simulation.anchor.clock")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+        .map(|instant| instant.with_timezone(&Utc))
 }
 
 /// Why an anchor could not be written or read.
@@ -246,33 +265,33 @@ impl DgraphSimulationAnchor {
             )
             .await
             {
-                Ok(response) => {
-                    let rows: Vec<serde_json::Value> = response
-                        .json
-                        .get("exists")
-                        .and_then(serde_json::Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    if rows.is_empty() {
-                        return Ok(());
+                Ok(_response) => {
+                    // The create-if-absent committed, or the row was
+                    // there already. What decides replay against a moved
+                    // anchor is the row read back through the type: the
+                    // var block's JSON shape is not the contract.
+                    match self.lookup(simulation, account).await? {
+                        Some(frozen) if frozen == *anchor => {
+                            // Re-recording the very same anchor is a
+                            // replay: the simulation re-declares what it
+                            // froze.
+                            return Ok(());
+                        }
+                        Some(_) => {
+                            return Err(AnchorError::AlreadyAnchored {
+                                simulation: simulation.to_string(),
+                                account: account.to_string(),
+                            });
+                        }
+                        // The server answered the write but the typed
+                        // lookup does not see the row yet: a concurrent
+                        // writer is mid-flight, or the propagation is
+                        // slow. The idempotent gate is retried.
+                        None => {
+                            last = "the anchor row is not readable yet".to_string();
+                            tokio::time::sleep(ALTER_BACKOFF * (attempt + 1) as u32).await;
+                        }
                     }
-                    if rows.iter().any(|row| {
-                        row.get("hodei.simulation.anchor.snapshot")
-                            .and_then(serde_json::Value::as_u64)
-                            == Some(anchor.snapshot_generation)
-                            && row
-                                .get("hodei.simulation.anchor.clock")
-                                .and_then(serde_json::Value::as_str)
-                                == Some(anchor.clock.to_rfc3339().as_str())
-                    }) {
-                        // Re-recording the very same anchor is a replay:
-                        // the simulation re-declares what it froze.
-                        return Ok(());
-                    }
-                    return Err(AnchorError::AlreadyAnchored {
-                        simulation: simulation.to_string(),
-                        account: account.to_string(),
-                    });
                 }
                 // Losing the write race on the @upsert key: the other
                 // writer committed, and the retry reads what it froze.
@@ -280,25 +299,13 @@ impl DgraphSimulationAnchor {
                     if attempt + 1 < MAX_ANCHOR_WRITE_ATTEMPTS =>
                 {
                     last = "the anchor write raced another writer".to_string();
-                    tokio::time::sleep(PROPAGATION_BACKOFF * (attempt + 1) as u32).await;
-                }
-                // The DDL slice answers before the predicate reaches the
-                // mutation layer: the first write falls inside the
-                // propagation window and the server refuses the literal
-                // in the lexer. The create-if-absent is idempotent, so
-                // the window is crossed with a bounded sleep.
-                Err(error @ GraphClientError::Request { .. })
-                    if error.to_string().contains("Invalid input")
-                        && attempt + 1 < MAX_ANCHOR_WRITE_ATTEMPTS =>
-                {
-                    last = error.to_string();
-                    tokio::time::sleep(PROPAGATION_BACKOFF * (attempt + 1) as u32).await;
+                    tokio::time::sleep(ALTER_BACKOFF * (attempt + 1) as u32).await;
                 }
                 Err(error) => return Err(AnchorError::Unavailable(error.to_string())),
             }
         }
         Err(AnchorError::Unavailable(format!(
-            "the anchor write did not settle after {MAX_ANCHOR_WRITE_ATTEMPTS} attempts: {last}"
+            "the anchor write kept racing after {MAX_ANCHOR_WRITE_ATTEMPTS} attempts: {last}"
         )))
     }
 
@@ -323,20 +330,12 @@ impl DgraphSimulationAnchor {
         else {
             return Ok(None);
         };
-        let snapshot = row
-            .get("hodei.simulation.anchor.snapshot")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| {
-                AnchorError::Unavailable("the anchor row carries no snapshot".to_string())
-            })?;
-        let clock = row
-            .get("hodei.simulation.anchor.clock")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-            .map(|instant| instant.with_timezone(&Utc))
-            .ok_or_else(|| {
-                AnchorError::Unavailable("the anchor row carries no readable clock".to_string())
-            })?;
+        let snapshot = anchor_snapshot_of(&row).ok_or_else(|| {
+            AnchorError::Unavailable("the anchor row carries no snapshot".to_string())
+        })?;
+        let clock = anchor_clock_of(&row).ok_or_else(|| {
+            AnchorError::Unavailable("the anchor row carries no readable clock".to_string())
+        })?;
         Ok(Some(SimulationAnchor::new(snapshot, clock)))
     }
 }
@@ -674,7 +673,7 @@ mod tests {
         assert!(
             block
                 .set_nquads
-                .contains("_:a <hodei.simulation.anchor.snapshot> 7")
+                .contains("_:a <hodei.simulation.anchor.snapshot> \"7\"")
         );
         assert!(block.set_nquads.contains(&clock.to_rfc3339()));
         assert!(tx.commit_now, "the create-if-absent is one answer");
