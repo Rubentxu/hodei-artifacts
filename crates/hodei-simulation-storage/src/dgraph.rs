@@ -16,8 +16,10 @@
 //! fork live in memory and in the diff, never in the authority. The only
 //! state this module writes is
 //!
-//! - the fixture of the conformance world — REAL base, said by the
-//!   writer port and nothing else;
+//! - the fixture of the conformance world — REAL base, said through the
+//!   graph's writer port with no cause, exactly as the Surreal oracle
+//!   says it (a cause-less changeset emits no deltas and moves no
+//!   watermark: preparing a world is not simulating in it);
 //! - the anchor row of a simulation: the snapshot watermark and the
 //!   fixed clock it was prepared against. The anchor is a record OF the
 //!   simulation, in the additive `hodei.simulation.*` namespace of this
@@ -30,12 +32,14 @@
 //! world nobody has. The reads are therefore frozen twice over:
 //!
 //! - the **snapshot**: the watermark of the tenant's delta story the
-//!   fork declared. The port answers its `generation` with the LIVE
-//!   watermark — the version the frontier's committed deliveries
-//!   reached — so a world that moved is caught by the service's guards
-//!   as a stale base, the same answer the Surreal oracle gives; and the
-//!   relation reads refuse a world that moved above the sealed snapshot
-//!   inside the read itself, which is a coherence guard, not a guess;
+//!   fork was prepared against. The port answers its `generation` with
+//!   the LIVE watermark — the version the frontier's committed
+//!   deliveries reached — so a world that moved is caught by the
+//!   service's guards as a stale base, the same answer the Surreal
+//!   oracle gives. Inside the read itself the port refuses a world
+//!   ABOVE the sealed snapshot: a relation of the next generation is
+//!   not part of the world the fork declared, and answering with two
+//!   generations would return a diff over a world nobody has;
 //! - the **clock**: the instant the fork evaluates at, frozen when the
 //!   anchor was written. Two forks against one anchor give one result,
 //!   and a result that depends on the wall clock cannot be audited.
@@ -53,15 +57,9 @@ use chrono::{DateTime, Utc};
 use hex::encode as hex_encode;
 use hodei_evidence::application::projector::evidence_hrn;
 use hodei_evidence::domain::delta::RelationDeltaLedger;
-use hodei_evidence::domain::graph::{
-    GraphChangeSet, GraphNode, GraphRelation, NodeKind, RelationType,
-};
+use hodei_evidence::domain::graph::{GraphChangeSet, GraphNode, GraphRelation, NodeKind};
 use hodei_evidence::ports::graph::{GraphQuery, GraphWriter};
-use hodei_evidence::ports::EvidenceStore;
-use hodei_evidence::{
-    ContentDigest, ContentRef, EvidenceId, EvidenceRecord, EvidenceType, EvidenceVerification,
-    Normalization, Producer,
-};
+use hodei_evidence::EvidenceId;
 use hodei_evidence_storage::DgraphGraphStore;
 use hodei_graph_client::{
     GraphClient, GraphClientError, GraphMutationBlock, GraphMutationPort, GraphUpsertTransaction,
@@ -74,9 +72,6 @@ use sha2::{Digest, Sha256};
 use hodei_simulation::conformance::{ConformanceWorld, Fixture};
 use hodei_simulation::hypothetical::RelationFact;
 use hodei_simulation::ports::{DecisionEvaluator, SimulationGraph};
-
-/// The status the graph answers with: only asserted relations are read.
-const STATUS_ASSERTED: &str = "asserted";
 
 const MAX_ALTER_ATTEMPTS: usize = 8;
 const ALTER_BACKOFF: Duration = Duration::from_millis(25);
@@ -235,10 +230,11 @@ impl DgraphSimulationAnchor {
     ) -> Result<(), AnchorError> {
         let key = anchor_key(simulation, account);
         for attempt in 0..MAX_WRITE_ATTEMPTS {
-            match self
-                .client
-                .upsert(anchor_upsert(&key, anchor.snapshot_generation, &anchor.clock))
-                .await
+            match GraphMutationPort::upsert(
+                &*self.client,
+                anchor_upsert(&key, anchor.snapshot_generation, &anchor.clock),
+            )
+            .await
             {
                 Ok(response) => {
                     let rows: Vec<serde_json::Value> = response
@@ -270,7 +266,8 @@ impl DgraphSimulationAnchor {
                 // Losing the write race on the @upsert key: the other
                 // writer committed, and the retry reads what it froze.
                 Err(GraphClientError::UpsertConflict { .. })
-                    if attempt + 1 < MAX_WRITE_ATTEMPTS => {}                Err(error) => return Err(AnchorError::Unavailable(error.to_string())),
+                    if attempt + 1 < MAX_WRITE_ATTEMPTS => {}
+                Err(error) => return Err(AnchorError::Unavailable(error.to_string())),
             }
         }
         Err(AnchorError::Unavailable(
@@ -325,7 +322,6 @@ impl DgraphSimulationAnchor {
 /// has no write method, and this type has none either: the only path to
 /// the graph from here is a query.
 pub struct DgraphSimulationGraph {
-    client: Arc<GraphClient>,
     graph: Arc<DgraphGraphStore>,
     deltas: Arc<dyn RelationDeltaLedger>,
     tenant: Hrn,
@@ -334,15 +330,17 @@ pub struct DgraphSimulationGraph {
 
 impl DgraphSimulationGraph {
     /// The reader of one account, anchored at a snapshot and a clock.
+    ///
+    /// The store is the only path to the graph, and the store's read
+    /// side is all this type uses: the port has no write method, and
+    /// neither does this one.
     pub fn new(
-        client: Arc<GraphClient>,
         graph: Arc<DgraphGraphStore>,
         deltas: Arc<dyn RelationDeltaLedger>,
         tenant: Hrn,
         anchor: SimulationAnchor,
     ) -> Self {
         Self {
-            client,
             graph,
             deltas,
             tenant,
@@ -373,30 +371,37 @@ impl DgraphSimulationGraph {
         )
     }
 
-    /// The asserted relations of the tenant, read through the projection's
-    /// own tenant-scoped scan. The scan is bounded to the account: on a
+    /// The asserted relations of the tenant, walked natively from every
+    /// node and deduplicated by identity — the same walk the graph's own
+    /// state fingerprint does. The scan is bounded to the account: on a
     /// shared alpha another tenant's keys are never seen.
     async fn the_relations_of_account(&self) -> Result<Vec<GraphRelation>, String> {
-        let tenant_literal = dql_string(&self.tenant.to_string());
-        let query = format!(
-            "{{ q(func: eq(hodei.graph.rel.tenant, {tenant_literal})) \
-             @filter(eq(hodei.graph.rel.status, {status})) {{ \
-             hodei.graph.rel.tenant hodei.graph.rel.type hodei.graph.rel.from_hrn \
-             hodei.graph.rel.to_hrn hodei.graph.rel.evidence hodei.graph.rel.observed_at }} }}",
-            status = dql_string(STATUS_ASSERTED),
-        );
-        let response = self
-            .client
-            .execute_dql(&query)
-            .await
-            .map_err(|error| error.to_string())?;
-        let rows = response
-            .json
-            .get("q")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        Ok(rows.iter().filter_map(relation_of).collect())
+        let mut seen: std::collections::BTreeMap<String, GraphRelation> =
+            std::collections::BTreeMap::new();
+        for kind in [
+            NodeKind::Repository,
+            NodeKind::SourceRevision,
+            NodeKind::Build,
+            NodeKind::Artifact,
+            NodeKind::Deployment,
+            NodeKind::Evidence,
+            NodeKind::Component,
+            NodeKind::Vulnerability,
+        ] {
+            for node in GraphQuery::nodes(&*self.graph, &self.tenant, kind)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                for relation in
+                    GraphQuery::relations_from(&*self.graph, &self.tenant, &node.id)
+                        .await
+                        .map_err(|error| error.to_string())?
+                {
+                    seen.insert(relation.identity(), relation);
+                }
+            }
+        }
+        Ok(seen.into_values().collect())
     }
 
     /// A fact of a relation, as the anchored reader answers it.
@@ -477,15 +482,14 @@ impl SimulationGraph for DgraphSimulationGraph {
 /// authority, read back through the anchored port.
 ///
 /// The fixture is the REAL base the simulation runs on — said by the
-/// graph's writer port with the SAME mechanics the projection uses, and
-/// nothing else reaches the graph. The hypothetical overlays and diffs
-/// never pass through this type: they live in the forks and in memory,
-/// and the graph stays the world as it was.
+/// graph's writer port, exactly as the Surreal oracle says it: a
+/// cause-less changeset, so preparing the world moves no watermark. The
+/// hypothetical overlays and diffs never pass through this type: they
+/// live in the forks and in memory, and the graph stays the world as it
+/// was.
 pub struct DgraphConformance {
-    client: Arc<GraphClient>,
     graph: Arc<DgraphGraphStore>,
     deltas: Arc<dyn RelationDeltaLedger>,
-    evidence: Arc<dyn EvidenceStore>,
     tenant: Hrn,
     anchor: SimulationAnchor,
     decisions: Arc<dyn DecisionEvaluator>,
@@ -493,26 +497,21 @@ pub struct DgraphConformance {
 
 impl DgraphConformance {
     /// The world over the graph's pieces, anchored at the watermark the
-    /// story holds at opening and the fixed conformance instant.
+    /// story holds at opening and the instant of the fixed clock.
     pub async fn new(
-        client: Arc<GraphClient>,
         graph: Arc<DgraphGraphStore>,
         deltas: Arc<dyn RelationDeltaLedger>,
-        evidence: Arc<dyn EvidenceStore>,
         tenant: Hrn,
         clock: DateTime<Utc>,
         decisions: Arc<dyn DecisionEvaluator>,
     ) -> Result<Self, AnchorError> {
-        DgraphSimulationAnchor::ensure_schema(&client).await?;
         let snapshot_generation = deltas
             .version_of(&tenant)
             .await
             .map_err(AnchorError::Unavailable)?;
         Ok(Self {
-            client,
             graph,
             deltas,
-            evidence,
             tenant,
             anchor: SimulationAnchor::new(snapshot_generation, clock),
             decisions,
@@ -528,7 +527,6 @@ impl DgraphConformance {
     /// consumer would build, with the fixture's snapshot and clock.
     pub fn the_graph(&self) -> Arc<DgraphSimulationGraph> {
         Arc::new(DgraphSimulationGraph::new(
-            self.client.clone(),
             self.graph.clone(),
             self.deltas.clone(),
             self.tenant.clone(),
@@ -548,32 +546,11 @@ impl ConformanceWorld for DgraphConformance {
     }
 
     async fn prepare(&self, fixture: &Fixture) -> Result<(), String> {
-        // The fixture's evidence is part of the world: the graph refuses
-        // a relation that claims evidence the authority does not hold,
-        // so the evidence records are admitted first — with the
-        // conformance clock, never the wall clock.
-        for id in [
-            hodei_simulation::conformance::THE_FIRST_EVIDENCE,
-            hodei_simulation::conformance::THE_SECOND_EVIDENCE,
-        ] {
-            let record = EvidenceRecord::builder(EvidenceId::new(id), fixture.tenant.clone())
-                .subjects(vec![fixture.artefact.clone()])
-                .evidence_type(EvidenceType::Sbom)
-                .producer(Producer::new("connector", "hsp208").with_version("1.0.0"))
-                .content(ContentRef::by_digest(ContentDigest::of_bytes(
-                    format!("hsp208-conformance-{id}").as_bytes(),
-                )))
-                .observed_at(self.anchor.clock)
-                .recorded_at(self.anchor.clock)
-                .verification(EvidenceVerification::unverified())
-                .normalization(Normalization::new("raw", "1.0.0"))
-                .build();
-            self.evidence
-                .put(record)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
-
+        // The fixture is REAL base. The evidence nodes ride in the same
+        // changeset: the graph refuses a relation that claims evidence
+        // it does not hold, and a cause-less changeset emits no deltas —
+        // the same answer the Surreal oracle gives when it prepares the
+        // world.
         let now = self.anchor.clock;
         let mut changes = GraphChangeSet::empty();
 
@@ -625,7 +602,8 @@ impl ConformanceWorld for DgraphConformance {
 
     async fn generation(&self) -> Result<u64, String> {
         // Live, exactly as the Surreal oracle answers: the version the
-        // story of the tenant reached.
+        // story of the tenant reached. A cause-less prepare moved
+        // nothing, so this is the anchored snapshot for the scenarios.
         self.deltas.version_of(&self.tenant).await
     }
 
@@ -634,42 +612,80 @@ impl ConformanceWorld for DgraphConformance {
     }
 }
 
-/// The row of a relation, read from the graph's own answer. Mirrors the
-/// projection's parser so a row the graph answers with is a fact the
-/// simulation can compare, and anything unparseable is absent — never a
-/// half-relation that would seal a manifest on noise.
-fn relation_of(row: &serde_json::Value) -> Option<GraphRelation> {
-    let relation = RelationType::parse(
-        row.get("hodei.graph.rel.type")
-            .and_then(serde_json::Value::as_str)?,
-    )?;
-    let from = Hrn::from_string(
-        row.get("hodei.graph.rel.from_hrn")
-            .and_then(serde_json::Value::as_str)?,
-    )?;
-    let to = Hrn::from_string(
-        row.get("hodei.graph.rel.to_hrn")
-            .and_then(serde_json::Value::as_str)?,
-    )?;
-    let tenant = Hrn::from_string(
-        row.get("hodei.graph.rel.tenant")
-            .and_then(serde_json::Value::as_str)?,
-    )?;
-    let evidence = row
-        .get("hodei.graph.rel.evidence")
-        .and_then(serde_json::Value::as_str)?
-        .to_owned();
-    Some(GraphRelation {
-        relation,
-        from,
-        to,
-        tenant_hrn: tenant,
-        evidence_id: EvidenceId::new(evidence),
-        observed_at: row
-            .get("hodei.graph.rel.observed_at")
-            .and_then(serde_json::Value::as_str)
-            .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-            .map(|instant| instant.with_timezone(&Utc))
-            .unwrap_or_else(Utc::now),
-    })
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The portable that was learned the hard way: an upsert `@if` only
+    /// sees a declared var — the existence check of the anchor must be
+    /// `exists as var(...)`, never an inline func.
+    #[test]
+    fn the_anchor_create_gates_on_a_declared_var() {
+        let clock = DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
+            .expect("an instant")
+            .with_timezone(&Utc);
+        let tx = anchor_upsert(&anchor_key("sim-1", "acme"), 7, &clock);
+
+        assert!(
+            tx.query
+                .contains("exists as var(func: eq(hodei.simulation.anchor.key,"),
+            "the existence check is a declared var: {}",
+            tx.query
+        );
+        let block = tx.blocks.first().expect("one block");
+        assert_eq!(block.cond.as_deref(), Some("eq(len(exists), 0)"));
+        assert!(block.set_nquads.contains("_:a <hodei.simulation.anchor.snapshot> 7"));
+        assert!(block.set_nquads.contains(&clock.to_rfc3339()));
+        assert!(tx.commit_now, "the create-if-absent is one answer");
+    }
+
+    /// Every composite key is quoted through `dql_string`: a raw `#` or
+    /// separator breaks the server's lexer.
+    #[test]
+    fn the_anchor_keys_are_quoted() {
+        let key = anchor_key("sim|weird#1", "ac|me#2");
+        let tx = anchor_upsert(
+            &key,
+            0,
+            &DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
+                .expect("an instant")
+                .with_timezone(&Utc),
+        );
+        let quoted = dql_string(&key);
+        assert!(quoted.starts_with('"') && quoted.ends_with('"'));
+        assert!(tx.query.contains(&quoted) && tx.blocks[0].set_nquads.contains(&quoted));
+    }
+
+    /// The identity of one anchor is deterministic per simulation and
+    /// account, and two accounts never share a row.
+    #[test]
+    fn the_anchor_key_is_deterministic_and_scoped() {
+        assert_eq!(anchor_key("sim-1", "acme"), anchor_key("sim-1", "acme"));
+        assert_ne!(anchor_key("sim-1", "acme"), anchor_key("sim-1", "other"));
+        assert_ne!(anchor_key("sim-1", "acme"), anchor_key("sim-2", "acme"));
+    }
+
+    /// The anchor query names the type and quotes the key: a lookup
+    /// cannot be steered by a caller who controls the simulation name.
+    #[test]
+    fn the_anchor_query_is_typed_and_quoted() {
+        let query = anchor_query(&anchor_key("sim-1", "acme"));
+        assert!(query.contains("@filter(type(HodeiSimulationAnchor))"));
+        assert!(query.contains(&dql_string(&anchor_key("sim-1", "acme"))));
+    }
+
+    /// The DDL slice is additive and confined to the adapter namespace:
+    /// the shared schema is not this adapter's to touch.
+    #[test]
+    fn the_ddl_slice_is_additive_and_confined() {
+        for line in SIMULATION_SCHEMA_DQL.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            assert!(
+                line.starts_with("hodei.simulation.") || line.contains("HodeiSimulationAnchor"),
+                "the slice only adds its own predicates: {line}"
+            );
+        }
+    }
 }
