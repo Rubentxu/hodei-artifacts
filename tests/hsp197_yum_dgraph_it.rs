@@ -395,7 +395,7 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
         if entry.path().is_dir() {
             copy_dir(&entry.path(), &target)?;
         } else {
-            std::fs::copy(&entry.path(), &target)?;
+            std::fs::copy(entry.path(), &target)?;
         }
     }
     Ok(())
@@ -1620,7 +1620,9 @@ async fn the_yum_queries_are_scoped_keyed_and_indexed() {
         "five foreign binaries and five foreign records, never mine"
     );
     assert!(
-        foreign.iter().all(|asset| asset.digest.value != tilde_rpm.value),
+        foreign
+            .iter()
+            .all(|asset| asset.digest.value != tilde_rpm.value),
         "the foreign window cannot borrow my bytes"
     );
 
