@@ -55,11 +55,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use hex::encode as hex_encode;
+use hodei_evidence::EvidenceId;
 use hodei_evidence::application::projector::evidence_hrn;
 use hodei_evidence::domain::delta::RelationDeltaLedger;
 use hodei_evidence::domain::graph::{GraphChangeSet, GraphNode, GraphRelation, NodeKind};
 use hodei_evidence::ports::graph::{GraphQuery, GraphWriter};
-use hodei_evidence::EvidenceId;
 use hodei_evidence_storage::DgraphGraphStore;
 use hodei_graph_client::{
     GraphClient, GraphClientError, GraphMutationBlock, GraphMutationPort, GraphUpsertTransaction,
@@ -75,7 +75,13 @@ use hodei_simulation::ports::{DecisionEvaluator, SimulationGraph};
 
 const MAX_ALTER_ATTEMPTS: usize = 8;
 const ALTER_BACKOFF: Duration = Duration::from_millis(25);
-const MAX_WRITE_ATTEMPTS: usize = 3;
+const MAX_ANCHOR_WRITE_ATTEMPTS: usize = 6;
+/// Dgraph answers an alter before the predicate is known to the
+/// mutation layer: the first write after the DDL slice falls inside the
+/// propagation window and the server refuses the literal in the lexer.
+/// The create-if-absent is idempotent, so the window is crossed with a
+/// bounded sleep, not with a invented fallback.
+const PROPAGATION_BACKOFF: Duration = Duration::from_millis(250);
 
 /// The Dgraph type of the anchor row. It lives in this adapter's own
 /// namespace: the shared schema of `hodei_graph_client::schema` is not
@@ -142,7 +148,9 @@ pub enum AnchorError {
     /// The anchor of this simulation and account exists with ANOTHER
     /// snapshot or clock: the world and the instant of a simulation are
     /// frozen once, and re-opening must not silently move the first.
-    #[error("the anchor of simulation {simulation} in account {account} is already frozen elsewhere")]
+    #[error(
+        "the anchor of simulation {simulation} in account {account} is already frozen elsewhere"
+    )]
     AlreadyAnchored {
         /// The simulation the key belongs to.
         simulation: String,
@@ -187,6 +195,7 @@ impl SimulationAnchor {
 /// once per (simulation, account): a re-open that replays the very same
 /// anchor is fine, a re-open that would move the snapshot or the clock is
 /// refused.
+#[derive(Clone)]
 pub struct DgraphSimulationAnchor {
     client: Arc<GraphClient>,
 }
@@ -229,7 +238,8 @@ impl DgraphSimulationAnchor {
         anchor: &SimulationAnchor,
     ) -> Result<(), AnchorError> {
         let key = anchor_key(simulation, account);
-        for attempt in 0..MAX_WRITE_ATTEMPTS {
+        let mut last = String::new();
+        for attempt in 0..MAX_ANCHOR_WRITE_ATTEMPTS {
             match GraphMutationPort::upsert(
                 &*self.client,
                 anchor_upsert(&key, anchor.snapshot_generation, &anchor.clock),
@@ -250,7 +260,8 @@ impl DgraphSimulationAnchor {
                         row.get("hodei.simulation.anchor.snapshot")
                             .and_then(serde_json::Value::as_u64)
                             == Some(anchor.snapshot_generation)
-                            && row.get("hodei.simulation.anchor.clock")
+                            && row
+                                .get("hodei.simulation.anchor.clock")
                                 .and_then(serde_json::Value::as_str)
                                 == Some(anchor.clock.to_rfc3339().as_str())
                     }) {
@@ -266,13 +277,29 @@ impl DgraphSimulationAnchor {
                 // Losing the write race on the @upsert key: the other
                 // writer committed, and the retry reads what it froze.
                 Err(GraphClientError::UpsertConflict { .. })
-                    if attempt + 1 < MAX_WRITE_ATTEMPTS => {}
+                    if attempt + 1 < MAX_ANCHOR_WRITE_ATTEMPTS =>
+                {
+                    last = "the anchor write raced another writer".to_string();
+                    tokio::time::sleep(PROPAGATION_BACKOFF * (attempt + 1) as u32).await;
+                }
+                // The DDL slice answers before the predicate reaches the
+                // mutation layer: the first write falls inside the
+                // propagation window and the server refuses the literal
+                // in the lexer. The create-if-absent is idempotent, so
+                // the window is crossed with a bounded sleep.
+                Err(error @ GraphClientError::Request { .. })
+                    if error.to_string().contains("Invalid input")
+                        && attempt + 1 < MAX_ANCHOR_WRITE_ATTEMPTS =>
+                {
+                    last = error.to_string();
+                    tokio::time::sleep(PROPAGATION_BACKOFF * (attempt + 1) as u32).await;
+                }
                 Err(error) => return Err(AnchorError::Unavailable(error.to_string())),
             }
         }
-        Err(AnchorError::Unavailable(
-            "the anchor write kept conflicting".to_string(),
-        ))
+        Err(AnchorError::Unavailable(format!(
+            "the anchor write did not settle after {MAX_ANCHOR_WRITE_ATTEMPTS} attempts: {last}"
+        )))
     }
 
     /// Reads the anchor row back: the snapshot and the clock the graph
@@ -392,10 +419,9 @@ impl DgraphSimulationGraph {
                 .await
                 .map_err(|error| error.to_string())?
             {
-                for relation in
-                    GraphQuery::relations_from(&*self.graph, &self.tenant, &node.id)
-                        .await
-                        .map_err(|error| error.to_string())?
+                for relation in GraphQuery::relations_from(&*self.graph, &self.tenant, &node.id)
+                    .await
+                    .map_err(|error| error.to_string())?
                 {
                     seen.insert(relation.identity(), relation);
                 }
@@ -497,23 +523,34 @@ pub struct DgraphConformance {
 
 impl DgraphConformance {
     /// The world over the graph's pieces, anchored at the watermark the
-    /// story holds at opening and the instant of the fixed clock.
-    pub async fn new(
+    /// story holds at opening and the instant of the fixed clock, and
+    /// FROZEN there: the anchor row of the simulation is written on the
+    /// way in, so a re-open replays the snapshot and the clock it finds
+    /// and refuses a snapshot or a clock that moved.
+    pub async fn open(
+        client: Arc<GraphClient>,
         graph: Arc<DgraphGraphStore>,
         deltas: Arc<dyn RelationDeltaLedger>,
         tenant: Hrn,
+        simulation: &str,
         clock: DateTime<Utc>,
         decisions: Arc<dyn DecisionEvaluator>,
     ) -> Result<Self, AnchorError> {
+        let anchor_store = DgraphSimulationAnchor::new(client);
+        DgraphSimulationAnchor::ensure_schema(&anchor_store.client).await?;
         let snapshot_generation = deltas
             .version_of(&tenant)
             .await
             .map_err(AnchorError::Unavailable)?;
+        let anchor = SimulationAnchor::new(snapshot_generation, clock);
+        anchor_store
+            .record(simulation, tenant.account_id(), &anchor)
+            .await?;
         Ok(Self {
             graph,
             deltas,
             tenant,
-            anchor: SimulationAnchor::new(snapshot_generation, clock),
+            anchor,
             decisions,
         })
     }
@@ -634,7 +671,11 @@ mod tests {
         );
         let block = tx.blocks.first().expect("one block");
         assert_eq!(block.cond.as_deref(), Some("eq(len(exists), 0)"));
-        assert!(block.set_nquads.contains("_:a <hodei.simulation.anchor.snapshot> 7"));
+        assert!(
+            block
+                .set_nquads
+                .contains("_:a <hodei.simulation.anchor.snapshot> 7")
+        );
         assert!(block.set_nquads.contains(&clock.to_rfc3339()));
         assert!(tx.commit_now, "the create-if-absent is one answer");
     }
