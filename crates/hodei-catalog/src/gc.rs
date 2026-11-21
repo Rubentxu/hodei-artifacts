@@ -540,6 +540,11 @@ pub trait ContentLedger: Send + Sync {
     }
 
     /// Close a coordinated run as swept for its generation.
+    ///
+    /// The counters travel with the close because the report is what a
+    /// resumed pass replays; the shape is the contract, not an
+    /// oversight.
+    #[allow(clippy::too_many_arguments)]
     async fn complete_scoped_run(
         &self,
         scope: &str,
