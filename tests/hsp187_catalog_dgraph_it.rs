@@ -169,15 +169,72 @@ fn a_publication(account: &str, repository: &str, asset_path: &str, content: &[u
     a_publication_at(account, repository, asset_path, "1.0.0", content)
 }
 
-/// Cuántos eventos pendientes hay de ESTA ejecución: el outbox del
-/// servidor acumula los de todas, y el censo cuenta la correlación propia.
-async fn the_event_count(outbox: &DgraphAuditOutbox, correlation: &str) -> usize {
-    outbox
-        .pending(Utc::now())
+/// Un hecho del outbox, dicho como lo graba el outbox atómico: los campos
+/// del `AuditEvent` que las aserciones miran.
+#[derive(Debug)]
+struct OutboxFact {
+    correlation_id: String,
+    resource: String,
+    action: String,
+    result: String,
+    tenant: String,
+    digest: String,
+}
+
+/// Los hechos del outbox de ESTA cuenta, dichos por su clave de tenant.
+///
+/// El censo va POR TENANT (índice exacto), no por el `pending()` global:
+/// el outbox del servidor compartido acumula los hechos de TODAS las
+/// corridas —ninguna prueba los marca entregados— y su respuesta llegó a
+/// desbordar el límite de mensaje gRPC (4 MiB; hallazgo de HSP-194,
+/// drenado y documentado por HSP-220). La cuenta es única por corrida,
+/// así que la raíz `eq(tenant)` trae por índice solo los hechos de ESTA
+/// prueba, y el filtro fino (la correlación) va en el adaptador.
+async fn the_events_of(client: &GraphClient, tenant: &str) -> Vec<OutboxFact> {
+    let escaped = tenant.replace('\\', "\\\\").replace('"', "\\\"");
+    let response = client
+        .execute_dql(&format!(
+            "{{ q(func: eq(hodei.catalog.outbox.tenant, \"{escaped}\")) \
+             {{ hodei.catalog.outbox.correlation_id hodei.catalog.outbox.resource \
+                hodei.catalog.outbox.action hodei.catalog.outbox.result \
+                hodei.catalog.outbox.digest hodei.catalog.outbox.tenant }} }}"
+        ))
         .await
-        .expect("the pending events")
+        .expect("the outbox census answers");
+    let nodes = response
+        .json
+        .get("q")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    nodes
+        .iter()
+        .map(|node| OutboxFact {
+            correlation_id: the_fact_field(node, "hodei.catalog.outbox.correlation_id"),
+            resource: the_fact_field(node, "hodei.catalog.outbox.resource"),
+            action: the_fact_field(node, "hodei.catalog.outbox.action"),
+            result: the_fact_field(node, "hodei.catalog.outbox.result"),
+            tenant: the_fact_field(node, "hodei.catalog.outbox.tenant"),
+            digest: the_fact_field(node, "hodei.catalog.outbox.digest"),
+        })
+        .collect()
+}
+
+/// Un campo del hecho dicho por el grafo, o vacío cuando no está.
+fn the_fact_field(node: &serde_json::Value, field: &str) -> String {
+    node.get(field)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Cuántos eventos pendientes hay de ESTA ejecución: el censo va por
+/// tenant y la correlación propia filtra en el adaptador.
+async fn the_event_count(client: &GraphClient, account: &str) -> usize {
+    the_events_of(client, account)
+        .await
         .into_iter()
-        .filter(|entry| entry.event.correlation_id() == correlation)
+        .filter(|fact| fact.correlation_id == correlation_of(account))
         .count()
 }
 
@@ -453,7 +510,6 @@ async fn the_publish_commit_and_its_audit_event_are_one_transaction() {
         .create_repository(&account, a_descriptor(&account, "raw"))
         .await
         .expect("the repository");
-    let outbox = DgraphAuditOutbox::new(client);
 
     let content = b"one atomic fact";
     store
@@ -464,31 +520,30 @@ async fn the_publish_commit_and_its_audit_event_are_one_transaction() {
         .await
         .expect("the publication");
 
-    // El asset está y el evento también, con el mismo digest.
+    // El asset está y el evento también, con el mismo digest. El censo va
+    // por tenant (la cuenta es única por corrida) y la correlación propia
+    // filtra en el adaptador.
     let asset = store
         .asset(&account, "raw", "app/one.bin")
         .await
         .expect("the asset");
-    let pending = outbox.pending(Utc::now()).await.expect("the pending");
-    let own: Vec<_> = pending
-        .iter()
-        .filter(|entry| entry.event.correlation_id() == correlation_of(&account))
+    let own: Vec<_> = the_events_of(&client, &account)
+        .await
+        .into_iter()
+        .filter(|fact| fact.correlation_id == correlation_of(&account))
         .collect();
     assert_eq!(own.len(), 1, "one publish, one event");
-    let event = &own[0].event;
+    let event = &own[0];
     assert_eq!(event.resource, "raw/app/one.bin");
     assert_eq!(event.action, "publish");
-    assert_eq!(event.result, AuditResult::Allowed);
-    assert_eq!(event.tenant(), account);
+    assert_eq!(event.result, AuditResult::Allowed.to_string());
+    assert_eq!(event.tenant, account);
     assert_eq!(
-        event.digest.as_deref(),
-        Some(
-            format!(
-                "{}:{}",
-                ContentDigest::of_bytes(content).algorithm,
-                ContentDigest::of_bytes(content).value
-            )
-            .as_str()
+        event.digest,
+        format!(
+            "{}:{}",
+            ContentDigest::of_bytes(content).algorithm,
+            ContentDigest::of_bytes(content).value
         )
     );
     assert_eq!(asset.digest, ContentDigest::of_bytes(content));
@@ -580,7 +635,6 @@ async fn a_republication_writes_nothing_and_a_conflict_says_a_conflict_event() {
         .create_repository(&account, a_descriptor(&account, "raw"))
         .await
         .expect("the repository");
-    let outbox = DgraphAuditOutbox::new(client);
 
     let first = store
         .publish(
@@ -601,7 +655,7 @@ async fn a_republication_writes_nothing_and_a_conflict_says_a_conflict_event() {
     assert!(!second.created, "the republication did not write anything");
     assert_eq!(first.asset.digest, second.asset.digest);
     assert_eq!(
-        the_event_count(&outbox, &correlation_of(&account)).await,
+        the_event_count(&client, &account).await,
         1,
         "no new fact was said"
     );
@@ -618,14 +672,14 @@ async fn a_republication_writes_nothing_and_a_conflict_says_a_conflict_event() {
         Err(hodei_catalog::CatalogError::Conflict { .. })
     ));
     let correlation = correlation_of(&account);
-    let pending = outbox.pending(Utc::now()).await.expect("the pending");
-    let own: Vec<_> = pending
-        .iter()
-        .filter(|entry| entry.event.correlation_id() == correlation)
+    let own: Vec<_> = the_events_of(&client, &account)
+        .await
+        .into_iter()
+        .filter(|fact| fact.correlation_id == correlation)
         .collect();
     assert!(
         own.iter()
-            .any(|entry| entry.event.result == AuditResult::Conflict),
+            .any(|fact| fact.result == AuditResult::Conflict.to_string()),
         "the conflict is said"
     );
     assert_eq!(own.len(), 2, "one allowed, one conflict");
@@ -655,7 +709,6 @@ async fn two_writers_publishing_the_same_thing_leave_one_asset_and_one_event() {
     left.create_repository(&account, a_descriptor(&account, "releases"))
         .await
         .expect("the repository");
-    let outbox = DgraphAuditOutbox::new(client);
 
     // Dos clientes, el MISMO contenido, la MISMA ruta: una creación y una
     // constatación, no dos assets.
@@ -680,7 +733,7 @@ async fn two_writers_publishing_the_same_thing_leave_one_asset_and_one_event() {
     assert_eq!(created, 1, "one client created the asset");
     assert_eq!(idempotent, 1, "the other one found it already there");
     assert_eq!(
-        the_event_count(&outbox, &correlation_of(&account)).await,
+        the_event_count(&client, &account).await,
         1,
         "one fact was said"
     );
@@ -778,7 +831,6 @@ async fn a_retry_after_the_commit_keeps_one_asset_and_one_event() {
         .create_repository(&account, a_descriptor(&account, "raw"))
         .await
         .expect("the repository");
-    let outbox = DgraphAuditOutbox::new(client);
 
     let publication = a_publication(&account, "raw", "app/one.bin", b"one");
     let first = store
@@ -800,7 +852,7 @@ async fn a_retry_after_the_commit_keeps_one_asset_and_one_event() {
         assert_eq!(retry.reference.digest, first.reference.digest);
     }
     assert_eq!(
-        the_event_count(&outbox, &correlation_of(&account)).await,
+        the_event_count(&client, &account).await,
         1,
         "one fact, said once"
     );
