@@ -1079,7 +1079,10 @@ async fn the_real_dnf_clients_verify_the_signed_repodata_over_dgraph() {
             "gpgkey=file:///work/key.asc\n",
             "EOF\n",
             "dnf -y --disablerepo='*' --enablerepo=hodei --refresh install hello-tilde\n",
-            "rpm -q hello-tilde\n",
+            // El `rpm -q` del NEVRA por defecto no pinta el epoch: se pide
+            // explicitamente con el query format, que es lo que prueba la
+            // inmersion real del charset en la transaccion rpm.
+            "rpm -q --qf '%{{NAME}}-%{{EPOCH}}:%{{VERSION}}-%{{RELEASE}}.%{{ARCH}}\\n' hello-tilde\n",
             "cat /usr/share/hello-tilde/greeting.txt\n",
         ),
         port = port,
