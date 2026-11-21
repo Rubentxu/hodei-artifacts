@@ -186,7 +186,7 @@ fn unsound(what: impl Into<String>) -> BundleError {
     BundleError::Unsound(what.into())
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, BundleError> {
+pub(super) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, BundleError> {
     let bytes = std::fs::read(path)?;
     Ok(serde_json::from_slice(&bytes)?)
 }
@@ -194,7 +194,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, BundleErr
 /// Los bytes de cada descriptor que un manifiesto declara, comprobados
 /// contra su descriptor. Un blob que falta es un error; uno que no
 /// cuadra, tambien.
-fn read_declared_blobs(
+pub(super) fn read_declared_blobs(
     dir: &Path,
     manifest: &ImageManifest,
 ) -> Result<BTreeMap<String, Vec<u8>>, BundleError> {
@@ -213,7 +213,7 @@ fn read_declared_blobs(
     Ok(blobs)
 }
 
-fn read_layout_blob(dir: &Path, desc: &Descriptor) -> Result<Vec<u8>, BundleError> {
+pub(super) fn read_layout_blob(dir: &Path, desc: &Descriptor) -> Result<Vec<u8>, BundleError> {
     let path = dir.join(layout_blob_path(&desc.digest));
     let bytes = std::fs::read(&path).map_err(|_| {
         unsound(format!(
