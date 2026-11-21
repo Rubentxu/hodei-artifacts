@@ -368,6 +368,25 @@ fn tag_guard_scope(
     )
 }
 
+/// Los ajustes de npm de un repositorio, tal y como los valida la
+/// referencia Surreal (HSP-111): solo un repositorio npm los declara, y
+/// los que declara tienen que entenderse. El slice Dgraph comparte el
+/// mismo contrato de alta, para que el mismo descriptor valga en los dos
+/// motores (HSP-193).
+fn the_npm_of(format: RepositoryFormat, config: &RepositoryConfig) -> Result<(), CatalogError> {
+    if format != RepositoryFormat::Npm {
+        if config.config_settings.get("npm").is_some() {
+            return Err(CatalogError::invalid(
+                "only an npm repository can declare config_settings.npm",
+            ));
+        }
+        return Ok(());
+    }
+    hodei_catalog::npm::NpmConfig::of_settings(&config.config_settings)
+        .map(|_| ())
+        .map_err(CatalogError::invalid)
+}
+
 /// El sujeto de la guarda de una creación de repositorio.
 fn repository_guard_scope(account: &str, repo_key: &str) -> Result<GuardScope, CatalogError> {
     scope_of(
@@ -980,6 +999,22 @@ enum WriteKind {
     Repair,
 }
 
+/// La publicación que se juzga sobre el estado DESPUÉS del commit. La
+/// precondición del cliente ya la arbitró la transacción: la pre-lectura
+/// la decidió y la guarda del grafo la impuso al commitear, así que el
+/// estado posterior la satisface POR CONSTRUCCIÓN — un `Absent` que nació
+/// de una ruta vacía, o un `Present` del digest que el propio commit
+/// movió. Juzgarla otra vez diría que la escritura que acaba de cumplir
+/// la condición la incumple, y la publicación que asentó saldría como
+/// fallo de precondición (HSP-193, el consumidor npm del puntero de
+/// packument fue el primero en pisarla).
+fn the_settled_publication(publication: &Publication) -> Publication {
+    Publication {
+        precondition: None,
+        ..publication.clone()
+    }
+}
+
 /// El plan decidido sobre un estado de publicación.
 struct PublishPlan {
     /// Lo que hay que escribir, si hay que escribir.
@@ -1438,11 +1473,19 @@ fn the_effect_query_lines(
                 ));
             }
         }
-        WriteKind::Replace { previous } => {
+        WriteKind::Replace { .. } => {
+            // La fila que se mueve se liga POR CLAVE, sin filtrar por el
+            // digest que la planificación vio: el filtro `NOT eq(digest,
+            // previous)` excluye EXACTAMENTE la fila que el plan decidió
+            // mover — su digest ES el `previous` — y el bloque saltado
+            // dejaba un commit de guarda sin filas (HSP-193, el puntero
+            // de packument de npm fue el primer consumidor del replace).
+            // La carrera la arbitra la guarda (la revisión avanza en el
+            // mismo commit) y la unicidad la impone el @upsert de la
+            // clave; el plan ya decidió que lo que hay no es lo que llega.
             lines.push(format!(
-                "am as var(func: eq(hodei.catalog.asset.key, {})) @filter(NOT eq(hodei.catalog.asset.digest, {}))",
+                "am as var(func: eq(hodei.catalog.asset.key, {}))",
                 dql_string(&asset),
-                dql_string(previous),
             ));
             lines.push(format!(
                 "rf as var(func: eq(hodei.catalog.reference.key, {}))",
@@ -2383,6 +2426,7 @@ impl CatalogWriter for DgraphCatalogStore {
                 "the repository belongs to another account",
             ));
         }
+        the_npm_of(descriptor.format, &descriptor.config)?;
         let guard = repository_guard_scope(principal_account, &descriptor.repo_key)?;
         let operation = repository_operation_id(&descriptor);
         let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
@@ -2678,7 +2722,7 @@ impl CatalogWriter for DgraphCatalogStore {
                     &event_id,
                 )
                 .await?;
-                let plan = PublishPlan::decide(&state, &publication);
+                let plan = PublishPlan::decide(&state, &the_settled_publication(&publication));
                 if plan.complete {
                     return the_outcome_from_state(
                         &state,
@@ -2694,11 +2738,12 @@ impl CatalogWriter for DgraphCatalogStore {
             }
             // El commit contestó; el ESTADO decide lo que esta llamada
             // dejó: una creación que se asentó es una creación, y una
-            // sustitución que se asentó es una sustitución.
+            // sustitución que se asentó es una sustitución. La precondición
+            // del cliente ya la arbitró la transacción.
             let state =
                 read_publication_state(&self.client, principal_account, &publication, &event_id)
                     .await?;
-            let plan = PublishPlan::decide(&state, &publication);
+            let plan = PublishPlan::decide(&state, &the_settled_publication(&publication));
             if let Some(conflict) = plan.conflict {
                 self.audit_the_publication(
                     &event_id,
@@ -2741,10 +2786,12 @@ impl CatalogWriter for DgraphCatalogStore {
 
         // El último intento también se relee: perder la carrera en el
         // último intento es un conflicto, no un fallo del almacenamiento.
+        // La precondición del cliente ya la arbitraron la pre-lectura y la
+        // guarda, como en el resto de lecturas posteriores al commit.
         let state =
             read_publication_state(&self.client, principal_account, &publication, &event_id)
                 .await?;
-        let plan = PublishPlan::decide(&state, &publication);
+        let plan = PublishPlan::decide(&state, &the_settled_publication(&publication));
         if let Some(conflict) = plan.conflict {
             self.audit_the_publication(
                 &event_id,
