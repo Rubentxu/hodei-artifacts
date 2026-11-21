@@ -46,7 +46,9 @@ use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use crate::reclaim::{BlobReclaim, Reclaimed, StoredBlob};
+use crate::reclaim::{
+    BlobReclaim, ConditionalBlob, ConditionalOutcome, Reclaimed, StoredBlob, VersionMarker,
+};
 
 /// El directorio, dentro de la raiz del almacen, donde viven las
 /// escrituras en curso.
@@ -260,6 +262,18 @@ pub trait BlobStore: Send + Sync {
     /// Un almacen que no sabe listar ni borrar con barrera no se puede
     /// recolectar: el recolector se niega en vez de adivinar.
     fn reclaimer(&self) -> Option<&dyn BlobReclaim> {
+        None
+    }
+
+    /// La vista de borrado condicional, si el almacen la tiene (HSP-192,
+    /// AC2).
+    ///
+    /// Un almacen sin capacidad condicional segura puede aun ser
+    /// recolectado en modo legacy; lo que no puede es participar de una
+    /// pasada coordinada sobre la clave original sin cuarentena
+    /// versionada. El recolector pregunta esto, no una bandera de
+    /// configuracion.
+    fn conditional(&self) -> Option<&dyn crate::reclaim::ConditionalBlob> {
         None
     }
 }
@@ -672,6 +686,10 @@ impl BlobStore for FileBlobStore {
     }
 
     fn reclaimer(&self) -> Option<&dyn BlobReclaim> {
+        Some(self)
+    }
+
+    fn conditional(&self) -> Option<&dyn ConditionalBlob> {
         Some(self)
     }
 
@@ -1115,6 +1133,17 @@ impl BlobReclaim for FileBlobStore {
                     for file in std::fs::read_dir(second.path()).map_err(unavailable)? {
                         let file = file.map_err(unavailable)?;
                         let name = file.file_name().to_string_lossy().into_owned();
+                        // Primero la forma del nombre: un objeto de
+                        // cuarentena (HSP-192) comparte shard pero lleva
+                        // sufijo, y lo que no es un digest exacto no es
+                        // de este almacen: no se lista ni se borra.
+                        if name.len() != 64
+                            || !name
+                                .bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                        {
+                            continue;
+                        }
                         let Some(digest) = digest_of_blob_file(&first_name, &second_name, &name)
                         else {
                             continue;
@@ -1189,6 +1218,137 @@ impl BlobReclaim for FileBlobStore {
                 })
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Reclaimed::Gone),
+            Err(error) => Err(BlobError::Unavailable(error.to_string())),
+        }
+    }
+}
+
+/// La marca de una version de fichero: el mtime en nanos y el tamano.
+///
+/// Dos escrituras concurrentes de contenido distinto producen marcas
+/// distintas; el rename no toca la marca, asi que una cuarentena o un
+/// borrado condicional bajo la barrera es atomo-seguro.
+fn file_marker(path_key: &str, metadata: &std::fs::Metadata) -> VersionMarker {
+    let modified = metadata
+        .modified()
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_nanos();
+    VersionMarker {
+        key: path_key.to_string(),
+        marker: format!("mtime:{modified}:len:{}", metadata.len()),
+        length: metadata.len(),
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::reclaim::ConditionalBlob for FileBlobStore {
+    fn supports_conditional_delete(&self) -> bool {
+        // El rename sobre la barrera del almacen es atomico y no toca
+        // la marca: en un POSIX local si se puede borrar una version
+        // exacta sin pisar la reescritura de otro.
+        true
+    }
+
+    async fn head_marker(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<VersionMarker>, BlobError> {
+        let path = self.the_path_of(digest);
+        let key = path.to_string_lossy().into_owned();
+        let _barrier = self.gate.lock().await;
+        match tokio::fs::metadata(&path).await {
+            Ok(metadata) => Ok(Some(file_marker(&key, &metadata))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(BlobError::Unavailable(error.to_string())),
+        }
+    }
+
+    async fn delete_if_untouched(
+        &self,
+        digest: &ContentDigest,
+        marker: &VersionMarker,
+    ) -> Result<ConditionalOutcome, BlobError> {
+        if digest.algorithm != DigestAlgorithm::Sha256 || digest.value.len() != 64 {
+            return Err(BlobError::UnsupportedAlgorithm(
+                digest.algorithm.to_string(),
+            ));
+        }
+        let path = self.the_path_of(digest);
+        let _barrier = self.gate.lock().await;
+        let metadata = match tokio::fs::metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(ConditionalOutcome::Gone);
+            }
+            Err(error) => return Err(BlobError::Unavailable(error.to_string())),
+        };
+        // La condicion se mira con la barrera tomada: sigue siendo
+        // cierta cuando se borra debajo.
+        let current = file_marker(&path.to_string_lossy(), &metadata);
+        if current.marker != marker.marker {
+            return Ok(ConditionalOutcome::NotApplied);
+        }
+        match tokio::fs::remove_file(&path).await {
+            Ok(()) => {
+                if let Some(parent) = path.parent()
+                    && let Ok(directory) = tokio::fs::File::open(parent).await
+                {
+                    let _ = directory.sync_all().await;
+                }
+                Ok(ConditionalOutcome::Applied {
+                    length: metadata.len(),
+                })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(ConditionalOutcome::Gone)
+            }
+            Err(error) => Err(BlobError::Unavailable(error.to_string())),
+        }
+    }
+
+    async fn quarantine_if_untouched(
+        &self,
+        digest: &ContentDigest,
+        marker: &VersionMarker,
+        quarantine_key: &str,
+    ) -> Result<ConditionalOutcome, BlobError> {
+        if digest.algorithm != DigestAlgorithm::Sha256 || digest.value.len() != 64 {
+            return Err(BlobError::UnsupportedAlgorithm(
+                digest.algorithm.to_string(),
+            ));
+        }
+        let path = self.the_path_of(digest);
+        let quarantine = std::path::Path::new(quarantine_key);
+        let _barrier = self.gate.lock().await;
+        let metadata = match tokio::fs::metadata(&path).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(ConditionalOutcome::Gone);
+            }
+            Err(error) => return Err(BlobError::Unavailable(error.to_string())),
+        };
+        let current = file_marker(&path.to_string_lossy(), &metadata);
+        if current.marker != marker.marker {
+            return Ok(ConditionalOutcome::NotApplied);
+        }
+        // La cuarentena es un nombre NUEVO, jamas la clave original:
+        // un rename sobre la barrera deja la version marcada leible
+        // bajo el nombre nuevo y libera la clave para la reescritura
+        // del publisher sin carrera posible.
+        if let Some(parent) = quarantine.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        }
+        match tokio::fs::rename(&path, quarantine).await {
+            Ok(()) => Ok(ConditionalOutcome::Applied {
+                length: metadata.len(),
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(ConditionalOutcome::Gone)
+            }
             Err(error) => Err(BlobError::Unavailable(error.to_string())),
         }
     }
@@ -1275,6 +1435,111 @@ mod tests {
                 expected: 10,
                 found: 6
             }
+        );
+    }
+
+    /// HSP-192, AC2: la marca de version protege al que no fue visto.
+    #[tokio::test]
+    async fn a_conditional_delete_never_touches_an_unmarked_version() {
+        let directory = tempfile::tempdir().expect("a temp dir");
+        let store = FileBlobStore::new(directory.path()).expect("the store is usable");
+        let bytes = b"orphan bytes".to_vec();
+        let digest = ContentDigest::of_bytes(&bytes);
+        store.put(&bytes).await.expect("the content is stored");
+
+        let marker = store
+            .conditional()
+            .expect("the file store is conditional")
+            .head_marker(&digest)
+            .await
+            .expect("head works")
+            .expect("the blob is there");
+
+        // Otra version (la que un publisher pondria tras reescribir):
+        // la condicion no se cumple y NO se toca nada.
+        let stale = VersionMarker {
+            marker: format!("{}-otro", marker.marker),
+            ..marker.clone()
+        };
+        let outcome = store
+            .conditional()
+            .unwrap()
+            .delete_if_untouched(&digest, &stale)
+            .await
+            .expect("the conditional delete answers");
+        assert_eq!(outcome, ConditionalOutcome::NotApplied);
+        assert!(
+            store.exists(&digest).await.expect("exists"),
+            "an unmarked version is never deleted"
+        );
+
+        // La version marcada si se borra.
+        let outcome = store
+            .conditional()
+            .unwrap()
+            .delete_if_untouched(&digest, &marker)
+            .await
+            .expect("the conditional delete answers");
+        assert!(
+            matches!(outcome, ConditionalOutcome::Applied { length } if length == 12),
+            "the marked version is deleted: {outcome:?}"
+        );
+        assert!(!store.exists(&digest).await.expect("exists"));
+    }
+
+    /// HSP-192, AC2: la cuarentena es versionada —nombre nuevo, nunca
+    /// reescritura de la clave original— y deja los bytes reconciliables.
+    #[tokio::test]
+    async fn a_quarantine_moves_the_marked_version_to_a_new_name() {
+        let directory = tempfile::tempdir().expect("a temp dir");
+        let store = FileBlobStore::new(directory.path()).expect("the store is usable");
+        let bytes = b"marked version".to_vec();
+        let digest = ContentDigest::of_bytes(&bytes);
+        store.put(&bytes).await.expect("the content is stored");
+
+        let marker = store
+            .conditional()
+            .unwrap()
+            .head_marker(&digest)
+            .await
+            .expect("head works")
+            .expect("the blob is there");
+        let quarantine_key = directory
+            .path()
+            .join("quarantine")
+            .join(format!("{}.gc-run-1", digest.value))
+            .to_string_lossy()
+            .into_owned();
+
+        let outcome = store
+            .conditional()
+            .unwrap()
+            .quarantine_if_untouched(&digest, &marker, &quarantine_key)
+            .await
+            .expect("the quarantine answers");
+        assert!(
+            matches!(outcome, ConditionalOutcome::Applied { length } if length == 14),
+            "the marked version is quarantined: {outcome:?}"
+        );
+
+        // La clave original se libero; los bytes viven bajo el nombre
+        // nuevo, intactos.
+        assert!(!store.exists(&digest).await.expect("exists"));
+        let moved = std::fs::read(&quarantine_key).expect("the quarantined bytes are there");
+        assert_eq!(moved, bytes);
+
+        // Y list_blobs no los ve: lo que no reconoce como suyo no se
+        // lista ni se borra. La cuarentena es de la reconciliacion, no
+        // del censo.
+        let listed = store
+            .reclaimer()
+            .unwrap()
+            .list_blobs()
+            .await
+            .expect("the census works");
+        assert!(
+            listed.iter().all(|blob| blob.digest != digest),
+            "a quarantined name is not a live blob"
         );
     }
 }

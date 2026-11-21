@@ -12,7 +12,9 @@ use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_hub::blob::{
     BlobError, BlobStore, BlobWriteSession, CommitExpectation, ReadPolicy, StagingCleanup,
 };
-use hodei_hub::reclaim::{BlobReclaim, Reclaimed, StoredBlob};
+use hodei_hub::reclaim::{
+    BlobReclaim, ConditionalBlob, ConditionalOutcome, Reclaimed, StoredBlob, VersionMarker,
+};
 use sha2::{Digest, Sha256};
 
 /// El prefijo bajo el que vive el contenido dentro del cubo.
@@ -744,6 +746,149 @@ impl BlobStore for S3BlobStore {
 
     fn reclaimer(&self) -> Option<&dyn hodei_hub::reclaim::BlobReclaim> {
         Some(self)
+    }
+
+    fn conditional(&self) -> Option<&dyn hodei_hub::reclaim::ConditionalBlob> {
+        Some(self)
+    }
+}
+
+/// Si el error de servicio es la precondicion de `If-Match` (412): la
+/// version actual no es la que el recolector marque.
+fn is_conditional_mismatch(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorMetadata>) -> bool {
+    match ProvideErrorMetadata::code(error) {
+        Some("PreconditionFailed") => true,
+        // S3 devuelve 412 tambien como `If-Match` puro segun endpoint.
+        Some(status) => status.contains("Precondition"),
+        None => false,
+    }
+}
+
+#[async_trait::async_trait]
+impl ConditionalBlob for S3BlobStore {
+    fn supports_conditional_delete(&self) -> bool {
+        // La ultima generacion de S3 (y los endpoints S3-compatibles
+        // que lo implementan) acepta `If-Match` en DELETE y
+        // `x-amz-copy-source-if-match` en COPY. El recolector pregunta
+        // aqui, en el tipo del almacen; no en una bandera que se pueda
+        // poner mal. Un endpoint que no lo soporte se prueba en la
+        // primera condicion fallida: la copia devuelve 412 y NO toca
+        // nada, que es exactamente el contrato de fail-closed.
+        true
+    }
+
+    async fn head_marker(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<VersionMarker>, BlobError> {
+        let key = self.the_key_of(digest);
+        match self
+            .client
+            .head_object()
+            .bucket(&self.config.bucket)
+            .key(&key)
+            .send()
+            .await
+        {
+            Ok(head) => {
+                let Some(marker) = head.e_tag().map(|etag| etag.to_string()) else {
+                    return Err(Self::unavailable(
+                        "look up the blob version",
+                        "the object store served no ETag to condition on",
+                    ));
+                };
+                Ok(Some(VersionMarker {
+                    key,
+                    marker,
+                    length: head.content_length.unwrap_or(0).max(0) as u64,
+                }))
+            }
+            Err(error) if is_not_found(&error) => Ok(None),
+            Err(error) => Err(Self::unavailable("look up the blob version", error)),
+        }
+    }
+
+    async fn delete_if_untouched(
+        &self,
+        digest: &ContentDigest,
+        marker: &VersionMarker,
+    ) -> Result<ConditionalOutcome, BlobError> {
+        let key = self.the_key_of(digest);
+        match self
+            .client
+            .delete_object()
+            .bucket(&self.config.bucket)
+            .key(&key)
+            .set_if_match(Some(marker.marker.clone()))
+            .send()
+            .await
+        {
+            Ok(_) => Ok(ConditionalOutcome::Applied {
+                length: marker.length,
+            }),
+            Err(error) if is_not_found(&error) => Ok(ConditionalOutcome::Gone),
+            Err(error) if is_conditional_mismatch(&error) => Ok(ConditionalOutcome::NotApplied),
+            Err(error) => Err(Self::unavailable("delete the blob conditionally", error)),
+        }
+    }
+
+    async fn quarantine_if_untouched(
+        &self,
+        digest: &ContentDigest,
+        marker: &VersionMarker,
+        quarantine_key: &str,
+    ) -> Result<ConditionalOutcome, BlobError> {
+        if marker.marker.is_empty() {
+            return Err(Self::unavailable(
+                "quarantine the blob version",
+                "the marked version has no ETag to condition on",
+            ));
+        }
+        let source = self.the_key_of(digest);
+        // Paso 1: COPIA condicionada a la version marcada. Un 412 aqui
+        // significa que la clave original NO es lo que la pasada vio:
+        // no se toca nada. Un 404 significa que ya no esta.
+        let copied = self
+            .client
+            .copy_object()
+            .bucket(&self.config.bucket)
+            .copy_source(format!("{}/{}", self.config.bucket, source))
+            .set_copy_source_if_match(Some(marker.marker.clone()))
+            .key(quarantine_key)
+            .send()
+            .await;
+        match copied {
+            Ok(_) => {}
+            Err(error) if is_conditional_mismatch(&error) => {
+                return Ok(ConditionalOutcome::NotApplied);
+            }
+            Err(error) if is_not_found(&error) => {
+                return Ok(ConditionalOutcome::Gone);
+            }
+            Err(error) => {
+                return Err(Self::unavailable("quarantine the marked version", error));
+            }
+        }
+        // Paso 2: DELETE condicionado a la misma ETag. Si entre la copia
+        // y el delete alguien reescribio la clave, el delete falla con
+        // 412 y la cuarentena queda como copia exacta de la version
+        // marcada: reconciliable, nunca perdida.
+        match self
+            .client
+            .delete_object()
+            .bucket(&self.config.bucket)
+            .key(&source)
+            .set_if_match(Some(marker.marker.clone()))
+            .send()
+            .await
+        {
+            Ok(_) => Ok(ConditionalOutcome::Applied {
+                length: marker.length,
+            }),
+            Err(error) if is_not_found(&error) => Ok(ConditionalOutcome::Gone),
+            Err(error) if is_conditional_mismatch(&error) => Ok(ConditionalOutcome::NotApplied),
+            Err(error) => Err(Self::unavailable("release the quarantined key", error)),
+        }
     }
 }
 
