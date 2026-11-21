@@ -18,7 +18,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hodei_evidence::domain::delta::{RelationDelta, RelationDeltaLedger, RelationDeltaSubscription};
+use hodei_evidence::domain::delta::{
+    RelationDelta, RelationDeltaLedger, RelationDeltaSubscription,
+};
 use kernel::Hrn;
 
 use super::frontier::DgraphProjectionFrontier;
