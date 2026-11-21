@@ -8,13 +8,19 @@ license = "MIT"
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }
+hex = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
 hodei-evidence-storage = { path = "../hodei-evidence-storage" }
+hodei-graph-client = { path = "../hodei-graph-client" }
 hodei-simulation = { path = "../hodei-simulation" }
 hodei-trust-policy = { path = "../hodei-trust-policy" }
 kernel = { path = "../kernel" }
 serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 surrealdb = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
