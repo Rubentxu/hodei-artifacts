@@ -168,6 +168,32 @@ pub enum SignatureFailure {
         /// The subject the attestation was expected to speak about.
         expected: String,
     },
+    /// The key that signed is revoked under the policy the verifier was
+    /// given: the signature itself holds, but the trust says otherwise.
+    ///
+    /// The distinction matters. A signature that does not hold means the
+    /// bytes were not said by the key. A signature that holds over a
+    /// revoked key means the bytes *were* said, at a time when the key was
+    /// still trusted, and the policy has since taken that trust back.
+    #[error("the key that signed is revoked under the active policy: {key_id}")]
+    Revoked {
+        /// The identifier of the revoked key.
+        key_id: String,
+    },
+    /// The bundle is signed but it does not carry a readable statement:
+    /// the signature holds over truncated or malformed material.
+    #[error("the bundle is incomplete: {0}")]
+    IncompleteBundle(String),
+    /// The signature holds and the statement is whole, but the identity it
+    /// names is not the identity the root is pinned to: a different issuer
+    /// or a different builder spoke through a trusted key.
+    #[error("the attestation names {found}, not the pinned identity {expected}")]
+    IdentityMismatch {
+        /// The identity the deployment pinned.
+        expected: String,
+        /// The identity the statement actually names.
+        found: String,
+    },
 }
 
 /// How far the verification of an attestation goes.

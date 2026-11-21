@@ -1,0 +1,10 @@
+{
+  "payloadType": "application/vnd.in-toto+json",
+  "payload": "ewogICJfdHlwZSI6ICJodHRwczovL2luLXRvdG8uaW8vU3RhdGVtZW50L3YxIiwKICAic3ViamVjdCI6IFsKICAgIHsKICAgICAgIm5hbWUiOiAid2ViIiwKICAgICAgImRpZ2VzdCI6IHsKICAgICAgICAic2hhMjU2IjogImFjOWRhNDg1ZDZlYWM4YzE2MTExN2VjZDQxNTVjZjUwYmRiMzMwYzgyNDEyMzRkNjY5YWVmMWVkYmEyNjVhMDYiCiAgICAgIH0KICAgIH0KICBdLAogICJwcmVkaWNhdGVUeXBlIjogImh0dHBzOi8vc2xzYS5kZXYvcHJvdmVuYW5jZS92MSIsCiAgInByZWRpY2F0ZSI6IHsKICAgICJidWlsZERlZmluaXRpb24iOiB7CiAgICAgICJidWlsZFR5cGUiOiAiaHR0cHM6Ly9idWlsZGVycy5leGFt",
+  "signatures": [
+    {
+      "keyid": "hsp154-root-alpha-v1",
+      "sig": "MEQCIGWh+/tAw+xH2BbsbwDpHxe0kfB5bndWkc8pBoNb8zS9AiAQBjBz5unO9CflEJPHyuQ+dLQHE4/ytYqFL3Nx3viXkw=="
+    }
+  ]
+}

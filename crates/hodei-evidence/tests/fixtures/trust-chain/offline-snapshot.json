@@ -1,0 +1,43 @@
+{
+  "snapshot_at": "2026-03-04T10:15:00Z",
+  "root_id": "hsp154-root-alpha-v1",
+  "statement": {
+    "_type": "https://in-toto.io/Statement/v1",
+    "subject": [
+      {
+        "name": "web",
+        "digest": {
+          "sha256": "ac9da485d6eac8c161117ecd4155cf50bdb330c8241234d669aef1edba265a06"
+        }
+      }
+    ],
+    "predicateType": "https://slsa.dev/provenance/v1",
+    "predicate": {
+      "buildDefinition": {
+        "buildType": "https://builders.example/hsp154-builder@v1",
+        "resolvedDependencies": []
+      },
+      "runDetails": {
+        "builder": {
+          "id": "https://builders.example/hsp154-builder@v1"
+        },
+        "metadata": {
+          "invocationId": "hsp154-invocation-01",
+          "startedOn": "2026-03-04T10:00:00Z",
+          "finishedOn": "2026-03-04T10:12:00Z"
+        }
+      }
+    }
+  },
+  "envelope": {
+    "payloadType": "application/vnd.in-toto+json",
+    "payload": "ewogICJfdHlwZSI6ICJodHRwczovL2luLXRvdG8uaW8vU3RhdGVtZW50L3YxIiwKICAic3ViamVjdCI6IFsKICAgIHsKICAgICAgIm5hbWUiOiAid2ViIiwKICAgICAgImRpZ2VzdCI6IHsKICAgICAgICAic2hhMjU2IjogImFjOWRhNDg1ZDZlYWM4YzE2MTExN2VjZDQxNTVjZjUwYmRiMzMwYzgyNDEyMzRkNjY5YWVmMWVkYmEyNjVhMDYiCiAgICAgIH0KICAgIH0KICBdLAogICJwcmVkaWNhdGVUeXBlIjogImh0dHBzOi8vc2xzYS5kZXYvcHJvdmVuYW5jZS92MSIsCiAgInByZWRpY2F0ZSI6IHsKICAgICJidWlsZERlZmluaXRpb24iOiB7CiAgICAgICJidWlsZFR5cGUiOiAiaHR0cHM6Ly9idWlsZGVycy5leGFtcGxlL2hzcDE1NC1idWlsZGVyQHYxIiwKICAgICAgInJlc29sdmVkRGVwZW5kZW5jaWVzIjogW10KICAgIH0sCiAgICAicnVuRGV0YWlscyI6IHsKICAgICAgImJ1aWxkZXIiOiB7CiAgICAgICAgImlkIjogImh0dHBzOi8vYnVpbGRlcnMuZXhhbXBsZS9oc3AxNTQtYnVpbGRlckB2MSIKICAgICAgfSwKICAgICAgIm1ldGFkYXRhIjogewogICAgICAgICJpbnZvY2F0aW9uSWQiOiAiaHNwMTU0LWludm9jYXRpb24tMDEiLAogICAgICAgICJzdGFydGVkT24iOiAiMjAyNi0wMy0wNFQxMDowMDowMFoiLAogICAgICAgICJmaW5pc2hlZE9uIjogIjIwMjYtMDMtMDRUMTA6MTI6MDBaIgogICAgICB9CiAgICB9CiAgfQp9Cg==",
+    "signatures": [
+      {
+        "keyid": "hsp154-root-alpha-v1",
+        "sig": "MEUCIQCdrvU3Hdb6FqsG+LivFRH8SgqNj1Inn6kSBq8a6YGAeQIgI73gttRulKwo/nLdsz2GiE50A/qJz1prBj3gUt43MTw="
+      }
+    ]
+  },
+  "artifact_digest_sha256": "ac9da485d6eac8c161117ecd4155cf50bdb330c8241234d669aef1edba265a06"
+}

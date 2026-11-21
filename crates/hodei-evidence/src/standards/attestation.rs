@@ -195,7 +195,11 @@ pub fn bind_to_subject(
 }
 
 /// Reads the statement of an attestation.
-fn parse_statement(statement: &Value) -> Result<AttestationStatement, AttestationError> {
+///
+/// Shared with the chain verifier of [`trust_chain`][super::trust_chain]:
+/// the statement is read the same way by both, and one reader of the
+/// in-toto shape is the point of evolving M2 instead of duplicating it.
+pub(crate) fn parse_statement(statement: &Value) -> Result<AttestationStatement, AttestationError> {
     let statement_type = statement
         .get("_type")
         .and_then(Value::as_str)
@@ -317,7 +321,7 @@ fn parse_statement(statement: &Value) -> Result<AttestationStatement, Attestatio
 
 /// A statement with nothing in it, for the envelopes that could not be
 /// read.
-fn empty_statement() -> AttestationStatement {
+pub(crate) fn empty_statement() -> AttestationStatement {
     AttestationStatement {
         statement_type: String::new(),
         predicate_type: String::new(),
