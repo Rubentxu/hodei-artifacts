@@ -150,6 +150,22 @@ impl GcService {
         self.grace
     }
 
+    /// The durable ledger behind the service (for the coordinated pass).
+    pub(crate) fn ledger(&self) -> &Arc<dyn ContentLedger> {
+        &self.ledger
+    }
+
+    /// The content store behind the service.
+    pub(crate) fn store(&self) -> &Arc<dyn BlobStore> {
+        &self.store
+    }
+
+    /// The single-pass gate, shared by the legacy sweep and the
+    /// coordinated pass: one writer per process, whatever the mode.
+    pub(crate) fn gate(&self) -> &Mutex<()> {
+        &self.gate
+    }
+
     fn reclaimer(&self) -> Result<&dyn BlobReclaim, GcError> {
         self.store.reclaimer().ok_or(GcError::Unsupported)
     }
@@ -188,7 +204,7 @@ impl GcService {
     /// Called after anything that changes what the plan would say. When
     /// a census is in flight the generation moves anyway, so the in-flight
     /// result is returned but not cached.
-    fn invalidate_plan_cache(&self) {
+    pub(crate) fn invalidate_plan_cache(&self) {
         self.plan_generation.fetch_add(1, Ordering::AcqRel);
         if let Ok(mut cache) = self.plan_cache.try_lock() {
             *cache = None;
@@ -330,6 +346,9 @@ impl GcService {
                     deleted: 0,
                     bytes_freed: 0,
                     swept_at: None,
+                    // Modo legacy: sin scope ni generacion de claim.
+                    scope: None,
+                    generation: None,
                 };
                 // La marca se escribe antes de tocar un byte.
                 self.ledger.open_run(&run).await?;
@@ -380,6 +399,8 @@ impl GcService {
                 account: account.to_string(),
                 state: DeletionState::Intended,
                 at: Utc::now(),
+                // Modo legacy: el barrido no observa version de blob.
+                marker: None,
             };
             self.ledger.record_deletion(&intended).await?;
 
@@ -496,7 +517,7 @@ impl GcService {
     }
 }
 
-fn parse_digest(text: &str) -> Option<ContentDigest> {
+pub(crate) fn parse_digest(text: &str) -> Option<ContentDigest> {
     let value = text.strip_prefix("sha256:")?;
     Some(ContentDigest::sha256(value))
 }

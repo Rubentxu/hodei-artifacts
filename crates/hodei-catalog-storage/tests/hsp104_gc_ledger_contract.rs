@@ -193,6 +193,8 @@ async fn a_marked_run_is_pending_until_it_is_completed() {
         deleted: 0,
         bytes_freed: 0,
         swept_at: None,
+        scope: None,
+        generation: None,
     };
     let store = store(open(&path).await);
     store.initialize().await.expect("initialize");
@@ -242,6 +244,7 @@ async fn confirming_a_deletion_leaves_a_trace_and_one_audit_event() {
         account: "hodei-admin".to_string(),
         state: DeletionState::Intended,
         at: Utc::now(),
+        marker: None,
     };
     store.record_deletion(&deletion).await.expect("intended");
     assert_eq!(

@@ -777,6 +777,10 @@ impl ConditionalBlob for S3BlobStore {
         true
     }
 
+    fn quarantine_key_of(&self, digest: &ContentDigest, run_id: &str) -> String {
+        format!("quarantine/{run_id}/{}", digest.value)
+    }
+
     async fn head_marker(
         &self,
         digest: &ContentDigest,

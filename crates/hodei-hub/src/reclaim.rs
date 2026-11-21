@@ -131,6 +131,15 @@ pub trait ConditionalBlob: Send + Sync {
     async fn head_marker(&self, digest: &ContentDigest)
     -> Result<Option<VersionMarker>, BlobError>;
 
+    /// El nombre versionado de cuarentena de este blob para la pasada
+    /// `run_id`: un nombre NUEVO que la clave original no ocupa, y que
+    /// dos pasadas no comparten. Cada almacen lo deriva a su manera (en
+    /// disco una ruta bajo `quarantine/`, en S3 una clave bajo el
+    /// prefijo `quarantine/`).
+    fn quarantine_key_of(&self, digest: &ContentDigest, run_id: &str) -> String {
+        format!("quarantine/{run_id}/{}", digest.value)
+    }
+
     /// Borra la clave del blob solo si su version actual sigue marcada
     /// por `marker`. Nunca borra una version que el recolector no vio.
     async fn delete_if_untouched(

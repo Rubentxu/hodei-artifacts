@@ -1251,6 +1251,15 @@ impl crate::reclaim::ConditionalBlob for FileBlobStore {
         true
     }
 
+    fn quarantine_key_of(&self, digest: &ContentDigest, run_id: &str) -> String {
+        self.root
+            .join("quarantine")
+            .join(run_id)
+            .join(&digest.value)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     async fn head_marker(
         &self,
         digest: &ContentDigest,

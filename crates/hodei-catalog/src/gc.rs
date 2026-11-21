@@ -161,6 +161,14 @@ pub struct GcRun {
     pub bytes_freed: u64,
     /// Cuando termino el barrido.
     pub swept_at: Option<DateTime<Utc>>,
+    /// El scope de autoridad bajo el que se marco esta pasada (modo
+    /// coordinado, HSP-192). Vacio en el modo legacy.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// La generacion del claim que abrio la pasada. Un zombie de una
+    /// generacion anterior puede leer la marca pero no barre bajo ella.
+    #[serde(default)]
+    pub generation: Option<u64>,
 }
 
 /// Si el borrado ya ocurrio o solo se pretende.
@@ -204,6 +212,11 @@ pub struct GcDeletion {
     pub state: DeletionState,
     /// Cuando se anoto.
     pub at: DateTime<Utc>,
+    /// La marca de version del object store que la pasada observo al
+    /// pretender el borrado (modo coordinado, HSP-192). Vacia en el
+    /// modo legacy.
+    #[serde(default)]
+    pub marker: Option<String>,
 }
 
 /// Lo que una pasada dejo en cuarentena (HSP-192, AC2).
@@ -398,9 +411,14 @@ pub trait ContentLedger: Send + Sync {
         ))
     }
 
-    /// Re-confirm the durable mark of `run_id` still stands under the
-    /// same generation, for a resumed or long pass. A pass whose lease
-    /// generation moved on cannot sweep: the mark is gone.
+    /// Re-confirm the durable mark of `run_id` for the CURRENT live
+    /// lease, for a resumed or long pass.
+    ///
+    /// Fencing is by the presented token, not by the stamp: a take-over
+    /// of an expired claim MAY resume the pending mark of the dead
+    /// generation (that is the point of the durable mark), but only
+    /// while it presents the live token. A zombie whose lease was taken
+    /// over gets `PreconditionFailed` here and cannot sweep.
     async fn mark_of_run(
         &self,
         scope: &str,
@@ -467,5 +485,74 @@ pub trait ContentLedger: Send + Sync {
     async fn quarantines_of_run(&self, run_id: &str) -> Result<Vec<Quarantined>, CatalogError> {
         let _ = run_id;
         Ok(Vec::new())
+    }
+
+    /// The pending (marked, not completed) run of a coordinated scope.
+    ///
+    /// A worker that restarts resumes through this: the mark is durable
+    /// in the authority, not in the process. A run marked by another
+    /// scope's generation is not this scope's pending run.
+    async fn pending_scoped_run(
+        &self,
+        scope: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Option<GcRun>, CatalogError> {
+        let _ = (scope, now);
+        Err(CatalogError::unavailable(
+            "pending_scoped_run: this ledger cannot fence a coordinated pass",
+        ))
+    }
+
+    /// Renew the lease of the CURRENT generation for its own owner.
+    ///
+    /// The worker calls this between marks to extend the claim while it
+    /// sweeps. A token that is not the current generation's cannot
+    /// renew: the answer is a typed precondition failure, and the pass
+    /// stops deleting.
+    async fn renew_gc_lease(
+        &self,
+        scope: &str,
+        lease: &GcLease,
+        owner: &str,
+        lease_for: Duration,
+        now: DateTime<Utc>,
+    ) -> Result<GcLease, CatalogError> {
+        let _ = (scope, lease, owner, lease_for, now);
+        Err(CatalogError::unavailable(
+            "renew_gc_lease: this ledger cannot fence a coordinated pass",
+        ))
+    }
+
+    /// The post-commit reference probe (HSP-192: verify AFTER commit).
+    ///
+    /// Counts the catalog references to `digest` read FRESH from the
+    /// authority, after the mark committed. A nonzero count means a
+    /// publisher named the blob while the pass was marking: the
+    /// candidate is dropped from the sweep, never deleted. This is the
+    /// HSP-205 rule — the verdict comes from the state after the
+    /// commit, not from the transaction merely having committed.
+    async fn live_reference_count(&self, digest: &ContentDigest) -> Result<u64, CatalogError> {
+        // The legacy ledgers can only see the direct roots from here.
+        // Implementations that hold the graph MUST override and see the
+        // whole picture, including manifest edges.
+        let roots = self.content_roots().await?;
+        Ok(roots.iter().filter(|root| &root.digest == digest).count() as u64)
+    }
+
+    /// Close a coordinated run as swept for its generation.
+    async fn complete_scoped_run(
+        &self,
+        scope: &str,
+        lease: &GcLease,
+        run_id: &str,
+        deleted: u64,
+        bytes_freed: u64,
+        quarantined: u64,
+        at: DateTime<Utc>,
+    ) -> Result<(), CatalogError> {
+        let _ = (scope, lease, run_id, deleted, bytes_freed, quarantined, at);
+        Err(CatalogError::unavailable(
+            "complete_scoped_run: this ledger cannot fence a coordinated pass",
+        ))
     }
 }
