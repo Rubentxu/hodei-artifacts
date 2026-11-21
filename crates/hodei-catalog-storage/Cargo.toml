@@ -15,6 +15,11 @@ chrono = { workspace = true }
 hodei-audit = { path = "../hodei-audit" }
 hodei-catalog = { path = "../hodei-catalog" }
 hodei-evidence = { path = "../hodei-evidence" }
+# The engine of the Dgraph port: the authenticated client, the guarded
+# write (scope guard + once-only operation) and the additive schema boot.
+hodei-graph-client = { path = "../hodei-graph-client" }
+hex = { workspace = true }
+sha2 = { workspace = true }
 kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -593,6 +593,13 @@ where
                 });
             }
             Err(CatalogError::PreconditionFailed { .. }) => continue,
+            // El motor puede arbitrar la carrera con su guarda y decir
+            // conflicto DESPUÉS de que otro escritor movió el puntero
+            // entre la lectura y el commit: el que pierde relee y
+            // reintenta, igual que el que pierde la precondición. Las
+            // coordenadas de esta instantánea llevan el digest de ESTE
+            // intento, así que un conflicto de versión no puede serlo.
+            Err(CatalogError::Conflict { .. }) => continue,
             Err(error) => return Err(the_publication_error(&error).into()),
         }
     }

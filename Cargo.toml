@@ -306,3 +306,6 @@ flate2 = "1.1.11"
 # que el contrato declara con lo que la ruta sirve necesita leerlo, y no
 # adivinarlo.
 serde_yaml = "0.9"
+# El IT del catálogo Dgraph (HSP-187) abre el motor de verdad: el cliente
+# autenticado y la guarda versionada viven aquí.
+hodei-graph-client = { path = "crates/hodei-graph-client" }

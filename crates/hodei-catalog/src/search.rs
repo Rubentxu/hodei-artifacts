@@ -40,6 +40,20 @@
 //! account. The adapter says which order each filter gives, and the UAT
 //! writes it down.
 //!
+//! # The cursor (HSP-191)
+//!
+//! The page that follows starts **at the key** of the last result of the
+//! page before, never at a count of results left behind. An offset window
+//! moves when a row lands before it -- a page then skips one result or
+//! repeats one; a page that is asked **by key** does not: its window is
+//! "everything after the key that was already seen", and an insertion
+//! before that key does not move it. The key of the last result of a page
+//! is its cursor ([`search_cursor`]), and the engine that serves the
+//! cursor reads it back with [`parse_search_cursor`]. A cursor and an
+//! offset on the same query is an error, not a page where one of the two
+//! was quietly forgotten. An engine that does not serve the cursor keeps
+//! answering by offset, and says so with its own contract.
+//!
 //! # The total
 //!
 //! The total is the number of matches, and it is counted up to
@@ -214,6 +228,16 @@ pub struct SearchQuery {
     pub attribute: Option<RepositoryAttribute>,
     /// A text that appears in the package name or in the path.
     pub text: Option<String>,
+    /// The key of the last result of the page before, when the pages are
+    /// asked **by key** (HSP-191).
+    ///
+    /// It is written with [`search_cursor`] and read back with
+    /// [`parse_search_cursor`]. A page that carries a cursor starts at
+    /// that key, and an insertion before the key neither skips nor
+    /// duplicates a result. A cursor and a non-zero offset on the same
+    /// query is an error: they are two ways of leaving results behind,
+    /// and only one of them can be answered.
+    pub cursor: Option<String>,
     /// How many results the page brings.
     pub limit: usize,
     /// How many results are left behind.
@@ -230,6 +254,7 @@ impl Default for SearchQuery {
             tag: None,
             attribute: None,
             text: None,
+            cursor: None,
             limit: DEFAULT_LIMIT,
             offset: 0,
         }
@@ -309,6 +334,17 @@ impl SearchQuery {
         self
     }
 
+    /// The query, with the cursor of the page that follows.
+    ///
+    /// The cursor is the key of the last result of the page before, as
+    /// [`search_cursor`] writes it. The page that carries it starts
+    /// **after** that key: re-paginating after an insertion before the
+    /// key neither skips nor duplicates a result.
+    pub fn with_cursor(mut self, cursor: impl Into<String>) -> Self {
+        self.cursor = Some(cursor.into());
+        self
+    }
+
     /// The query, with the size of the page.
     pub fn with_limit(mut self, limit: usize) -> Self {
         self.limit = limit;
@@ -338,6 +374,7 @@ impl SearchQuery {
             (self.package_version.as_deref(), "version"),
             (self.tag.as_deref(), "tag"),
             (self.text.as_deref(), "text"),
+            (self.cursor.as_deref(), "cursor"),
         ] {
             if let Some(value) = value
                 && value.trim().is_empty()
@@ -345,8 +382,65 @@ impl SearchQuery {
                 return Err(SearchError::EmptyFilter(name));
             }
         }
+        if self.cursor.is_some() && self.offset != 0 {
+            return Err(SearchError::BadOffset(self.offset));
+        }
         Ok(())
     }
+}
+
+/// Escapes a part of a cursor: the separator `|` and the escape `%` cannot
+/// appear as themselves inside a part, or two different parts would read
+/// as the same cursor.
+fn cursor_part(value: &str) -> String {
+    value.replace('%', "%25").replace('|', "%7C")
+}
+
+/// The cursor of a page: the key of its **last** result.
+///
+/// The pages are asked by key ([`SearchQuery::with_cursor`]), and the key
+/// of the last result of a page is what the next page carries: a page
+/// neither repeats nor loses a result when a row lands before it, which
+/// is what an offset window cannot promise.
+pub fn search_cursor(repository: &str, asset_path: &str) -> String {
+    format!("{}|{}", cursor_part(repository), cursor_part(asset_path))
+}
+
+/// Reads back the cursor that [`search_cursor`] wrote.
+///
+/// A cursor that cannot be read is not a cursor: it is a query that says
+/// nothing, and the search refuses it instead of paging from anywhere.
+pub fn parse_search_cursor(cursor: &str) -> Result<(String, String), SearchError> {
+    let (repository, asset_path) = cursor
+        .split_once('|')
+        .ok_or_else(|| SearchError::BadAttribute(cursor.to_string()))?;
+    let unescape = |part: &str| -> Result<String, SearchError> {
+        let mut out = String::with_capacity(part.len());
+        let mut chars = part.chars();
+        while let Some(character) = chars.next() {
+            match character {
+                '%' => {
+                    let code: String = chars.by_ref().take(2).collect();
+                    match code.as_str() {
+                        "25" => out.push('%'),
+                        "7C" => out.push('|'),
+                        _ => {
+                            return Err(SearchError::BadAttribute(cursor.to_string()));
+                        }
+                    }
+                }
+                '|' => return Err(SearchError::BadAttribute(cursor.to_string())),
+                other => out.push(other),
+            }
+        }
+        Ok(out)
+    };
+    let repository = unescape(repository)?;
+    let asset_path = unescape(asset_path)?;
+    if repository.is_empty() || asset_path.is_empty() {
+        return Err(SearchError::BadAttribute(cursor.to_string()));
+    }
+    Ok((repository, asset_path))
 }
 
 /// An asset found by a search.
@@ -558,5 +652,46 @@ mod tests {
         let attribute = RepositoryAttribute::Channel(ServeChannel::Trusted);
         assert_eq!(attribute.name(), "channel");
         assert_eq!(attribute.value(), "trusted");
+    }
+
+    #[test]
+    fn a_cursor_round_trips_through_its_parts() {
+        let cursor = search_cursor("libs", "com/acme/lib/1.0/lib-1.0.pom");
+        assert_eq!(
+            parse_search_cursor(&cursor).expect("a cursor"),
+            (
+                "libs".to_string(),
+                "com/acme/lib/1.0/lib-1.0.pom".to_string()
+            )
+        );
+        let odd = search_cursor("we|ird", "pa%th|two");
+        assert_eq!(
+            parse_search_cursor(&odd).expect("an escaped cursor"),
+            ("we|ird".to_string(), "pa%th|two".to_string())
+        );
+    }
+
+    #[test]
+    fn a_cursor_that_cannot_be_read_is_not_a_cursor() {
+        for bad in ["", "onlyonepart", "a|", "|b", "a|b|c", "a|%99"] {
+            assert!(parse_search_cursor(bad).is_err(), "{bad:?} is not a cursor");
+        }
+    }
+
+    #[test]
+    fn a_cursor_and_an_offset_do_not_go_together() {
+        assert!(
+            SearchQuery::new()
+                .with_cursor("libs|one")
+                .validate()
+                .is_ok()
+        );
+        let both = SearchQuery::new().with_cursor("libs|one").with_offset(3);
+        assert!(both.validate().is_err());
+    }
+
+    #[test]
+    fn an_empty_cursor_is_not_a_cursor() {
+        assert!(SearchQuery::new().with_cursor("  ").validate().is_err());
     }
 }
