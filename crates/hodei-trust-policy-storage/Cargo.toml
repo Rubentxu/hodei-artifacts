@@ -7,6 +7,7 @@ license = "MIT"
 
 [dev-dependencies]
 chrono = { workspace = true }
+hodei-catalog-storage = { path = "../hodei-catalog-storage" }
 hodei-evidence = { path = "../hodei-evidence" }
 hodei-risk-storage = { path = "../hodei-risk-storage" }
 hodei-reactive = { path = "../hodei-reactive" }
@@ -18,9 +19,13 @@ async-trait = { workspace = true }
 kernel = { path = "../kernel" }
 chrono = { workspace = true }
 hodei-catalog = { path = "../hodei-catalog" }
+hodei-evidence = { path = "../hodei-evidence" }
 hodei-evidence-storage = { path = "../hodei-evidence-storage" }
+hodei-graph-client = { path = "../hodei-graph-client" }
 hodei-reactive = { path = "../hodei-reactive" }
 hodei-trust-policy = { path = "../hodei-trust-policy" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 surrealdb = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
