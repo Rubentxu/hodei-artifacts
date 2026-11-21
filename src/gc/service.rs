@@ -291,6 +291,7 @@ impl GcService {
             edges: &edges,
             grace: self.grace,
             now: Utc::now(),
+            roots_are_complete: true,
         });
         Ok((plan, blobs))
     }
