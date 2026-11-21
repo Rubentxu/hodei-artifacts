@@ -387,6 +387,30 @@ fn the_npm_of(format: RepositoryFormat, config: &RepositoryConfig) -> Result<(),
         .map_err(CatalogError::invalid)
 }
 
+/// La configuración de un repositorio, vista desde su modo, tal y como la
+/// valida la referencia Surreal (HSP-112): un proxy sin upstream válido no
+/// se crea, y un `proxy` en otro modo es un error, no un ajuste dormido.
+/// El slice Dgraph comparte el mismo contrato de alta para que un
+/// descriptor PyPI —que es el que ejercita el upstream en el hosted/proxy
+/// de HSP-194— valga en los dos motores (HSP-178).
+fn the_upstream_of(mode: RepositoryMode, config: &RepositoryConfig) -> Result<(), CatalogError> {
+    if mode != RepositoryMode::Proxy {
+        if config.config_settings.get("proxy").is_some() {
+            return Err(CatalogError::invalid(
+                "only a proxy repository can declare config_settings.proxy",
+            ));
+        }
+        return Ok(());
+    }
+    match hodei_catalog::UpstreamConfig::of(config) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(CatalogError::invalid(
+            "a proxy repository has to declare its upstream in config_settings.proxy.upstream",
+        )),
+        Err(error) => Err(CatalogError::invalid(error.to_string())),
+    }
+}
+
 /// El sujeto de la guarda de una creación de repositorio.
 fn repository_guard_scope(account: &str, repo_key: &str) -> Result<GuardScope, CatalogError> {
     scope_of(
@@ -2427,6 +2451,7 @@ impl CatalogWriter for DgraphCatalogStore {
             ));
         }
         the_npm_of(descriptor.format, &descriptor.config)?;
+        the_upstream_of(descriptor.mode, &descriptor.config)?;
         let guard = repository_guard_scope(principal_account, &descriptor.repo_key)?;
         let operation = repository_operation_id(&descriptor);
         let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
