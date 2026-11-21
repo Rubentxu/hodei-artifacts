@@ -30,7 +30,7 @@ use hodei_investigator::scope::{
 };
 use hodei_investigator_storage::{EvaluatorReadAuthorizer, GraphEvidenceRetriever};
 use hodei_trust_policy::decision::Outcome;
-use hodei_trust_policy::{Requirement, RequirementKind, TrustPolicy};
+use hodei_trust_policy::{ReasonCode, Requirement, RequirementKind, TrustPolicy};
 use kernel::Hrn;
 use kernel::application::ports::{
     AuthorizationError, EvaluationDecision, EvaluationRequest, IamPolicyEvaluator,
@@ -653,13 +653,19 @@ async fn m8_uat_04_the_investigator_cannot_decide_the_trust() {
 
         // Y una decision de verdad la sigue tomando el motor de politicas:
         // con la politica que no admite el riesgo, el resultado es DENY.
+        // La capsula vacia no tiene el riesgo establecido y UNKNOWN no es
+        // cero (contrato de HSP-134), asi que el motor falla cerrado.
         let policy = the_policy();
         assert_eq!(policy.version, "1.0.0");
         let decision = hodei_trust_policy::decision::evaluate(
             &hodei_trust_policy::TrustContext::builder(&empty_capsule()).build(),
             &policy,
         );
-        assert_eq!(decision.outcome, Outcome::Allow);
+        assert_eq!(decision.outcome, Outcome::Deny);
+        assert!(
+            decision.has_reason(ReasonCode::RiskUnknown),
+            "the refusal names the absence of knowledge, not a critical"
+        );
         Ok(())
     }
     .await;
