@@ -1620,7 +1620,9 @@ async fn the_yum_queries_are_scoped_keyed_and_indexed() {
         "five foreign binaries and five foreign records, never mine"
     );
     assert!(
-        foreign.iter().all(|asset| asset.digest.value != tilde_rpm.value),
+        foreign
+            .iter()
+            .all(|asset| asset.digest.value != tilde_rpm.value),
         "the foreign window cannot borrow my bytes"
     );
 
