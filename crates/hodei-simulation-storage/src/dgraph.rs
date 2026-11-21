@@ -558,12 +558,15 @@ impl ConformanceWorld for DgraphConformance {
         ] {
             let record = EvidenceRecord::builder(EvidenceId::new(id), fixture.tenant.clone())
                 .subjects(vec![fixture.artefact.clone()])
-                .evidence_type(EvidenceType::new("conformance"))
-                .producer(Producer::new("connector", "hsp208"))
-                .content(ContentDigest::sha256(format!("hsp208-conformance-{id}")))
+                .evidence_type(EvidenceType::Sbom)
+                .producer(Producer::new("connector", "hsp208").with_version("1.0.0"))
+                .content(ContentRef::by_digest(ContentDigest::of_bytes(
+                    format!("hsp208-conformance-{id}").as_bytes(),
+                )))
                 .observed_at(self.anchor.clock)
+                .recorded_at(self.anchor.clock)
                 .verification(EvidenceVerification::unverified())
-                .normalization(Normalization::raw())
+                .normalization(Normalization::new("raw", "1.0.0"))
                 .build();
             self.evidence
                 .put(record)
@@ -643,18 +646,15 @@ fn relation_of(row: &serde_json::Value) -> Option<GraphRelation> {
     let from = Hrn::from_string(
         row.get("hodei.graph.rel.from_hrn")
             .and_then(serde_json::Value::as_str)?,
-    )
-    .ok()?;
+    )?;
     let to = Hrn::from_string(
         row.get("hodei.graph.rel.to_hrn")
             .and_then(serde_json::Value::as_str)?,
-    )
-    .ok()?;
+    )?;
     let tenant = Hrn::from_string(
         row.get("hodei.graph.rel.tenant")
             .and_then(serde_json::Value::as_str)?,
-    )
-    .ok()?;
+    )?;
     let evidence = row
         .get("hodei.graph.rel.evidence")
         .and_then(serde_json::Value::as_str)?
