@@ -45,7 +45,7 @@ use hodei_catalog::{
     PackageCoordinates, PackageVersion, Publication, RepositoryConfig, RepositoryDescriptor,
     RepositoryFormat, RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::{DgraphAuditOutbox, DgraphCatalogStore, SurrealCatalogStore};
+use hodei_catalog_storage::{DgraphAuditOutbox, SurrealCatalogStore};
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::{BlobStore, FileBlobStore};
@@ -116,13 +116,16 @@ fn account(tag: &str) -> String {
     format!("it187{}{}", tag, &nonce()[8..])
 }
 
-/// El almacén Dgraph del catálogo, sobre un cliente fresco. `None` cuando
-/// el entorno no nombra servidor: el IT está gated.
-async fn open_store(client: Arc<GraphClient>) -> DgraphCatalogStore {
-    DgraphCatalogStore::open(client.clone(), Arc::new(AllowAllAuthorizer))
-        .await
-        .expect("the dgraph catalog store opens")
-}
+// El almacén Dgraph del catálogo: la apertura condicionada que comparten
+// las suites gated del stack (HSP-219). `DgraphCatalogStore::open` declara
+// su DDL con dos `alter` y Dgraph rechaza los `alter` concurrentes con
+// `errIndexingInProgress` durante la ventana de reindexado: el helper abre
+// de uno en uno dentro del proceso y reintenta lo transitorio con backoff.
+// **Carril recomendado**: este binario con los threads por defecto, pero
+// solo —sin otra suite gated contra el mismo alpha a la vez—; si se
+// lanzan dos juntas, el retry acotado absorbe la ventana pero el carril
+// seguro sigue siendo de una en una (lección HSP-190).
+include!("support/hsp219_concurrent_open.rs");
 
 /// Un descriptor de repositorio raw hosted.
 fn a_descriptor(account: &str, repo_key: &str) -> RepositoryDescriptor {
@@ -569,10 +572,7 @@ async fn an_event_id_already_said_with_another_fact_blocks_the_publication() {
             "event-{account}-"
         ))),
     );
-    let store = DgraphCatalogStore::open(client.clone(), Arc::new(AllowAllAuthorizer))
-        .await
-        .expect("the store opens")
-        .with_identity(identity);
+    let store = open_store(client.clone()).await.with_identity(identity);
     store
         .create_repository(&account, a_descriptor(&account, "raw"))
         .await
