@@ -207,6 +207,8 @@ async fn export_with(
     report.path
 }
 
+// compartido: el pasaporte de HSP-160 exporta pero no reimporta en destino
+#[allow(dead_code)]
 async fn import_into(
     site: &Site,
     directory: &std::path::Path,
