@@ -496,6 +496,34 @@ pipeline {
                 sh(
                     "cargo test --workspace --test hsp209_profile_smoke_it -- --test-threads=1"
                 )
+                // El cierre productivo (HSP-213): la promesa de que el
+                // arbol del binario no enlaza ni surrealdb ni rocksdb se
+                // comprueba contra el propio arbol de dependencias, con
+                // la contraprueba de que `legacy` sigue trayendolo. El
+                // script solo resuelve el tree: el corte lo sostiene el
+                // build de la feature.
+                sh("bash scripts/check-production-closure.sh")
+                // La mitad observable del retiro, con el proceso real:
+                // el binario construido SIN `legacy` --el arbol que
+                // empaqueta scripts/package-release.sh-- rechaza el
+                // perfil embebido con el mensaje de migracion: nombra la
+                // retirada, la herramienta y la ventana, y no crea el
+                // almacen local. Con las features del arbol el target
+                // queda vacio a proposito: el binario default no puede
+                // rechazar nada, y una prueba que no afirma nada es peor
+                // que no tenerla.
+                sh(
+                    "cargo test -p hodei-artifacts-api --no-default-features --test hsp213_profile_rejection"
+                )
+                // Y la otra cara (HSP-213): en el arbol con `legacy` --el
+                // de la herramienta aislada que empaqueta
+                // scripts/package-legacy-tools.sh y el de las suites
+                // historicas-- el mismo perfil sigue arrancando y
+                // sirviendo /health. Un solo hilo: levanta el almacem
+                // embebido y sondea su puerto.
+                sh(
+                    "cargo test -p hodei-artifacts-api --test hsp213_embedded_serves -- --test-threads=1"
+                )
                 sh(
                     "if [ ! -f target/uat/raw-conformity.md ]; then " +
                         "echo 'the conformity report is missing: the suite did not write it' >&2; " +
