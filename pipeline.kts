@@ -147,6 +147,7 @@ pipeline {
                     "cargo test --workspace " + listOf(
                         "--test admin_surface",
                         "--test atomic_projection",
+                        "--test dgraph_profile_failclosed",
                         "--test audit_events",
                         "--test http_contract",
                         "--test iam_account_index",
@@ -305,6 +306,19 @@ pipeline {
                 // necesita un solo hilo.
                 sh(
                     "cargo test --workspace --test hsp192_gc_ledger_dgraph_it -- --test-threads=1"
+                )
+                // El humo del perfil productivo sobre la autoridad unica
+                // (HSP-209): sin HODEI_GRAPH_IT_ENDPOINT se salta; con el
+                // alpha real arranca el binario con RUN_MODE=dgraph
+                // contra el mismo Zero+Alpha y el object store de la
+                // serie HSP-116, y fija que Raw, OCI y confianza sirven
+                // juntos sobre la autoridad unica, que el arranque no
+                // toca RocksDB y que el fallback rechazado muere
+                // nombrandolo. La evidencia queda en target/uat/hsp209/.
+                // Un solo hilo: las claves propias se leen por membresia
+                // sobre el alpha compartido.
+                sh(
+                    "cargo test --workspace --test hsp209_profile_smoke_it -- --test-threads=1"
                 )
                 sh(
                     "if [ ! -f target/uat/raw-conformity.md ]; then " +
