@@ -1,0 +1,81 @@
+{
+  "comment": "Oracle for HSP-155 AC1: the affected set and the justification every limit-range probe must produce, computed from the Maven/npm/PyPI rules implemented in src/version.rs. The reason fragments are substrings of what explain() returns.",
+  "lifecycle": {
+    "update_adds_a_package": 2
+  },
+  "limit_ranges": [
+    {
+      "ecosystem": "Maven",
+      "advisory": "GHSA-hodei-intel-0001",
+      "probes": [
+        {
+          "version": "1.0.0",
+          "match": "unaffected",
+          "reason_contains": ["before the range introduced at 1.2.0"]
+        },
+        {
+          "version": "1.2",
+          "match": "affected",
+          "reason_contains": ["inside the range", "introduced 1.2.0", "fixed at 2.0.0"]
+        },
+        {
+          "version": "1.5.0",
+          "match": "affected",
+          "reason_contains": ["inside the range"]
+        },
+        {
+          "version": "2",
+          "match": "unaffected",
+          "reason_contains": ["at or after the fix at 2.0.0"]
+        }
+      ]
+    },
+    {
+      "ecosystem": "npm",
+      "advisory": "GHSA-hodei-intel-0001",
+      "probes": [
+        {
+          "version": "1.0.0",
+          "match": "affected",
+          "reason_contains": ["inside the range", "last affected at 2.3.4"]
+        },
+        {
+          "version": "2.3.5",
+          "match": "unaffected",
+          "reason_contains": ["after the last affected one at 2.3.4"]
+        },
+        {
+          "version": "1.2",
+          "match": "unknown",
+          "reason_contains": ["cannot be ordered by the rules of npm"]
+        }
+      ]
+    },
+    {
+      "ecosystem": "PyPI",
+      "advisory": "GHSA-hodei-intel-0003",
+      "probes": [
+        {
+          "version": "0.6",
+          "match": "unaffected",
+          "reason_contains": ["before the range introduced at 0.7.0"]
+        },
+        {
+          "version": "2.19",
+          "match": "affected",
+          "reason_contains": ["inside the range", "last affected at 2.19.0"]
+        },
+        {
+          "version": "2.20",
+          "match": "unaffected",
+          "reason_contains": ["after the last affected one at 2.19.0"]
+        },
+        {
+          "version": "1!2.0",
+          "match": "unknown",
+          "reason_contains": ["cannot be ordered by the rules of PyPI"]
+        }
+      ]
+    }
+  ]
+}

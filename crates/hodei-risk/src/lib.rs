@@ -21,7 +21,9 @@
 
 pub mod affected;
 pub mod case;
+pub mod feed;
 pub mod ingestion;
+pub mod license;
 pub mod osv;
 pub mod ports;
 pub mod projection;
@@ -30,12 +32,21 @@ pub mod version;
 pub mod vex;
 
 pub use affected::{
-    AffectedState, DependencyKind, Finding, VexReference, apply_vex, state_without_vex,
+    AffectedState, DependencyKind, Finding, VexReference, apply_valid_vex, apply_vex,
+    state_without_vex,
 };
 pub use case::{
     BlastRadius, CaseEvent, CaseEventKind, CaseState, SecurityCase, VerificationCriteria,
 };
+pub use feed::{
+    AdvisoryRecord, AirGapBundle, BundleEntry, Coverage, FeedFailure, FeedPage, FeedStatus,
+    Reevaluation, RiskFeed, SyncReport, WatchedComponent, reassess,
+};
 pub use ingestion::{InventoryComponent, RiskIngestion, ingest, state_of};
+pub use license::{
+    LicenseFact, LicenseFile, LicenseLedger, LicenseOrigin, SPDX_LICENSE_LIST_VERSION, SpdxList,
+    parse_expression,
+};
 pub use osv::{
     OSV_SCHEMA_VERSION, OsvAdvisory, OsvAffected, OsvError, OsvEvent, OsvPackage, OsvRange,
     OsvReference, read_osv,
@@ -43,5 +54,5 @@ pub use osv::{
 pub use ports::{RiskRelationError, RiskRelationSource};
 pub use projection::{component_hrn, project, vulnerability_hrn};
 pub use traversal::{AffectedPath, Edge, affected_paths, blast_radius};
-pub use version::{Match, match_version};
+pub use version::{Match, explain, match_version};
 pub use vex::{VexError, VexJustification, VexStatement, VexStatus, read_vex};
