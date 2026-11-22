@@ -24,24 +24,45 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hodei_authz::{AuthorizationOutcome, VerifiedContext};
-use hodei_evidence::domain::delta::RelationDeltaLedger;
-use hodei_evidence::ports::{ContentStore, EvidenceStore, StoreError};
+// HSP-213: el puerto de la investigacion y sus tipos viajan sin la feature
+// `legacy` --el handler HTTP los necesita tambien en el binario
+// productivo--, y solo la composicion sobre el almacem embebido queda
+// detras del corte.
+use hodei_authz::VerifiedContext;
+use hodei_evidence::ports::{ContentStore, StoreError};
 use hodei_hub::blob::BlobError;
 use hodei_hub::blob::BlobStore;
-use hodei_investigator::Investigator;
 use hodei_investigator::freshness::Freshness;
-use hodei_investigator::guard::CapabilityGuard;
 use hodei_investigator::investigator::{Investigation, InvestigationError};
 use hodei_investigator::read_set::ReadSet;
-use hodei_investigator::scope::{EvidenceReadAuthorizer, RetrievalScope};
+use hodei_investigator::scope::RetrievalScope;
+
+#[cfg(feature = "legacy")]
+use hodei_authz::AuthorizationOutcome;
+#[cfg(feature = "legacy")]
+use hodei_evidence::domain::delta::RelationDeltaLedger;
+#[cfg(feature = "legacy")]
+use hodei_evidence::ports::EvidenceStore;
+#[cfg(feature = "legacy")]
+use hodei_investigator::Investigator;
+#[cfg(feature = "legacy")]
+use hodei_investigator::guard::CapabilityGuard;
+#[cfg(feature = "legacy")]
+use hodei_investigator::scope::EvidenceReadAuthorizer;
+#[cfg(feature = "legacy")]
 use hodei_investigator_storage::GraphEvidenceRetriever;
+#[cfg(feature = "legacy")]
 use hodei_investigator_storage::freshness::LedgerFreshness;
+#[cfg(feature = "legacy")]
 use kernel::Hrn;
+#[cfg(feature = "legacy")]
 use surrealdb::Connection;
 
+#[cfg(feature = "legacy")]
 use crate::actions;
+#[cfg(feature = "legacy")]
 use crate::authorization::AuthorizeResourceUseCase;
+#[cfg(feature = "legacy")]
 use crate::config::InvestigationConfig;
 
 /// The port of the investigation.
@@ -73,6 +94,7 @@ pub trait InvestigationPort: Send + Sync {
     ) -> Result<Freshness, InvestigationError>;
 }
 
+#[cfg(feature = "legacy")]
 /// The investigation over the graph and the evidence of the deployment.
 pub struct GraphInvestigation<C: Connection> {
     evidence: Arc<dyn EvidenceStore>,
@@ -83,6 +105,7 @@ pub struct GraphInvestigation<C: Connection> {
     limits: InvestigationConfig,
 }
 
+#[cfg(feature = "legacy")]
 impl<C: Connection> GraphInvestigation<C> {
     /// The investigation over the stores of the deployment.
     pub fn new(
@@ -114,6 +137,7 @@ impl<C: Connection> GraphInvestigation<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait]
 impl<C: Connection> InvestigationPort for GraphInvestigation<C> {
     async fn investigate(
@@ -162,6 +186,7 @@ impl<C: Connection> InvestigationPort for GraphInvestigation<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// The authorizer of the reads, over Cedar.
 ///
 /// It asks the **same** use case the HTTP boundary asks, with the same
@@ -176,6 +201,7 @@ struct CedarReadAuthorizer {
     context: VerifiedContext,
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait]
 impl EvidenceReadAuthorizer for CedarReadAuthorizer {
     async fn can_read(&self, _actor: &Hrn, resource: &Hrn) -> Result<(), String> {

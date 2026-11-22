@@ -170,6 +170,7 @@ pub mod get_effective_policies {
 // composition root. Application code should NOT depend on these directly.
 pub mod infrastructure {
     pub use crate::infrastructure::hrn_generator::UuidHrnGenerator;
+    #[cfg(feature = "legacy")]
     pub use crate::infrastructure::surreal::{
         SurrealGroupAdapter, SurrealPolicyAdapter, SurrealUserAdapter,
     };

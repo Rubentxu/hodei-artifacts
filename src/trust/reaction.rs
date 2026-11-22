@@ -50,48 +50,81 @@
 //! los hechos, se piden las reevaluaciones y se persiguen los
 //! vencimientos.
 
+#[cfg(feature = "legacy")]
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "legacy")]
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+#[cfg(feature = "legacy")]
 use kernel::Hrn;
 use serde::Serialize;
+#[cfg(feature = "legacy")]
 use surrealdb::Surreal;
+#[cfg(feature = "legacy")]
 use surrealdb::engine::local::Db;
 
+#[cfg(feature = "legacy")]
 use hodei_catalog::TrustLedger;
+#[cfg(feature = "legacy")]
 use hodei_evidence::application::capsule::CapsuleAssembler;
+#[cfg(feature = "legacy")]
 use hodei_evidence::application::projector::evidence_hrn;
+#[cfg(feature = "legacy")]
 use hodei_evidence::domain::graph::{GraphChangeSet, GraphNode, NodeKind, RelationType};
+#[cfg(feature = "legacy")]
 use hodei_evidence::ports::graph::GraphWriter;
+#[cfg(feature = "legacy")]
 use hodei_evidence::standards::inventory::read_cyclonedx_17;
+#[cfg(feature = "legacy")]
 use hodei_evidence::{ContentDigest, EvidenceId, RelationDelta, RelationDeltaKind};
+#[cfg(feature = "legacy")]
 use hodei_reactive::behavior::{BehaviorError, GuardOutcome};
+#[cfg(feature = "legacy")]
 use hodei_reactive::events::{Event, EventKind, Subscription};
+#[cfg(feature = "legacy")]
 use hodei_reactive::intent::{
     Intent, IntentExecutor, IntentOrigin, IntentOutbox, Plan, PlanningBehavior, ReadScope,
 };
+#[cfg(feature = "legacy")]
 use hodei_reactive::reactions::{
     BlastRadiusSource, DecisionRequester, DomainIntentExecutor, ImpactedSubject,
     PlannedVulnerabilityReaction, ReasonCode, SecurityCaseSink,
 };
+#[cfg(feature = "legacy")]
 use hodei_reactive::runtime::{DispatchReport, ReactiveRuntime};
+#[cfg(feature = "legacy")]
 use hodei_risk::osv::read_osv;
+#[cfg(feature = "legacy")]
 use hodei_risk::projection::{project, vulnerability_hrn};
+#[cfg(feature = "legacy")]
 use hodei_risk_storage::blast_radius;
+#[cfg(feature = "legacy")]
 use hodei_risk_storage::impact_view::SurrealImpactView;
+#[cfg(feature = "legacy")]
 use hodei_risk_storage::reactions::SurrealSecurityCaseStore;
+#[cfg(feature = "legacy")]
 use hodei_risk_storage::subject_risk::RiskFactsReader;
+#[cfg(feature = "legacy")]
 use hodei_trust_policy::PromotionService;
+#[cfg(feature = "legacy")]
 use hodei_trust_policy::context::TrustContext;
+#[cfg(feature = "legacy")]
 use hodei_trust_policy::ports::DecisionStore;
+#[cfg(feature = "legacy")]
 use hodei_trust_policy_storage::SurrealDecisionStore;
+#[cfg(feature = "legacy")]
 use hodei_trust_policy_storage::intents::SurrealIntentStore;
+#[cfg(feature = "legacy")]
 use hodei_trust_policy_storage::reactions::{PromotionDecisionRequester, TrustContextSource};
 
+#[cfg(feature = "legacy")]
 use crate::config::InvestigationConfig;
+#[cfg(feature = "legacy")]
 use crate::evidence::EvidenceReader;
+#[cfg(feature = "legacy")]
 use crate::risk_facts::to_trust_facts;
+#[cfg(feature = "legacy")]
 use crate::trust::promotion::{TRUSTED_DISTRIBUTION, TrustPlane, TrustedChannelTargets};
 
 /// Por qué el ciclo no pudo recorrer un tramo.
@@ -160,6 +193,7 @@ pub struct SweepCounters {
     pub already_said: usize,
 }
 
+#[cfg(feature = "legacy")]
 /// El tenant de la composición estampado en los intents.
 ///
 /// No es una identidad de cuenta: la autoridad multi-cuenta del ciclo es
@@ -169,6 +203,7 @@ pub struct SweepCounters {
 /// ejecutor la comprueba contra la composición que sirve.
 const COMPOSITION_MARK: &str = "hodei";
 
+#[cfg(feature = "legacy")]
 /// El techo de sujetos que un solo evento de drift puede nombrar.
 ///
 /// Un barrido que encontrara más deja el resto para el siguiente: decir
@@ -177,9 +212,11 @@ const COMPOSITION_MARK: &str = "hodei";
 /// cadena que cada sujeto dispara.
 const MAX_DRIFT_SUBJECTS: usize = 1024;
 
+#[cfg(feature = "legacy")]
 /// El techo de filas de deltas que una pasada de reconciliación lee.
 const MAX_RECONCILE_DELTAS: usize = 512;
 
+#[cfg(feature = "legacy")]
 /// The blast radius of the service: the tenant of every question comes
 /// from the subject's own account and region, through the same template
 /// the promotion and the risk facts already use.
@@ -195,6 +232,7 @@ pub struct GraphBlastRadius {
     limits: InvestigationConfig,
 }
 
+#[cfg(feature = "legacy")]
 impl GraphBlastRadius {
     /// The radius over the graph and the template of the composition.
     pub fn new(
@@ -205,6 +243,7 @@ impl GraphBlastRadius {
     }
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl BlastRadiusSource for GraphBlastRadius {
     async fn impacted(
@@ -251,6 +290,7 @@ impl BlastRadiusSource for GraphBlastRadius {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// The context of the reevaluation: the real one.
 ///
 /// It assembles the capsule from the evidence that exists and the risk
@@ -264,6 +304,7 @@ pub struct ContextFromEvidence {
     limits: InvestigationConfig,
 }
 
+#[cfg(feature = "legacy")]
 impl ContextFromEvidence {
     /// The source over the service's readers.
     pub fn new(
@@ -279,6 +320,7 @@ impl ContextFromEvidence {
     }
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl TrustContextSource for ContextFromEvidence {
     async fn context_of(
@@ -327,6 +369,7 @@ impl TrustContextSource for ContextFromEvidence {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// The digest a subject HRN names: `artifact/<repo>/<alg>-<hex>`.
 fn digest_of_subject(subject: &Hrn) -> Result<String, String> {
     let resource = subject.resource_id();
@@ -340,6 +383,7 @@ fn digest_of_subject(subject: &Hrn) -> Result<String, String> {
     Ok(format!("{algorithm}:{value}"))
 }
 
+#[cfg(feature = "legacy")]
 /// An identifier safe for a Surreal record id and for an event name.
 ///
 /// The HRNs of the cycle are full of `:` and `/`, and a raw HRN inside an
@@ -357,6 +401,7 @@ fn sanitize(value: &str) -> String {
         .collect()
 }
 
+#[cfg(feature = "legacy")]
 /// A concession the sweep found, with everything the renewal needs.
 #[derive(Debug, Clone, serde::Deserialize)]
 struct StaleGrantRow {
@@ -370,6 +415,7 @@ struct StaleGrantRow {
     valid_until: Option<DateTime<Utc>>,
 }
 
+#[cfg(feature = "legacy")]
 /// The planned reevaluation of a concession whose validity lapsed.
 ///
 /// It is the local twin of `PlannedExceptionExpiryReaction` and it
@@ -383,6 +429,7 @@ struct StaleGrantRow {
 /// carried is done.
 pub struct PlannedGrantExpiryReaction;
 
+#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl PlanningBehavior for PlannedGrantExpiryReaction {
     fn name(&self) -> &str {
@@ -450,6 +497,7 @@ impl PlanningBehavior for PlannedGrantExpiryReaction {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// The planned reevaluation of a concession whose policy version is no
 /// longer the active one.
 ///
@@ -461,6 +509,7 @@ impl PlanningBehavior for PlannedGrantExpiryReaction {
 /// rather than reaching back into the catalog.
 pub struct PlannedPolicyDriftReaction;
 
+#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl PlanningBehavior for PlannedPolicyDriftReaction {
     fn name(&self) -> &str {
@@ -540,6 +589,7 @@ impl PlanningBehavior for PlannedPolicyDriftReaction {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// The cycle itself: the runtime, its durable outbox, and the sweeps
 /// that keep the concessions honest after the admission that opened
 /// them.
@@ -559,6 +609,7 @@ pub struct VulnerabilityReactor {
     limits: InvestigationConfig,
 }
 
+#[cfg(feature = "legacy")]
 impl VulnerabilityReactor {
     /// Builds the cycle over the parts the composition root already has.
     ///
@@ -1043,6 +1094,7 @@ impl VulnerabilityReactor {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// Rebuilds a delta from the row the ledger stored.
 ///
 /// A row that does not parse is skipped, not failed: the
@@ -1068,6 +1120,7 @@ fn delta_of_row(row: &hodei_evidence_storage::DeltaRow) -> Option<RelationDelta>
     })
 }
 
+#[cfg(feature = "legacy")]
 /// The digest a grant row names.
 fn digest_of_row(row: &StaleGrantRow) -> Result<ContentDigest, String> {
     let algorithm = match row.digest_algorithm.as_str() {
@@ -1085,6 +1138,7 @@ fn digest_of_row(row: &StaleGrantRow) -> Result<ContentDigest, String> {
     Ok(digest)
 }
 
+#[cfg(feature = "legacy")]
 #[cfg(test)]
 mod tests {
     use super::*;

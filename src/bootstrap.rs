@@ -9,27 +9,40 @@
 use crate::app_state::AppState;
 use crate::auth::JwtAuthenticator;
 use crate::authorization::SharedAuthorizer;
+#[cfg(feature = "legacy")]
 use crate::composition_root::CompositionRoot;
 use crate::config::AppConfig;
+// HSP-213: los importes del lector embebido quedan tras la feature
+// `legacy`; el binario productivo se construye sin ellos.
+#[cfg(feature = "legacy")]
 use crate::repository_surreal::SurrealRepositoryStore;
+#[cfg(feature = "legacy")]
 use async_trait::async_trait;
 use cedar_policy::{Entities, Schema};
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
+#[cfg(feature = "legacy")]
 use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_hub::blob::FileBlobStore;
 use std::fs;
 
+#[cfg(feature = "legacy")]
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
+#[cfg(feature = "legacy")]
 use hodei_iam::register_iam_schema::dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};
+#[cfg(feature = "legacy")]
 use hodei_policies::build_schema::error::BuildSchemaError;
+#[cfg(feature = "legacy")]
 use hodei_policies::build_schema::ports::{
     AUTHORIZATION_BUNDLE_SCHEMA_ID, SchemaStoragePort, StoredSchema,
 };
+#[cfg(feature = "legacy")]
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(feature = "legacy")]
 use surrealdb::Surreal;
+#[cfg(feature = "legacy")]
 use surrealdb::engine::local::RocksDb;
 use tracing::{info, warn};
 
@@ -100,18 +113,52 @@ pub async fn bootstrap(
         .preflight_storage()
         .map_err(|error| BootstrapError::Initialization(format!("storage preflight: {error}")))?;
 
-    // Step 1: Initialize infrastructure with RocksDB
+    // Step 1: Initialize infrastructure
     info!("📦 Initializing infrastructure adapters");
     // The engine of the metadata is decided by the profile (HSP-209): with
     // a `[graph]` section the authority is the alpha and the embedded
     // engine is never opened — its path is not created, not locked, not
-    // touched. Without it, the embedded engine is the authority exactly as
-    // before. There is no branch that tries one and falls back to the
+    // touched. There is no branch that tries one and falls back to the
     // other: the choice was validated at the configuration, and a store
     // that cannot open stops the boot with its own error.
     if config.graph.is_some() {
         return bootstrap_graph_profile(config, bootstrap_config).await;
     }
+    // HSP-213: sin `[graph]` el despliegue pide la autoridad embebida, y
+    // esa autoridad sale del binario productivo. El binario se construye
+    // sin la feature `legacy` y rechaza el perfil con el mensaje de
+    // migracion; la herramienta legacy y las suites del arbol conservan
+    // la feature mientras dure la ventana.
+    #[cfg(feature = "legacy")]
+    return bootstrap_embedded_profile(config, bootstrap_config).await;
+    #[cfg(not(feature = "legacy"))]
+    {
+        let _ = bootstrap_config;
+        Err(LEGACY_PROFILE_REFUSAL.to_string().into())
+    }
+}
+
+/// HSP-213: la respuesta del binario productivo al perfil embebido antiguo.
+/// Nombra la retirada, el destino (la autoridad externa) y la herramienta
+/// que aún lee el almacén local durante la ventana de migración.
+pub const LEGACY_PROFILE_REFUSAL: &str = "the embedded engine (SurrealDB over RocksDB) is \
+retired from the production binary (HSP-213): declare a [graph] section so the external \
+authority is the single source of truth, or use the legacy tool surface (`hodei-recovery`, \
+built with --features legacy) to read and migrate an existing local store while the \
+migration window stays open (window opened 2026-11-22)";
+
+/// Bootstrap the deployment whose authority is the embedded engine.
+///
+/// HSP-213: this is the legacy profile, behind the `legacy` feature so the
+/// production binary —built `--no-default-features`— never links SurrealDB
+/// nor RocksDB. A deployment that still asks for it is refused by
+/// [`bootstrap`] with [`LEGACY_PROFILE_REFUSAL`]; the tool surface keeps
+/// the feature while the migration window is open.
+#[cfg(feature = "legacy")]
+async fn bootstrap_embedded_profile(
+    config: &AppConfig,
+    bootstrap_config: BootstrapConfig,
+) -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
     let schema_storage = initialize_schema_storage(config).await?;
 
     // When the production bundle declares a Cedar schema, persist the same
@@ -154,9 +201,9 @@ pub async fn bootstrap(
         Ok(true) => {}
         Ok(false) => warn!(
             "⚠️  The policy account index is missing. The IAM listing still isolates by account, \
-             but it scans the table. Stop the service and run `ensure-iam-index` (shipped \
-             alongside it in bin/) to declare it; from a source checkout: \
-             `cargo run --bin ensure-iam-index -- --db <path>`."
+             but it scans the table. Stop the service and run `ensure-iam-index` from the legacy \
+             tool package (HSP-213: it no longer ships with the service) to declare it; from a \
+             source checkout: `cargo run --features legacy --bin ensure-iam-index -- --db <path>`."
         ),
         Err(error) => warn!(
             "⚠️  The policy account index could not be checked: {}. Stop the service and run \
@@ -923,6 +970,7 @@ fn configure_production_security(
 /// reader can always find it again.
 pub const UNVERSIONED_SCHEMA_ID: &str = "latest";
 
+#[cfg(feature = "legacy")]
 /// Cablea la investigacion sobre el grafo y la evidencia.
 ///
 /// Se cablea al final, cuando la seguridad de produccion ya ha
@@ -970,6 +1018,7 @@ fn wire_the_investigation(
         .with_investigation_limits(config.investigation.clone()))
 }
 
+#[cfg(feature = "legacy")]
 /// Los hechos de riesgo de la promocion, leidos del grafo de impacto.
 ///
 /// La vista materializada y el registro de deltas son los mismos que ya
@@ -1001,6 +1050,7 @@ fn wire_the_risk_facts(
     state.with_risk_facts(Arc::new(SurrealRiskFacts::new(view, catalog)))
 }
 
+#[cfg(feature = "legacy")]
 /// El ciclo reactivo CVE: la composition root de `VulnerabilityReactor`.
 ///
 /// Solo existe si el plano de confianza existe: sin politicas ni
@@ -1060,6 +1110,7 @@ async fn wire_the_reactor(
     Ok(state.with_reactor(reactor))
 }
 
+#[cfg(feature = "legacy")]
 /// SurrealDB adapter for schema storage///
 /// This adapter implements the SchemaStoragePort trait for SurrealDB with RocksDB.
 #[derive(Clone)]
@@ -1067,6 +1118,7 @@ pub struct SurrealSchemaAdapter {
     db: Surreal<surrealdb::engine::local::Db>,
 }
 
+#[cfg(feature = "legacy")]
 impl SurrealSchemaAdapter {
     /// Get a reference to the underlying database client
     pub fn db(&self) -> &Surreal<surrealdb::engine::local::Db> {
@@ -1074,6 +1126,7 @@ impl SurrealSchemaAdapter {
     }
 }
 
+#[cfg(feature = "legacy")]
 impl SurrealSchemaAdapter {
     /// Create a new SurrealDB schema adapter
     pub fn new(db: Surreal<surrealdb::engine::local::Db>) -> Self {
@@ -1081,6 +1134,7 @@ impl SurrealSchemaAdapter {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// Row shape of a stored schema record.
 ///
 /// A single-record SurrealDB response is an object that also carries the
@@ -1096,6 +1150,7 @@ struct SchemaRecordRow {
     content: String,
 }
 
+#[cfg(feature = "legacy")]
 /// Row shape used when only the version of a stored schema is needed.
 #[derive(Debug, Clone, Deserialize)]
 struct SchemaVersionRow {
@@ -1105,6 +1160,7 @@ struct SchemaVersionRow {
     created_at: Option<String>,
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait]
 impl SchemaStoragePort for SurrealSchemaAdapter {
     async fn save_schema(
@@ -1250,6 +1306,7 @@ impl SchemaStoragePort for SurrealSchemaAdapter {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// Initialize the SurrealDB schema storage adapter with RocksDB
 async fn initialize_schema_storage(
     config: &AppConfig,
@@ -1326,6 +1383,7 @@ fn validate_bootstrap_configuration(
     Ok(())
 }
 
+#[cfg(feature = "legacy")]
 /// Register the IAM schema using the provided use case
 async fn register_iam_schema(
     use_case: &dyn hodei_iam::features::register_iam_schema::ports::RegisterIamSchemaPort,
@@ -1346,6 +1404,7 @@ async fn register_iam_schema(
     Ok(result)
 }
 
+#[cfg(feature = "legacy")]
 #[cfg(test)]
 mod tests {
     #[tokio::test]

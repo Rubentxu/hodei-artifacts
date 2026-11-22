@@ -34,6 +34,7 @@ pub const EFFECT_TABLE: &str = "reactive_effect";
 /// The table the intents wait in.
 pub const INTENT_TABLE: &str = "reactive_intent";
 
+#[cfg(feature = "legacy")]
 /// Escapes a part of a record identifier, with the same rules the graph
 /// store uses: lo que llega de fuera no se escribe tal cual en un id.
 fn escape_id(value: &str) -> String {
@@ -60,6 +61,7 @@ struct IntentRow {
     intent: Intent,
 }
 
+#[cfg(feature = "legacy")]
 /// One row of the operational state, said for the operator and for the
 /// agent that asks what is waiting, what was confirmed and why something
 /// stopped. It carries NO payload: el payload de un intent es dato, y el
@@ -85,11 +87,13 @@ pub struct IntentDiagnostic {
     pub failure_reason: Option<String>,
 }
 
+#[cfg(feature = "legacy")]
 /// The durable store, over the database that already exists.
 pub struct SurrealIntentStore<C: Connection> {
     db: Arc<Surreal<C>>,
 }
 
+#[cfg(feature = "legacy")]
 impl<C: Connection> SurrealIntentStore<C> {
     /// The store over a database.
     pub fn new(db: Arc<Surreal<C>>) -> Self {
@@ -213,6 +217,7 @@ impl<C: Connection> SurrealIntentStore<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait]
 impl<C: Connection> ExecutionStore for SurrealIntentStore<C> {
     async fn execution_of(&self, key: &str) -> Option<ExecutionRecord> {

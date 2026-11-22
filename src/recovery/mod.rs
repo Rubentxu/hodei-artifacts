@@ -37,6 +37,10 @@
 //!    embebido bloquea la base mientras el servicio vive; no se promete
 //!    copia en caliente ni alta disponibilidad.
 
+// HSP-213: la copia del motor embebido abre RocksDB en el propio
+// proceso: solo existe con la feature `legacy`, que el binario
+// productivo no declara y la herramienta legado si.
+#[cfg(feature = "legacy")]
 pub mod backup;
 pub mod cutover;
 pub mod export;
@@ -45,6 +49,7 @@ pub mod manifest;
 pub mod reconcile;
 pub mod scrub;
 
+#[cfg(feature = "legacy")]
 pub use backup::{
     BackupReport, RepairReport, RestoreReport, VerifyOutcome, backup, inspect, open_database,
     repair_from_backup, restore, verify,

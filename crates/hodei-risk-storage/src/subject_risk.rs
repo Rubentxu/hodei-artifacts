@@ -21,12 +21,15 @@
 //!   cannot be reproduced against the feed it actually saw.
 
 use std::collections::BTreeMap;
+#[cfg(feature = "legacy")]
 use std::sync::Arc;
 
+use crate::impact_view::ImpactRow;
+#[cfg(feature = "legacy")]
+use crate::impact_view::SurrealImpactView;
 use kernel::Hrn;
+#[cfg(feature = "legacy")]
 use surrealdb::Connection;
-
-use crate::impact_view::{ImpactRow, SurrealImpactView};
 
 /// How bad an advisory is, as the catalog says.
 ///
@@ -182,12 +185,14 @@ pub fn facts_from(
     }
 }
 
+#[cfg(feature = "legacy")]
 /// The facts of a subject, read from the materialized impact view.
 pub struct SurrealRiskFacts<C: Connection> {
     view: SurrealImpactView<C>,
     catalog: Arc<dyn AdvisoryCatalog>,
 }
 
+#[cfg(feature = "legacy")]
 impl<C: Connection> SurrealRiskFacts<C> {
     /// The reader over the view and the catalog of severities.
     pub fn new(view: SurrealImpactView<C>, catalog: Arc<dyn AdvisoryCatalog>) -> Self {
@@ -195,6 +200,7 @@ impl<C: Connection> SurrealRiskFacts<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl<C: Connection> RiskFactsReader for SurrealRiskFacts<C> {
     async fn risk_facts(
@@ -231,6 +237,7 @@ impl<C: Connection> RiskFactsReader for SurrealRiskFacts<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 #[cfg(test)]
 mod tests {
     use super::*;

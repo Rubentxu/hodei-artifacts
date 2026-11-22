@@ -12,14 +12,23 @@
 #![forbid(unsafe_code)]
 
 use async_trait::async_trait;
-use hodei_trust_policy::ports::{DecisionStore, DecisionStoreError, PromotionTargets};
-use hodei_trust_policy::promotion::{DecisionId, PromotionDecision, PromotionTarget};
+#[cfg(feature = "legacy")]
+use hodei_trust_policy::ports::DecisionStore;
+use hodei_trust_policy::ports::{DecisionStoreError, PromotionTargets};
+use hodei_trust_policy::promotion::PromotionTarget;
+#[cfg(feature = "legacy")]
+use hodei_trust_policy::promotion::{DecisionId, PromotionDecision};
+#[cfg(feature = "legacy")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "legacy")]
 use std::sync::Arc;
+#[cfg(feature = "legacy")]
 use surrealdb::Connection;
+#[cfg(feature = "legacy")]
 use surrealdb::Surreal;
 
 pub mod dgraph;
+#[cfg(feature = "legacy")]
 pub mod intents;
 pub mod lifecycle;
 pub mod reactions;
@@ -29,9 +38,11 @@ pub use dgraph::{
     DgraphTrustStore, GrantActivation,
 };
 
+#[cfg(feature = "legacy")]
 /// The table the decisions live in.
 pub const DECISION_TABLE: &str = "promotion_decision";
 
+#[cfg(feature = "legacy")]
 /// The row of a decision.
 ///
 /// The whole decision travels as one document: the policy, the context,
@@ -74,11 +85,13 @@ pub struct DecisionRow {
     pub decision: serde_json::Value,
 }
 
+#[cfg(feature = "legacy")]
 /// The store of the decisions, over SurrealDB.
 pub struct SurrealDecisionStore<C: Connection> {
     db: Arc<Surreal<C>>,
 }
 
+#[cfg(feature = "legacy")]
 impl<C: Connection> SurrealDecisionStore<C> {
     /// A store over a database.
     pub fn new(db: Arc<Surreal<C>>) -> Self {
@@ -91,6 +104,7 @@ impl<C: Connection> SurrealDecisionStore<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// The row of a decision.
 fn row_from(decision: &PromotionDecision) -> DecisionRow {
     DecisionRow {
@@ -115,11 +129,13 @@ fn row_from(decision: &PromotionDecision) -> DecisionRow {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// The decision of a row.
 fn decision_from(row: &DecisionRow) -> Option<PromotionDecision> {
     serde_json::from_value(row.decision.clone()).ok()
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait]
 impl<C: Connection> DecisionStore for SurrealDecisionStore<C> {
     /// Writes a decision down.

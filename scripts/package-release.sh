@@ -44,16 +44,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${1:-$ROOT/dist}"
 BIN_NAME="hodei-artifacts-api"
-# The operator command that declares the account index of the IAM policies.
-# It travels with the service because the deployment needs it: the index
-# cannot be declared by the running service, and a deployment that cannot
-# run it would keep scanning the table.
-MIGRATION_BIN_NAME="ensure-iam-index"
-# The operator command that declares the indexes of the evidence graph. It
-# travels with the service for the same reason: the indexes cannot be
-# declared by the running service, and the measure of the scale model
-# showed what the graph costs without them.
-GRAPH_INDEX_BIN_NAME="ensure-graph-index"
+# HSP-213: the release ships the service alone. The operator commands that
+# read or index the embedded engine (ensure-iam-index, ensure-graph-index,
+# backfill-iam-scope, hodei-recovery, perf_lab) live behind the `legacy`
+# feature and are packaged by scripts/package-legacy-tools.sh as the
+# isolated tool: the production binary and image must not contain
+# SurrealDB nor RocksDB while the migration window is open. The window
+# opened on 2026-11-22 and closes after the performance spine and the
+# retirement of the reader, not before.
 
 PROFILE="${HODEI_PACKAGE_PROFILE:-release}"
 case "$PROFILE" in
@@ -130,33 +128,25 @@ done
 
 # --- Build ------------------------------------------------------------------
 
-echo "==> building the $PROFILE binaries"
+echo "==> building the $PROFILE binary (production closure: --no-default-features)"
 if [ -n "$CROSS_TARGET" ]; then
   command -v cargo-zigbuild >/dev/null 2>&1 \
     || { echo "error: HODEI_PACKAGE_TARGET needs cargo-zigbuild" >&2; exit 1; }
-  cargo zigbuild ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} --target "$CROSS_TARGET" --features vendored-openssl \
-    --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME" --bin "$GRAPH_INDEX_BIN_NAME"
+  cargo zigbuild ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} --target "$CROSS_TARGET" --no-default-features \
+    --features vendored-openssl --bin "$BIN_NAME"
   BUILD_DIR="${TARGET_DIR}/${TARGET}/${PROFILE}"
 else
-  cargo build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME" --bin "$GRAPH_INDEX_BIN_NAME"
+  cargo build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} --no-default-features --bin "$BIN_NAME"
   BUILD_DIR="${TARGET_DIR}/${PROFILE}"
 fi
+
+# The promise of the cut, checked here too: if the closure of what we are
+# about to ship names the embedded engine, the package does not leave.
+"$ROOT/scripts/check-production-closure.sh"
 
 BIN_PATH="$(find "$BUILD_DIR" -maxdepth 1 -type f -name "$BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$BIN_PATH" ]; then
   echo "error: the release binary was not produced" >&2
-  exit 1
-fi
-
-MIGRATION_BIN_PATH="$(find "$BUILD_DIR" -maxdepth 1 -type f -name "$MIGRATION_BIN_NAME" -perm -u+x | head -n 1)"
-if [ -z "$MIGRATION_BIN_PATH" ]; then
-  echo "error: the operator command was not produced" >&2
-  exit 1
-fi
-
-GRAPH_INDEX_BIN_PATH="$(find "$BUILD_DIR" -maxdepth 1 -type f -name "$GRAPH_INDEX_BIN_NAME" -perm -u+x | head -n 1)"
-if [ -z "$GRAPH_INDEX_BIN_PATH" ]; then
-  echo "error: the operator command of the graph indexes was not produced" >&2
   exit 1
 fi
 
@@ -167,8 +157,6 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/config" "$STAGE/config/community"
 
 install -m 0755 "$BIN_PATH" "$STAGE/bin/$BIN_NAME"
-install -m 0755 "$MIGRATION_BIN_PATH" "$STAGE/bin/$MIGRATION_BIN_NAME"
-install -m 0755 "$GRAPH_INDEX_BIN_PATH" "$STAGE/bin/$GRAPH_INDEX_BIN_NAME"
 install -m 0644 "$CONFIG_FILE" "$STAGE/config/default.toml"
 
 # The community quickstart travels with the distribution.

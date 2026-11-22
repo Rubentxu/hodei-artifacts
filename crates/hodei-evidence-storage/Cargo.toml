@@ -14,11 +14,24 @@ kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-surrealdb = { workspace = true }
+surrealdb = { workspace = true, optional = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing = { workspace = true }
+
+# HSP-213: el motor embebido (SurrealDB/RocksDB) queda tras esta feature.
+# El binario productivo se construye sin ella; la herramienta legado y las
+# suites historicas la activan de forma predeterminada.
+[features]
+default = ["legacy"]
+legacy = ["dep:surrealdb"]
+
+# La medicion de escala escribe en el motor embebido: no existe sin la
+# feature legacy.
+[[bin]]
+name = "scale_benchmark"
+required-features = ["legacy"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

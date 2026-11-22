@@ -13,6 +13,11 @@ pub mod authenticator;
 pub mod content_store;
 pub mod dgraph;
 pub mod scale;
+// HSP-213: el adaptador sobre el motor embebido vive tras la feature
+// `legacy`. El binario productivo no la declara, asi que el crate se
+// compila sin enlazar SurrealDB; la herramienta legado y las suites
+// historicas si la activan.
+#[cfg(feature = "legacy")]
 pub mod surreal;
 
 pub use authenticator::{HmacEnvelopeAuthenticator, ProducerCredentials};
@@ -24,6 +29,11 @@ pub use dgraph::{
     GRAPH_RELATION_TYPE, GRAPH_SUPPORT_TYPE, LEDGER_EVENT_TYPE, LedgerEventRecord, STATUS_ASSERTED,
     STATUS_UNKNOWN,
 };
+#[cfg(feature = "legacy")]
+pub use surreal::delta::{DELTA_TABLE, DeltaRow, SurrealRelationDeltaLedger};
+#[cfg(feature = "legacy")]
+pub use surreal::graph::{GRAPH_INDEXES, declare_index_statement};
+#[cfg(feature = "legacy")]
 pub use surreal::{
     ACTIVE_PROJECTION, CHECKPOINT_TABLE, EVIDENCE_SUBJECT_TABLE, EVIDENCE_TABLE, EvidenceRow,
     LEDGER_TABLE, LedgerRecord, REBUILD_PROJECTION, SubjectRow, SurrealEventLedger,
@@ -31,8 +41,7 @@ pub use surreal::{
     the_evidence_put_statement, the_subject_pair_read, the_subject_records_read,
 };
 
-pub use surreal::delta::{DELTA_TABLE, DeltaRow, SurrealRelationDeltaLedger};
-pub use surreal::graph::{GRAPH_INDEXES, declare_index_statement};
+#[cfg(feature = "legacy")]
 pub use surreal::{EVIDENCE_INDEXES, declare_indexes};
 
 /// How many times a write is tried when the transaction of the loser could
