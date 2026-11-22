@@ -1139,6 +1139,24 @@ pub fn verify_passport_offline(
     })?;
     let capsule_digest = capsule_desc.digest.clone();
 
+    // What the manifest declares about itself must be what the layout
+    // holds. The annotations `hodei.passport.subject` and
+    // `hodei.passport.vsa` name the two digests that make the passport
+    // a record *of something*: a reader that did not check them would
+    // accept a manifest pointing at one capsule while its layers
+    // describe another. The check is cheap and it is the passport's
+    // equivalent of the capsule's "the signature names this image".
+    let declared_subject = image
+        .annotations
+        .get("hodei.passport.subject")
+        .cloned()
+        .unwrap_or_default();
+    if declared_subject != capsule_digest {
+        return Err(unsound(format!(
+            "the passport annotation names subject {declared_subject}, its subject is {capsule_digest}"
+        )));
+    }
+
     // The VSA layer.
     let vsa_bytes = blob_of(&image, &blobs, VSA_MEDIA_TYPE, "vsa.json")?;
     let vsa: PassportVsa = serde_json::from_slice(vsa_bytes).map_err(|error| {
@@ -1160,6 +1178,36 @@ pub fn verify_passport_offline(
         return Err(PassportProblem::new(
             PassportProblemCode::Malformed,
             format!("the predicate is {}, not the VSA type", vsa.predicate_type),
+        ))?;
+    }
+    // The VSA the annotation promises is the VSA the layers hold, and
+    // the bundle the annotation names is the release layer byte for
+    // byte. The record cannot be pointed at one document while being
+    // read from another.
+    let declared_vsa = image
+        .annotations
+        .get("hodei.passport.vsa")
+        .cloned()
+        .unwrap_or_default();
+    let actual_vsa = digest_of(blob_of(&image, &blobs, VSA_MEDIA_TYPE, "vsa.json")?);
+    if declared_vsa != actual_vsa {
+        return Err(PassportProblem::new(
+            PassportProblemCode::TamperedBlob,
+            format!("the passport annotation names VSA {declared_vsa}, the VSA layer is {actual_vsa}"),
+        ))?;
+    }
+    let declared_bundle = image
+        .annotations
+        .get("hodei.passport.bundle")
+        .cloned()
+        .unwrap_or_default();
+    let actual_bundle = digest_of(blob_of(&image, &blobs, RELEASE_MEDIA_TYPE, "release.json")?);
+    if declared_bundle != actual_bundle {
+        return Err(PassportProblem::new(
+            PassportProblemCode::TamperedBlob,
+            format!(
+                "the passport annotation names bundle {declared_bundle}, the release layer is {actual_bundle}"
+            ),
         ))?;
     }
     // AC3 half one: the VSA's subject is the capsule, named exactly —
