@@ -27,7 +27,7 @@
 //! visible instead of silently green.
 
 use crate::domain::standards::attestation::{
-    AttestationVerification, SLSA_PROVENANCE_PREDICATE_TYPE,
+    AttestationVerification, SLSA_PROVENANCE_PREDICATE_TYPE, SignatureFailure,
 };
 use crate::standards::trust_chain::{ChainVerification, ExpectedIdentity};
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,7 @@ pub const SLSA_ASSESSMENT_VERSION: &str = "1.0.0";
 /// The expectations are the policy's own words -- who the trusted builders
 /// are, who issued the root, and what the deployment separately knows --
 /// and the assessment refuses what the expectations do not cover.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SlsaExpectations {
     /// The builder identities the policy trusts to have produced a real
     /// hosted build (the trusted-builder list).
@@ -57,17 +57,6 @@ pub struct SlsaExpectations {
     /// beyond what the statement declares. The declared dependencies are
     /// checked directly; this covers what the statement cannot say.
     pub hermetic_declared_complete: bool,
-}
-
-impl Default for SlsaExpectations {
-    fn default() -> Self {
-        Self {
-            trusted_builder_ids: Vec::new(),
-            pinned_issuer: None,
-            builder_identity_proven: false,
-            hermetic_declared_complete: false,
-        }
-    }
 }
 
 /// The SLSA build levels, in order.
@@ -174,7 +163,11 @@ impl SlsaAssessment {
     pub fn asserted_level(&self) -> Option<SlsaBuildLevel> {
         [SlsaBuildLevel::L1, SlsaBuildLevel::L2, SlsaBuildLevel::L3]
             .into_iter()
-            .filter(|level| self.level_requirements(*level).iter().all(|finding| finding.status.is_met()))
+            .filter(|level| {
+                self.level_requirements(*level)
+                    .iter()
+                    .all(|finding| finding.status.is_met())
+            })
             .max()
     }
 
@@ -206,7 +199,8 @@ impl SlsaAssessment {
     /// Whether a level may be asserted; the reason is the whole finding
     /// list, which the caller can show.
     pub fn may_assert(&self, level: SlsaBuildLevel) -> bool {
-        self.asserted_level().is_some_and(|asserted| asserted >= level)
+        self.asserted_level()
+            .is_some_and(|asserted| asserted >= level)
     }
 }
 
@@ -290,7 +284,11 @@ pub fn assess_provenance(
             RequirementStatus::NotMet {
                 reason: "the provenance names no builder".to_string(),
             }
-        } else if expectations.trusted_builder_ids.iter().any(|trusted| trusted == builder) {
+        } else if expectations
+            .trusted_builder_ids
+            .iter()
+            .any(|trusted| trusted == builder)
+        {
             RequirementStatus::Met
         } else {
             RequirementStatus::NotMet {
@@ -299,10 +297,30 @@ pub fn assess_provenance(
         },
     });
 
-    // IssuerPinned: the chain enforced the pin when it was asked to.
-    // A chain that verified without an issuer expectation proves
-    // nothing about the issuer, and the assessor says so instead of
-    // inventing the verdict.
+    // IssuerPinned: the chain enforced the pin when it was asked to, and
+    // it reached the issuer check only after the signature and the
+    // subject held. A chain that verified without an issuer expectation
+    // proves nothing about the issuer, and a chain that refused BEFORE
+    // the issuer check (a bad signature, a revoked root, the wrong
+    // subject) never tested the pin at all. Both are `NotEvaluated`, not
+    // `Met` and not a false `NotMet`: the assessor separates "the pin
+    // failed" from "the pin was never reached".
+    let pin_reached_and_held = matches!(attestation.verification, AttestationVerification::Verified { .. })
+        // The builder mismatch is recorded last and does not stop the
+        // issuer check, so a chain refused for the builder still proved
+        // the issuer pin.
+        || matches!(
+            &attestation.verification,
+            AttestationVerification::Invalid {
+                reason: SignatureFailure::IdentityMismatch { expected, .. }
+            } if expected != expectations.pinned_issuer.as_deref().unwrap_or_default()
+        );
+    let pin_failed = matches!(
+        &attestation.verification,
+        AttestationVerification::Invalid {
+            reason: SignatureFailure::IdentityMismatch { expected, .. }
+        } if Some(expected.as_str()) == expectations.pinned_issuer.as_deref()
+    );
     findings.push(SlsaFinding {
         requirement: SlsaRequirement::IssuerPinned,
         status: match &expectations.pinned_issuer {
@@ -314,11 +332,19 @@ pub fn assess_provenance(
                     "the chain was run without an issuer pin to {pinned}, so pinning was not verified"
                 ),
             },
-            Some(_) if matches!(attestation.verification, AttestationVerification::Verified { .. }) => {
-                RequirementStatus::Met
-            }
-            Some(pinned) => RequirementStatus::NotMet {
-                reason: format!("the chain did not verify against a root pinned to {pinned}: {}", attestation.verification),
+            _ if pin_reached_and_held => RequirementStatus::Met,
+            _ if pin_failed => RequirementStatus::NotMet {
+                reason: format!(
+                    "the signing root is not pinned to {}: {}",
+                    expectations.pinned_issuer.as_deref().unwrap_or_default(),
+                    attestation.verification
+                ),
+            },
+            Some(pinned) => RequirementStatus::NotEvaluated {
+                gap: format!(
+                    "the chain refused before the issuer pin to {pinned} could be tested: {}",
+                    attestation.verification
+                ),
             },
         },
     });

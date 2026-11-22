@@ -37,17 +37,17 @@ pub use attestation::{
     ATTESTATION_NORMALIZER_VERSION, AttestationError, bind_to_subject, read_attestation,
 };
 pub use correlation::{CorrelationError, correlate_identities};
+pub use dsse::{KeyRing, VerificationKey, VerificationOutcome, pae, verify_envelope};
+pub use inventory::{
+    CYCLONEDX_NORMALIZER_VERSION, InventoryError, SPDX_NORMALIZER_VERSION, read_cyclonedx_17,
+    read_spdx_30,
+};
 pub use slsa::{
-    RequirementStatus, SlsaAssessment, SlsaBuildLevel, SlsaExpectations, SlsaFinding,
-    SlsaRequirement, assess_provenance, SLSA_ASSESSMENT_VERSION,
+    RequirementStatus, SLSA_ASSESSMENT_VERSION, SlsaAssessment, SlsaBuildLevel, SlsaExpectations,
+    SlsaFinding, SlsaRequirement, assess_provenance,
 };
 pub use trust_chain::{
     ChainVerification, ExpectedIdentity, FreshnessNow, OfflineSnapshot, RootRevision,
     RotationRecord, SnapshotReading, TRUST_CHAIN_VERSION, TrustRoots, TrustRootsError,
     cosign_verify,
-};
-pub use dsse::{KeyRing, VerificationKey, VerificationOutcome, pae, verify_envelope};
-pub use inventory::{
-    CYCLONEDX_NORMALIZER_VERSION, InventoryError, SPDX_NORMALIZER_VERSION, read_cyclonedx_17,
-    read_spdx_30,
 };

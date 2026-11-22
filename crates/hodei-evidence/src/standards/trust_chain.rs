@@ -38,8 +38,8 @@
 use crate::domain::capsule::DimensionState;
 use crate::domain::content::ContentDigest;
 use crate::domain::standards::attestation::{
-    Attestation, AttestationStatement, AttestationVerification, DsseEnvelope, IN_TOTO_STATEMENT_TYPE,
-    SignatureFailure,
+    Attestation, AttestationStatement, AttestationVerification, DsseEnvelope,
+    IN_TOTO_STATEMENT_TYPE, SignatureFailure,
 };
 use crate::standards::attestation::{AttestationError, parse_statement};
 use crate::standards::dsse::{KeyRing, VerificationKey, verify_envelope};
@@ -159,7 +159,10 @@ impl TrustRoots {
         let activated_at = revision.activated_at;
         let lineage = revision.lineage.clone();
         let to = revision.revision;
-        self.revisions.entry(lineage.clone()).or_default().push(revision);
+        self.revisions
+            .entry(lineage.clone())
+            .or_default()
+            .push(revision);
         self.history.push(RotationRecord {
             lineage,
             from_revision: None,
@@ -408,7 +411,9 @@ pub fn cosign_verify(
         )
     {
         attestation.verification = AttestationVerification::Invalid {
-            reason: SignatureFailure::UnsupportedStatement(attestation.statement.statement_type.clone()),
+            reason: SignatureFailure::UnsupportedStatement(
+                attestation.statement.statement_type.clone(),
+            ),
         };
     }
 
@@ -478,7 +483,10 @@ pub fn cosign_verify(
         chain.attestation.verification = AttestationVerification::Invalid {
             reason: SignatureFailure::IdentityMismatch {
                 expected: pinned.clone(),
-                found: revision.issuer.clone().unwrap_or_else(|| "<none>".to_string()),
+                found: revision
+                    .issuer
+                    .clone()
+                    .unwrap_or_else(|| "<none>".to_string()),
             },
         };
         return Ok(chain);
@@ -709,7 +717,12 @@ mod tests {
         // The old revision is revoked but still reachable -- its past
         // signatures can still be identified -- and the new one is
         // current.
-        assert!(roots.find_key("k1").expect("k1 stays").is_revoked_at(Utc::now()));
+        assert!(
+            roots
+                .find_key("k1")
+                .expect("k1 stays")
+                .is_revoked_at(Utc::now())
+        );
         assert_eq!(roots.current("alpha").expect("a current").key.key_id, "k2");
     }
 
@@ -718,7 +731,14 @@ mod tests {
         let mut roots = TrustRoots::new();
         roots.activate(revision("k1", "alpha", 1), "alice", "the first one");
 
-        let sideways = roots.rotate("alpha", revision("k3", "alpha", 3), false, Utc::now(), "bob", "skip");
+        let sideways = roots.rotate(
+            "alpha",
+            revision("k3", "alpha", 3),
+            false,
+            Utc::now(),
+            "bob",
+            "skip",
+        );
         assert_eq!(
             sideways,
             Err(TrustRootsError::NotTheNextRevision {
