@@ -1,0 +1,1 @@
+[{"id":"catalog_tag:acme|main|latest","account":"acme","repository":"main","tag_name":"latest","target_version":"2.0.0"},{"id":"catalog_tag:acme|main|stable","account":"acme","repository":"main","tag_name":"stable","target_version":"1.1.0"}]

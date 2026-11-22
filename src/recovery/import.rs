@@ -231,14 +231,14 @@ impl ImportManifest {
                         batch.file, table.table
                     )));
                 }
-                if let Some(previous) = previous_last {
-                    if previous > batch.first_id.as_str() {
-                        return Err(ImportFailure::Order {
-                            table: table.table.clone(),
-                            previous: previous.to_string(),
-                            found: batch.first_id.clone(),
-                        });
-                    }
+                if let Some(previous) = previous_last
+                    && previous > batch.first_id.as_str()
+                {
+                    return Err(ImportFailure::Order {
+                        table: table.table.clone(),
+                        previous: previous.to_string(),
+                        found: batch.first_id.clone(),
+                    });
                 }
                 previous_last = Some(&batch.last_id);
                 counted += batch.rows;
@@ -277,8 +277,9 @@ pub fn read_import_manifest(directory: &Path) -> Result<ImportManifest, Recovery
             IMPORT_MANIFEST_FILE
         ))
     })?;
-    let manifest: ImportManifest = serde_json::from_slice(&text)
-        .map_err(|error| RecoveryError::Unsound(format!("the export manifest is invalid: {error}")))?;
+    let manifest: ImportManifest = serde_json::from_slice(&text).map_err(|error| {
+        RecoveryError::Unsound(format!("the export manifest is invalid: {error}"))
+    })?;
     manifest
         .check()
         .map_err(|failure| RecoveryError::Unsound(failure.to_string()))?;
@@ -367,8 +368,10 @@ pub fn canonical_digest(row: &Row) -> String {
 fn canonical_value(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(object) => {
-            let ordered: BTreeMap<&String, serde_json::Value> =
-                object.iter().map(|(k, v)| (k, canonical_value(v))).collect();
+            let ordered: BTreeMap<&String, serde_json::Value> = object
+                .iter()
+                .map(|(k, v)| (k, canonical_value(v)))
+                .collect();
             serde_json::Value::Object(
                 ordered
                     .into_iter()
@@ -538,9 +541,7 @@ pub enum ImportFailure {
         detail: String,
     },
     /// Una identidad fuera del rango de bordes de su lote.
-    #[error(
-        "the row '{id}' of batch '{file}' is outside the batch range '{first}'..='{last}'"
-    )]
+    #[error("the row '{id}' of batch '{file}' is outside the batch range '{first}'..='{last}'")]
     RowOutOfBatch {
         /// La identidad culpable.
         id: String,
@@ -641,11 +642,13 @@ pub fn canonicalize_id(table: &str, row: &Row) -> Result<String, ImportFailure> 
     })?;
     match declared {
         serde_json::Value::String(text) => {
-            let (prefix, key) = text.split_once(':').ok_or_else(|| ImportFailure::RowInvalid {
-                table: table.to_string(),
-                id: text.clone(),
-                detail: "the id is not a canonical 'table:key' identity".to_string(),
-            })?;
+            let (prefix, key) = text
+                .split_once(':')
+                .ok_or_else(|| ImportFailure::RowInvalid {
+                    table: table.to_string(),
+                    id: text.clone(),
+                    detail: "the id is not a canonical 'table:key' identity".to_string(),
+                })?;
             if prefix != table {
                 return Err(ImportFailure::RowInvalid {
                     table: table.to_string(),
@@ -731,7 +734,10 @@ fn with_canonical_id(mut row: Row, identity: &str) -> Row {
 pub fn read_batch(package: &Path, batch: &ImportBatch) -> Result<Vec<Row>, RecoveryError> {
     let path = package.join(&batch.file);
     let bytes = std::fs::read(&path).map_err(|error| {
-        RecoveryError::Metadata(format!("the batch '{}' cannot be read: {error}", batch.file))
+        RecoveryError::Metadata(format!(
+            "the batch '{}' cannot be read: {error}",
+            batch.file
+        ))
     })?;
     let hash = sha256_hex(&bytes);
     if hash != batch.sha256 {
@@ -767,10 +773,10 @@ fn referenced_digests(table: &str, row: &Row) -> Vec<String> {
             continue;
         }
         for field in *fields {
-            if let Some(value) = row.get(*field).and_then(serde_json::Value::as_str) {
-                if !value.is_empty() {
-                    digests.push(value.to_string());
-                }
+            if let Some(value) = row.get(*field).and_then(serde_json::Value::as_str)
+                && !value.is_empty()
+            {
+                digests.push(value.to_string());
             }
         }
     }
@@ -1365,10 +1371,7 @@ mod tests {
             rows: 2,
             batches: vec![batch(1, "x:2", "x:2"), batch(2, "x:1", "x:1")],
         }]);
-        assert!(matches!(
-            manifest.check(),
-            Err(ImportFailure::Order { .. })
-        ));
+        assert!(matches!(manifest.check(), Err(ImportFailure::Order { .. })));
     }
 
     #[tokio::test]

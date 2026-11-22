@@ -44,10 +44,11 @@ pub use backup::{
     repair_from_backup, restore, verify,
 };
 pub use import::{
-    BatchOutcome, DestinationState, DIGEST_FIELDS, ExportFrontier, ExportSource, IMPORT_FORMAT,
-    IMPORT_MANIFEST_FILE, ImportFailure, ImportManifest, ImportOptions, ImportReport,
+    BatchOutcome, BlobPolicy, DIGEST_FIELDS, DestinationState, DigestReconciler, ExportFrontier,
+    ExportSource, IMPORT_BATCHES_DIR, IMPORT_FORMAT, IMPORT_MANIFEST_FILE, IMPORT_PROGRESS_FILE,
+    ImportBatch, ImportFailure, ImportManifest, ImportOptions, ImportReport, ImportTable,
     MemorySink, Row, RowSink, SetReconciler, canonical_digest, canonicalize_id, import_export,
-    read_import_manifest,
+    read_batch, read_import_manifest,
 };
 pub use manifest::{BackupManifest, BlobEntry, Excluded, FORMAT, MetadataEntry};
 pub use scrub::{Finding, RepairAction, RootRef, ScrubReport, ScrubSummary, Scrubber};

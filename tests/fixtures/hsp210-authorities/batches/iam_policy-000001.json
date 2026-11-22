@@ -1,0 +1,1 @@
+[{"id":"iam_policy:admin","effect":"deny","actions":["*"],"resources":["*"],"scope":"tenant/globex","revision":2},{"id":"iam_policy:read-artifacts","effect":"permit","actions":["read"],"resources":["artifact/*"],"scope":"tenant/acme","revision":1}]
