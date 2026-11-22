@@ -19,6 +19,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod advisories;
 pub mod affected;
 pub mod case;
 pub mod feed;

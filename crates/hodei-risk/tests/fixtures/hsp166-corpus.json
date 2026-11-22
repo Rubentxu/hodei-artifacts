@@ -1,0 +1,2248 @@
+[
+  {
+    "ecosystem": "npm",
+    "name": "express",
+    "version": "1.10.6",
+    "publisher": "express-team",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "1.8.6",
+    "publisher": "fb-react",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "lodash",
+    "version": "1.3.0",
+    "publisher": "lodash-core",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "axios",
+    "version": "1.10.8",
+    "publisher": "axios-owner",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "1.10.6",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/core",
+    "version": "1.2.2",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "requests",
+    "version": "1.5.6",
+    "publisher": "psf-kenneth",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "1.2.6",
+    "publisher": "pallets-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "urllib3",
+    "version": "1.6.8",
+    "publisher": "urllib3-team",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme-internal",
+    "version": "1.3.0",
+    "publisher": "acme-release-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:core",
+    "version": "1.8.5",
+    "publisher": "example-sonatype",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang:commons-lang",
+    "version": "1.10.5",
+    "publisher": "apache-commons",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:service",
+    "version": "1.6.7",
+    "publisher": "acme-release-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "express",
+    "version": "1.2.3",
+    "publisher": "express-team",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "1.8.2",
+    "publisher": "fb-react",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "lodash",
+    "version": "1.8.8",
+    "publisher": "lodash-core",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "axios",
+    "version": "1.3.4",
+    "publisher": "axios-owner",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "1.3.2",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/core",
+    "version": "1.8.2",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "requests",
+    "version": "1.9.6",
+    "publisher": "psf-kenneth",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "1.7.4",
+    "publisher": "pallets-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "urllib3",
+    "version": "1.4.6",
+    "publisher": "urllib3-team",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme-internal",
+    "version": "1.5.1",
+    "publisher": "acme-release-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:core",
+    "version": "1.9.4",
+    "publisher": "example-sonatype",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang:commons-lang",
+    "version": "1.4.7",
+    "publisher": "apache-commons",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:service",
+    "version": "1.8.1",
+    "publisher": "acme-release-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "express",
+    "version": "1.6.5",
+    "publisher": "express-team",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "1.4.1",
+    "publisher": "fb-react",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "lodash",
+    "version": "1.9.2",
+    "publisher": "lodash-core",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "axios",
+    "version": "1.7.1",
+    "publisher": "axios-owner",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "1.10.3",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/core",
+    "version": "1.10.3",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "requests",
+    "version": "1.2.8",
+    "publisher": "psf-kenneth",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "1.2.3",
+    "publisher": "pallets-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "urllib3",
+    "version": "1.6.1",
+    "publisher": "urllib3-team",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme-internal",
+    "version": "1.9.2",
+    "publisher": "acme-release-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:core",
+    "version": "1.9.5",
+    "publisher": "example-sonatype",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang:commons-lang",
+    "version": "1.10.1",
+    "publisher": "apache-commons",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:service",
+    "version": "1.3.0",
+    "publisher": "acme-release-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "express",
+    "version": "1.4.1",
+    "publisher": "express-team",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "1.6.7",
+    "publisher": "fb-react",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "lodash",
+    "version": "1.7.8",
+    "publisher": "lodash-core",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "axios",
+    "version": "1.6.1",
+    "publisher": "axios-owner",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "1.4.1",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/core",
+    "version": "1.8.2",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "requests",
+    "version": "1.2.0",
+    "publisher": "psf-kenneth",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "1.3.3",
+    "publisher": "pallets-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "urllib3",
+    "version": "1.2.8",
+    "publisher": "urllib3-team",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme-internal",
+    "version": "1.2.8",
+    "publisher": "acme-release-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:core",
+    "version": "1.8.3",
+    "publisher": "example-sonatype",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang:commons-lang",
+    "version": "1.3.4",
+    "publisher": "apache-commons",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:service",
+    "version": "1.8.6",
+    "publisher": "acme-release-bot",
+    "label": "benign",
+    "pattern": "legitimate release",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "acme-new-service",
+    "version": "0.1.0",
+    "publisher": "acme-ci",
+    "label": "benign",
+    "pattern": "first legitimate release by a known publisher",
+    "score": 0,
+    "reasons": [],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "requestz",
+    "version": "1.0.0",
+    "publisher": "psf-kenneth",
+    "label": "benign",
+    "pattern": "legitimate package one edit from another legitimate one",
+    "score": 40,
+    "reasons": [
+      "name-similar-to-known-package"
+    ],
+    "status": "observation",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "expres",
+    "version": "2.0.0",
+    "publisher": "express-team",
+    "label": "benign",
+    "pattern": "legitimate alias one edit from a flagship package",
+    "score": 40,
+    "reasons": [
+      "name-similar-to-known-package"
+    ],
+    "status": "observation",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "expres",
+    "version": "0.0.1",
+    "publisher": "squatter-0",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "expresx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-0",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "raect",
+    "version": "0.0.1",
+    "publisher": "squatter-1",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "raectx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-1",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "loadsh",
+    "version": "0.0.1",
+    "publisher": "squatter-2",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "loadshx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-2",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "axpios",
+    "version": "0.0.1",
+    "publisher": "squatter-3",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "axpiosx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-3",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "expres",
+    "version": "0.0.1",
+    "publisher": "squatter-4",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "expresx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-4",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "raect",
+    "version": "0.0.1",
+    "publisher": "squatter-5",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "raectx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-5",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "loadsh",
+    "version": "0.0.1",
+    "publisher": "squatter-6",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "loadshx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-6",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "axpios",
+    "version": "0.0.1",
+    "publisher": "squatter-7",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "axpiosx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-7",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "reqests",
+    "version": "0.0.1",
+    "publisher": "squatter-0",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "reqestsx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-0",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flaks",
+    "version": "0.0.1",
+    "publisher": "squatter-1",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flaksx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-1",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "urlib3",
+    "version": "0.0.1",
+    "publisher": "squatter-2",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "urlib3x",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-2",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme-interna1",
+    "version": "0.0.1",
+    "publisher": "squatter-3",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme-interna1x",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-3",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "reqests",
+    "version": "0.0.1",
+    "publisher": "squatter-4",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "reqestsx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-4",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flaks",
+    "version": "0.0.1",
+    "publisher": "squatter-5",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flaksx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-5",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "urlib3",
+    "version": "0.0.1",
+    "publisher": "squatter-6",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "urlib3x",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-6",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme-interna1",
+    "version": "0.0.1",
+    "publisher": "squatter-7",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme-interna1x",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-7",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:corg",
+    "version": "0.0.1",
+    "publisher": "squatter-0",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:corgx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-0",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang3:commons-lang",
+    "version": "0.0.1",
+    "publisher": "squatter-1",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang3:commons-langx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-1",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:servlice",
+    "version": "0.0.1",
+    "publisher": "squatter-2",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 100,
+    "reasons": [
+      "name-similar-to-known-package",
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:servlicex",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-2",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:corg",
+    "version": "0.0.1",
+    "publisher": "squatter-3",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:corgx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-3",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang3:commons-lang",
+    "version": "0.0.1",
+    "publisher": "squatter-4",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang3:commons-langx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-4",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:servlice",
+    "version": "0.0.1",
+    "publisher": "squatter-5",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 100,
+    "reasons": [
+      "name-similar-to-known-package",
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:servlicex",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-5",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:corg",
+    "version": "0.0.1",
+    "publisher": "squatter-6",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "org.example:corgx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-6",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang3:commons-lang",
+    "version": "0.0.1",
+    "publisher": "squatter-7",
+    "label": "malicious",
+    "pattern": "typosquat one edit from a legitimate name",
+    "score": 75,
+    "reasons": [
+      "name-similar-to-known-package",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "commons-lang3:commons-langx",
+    "version": "0.0.1",
+    "publisher": "slow-squatter-7",
+    "label": "malicious",
+    "pattern": "slow typosquat variant (two edits, expected miss)",
+    "score": 35,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "observation",
+    "decision": "allow"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "99.0.0",
+    "publisher": "confusion-0",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved npm scope",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "ACME_Internal",
+    "version": "2.0.0",
+    "publisher": "pypi-confusion-0",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved PyPI project (normalized alias)",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:agent-0",
+    "version": "1.0.0-SNAPSHOT",
+    "publisher": "maven-confusion-0",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved Maven group (and its subgroups)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "99.1.0",
+    "publisher": "confusion-1",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved npm scope",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme.internal",
+    "version": "2.0.1",
+    "publisher": "pypi-confusion-1",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved PyPI project (normalized alias)",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform.secrets:plugin-1",
+    "version": "1.0.0-SNAPSHOT",
+    "publisher": "maven-confusion-1",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved Maven group (and its subgroups)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "99.2.0",
+    "publisher": "confusion-2",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved npm scope",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "ACME_Internal",
+    "version": "2.0.2",
+    "publisher": "pypi-confusion-2",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved PyPI project (normalized alias)",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:agent-2",
+    "version": "1.0.0-SNAPSHOT",
+    "publisher": "maven-confusion-2",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved Maven group (and its subgroups)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "99.3.0",
+    "publisher": "confusion-3",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved npm scope",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme.internal",
+    "version": "2.0.3",
+    "publisher": "pypi-confusion-3",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved PyPI project (normalized alias)",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform.secrets:plugin-3",
+    "version": "1.0.0-SNAPSHOT",
+    "publisher": "maven-confusion-3",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved Maven group (and its subgroups)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "99.4.0",
+    "publisher": "confusion-4",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved npm scope",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "ACME_Internal",
+    "version": "2.0.4",
+    "publisher": "pypi-confusion-4",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved PyPI project (normalized alias)",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:agent-4",
+    "version": "1.0.0-SNAPSHOT",
+    "publisher": "maven-confusion-4",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved Maven group (and its subgroups)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "99.5.0",
+    "publisher": "confusion-5",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved npm scope",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme.internal",
+    "version": "2.0.5",
+    "publisher": "pypi-confusion-5",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved PyPI project (normalized alias)",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform.secrets:plugin-5",
+    "version": "1.0.0-SNAPSHOT",
+    "publisher": "maven-confusion-5",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved Maven group (and its subgroups)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "99.6.0",
+    "publisher": "confusion-6",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved npm scope",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "ACME_Internal",
+    "version": "2.0.6",
+    "publisher": "pypi-confusion-6",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved PyPI project (normalized alias)",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform:agent-6",
+    "version": "1.0.0-SNAPSHOT",
+    "publisher": "maven-confusion-6",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved Maven group (and its subgroups)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "@acme/utils",
+    "version": "99.7.0",
+    "publisher": "confusion-7",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved npm scope",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "acme.internal",
+    "version": "2.0.7",
+    "publisher": "pypi-confusion-7",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved PyPI project (normalized alias)",
+    "score": 100,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "com.acme.platform.secrets:plugin-7",
+    "version": "1.0.0-SNAPSHOT",
+    "publisher": "maven-confusion-7",
+    "label": "malicious",
+    "pattern": "dependency confusion inside a reserved Maven group (and its subgroups)",
+    "score": 70,
+    "reasons": [
+      "reserved-namespace-from-unknown-publisher",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "19.0.0",
+    "publisher": "hijacker-0",
+    "label": "malicious",
+    "pattern": "account takeover: new publisher plus install hooks",
+    "score": 100,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "install-hooks-declared",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "3.1.0",
+    "publisher": "flask-stranger-0",
+    "label": "malicious",
+    "pattern": "metadata anomaly: repository link dropped, publisher unknown",
+    "score": 85,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "logj-core",
+    "version": "3.0.0",
+    "publisher": "bare-0",
+    "label": "malicious",
+    "pattern": "bare-name Maven upload (coordinate shape anomaly)",
+    "score": 55,
+    "reasons": [
+      "package-name-coordinates-anomalous",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "19.0.0",
+    "publisher": "hijacker-1",
+    "label": "malicious",
+    "pattern": "account takeover: new publisher plus install hooks",
+    "score": 100,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "install-hooks-declared",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "3.1.0",
+    "publisher": "flask-stranger-1",
+    "label": "malicious",
+    "pattern": "metadata anomaly: repository link dropped, publisher unknown",
+    "score": 85,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "logj-core",
+    "version": "3.0.0",
+    "publisher": "bare-1",
+    "label": "malicious",
+    "pattern": "bare-name Maven upload (coordinate shape anomaly)",
+    "score": 55,
+    "reasons": [
+      "package-name-coordinates-anomalous",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "19.0.0",
+    "publisher": "hijacker-2",
+    "label": "malicious",
+    "pattern": "account takeover: new publisher plus install hooks",
+    "score": 100,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "install-hooks-declared",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "3.1.0",
+    "publisher": "flask-stranger-2",
+    "label": "malicious",
+    "pattern": "metadata anomaly: repository link dropped, publisher unknown",
+    "score": 85,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "logj-core",
+    "version": "3.0.0",
+    "publisher": "bare-2",
+    "label": "malicious",
+    "pattern": "bare-name Maven upload (coordinate shape anomaly)",
+    "score": 55,
+    "reasons": [
+      "package-name-coordinates-anomalous",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "19.0.0",
+    "publisher": "hijacker-3",
+    "label": "malicious",
+    "pattern": "account takeover: new publisher plus install hooks",
+    "score": 100,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "install-hooks-declared",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "3.1.0",
+    "publisher": "flask-stranger-3",
+    "label": "malicious",
+    "pattern": "metadata anomaly: repository link dropped, publisher unknown",
+    "score": 85,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "logj-core",
+    "version": "3.0.0",
+    "publisher": "bare-3",
+    "label": "malicious",
+    "pattern": "bare-name Maven upload (coordinate shape anomaly)",
+    "score": 55,
+    "reasons": [
+      "package-name-coordinates-anomalous",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "19.0.0",
+    "publisher": "hijacker-4",
+    "label": "malicious",
+    "pattern": "account takeover: new publisher plus install hooks",
+    "score": 100,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "install-hooks-declared",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "3.1.0",
+    "publisher": "flask-stranger-4",
+    "label": "malicious",
+    "pattern": "metadata anomaly: repository link dropped, publisher unknown",
+    "score": 85,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "logj-core",
+    "version": "3.0.0",
+    "publisher": "bare-4",
+    "label": "malicious",
+    "pattern": "bare-name Maven upload (coordinate shape anomaly)",
+    "score": 55,
+    "reasons": [
+      "package-name-coordinates-anomalous",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "19.0.0",
+    "publisher": "hijacker-5",
+    "label": "malicious",
+    "pattern": "account takeover: new publisher plus install hooks",
+    "score": 100,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "install-hooks-declared",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "3.1.0",
+    "publisher": "flask-stranger-5",
+    "label": "malicious",
+    "pattern": "metadata anomaly: repository link dropped, publisher unknown",
+    "score": 85,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "logj-core",
+    "version": "3.0.0",
+    "publisher": "bare-5",
+    "label": "malicious",
+    "pattern": "bare-name Maven upload (coordinate shape anomaly)",
+    "score": 55,
+    "reasons": [
+      "package-name-coordinates-anomalous",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "19.0.0",
+    "publisher": "hijacker-6",
+    "label": "malicious",
+    "pattern": "account takeover: new publisher plus install hooks",
+    "score": 100,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "install-hooks-declared",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "3.1.0",
+    "publisher": "flask-stranger-6",
+    "label": "malicious",
+    "pattern": "metadata anomaly: repository link dropped, publisher unknown",
+    "score": 85,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "logj-core",
+    "version": "3.0.0",
+    "publisher": "bare-6",
+    "label": "malicious",
+    "pattern": "bare-name Maven upload (coordinate shape anomaly)",
+    "score": 55,
+    "reasons": [
+      "package-name-coordinates-anomalous",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "npm",
+    "name": "react",
+    "version": "19.0.0",
+    "publisher": "hijacker-7",
+    "label": "malicious",
+    "pattern": "account takeover: new publisher plus install hooks",
+    "score": 100,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "install-hooks-declared",
+      "dependency-set-changed",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "PyPI",
+    "name": "flask",
+    "version": "3.1.0",
+    "publisher": "flask-stranger-7",
+    "label": "malicious",
+    "pattern": "metadata anomaly: repository link dropped, publisher unknown",
+    "score": 85,
+    "reasons": [
+      "first-seen-publisher",
+      "publisher-account-too-young",
+      "repository-link-dropped",
+      "publisher-changed-for-known-package"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  },
+  {
+    "ecosystem": "Maven",
+    "name": "logj-core",
+    "version": "3.0.0",
+    "publisher": "bare-7",
+    "label": "malicious",
+    "pattern": "bare-name Maven upload (coordinate shape anomaly)",
+    "score": 55,
+    "reasons": [
+      "package-name-coordinates-anomalous",
+      "first-seen-publisher",
+      "publisher-account-too-young"
+    ],
+    "status": "hypothesis",
+    "decision": "alert"
+  }
+]
