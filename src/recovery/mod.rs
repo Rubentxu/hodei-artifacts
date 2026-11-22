@@ -16,6 +16,10 @@
 //!   reparacion desde una copia.
 //! - [`import`]: el import idempotente del paquete semantico portable
 //!   (HSP-210): misma clave canonica, mismo orden, ninguna copia de UID.
+//! - [`reconcile`]: el rebuild de proyecciones y la reconciliacion
+//!   semantica del cutover (HSP-211): origen y destino equivalen por
+//!   cuenta, grants, tags, caminos, digests y cursores — nunca por
+//!   conteos aislados — y missing/corrupt jamas escala a verificado.
 //!
 //! Reglas, de mas a menos importantes:
 //!
@@ -37,6 +41,7 @@ pub mod backup;
 pub mod export;
 pub mod import;
 pub mod manifest;
+pub mod reconcile;
 pub mod scrub;
 
 pub use backup::{
@@ -51,6 +56,11 @@ pub use import::{
     read_batch, read_import_manifest,
 };
 pub use manifest::{BackupManifest, BlobEntry, Excluded, FORMAT, MetadataEntry};
+pub use reconcile::{
+    ACCOUNT_TABLES, CutoverDecision, CutoverToken, Divergence, GRANT_TABLE, HEAD_TABLE,
+    LEDGER_TABLE, PATH_TABLES, ReconcileError, ReconcileSubject, SemanticProjection, TAG_TABLE,
+    gate_cutover, package_rows, prepare, prepare_from_sink,
+};
 pub use scrub::{Finding, RepairAction, RootRef, ScrubReport, ScrubSummary, Scrubber};
 
 /// Por que una operacion de recuperacion no se hizo.
