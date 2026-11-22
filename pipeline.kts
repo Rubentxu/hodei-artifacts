@@ -511,9 +511,13 @@ pipeline {
                 // almacen local. Con las features del arbol el target
                 // queda vacio a proposito: el binario default no puede
                 // rechazar nada, y una prueba que no afirma nada es peor
-                // que no tenerla.
+                // que no tenerla. En el mismo arbol corre el ensayo de
+                // rollback (HSP-213/AC3, maquina de HSP-212): demostrar
+                // que volver atras no levanta dos autoridades justo aqui
+                // --sin el motor embebido retirado-- es parte de la
+                // prueba.
                 sh(
-                    "cargo test -p hodei-artifacts-api --no-default-features --test hsp213_profile_rejection"
+                    "cargo test -p hodei-artifacts-api --no-default-features --test hsp213_profile_rejection --test hsp213_rollback_single_authority"
                 )
                 // Y la otra cara (HSP-213): en el arbol con `legacy` --el
                 // de la herramienta aislada que empaqueta
