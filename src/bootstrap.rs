@@ -102,6 +102,16 @@ pub async fn bootstrap(
 
     // Step 1: Initialize infrastructure with RocksDB
     info!("📦 Initializing infrastructure adapters");
+    // The engine of the metadata is decided by the profile (HSP-209): with
+    // a `[graph]` section the authority is the alpha and the embedded
+    // engine is never opened — its path is not created, not locked, not
+    // touched. Without it, the embedded engine is the authority exactly as
+    // before. There is no branch that tries one and falls back to the
+    // other: the choice was validated at the configuration, and a store
+    // that cannot open stops the boot with its own error.
+    if config.graph.is_some() {
+        return bootstrap_graph_profile(config, bootstrap_config).await;
+    }
     let schema_storage = initialize_schema_storage(config).await?;
 
     // When the production bundle declares a Cedar schema, persist the same
@@ -243,64 +253,7 @@ pub async fn bootstrap(
         // directory, because content that silently lives in two places
         // is content the GC deletes as garbage and the health probe
         // reports as fine.
-        let chosen = the_content_store(config).await?;
-        let content: Arc<dyn hodei_hub::blob::BlobStore> = chosen.as_blob();
-        // The staging that an interrupted upload leaves behind is not a
-        // reason to not start, and it is not left to rot either. The
-        // directory backend removes the files no one is writing; the
-        // object store aborts the multipart uploads whose last part is
-        // older than the margin, and drops the completed-but-never-
-        // published staging objects (HSP-139: an incomplete multipart is
-        // invisible to `list_blobs` but not free -- it is billed and it
-        // is the one piece of garbage the bucket would never reclaim).
-        //
-        // The staging of a write **in progress** is not touched: a locked
-        // file is not removed, and an upload whose last part is younger
-        // than the margin stays alone. The age is only the margin of
-        // prudence, not the criterion: an old upload that is still being
-        // written is a live upload, and taking it away breaks it.
-        //
-        // And a staging that could not be removed is not a reason to not
-        // start: it is a problem of disk or of the object store, and the
-        // service has work to do.
-        let cleanup = match chosen {
-            ChosenContentStore::Filesystem(ref directory) => directory
-                .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs)),
-            ChosenContentStore::S3(ref store) => {
-                store
-                    .clean_staging(Duration::from_secs(config.content.staging_max_age_secs))
-                    .await
-            }
-        };
-        match cleanup {
-            Ok(cleanup) => {
-                if cleanup.removed > 0 {
-                    warn!(
-                        removed = cleanup.removed,
-                        "the staging of interrupted uploads was removed at the boot"
-                    );
-                }
-                if cleanup.alive > 0 {
-                    info!(
-                        alive = cleanup.alive,
-                        "the staging of the uploads in progress was left alone at the boot"
-                    );
-                }
-                for (path, reason) in &cleanup.failed {
-                    warn!(
-                        %reason,
-                        path,
-                        "the staging of an interrupted upload could not be removed at the boot"
-                    );
-                }
-            }
-            Err(error) => {
-                warn!(
-                    %error,
-                    "the staging could not be read at the boot; the interrupted uploads stay"
-                );
-            }
-        }
+        let content = open_content_store(config).await?;
         // The catalog does not decide again what the HTTP boundary already
         // decided with Cedar. Its queries are already scoped to the
         // verified account, so the isolation between accounts does not
@@ -462,6 +415,184 @@ pub async fn bootstrap(
         schema_version
     );
 
+    Ok(app_state)
+}
+
+/// Build the store of content the configuration names and clean the staging
+/// an interrupted upload left behind.
+///
+/// The boot of both profiles —the embedded and the graph one— goes through
+/// here so the bytes live in exactly one place and the cleanup rules are
+/// decided once: the directory backend removes the files no one is writing;
+/// the object store aborts the multipart uploads whose last part is older
+/// than the margin, and drops the completed-but-never-published staging
+/// objects (HSP-139: an incomplete multipart is invisible to `list_blobs`
+/// but not free -- it is billed and it is the one piece of garbage the
+/// bucket would never reclaim).
+///
+/// The staging of a write **in progress** is not touched: a locked file is
+/// not removed, and an upload whose last part is younger than the margin
+/// stays alone. The age is only the margin of prudence, not the criterion:
+/// an old upload that is still being written is a live upload, and taking
+/// it away breaks it.
+///
+/// And a staging that could not be removed is not a reason to not start: it
+/// is a problem of disk or of the object store, and the service has work to
+/// do.
+async fn open_content_store(
+    config: &AppConfig,
+) -> Result<Arc<dyn hodei_hub::blob::BlobStore>, BootstrapError> {
+    let chosen = the_content_store(config).await?;
+    let content: Arc<dyn hodei_hub::blob::BlobStore> = chosen.as_blob();
+    let cleanup = match chosen {
+        ChosenContentStore::Filesystem(ref directory) => directory
+            .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs)),
+        ChosenContentStore::S3(ref store) => {
+            store
+                .clean_staging(Duration::from_secs(config.content.staging_max_age_secs))
+                .await
+        }
+    };
+    match cleanup {
+        Ok(cleanup) => {
+            if cleanup.removed > 0 {
+                warn!(
+                    removed = cleanup.removed,
+                    "the staging of interrupted uploads was removed at the boot"
+                );
+            }
+            if cleanup.alive > 0 {
+                info!(
+                    alive = cleanup.alive,
+                    "the staging of the uploads in progress was left alone at the boot"
+                );
+            }
+            for (path, reason) in &cleanup.failed {
+                warn!(
+                    %reason,
+                    path,
+                    "the staging of an interrupted upload could not be removed at the boot"
+                );
+            }
+        }
+        Err(error) => {
+            warn!(
+                %error,
+                "the staging could not be read at the boot; the interrupted uploads stay"
+            );
+        }
+    }
+    Ok(content)
+}
+
+/// Bootstrap the deployment whose authority is the graph (HSP-209).
+///
+/// This is the other half of the single-profile contract: a service that
+/// declares `[graph]` never opens the embedded engine -- its path is not
+/// created, not locked, not touched -- and every store of the profile is
+/// assembled by [`crate::profile`] over one connected, logged-in, schema-
+/// guarded client. There is no fallback in either direction: if the alpha,
+/// the CAS, or any store cannot open, the boot dies with that store's own
+/// error, and RocksDB is not even tried.
+///
+/// What the profile does NOT carry, and says so instead of degrading:
+///
+/// - The persistence of the Cedar schema: `SchemaStoragePort` has no Dgraph
+///   implementation (registered blocker). The gate authorizes from the
+///   declared bundle file -- that is the security boundary every request
+///   crosses -- and the persisted evaluator runs in NoSchema mode, exactly
+///   the mode the IAM-over-graph ITs (HSP-186) certify.
+/// - The IAM schema registration: it writes through the same missing port,
+///   so a deployment that asks for it stops with the blocker named.
+/// - The evidence reader, the investigation, the reactor and the legacy
+///   repository registry: their Dgraph stores exist (`HSP-188/206`) or their
+///   wiring is not done yet; the surfaces answer with their default closed
+///   behavior and the profile does not open a local engine to make them
+///   answer.
+async fn bootstrap_graph_profile(
+    config: &AppConfig,
+    bootstrap_config: BootstrapConfig,
+) -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
+    info!("🕸️  Starting the Dgraph profile: the alpha is the single authority of the metadata");
+
+    // Step 0 is shared with the embedded profile and already ran: the
+    // security bundle, the configuration validation (which under a graph
+    // section refuses the embedded engine), and the storage preflight
+    // (which under a graph section does not touch the RocksDB path).
+
+    // Step 1: the authority itself. Connection, ACL login and the versioned
+    // schema guard (v7) inside the IAM adapter's open: no store of the
+    // profile exists over a server this binary cannot speak to.
+    let graph = crate::profile::GraphAuthority::connect(config).await?;
+
+    if config.schema.register_iam_on_startup {
+        return Err(Box::new(BootstrapError::SchemaRegistration(
+            "the graph profile cannot register the IAM Cedar schema: SchemaStoragePort is not \
+             implemented over Dgraph (HSP-209 blocker). Set schema.register_iam_on_startup = \
+             false, or run the embedded profile until the port lands"
+                .to_string(),
+        )));
+    }
+    if config.security.authorization_schema_path.is_some() {
+        warn!(
+            "the authorization bundle schema cannot be PERSISTED on the graph profile \
+             (HSP-209 blocker: no SchemaStoragePort over Dgraph); the Cedar gate authorizes \
+             from the declared file and the persisted evaluator runs in NoSchema mode"
+        );
+    }
+
+    // Step 2: the bytes. The same decision and the same readiness the
+    // embedded profile makes of its content store: an S3 deployment that
+    // cannot reach its bucket does not boot, and never writes the
+    // filesystem CAS on the side.
+    let content = open_content_store(config).await?;
+
+    // Step 3: the use cases over the graph. The IAM ports of the
+    // composition root are the Dgraph adapter's; the schema provider is
+    // the profile's honest stand-in (writes refused, reads empty).
+    let root = crate::profile::composition_root_for_graph(graph.iam.clone());
+    let schema_version = bootstrap_config
+        .schema_version
+        .unwrap_or_else(|| "graph-v7".to_string());
+    let app_state = AppState::from_composition_root(schema_version.clone(), root);
+
+    // Step 4: the vertical stores, all over the same client, with the
+    // failure of any of them stopping the boot.
+    let app_state =
+        crate::profile::assemble_graph_profile(app_state, config, &graph, content).await?;
+
+    // The tail the two profiles share: the body limit, the quotas (the
+    // in-memory ledger the embedded deployment also uses; the durable
+    // `DgraphQuotaStore` waits for its production consumer), and the
+    // production security bundle, which on this profile is the file-based
+    // gate without the persistence step.
+    let app_state = app_state.with_body_limit(config.server.max_body_size);
+    let app_state = app_state.with_quota(config.quota.the_limits());
+    if config.quota.max_stored_bytes_per_account.is_some()
+        || config.quota.max_concurrent_uploads_per_account.is_some()
+    {
+        info!(
+            max_stored_bytes_per_account = ?config.quota.max_stored_bytes_per_account,
+            max_concurrent_uploads_per_account = ?config.quota.max_concurrent_uploads_per_account,
+            "the account quotas are in force"
+        );
+    }
+    let app_state = configure_production_security(app_state, config)?;
+    // The investigation limits travel without the surface: the graph
+    // profile has no evidence reader over the alpha yet, so the endpoint
+    // answers with its default closed behavior and no local engine is
+    // opened to give it an answer.
+    let app_state = app_state.with_investigation_limits(config.investigation.clone());
+    if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
+        tracing::error!(
+            "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"
+        );
+    }
+
+    info!(
+        "✅ Bootstrap completed successfully on the graph profile (schema version: {})",
+        schema_version
+    );
     Ok(app_state)
 }
 

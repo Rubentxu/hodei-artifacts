@@ -614,6 +614,18 @@ pub struct AppConfig {
     #[serde(default)]
     pub quota: QuotaConfig,
 
+    /// The authority of the graph: the Dgraph deployment this service
+    /// reads and writes. Absent means the service runs on the embedded
+    /// engine (SurrealDB over RocksDB); present means the graph is the
+    /// single authority and the embedded engine is refused: a deployment
+    /// that names an alpha never opens a local RocksDB, and a profile
+    /// that cannot be validated against the server stops the boot
+    /// instead of degrading (HSP-209). There is no fallback between the
+    /// two authorities: metadata that silently lives in two places is
+    /// metadata no restore can be trusted with.
+    #[serde(default)]
+    pub graph: Option<hodei_graph_client::GraphClientConfig>,
+
     /// Database configuration
     pub database: DatabaseConfig,
 
@@ -1038,8 +1050,21 @@ impl AppConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.server.validate()?;
         self.security.validate()?;
-        self.database.validate()?;
-        self.rocksdb.validate()?;
+        // The engine of the metadata is decided by the profile: with a
+        // `[graph]` section the authority is Dgraph and the embedded
+        // engine must NOT be claimed; without it the embedded engine is
+        // the authority and `db_type` keeps its own contract (HSP-209).
+        if self.graph.is_some() {
+            self.database.validate_without_engine()?;
+            if let Some(graph) = &self.graph {
+                graph
+                    .validate()
+                    .map_err(|error| ConfigError::Message(error.to_string()))?;
+            }
+        } else {
+            self.database.validate()?;
+            self.rocksdb.validate()?;
+        }
         self.logging.validate()?;
         self.content.validate()?;
         self.investigation.validate()?;
@@ -1053,8 +1078,23 @@ impl AppConfig {
     /// the filesystem. It runs when the service starts, not when somebody
     /// validates a configuration, and its failures say that the problem is
     /// the storage and not the configuration.
+    ///
+    /// With a graph authority declared, the local engine is not preflighted
+    /// at all: the profile refuses RocksDB (HSP-209). What the graph profile
+    /// preflights is its own content store; the reachability of the alpha is
+    /// checked with a real connection and a version probe in the bootstrap,
+    /// which is where the network question belongs.
     pub fn preflight_storage(&self) -> Result<(), ConfigError> {
-        self.rocksdb.preflight_storage()
+        if self.graph.is_some() {
+            // There is no local engine to preflight: the bytes live in the
+            // content store, whose readiness the bootstrap checks when it
+            // opens it, and the metadata live in the alpha, whose reach is
+            // a real connection. The path the RocksDB section names is not
+            // created, opened, or touched by a graph deployment.
+            Ok(())
+        } else {
+            self.rocksdb.preflight_storage()
+        }
     }
 
     /// Get the server bind address
@@ -1153,6 +1193,50 @@ impl DatabaseConfig {
                 "Unsupported database type '{}'. Only 'rocksdb' is supported. Please set HODEI_DATABASE__DB_TYPE to 'rocksdb'",
                 self.db_type
             )));
+        }
+
+        if self.namespace.is_none() || self.namespace.as_ref().unwrap().is_empty() {
+            return Err(ConfigError::Message(
+                "Database namespace cannot be empty. Please set HODEI_DATABASE__NAMESPACE"
+                    .to_string(),
+            ));
+        }
+
+        if self.database.is_none() || self.database.as_ref().unwrap().is_empty() {
+            return Err(ConfigError::Message(
+                "Database name cannot be empty. Please set HODEI_DATABASE__DATABASE".to_string(),
+            ));
+        }
+
+        if self.pool_size == 0 {
+            return Err(ConfigError::Message(
+                "Database pool size cannot be 0. Please set HODEI_DATABASE__POOL_SIZE to a positive value".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate the database section of a deployment whose authority is the
+    /// graph (a `[graph]` section is declared), HSP-209.
+    ///
+    /// The embedded engine is refused, not reinterpreted: under a graph
+    /// profile the metadata live in the alpha and nowhere else, so a
+    /// `[database]` section that claims `db_type = "rocksdb"` is not a
+    /// second storage waiting to be used -- it is a silent second authority.
+    /// A boot that would "work" on RocksDB while the profile says Dgraph is
+    /// exactly the degradation this rejection exists to make impossible:
+    /// metadata that lives in two places is metadata no restore can be
+    /// trusted with. The section is therefore refused when it names the
+    /// local engine. The remaining keys stay validated because the profile
+    /// files keep the section present (a graph deployment is one edit away
+    /// from an embedded one), and an invalid embedded configuration must not
+    /// be carried unnoticed in either direction.
+    pub fn validate_without_engine(&self) -> Result<(), ConfigError> {
+        if self.db_type == "rocksdb" {
+            return Err(ConfigError::Message(
+                "the Dgraph profile refuses the embedded RocksDB engine: [graph] declares the authority, so [database] db_type = \"rocksdb\" would claim a second one. There is no fallback between the two authorities (HSP-209)".to_string()
+            ));
         }
 
         if self.namespace.is_none() || self.namespace.as_ref().unwrap().is_empty() {
