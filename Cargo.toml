@@ -256,6 +256,9 @@ flate2 = "1.1.11"
 # con clave Ed25519, contrastada con gpgv en las pruebas.
 pgp = { workspace = true }
 rand = { workspace = true }
+# La firma ECDSA P-256 de los fixtures de procedencia del pasaporte de confianza
+# (HSP-160): el par se genera en la prueba, nunca viaja una clave privada.
+ring = { workspace = true }
 md-5 = { workspace = true }
 sha1 = { workspace = true }
 semver = "1.0"
