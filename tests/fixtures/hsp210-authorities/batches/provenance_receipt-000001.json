@@ -1,0 +1,1 @@
+[{"id":"provenance_receipt:pr-0001","subject":"pkg/widget@1.0.0","digest":"sha256:r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1r1","attested_at":"2026-10-03T10:05:00Z"},{"id":"provenance_receipt:pr-0002","subject":"pkg/widget@1.1.0","digest":"sha256:r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2r2","attested_at":"2026-10-04T11:05:00Z"}]

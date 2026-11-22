@@ -1,0 +1,1 @@
+[{"id":"event_ledger:stream_a,2","stream":"stream_a","position":2,"kind":"grant.issued","recorded_at":"2026-10-05T09:00:01Z"},{"id":"event_ledger:stream_b,0","stream":"stream_b","position":0,"kind":"version.published","recorded_at":"2026-10-05T12:00:01Z"}]

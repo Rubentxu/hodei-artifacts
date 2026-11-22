@@ -1,0 +1,1 @@
+[{"id":"catalog_version:acme|main|widget|1.0.0","account":"acme","repository":"main","package_name":"widget","package_version":"1.0.0","release_digest":"sha256:rel100"},{"id":"catalog_version:acme|main|widget|1.1.0","account":"acme","repository":"main","package_name":"widget","package_version":"1.1.0","release_digest":"sha256:rel110"}]

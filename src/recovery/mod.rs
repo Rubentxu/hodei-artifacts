@@ -14,6 +14,8 @@
 //! - [`export`]: la correccion del export del motor para que se pueda importar.
 //! - [`backup`]: la copia coherente, su verificacion, la restauracion y la
 //!   reparacion desde una copia.
+//! - [`import`]: el import idempotente del paquete semantico portable
+//!   (HSP-210): misma clave canonica, mismo orden, ninguna copia de UID.
 //!
 //! Reglas, de mas a menos importantes:
 //!
@@ -33,12 +35,20 @@
 
 pub mod backup;
 pub mod export;
+pub mod import;
 pub mod manifest;
 pub mod scrub;
 
 pub use backup::{
     BackupReport, RepairReport, RestoreReport, VerifyOutcome, backup, inspect, open_database,
     repair_from_backup, restore, verify,
+};
+pub use import::{
+    BatchOutcome, BlobPolicy, DIGEST_FIELDS, DestinationState, DigestReconciler, ExportFrontier,
+    ExportSource, IMPORT_BATCHES_DIR, IMPORT_FORMAT, IMPORT_MANIFEST_FILE, IMPORT_PROGRESS_FILE,
+    ImportBatch, ImportFailure, ImportManifest, ImportOptions, ImportReport, ImportTable,
+    MemorySink, Row, RowSink, SetReconciler, canonical_digest, canonicalize_id, import_export,
+    read_batch, read_import_manifest,
 };
 pub use manifest::{BackupManifest, BlobEntry, Excluded, FORMAT, MetadataEntry};
 pub use scrub::{Finding, RepairAction, RootRef, ScrubReport, ScrubSummary, Scrubber};
