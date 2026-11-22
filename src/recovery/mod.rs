@@ -38,6 +38,7 @@
 //!    copia en caliente ni alta disponibilidad.
 
 pub mod backup;
+pub mod cutover;
 pub mod export;
 pub mod import;
 pub mod manifest;
@@ -47,6 +48,10 @@ pub mod scrub;
 pub use backup::{
     BackupReport, RepairReport, RestoreReport, VerifyOutcome, backup, inspect, open_database,
     repair_from_backup, restore, verify,
+};
+pub use cutover::{
+    Authority, AuthorityError, CutoverError, CutoverMachine, CutoverMetrics, CutoverWindow, Phase,
+    drain_rows, export_package,
 };
 pub use import::{
     BatchOutcome, BlobPolicy, DIGEST_FIELDS, DestinationState, DigestReconciler, ExportFrontier,
