@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.6.0",
+  "id": "GHSA-hodei-intel-0003",
+  "aliases": ["CVE-2026-33333"],
+  "modified": "2026-10-01T00:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "PyPI",
+        "name": "requests"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [{ "introduced": "0.7" }, { "last_affected": "2.19" }]
+        }
+      ]
+    }
+  ]
+}
