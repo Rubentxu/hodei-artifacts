@@ -70,6 +70,14 @@ pub enum ReasonCode {
     PolicyUnavailable,
     /// The trust context could not be built.
     ContextUnavailable,
+    /// The trust root a decision was made under was rotated, and the
+    /// decision is being reevaluated under the new root.
+    ///
+    /// The code names *why* a new decision exists when nothing about the
+    /// artefact changed: the root changed. It is the reason a reevaluation
+    /// after a rotation carries, so that the chain from the old decision
+    /// to the new one says what moved.
+    TrustRootRotated,
 }
 
 impl ReasonCode {
@@ -98,6 +106,7 @@ impl ReasonCode {
             Self::ExceptionApplied => "EXCEPTION_APPLIED",
             Self::PolicyUnavailable => "POLICY_UNAVAILABLE",
             Self::ContextUnavailable => "CONTEXT_UNAVAILABLE",
+            Self::TrustRootRotated => "TRUST_ROOT_ROTATED",
         }
     }
 

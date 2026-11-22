@@ -231,6 +231,7 @@ impl ReasonLabel for Reevaluation {
         match self.reason {
             hodei_reactive::reactions::ReasonCode::VulnerabilityImpacted => "vulnerability",
             hodei_reactive::reactions::ReasonCode::ExceptionExpired => "expired",
+            hodei_reactive::reactions::ReasonCode::TrustRootRotated => "root-rotation",
         }
     }
 }
