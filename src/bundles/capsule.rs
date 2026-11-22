@@ -134,7 +134,7 @@ impl TrustState {
     }
 }
 
-fn descriptor(media_type: &str, bytes: &[u8]) -> Descriptor {
+pub(super) fn descriptor(media_type: &str, bytes: &[u8]) -> Descriptor {
     Descriptor {
         media_type: media_type.to_string(),
         digest: digest_of(bytes),
@@ -143,7 +143,7 @@ fn descriptor(media_type: &str, bytes: &[u8]) -> Descriptor {
     }
 }
 
-fn annotation(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+pub(super) fn annotation(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs
         .iter()
         .map(|(key, value)| (key.to_string(), value.to_string()))
@@ -158,7 +158,7 @@ pub fn layout_blob_path(digest: &str) -> PathBuf {
     PathBuf::from(LAYOUT_BLOBS).join(hex)
 }
 
-fn write_layout_blob(
+pub(super) fn write_layout_blob(
     dir: &Path,
     media_type: &str,
     bytes: &[u8],
@@ -182,7 +182,7 @@ fn write_layout_blob(
     Ok(desc)
 }
 
-fn unsound(what: impl Into<String>) -> BundleError {
+pub(super) fn unsound(what: impl Into<String>) -> BundleError {
     BundleError::Unsound(what.into())
 }
 
@@ -438,7 +438,7 @@ pub fn export_capsule(
 /// `ContentDigest::of_bytes` writes it in uppercase, which is not
 /// valid here: the blob path and the announced digest have to match
 /// byte for byte with what any OCI client is going to recompute.
-fn digest_of(bytes: &[u8]) -> String {
+pub(super) fn digest_of(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     use std::fmt::Write as _;
     let mut digest = String::from("sha256:");
@@ -568,7 +568,7 @@ pub fn verify_capsule(
 
 /// The layout manifest whose `artifactType` is `want`, checking
 /// that the blob under the announced digest digests exactly that.
-fn read_manifest_of(
+pub(super) fn read_manifest_of(
     dir: &Path,
     index: &LayoutIndex,
     want: &str,
