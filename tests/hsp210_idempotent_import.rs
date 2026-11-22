@@ -128,6 +128,7 @@ async fn clean_reference() -> (Arc<MemorySink>, String) {
     assert_eq!(report.skipped, 0);
     assert!(report.finished);
     let fingerprint = fingerprint_of(&sink).await;
+    eprintln!("HSP210 authorities fingerprint = {fingerprint}");
     (sink, fingerprint)
 }
 
