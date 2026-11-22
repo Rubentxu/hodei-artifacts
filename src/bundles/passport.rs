@@ -1172,13 +1172,15 @@ pub fn verify_passport_offline(
                 "the VSA is not an in-toto statement: {}",
                 vsa.statement_type
             ),
-        ))?;
+        )
+        .into());
     }
     if vsa.predicate_type != VSA_PREDICATE_TYPE {
         return Err(PassportProblem::new(
             PassportProblemCode::Malformed,
             format!("the predicate is {}, not the VSA type", vsa.predicate_type),
-        ))?;
+        )
+        .into());
     }
     // The VSA the annotation promises is the VSA the layers hold, and
     // the bundle the annotation names is the release layer byte for
@@ -1193,8 +1195,11 @@ pub fn verify_passport_offline(
     if declared_vsa != actual_vsa {
         return Err(PassportProblem::new(
             PassportProblemCode::TamperedBlob,
-            format!("the passport annotation names VSA {declared_vsa}, the VSA layer is {actual_vsa}"),
-        ))?;
+            format!(
+                "the passport annotation names VSA {declared_vsa}, the VSA layer is {actual_vsa}"
+            ),
+        )
+        .into());
     }
     let declared_bundle = image
         .annotations
@@ -1208,7 +1213,7 @@ pub fn verify_passport_offline(
             format!(
                 "the passport annotation names bundle {declared_bundle}, the release layer is {actual_bundle}"
             ),
-        ))?;
+        ).into());
     }
     // AC3 half one: the VSA's subject is the capsule, named exactly —
     // the same binding rule the chain applies to the provenance.
@@ -1222,7 +1227,8 @@ pub fn verify_passport_offline(
         return Err(PassportProblem::new(
             PassportProblemCode::SubjectMismatch,
             format!("the VSA speaks about sha256:{named}, the passport is about {capsule_digest}"),
-        ))?;
+        )
+        .into());
     }
 
     // The policy the VSA digests must be the policy layer, and the
@@ -1242,7 +1248,7 @@ pub fn verify_passport_offline(
             format!(
                 "the VSA names policy sha256:{named_policy}, the policy layer digests as {actual_policy}"
             ),
-        ))?;
+        ).into());
     }
     let layout_policy: PassportPolicy = serde_json::from_slice(policy_bytes).map_err(|error| {
         PassportProblem::new(
@@ -1254,7 +1260,8 @@ pub fn verify_passport_offline(
         return Err(PassportProblem::new(
             PassportProblemCode::PolicyMismatch,
             "the policy the reader brings is not the policy the VSA names",
-        ))?;
+        )
+        .into());
     }
 
     // The provenance envelope, from the bundle layer, canonical bytes.
@@ -1288,7 +1295,7 @@ pub fn verify_passport_offline(
             format!(
                 "the VSA evaluated envelope sha256:{named_envelope}, the bundle holds {actual_envelope}"
             ),
-        ))?;
+        ).into());
     }
     // And the statement the VSA names is the statement layer that is
     // actually here, not a claim over bytes the layout never held.
@@ -1314,7 +1321,7 @@ pub fn verify_passport_offline(
             format!(
                 "the VSA evaluated statement sha256:{named_statement}, the statement layer digests as {actual_statement}"
             ),
-        ))?;
+        ).into());
     }
 
     // Re-run the chain, the reader's way: the reader's roots, at the
@@ -1345,7 +1352,7 @@ pub fn verify_passport_offline(
         return Err(PassportProblem::new(
             PassportProblemCode::SignerRevoked,
             "the provenance's signing key is revoked under the reader's roots at the reading moment",
-        ))?;
+        ).into());
     }
 
     let recomputed = assess_provenance(
@@ -1374,7 +1381,8 @@ pub fn verify_passport_offline(
                 vsa.predicate.verification_result,
                 verification_result(&recomputed)
             ),
-        ))?;
+        )
+        .into());
     }
     if recorded.findings != recomputed.findings {
         let mut diff = Vec::new();
@@ -1388,7 +1396,7 @@ pub fn verify_passport_offline(
                     "{}: recorded {:?}, material says {:?}",
                     requirement_name(finding.requirement),
                     prior.map(|f| &f.status),
-                    &finding.status
+                    finding.status
                 ));
             }
         }
@@ -1398,7 +1406,8 @@ pub fn verify_passport_offline(
                 "the VSA's verdicts do not match the material: {}",
                 diff.join("; ")
             ),
-        ))?;
+        )
+        .into());
     }
 
     // The bundle's own bytes: the release layer is the bundle manifest
@@ -1452,7 +1461,8 @@ pub fn verify_passport_offline(
                     "the blob {} is not the content the release cites (it digests as {computed})",
                     asset.digest
                 ),
-            ))?;
+            )
+            .into());
         }
     }
 
@@ -1472,7 +1482,8 @@ pub fn verify_passport_offline(
         return Err(PassportProblem::new(
             PassportProblemCode::SignatureInvalid,
             "the signature subject does not name this passport",
-        ))?;
+        )
+        .into());
     }
     let sig_desc = signature_image.layers.first().ok_or_else(|| {
         PassportProblem::new(
@@ -1502,7 +1513,8 @@ pub fn verify_passport_offline(
             format!(
                 "the signature names key {declared_signer}, not the key the reader verifies with"
             ),
-        ))?;
+        )
+        .into());
     }
     let public_key_asc = signer.key_asc().map_err(|error| {
         PassportProblem::new(
