@@ -681,10 +681,12 @@ async fn m8_uat_04_the_investigator_cannot_decide_the_trust() {
         // Y con el riesgo **establecido** (que el alimentador miro y no
         // encontró criticos alcanzables), la misma politica permite: ahi si
         // hay un hecho, y el hecho es que no hay nada que denegar.
-        let mut established = hodei_trust_policy::context::RiskFacts::default();
-        established.established = true;
-        established.critical_known = 0;
-        established.critical_reachable = 0;
+        let established = hodei_trust_policy::context::RiskFacts {
+            established: true,
+            critical_known: 0,
+            critical_reachable: 0,
+            ..Default::default()
+        };
         let allowed = hodei_trust_policy::decision::evaluate(
             &hodei_trust_policy::TrustContext::builder(&empty_capsule())
                 .with_risk(established)

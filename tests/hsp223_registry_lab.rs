@@ -31,13 +31,12 @@
 
 mod support;
 
-use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use support::lab::{
     Budget, Doc, Expectation, HomeSnapshot, LabCase, LabHome, Outcome, REAL_MODE_VARIABLE, Scope,
-    Summary, Upstream, expect_registry_lab_cases, real_mode_enabled, record_registry_lab,
+    Summary, Upstream, real_mode_enabled, run_registry_lab_case,
 };
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
@@ -257,6 +256,9 @@ fn fetch(port: u16, repository: &str, path: &str, into: &Path) -> Reply {
 /// And a panic does not take the report with it: the panic is caught, the
 /// case is inscribed as the failure it is, and the panic is resumed so
 /// that the suite still fails.
+///
+/// The arnés es el del laboratorio: lo ejecuta `support::lab`, y esta
+/// suite solo declara que casos son los suyos.
 fn a_case(
     id: &str,
     title: &str,
@@ -264,45 +266,7 @@ fn a_case(
     expectation: Expectation,
     body: impl FnOnce() -> LabCase,
 ) {
-    expect_registry_lab_cases(THE_CASES);
-    record_registry_lab(
-        LabCase::new(id, title)
-            .scope(scope)
-            .expecting(expectation)
-            .not_run("iniciado"),
-    );
-    let outcome = std::panic::catch_unwind(AssertUnwindSafe(body));
-    match outcome {
-        Ok(mut case) => {
-            // The scope and the expectation are declared by the caller:
-            // what the case measured does not depend on how the case
-            // built itself.
-            case.scope = scope;
-            case.expectation = expectation;
-            record_registry_lab(case)
-        }
-        Err(panic) => {
-            let cause = the_cause_of_the_panic(&panic);
-            record_registry_lab(
-                LabCase::new(id, title)
-                    .scope(scope)
-                    .expecting(expectation)
-                    .failed(cause),
-            );
-            std::panic::resume_unwind(panic);
-        }
-    }
-}
-
-/// The message of a panic.
-fn the_cause_of_the_panic(panic: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(message) = panic.downcast_ref::<&str>() {
-        (*message).to_string()
-    } else if let Some(message) = panic.downcast_ref::<String>() {
-        message.clone()
-    } else {
-        "the case panicked without a message".to_string()
-    }
+    run_registry_lab_case(THE_CASES, id, title, scope, expectation, body);
 }
 
 // ---------------------------------------------------------------------------
