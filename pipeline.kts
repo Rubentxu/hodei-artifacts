@@ -265,6 +265,11 @@ pipeline {
                         "--test hsp135_vigencia_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
+                        // El camino comunitario (HSP-241): el script que
+                        // el tutorial dice a la comunidad ejecutar,
+                        // contra el binario real: publica, descarga,
+                        // comprueba los digests, reinicia y limpia.
+                        "--test hsp241_community_quickstart",
                         // Prueba contra Dgraph real (HSP-181): sin
                         // HODEI_GRAPH_IT_ENDPOINT la suite se salta a si
                         // misma (exit 0); con la variable corre los tres
