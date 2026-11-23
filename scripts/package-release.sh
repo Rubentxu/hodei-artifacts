@@ -6,6 +6,10 @@
 #   <out>/hodei-artifacts-api-<version>-<target>.tar.gz
 #   <out>/hodei-artifacts-api-<version>-<target>.tar.gz.sha256
 #
+# The package carries the community quickstart with it: the tutorial, the
+# script that executes it and the templates of the laboratory. Somebody who
+# downloads the distribution can run it without a toolchain.
+#
 # # Why it is a script and not a shell history
 #
 # The release asset has to be regenerable from a commit: the same script, at
@@ -80,6 +84,21 @@ for required in README.md LICENSE CHANGELOG.md; do
   fi
 done
 
+# The community path travels with the distribution, so the files it needs
+# are checked here too: a package without them would download and then not
+# run, which is the worst way to fail.
+for required in \
+  scripts/community-quickstart.sh \
+  config/community/schema.json \
+  config/community/policies.cedar \
+  config/release.toml \
+  docs/community/quickstart.md; do
+  if [ ! -f "$required" ]; then
+    echo "error: $required is missing; the community quickstart would not run" >&2
+    exit 1
+  fi
+done
+
 # --- Build ------------------------------------------------------------------
 
 echo "==> building the release binary"
@@ -107,12 +126,27 @@ fi
 
 echo "==> assembling $PKG_NAME"
 rm -rf "$STAGE"
-mkdir -p "$STAGE/bin" "$STAGE/config"
+mkdir -p "$STAGE/bin" "$STAGE/config" "$STAGE/config/community"
 
 install -m 0755 "$BIN_PATH" "$STAGE/bin/$BIN_NAME"
 install -m 0755 "$MIGRATION_BIN_PATH" "$STAGE/bin/$MIGRATION_BIN_NAME"
 install -m 0755 "$GRAPH_INDEX_BIN_PATH" "$STAGE/bin/$GRAPH_INDEX_BIN_NAME"
 install -m 0644 "$CONFIG_FILE" "$STAGE/config/default.toml"
+
+# The community quickstart travels with the distribution.
+#
+# The point of the distribution is that somebody can run it without a
+# toolchain: the tutorial, the script that executes it and the templates
+# of the laboratory have to be in the package, because the person who
+# downloads it has nothing else. The production profile travels too, for
+# the same reason: it is the profile an operator deploys, and it is the
+# one the guard of the quickstart checks.
+install -m 0644 config/release.toml "$STAGE/config/release.toml"
+install -m 0644 config/community/schema.json "$STAGE/config/community/schema.json"
+install -m 0644 config/community/policies.cedar "$STAGE/config/community/policies.cedar"
+install -m 0755 scripts/community-quickstart.sh "$STAGE/community-quickstart.sh"
+install -m 0644 docs/community/quickstart.md "$STAGE/QUICKSTART.md"
+
 install -m 0644 README.md "$STAGE/README.md"
 install -m 0644 LICENSE "$STAGE/LICENSE"
 install -m 0644 CHANGELOG.md "$STAGE/CHANGELOG.md"
