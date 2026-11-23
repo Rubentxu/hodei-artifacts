@@ -10,13 +10,8 @@
 
 mod support;
 
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-
 use sha1::{Digest, Sha1};
+use support::lab::Upstream;
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
 const HOSTED: &str = "mvn-hosted";
@@ -27,151 +22,6 @@ const METADATA_PATH: &str = "org/up/lib/maven-metadata.xml";
 
 const JAR: &[u8] = b"jar bytes served by the upstream";
 const OTHER_JAR: &[u8] = b"jar bytes that the other member has for the same coordinates";
-
-/// Una peticion que llego a un upstream.
-#[derive(Debug, Clone)]
-struct Seen {
-    path: String,
-    authorization: Option<String>,
-    if_none_match: Option<String>,
-}
-
-/// Un documento que sirve el upstream.
-#[derive(Debug, Clone)]
-struct Doc {
-    body: Vec<u8>,
-    etag: Option<String>,
-}
-
-/// El estado del upstream, que la prueba cambia mientras corre.
-struct World {
-    docs: Mutex<HashMap<String, Doc>>,
-    failing: AtomicBool,
-    seen: Mutex<Vec<Seen>>,
-}
-
-struct Upstream {
-    port: u16,
-    world: Arc<World>,
-}
-
-impl Upstream {
-    fn start() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("the upstream binds");
-        let port = listener.local_addr().expect("the address").port();
-        let world = Arc::new(World {
-            docs: Mutex::new(HashMap::new()),
-            failing: AtomicBool::new(false),
-            seen: Mutex::new(Vec::new()),
-        });
-        let shared = Arc::clone(&world);
-        std::thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let world = Arc::clone(&shared);
-                std::thread::spawn(move || serve(stream, &world));
-            }
-        });
-        Self { port, world }
-    }
-
-    fn put(&self, path: &str, body: &[u8], etag: Option<&str>) {
-        self.world.docs.lock().expect("docs").insert(
-            path.to_string(),
-            Doc {
-                body: body.to_vec(),
-                etag: etag.map(str::to_string),
-            },
-        );
-    }
-
-    fn fail(&self, failing: bool) {
-        self.world.failing.store(failing, Ordering::SeqCst);
-    }
-
-    fn requests(&self) -> Vec<Seen> {
-        self.world.seen.lock().expect("the log").clone()
-    }
-
-    fn hits(&self, path: &str) -> usize {
-        self.requests()
-            .iter()
-            .filter(|one| one.path == path)
-            .count()
-    }
-
-    fn total(&self) -> usize {
-        self.requests().len()
-    }
-}
-
-fn header_of(text: &str, name: &str) -> Option<String> {
-    text.lines().find_map(|line| {
-        let (key, value) = line.split_once(':')?;
-        key.trim()
-            .eq_ignore_ascii_case(name)
-            .then(|| value.trim().to_string())
-    })
-}
-
-fn serve(mut stream: TcpStream, world: &World) {
-    let mut request = Vec::new();
-    let mut buffer = [0u8; 1024];
-    while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-        match stream.read(&mut buffer) {
-            Ok(0) | Err(_) => return,
-            Ok(read) => request.extend_from_slice(&buffer[..read]),
-        }
-    }
-    let text = String::from_utf8_lossy(&request).into_owned();
-    let path = text
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .unwrap_or("/")
-        .trim_start_matches('/')
-        .to_string();
-    let if_none_match = header_of(&text, "if-none-match");
-    world.seen.lock().expect("the log").push(Seen {
-        path: path.clone(),
-        authorization: header_of(&text, "authorization"),
-        if_none_match: if_none_match.clone(),
-    });
-
-    let doc = world.docs.lock().expect("docs").get(&path).cloned();
-    let response: Vec<u8> = if world.failing.load(Ordering::SeqCst) {
-        b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            .to_vec()
-    } else if let Some(doc) = doc {
-        let validators = doc
-            .etag
-            .as_ref()
-            .map(|etag| format!("ETag: {etag}\r\n"))
-            .unwrap_or_default();
-        let unchanged = matches!(
-            (&doc.etag, &if_none_match),
-            (Some(etag), Some(sent)) if etag == sent
-        );
-        if unchanged {
-            format!(
-                "HTTP/1.1 304 Not Modified\r\n{validators}Content-Length: 0\r\nConnection: close\r\n\r\n"
-            )
-            .into_bytes()
-        } else {
-            let mut out = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n{validators}Connection: close\r\n\r\n",
-                doc.body.len()
-            )
-            .into_bytes();
-            out.extend_from_slice(&doc.body);
-            out
-        }
-    } else {
-        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
-    };
-    let _ = stream.write_all(&response);
-    let _ = stream.flush();
-    let _ = stream.shutdown(Shutdown::Both);
-}
 
 /// El seeder del catalogo.
 #[test]
@@ -257,7 +107,7 @@ impl Lab {
             .map(|proxy| {
                 let mut upstream = serde_json::json!({
                     "id": format!("lab-{}", proxy.upstream),
-                    "url": format!("http://127.0.0.1:{}/", upstreams[proxy.upstream].port),
+                    "url": format!("http://127.0.0.1:{}/", upstreams[proxy.upstream].port()),
                     "scopes": ["/"],
                     "max_bytes": 4096,
                 });
@@ -285,7 +135,7 @@ impl Lab {
         let allowed = self
             .upstreams
             .iter()
-            .map(|upstream| format!("127.0.0.1:{};private;http", upstream.port))
+            .map(|upstream| format!("127.0.0.1:{};private;http", upstream.port()))
             .collect::<Vec<_>>()
             .join(",");
         let mut environment = vec![("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str())];
