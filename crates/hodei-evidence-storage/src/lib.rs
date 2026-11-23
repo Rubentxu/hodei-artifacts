@@ -11,11 +11,15 @@
 
 pub mod authenticator;
 pub mod content_store;
+pub mod dgraph;
 pub mod scale;
 pub mod surreal;
 
 pub use authenticator::{HmacEnvelopeAuthenticator, ProducerCredentials};
 pub use content_store::InMemoryContentStore;
+pub use dgraph::ledger::{
+    DgraphEventLedger, DgraphLedgerError, LEDGER_EVENT_TYPE, LedgerEventRecord,
+};
 pub use surreal::{
     ACTIVE_PROJECTION, CHECKPOINT_TABLE, EVIDENCE_SUBJECT_TABLE, EVIDENCE_TABLE, EvidenceRow,
     LEDGER_TABLE, LedgerRecord, REBUILD_PROJECTION, SubjectRow, SurrealEventLedger,

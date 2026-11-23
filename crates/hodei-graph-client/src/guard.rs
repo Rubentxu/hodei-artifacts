@@ -81,6 +81,8 @@ pub enum GuardKind {
     GcHold,
     /// Quota reservations over one quota subject.
     Quota,
+    /// Ledger appends over one event stream.
+    Ledger,
 }
 
 impl GuardKind {
@@ -91,6 +93,7 @@ impl GuardKind {
             GuardKind::Reference => "reference",
             GuardKind::GcHold => "gc-hold",
             GuardKind::Quota => "quota",
+            GuardKind::Ledger => "ledger",
         }
     }
 }
