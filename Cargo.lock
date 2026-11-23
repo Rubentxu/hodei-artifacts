@@ -3515,6 +3515,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hodei-export-tool"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "hodei-catalog-storage",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "surrealdb",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "hodei-graph-client"
 version = "0.1.0"
 dependencies = [

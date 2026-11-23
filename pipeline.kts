@@ -179,6 +179,7 @@ pipeline {
                         "--test hsp174_gc_census_cache",
                         "--test hsp175_precondition_guard",
                         "--test hsp176_capsule_subject_bounded",
+                        "--test hsp179_export_portable",
                         "--test hsp105_trust_ledger_contract",
                         "--test hsp106_provenance_ledger_contract",
                         "--test hsp108_group_contract",
