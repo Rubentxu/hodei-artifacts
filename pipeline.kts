@@ -112,6 +112,7 @@ pipeline {
                         "--test m5_uat",
                         "--test capsule_read",
                         "--test ci_suites",
+                        "--test test_affected_selection",
                         "--test evidence_contract",
                         "--test graph_contract",
                         "--test m1_uat",

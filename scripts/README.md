@@ -4,7 +4,7 @@ This directory contains utility scripts for the Hodei Artifacts API project.
 
 ## test-affected.sh
 
-La puerta del dia a dia: corre **solo** las pruebas de lo que ha cambiado.
+La puerta del día a día: corre **solo** las pruebas de lo que ha cambiado.
 
 La pipeline de `pipeline.kts` es la puerta de la entrega --ocho etapas sobre
 el workspace entero-- y por eso no se abre cada diez minutos. Esta corre lo
@@ -26,17 +26,63 @@ las pruebas de esos paquetes.
 
 # Sin pruebas (solo formato y avisos)
 ./scripts/test-affected.sh --no-tests
+
+# El plan sin ejecutar nada: qué se correría y por qué
+./scripts/test-affected.sh --plan
+
+# Sin los límites de recursos de `bounded`
+./scripts/test-affected.sh --no-bounded
+
+# Dónde escribe el informe JSON
+./scripts/test-affected.sh --report target/test-affected/report.json
 ```
 
-### Que deduce
+### Qué deduce
 
 El mapeo lo hace el manifiesto del workspace (`cargo metadata`), no un
-recorrido de rutas: el manifiesto sabe que archivos son de que paquete y
-quien depende de quien. Un cambio en un crate de dominio arrastra a quien
-depende de el, y si no se arrastra el fallo aparece en el sitio equivocado.
+recorrido de rutas: el manifiesto sabe qué archivos son de qué paquete y
+quién depende de quién. Un cambio en un crate de dominio arrastra a quien
+depende de él, y si no se arrastra el fallo aparece en el sitio equivocado.
 
 El formato se pide **por paquete** y no con `cargo fmt --all`: el primero son
 unos segundos y el segundo recorre todos los archivos del repositorio.
+
+La selección de gates se decide por **causa**, y cada gate dice cuál es:
+
+| Cambio | Gates que se eligen |
+| --- | --- |
+| `Cargo.lock`, `Cargo.toml` | `clippy` y `test` de todos los paquetes: el grafo de dependencias cambió |
+| código de un paquete | `fmt`, `clippy` y `test` de ese paquete, y `test` de quien depende de él |
+| `config/` | `test` de la API: la configuración se carga al arrancar |
+| `*.cedar` | `test` de la API y de los paquetes que hablan Cedar |
+| `docs/openapi/` | el gate `openapi` y `test` de la API |
+| `frontend/` | el gate `frontend` |
+| `pipeline.kts` | el gate `ci_suites`: el guardián de la segmentación |
+
+### Fallar es honesto
+
+- Si la rama base **no existe**, el script falla con el motivo: sin ella no
+  hay diff, y sin diff no se puede decir que lo que ha cambiado está bien.
+- Si los metadatos del workspace no se pueden leer, el script falla: sin el
+  grafo de dependencias no se sabe a quién arrastra un cambio.
+- Un gate que **no se ha ejecutado** es `NOT_RUN`, y un `NOT_RUN` nunca
+  cuenta como `PASS`. Si falta `frontend/node_modules`, por ejemplo, el gate
+  del frontend queda `NOT_RUN` y la puerta no se queda en verde.
+
+### El informe JSON
+
+Cada ejecución escribe `target/test-affected/report.json` (o donde diga
+`--report`). Registra el commit y la base comparados, los crates afectados,
+los gates elegidos **con la razón de cada elección**, la duración y el
+resultado. Es la evidencia de qué se.corrió, y por eso los logs de cada gate
+se quedan en `target/test-affected/logs/`.
+
+### `bounded`
+
+`bounded` es un tope de recursos **opcional**: donde está instalado, los
+gates se corren con él; donde no, se corren igual y el script lo dice. Con
+`--no-bounded` se fuerza el camino sin límites. En cualquier caso, los
+límites no son la garantía: la garantía es que el gate se ha ejecutado.
 
 ### Cuando correr la pipeline
 
