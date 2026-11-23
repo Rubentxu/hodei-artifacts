@@ -430,6 +430,13 @@ pub struct Context<'a> {
     pub offline: bool,
     /// La hora de la decision.
     pub now: DateTime<Utc>,
+    /// La clase de la ruta, cuando quien decide ya la sabe.
+    ///
+    /// La superficie OCI la sabe: un manifiesto pedido por **etiqueta** es
+    /// metadata --la etiqueta se mueve-- y el mismo manifiesto pedido por
+    /// **digest** es contenido --el digest no se mueve--. Sin esto, los dos
+    /// se rigirian por la misma regla, y el digest acabaria moviendose.
+    pub kind: Option<CacheKind>,
 }
 
 /// La edad de una confirmacion, en segundos (nunca negativa).
@@ -474,7 +481,9 @@ pub fn decide(ctx: &Context<'_>, entry: Option<&CacheEntry>) -> CacheDecision {
         };
     }
 
-    let kind = ctx.policy.kind_in(ctx.format, ctx.asset_path);
+    let kind = ctx
+        .kind
+        .unwrap_or_else(|| ctx.policy.kind_in(ctx.format, ctx.asset_path));
     let known = |with_validators: bool| Known {
         digest: entry.digest.clone(),
         size_bytes: entry.size_bytes,
@@ -524,10 +533,10 @@ pub fn stale_allowed(ctx: &Context<'_>, entry: &CacheEntry) -> bool {
     else {
         return false;
     };
-    match ctx
-        .policy
-        .ttl_of(ctx.policy.kind_in(ctx.format, ctx.asset_path))
-    {
+    let kind = ctx
+        .kind
+        .unwrap_or_else(|| ctx.policy.kind_in(ctx.format, ctx.asset_path));
+    match ctx.policy.ttl_of(kind) {
         None => true,
         Some(ttl) => {
             age_secs(confirmation, ctx.now) < ttl.saturating_add(ctx.policy.stale_if_error_secs)
@@ -582,6 +591,7 @@ mod tests {
             config_version: 1,
             offline: false,
             now: at(now),
+            kind: None,
         }
     }
 

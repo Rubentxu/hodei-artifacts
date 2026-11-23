@@ -69,7 +69,6 @@ fn invalid(reason: impl Into<String>) -> UpstreamConfigError {
 /// configuracion versionada y auditada no puede llevar un token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CredentialRef(String);
-
 impl CredentialRef {
     /// Lee una referencia `env:NOMBRE`.
     ///
@@ -107,6 +106,33 @@ impl CredentialRef {
     }
 }
 
+/// El realm del token, cuando el upstream lo declara.
+///
+/// Un upstream que exige autenticacion no la pide con una cabecera de
+/// credenciales: contesta con un **reto** que dice donde hay que pedir un
+/// token. Ese reto lo dice el upstream, y un upstream puede decir cualquier
+/// cosa: por eso el realm **declarado** es el que cuenta, y el reto que no
+/// nombra ese realm no recibe ninguna credencial.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenAuth {
+    /// Donde se pide el token.
+    pub realm: Url,
+    /// El nombre del servicio que se pide, si el upstream lo distingue.
+    pub service: Option<String>,
+    /// El usuario con el que se pide el token.
+    ///
+    /// Es informativo: lo que autentica es la credencial. Sin usuario
+    /// declarado se usa el identificador del upstream.
+    pub username: Option<String>,
+}
+
+impl TokenAuth {
+    /// El usuario con el que se pide el token.
+    pub fn the_username<'a>(&'a self, upstream_id: &'a str) -> &'a str {
+        self.username.as_deref().unwrap_or(upstream_id)
+    }
+}
+
 /// El upstream de un repositorio proxy, ya validado.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamConfig {
@@ -129,6 +155,8 @@ pub struct UpstreamConfig {
     /// Con `true`, una respuesta que no lo declara se rechaza: el contenido
     /// no se puede presentar como verificado contra el upstream.
     pub require_checksum: bool,
+    /// El realm del token, si el upstream exige autenticacion.
+    pub auth: Option<TokenAuth>,
     /// La politica de cache (`proxy.cache`); los valores por defecto si la
     /// configuracion no la declara.
     pub cache: CachePolicy,
@@ -148,6 +176,18 @@ struct RawUpstream {
     max_bytes: Option<u64>,
     #[serde(default)]
     require_checksum: bool,
+    #[serde(default)]
+    auth: Option<RawAuth>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAuth {
+    realm: String,
+    #[serde(default)]
+    service: Option<String>,
+    #[serde(default)]
+    username: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -253,6 +293,8 @@ impl UpstreamConfig {
             return Err(invalid("max_bytes cannot be zero"));
         }
 
+        let auth = raw.auth.map(Self::auth).transpose()?;
+
         Ok(Self {
             id: raw.id,
             base,
@@ -262,7 +304,39 @@ impl UpstreamConfig {
             cross_origin_redirects,
             max_bytes: raw.max_bytes,
             require_checksum: raw.require_checksum,
+            auth,
             cache: CachePolicy::default(),
+        })
+    }
+
+    /// El realm del token, si la declaracion se entiende.
+    ///
+    /// El realm es una URL como cualquier otra: absoluta, con esquema de
+    /// red y sin credenciales. Un realm con credenciales las pondria en
+    /// cada traza que lo nombre, y un realm sin host no lleva a ningun
+    /// sitio.
+    fn auth(raw: RawAuth) -> Result<TokenAuth, UpstreamConfigError> {
+        let realm =
+            Url::parse(&raw.realm).map_err(|_| invalid("auth.realm is not an absolute URL"))?;
+        if !matches!(realm.scheme(), "http" | "https") {
+            return Err(invalid("auth.realm must use http or https"));
+        }
+        if realm.host().is_none() {
+            return Err(invalid("auth.realm has no host"));
+        }
+        if !realm.username().is_empty() || realm.password().is_some() {
+            return Err(invalid("auth.realm must not carry credentials"));
+        }
+        let service = raw
+            .service
+            .filter(|service| !service.is_empty() && service.len() <= 128);
+        let username = raw
+            .username
+            .filter(|username| !username.is_empty() && username.len() <= 128);
+        Ok(TokenAuth {
+            realm,
+            service,
+            username,
         })
     }
 

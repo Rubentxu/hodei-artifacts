@@ -822,6 +822,9 @@ pub(super) async fn the_proxy_asset_at(
         config_version,
         offline: upstream.cache.offline || plane.is_offline(),
         now: chrono::Utc::now(),
+        // La superficie cruda no distingue: su ruta es la direccion del
+        // contenido, y la clase la decide la politica.
+        kind: None,
     };
     let decision = decide(&decision_context, entry.as_ref());
     tracing::debug!(
@@ -1024,6 +1027,11 @@ async fn fetch_and_publish(
         actor,
         correlation_id: correlation,
         accept,
+        // Ni token de reto ni digest esperado: la superficie cruda no pide
+        // manifests y su contenido no se pide por digest.
+        authorization: None,
+        expect_digest: None,
+        digest_path_prefix: None,
     };
     let outcome = match url {
         Some(url) => {

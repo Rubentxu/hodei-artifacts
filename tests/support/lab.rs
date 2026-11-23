@@ -1211,7 +1211,20 @@ pub fn run_registry_lab_case(
             // built itself.
             case.scope = scope;
             case.expectation = expectation;
-            record_registry_lab(case)
+            // Un fallo que **nadie pidio** es un fallo de la suite: el
+            // laboratorio existe para que un fallo se vea, y un informe
+            // con `green: false` que el `cargo test` no ve es un falso
+            // verde. Un rechazo que el caso pedia (un `refused`) si es un
+            // resultado: no falla la suite.
+            let unexpected = case.result == Outcome::Fail && !case.expected;
+            let cause = case.cause.clone();
+            record_registry_lab(case);
+            if unexpected {
+                panic!(
+                    "the case {id} failed: {}",
+                    cause.unwrap_or_else(|| "the cause was not said".to_string())
+                );
+            }
         }
         Err(panic) => {
             let cause = the_cause_of_the_panic(&panic);

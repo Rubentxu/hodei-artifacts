@@ -35,6 +35,7 @@ use crate::oci::target::{Target, the_digest_of_reference, the_target};
 use crate::oci::token::the_realm;
 use crate::oci::{the_catalog, the_content_store, the_context, the_decision, the_repository};
 use crate::public_url::TheOrigin;
+use hodei_catalog::RepositoryMode;
 
 /// Los media types de manifiesto que este registro sirve.
 ///
@@ -112,7 +113,9 @@ pub async fn content(
     // donde `<name>` puede tener niveles (`team/demo`).
     let target = the_target(uri.path())?;
     match target {
-        Target::Blob { name, reference } => blob(&state, &context, &name, &reference, head).await,
+        Target::Blob { name, reference } => {
+            blob(&state, &context, &name, &reference, &headers, head).await
+        }
         Target::Manifest { name, reference } => {
             manifest(&state, &context, &name, &reference, &headers, head).await
         }
@@ -150,6 +153,7 @@ async fn blob(
     context: &hodei_authz::VerifiedContext,
     name: &str,
     reference: &str,
+    headers: &HeaderMap,
     head: bool,
 ) -> Result<Response, OciFailure> {
     let digest = the_digest_of_reference(reference)?;
@@ -161,6 +165,21 @@ async fn blob(
         crate::actions::download_asset(),
         &repository,
     )?;
+
+    // Un repositorio proxy no guarda lo que se publico en el: lo trae de
+    // un upstream, con las reglas de la distribucion por delante.
+    if repository.mode == RepositoryMode::Proxy {
+        return crate::oci::proxy::the_blob(
+            state,
+            context,
+            &repository,
+            name,
+            &digest,
+            headers,
+            head,
+        )
+        .await;
+    }
 
     // La fila del asset es la referencia: sin ella, el blob no es
     // contenido de este repositorio, esten sus bytes donde esten.
@@ -244,6 +263,21 @@ async fn manifest(
         crate::actions::download_asset(),
         &repository,
     )?;
+
+    // Un repositorio proxy no guarda lo que se publico en el: lo trae de
+    // un upstream, con las reglas de la distribucion por delante.
+    if repository.mode == RepositoryMode::Proxy {
+        return crate::oci::proxy::the_manifest(
+            state,
+            context,
+            &repository,
+            name,
+            reference,
+            headers,
+            head,
+        )
+        .await;
+    }
 
     let (reader, _) = the_catalog(state)?;
 

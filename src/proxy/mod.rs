@@ -5,11 +5,13 @@
 //! - [`fetch`]: el cliente que sale, y la comprobacion de lo que llega.
 //! - [`resolution`]: traer, verificar, guardar y dejar constancia.
 //! - [`cache`]: coalescencia de descargas, cache negativa y metricas.
+//! - [`token`]: los tokens que un upstream exige y ya se han pedido.
 
 pub mod cache;
 pub mod egress;
 pub mod fetch;
 pub mod resolution;
+pub mod token;
 
 use std::sync::Arc;
 
@@ -18,6 +20,7 @@ use hodei_catalog::ProvenanceLedger;
 use self::cache::{NegativeCache, PathKey, ProxyFailure, ProxyMetrics, SingleFlight};
 use self::fetch::ProxyFetcher;
 use self::resolution::Outcome;
+use self::token::TokenCache;
 
 /// Lo que comparten las peticiones que esperan la misma descarga.
 pub type FlightResult = Result<Outcome, ProxyFailure>;
@@ -37,6 +40,8 @@ pub struct ProxyPlane {
     pub negatives: Arc<NegativeCache>,
     /// Los contadores.
     pub metrics: Arc<ProxyMetrics>,
+    /// Los tokens de los upstreams que exigen autenticacion.
+    pub tokens: Arc<TokenCache>,
 }
 
 impl ProxyPlane {
@@ -48,6 +53,7 @@ impl ProxyPlane {
             flights: Arc::new(SingleFlight::new()),
             negatives: Arc::new(NegativeCache::new()),
             metrics: Arc::new(ProxyMetrics::default()),
+            tokens: Arc::new(TokenCache::new()),
         }
     }
 
