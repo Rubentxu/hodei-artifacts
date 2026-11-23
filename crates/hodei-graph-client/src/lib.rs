@@ -48,6 +48,8 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod generated;
+pub mod guard;
+pub mod idempotency;
 pub mod identity;
 pub mod port;
 pub mod schema;
@@ -55,6 +57,13 @@ pub mod schema;
 pub use client::GraphClient;
 pub use config::{GraphClientConfig, GraphLoginCredentials, GraphTlsConfig};
 pub use error::{GraphClientError, GraphConfigError, GraphConfigLoadError};
+pub use guard::{
+    GUARD_TYPE, GuardError, GuardKind, GuardScope, GuardStore, GuardedEffect, GuardedOutcome,
+    RevisionDemand, guard_key,
+};
+pub use idempotency::{
+    OPERATION_TYPE, OperationError, OperationId, OperationRecord, parse_operation, replayed_result,
+};
 pub use identity::{
     CanonicalHrn, IDENTITY_TYPE, IdentityError, IdentityRecord, IdentityStore, KEY_SEPARATOR,
     Tenant, identity_digest, identity_key,

@@ -16,6 +16,9 @@
 //! - the identity node (see [`crate::identity`]) with its unique
 //!   composite key, its canonical HRN, its deterministic digest and the
 //!   CAS revision guard;
+//! - the shared scope guard and the idempotent operation registry (see
+//!   [`crate::guard`] and [`crate::idempotency`]), the transactional
+//!   guard a writer of tags, references, GC holds or quotas runs under;
 //! - two native edge predicates (`owner`, `member_of`) with reverse
 //!   indexes, so references are traversable in both directions;
 //! - the schema metadata node that makes the schema versioned *in the
@@ -38,7 +41,13 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// Version of the schema this binary carries. Any server whose stored
 /// schema is *newer* than this must not be opened by this binary: it was
 /// upgraded by a build that knows more than we do.
-pub const SCHEMA_VERSION: u64 = 1;
+///
+/// v2 adds the transactional guard of scopes ([`crate::guard`]) and the
+/// idempotent operation registry ([`crate::idempotency`]): the shared
+/// conflict key per scope (`hodei.guard.*`) and the once-only operation
+/// marker (`hodei.operation.*`), both `@upsert` guarded so the server
+/// itself forces the conflict between concurrent writers.
+pub const SCHEMA_VERSION: u64 = 2;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -169,7 +178,21 @@ impl HodeiSchema {
 /// - `hodei.identity.member_of` — a native list edge to the groups, in
 ///   both directions (cardinality N);
 /// - `hodei.schema.*` — the metadata node itself, with the version and
-///   hash `@upsert` guarded so two bootstrappers cannot both claim it.
+///   hash `@upsert` guarded so two bootstrappers cannot both claim it;
+/// - `hodei.guard.*` — the shared scope guard ([`crate::guard`]): one
+///   node per scope (`hodei.guard.key`, unique and `@upsert` guarded)
+///   whose revision every writer of the scope advances inside its own
+///   transaction. The advance writes the scope-qualified token of the
+///   next revision (`hodei.guard.token`, exact-indexed and `@upsert`):
+///   two writers advancing to the same revision write the SAME new
+///   token, and the server forces one of them to abort — snapshot
+///   isolation is not serialization, so the conflict is the server's
+///   decision, not a client's hope;
+/// - `hodei.operation.*` — the idempotent operation registry
+///   ([`crate::idempotency`]): one node per operation id, committed
+///   atomically WITH its effect, so a retried operation finds its
+///   marker and replays the already-committed result instead of
+///   applying the effect twice.
 pub fn hodei_schema() -> HodeiSchema {
     let spec = |name,
                 declaration,
@@ -297,6 +320,78 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            spec(
+                "hodei.guard.key",
+                "hodei.guard.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.guard.revision",
+                "hodei.guard.revision: int @index(int) @upsert .",
+                "int",
+                Some("int"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.guard.token",
+                "hodei.guard.token: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.guard.updated_at",
+                "hodei.guard.updated_at: datetime .",
+                "datetime",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.operation.id",
+                "hodei.operation.id: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.operation.scope",
+                "hodei.operation.scope: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.operation.result",
+                "hodei.operation.result: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.operation.committed_at",
+                "hodei.operation.committed_at: datetime .",
+                "datetime",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -312,6 +407,12 @@ pub fn hodei_schema() -> HodeiSchema {
             "type HodeiGroup {\n  hodei.identity.tenant\n  hodei.identity.name\n}".to_owned(),
             "type HodeiSchemaMeta {\n  hodei.schema.version\n  hodei.schema.hash\n  \
              hodei.schema.applied_at\n}"
+                .to_owned(),
+            "type HodeiGuard {\n  hodei.guard.key\n  hodei.guard.revision\n  \
+             hodei.guard.token\n  hodei.guard.updated_at\n}"
+                .to_owned(),
+            "type HodeiOperation {\n  hodei.operation.id\n  hodei.operation.scope\n  \
+             hodei.operation.result\n  hodei.operation.committed_at\n}"
                 .to_owned(),
         ],
     )
@@ -777,6 +878,10 @@ mod tests {
             "hodei.schema.hash",
             "hodei.identity.revision",
             "hodei.schema.version",
+            "hodei.guard.key",
+            "hodei.guard.revision",
+            "hodei.guard.token",
+            "hodei.operation.id",
         ] {
             let spec = schema
                 .predicates()
