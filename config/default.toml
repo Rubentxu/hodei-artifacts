@@ -117,6 +117,21 @@ max_concurrent = 8
 # this switch is the operator's and wins.
 offline = false
 
+[public_url]
+# The public address of the deployment: the absolute URL the clients are
+# told about -- the tarball of a package, the address of a feed, the
+# endpoint of the OCI token. It is decided here and not by the request,
+# because a request can be written by anybody.
+# Unset means the authority of the request, when that authority is a valid
+# one; a base that cannot be read stops the boot.
+# public_base_url = "https://artifacts.example.com"
+# The reverse proxies whose forwarded headers are believed. An entry is an
+# address ("10.0.0.1") or a network of addresses ("10.0.0.0/8").
+# Empty means no forwarded header is heard at all: trust is never the
+# default, and a client that says "X-Forwarded-Proto: https" does not get
+# to say it.
+trusted_proxies = []
+
 [quota]
 # Per-account rate-shaping on the upload surfaces. The ledger is in
 # memory: a restart forgets it, and it is a gate, not a billing book.

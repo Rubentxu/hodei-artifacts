@@ -157,6 +157,27 @@ cors_allowed_origins = []
 - El preflight CORS (`OPTIONS`) lo responde la capa CORS exterior y no alcanza ningún handler.
 - `tests/admin_surface.rs` verifica las 12 rutas administrativas (anónimo, sin permiso, permitido, flag false/true, método/recurso), la allowlist CORS (incluido `*` en configuración no validada) y que los healthchecks siguen disponibles.
 
+### La dirección pública del despliegue
+
+Las URLs que el registro devuelve —el tarball de un paquete npm, el fichero de una distribución PyPI, el índice de un feed NuGet, la configuración de un repositorio Cargo y el endpoint del token OCI— las decide **la configuración**, no la petición: un `Host` o un `X-Forwarded-Proto` que escribe un cliente no mueven la URL pública.
+
+```toml
+[public_url]
+# La URL base pública del despliegue. Sin ella, la autoridad válida de la
+# petición es la dirección pública del registro.
+public_base_url = "https://artifacts.example.com"
+# Los proxies inversos cuyas cabeceras `X-Forwarded-*` se creerán. Vacío =
+# ninguna cabecera forwarded se escucha: la confianza nunca es el valor por
+# defecto.
+trusted_proxies = ["10.0.0.0/8"]
+```
+
+- `HODEI_PUBLIC_URL__PUBLIC_BASE_URL` y `HODEI_PUBLIC_URL__TRUSTED_PROXIES` sobrescriben los valores del fichero.
+- Una `public_base_url` mal formada —un esquema que no sea `http`/`https`, credenciales embebidas, una ruta, una query— **detiene el arranque**: una configuración que no se entiende no se ignora.
+- `X-Forwarded-Proto` y `X-Forwarded-Host` solo se aceptan si la petición viene de un proxy de la lista; si no hay confianza configurada, se ignoran.
+- El `Host` de la petición solo se usa si es una autoridad válida (sin CRLF, sin credenciales, sin ruta). Una autoridad que no lo es no se refleja en ninguna respuesta.
+- El `trace` de una petición registra el camino y no la query: una query lleva credenciales y una traza es un sitio donde se quedarían.
+
 ## Documentación
 
 - **📖 [Documentación completa](./docs/README.md)**

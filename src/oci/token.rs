@@ -40,6 +40,7 @@ use base64::Engine;
 
 use crate::app_state::AppState;
 use crate::oci::failure::OciFailure;
+use crate::public_url::TheOrigin;
 
 /// El nombre del servicio en el reto de autenticacion.
 ///
@@ -70,10 +71,11 @@ const REFRESH_SECONDS: i64 = 300;
 /// mismo reto que el cliente ya conoce.
 pub async fn token(
     State(state): State<AppState>,
+    origin: TheOrigin,
     headers: HeaderMap,
 ) -> Result<Response, OciFailure> {
     let Some(credentials) = the_basic_credentials(&headers) else {
-        return Err(OciFailure::unauthorized().with_challenge(the_realm(&headers)));
+        return Err(OciFailure::unauthorized().with_challenge(the_realm(&origin)));
     };
 
     // La contrasena es la credencial de la plataforma, y se verifica
@@ -86,7 +88,7 @@ pub async fn token(
     .await
     .is_err()
     {
-        return Err(OciFailure::unauthorized().with_challenge(the_realm(&headers)));
+        return Err(OciFailure::unauthorized().with_challenge(the_realm(&origin)));
     }
 
     let body = serde_json::json!({
@@ -143,34 +145,18 @@ fn the_basic_credentials(headers: &HeaderMap) -> Option<BasicCredentials> {
 
 /// El realm del endpoint de token, tal y como lo ve el cliente.
 ///
-/// Se construye con la cabecera `Host` de la peticion: es la direccion
-/// por la que el cliente ha llegado, y es la unica que el cliente puede
-/// usar. Un despliegue con TLS delante lo dice con `X-Forwarded-Proto`.
-pub fn the_realm(headers: &HeaderMap) -> String {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .filter(|host| is_a_host(host))
-        .unwrap_or("localhost");
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .filter(|scheme| *scheme == "http" || *scheme == "https")
-        .unwrap_or("http");
-    format!("{scheme}://{host}{TOKEN_PATH}")
-}
-
-/// Si el valor de la cabecera `Host` sirve para una URL.
+/// Es la direccion **publica** del despliegue, la que decide su
+/// configuracion: la que el cliente uso para llegar y la unica que puede
+/// usar. No la decide la peticion, porque el `Host` y el
+/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
+/// un reto que apunta a otro sitio es una credencial que se pide en otro
+/// sitio.
 ///
-/// Un `Host` con espacios, barras o controles no es un host: es una
-/// intento de escribir la cabecera de otra manera, y una cabecera de
-/// reto es una cabecera que se lee en un cliente.
-fn is_a_host(host: &str) -> bool {
-    !host.is_empty()
-        && host.len() <= 255
-        && host
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '[' | ']'))
+/// Cuando el despliegue no dice donde vive y la peticion no trae una
+/// autoridad valida, el reto dice `localhost`: es la direccion que el
+/// propio servicio declara cuando no sabe de otra.
+pub fn the_realm(origin: &TheOrigin) -> String {
+    origin.url_or(TOKEN_PATH, "http://localhost/token")
 }
 
 #[cfg(test)]
@@ -179,30 +165,18 @@ mod tests {
 
     /// El reto dice donde esta el endpoint de token y de que servicio
     /// se trata.
+    ///
+    /// El realm es la direccion que el despliegue declara, no la que la
+    /// peticion escribe: un `Host` hostil no llega al reto.
     #[test]
     fn the_challenge_names_the_realm_and_the_service() {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::HOST, "127.0.0.1:5000".parse().expect("a host"));
-        assert_eq!(the_realm(&headers), "http://127.0.0.1:5000/token");
+        let origin = TheOrigin::default();
+        assert_eq!(the_realm(&origin), "http://localhost/token");
 
-        headers.insert("x-forwarded-proto", "https".parse().expect("a scheme"));
-        assert_eq!(the_realm(&headers), "https://127.0.0.1:5000/token");
-    }
-
-    /// Un `Host` que no es un host no se copia a la cabecera del reto.
-    ///
-    /// Un `Host` con un salto de linea no puede ni construirse: el
-    /// analizador de cabeceras lo rechaza antes de que la peticion
-    /// llegue al handler. El caso que si puede llegar es el que trae un
-    /// camino o un espacio, y ese tampoco es un host.
-    #[test]
-    fn a_host_that_is_not_a_host_does_not_reach_the_challenge() {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::HOST, "evil.example/path".parse().expect("a header"));
-        assert_eq!(the_realm(&headers), "http://localhost/token");
-
-        headers.insert(header::HOST, "evil example".parse().expect("a header"));
-        assert_eq!(the_realm(&headers), "http://localhost/token");
+        let public = crate::public_url::PublicUrl::of(Some("https://artifacts.example"), &[])
+            .expect("a public base URL");
+        let origin = TheOrigin::of(&public, None, &HeaderMap::new());
+        assert_eq!(the_realm(&origin), "https://artifacts.example/token");
     }
 
     /// Las credenciales basicas se leen, y lo que no son no se leen.

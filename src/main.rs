@@ -96,9 +96,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("📊 Health check: http://{}/health", addr);
     info!("📖 API documentation: http://{}/docs", addr);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // The peer address travels with the request: it is what says whether
+    // the request came from a proxy the deployment trusts, and a forwarded
+    // header is heard only when it did.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     info!("👋 Hodei Artifacts API shut down gracefully");
     Ok(())

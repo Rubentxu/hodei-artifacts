@@ -56,6 +56,7 @@ use super::raw::{
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{correlation_id, record_audit};
+use crate::public_url::TheOrigin;
 use crate::raw::{conditional, path};
 
 /// Cuantas veces se reintenta una escritura del packument que pierde la
@@ -202,28 +203,17 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
 }
 
 /// La URL base de este repositorio tal y como la ve el cliente.
-fn the_base(headers: &HeaderMap, repository: &str) -> Result<String, Failure> {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .filter(|host| {
-            !host.is_empty()
-                && host.len() <= 255
-                && host.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':' | b'[' | b']')
-                })
-        })
+///
+/// El origen lo decide el despliegue y no la peticion: el `Host` y el
+/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
+/// una URL que el cliente mueve es una URL que el cliente envenena.
+fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
+    origin
+        .url(&format!("/npm/{repository}"))
         .ok_or(RawApiError::BadRequest(
-            "the Host header is missing or invalid",
-        ))?;
-    let scheme = match headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-    {
-        Some("https") => "https",
-        _ => "http",
-    };
-    Ok(format!("{scheme}://{host}/npm/{repository}"))
+            "the public address of the registry is unknown: the Host header is missing or invalid",
+        ))
+        .map_err(Failure::from)
 }
 
 fn the_now(state: &AppState) -> String {
@@ -249,6 +239,7 @@ fn json_response(
 /// Cualquier peticion de `/npm/{repositorio}/...`.
 pub async fn handle(
     State(state): State<AppState>,
+    origin: TheOrigin,
     method: Method,
     uri: OriginalUri,
     headers: HeaderMap,
@@ -311,6 +302,7 @@ pub async fn handle(
                 &route,
                 method == Method::HEAD,
                 &headers,
+                &origin,
                 &correlation,
             )
             .await;
@@ -363,6 +355,7 @@ pub async fn handle(
 // Lectura
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 async fn read(
     state: &AppState,
     context: &VerifiedContext,
@@ -370,6 +363,7 @@ async fn read(
     route: &Route,
     head: bool,
     headers: &HeaderMap,
+    origin: &TheOrigin,
     correlation: &str,
 ) -> Result<Response, Failure> {
     the_decision(
@@ -455,7 +449,7 @@ async fn read(
                         Route::Packument { name } => name.full(),
                         _ => return Err(RawApiError::NotFound.into()),
                     };
-                    npm::rewrite_tarballs(&mut packument, name, &the_base(headers, &requested)?);
+                    npm::rewrite_tarballs(&mut packument, name, &the_base(origin, &requested)?);
                     Value::Object(packument)
                 }
             };

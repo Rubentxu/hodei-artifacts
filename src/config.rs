@@ -390,6 +390,53 @@ fn the_default_trust_sweep_interval_secs() -> u64 {
     60
 }
 
+/// The public address of the deployment.
+///
+/// It is what the registry tells its clients: the absolute URL of a
+/// package, of a feed and of the token endpoint. A deployment that
+/// declares nothing says that its address is the authority of the
+/// request, and nothing more: the forwarded headers of a proxy are heard
+/// only when the deployment says that proxy is trusted, and trust is
+/// never the default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PublicUrlConfig {
+    /// The public base URL of the deployment.
+    ///
+    /// Default: none. Without it the public address is the authority of
+    /// the request, when that authority is a valid one.
+    #[serde(default)]
+    pub public_base_url: Option<String>,
+    /// The reverse proxies whose forwarded headers are believed.
+    ///
+    /// An entry is an address (`10.0.0.1`) or a network of addresses
+    /// (`10.0.0.0/8`).
+    ///
+    /// Default: none, and a deployment that trusts no proxy ignores every
+    /// forwarded header it receives.
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
+}
+
+impl PublicUrlConfig {
+    /// The public address, resolved.
+    ///
+    /// # Errors
+    ///
+    /// A message saying what is wrong when the base URL is not a usable
+    /// public address, or when a trusted proxy is not an address or a
+    /// network. A configuration that cannot be understood does not boot.
+    pub fn the_public_url(&self) -> Result<crate::public_url::PublicUrl, String> {
+        crate::public_url::PublicUrl::of(self.public_base_url.as_deref(), &self.trusted_proxies)
+    }
+
+    /// Check that the public address of the deployment can be used.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        self.the_public_url().map(|_| ()).map_err(|error| {
+            ConfigError::Message(format!("Invalid public URL configuration: {error}"))
+        })
+    }
+}
+
 /// The per-account quotas.
 ///
 /// Not saying is not saying zero: every limit here is an `Option`, and
@@ -613,6 +660,11 @@ pub struct AppConfig {
     /// it may do at once.
     #[serde(default)]
     pub quota: QuotaConfig,
+
+    /// The public address of the deployment: the URL the clients are
+    /// told about, and the proxies whose forwarded headers are believed.
+    #[serde(default)]
+    pub public_url: PublicUrlConfig,
 
     /// Database configuration
     pub database: DatabaseConfig,
@@ -1044,6 +1096,7 @@ impl AppConfig {
         self.content.validate()?;
         self.investigation.validate()?;
         self.quota.validate()?;
+        self.public_url.validate()?;
         Ok(())
     }
 
@@ -1085,6 +1138,7 @@ fn environment_source() -> Environment {
         .with_list_parse_key("security.cors_allowed_origins")
         .with_list_parse_key("proxy.allowed_hosts")
         .with_list_parse_key("proxy.allowed_credentials")
+        .with_list_parse_key("public_url.trusted_proxies")
 }
 
 /// Builds the configuration from the file sources and the environment source.
@@ -1395,6 +1449,38 @@ mod tests {
         assert!(
             result.is_err(),
             "an environment override that cannot be parsed must be rejected"
+        );
+    }
+
+    /// The public address of the deployment has to be configurable
+    ///
+    /// The base URL and the list of trusted proxies are the only way a
+    /// deployment says where it lives, so they have to arrive from the
+    /// environment like everything else.
+    #[test]
+    fn the_public_address_comes_from_the_environment() {
+        let mut variables = overrides();
+        variables.insert(
+            "HODEI_PUBLIC_URL__PUBLIC_BASE_URL".to_string(),
+            "https://artifacts.example".to_string(),
+        );
+        variables.insert(
+            "HODEI_PUBLIC_URL__TRUSTED_PROXIES".to_string(),
+            "127.0.0.1/32,10.0.0.0/8".to_string(),
+        );
+
+        let config = build_config(environment_source().source(Some(variables)))
+            .expect("the configuration must be loadable");
+
+        assert_eq!(
+            config.public_url.public_base_url.as_deref(),
+            Some("https://artifacts.example"),
+            "HODEI_PUBLIC_URL__PUBLIC_BASE_URL must reach the configuration"
+        );
+        assert_eq!(
+            config.public_url.trusted_proxies,
+            vec!["127.0.0.1/32".to_string(), "10.0.0.0/8".to_string()],
+            "HODEI_PUBLIC_URL__TRUSTED_PROXIES must reach the configuration as a list"
         );
     }
 

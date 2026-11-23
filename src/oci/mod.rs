@@ -45,7 +45,6 @@ use hodei_catalog::{
 
 use crate::app_state::AppState;
 use failure::OciFailure;
-use token::the_realm;
 
 /// El principal verificado de la peticion.
 ///
@@ -56,10 +55,10 @@ pub async fn the_context(
     headers: &HeaderMap,
 ) -> Result<VerifiedContext, OciFailure> {
     let token = crate::handlers::bearer_token(headers).ok_or_else(|| {
-        // Sin credencial no hay nada que verificar, pero la respuesta
-        // dice **como** conseguir una: el reto es lo que permite a un
-        // cliente de Docker saber donde está el endpoint de token.
-        OciFailure::unauthorized().with_challenge(the_realm(headers))
+        // Sin credencial no hay nada que verificar. El reto --que dice
+        // **como** conseguir una-- lo pone el borde, que es quien sabe
+        // donde vive el despliegue: aqui todavia no se sabe.
+        OciFailure::unauthorized()
     })?;
     let principal = match hodei_authz::verify_principal(
         state.authenticator.as_ref(),
@@ -74,7 +73,7 @@ pub async fn the_context(
             ));
         }
         Err(_) => {
-            return Err(OciFailure::unauthorized().with_challenge(the_realm(headers)));
+            return Err(OciFailure::unauthorized());
         }
     };
     Ok(VerifiedContext::from_principal(principal))
