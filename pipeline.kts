@@ -258,6 +258,11 @@ pipeline {
                         "--test hsp135_vigencia_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
+                        // Prueba contra Dgraph real (HSP-181): sin
+                        // HODEI_GRAPH_IT_ENDPOINT la suite se salta a si
+                        // misma (exit 0); con la variable corre los tres
+                        // escenarios contra el Zero+Alpha con ACL y TLS.
+                        "--test dgraph_it",
                     ).joinToString(" ")
                 )
                 sh(
