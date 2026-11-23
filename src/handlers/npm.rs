@@ -141,6 +141,7 @@ impl Failure {
                     "the upstream did not answer in time".into(),
                 ),
                 RawApiError::Offline(reason) => (StatusCode::SERVICE_UNAVAILABLE, (*reason).into()),
+                RawApiError::ReservedNamespace(reason) => (StatusCode::FORBIDDEN, reason.clone()),
                 RawApiError::Internal => {
                     (StatusCode::INTERNAL_SERVER_ERROR, "internal error".into())
                 }

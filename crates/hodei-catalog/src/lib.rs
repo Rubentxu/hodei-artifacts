@@ -53,6 +53,7 @@ pub mod gomod;
 pub mod group;
 pub mod maven;
 pub mod model;
+pub mod namespaces;
 pub mod npm;
 pub mod nuget;
 pub mod ports;
@@ -81,6 +82,7 @@ pub use model::{
     RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustState,
     repository_hrn,
 };
+pub use namespaces::{Judgement, MAX_RESERVED, NamespacePolicy, NamespacePolicyError, OnConflict};
 pub use ports::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
     CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogSearch, CatalogWriter,

@@ -233,6 +233,8 @@ pipeline {
                         "--test hsp111_npm_cli",
                         "--test hsp112_pypi_e2e",
                         "--test hsp112_pypi_cli",
+                        "--test hsp143_namespaces_e2e",
+                        "--test hsp143_npm_namespaces_cli",
                         "--test hsp116_localstack_fidelity",
                         "--test hsp116_s3_contract",
                         "--test hsp116_s3_bench",

@@ -106,6 +106,9 @@ pub enum RawApiError {
     /// El proxy no sale a la red y lo pedido no está en su caché (o no se
     /// puede demostrar íntegro): un 503 explícito, no un 404.
     Offline(&'static str),
+    /// La ruta cae en un namespace reservado y las fuentes que quedaron
+    /// fuera se nombran: la reserva gana, y el rechazo se explica.
+    ReservedNamespace(String),
     /// Algo fallo por dentro.
     Internal,
 }
@@ -163,6 +166,7 @@ impl RawApiError {
                 "the upstream did not answer in time".to_string(),
             ),
             Self::Offline(reason) => (StatusCode::SERVICE_UNAVAILABLE, reason.to_string()),
+            Self::ReservedNamespace(reason) => (StatusCode::FORBIDDEN, reason.clone()),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error".to_string(),
@@ -635,6 +639,61 @@ impl ProxyServed {
     }
 }
 
+/// La politica de namespaces de un repositorio, si la declara.
+///
+/// Un ajuste de reserva que no se entiende es un error, no una ausencia:
+/// una politica de seguridad ilegible no degrada a "sin reserva".
+pub(super) fn the_namespace_policy(
+    config: &hodei_catalog::RepositoryConfig,
+) -> Result<Option<hodei_catalog::NamespacePolicy>, RawApiError> {
+    hodei_catalog::NamespacePolicy::of(config).map_err(|error| {
+        tracing::warn!(error = %error, "the namespace policy of a repository cannot be read");
+        RawApiError::Unavailable
+    })
+}
+
+/// Los upstreams que declara la configuracion, por su identificador.
+///
+/// Para nombrar las fuentes que una reserva deja fuera. Una configuracion
+/// que no se puede leer no nombra nada.
+pub(super) fn the_upstream_names(config: &hodei_catalog::RepositoryConfig) -> Vec<String> {
+    hodei_catalog::UpstreamConfig::of(config)
+        .ok()
+        .flatten()
+        .map(|upstream| vec![upstream.id])
+        .unwrap_or_default()
+}
+
+/// La explicacion de una negativa por reserva: la regla que aplico y las
+/// fuentes que quedaron fuera.
+///
+/// El veredicto nombra el namespace reservado que coincidio y, si la
+/// peticion llego escrita con un alias que normaliza igual, tambien el
+/// alias: las mismas entradas siempre producen la misma explicacion.
+pub(super) fn the_reservation_explanation(
+    judgement: &hodei_catalog::Judgement,
+    sources: &[String],
+) -> String {
+    let hodei_catalog::Judgement::Reserved { matched, alias_of } = judgement else {
+        return "the path is not under a reserved namespace".to_string();
+    };
+    let mut text = format!("the namespace {matched} is reserved and is never served from ");
+    match sources {
+        [] => text.push_str("its upstream"),
+        [one] => text.push_str(&format!("the public upstream {one}")),
+        many => {
+            let names = many.join(", ");
+            text.push_str(&format!("the public upstreams {names}"));
+        }
+    }
+    if let Some(alias) = alias_of {
+        text.push_str(&format!(
+            " (the request names it as {alias}, which normalizes to the same namespace)"
+        ));
+    }
+    text
+}
+
 /// El contenido de una ruta de un proxy: de la caché, revalidado o traído.
 ///
 /// La decisión (¿está vigente? ¿hay que preguntar? ¿se puede salir?) es
@@ -684,6 +743,28 @@ pub(super) async fn the_proxy_asset_at(
     use hodei_catalog::proxy_cache::{CacheDecision, CacheEntry, Context, decide, stale_allowed};
 
     use crate::proxy::cache::PathKey;
+
+    // La reserva de namespaces es la primera pregunta de la resolucion de
+    // un proxy: ni la cache (TTL positivo o negativo), ni el modo offline,
+    // ni un upstream caido la esquivan, porque ninguna de esas vias llega a
+    // ejecutarse. Todo lo que este repositorio tiene salio de su upstream:
+    // una ruta reservada no se sirve desde aqui, este o no en la cache.
+    // Una politica que no se entiende no degrada a "sin reserva".
+    if let Some(policy) = the_namespace_policy(&repository.config)? {
+        let judgement = policy.judge(repository.format, asset_path);
+        if judgement.is_reserved() {
+            tracing::warn!(
+                target: "hodei_artifacts::proxy",
+                repository = %repository.repo_key,
+                path = asset_path,
+                "a reserved namespace is not served from the proxy upstream"
+            );
+            return Err(RawApiError::ReservedNamespace(the_reservation_explanation(
+                &judgement,
+                &the_upstream_names(&repository.config),
+            )));
+        }
+    }
 
     let plane = state
         .proxy_plane
