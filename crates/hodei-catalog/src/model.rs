@@ -167,6 +167,30 @@ impl RepositoryFormat {
             RepositoryFormat::Rpm,
         ]
     }
+
+    /// The formats this release declares, whether it serves them or not.
+    ///
+    /// A format can be part of the vocabulary of the registry —it parses,
+    /// it has a name on the wire— without a surface that serves it: helm
+    /// is declared, and no helm repository can be created yet. A client
+    /// that builds a matrix of what exists and what is refused walks this
+    /// list, and the refusal of a declared but unserved combination is an
+    /// answer, not a failure: the registry knows the name and says no.
+    pub fn declared() -> &'static [RepositoryFormat] {
+        &[
+            RepositoryFormat::Raw,
+            RepositoryFormat::Oci,
+            RepositoryFormat::Maven2,
+            RepositoryFormat::Npm,
+            RepositoryFormat::PyPi,
+            RepositoryFormat::Cargo,
+            RepositoryFormat::NuGet,
+            RepositoryFormat::Go,
+            RepositoryFormat::Helm,
+            RepositoryFormat::Apt,
+            RepositoryFormat::Rpm,
+        ]
+    }
 }
 
 /// Como se comporta un repositorio respecto del exterior.
