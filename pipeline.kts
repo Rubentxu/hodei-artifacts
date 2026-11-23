@@ -112,6 +112,7 @@ pipeline {
                         "--test m5_uat",
                         "--test capsule_read",
                         "--test ci_suites",
+                        "--test test_affected_selection",
                         "--test evidence_contract",
                         "--test graph_contract",
                         "--test m1_uat",
@@ -227,6 +228,8 @@ pipeline {
                         "--test oci_index_contract",
                         "--test hsp104_gc_e2e",
                         "--test hsp115_recovery_e2e",
+                        "--test hsp223_registry_lab",
+                        "--test hsp224_maven_central_real",
                         "--test hsp105_trust_e2e",
                         "--test hsp106_proxy_e2e",
                         "--test hsp107_proxy_cache_e2e",
@@ -267,6 +270,11 @@ pipeline {
                         "--test hsp135_vigencia_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
+                        // El camino comunitario (HSP-241): el script que
+                        // el tutorial dice a la comunidad ejecutar,
+                        // contra el binario real: publica, descarga,
+                        // comprueba los digests, reinicia y limpia.
+                        "--test hsp241_community_quickstart",
                         // Prueba contra Dgraph real (HSP-181): sin
                         // HODEI_GRAPH_IT_ENDPOINT la suite se salta a si
                         // misma (exit 0); con la variable corre los tres

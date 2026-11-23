@@ -98,6 +98,13 @@ segura que este repositorio construye hoy.
 
 ## Quickstart
 
+> **¿Quieres ver Hodei funcionando sin compilar Rust?** El
+> [quickstart comunitario](./docs/community/quickstart.md) es el camino
+> ejecutable: un `tar.gz` de release, una cuenta, un repositorio Raw y otro
+> Maven, un blob y un paquete publicados, sus digests comprobados, un
+> reinicio y la limpieza. Un solo comando:
+> `scripts/community-quickstart.sh run`.
+
 ```bash
 # Clonar el repositorio
 git clone https://github.com/Rubentxu/hodei-artifacts.git
