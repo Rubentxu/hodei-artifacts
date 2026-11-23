@@ -548,6 +548,23 @@ fn digests_of(digests: &[ContentDigest]) -> Vec<String> {
     digests.iter().map(|digest| digest.value.clone()).collect()
 }
 
+/// The read the precondition guard revalidates the row with, as the
+/// statement the publish transaction embeds.
+///
+/// It is a fetch by identity (`FROM $guard_id`, where the bound
+/// `$guard_id` is the record id of the row), not a filter over the table.
+/// SurrealDB does not optimize a `WHERE id = $guard_id` predicate into a
+/// record fetch: it scans the whole `catalog_asset` table, so every
+/// publication would pay one full scan and the cost would grow with the
+/// size of the catalog. A fetch by identity reads only the one row,
+/// whatever the catalog holds.
+///
+/// Exposed so the regression test pins the statement the code actually
+/// sends instead of a copy of it.
+pub fn the_guard_fetch() -> &'static str {
+    "SELECT digest FROM $guard_id"
+}
+
 /// El almacén del catálogo sobre SurrealDB.
 #[derive(Clone)]
 pub struct SurrealCatalogStore {
@@ -2918,6 +2935,14 @@ impl SurrealCatalogStore {
         //
         // La comprobación del plan, antes de la transacción, dice el
         // motivo; esta dice que el motivo sigue siendo verdad.
+        //
+        // The row is revalidated by identity fetch (`FROM $guard_id`),
+        // never by filtering the table (`WHERE id = $guard_id`):
+        // SurrealDB does not optimize a `WHERE id =` predicate into a
+        // record fetch, so it scans the whole `catalog_asset` table and
+        // the guard would cost one full scan per publication, growing
+        // with the size of the catalog. A fetch by identity reads only
+        // the one row, whatever the catalog holds.
         let mut guard = None;
         if let Some(precondition) = &publication.precondition {
             let id = asset_id(
@@ -2927,30 +2952,32 @@ impl SurrealCatalogStore {
             );
             match precondition {
                 Precondition::Present(expected) => {
+                    sql.push_str("IF (");
+                    sql.push_str(the_guard_fetch());
                     sql.push_str(
-                        "IF (SELECT digest FROM catalog_asset WHERE id = $guard_id)[0].digest \
-                         NOT IN $expected_digests { THROW 'the precondition does not hold' };\n",
+                        ")[0].digest NOT IN $expected_digests \
+                         { THROW 'the precondition does not hold' };\n",
                     );
                     guard = Some((id, digests_of(expected)));
                 }
                 Precondition::Absent => {
-                    sql.push_str(
-                        "IF (SELECT digest FROM catalog_asset WHERE id = $guard_id)[0] != NONE \
-                         { THROW 'the precondition does not hold' };\n",
-                    );
+                    sql.push_str("IF (");
+                    sql.push_str(the_guard_fetch());
+                    sql.push_str(")[0] != NONE { THROW 'the precondition does not hold' };\n");
                     guard = Some((id, Vec::new()));
                 }
                 Precondition::Exists => {
-                    sql.push_str(
-                        "IF (SELECT digest FROM catalog_asset WHERE id = $guard_id)[0] == NONE \
-                         { THROW 'the precondition does not hold' };\n",
-                    );
+                    sql.push_str("IF (");
+                    sql.push_str(the_guard_fetch());
+                    sql.push_str(")[0] == NONE { THROW 'the precondition does not hold' };\n");
                     guard = Some((id, Vec::new()));
                 }
                 Precondition::Other(expected) => {
+                    sql.push_str("IF (");
+                    sql.push_str(the_guard_fetch());
                     sql.push_str(
-                        "IF (SELECT digest FROM catalog_asset WHERE id = $guard_id)[0].digest \
-                         IN $expected_digests { THROW 'the precondition does not hold' };\n",
+                        ")[0].digest IN $expected_digests \
+                         { THROW 'the precondition does not hold' };\n",
                     );
                     guard = Some((id, digests_of(expected)));
                 }
