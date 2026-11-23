@@ -651,15 +651,50 @@ async fn m8_uat_04_the_investigator_cannot_decide_the_trust() {
             "el investigador no ha escrito ninguna decision"
         );
 
-        // Y una decision de verdad la sigue tomando el motor de politicas:
-        // con la politica que no admite el riesgo, el resultado es DENY.
+        // Y una decision de verdad la sigue tomando el motor de politicas.
+        //
+        // Con una capsula **sin hechos de riesgo** el resultado es DENY, y no
+        // por el riesgo: porque el riesgo no se pudo establecer. La ausencia
+        // de criticos es un hecho sobre el mundo, y un mundo que el alimentador
+        // de riesgos nunca miro no concede ese hecho: lo desconocido no es
+        // cero. Por eso el motivo es `RiskUnknown` y no
+        // `RiskReachableCriticalVulnerability`.
         let policy = the_policy();
         assert_eq!(policy.version, "1.0.0");
         let decision = hodei_trust_policy::decision::evaluate(
             &hodei_trust_policy::TrustContext::builder(&empty_capsule()).build(),
             &policy,
         );
-        assert_eq!(decision.outcome, Outcome::Allow);
+        assert_eq!(
+            decision.outcome,
+            Outcome::Deny,
+            "un riesgo que no se pudo establecer no se concede: lo desconocido no es cero"
+        );
+        assert!(
+            decision.reasons.contains(&hodei_trust_policy::ReasonCode::RiskUnknown),
+            "el motivo del rechazo dice que el riesgo se desconoce: {:?}",
+            decision.reasons
+        );
+
+        // Y con el riesgo **establecido** (que el alimentador miro y no
+        // encontró criticos alcanzables), la misma politica permite: ahi si
+        // hay un hecho, y el hecho es que no hay nada que denegar.
+        let mut established = hodei_trust_policy::context::RiskFacts::default();
+        established.established = true;
+        established.critical_known = 0;
+        established.critical_reachable = 0;
+        let allowed = hodei_trust_policy::decision::evaluate(
+            &hodei_trust_policy::TrustContext::builder(&empty_capsule())
+                .with_risk(established)
+                .build(),
+            &policy,
+        );
+        assert_eq!(
+            allowed.outcome,
+            Outcome::Allow,
+            "un riesgo establecido y sin criticos alcanzables no bloquea: {:?}",
+            allowed.reasons
+        );
         Ok(())
     }
     .await;
