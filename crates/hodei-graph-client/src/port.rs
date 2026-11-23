@@ -50,3 +50,79 @@ pub trait GraphQueryPort: Send + Sync {
     /// performed: queries are read-only by construction of this port.
     async fn execute_dql(&self, query: &str) -> Result<DqlResponse, GraphClientError>;
 }
+
+/// One mutation block inside an upsert transaction: the N-Quads it sets
+/// or deletes, optionally guarded by a condition over the query's result
+/// variables (`@if(eq(var, value))`).
+///
+/// This is a plain DTO on purpose: the port mentions no tonic or protobuf
+/// type, so callers stay decoupled from the Dgraph SDK.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GraphMutationBlock {
+    /// The upsert condition that gates this block, in DQL condition
+    /// syntax without the `@if(...)` wrapper (e.g. `eq(len(u), 0)`).
+    /// `None` means the block always applies.
+    pub cond: Option<String>,
+    /// N-Quads to set. Empty means nothing is set.
+    pub set_nquads: String,
+    /// N-Quads to delete. Empty means nothing is deleted.
+    pub delete_nquads: String,
+}
+
+impl GraphMutationBlock {
+    /// An unconditional block that only sets N-Quads.
+    pub fn set(set_nquads: impl Into<String>) -> Self {
+        Self {
+            cond: None,
+            set_nquads: set_nquads.into(),
+            delete_nquads: String::new(),
+        }
+    }
+
+    /// A block gated by an upsert condition over the query variables.
+    pub fn set_if(cond: impl Into<String>, set_nquads: impl Into<String>) -> Self {
+        Self {
+            cond: Some(cond.into()),
+            set_nquads: set_nquads.into(),
+            delete_nquads: String::new(),
+        }
+    }
+}
+
+/// One upsert transaction: a DQL query that binds result variables,
+/// followed by mutation blocks that may reference those variables, all
+/// committed atomically (either every block commits or none does).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GraphUpsertTransaction {
+    /// The DQL query block whose variables the mutations reference.
+    pub query: String,
+    /// The mutation blocks, applied in order under their conditions.
+    pub blocks: Vec<GraphMutationBlock>,
+    /// Whether the server must commit (or abort) immediately with the
+    /// response. Uniqueness upserts set this: the answer decides whether
+    /// the caller won or lost the write race.
+    pub commit_now: bool,
+}
+
+/// The write port of the graph authority: atomic upsert transactions and
+/// schema alterations. Like the query port, it mentions no SDK type.
+#[async_trait]
+pub trait GraphMutationPort: Send + Sync {
+    /// Runs one upsert transaction. The JSON answer carries the results
+    /// of the transaction's query block (including the bound variables),
+    /// so the caller can tell what the server actually did.
+    ///
+    /// Losing a write race on a predicate marked `@upsert` surfaces as
+    /// [`GraphClientError::UpsertConflict`]: the server enforced the
+    /// unique index and aborted this transaction.
+    async fn upsert(
+        &self,
+        transaction: GraphUpsertTransaction,
+    ) -> Result<DqlResponse, GraphClientError>;
+
+    /// Alters the schema of the graph (new predicates, types, indexes).
+    /// Alterations are additive and idempotent when the schema text is
+    /// idempotent: re-sending an identical schema is accepted as a
+    /// no-op by the server.
+    async fn alter_schema(&self, schema_dql: &str) -> Result<(), GraphClientError>;
+}

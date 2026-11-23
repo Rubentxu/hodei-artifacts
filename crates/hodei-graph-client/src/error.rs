@@ -179,6 +179,18 @@ pub enum GraphClientError {
         /// The elapsed error underneath.
         source: tokio::time::error::Elapsed,
     },
+    /// An indexed upsert lost the write race on a unique predicate.
+    ///
+    /// With `@upsert` on a predicate, Dgraph v25 rejects any transaction
+    /// that would commit a second edge over the same index key
+    /// (`ErrIndexingConflict`). This is not a failure of the operation:
+    /// it is the server enforcing uniqueness, and the correct answer is
+    /// to revalidate and retry, which is why callers can distinguish it.
+    #[error("the upsert conflicted with a concurrent writer on an indexed predicate: {detail}")]
+    UpsertConflict {
+        /// The server's own conflict detail (no secrets: DQL text only).
+        detail: String,
+    },
 }
 
 /// Why a PEM document was rejected.
