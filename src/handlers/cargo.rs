@@ -37,6 +37,7 @@ use super::raw::{
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{correlation_id, record_audit};
+use crate::public_url::TheOrigin;
 use crate::raw::conditional;
 
 /// Lo que pasa con una peticion que no se puede servir.
@@ -107,28 +108,17 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
 }
 
 /// La URL base del indice tal y como la ve el cliente.
-fn the_base(headers: &HeaderMap, repository: &str) -> Result<String, Failure> {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .filter(|host| {
-            !host.is_empty()
-                && host.len() <= 255
-                && host.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':' | b'[' | b']')
-                })
-        })
+///
+/// El origen lo decide el despliegue y no la peticion: el `Host` y el
+/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
+/// una URL que el cliente mueve es una URL que el cliente envenena.
+fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
+    origin
+        .url(&format!("/cargo/{repository}"))
         .ok_or(RawApiError::BadRequest(
-            "the Host header is missing or invalid",
-        ))?;
-    let scheme = match headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-    {
-        Some("https") => "https",
-        _ => "http",
-    };
-    Ok(format!("{scheme}://{host}/cargo/{repository}"))
+            "the public address of the registry is unknown: the Host header is missing or invalid",
+        ))
+        .map_err(Failure::from)
 }
 
 /// Cargo manda el token sin esquema: `Authorization: <jwt>`. La superficie
@@ -153,6 +143,7 @@ fn normalize_authorization(headers: &mut HeaderMap) {
 /// Cualquier peticion de `/cargo/{repositorio}/...`.
 pub async fn handle(
     State(state): State<AppState>,
+    origin: TheOrigin,
     method: Method,
     uri: OriginalUri,
     mut headers: HeaderMap,
@@ -181,7 +172,7 @@ pub async fn handle(
                 crate::actions::download_asset(),
                 &repository,
             )?;
-            let body = cargo::config_json(&the_base(&headers, &repository_key)?);
+            let body = cargo::config_json(&the_base(&origin, &repository_key)?);
             Ok(json_response(StatusCode::OK, &body, None, &correlation))
         }
         (Route::Index { name }, true, _) => {

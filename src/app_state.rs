@@ -182,6 +182,13 @@ pub struct AppState {
     ///
     /// They are the deployment's, and a request can only narrow them.
     pub(crate) investigation_limits: crate::config::InvestigationConfig,
+    /// The public address of the deployment.
+    ///
+    /// It is what the registry tells its clients: the absolute URL of a
+    /// package, of a feed and of the token endpoint. It is decided by the
+    /// deployment and not by the request, because a request can be
+    /// written by anybody.
+    pub(crate) public_url: crate::public_url::PublicUrl,
     /// The registry of the upload sessions.
     ///
     /// It lives here because it is state that **survives a request**: the
@@ -329,6 +336,7 @@ impl AppState {
             admin_authorizer_configured: true,
             investigation: None,
             investigation_limits: crate::config::InvestigationConfig::default(),
+            public_url: crate::public_url::PublicUrl::default(),
         }
     }
 
@@ -398,6 +406,7 @@ impl AppState {
             admin_authorizer_configured: false,
             investigation: None,
             investigation_limits: crate::config::InvestigationConfig::default(),
+            public_url: crate::public_url::PublicUrl::default(),
         }
     }
 
@@ -445,6 +454,12 @@ impl AppState {
     /// Set the limits of the investigation.
     pub fn with_investigation_limits(mut self, limits: crate::config::InvestigationConfig) -> Self {
         self.investigation_limits = limits;
+        self
+    }
+
+    /// Set the public address of the deployment.
+    pub fn with_public_url(mut self, public_url: crate::public_url::PublicUrl) -> Self {
+        self.public_url = public_url;
         self
     }
 

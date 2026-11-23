@@ -32,7 +32,9 @@ use axum::response::{IntoResponse, Response};
 use crate::app_state::AppState;
 use crate::oci::failure::OciFailure;
 use crate::oci::target::{Target, the_digest_of_reference, the_target};
+use crate::oci::token::the_realm;
 use crate::oci::{the_catalog, the_content_store, the_context, the_decision, the_repository};
+use crate::public_url::TheOrigin;
 
 /// Los media types de manifiesto que este registro sirve.
 ///
@@ -49,9 +51,12 @@ const API_VERSION_HEADER: &str = "Docker-Distribution-API-Version";
 /// Autenticado como todo el resto de la superficie; no mira repositorios.
 pub async fn version_check(
     State(state): State<AppState>,
+    origin: TheOrigin,
     headers: HeaderMap,
 ) -> Result<Response, OciFailure> {
-    let _ = the_context(&state, &headers).await?;
+    let _ = the_context(&state, &headers)
+        .await
+        .map_err(|failure| failure.with_the_realm(the_realm(&origin)))?;
     let mut response = (StatusCode::OK, "{}".to_string()).into_response();
     response
         .headers_mut()
@@ -66,20 +71,26 @@ pub async fn version_check(
 /// eso se decide antes de leer.
 pub async fn dispatch(
     State(state): State<AppState>,
+    origin: TheOrigin,
     uri: OriginalUri,
     method: Method,
     headers: HeaderMap,
     request: axum::http::Request<Body>,
 ) -> Result<Response, OciFailure> {
-    match method {
+    // El reto de autenticacion lo pone el borde: el borde sabe donde
+    // vive el despliegue, y un `401` sin reto no dice al cliente como
+    // autenticarse.
+    let answer = match method {
         Method::GET | Method::HEAD => {
             if let Ok(Target::UploadSession { .. }) = the_target(uri.path()) {
-                return crate::oci::push::upload_status(state, uri, headers).await;
+                crate::oci::push::upload_status(state, uri, headers).await
+            } else {
+                content(state, uri, headers, method).await
             }
-            content(state, uri, headers, method).await
         }
         _ => crate::oci::push::mutate(state, uri, method, headers, request).await,
-    }
+    };
+    answer.map_err(|failure| failure.with_the_realm(the_realm(&origin)))
 }
 
 /// El contenido de la distribucion: blobs y manifests.

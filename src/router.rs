@@ -105,7 +105,10 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
                     tracing::info_span!(
                         "http_request",
                         method = %request.method(),
-                        uri = %request.uri(),
+                        // The path and not the URI: a query carries
+                        // credentials --a token, a signed address-- and a
+                        // trace is a place where they would stay.
+                        uri = %request.uri().path(),
                         correlation_id = %correlation_id,
                     )
                 })

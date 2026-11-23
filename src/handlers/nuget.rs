@@ -45,6 +45,7 @@ use super::raw::{
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{correlation_id, record_audit};
+use crate::public_url::TheOrigin;
 use crate::raw::conditional;
 
 /// Lo que pasa con una peticion que no se puede servir.
@@ -125,29 +126,18 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
 }
 
 /// La URL base del feed tal y como la ve el cliente: el service index
+///
+/// El origen lo decide el despliegue y no la peticion: el `Host` y el
+/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
+/// una URL que el cliente mueve es una URL que el cliente envenena.
 /// declara direcciones absolutas, y absolutas por el host que pregunto.
-fn the_base(headers: &HeaderMap, repository: &str) -> Result<String, Failure> {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .filter(|host| {
-            !host.is_empty()
-                && host.len() <= 255
-                && host.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':' | b'[' | b']')
-                })
-        })
+fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
+    origin
+        .url(&format!("/nuget/{repository}"))
         .ok_or(RawApiError::BadRequest(
-            "the Host header is missing or invalid",
-        ))?;
-    let scheme = match headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-    {
-        Some("https") => "https",
-        _ => "http",
-    };
-    Ok(format!("{scheme}://{host}/nuget/{repository}"))
+            "the public address of the registry is unknown: the Host header is missing or invalid",
+        ))
+        .map_err(Failure::from)
 }
 
 /// El cliente NuGet llega de dos maneras: con Basic desde sus
@@ -213,6 +203,7 @@ struct PublishedId(String);
 /// Cualquier peticion de `/nuget/{repositorio}/...`.
 pub async fn handle(
     State(state): State<AppState>,
+    origin: TheOrigin,
     method: Method,
     uri: OriginalUri,
     mut headers: HeaderMap,
@@ -232,7 +223,7 @@ pub async fn handle(
             if matches!(nuget::parse_route(&rest)?, NuGetRoute::ServiceIndex) {
                 Ok(Some(json_response(
                     StatusCode::OK,
-                    &nuget::service_index(&the_base(&headers, &repository_key)?),
+                    &nuget::service_index(&the_base(&origin, &repository_key)?),
                     None,
                     &correlation_id(&headers, &state.identity),
                 )))
@@ -240,8 +231,14 @@ pub async fn handle(
                 Ok(None)
             }
         })();
-        if let Some(response) = anonymous.unwrap_or_default() {
-            return Ok(response);
+        // Un error aqui no se traga: si la peticion no trae credenciales
+        // y el service index no se puede construir --porque el `Host` no
+        // es una autoridad-- la respuesta dice eso, y no se disfraza de
+        // un 401 de un camino que ya no era este.
+        match anonymous {
+            Ok(Some(response)) => return Ok(response),
+            Ok(None) => {}
+            Err(failure) => return Err(failure),
         }
     }
     let context = the_context(&state, &headers).await?;
@@ -261,7 +258,7 @@ pub async fn handle(
     let outcome = match (&route, reading, writing) {
         (NuGetRoute::ServiceIndex, true, _) => Ok(json_response(
             StatusCode::OK,
-            &nuget::service_index(&the_base(&headers, &repository_key)?),
+            &nuget::service_index(&the_base(&origin, &repository_key)?),
             None,
             &correlation,
         )),

@@ -74,6 +74,7 @@ use super::raw::{
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{bearer_token, correlation_id, record_audit};
+use crate::public_url::TheOrigin;
 use crate::raw::conditional;
 
 /// Cuantas veces se reintenta una escritura del documento que pierde la
@@ -259,28 +260,17 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
 }
 
 /// La URL base de este repositorio tal y como la ve el cliente.
-fn the_base(headers: &HeaderMap, repository: &str) -> Result<String, Failure> {
-    let host = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .filter(|host| {
-            !host.is_empty()
-                && host.len() <= 255
-                && host.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b':' | b'[' | b']')
-                })
-        })
+///
+/// El origen lo decide el despliegue y no la peticion: el `Host` y el
+/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
+/// una URL que el cliente mueve es una URL que el cliente envenena.
+fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
+    origin
+        .url(&format!("/pypi/{repository}"))
         .ok_or(RawApiError::BadRequest(
-            "the Host header is missing or invalid",
-        ))?;
-    let scheme = match headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-    {
-        Some("https") => "https",
-        _ => "http",
-    };
-    Ok(format!("{scheme}://{host}/pypi/{repository}"))
+            "the public address of the registry is unknown: the Host header is missing or invalid",
+        ))
+        .map_err(Failure::from)
 }
 
 /// El prefijo donde viven los ficheros, tal y como lo guarda el documento.
@@ -362,6 +352,7 @@ struct ProjectView {
 /// Cualquier peticion de `/pypi/{repositorio}/...`.
 pub async fn handle(
     State(state): State<AppState>,
+    origin: TheOrigin,
     method: Method,
     uri: OriginalUri,
     headers: HeaderMap,
@@ -379,7 +370,15 @@ pub async fn handle(
     match (&route, reading) {
         (Route::Root, true) => {
             let resource = format!("{repository_key}/simple/");
-            let outcome = the_root(&state, &context, &repository, &headers, &correlation).await;
+            let outcome = the_root(
+                &state,
+                &context,
+                &repository,
+                &headers,
+                &origin,
+                &correlation,
+            )
+            .await;
             let result = match &outcome {
                 Ok(_) => AuditResult::Allowed,
                 Err(Failure::Raw(RawApiError::Forbidden)) => AuditResult::Denied,
@@ -408,6 +407,7 @@ pub async fn handle(
                     headers: &headers,
                     correlation: &correlation,
                 },
+                &origin,
             )
             .await;
             let result = match &outcome {
@@ -517,12 +517,13 @@ async fn the_root(
     context: &VerifiedContext,
     repository: &RepositoryDescriptor,
     headers: &HeaderMap,
+    origin: &TheOrigin,
     correlation: &str,
 ) -> Result<Response, Failure> {
     the_decision(state, context, crate::actions::download_asset(), repository)?;
     let projects = the_projects(state, context, repository, correlation).await?;
     // Los proyectos del repositorio, en orden.
-    let base = the_base(headers, &repository.repo_key)?;
+    let base = the_base(origin, &repository.repo_key)?;
     let representation = pypi::negotiate(headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()));
     let (body, content_type) = match representation {
         pypi::Representation::Json => {
@@ -600,6 +601,7 @@ async fn the_project_page(
     repository: &RepositoryDescriptor,
     project: &ProjectName,
     ask: &Ask<'_>,
+    origin: &TheOrigin,
 ) -> Result<Response, Failure> {
     the_decision(state, context, crate::actions::download_asset(), repository)?;
     let view = the_project(state, context, repository, project, ask.correlation).await?;
@@ -607,7 +609,7 @@ async fn the_project_page(
         name: view.name.clone(),
         files: view.files.iter().map(|file| file.entry.clone()).collect(),
     };
-    let base = the_base(ask.headers, &repository.repo_key)?;
+    let base = the_base(origin, &repository.repo_key)?;
     let representation = pypi::negotiate(
         ask.headers
             .get(header::ACCEPT)

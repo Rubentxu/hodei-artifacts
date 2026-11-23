@@ -430,6 +430,16 @@ pub async fn bootstrap(
     // despliegue que no dice cuotas obtiene un libro sin limites, que
     // admite todo y es exactamente lo que dijo.
     let app_state = app_state.with_quota(config.quota.the_limits());
+    // La direccion publica del despliegue la dice la configuracion, y no
+    // la peticion: un `Host` hostil o un `X-Forwarded-Proto` hostil que
+    // cambien la URL que el registro devuelve es una URL que el cliente
+    // elige. La configuracion que no se puede entender no arranca.
+    let app_state = app_state.with_public_url(
+        config
+            .public_url
+            .the_public_url()
+            .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
+    );
     if config.quota.max_stored_bytes_per_account.is_some()
         || config.quota.max_concurrent_uploads_per_account.is_some()
     {

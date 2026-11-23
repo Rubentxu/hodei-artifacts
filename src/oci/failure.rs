@@ -312,6 +312,18 @@ impl OciFailure {
         self.challenge = Some(realm.into());
         self
     }
+
+    /// El error con el reto, si lo lleva.
+    ///
+    /// El reto es de las respuestas `401` y solo de ellas: un `404` con
+    /// un reto seria una respuesta que pide una credencial que no va a
+    /// servir de nada. Un error que ya trae su reto lo conserva.
+    pub fn with_the_realm(mut self, realm: impl Into<String>) -> Self {
+        if self.status == StatusCode::UNAUTHORIZED && self.challenge.is_none() {
+            self.challenge = Some(realm.into());
+        }
+        self
+    }
 }
 
 /// La respuesta de error, en el dialecto de la distribucion.
