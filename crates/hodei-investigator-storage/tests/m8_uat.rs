@@ -671,7 +671,9 @@ async fn m8_uat_04_the_investigator_cannot_decide_the_trust() {
             "un riesgo que no se pudo establecer no se concede: lo desconocido no es cero"
         );
         assert!(
-            decision.reasons.contains(&hodei_trust_policy::ReasonCode::RiskUnknown),
+            decision
+                .reasons
+                .contains(&hodei_trust_policy::ReasonCode::RiskUnknown),
             "el motivo del rechazo dice que el riesgo se desconoce: {:?}",
             decision.reasons
         );
