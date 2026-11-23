@@ -31,6 +31,14 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 use sha2::Digest as _;
 
+/// El laboratorio del registro: el upstream con contador, el resultado de
+/// un caso y el informe en JSON de una ejecución.
+///
+/// Vive aquí y no en el fichero de un caso porque siete tareas más lo
+/// van a usar: un upstream con contador que se implemente dos veces es un
+/// contador que mide uno de los dos.
+pub mod lab;
+
 /// El binario del servicio, tal y como lo compila la CI.
 pub const BIN: &str = env!("CARGO_BIN_EXE_hodei-artifacts-api");
 
