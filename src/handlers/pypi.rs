@@ -165,6 +165,7 @@ impl Failure {
                     "the upstream did not answer".into(),
                 ),
                 RawApiError::Offline(reason) => (StatusCode::SERVICE_UNAVAILABLE, (*reason).into()),
+                RawApiError::ReservedNamespace(reason) => (StatusCode::FORBIDDEN, reason.clone()),
                 RawApiError::Internal => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "the service failed to answer".into(),
@@ -653,7 +654,14 @@ async fn the_project(
     match repository.mode {
         RepositoryMode::Group => {
             let mut files: Vec<FileView> = Vec::new();
-            for member in super::raw_group::the_leaves(state, context, repository).await? {
+            // La reserva de namespaces del grupo se consulta con el nombre
+            // del proyecto: un upstream publico no aporta ficheros a un
+            // nombre reservado, aunque tenga versiones mayores. Los
+            // miembros que quedan fuera no se consultan.
+            let (leaves, denied, judgement) =
+                super::raw_group::the_governed_leaves(state, context, repository, project.as_str())
+                    .await?;
+            for member in leaves {
                 // Un miembro que no tiene el proyecto no es un fallo: se
                 // sigue con el siguiente.
                 let view =
@@ -673,6 +681,14 @@ async fn the_project(
                 }
             }
             if files.is_empty() {
+                if !denied.is_empty()
+                    && let Some(judgement) = judgement
+                {
+                    return Err(super::raw_group::the_group_reservation_explanation(
+                        repository, &judgement, &denied,
+                    )
+                    .into());
+                }
                 return Err(RawApiError::NotFound.into());
             }
             Ok(ProjectView {

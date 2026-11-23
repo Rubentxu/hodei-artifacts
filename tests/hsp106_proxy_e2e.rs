@@ -1,5 +1,9 @@
 //! El repository proxy remoto (HSP-106 / HAR-12), contra el wire.
 //!
+//! La superficie que ejercita es la del formato **raw**: el upstream
+//! sirve bytes opacos por HTTP y el proxy los trae como son, sin
+//! reescribirlos, que es lo que un proxy raw promete.
+//!
 //! El servicio es un proceso de verdad con catalogo, almacen de bytes y
 //! Cedar reales. El upstream es un servidor local que este fichero
 //! controla: uno **autorizado** (el que la politica de salida deja
