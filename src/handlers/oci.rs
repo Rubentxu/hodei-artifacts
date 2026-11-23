@@ -392,7 +392,7 @@ fn the_admission_failure(
 /// El manifiesto es la verdad de que es: si declara un tipo que este
 /// registro no sirve, la peticion falla con el error OCI de manifiesto
 /// desconocido, y no con un 200 que finge ser lo que el cliente pidio.
-fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure> {
+pub(crate) fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure> {
     let declared = serde_json::from_slice::<serde_json::Value>(bytes)
         .ok()
         .and_then(|manifest| {
@@ -495,7 +495,7 @@ fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool
 /// (RFC 9110, seccion 12.5.1), y un tipo rechazado es un tipo que no se
 /// puede servir. Sin esto, un `Accept: */*;q=0`--que es un "no acepto
 /// nada"--serviria cualquier manifiesto.
-fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> {
+pub(crate) fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> {
     let mut there_is_an_accept = false;
     let mut asked: Vec<&str> = Vec::new();
     for value in headers.get_all(header::ACCEPT).iter() {

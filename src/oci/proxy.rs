@@ -789,11 +789,20 @@ async fn the_served(
         .map_err(|_| OciFailure::unavailable("the content is not in the store"))?;
 
     // El tipo de medio lo dice el manifiesto, no el cliente: el manifiesto
-    // es la verdad de que es.
+    // es la verdad de que es. Y son los mismos tipos que el registro
+    // sirve en un repositorio hosted: un proxy no sirve lo que el
+    // registro no sirve.
     let media_type = match kind {
         TheKind::Blob => "application/octet-stream".to_string(),
-        TheKind::Manifest => the_declared_media_type(&bytes)?,
+        TheKind::Manifest => crate::handlers::oci::the_declared_media_type(&bytes)?,
     };
+
+    // Y la negociacion es la misma: un cliente que solo nombra tipos que
+    // este registro no sirve recibe el error de manifiesto desconocido, no
+    // una respuesta que finge ser lo que pidio.
+    if kind == TheKind::Manifest {
+        crate::handlers::oci::the_negotiation(headers, &media_type)?;
+    }
 
     let length = bytes.len().to_string();
     let mut response = if head {
@@ -823,27 +832,6 @@ async fn the_served(
         HeaderValue::from_static("nosniff"),
     );
     Ok(response)
-}
-
-/// El tipo de medio que el manifiesto declara.
-///
-/// Un manifiesto puede omitirlo: el media-spec dice que entonces se
-/// infiere, y `helm push` lo omite. La inferencia es estructural y solo usa
-/// tipos que este registro sirve.
-fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure> {
-    let manifest: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|_| OciFailure::unavailable("the manifest of the upstream is not readable"))?;
-    match manifest.get("mediaType").and_then(|value| value.as_str()) {
-        Some(media_type) => Ok(media_type.to_string()),
-        None => {
-            let kind = if manifest.get("manifests").is_some() {
-                "application/vnd.oci.image.index.v1+json"
-            } else {
-                "application/vnd.oci.image.manifest.v1+json"
-            };
-            Ok(kind.to_string())
-        }
-    }
 }
 
 #[cfg(test)]

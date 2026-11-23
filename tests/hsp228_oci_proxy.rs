@@ -1074,14 +1074,15 @@ fn ac2_redirect() {
         || {
             the_report();
             let lab = TheLab::new();
-            the_content(&lab.registry);
+            let (manifest, _) = the_content(&lab.registry);
+            let digest = sha256_of(&manifest);
             lab.registry.elsewhere(&lab.hostile.origin());
             lab.registry.behave(TheBehaviour::Redirect);
             let mut service = lab.start();
             let answer = Curl::call(
                 service.port,
                 "GET",
-                &the_manifest_path(TAG),
+                &the_manifest_path(&format!("sha256:{digest}")),
                 &the_client_token(),
                 None,
                 None,
@@ -1096,8 +1097,13 @@ fn ac2_redirect() {
                     "Una redireccion a otro origen no lleva la credencial",
                 )
             };
+            // El contenido de un digest **fijado** no se sustituye: lo que
+            // llega de otro origen no es lo que se pidio, y no se sirve.
             if answer.status == 200 {
                 return case().failed("el pull funciono con una redireccion a otro origen");
+            }
+            if answer.body == b"robado".to_vec() {
+                return case().failed("el contenido del otro origen llego al cliente");
             }
             // El origen hostil recibio la peticion, pero **sin** la
             // credencial: la credencial solo viaja a su origen.
@@ -1107,7 +1113,7 @@ fn ac2_redirect() {
                 }
             }
             case()
-                .command("curl /v2/oci-proxy/manifests/latest")
+                .command("curl /v2/oci-proxy/manifests/sha256:...")
                 .origin(&lab.registry.origin())
                 .passed()
         },
