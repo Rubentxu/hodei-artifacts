@@ -1002,6 +1002,7 @@ pub struct LabReport {
     budget: Budget,
     cases: Vec<LabCase>,
     expected: Vec<(String, String)>,
+    disclaimer: Vec<String>,
 }
 
 impl LabReport {
@@ -1013,7 +1014,21 @@ impl LabReport {
             budget: Budget::from_environment(),
             cases: Vec::new(),
             expected: Vec::new(),
+            disclaimer: DISCLAIMER.iter().map(|line| line.to_string()).collect(),
         }
+    }
+
+    /// The title of the report.
+    pub fn set_title(&mut self, title: &str) {
+        self.title = title.to_string();
+    }
+
+    /// What the report does **not** certify.
+    ///
+    /// The disclaimer belongs to the suite: a suite that talks to a real
+    /// client cannot use the disclaimer of one that talks to none.
+    pub fn set_disclaimer(&mut self, lines: &[&str]) {
+        self.disclaimer = lines.iter().map(|line| line.to_string()).collect();
     }
 
     /// The cases that a complete run has to execute.
@@ -1046,6 +1061,10 @@ impl LabReport {
     ///
     /// The variable of the environment wins, so that a run can keep its
     /// report somewhere else without touching the code.
+    ///
+    /// Without it, the name comes from the **test binary** that is
+    /// running: every suite writes its own report, and two suites do
+    /// not overwrite each other's report.
     pub fn the_path() -> PathBuf {
         std::env::var_os("HODEI_LAB_REPORT")
             .map(PathBuf::from)
@@ -1053,7 +1072,7 @@ impl LabReport {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                     .join("target")
                     .join("uat")
-                    .join("hsp223-registry-lab.json")
+                    .join(the_report_name())
             })
     }
 
@@ -1105,7 +1124,7 @@ impl LabReport {
         let cases = self.effective_cases();
         let document = Document {
             title: self.title.clone(),
-            disclaimer: DISCLAIMER.iter().map(|line| line.to_string()).collect(),
+            disclaimer: self.disclaimer.clone(),
             semantics: SEMANTICS.to_string(),
             moment: super::the_moment(),
             service: super::the_version(),
@@ -1142,6 +1161,104 @@ pub fn expect_registry_lab_cases(expected: &[(&str, &str)]) {
         .lock()
         .expect("the report of the laboratory");
     report.expect_cases(expected);
+}
+
+/// Declares the title and the disclaimer of the report of this suite.
+///
+/// The disclaimer is what the report does **not** certify, and it belongs
+/// to the suite: a suite that talks to a real client cannot use the
+/// disclaimer of one that talks to none.
+pub fn describe_registry_lab(title: &str, disclaimer: &[&str]) {
+    let mut report = the_registry_lab_report()
+        .lock()
+        .expect("the report of the laboratory");
+    report.set_title(title);
+    report.set_disclaimer(disclaimer);
+}
+
+/// Runs a case of the laboratory of the registry.
+///
+/// The cases that a complete run has to execute are declared **before**
+/// the case runs, so that a run which only reached some of them says so:
+/// the ones that did not run count as `NOT_RUN`, and the report is never
+/// green.
+///
+/// The case itself is **inscribed before it runs**, with `NOT_RUN`, and
+/// replaced when it ends: a case that dies in the middle leaves a
+/// `NOT_RUN` in the report, and a panic leaves a `FAIL` with its cause.
+/// The panic is resumed afterwards, so that the suite still fails: a
+/// laboratory that swallows the failure is not a laboratory.
+pub fn run_registry_lab_case(
+    expected: &[(&str, &str)],
+    id: &str,
+    title: &str,
+    scope: Scope,
+    expectation: Expectation,
+    body: impl FnOnce() -> LabCase,
+) {
+    expect_registry_lab_cases(expected);
+    record_registry_lab(
+        LabCase::new(id, title)
+            .scope(scope)
+            .expecting(expectation)
+            .not_run("iniciado"),
+    );
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
+    match outcome {
+        Ok(mut case) => {
+            // The scope and the expectation are declared by the caller:
+            // what the case measured does not depend on how the case
+            // built itself.
+            case.scope = scope;
+            case.expectation = expectation;
+            record_registry_lab(case)
+        }
+        Err(panic) => {
+            let cause = the_cause_of_the_panic(&panic);
+            record_registry_lab(
+                LabCase::new(id, title)
+                    .scope(scope)
+                    .expecting(expectation)
+                    .failed(cause),
+            );
+            std::panic::resume_unwind(panic);
+        }
+    }
+}
+
+/// The message of a panic.
+fn the_cause_of_the_panic(panic: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "the case panicked without a message".to_string()
+    }
+}
+
+/// The name of the report of the suite that is running.
+///
+/// Cargo names a test binary `<target>-<hash>`, and the hash is
+/// hexadecimal: what the report is about is the target, not the hash.
+/// A binary that does not follow that shape keeps its whole name.
+fn the_report_name() -> String {
+    let stem = std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            exe.file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "registry-lab".to_string());
+    let name = match stem.rsplit_once('-') {
+        Some((name, hash))
+            if hash.len() == 16 && hash.chars().all(|character| character.is_ascii_hexdigit()) =>
+        {
+            name.to_string()
+        }
+        _ => stem,
+    };
+    format!("{}.json", name.replace('_', "-"))
 }
 
 /// The report of the laboratory of the registry, shared by its cases.

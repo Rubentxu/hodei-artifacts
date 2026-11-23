@@ -228,6 +228,7 @@ pipeline {
                         "--test hsp104_gc_e2e",
                         "--test hsp115_recovery_e2e",
                         "--test hsp223_registry_lab",
+                        "--test hsp224_maven_central_real",
                         "--test hsp105_trust_e2e",
                         "--test hsp106_proxy_e2e",
                         "--test hsp107_proxy_cache_e2e",
