@@ -106,6 +106,7 @@ struct World {
     docs: Mutex<HashMap<String, Doc>>,
     failing: AtomicBool,
     seen: Mutex<Vec<Seen>>,
+    required: Mutex<Option<String>>,
 }
 
 /// A local HTTP upstream that counts what it is asked.
@@ -133,6 +134,7 @@ impl Upstream {
             docs: Mutex::new(HashMap::new()),
             failing: AtomicBool::new(false),
             seen: Mutex::new(Vec::new()),
+            required: Mutex::new(None),
         });
         let live = Arc::new(AtomicBool::new(true));
         let shared = Arc::clone(&world);
@@ -197,6 +199,29 @@ impl Upstream {
     /// Makes the upstream answer with an error to everything.
     pub fn fail(&self, failing: bool) {
         self.world.failing.store(failing, Ordering::SeqCst);
+    }
+
+    /// The credential that the upstream **demands**.
+    ///
+    /// An upstream that demands a credential answers with a `401` to
+    /// anybody that does not bring exactly that one: a case that wants to
+    /// measure that a credential travels has to be able to tell "the
+    /// credential arrived" from "the credential did not".
+    pub fn require_authorization(&self, value: &str) {
+        self.world
+            .required
+            .lock()
+            .expect("the credential of the upstream")
+            .replace(value.to_string());
+    }
+
+    /// Whether the upstream is accepting connections.
+    ///
+    /// It is the proof that an upstream is **gone**: a counter that does
+    /// not grow when the port is closed proves nothing, because it could
+    /// not grow anyway.
+    pub fn accepts_connections(&self) -> bool {
+        std::net::TcpStream::connect(("127.0.0.1", self.port)).is_ok()
     }
 
     /// **Disconnects** the upstream: it stops accepting connections.
@@ -287,6 +312,7 @@ fn serve(mut stream: TcpStream, world: &World) {
         .trim_start_matches('/')
         .to_string();
     let if_none_match = header_of(&text, "if-none-match");
+    let authorization = header_of(&text, "authorization");
     world
         .seen
         .lock()
@@ -294,7 +320,7 @@ fn serve(mut stream: TcpStream, world: &World) {
         .push(Seen {
             path: path.clone(),
             method,
-            authorization: header_of(&text, "authorization"),
+            authorization: authorization.clone(),
             if_none_match: if_none_match.clone(),
         });
 
@@ -304,9 +330,26 @@ fn serve(mut stream: TcpStream, world: &World) {
         .expect("the documents of the upstream")
         .get(&path)
         .cloned();
+    let required = world
+        .required
+        .lock()
+        .expect("the credential of the upstream")
+        .clone();
     let response: Vec<u8> = if world.failing.load(Ordering::SeqCst) {
         b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             .to_vec()
+    } else if let Some(required) = required
+        && authorization.as_deref() != Some(required.as_str())
+    {
+        // The credential is not the one that the upstream demands.
+        let body = b"the credential is not valid";
+        let mut out = format!(
+            "HTTP/1.1 401 Unauthorized\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        out.extend_from_slice(body);
+        out
     } else if let Some(doc) = doc {
         the_response(&doc, if_none_match.as_deref())
     } else {
@@ -410,6 +453,21 @@ impl Outcome {
     }
 }
 
+/// What a case measures.
+///
+/// A case that measures the **harness** says nothing about the product:
+/// it says that the laboratory counts what it says it counts. Mixing the
+/// two in one summary would let a green harness dress a product that was
+/// never measured.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    /// The case measures the product: the registry, as it is.
+    Product,
+    /// The case measures the harness: the laboratory itself.
+    Harness,
+}
+
 /// A case of the laboratory.
 #[derive(Clone, Debug, Serialize)]
 pub struct LabCase {
@@ -417,6 +475,8 @@ pub struct LabCase {
     pub id: String,
     /// What the case is about.
     pub title: String,
+    /// What the case measures: the product or the harness.
+    pub scope: Scope,
     /// What the case was measuring.
     pub expectation: Expectation,
     /// The command that carried the case out.
@@ -443,6 +503,7 @@ impl LabCase {
         Self {
             id: id.to_string(),
             title: title.to_string(),
+            scope: Scope::Product,
             expectation: Expectation::Succeeds,
             command: String::new(),
             result: Outcome::NotRun,
@@ -451,6 +512,12 @@ impl LabCase {
             origin: None,
             sha256: None,
         }
+    }
+
+    /// The case, with what it measures.
+    pub fn scope(mut self, scope: Scope) -> Self {
+        self.scope = scope;
+        self
     }
 
     /// The case, with what it was measuring.
@@ -570,6 +637,19 @@ impl Summary {
             green: unexpected_failures == 0 && not_run == 0 && pass > 0,
             complete: not_run == 0,
         }
+    }
+
+    /// The summary of the cases that measure one thing.
+    ///
+    /// The harness and the product are counted apart: a laboratory that
+    /// counts well does not certify a registry that was never measured.
+    pub fn of_scope(cases: &[LabCase], scope: Scope) -> Self {
+        let cases: Vec<LabCase> = cases
+            .iter()
+            .filter(|case| case.scope == scope)
+            .cloned()
+            .collect();
+        Self::of(&cases)
     }
 
     /// The cases that may be counted as green.
@@ -781,6 +861,13 @@ impl HomeSnapshot {
     /// what else the machine is doing: a file that another process wrote
     /// elsewhere in the HOME does not change it, and a file that the
     /// laboratory wrote does.
+    ///
+    /// It is not, all the same, a certificate of anything: the HOME of a
+    /// person is a directory that **other processes write to**, and a
+    /// fingerprint compared before and after a run can blame the
+    /// laboratory for the traffic of the machine. The proof that the
+    /// laboratory did not touch the HOME is the environment of the
+    /// service, not a number.
     pub fn fingerprint(&self) -> (usize, u64) {
         let files: Vec<_> = self.entries.values().filter(|(_, _, file)| *file).collect();
         (files.len(), files.iter().map(|(size, _, _)| size).sum())
@@ -861,6 +948,7 @@ pub const DISCLAIMER: &[&str] = &[
     "- **Ni la red real.** Por defecto el laboratorio no sale a la red: el upstream es un servidor local. El modo real es opt-in (`HODEI_LAB_REAL=1`) y esta ejecución no lo ha usado.",
     "- **Ni la disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea: lo que se ha medido es lo que el registro devuelve y lo que el upstream recibe.",
     "- **Ni el borrado de contenido.** El registro no implementa el borrado de blobs, y nada de lo que se ha ejecutado lo ha medido.",
+    "- **Ni el laboratorio.** Los casos de `scope: harness` miden el arnés --el recuento, el presupuesto, el aislamiento-- y no el producto: que el laboratorio cuente bien no dice nada de un registro que no se ha medido. Los dos recuentos van aparte.",
 ];
 
 /// What the outcomes of the report mean.
@@ -870,11 +958,15 @@ pub const SEMANTICS: &str = "\
 dice si ese fallo era el resultado medido --un rechazo que el caso pedía-- \
 o un fallo que nadie pedía.\n\
 - `NOT_RUN`: el caso no se ejecutó. No cuenta como verde, ni ahora ni \
-después: un caso que no se ha ejecutado no ha demostrado nada.\n\
+después: un caso que no se ha ejecutado no ha demostrado nada. Un caso que \
+se inscribió y no llegó a terminar queda `NOT_RUN`, y el que no aparece \
+--porque la ejecución no lo alcanzó-- también.\n\
 - `green`: no hay ningún fallo inesperado y no se ha saltado ningún caso. \
 `expected_failures` son los rechazos que el caso pedía; \
 `unexpected_failures` son los fallos que nadie pedía. `complete` dice si \
-se ha ejecutado todo.";
+se ha ejecutado todo.\n\
+- `scope`: `product` mide el registro; `harness` mide el laboratorio. Los \
+dos recuentos van aparte, y el resumen del arnés no certifica el producto.";
 
 /// The real mode, as the report writes it.
 #[derive(Clone, Debug, Serialize)]
@@ -899,6 +991,8 @@ struct Document {
     real_mode: RealMode,
     cases: Vec<LabCase>,
     summary: Summary,
+    product: Summary,
+    harness: Summary,
 }
 
 /// The report of the laboratory.
@@ -907,6 +1001,7 @@ pub struct LabReport {
     path: PathBuf,
     budget: Budget,
     cases: Vec<LabCase>,
+    expected: Vec<(String, String)>,
 }
 
 impl LabReport {
@@ -917,7 +1012,34 @@ impl LabReport {
             path: Self::the_path(),
             budget: Budget::from_environment(),
             cases: Vec::new(),
+            expected: Vec::new(),
         }
+    }
+
+    /// The cases that a complete run has to execute.
+    ///
+    /// The report describes **a run**, and a run that only reached one
+    /// case has not executed the others: every case that is expected and
+    /// does not appear counts as `NOT_RUN`, and a report with a case that
+    /// did not run is never green.
+    pub fn expect_cases(&mut self, expected: &[(&str, &str)]) {
+        self.expected = expected
+            .iter()
+            .map(|(id, title)| (id.to_string(), title.to_string()))
+            .collect();
+    }
+
+    /// The cases of the run, with the ones that did not run.
+    pub fn effective_cases(&self) -> Vec<LabCase> {
+        let mut cases = self.cases.clone();
+        for (id, title) in &self.expected {
+            if !cases.iter().any(|case| &case.id == id) {
+                cases.push(
+                    LabCase::new(id, title).not_run("the case did not run in this execution"),
+                );
+            }
+        }
+        cases
     }
 
     /// Where the report is written.
@@ -940,14 +1062,14 @@ impl LabReport {
         self.budget
     }
 
+    /// The summary of the run.
+    pub fn summary(&self) -> Summary {
+        Summary::of(&self.effective_cases())
+    }
+
     /// The cases of the run.
     pub fn cases(&self) -> &[LabCase] {
         &self.cases
-    }
-
-    /// The summary of the run.
-    pub fn summary(&self) -> Summary {
-        Summary::of(&self.cases)
     }
 
     /// Notes a case and writes the report.
@@ -980,6 +1102,7 @@ impl LabReport {
 
     /// The report, as JSON.
     pub fn as_json(&self) -> String {
+        let cases = self.effective_cases();
         let document = Document {
             title: self.title.clone(),
             disclaimer: DISCLAIMER.iter().map(|line| line.to_string()).collect(),
@@ -992,11 +1115,33 @@ impl LabReport {
                 max_bytes: self.budget.max_bytes,
                 max_seconds: self.budget.max_seconds,
             },
-            cases: self.cases.clone(),
-            summary: self.summary(),
+            summary: Summary::of(&cases),
+            product: Summary::of_scope(&cases, Scope::Product),
+            harness: Summary::of_scope(&cases, Scope::Harness),
+            cases,
         };
         serde_json::to_string_pretty(&document).expect("the report is json")
     }
+}
+
+/// Notes a case in the report of the laboratory of the registry.
+pub fn record_registry_lab(case: LabCase) {
+    let mut report = the_registry_lab_report()
+        .lock()
+        .expect("the report of the laboratory");
+    report.record(case);
+}
+
+/// Declares the cases that a complete run has to execute.
+///
+/// The declaration is what makes a partial run visible: a case that the
+/// run did not reach counts as `NOT_RUN`, and a report with a case that
+/// did not run is never green.
+pub fn expect_registry_lab_cases(expected: &[(&str, &str)]) {
+    let mut report = the_registry_lab_report()
+        .lock()
+        .expect("the report of the laboratory");
+    report.expect_cases(expected);
 }
 
 /// The report of the laboratory of the registry, shared by its cases.
@@ -1006,12 +1151,4 @@ static REGISTRY_LAB_REPORT: OnceLock<Mutex<LabReport>> = OnceLock::new();
 pub fn the_registry_lab_report() -> &'static Mutex<LabReport> {
     REGISTRY_LAB_REPORT
         .get_or_init(|| Mutex::new(LabReport::new("Laboratorio del registro — informe")))
-}
-
-/// Notes a case in the report of the laboratory of the registry.
-pub fn record_registry_lab(case: LabCase) {
-    let mut report = the_registry_lab_report()
-        .lock()
-        .expect("the report of the laboratory");
-    report.record(case);
 }
