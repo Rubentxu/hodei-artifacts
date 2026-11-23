@@ -21,4 +21,6 @@ pub mod audit_outbox;
 pub mod surreal;
 
 pub use audit_outbox::{AUDIT_OUTBOX_TABLE, AuditRow, SurrealAuditOutbox};
-pub use surreal::{SCHEMA_VERSION, SurrealCatalogStore, the_guard_fetch};
+pub use surreal::{
+    SCHEMA_VERSION, SurrealCatalogStore, the_assets_under_read, the_guard_fetch, the_prefix_end,
+};
