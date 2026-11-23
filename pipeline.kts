@@ -233,6 +233,7 @@ pipeline {
                         "--test hsp225_npm_registry_real",
                         "--test hsp226_pypi_registry_real",
                         "--test hsp227_raw_external",
+                        "--test hsp228_oci_proxy",
                         "--test hsp105_trust_e2e",
                         "--test hsp106_proxy_e2e",
                         "--test hsp107_proxy_cache_e2e",

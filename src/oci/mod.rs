@@ -29,6 +29,7 @@
 //! habla dos idiomas.
 
 pub mod failure;
+pub mod proxy;
 pub mod push;
 pub mod query;
 pub mod target;
@@ -131,7 +132,7 @@ pub async fn the_repository(
             if !matches!(
                 descriptor.format,
                 RepositoryFormat::Raw | RepositoryFormat::Oci | RepositoryFormat::Helm
-            ) || descriptor.mode != RepositoryMode::Hosted =>
+            ) || !descriptor.serves_the_distribution() =>
         {
             Err(OciFailure::name_unknown(format!(
                 "the repository {name:?} is not known to this account"
@@ -143,6 +144,28 @@ pub async fn the_repository(
             format!("the repository {name:?} is not known to this account"),
         )),
         Err(_other) => Err(OciFailure::unavailable("the catalog is not available")),
+    }
+}
+
+/// Si el repositorio lo sirve esta superficie.
+///
+/// Un repositorio **hosted** de un formato de la distribucion se sirve
+/// siempre. Un repositorio **proxy** solo si su formato es de imagen o de
+/// chart: un proxy crudo lo sirve la superficie cruda, y un proxy de otro
+/// formato no significa nada en la distribucion.
+trait ServesTheDistribution {
+    fn serves_the_distribution(&self) -> bool;
+}
+
+impl ServesTheDistribution for RepositoryDescriptor {
+    fn serves_the_distribution(&self) -> bool {
+        match self.mode {
+            RepositoryMode::Hosted => true,
+            RepositoryMode::Proxy => {
+                matches!(self.format, RepositoryFormat::Oci | RepositoryFormat::Helm)
+            }
+            RepositoryMode::Group => false,
+        }
     }
 }
 

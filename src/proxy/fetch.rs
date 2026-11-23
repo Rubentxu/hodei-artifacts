@@ -29,9 +29,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
 use hodei_catalog::{ChecksumEvidence, CredentialRef, UpstreamConfig, origin_of};
 use reqwest::header::{
     ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_ENCODING, HeaderValue, LOCATION,
+    WWW_AUTHENTICATE,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use url::{Host, Url};
@@ -175,6 +177,12 @@ pub enum FetchError {
     /// La credencial configurada no esta disponible.
     #[error("the credential of the upstream is not available")]
     Credential,
+    /// El upstream pide autenticacion y el reto no se puede satisfacer.
+    ///
+    /// El reto va dentro porque es lo que dice **como** autenticarse: sin
+    /// el, quien recibe el error no puede ni mirar el realm.
+    #[error("the upstream asks for a credential: {0}")]
+    Unauthorized(String),
     /// Hay demasiadas salidas a la vez.
     #[error("too many fetches are in flight")]
     Busy,
@@ -208,6 +216,45 @@ pub enum Fetched {
     /// El upstream confirma que el contenido que se tiene sigue valiendo
     /// (`304`): no hay cuerpo.
     NotModified(NotModified),
+    /// El upstream pide autenticacion (`401`): el reto dice como pedirla.
+    ///
+    /// El reto **no** se sigue a ciegas: quien lo recibe decide si el realm
+    /// que nombra es el que la configuracion declara. Un reto que apunta a
+    /// otro sitio no recibe ninguna credencial.
+    Unauthorized {
+        /// El valor de la cabecera `WWW-Authenticate`, si el upstream la mando.
+        challenge: Option<String>,
+    },
+}
+
+/// Una credencial y el origen al que puede viajar.
+///
+/// La credencial y su origen van juntos: una credencial sin origen es una
+/// credencial que puede acabar en cualquier sitio, y eso es exactamente lo
+/// que un redirect hostil tries.
+#[derive(Debug)]
+struct TheCredential<'a> {
+    /// De que credencial se trata.
+    kind: TheCredentialKind<'a>,
+    /// El origen que la puede recibir: esquema, host y puerto, exactos.
+    origin: &'a str,
+}
+
+/// De que credencial se trata.
+#[derive(Debug)]
+enum TheCredentialKind<'a> {
+    /// La credencial del upstream, como `Bearer`.
+    Bearer(&'a Secret),
+    /// La credencial del upstream, como basica: la que se manda al realm
+    /// del reto.
+    Basic {
+        /// El usuario, que es informativo.
+        user: &'a str,
+        /// La contrasena.
+        password: &'a Secret,
+    },
+    /// Un token ya obtenido del realm del reto.
+    Token(&'a str),
 }
 
 /// La confirmacion de un `304`.
@@ -313,6 +360,10 @@ impl ProxyFetcher {
             // Sin validadores no hay nada que confirmar: un `304` no
             // solicitado es una respuesta que no es un contenido.
             Fetched::NotModified(_) => Err(FetchError::Status(304)),
+            // Un reto no es un contenido: quien llama tiene que resolverlo.
+            Fetched::Unauthorized { challenge } => {
+                Err(FetchError::Unauthorized(challenge.unwrap_or_default()))
+            }
         }
     }
 
@@ -350,6 +401,28 @@ impl ProxyFetcher {
         accept: Option<&str>,
         validators: Option<&Validators>,
     ) -> Result<Fetched, FetchError> {
+        self.open_conditional_with_token(upstream, url, accept, validators, None)
+            .await
+    }
+
+    /// Como [`Self::open_conditional_at`], pero con un **token** que ya se
+    /// tiene.
+    ///
+    /// El token es el que el upstream pidio en su reto: viaja como `Bearer`
+    /// y **solo** al origen del upstream. Un token es una credencial, y una
+    /// credencial que viaja a un origen al que una redireccion lleva es una
+    /// credencial filtrada.
+    ///
+    /// Sin token, la credencial que viaja es la que declara la
+    /// configuracion del upstream, tambien solo a su origen.
+    pub async fn open_conditional_with_token(
+        &self,
+        upstream: &UpstreamConfig,
+        url: Url,
+        accept: Option<&str>,
+        validators: Option<&Validators>,
+        token: Option<&str>,
+    ) -> Result<Fetched, FetchError> {
         if self.offline {
             return Err(FetchError::Offline);
         }
@@ -366,18 +439,37 @@ impl ProxyFetcher {
             .max_bytes
             .map_or(self.limits.max_bytes, |own| own.min(self.limits.max_bytes));
         let upstream_origin = upstream.origin();
+        // El token, si lo hay, manda: es la credencial que el upstream
+        // acaba de pedir. La de la configuracion es la de reserva.
+        let secret = match token {
+            Some(_) => None,
+            None => upstream
+                .credential
+                .as_ref()
+                .and_then(|credential| self.secrets.get(credential)),
+        };
+        let credential = match token {
+            Some(token) => Some(TheCredential {
+                kind: TheCredentialKind::Token(token),
+                origin: &upstream_origin,
+            }),
+            None => secret.as_ref().map(|secret| TheCredential {
+                kind: TheCredentialKind::Bearer(secret),
+                origin: &upstream_origin,
+            }),
+        };
         let mut url = url;
         let mut redirects: u8 = 0;
 
         loop {
             let response = self
                 .hop(
-                    upstream,
                     &upstream_origin,
                     &url,
                     deadline,
                     accept,
                     validators,
+                    credential.as_ref(),
                 )
                 .await?;
             let status = response.status().as_u16();
@@ -385,6 +477,14 @@ impl ProxyFetcher {
                 200 => {
                     return Self::accept(response, url, redirects, budget, permit)
                         .map(|opened| Fetched::Content(Box::new(opened)));
+                }
+                // Un `401` no es un contenido: es un reto. Se devuelve tal
+                // cual, con la cabecera que lo describe, y quien lo recibe
+                // decide si el realm que nombra es el declarado.
+                401 => {
+                    return Ok(Fetched::Unauthorized {
+                        challenge: header_text(&response, WWW_AUTHENTICATE, 512),
+                    });
                 }
                 // Un `304` solo vale de quien recibio los validadores: otro
                 // origen al que llevo un redirect no sabe de que copia habla.
@@ -410,15 +510,81 @@ impl ProxyFetcher {
         }
     }
 
+    /// El secreto del upstream, si la configuracion lo declara y el
+    /// servicio lo permite salir.
+    ///
+    /// Es la credencial que la configuracion nombra, no una credencial
+    /// cualquiera: el nombre sale de `credential_ref` y el secreto sale del
+    /// entorno, y el entorno solo responde a los nombres que el operador ha
+    /// autorizado.
+    pub fn the_credential(&self, upstream: &UpstreamConfig) -> Option<Secret> {
+        upstream
+            .credential
+            .as_ref()
+            .and_then(|credential| self.secrets.get(credential))
+    }
+
+    /// Abre una peticion con la credencial del upstream en forma **basica**.
+    ///
+    /// La credencial solo viaja al origen que se le dice
+    /// (`credential_origin`), que es el que declara la configuracion: el
+    /// realm del reto. Un realm que el upstream invente no recibe la
+    /// credencial, porque quien decide el origen es la configuracion, no la
+    /// respuesta.
+    ///
+    /// La peticion **no** sigue redirecciones: un realm que conteste con una
+    /// redireccion a otro origen se queda sin credencial, y el error lo dice.
+    pub async fn open_with_basic(
+        &self,
+        upstream: &UpstreamConfig,
+        url: Url,
+        credential_origin: &str,
+        user: &str,
+        password: &Secret,
+    ) -> Result<Opened, FetchError> {
+        if self.offline {
+            return Err(FetchError::Offline);
+        }
+        let permit = self
+            .permits
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| FetchError::Busy)?;
+        let deadline = tokio::time::Instant::now() + self.limits.total_timeout;
+        let budget = upstream
+            .max_bytes
+            .map_or(self.limits.max_bytes, |own| own.min(self.limits.max_bytes));
+        let upstream_origin = upstream.origin();
+        let credential = TheCredential {
+            kind: TheCredentialKind::Basic { user, password },
+            origin: credential_origin,
+        };
+        let response = self
+            .hop(
+                &upstream_origin,
+                &url,
+                deadline,
+                Some("application/json"),
+                None,
+                Some(&credential),
+            )
+            .await?;
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(FetchError::Status(status));
+        }
+        Self::accept(response, url, 0, budget, permit)
+    }
+
     /// Una peticion a un destino ya admitido por la politica.
     async fn hop(
         &self,
-        upstream: &UpstreamConfig,
         upstream_origin: &str,
         url: &Url,
         deadline: tokio::time::Instant,
         accept: Option<&str>,
         validators: Option<&Validators>,
+        credential: Option<&TheCredential<'_>>,
     ) -> Result<reqwest::Response, FetchError> {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
@@ -471,13 +637,29 @@ impl ProxyFetcher {
                 accept.unwrap_or("application/octet-stream, */*;q=0.8"),
             )
             .header(ACCEPT_ENCODING, "identity");
-        // La credencial es del upstream: solo viaja a su origen.
-        if let Some(credential) = &upstream.credential
-            && origin_of(url) == upstream_origin
+        // La credencial viaja **solo** al origen para el que es: el del
+        // upstream, o el del realm que la configuracion declara. Un salto a
+        // otro origen --una redireccion, un realm que el upstream invento--
+        // se queda sin credencial.
+        if let Some(credential) = credential
+            && origin_of(url) == credential.origin
         {
-            let secret = self.secrets.get(credential).ok_or(FetchError::Credential)?;
-            let mut value = HeaderValue::from_str(&format!("Bearer {}", secret.expose()))
-                .map_err(|_| FetchError::Credential)?;
+            let mut value = match &credential.kind {
+                TheCredentialKind::Bearer(secret) => {
+                    HeaderValue::from_str(&format!("Bearer {}", secret.expose()))
+                }
+                TheCredentialKind::Token(token) => {
+                    HeaderValue::from_str(&format!("Bearer {token}"))
+                }
+                TheCredentialKind::Basic { user, password } => {
+                    let pair = format!("{user}:{}", password.expose());
+                    HeaderValue::from_str(&format!(
+                        "Basic {}",
+                        base64::engine::general_purpose::STANDARD.encode(pair)
+                    ))
+                }
+            }
+            .map_err(|_| FetchError::Credential)?;
             value.set_sensitive(true);
             request = request.header(AUTHORIZATION, value);
         }

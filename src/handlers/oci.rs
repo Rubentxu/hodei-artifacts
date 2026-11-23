@@ -35,6 +35,7 @@ use crate::oci::target::{Target, the_digest_of_reference, the_target};
 use crate::oci::token::the_realm;
 use crate::oci::{the_catalog, the_content_store, the_context, the_decision, the_repository};
 use crate::public_url::TheOrigin;
+use hodei_catalog::RepositoryMode;
 
 /// Los media types de manifiesto que este registro sirve.
 ///
@@ -112,7 +113,9 @@ pub async fn content(
     // donde `<name>` puede tener niveles (`team/demo`).
     let target = the_target(uri.path())?;
     match target {
-        Target::Blob { name, reference } => blob(&state, &context, &name, &reference, head).await,
+        Target::Blob { name, reference } => {
+            blob(&state, &context, &name, &reference, &headers, head).await
+        }
         Target::Manifest { name, reference } => {
             manifest(&state, &context, &name, &reference, &headers, head).await
         }
@@ -150,6 +153,7 @@ async fn blob(
     context: &hodei_authz::VerifiedContext,
     name: &str,
     reference: &str,
+    headers: &HeaderMap,
     head: bool,
 ) -> Result<Response, OciFailure> {
     let digest = the_digest_of_reference(reference)?;
@@ -161,6 +165,21 @@ async fn blob(
         crate::actions::download_asset(),
         &repository,
     )?;
+
+    // Un repositorio proxy no guarda lo que se publico en el: lo trae de
+    // un upstream, con las reglas de la distribucion por delante.
+    if repository.mode == RepositoryMode::Proxy {
+        return crate::oci::proxy::the_blob(
+            state,
+            context,
+            &repository,
+            name,
+            &digest,
+            headers,
+            head,
+        )
+        .await;
+    }
 
     // La fila del asset es la referencia: sin ella, el blob no es
     // contenido de este repositorio, esten sus bytes donde esten.
@@ -244,6 +263,21 @@ async fn manifest(
         crate::actions::download_asset(),
         &repository,
     )?;
+
+    // Un repositorio proxy no guarda lo que se publico en el: lo trae de
+    // un upstream, con las reglas de la distribucion por delante.
+    if repository.mode == RepositoryMode::Proxy {
+        return crate::oci::proxy::the_manifest(
+            state,
+            context,
+            &repository,
+            name,
+            reference,
+            headers,
+            head,
+        )
+        .await;
+    }
 
     let (reader, _) = the_catalog(state)?;
 
@@ -358,7 +392,7 @@ fn the_admission_failure(
 /// El manifiesto es la verdad de que es: si declara un tipo que este
 /// registro no sirve, la peticion falla con el error OCI de manifiesto
 /// desconocido, y no con un 200 que finge ser lo que el cliente pidio.
-fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure> {
+pub(crate) fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure> {
     let declared = serde_json::from_slice::<serde_json::Value>(bytes)
         .ok()
         .and_then(|manifest| {
@@ -461,7 +495,7 @@ fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool
 /// (RFC 9110, seccion 12.5.1), y un tipo rechazado es un tipo que no se
 /// puede servir. Sin esto, un `Accept: */*;q=0`--que es un "no acepto
 /// nada"--serviria cualquier manifiesto.
-fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> {
+pub(crate) fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> {
     let mut there_is_an_accept = false;
     let mut asked: Vec<&str> = Vec::new();
     for value in headers.get_all(header::ACCEPT).iter() {

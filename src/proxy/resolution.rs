@@ -55,6 +55,24 @@ pub struct Resolution<'a> {
     pub correlation_id: &'a str,
     /// El `Accept` que se pide al upstream, si es distinto del de siempre.
     pub accept: Option<&'a str>,
+    /// Un token que el upstream ya pidio y que viaja como `Bearer`.
+    ///
+    /// Solo lo usa la superficie OCI, cuyo upstream puede pedir un token en
+    /// su reto. El token viaja **solo** al origen del upstream.
+    pub authorization: Option<&'a str>,
+    /// El digest que el contenido **tiene** que tener.
+    ///
+    /// Lo usa la superficie OCI, donde la identidad del contenido es el
+    /// digest: un manifiesto pedido por `sha256:...` que llega con otros
+    /// bytes no es el que se pidio, y no se publica.
+    pub expect_digest: Option<&'a str>,
+    /// El prefijo de la ruta del asset, cuando la ruta **es** el digest.
+    ///
+    /// La superficie OCI guarda el manifiesto en `manifests/<digest>` y el
+    /// blob en `blobs/<digest>`, y el recibo tiene que ir ahi: un recibo en
+    /// la ruta por la que se pidio --una etiqueta-- no respalda el contenido
+    /// que hay, y el contenido sin respaldo no se sirve sin red.
+    pub digest_path_prefix: Option<&'a str>,
 }
 
 /// Un contenido resuelto y verificado.
@@ -143,10 +161,23 @@ pub async fn resolve_url(
         (!validators.is_empty()).then_some(validators)
     });
     let fetched = fetcher
-        .open_conditional_at(request.upstream, url, request.accept, validators.as_ref())
+        .open_conditional_with_token(
+            request.upstream,
+            url,
+            request.accept,
+            validators.as_ref(),
+            request.authorization,
+        )
         .await?;
     let mut opened = match fetched {
         Fetched::Content(opened) => *opened,
+        // El upstream pide una credencial y no hay ninguna todavia: quien
+        // llama tiene que resolver el reto antes de volver a intentarlo. El
+        // reto viaja en el error, que es donde se lee lo que dice el
+        // upstream sobre como autenticarse.
+        Fetched::Unauthorized { challenge } => {
+            return Err(FetchError::Unauthorized(challenge.unwrap_or_default()).into());
+        }
         Fetched::NotModified(confirmation) => {
             // Un `304` solo se acepta si se enviaron validadores: sin
             // `known` no hay a que referirlo.
@@ -157,7 +188,7 @@ pub async fn resolve_url(
                 id: format!("prv-{}", uuid::Uuid::new_v4()),
                 account: request.account.to_string(),
                 repository: request.repository.to_string(),
-                asset_path: request.asset_path.to_string(),
+                asset_path: the_asset_path(request, &known.digest.value),
                 upstream_id: request.upstream.id.clone(),
                 source_url: confirmation.source_url,
                 config_version: request.config_version,
@@ -219,11 +250,47 @@ pub async fn resolve_url(
         }
     };
 
+    // El digest esperado: el contenido tiene que **ser** el que se pidio.
+    //
+    // La superficie OCI lo necesita: el manifiesto pedido por `sha256:...`
+    // que llega con otros bytes no es el que se pidio, y un contenido que
+    // no es el pedido no se publica --ni se sirve, ni queda con recibo que
+    // lo respalde. Se retiene, y el recibo lo dice.
+    if let Some(expected) = request.expect_digest
+        && expected != computed.value
+    {
+        let _ = session.abort().await;
+        let receipt = ProvenanceReceipt {
+            id: format!("prv-{}", uuid::Uuid::new_v4()),
+            account: request.account.to_string(),
+            repository: request.repository.to_string(),
+            // El recibo va a la ruta del contenido **pedido**: es el que
+            // tiene que saber que lo que se ofrecio no era lo suyo.
+            asset_path: the_asset_path(request, expected),
+            upstream_id: request.upstream.id.clone(),
+            source_url: opened.source_url(),
+            config_version: request.config_version,
+            digest: computed.clone(),
+            size_bytes: verified.size_bytes,
+            checksum: verified.evidence.clone(),
+            status: 200,
+            redirects: opened.redirects(),
+            etag: opened.etag().map(str::to_string),
+            last_modified: opened.last_modified().map(str::to_string),
+            outcome: ReceiptOutcome::Quarantined,
+            actor: request.actor.to_string(),
+            correlation_id: request.correlation_id.to_string(),
+            fetched_at: Utc::now(),
+        };
+        ledger.record(&receipt).await?;
+        return Ok(Outcome::Quarantined(receipt));
+    }
+
     let mut receipt = ProvenanceReceipt {
         id: format!("prv-{}", uuid::Uuid::new_v4()),
         account: request.account.to_string(),
         repository: request.repository.to_string(),
-        asset_path: request.asset_path.to_string(),
+        asset_path: the_asset_path(request, &computed.value),
         upstream_id: request.upstream.id.clone(),
         source_url: opened.source_url(),
         config_version: request.config_version,
@@ -284,4 +351,18 @@ pub async fn resolve_url(
         size_bytes: verified.size_bytes,
         receipt,
     }))
+}
+
+/// La ruta del asset que respalda el recibo.
+///
+/// Cuando la ruta **es** el digest del contenido --como en la superficie
+/// OCI, donde el manifiesto vive en `manifests/<digest>`-- el recibo va ahi
+/// y no a la ruta por la que se pidio: un recibo en la ruta de una etiqueta
+/// no respalda el contenido que hay, y el contenido sin respaldo no se
+/// sirve sin red.
+fn the_asset_path(request: &Resolution<'_>, digest: &str) -> String {
+    match request.digest_path_prefix {
+        Some(prefix) => format!("{prefix}/{digest}"),
+        None => request.asset_path.to_string(),
+    }
 }

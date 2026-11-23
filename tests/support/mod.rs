@@ -2608,6 +2608,8 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::Go
             } else if repository["format"].as_str() == Some("nuget") {
                 hodei_catalog::RepositoryFormat::NuGet
+            } else if repository["format"].as_str() == Some("oci") {
+                hodei_catalog::RepositoryFormat::Oci
             } else if repository["format"].as_str() == Some("helm") {
                 hodei_catalog::RepositoryFormat::Helm
             } else if repository["format"].as_str() == Some("apt") {
