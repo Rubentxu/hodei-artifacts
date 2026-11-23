@@ -24,9 +24,69 @@ pub const EVIDENCE_TABLE: &str = "evidence";
 /// evidence grew.
 pub const EVIDENCE_INDEX_TABLE: &str = "evidence_external";
 
+/// The table the subject entries of the evidence live in.
+///
+/// One row per pair of subject and record of evidence, written next to the
+/// record in the same transaction. It is the entry the read of one subject
+/// walks: asking the evidence table itself (`subjects CONTAINS $subject`)
+/// cannot be answered by an index, because the planner binds only the
+/// equality of the account and filters the containment row by row -- the
+/// read of the trust capsule then grew with the size of the evidence and
+/// not with the evidence the subject holds (211 ms at 100k records, 16.1 s
+/// at 1M). The pair table is read by equality on the account and the
+/// subject, both bound into the index, and the records it names are read
+/// by identity: two reads, and no scan.
+pub const EVIDENCE_SUBJECT_TABLE: &str = "evidence_subject";
+
 /// Escapes a part of a record identifier.
 fn escape_id_part(value: &str) -> String {
     value.replace('~', "~0").replace(':', "~1")
+}
+
+/// The statement that reads the entries of one subject.
+///
+/// Both predicates are equalities over the fields the index of the pair
+/// table covers, so the planner binds them both into the index read: the
+/// plan is a bounded read of the entries the account and the subject name,
+/// whatever the evidence table holds. Exposed so the contract test plans
+/// exactly the statement the store runs, instead of restating it.
+pub fn the_subject_pair_read() -> &'static str {
+    "SELECT VALUE evidence_id FROM type::table($table) \
+     WHERE account = $account AND subject = $subject"
+}
+
+/// The statement that reads the records a list of entries names.
+///
+/// The identifiers are record identities, bound as the array the statement
+/// reads: a fetch by identity, and no scan of the evidence table. Exposed
+/// for the same reason as `the_subject_pair_read`.
+pub fn the_subject_records_read() -> &'static str {
+    "SELECT * FROM $ids"
+}
+
+/// The statement that writes one record of evidence, its external index
+/// entry and its subject pairs, as one batch.
+///
+/// In SurrealDB every statement commits by itself, so an unwrapped batch
+/// does not have one frontier of commit: a crash between statements would
+/// leave the index naming a record that is not there, or a record without
+/// the entries its subjects walk. The batch is wrapped in `BEGIN
+/// TRANSACTION` / `COMMIT TRANSACTION`, so it all lands or none of it
+/// does -- and when one statement fails, the transaction aborts and
+/// nothing of the batch is left behind. Exposed so the contract test
+/// asserts on exactly the statement the store sends, instead of
+/// restating it.
+pub fn the_evidence_put_statement(subjects: usize) -> String {
+    let mut sql = String::from("BEGIN TRANSACTION;\n");
+    sql.push_str("UPSERT $id CONTENT $content;\n");
+    sql.push_str("UPSERT $index_id CONTENT $index;\n");
+    for position in 0..subjects {
+        sql.push_str(&format!(
+            "UPSERT $pair_{position}_id CONTENT $pair_{position};\n"
+        ));
+    }
+    sql.push_str("COMMIT TRANSACTION;\n");
+    sql
 }
 
 /// The entry of the external index, as it is stored.
@@ -90,6 +150,21 @@ pub struct SurrealEvidenceStore<C: Connection> {
     db: Arc<Surreal<C>>,
 }
 
+/// One entry of the subject table: a pair of subject and record.
+///
+/// The account and the subject are kept as fields -- not folded into the
+/// record identifier -- because the read of one subject asks for them by
+/// equality, and the index that answers it covers exactly these fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubjectRow {
+    /// The account the evidence belongs to.
+    pub account: String,
+    /// The subject the evidence speaks about.
+    pub subject: String,
+    /// The identity of the record of evidence.
+    pub evidence_id: String,
+}
+
 impl<C: Connection> SurrealEvidenceStore<C> {
     /// A store over a database.
     pub fn new(db: Arc<Surreal<C>>) -> Self {
@@ -112,6 +187,22 @@ impl<C: Connection> SurrealEvidenceStore<C> {
             ),
         ))
     }
+
+    /// The identifier of the entry of one subject.
+    ///
+    /// The identity of the entry is the pair it holds, so storing the same
+    /// evidence twice writes the same entry: the write stays idempotent.
+    fn subject_id(account: &str, subject: &str, evidence_id: &str) -> surrealdb::sql::Thing {
+        surrealdb::sql::Thing::from((
+            EVIDENCE_SUBJECT_TABLE.to_string(),
+            format!(
+                "{}~{}~{}",
+                escape_id_part(account),
+                escape_id_part(subject),
+                escape_id_part(evidence_id)
+            ),
+        ))
+    }
 }
 
 #[async_trait::async_trait]
@@ -124,20 +215,37 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
         let row = row_from(&evidence);
         let mut attempts = 0;
         loop {
-            // The record and the entry of the external index go together,
-            // in one transaction: the index never points at a record that
-            // is not there.
+            // The record, the entry of the external index and the entries
+            // of its subjects go together, in one transaction: the indexes
+            // never name a record that is not there.
             let index = IndexRow {
                 producer_id: evidence.producer().id.clone(),
                 external_id: evidence.source().external_id.clone().unwrap_or_default(),
                 evidence_id: evidence.id().as_str().to_string(),
             };
-            let written = self
+            // One entry per subject the record speaks about. The subjects
+            // of a record are few, and each entry is an upsert over its
+            // own identity, so a repetition of the record rewrites the
+            // same entries and the write stays idempotent.
+            let subjects: Vec<(surrealdb::sql::Thing, SubjectRow)> = evidence
+                .subject_refs()
+                .iter()
+                .map(|subject| {
+                    let subject = subject.to_string();
+                    let entry = SubjectRow {
+                        account: row.account.clone(),
+                        subject: subject.clone(),
+                        evidence_id: evidence.id().as_str().to_string(),
+                    };
+                    (
+                        Self::subject_id(&row.account, &subject, evidence.id().as_str()),
+                        entry,
+                    )
+                })
+                .collect();
+            let mut statement = self
                 .db
-                .query(
-                    "UPSERT $id CONTENT $content; \
-                     UPSERT $index_id CONTENT $index",
-                )
+                .query(the_evidence_put_statement(subjects.len()))
                 .bind(("id", Self::record_id(evidence.id().as_str())))
                 .bind(("content", row.clone()))
                 .bind((
@@ -147,7 +255,13 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
                         evidence.source().external_id.as_deref().unwrap_or_default(),
                     ),
                 ))
-                .bind(("index", index))
+                .bind(("index", index));
+            for (position, (id, entry)) in subjects.iter().enumerate() {
+                statement = statement
+                    .bind((format!("pair_{position}_id"), id.clone()))
+                    .bind((format!("pair_{position}"), entry.clone()));
+            }
+            let written = statement
                 .await
                 .map_err(|error| StoreError::Unavailable(error.to_string()));
 
@@ -187,21 +301,44 @@ impl<C: Connection> EvidenceStore for SurrealEvidenceStore<C> {
     /// Reads the pieces of evidence that speak about a subject.
     ///
     /// The account is part of the question: the evidence of another
-    /// account never comes back.
+    /// account never comes back. The read is bounded by the subject and
+    /// the account it names, not by the size of the evidence: the entries
+    /// come from the pair table, read by equality with both predicates
+    /// bound into the index, and the records they name are fetched by
+    /// identity. Asking the evidence table itself would filter a
+    /// containment over an array, which the planner answers by reading
+    /// the whole table.
     async fn evidence_of_subject(
         &self,
         account: &str,
         subject: &kernel::Hrn,
     ) -> Result<Vec<EvidenceRecord>, StoreError> {
+        // The entries the account and the subject name. Equality on the
+        // two fields the index covers: the plan is a bounded index read.
         let mut response = self
             .db
-            .query(
-                "SELECT * FROM type::table($table) \
-                 WHERE account = $account AND subjects CONTAINS $subject",
-            )
-            .bind(("table", EVIDENCE_TABLE.to_string()))
+            .query(the_subject_pair_read())
+            .bind(("table", EVIDENCE_SUBJECT_TABLE.to_string()))
             .bind(("account", account.to_string()))
             .bind(("subject", subject.to_string()))
+            .await
+            .map_err(|error| StoreError::Unavailable(error.to_string()))?;
+        let evidence_ids: Vec<String> = response
+            .take(0)
+            .map_err(|error| StoreError::InvalidRecord(error.to_string()))?;
+
+        // The records themselves, by identity: a fetch of the named
+        // records, and no scan of the evidence table. A record whose row
+        // cannot be read back is dropped, as every read of this store
+        // does: corrupt evidence never comes back as evidence.
+        let ids: Vec<surrealdb::sql::Thing> = evidence_ids
+            .iter()
+            .map(|evidence_id| Self::record_id(evidence_id))
+            .collect();
+        let mut response = self
+            .db
+            .query(the_subject_records_read())
+            .bind(("ids", ids))
             .await
             .map_err(|error| StoreError::Unavailable(error.to_string()))?;
         let rows: Vec<EvidenceRow> = response

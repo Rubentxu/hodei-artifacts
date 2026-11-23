@@ -25,6 +25,7 @@ members = [
     "crates/hodei-catalog",
     "crates/hodei-catalog-storage",
     "crates/hodei-audit",
+    "crates/hodei-export-tool",
     "crates/hodei-investigator",
     "crates/hodei-investigator-storage",
     "crates/hodei-simulation",
@@ -32,6 +33,7 @@ members = [
     "crates/hodei-counterfactual",
     "crates/hodei-hub-s3",
     "crates/hodei-spike-ladybug",
+    "crates/hodei-graph-client",
     ".",
 ]
 exclude = [

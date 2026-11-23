@@ -1,5 +1,9 @@
 //! Los repositorios virtuales (grupos) de HSP-108 / HAR-14, contra el wire.
 //!
+//! La superficie que ejercita es la del formato **raw**: los miembros del
+//! grupo son raw hosted y raw proxy, y el grupo resuelve en ellos en
+//! orden, que es lo que un grupo raw promete.
+//!
 //! El servicio es un proceso de verdad con catalogo, almacen de bytes y
 //! Cedar reales; el upstream es un servidor local que este fichero
 //! controla. Lo que se mide es lo que una persona ve: de que miembro sale

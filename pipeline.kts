@@ -148,6 +148,7 @@ pipeline {
                         "--test admin_surface",
                         "--test atomic_projection",
                         "--test audit_events",
+                        "--test backend_selection_failclosed",
                         "--test http_contract",
                         "--test iam_account_index",
                         "--test iam_audit",
@@ -177,7 +178,9 @@ pipeline {
                         "--test hsp104_gc_service",
                         "--test hsp174_gc_census_cache",
                         "--test hsp175_precondition_guard",
+                        "--test hsp176_capsule_subject_bounded",
                         "--test hsp178_pypi_simple_index_bounded",
+                        "--test hsp179_export_portable",
                         "--test hsp105_trust_ledger_contract",
                         "--test hsp106_provenance_ledger_contract",
                         "--test hsp108_group_contract",
@@ -191,6 +194,7 @@ pipeline {
                         "--test freshness_storage",
                         "--test hsp92_surreal_conformance",
                         "--test hsp134_risk_facts_e2e",
+                        "--test hsp142_capability_matrix",
                     ).joinToString(" ")
                 )
             }
@@ -232,6 +236,8 @@ pipeline {
                         "--test hsp111_npm_cli",
                         "--test hsp112_pypi_e2e",
                         "--test hsp112_pypi_cli",
+                        "--test hsp143_namespaces_e2e",
+                        "--test hsp143_npm_namespaces_cli",
                         "--test hsp116_localstack_fidelity",
                         "--test hsp116_s3_contract",
                         "--test hsp116_s3_bench",
@@ -254,6 +260,11 @@ pipeline {
                         "--test hsp135_vigencia_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
+                        // Prueba contra Dgraph real (HSP-181): sin
+                        // HODEI_GRAPH_IT_ENDPOINT la suite se salta a si
+                        // misma (exit 0); con la variable corre los tres
+                        // escenarios contra el Zero+Alpha con ACL y TLS.
+                        "--test dgraph_it",
                     ).joinToString(" ")
                 )
                 sh(

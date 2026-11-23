@@ -46,12 +46,14 @@
 
 pub mod apt;
 pub mod cargo;
+pub mod conformance;
 pub mod error;
 pub mod gc;
 pub mod gomod;
 pub mod group;
 pub mod maven;
 pub mod model;
+pub mod namespaces;
 pub mod npm;
 pub mod nuget;
 pub mod ports;
@@ -62,6 +64,10 @@ pub mod search;
 pub mod trust;
 pub mod yum;
 
+pub use conformance::{
+    Accreditation, AuditFailure, ConformanceCell, EvidenceMismatch, PROFILE_VERSION, accredits,
+    audit, cell as conformance_cell, matrix as conformance_matrix, refuses, served_pairs,
+};
 pub use error::CatalogError;
 pub use gc::{
     ContentHold, ContentLedger, ContentRoot, DeletionState, GcDeletion, GcRun, HoldScope, RootKind,
@@ -76,6 +82,7 @@ pub use model::{
     RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustState,
     repository_hrn,
 };
+pub use namespaces::{Judgement, MAX_RESERVED, NamespacePolicy, NamespacePolicyError, OnConflict};
 pub use ports::{
     AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
     CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogSearch, CatalogWriter,
