@@ -20,6 +20,7 @@ use surrealdb::Connection;
 use surrealdb::Surreal;
 
 pub mod intents;
+pub mod lifecycle;
 pub mod reactions;
 
 /// The table the decisions live in.
