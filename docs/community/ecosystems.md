@@ -25,7 +25,7 @@ expone en tiempo de ejecución en `GET /api/v1/capabilities`:
 | Formato (`wire`) | `hosted` | `proxy` | `group` | Prefijo de ruta HTTP | Notas / límites |
 | --- | --- | --- | --- | --- | --- |
 | `raw` | Sí | Sí | Sí | `/repository/{repo}/...` | Ver [quickstart.md](quickstart.md) |
-| `oci` | Sí | No | Sí | `/v2/{repo}/...` | Soporta artefactos OCI y Helm-OCI |
+| `oci` | Sí | Sí | Sí | `/v2/{repo}/...` | Soporta artefactos OCI y Helm-OCI |
 | `maven2` | Sí | Sí | Sí | `/repository/{repo}/...` | Releases inmutables; snapshots reemplazables |
 | `npm` | Sí | Sí | Sí | `/npm/{repo}/...` | `unpublish` rechazado; `integrity` SRI verificado |
 | `pypi` | Sí | Sí | Sí | `/pypi/{repo}/...` | PEP 503/691/592; límite `max_body_size` + 256 KiB |
@@ -175,9 +175,9 @@ curl -sS -H "Authorization: Bearer ${HODEI_TOKEN}" \
 
 ### OCI (`oci`)
 
-- **Estado:** `NOT_RUN` (acreditado en workspace por `oci_push_contract`, `oci_pull_contract`, `oci_index_contract`, `hsp229_oci_group`)
+- **Estado:** `NOT_RUN` (acreditado en workspace por `oci_push_contract`, `oci_pull_contract`, `oci_index_contract`, `hsp228_oci_proxy`, `hsp229_oci_group`)
 - **Versión de cliente:** `docker` `26+` / `podman` `5+` / `oras` `1.2+`
-- **Política de upstream:** `proxy.allowed_hosts` + `settings.upstream` (nota: `RepositoryFormat::Oci` sirve `hosted` y `group` en esta versión; `proxy` no está habilitado en `serves_modes()`)
+- **Política de upstream:** `proxy.allowed_hosts` + `settings.upstream` (`RepositoryFormat::Oci` sirve `hosted`, `proxy` y `group`; un proxy se crea con `POST /api/v1/catalog/repositories` y `settings.proxy.upstream`, y su salida respeta la lista de hosts permitidos del despliegue)
 - **Rutas reales:**
   - `hosted`: `/v2/{repo}/blobs/uploads/`, `/v2/{repo}/blobs/{digest}`, `/v2/{repo}/manifests/{reference}`
   - `group`: `GET /v2/{repo}/manifests/{reference}` y `GET /v2/{repo}/blobs/{digest}`
