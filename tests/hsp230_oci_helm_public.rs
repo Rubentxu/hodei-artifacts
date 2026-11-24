@@ -89,7 +89,8 @@ const REAL_IMAGE_DIGEST: &str =
     "sha256:7031c1b283388d2c2e09b57badb803c05ebed362dc88d84b480cc47f72a21097";
 const REAL_IMAGE_GROUP: &str = "real-oci-image-group";
 
-const REAL_HELM_REPO: &str = "stefanprodan/charts/podinfo";
+const REAL_HELM_REPO: &str = "podinfo-proxy";
+const REAL_HELM_UPSTREAM_URL: &str = "https://ghcr.io/v2/stefanprodan/charts/podinfo/";
 const REAL_HELM_VERSION: &str = "6.7.0";
 const REAL_HELM_TGZ_SHA256: &str =
     "bd660969295320a5d5328f1b63a7c82a9853c1b7dbc61d0565a162c4f71f5a65";
@@ -1411,8 +1412,8 @@ fn ac2_real_public_helm_oci_chart_through_proxy_and_group() {
                 "proxy": {
                     "upstream": {
                         "id": "ghcr-helm",
-                        "url": "https://ghcr.io/",
-                        "scopes": ["v2/"],
+                        "url": REAL_HELM_UPSTREAM_URL,
+                        "scopes": ["manifests/", "blobs/"],
                         "auth": {
                             "realm": "https://ghcr.io/token",
                             "service": "ghcr.io"
@@ -1485,9 +1486,17 @@ fn ac2_real_public_helm_oci_chart_through_proxy_and_group() {
                 ));
             }
 
-            let tgz = clients
-                .helm_work
-                .join(format!("{REAL_HELM_GROUP}-{REAL_HELM_VERSION}.tgz"));
+            let tgz = [
+                clients
+                    .helm_work
+                    .join(format!("{REAL_HELM_GROUP}-{REAL_HELM_VERSION}.tgz")),
+                clients
+                    .helm_work
+                    .join(format!("podinfo-{REAL_HELM_VERSION}.tgz")),
+            ]
+            .into_iter()
+            .find(|p| p.exists())
+            .expect("downloaded podinfo tgz");
             let actual_sha = sha256_hex(&std::fs::read(&tgz).expect("downloaded podinfo tgz"));
             if actual_sha != REAL_HELM_TGZ_SHA256 {
                 return LabCase::new(

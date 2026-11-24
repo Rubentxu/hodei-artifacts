@@ -218,8 +218,9 @@ pub async fn the_resolved_tags(
         }
     };
 
-    // El camino del upstream: `v2/<nombre>/tags/list`.
-    let upstream_path = format!("v2/{name}/{TAGS_LIST}");
+    // Upstream path: if upstream.base already targets a repository under /v2/<repo>/,
+    // append only `tags/list`; otherwise use `v2/<name>/tags/list`.
+    let upstream_path = upstream_oci_path(&upstream, name, TAGS_LIST);
     // Lo que no cae en un scope no se pide al upstream: un upstream que no
     // cubre el listado es un miembro que no puede enumerar.
     //
@@ -308,6 +309,21 @@ pub async fn the_resolved_tags(
         "the tag list of an upstream was read"
     );
     Ok(TheUpstreamTags::Listed(the_tag_names(&body)?))
+}
+
+/// Builds the relative upstream path for an OCI distribution endpoint.
+///
+/// When `upstream.base` already includes `/v2/<repo>/`, the suffix (such as
+/// `manifests/<ref>`, `blobs/<digest>`, or `tags/list`) is appended directly so
+/// a valid single-segment Hodei `repo_key` can proxy a multi-segment upstream
+/// repository (e.g. `ghcr.io/v2/org/charts/name/`).
+fn upstream_oci_path(upstream: &UpstreamConfig, name: &str, suffix: &str) -> String {
+    let base_path = upstream.base.path();
+    if base_path.starts_with("/v2/") && base_path.len() > 4 {
+        suffix.to_string()
+    } else {
+        format!("v2/{name}/{suffix}")
+    }
 }
 
 /// La URL del listado, si el ambito del upstream la cubre.
@@ -555,10 +571,12 @@ async fn the_resolved(
         the_tag_name(reference)?;
     }
 
-    // El camino del upstream: `v2/<nombre>/manifests/<referencia>`.
-    let upstream_path = format!(
-        "v2/{name}/{}/{upstream_reference}",
-        kind.the_upstream_word()
+    // Upstream path: if upstream.base already targets a repository under /v2/<repo>/,
+    // append `<kind>/<ref>`; otherwise use `v2/<name>/<kind>/<ref>`.
+    let upstream_path = upstream_oci_path(
+        &upstream,
+        name,
+        &format!("{}/{upstream_reference}", kind.the_upstream_word()),
     );
     // Lo que no cae en un scope no se pide al upstream.
     if !upstream.in_scope(&upstream_path) {
