@@ -1,8 +1,8 @@
 import { http, HttpResponse } from 'msw';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { server } from '@/shared/test/mocks/server';
 import { render } from '@/shared/test/test-utils';
@@ -16,7 +16,31 @@ const renderRepositoriesView = () =>
     </MemoryRouter>
   );
 
+const CONNECT_REPOSITORIES = [
+  { name: 'doc-maven', format: 'maven2', mode: 'hosted', channel: 'open' },
+  { name: 'npmjs-proxy', format: 'npm', mode: 'proxy', channel: 'trusted' },
+  { name: 'doc-oci', format: 'oci', mode: 'hosted', channel: 'open' },
+];
+
 describe('RepositoriesView', () => {
+  beforeEach(() => {
+    server.use(
+      http.get('/api/v1/catalog/repositories', () =>
+        HttpResponse.json({ repositories: CONNECT_REPOSITORIES })
+      ),
+      http.get('/api/v1/capabilities', () =>
+        HttpResponse.json({
+          formats: [
+            { name: 'maven2', modes: ['hosted', 'proxy', 'group'] },
+            { name: 'npm', modes: ['hosted', 'proxy', 'group'] },
+            { name: 'oci', modes: ['hosted', 'group'] },
+          ],
+          public_base_url: 'https://artifacts.example.com',
+        })
+      )
+    );
+  });
+
   it('refreshes the repository list after creating a repository from capabilities', async () => {
     const user = userEvent.setup();
     const repositories = [
@@ -112,5 +136,67 @@ describe('RepositoriesView', () => {
     );
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(listCalls).toBe(1);
+  });
+
+  it('shows a verified Maven recipe using the configured public base URL', async () => {
+    const user = userEvent.setup();
+    renderRepositoriesView();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Connect client to doc-maven' })
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('VERIFIED')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Apache Maven 3\.9\+/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        'https://artifacts.example.com/repository/doc-maven'
+      )
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(/mvn deploy/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/<value>Bearer \$\{env\.HODEI_TOKEN\}<\/value>/)
+    ).toBeInTheDocument();
+  });
+
+  it('shows a read-only npm proxy recipe without a publish command', async () => {
+    const user = userEvent.setup();
+    renderRepositoriesView();
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Connect client to npmjs-proxy',
+      })
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('VERIFIED')).toBeInTheDocument();
+    expect(within(dialog).getByText(/npm 10\+/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/npm install/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/npm publish/)).not.toBeInTheDocument();
+  });
+
+  it('marks OCI as not run and falls back to the validated browser origin', async () => {
+    server.use(
+      http.get('/api/v1/capabilities', () =>
+        HttpResponse.json({
+          formats: [{ name: 'oci', modes: ['hosted', 'group'] }],
+        })
+      )
+    );
+    const user = userEvent.setup();
+    renderRepositoriesView();
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Connect client to doc-oci' })
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('NOT_RUN')).toBeInTheDocument();
+    expect(within(dialog).getByText(/Origin \(browser\):/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('docker login localhost:3000')
+    ).toBeInTheDocument();
   });
 });

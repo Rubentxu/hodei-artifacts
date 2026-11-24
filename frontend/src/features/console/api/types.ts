@@ -51,6 +51,7 @@ export interface FormatCapability {
 /** What can be created. */
 export interface Capabilities {
   formats: FormatCapability[];
+  public_base_url?: string;
 }
 
 /** An asset found by the search. */

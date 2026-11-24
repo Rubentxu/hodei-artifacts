@@ -198,6 +198,7 @@ async fn app_with_search(
 
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
+    config.public_url.public_base_url = Some("https://artifacts.example.com".to_string());
     config.rocksdb.path = tmp
         .path()
         .join("schema.rocksdb")
@@ -534,6 +535,36 @@ async fn a_creation_without_the_permission_is_refused() {
 }
 
 #[tokio::test]
+async fn capabilities_publish_the_configured_public_url_not_an_untrusted_forwarded_host() {
+    let (app, _store, _tmp) = app().await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/capabilities")
+                .header("authorization", "Bearer alice")
+                .header("x-forwarded-host", "evil.example")
+                .header("x-forwarded-proto", "http")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("the response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("the body"),
+    )
+    .expect("json");
+    assert_eq!(
+        body["public_base_url"], "https://artifacts.example.com",
+        "the declared, validated URL wins over forwarded headers from an untrusted peer"
+    );
+}
+
+#[tokio::test]
 async fn the_capabilities_say_what_can_be_created() {
     let (app, _store, _tmp) = app().await;
 
@@ -548,7 +579,6 @@ async fn the_capabilities_say_what_can_be_created() {
             .expect("the body"),
     )
     .expect("json");
-
     let formats = body["formats"].as_array().expect("the formats");
     let of = |name: &str| {
         formats
