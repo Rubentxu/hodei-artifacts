@@ -219,10 +219,17 @@ pub async fn the_resolved_tags(
     let upstream_path = format!("v2/{name}/{TAGS_LIST}");
     // Lo que no cae en un scope no se pide al upstream: un upstream que no
     // cubre el listado es un miembro que no puede enumerar.
-    if !upstream.in_scope(&upstream_path) {
-        return Ok(TheUpstreamTags::NotInScope);
-    }
-    let Some(url) = upstream.target(&upstream_path) else {
+    //
+    // La decision se deja **vista**: el miembro no aporta etiquetas al
+    // listado del grupo, y sin una traza el cliente veria un listado mas
+    // corto, que es indistinguible de "este miembro no tiene etiquetas".
+    let Some(url) = the_listed_url(&upstream, &upstream_path) else {
+        tracing::warn!(
+            target: "hodei_artifacts::oci",
+            repository = %repository.repo_key,
+            correlation_id = %correlation,
+            "the scope of the upstream does not cover the tag list, so the member cannot be enumerated"
+        );
         return Ok(TheUpstreamTags::NotInScope);
     };
 
@@ -281,6 +288,17 @@ pub async fn the_resolved_tags(
         "the tag list of an upstream was read"
     );
     Ok(TheUpstreamTags::Listed(the_tag_names(&body)?))
+}
+
+/// La URL del listado, si el ambito del upstream la cubre.
+///
+/// Lo que no cae en el ambito no se pide: un upstream que no cubre el
+/// listado es un miembro que **no puede enumerar**, no un fallo.
+fn the_listed_url(upstream: &UpstreamConfig, path: &str) -> Option<Url> {
+    if !upstream.in_scope(path) {
+        return None;
+    }
+    upstream.target(path)
 }
 
 /// Los bytes del cuerpo de la respuesta del upstream.
