@@ -51,6 +51,85 @@ podman run -d --name dgraph-alpha --hostname dgraph-alpha --network dgraph-airga
 On SELinux hosts (Fedora) the secret bind-mount needs the `z` relabel or the
 alpha fails with "permission denied" while reading the ACL secret.
 
+## SBOM y escaneo de CVE de la imagen fijada (HSP-177)
+
+Estado: **PASS** (ejecutado el 2026-11-24 con red; el script necesita red una
+vez para bajar las imágenes de syft/trivy y la base de vulnerabilidades).
+
+```sh
+deploy/dgraph/sbom-scan.sh   # syft 1.57.2 + trivy 0.76.2, ambos fijados por digest
+```
+
+- SBOM formal en SPDX 2.3 (`sbom.spdx.json`, 279 paquetes) y CycloneDX
+  (`sbom.cdx.json`, 3019 componentes) generados con syft sobre la imagen
+  `docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f39…`. Los ficheros completos
+  (1–3 MB) quedan en `target/uat/hsp177/` (gitignored); en
+  [`evidence/sbom-cve-summary.json`](evidence/sbom-cve-summary.json) se versionan
+  los SHA-256, los recuentos y los hallazgos HIGH/CRITICAL.
+- Escaneo de CVE con trivy (ubuntu 24.04 + binario Go `dgraph`): 0 CRITICAL,
+  5 HIGH, 67 MEDIUM, 16 LOW, 1 UNKNOWN. Los 5 HIGH (todos con versión corregida
+  disponible) son `apt`/`libapt-pkg6.0t64` (CVE-2026-109518), `libbrotli1`
+  (CVE-2026-111497), `go-jose/v4` v4.1.4 (CVE-2026-116587) y `golang.org/x/net`
+  v0.60.0 (CVE-2026-78661).
+- El resultado depende de la fecha de la base de vulnerabilidades de trivy; es
+  una fotografía, no una garantía. Los HIGH no se han analizado ni mitigado aquí:
+  quedan como hallazgos abiertos para decidir si se acepta el riesgo o se sube
+  de versión de Dgraph.
+- **NOT_RUN**: firma/atestación del SBOM con `cosign` (no hay clave ni
+  registro propios en este laboratorio) y verificación de la firma de la imagen
+  upstream.
+
+## TLS cliente↔Alpha y nodo↔nodo (HSP-177)
+
+Estado: **PASS en laboratorio** (16/16 comprobaciones, salida en
+[`evidence/tls-verify.txt`](evidence/tls-verify.txt)).
+
+```sh
+cd deploy/dgraph
+TLS_DIR=tls-single NODES=dgraph-zero,dgraph-alpha,localhost,127.0.0.1 ./gen-certs.sh
+head -c 32 /dev/urandom > secrets/hmac-secret
+podman compose -f compose.yaml -f compose-tls.yaml up -d
+./tls-verify.sh
+```
+
+Los certificados los emite `dgraph cert` dentro de la imagen fijada y se
+escriben en `tls-single/` (gitignored, igual que `secrets/`): nunca se
+versionan claves privadas. `compose-tls.yaml` añade `--tls … internal-port=true`
+a Zero y Alpha, de modo que se cifran y verifican tanto los puertos de cliente
+(8080 HTTP, 9080 gRPC) como los internos (Zero 5080, Alpha 7080).
+
+Probado:
+
+- CA correcta: `/state`, `/health`, login guardian y consulta DQL autenticada
+  funcionan por HTTPS; el handshake gRPC de 9080 verifica con código 0.
+- CA incorrecta o ausente: `curl` falla con error 60; `openssl s_client` no
+  verifica en 9080.
+- Sin TLS: `http://…:8080/state`, `/login` y `/query` responden 400 (“Client
+  sent an HTTP request to an HTTPS server”); HTTP/2 en claro a 9080, 5080 y
+  7080 es rechazado.
+- Nodo↔nodo: desde un contenedor de la red cerrada, 5080 y 7080 presentan un
+  certificado que verifica con la CA del laboratorio y rechazan texto plano; el
+  Alpha se une al Zero y `/health` reporta `healthy`.
+- Un certificado de cliente emitido por la CA del laboratorio es aceptado
+  (`client-auth-type=VERIFYIFGIVEN`).
+
+Matices honestos:
+
+- `GET /health` (sin `?all`) responde también por HTTP en claro: expone solo el
+  estado del nodo, sin datos. El resto de endpoints sí exigen TLS.
+- mTLS **obligatorio** (`REQUIREANDVERIFY`) no se ha probado: el modo probado
+  es TLS de servidor con certificado de cliente opcional pero verificado.
+- Un certificado de cliente firmado por una CA ajena no se ha probado de forma
+  explícita; sí se probó que el cliente rechaza un servidor cuya CA no confía.
+- El login guardian está restringido a loopback; la verificación autenticada
+  se ejecuta en el espacio de red del Alpha (`--network container:dgraph-alpha`).
+- Los certificados de laboratorio duran 10 años y la CA no se rota; no son
+  material de producción.
+- El `compose.yaml` base sigue sin TLS: el TLS se activa solo al añadir
+  `compose-tls.yaml`.
+- Los volúmenes `dgraph-*` ya existían de UAT anteriores (compose avisa de que
+  no los creó él); la prueba los reutilizó y no los borró.
+
 ## Quorum topology (HSP-180): 3 Zero + 3 Alpha, RF3, TLS, ACL
 
 `compose-quorum.yaml` extends this deployment to the quorum topology required
