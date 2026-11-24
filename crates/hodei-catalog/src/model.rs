@@ -107,12 +107,14 @@ impl RepositoryFormat {
     /// The raw surface, and the npm and PyPI ones that ride on it, serve
     /// the three modalities: what a client publishes, what a proxy brings
     /// from its upstream, and what a group composes of its members. The
-    /// OCI surface and the cargo one serve only the hosted one for now:
-    /// a push is a write, and a write lands where the client publishes.
-    /// The proxy semantics of cargo need a client-verified upstream before
-    /// they can be declared. The go and nuget surfaces serve the hosted
-    /// one and the proxy one —their protocol documents were verified
-    /// byte for byte— and neither assembles a group yet.
+    /// OCI surface serves the hosted one and the group one: un grupo OCI
+    /// resuelve la referencia entre sus miembros con la precedencia que
+    /// declara su configuracion. The cargo one serves only the hosted
+    /// one for now: a push is a write, and a write lands where the client
+    /// publishes. The proxy semantics of cargo need a client-verified
+    /// upstream before they can be declared. The go and nuget surfaces
+    /// serve the hosted one and the proxy one —their protocol documents
+    /// were verified byte for byte— and neither assembles a group yet.
     ///
     /// The formats that are declared but not served yet —helm— have no
     /// modality at all: a repository of one of them can be declared, and
@@ -129,7 +131,8 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
-            RepositoryFormat::Oci | RepositoryFormat::Cargo => &[RepositoryMode::Hosted],
+            RepositoryFormat::Oci => &[RepositoryMode::Hosted, RepositoryMode::Group],
+            RepositoryFormat::Cargo => &[RepositoryMode::Hosted],
             RepositoryFormat::Apt | RepositoryFormat::Rpm => &[RepositoryMode::Hosted],
             RepositoryFormat::NuGet | RepositoryFormat::Go => {
                 &[RepositoryMode::Hosted, RepositoryMode::Proxy]

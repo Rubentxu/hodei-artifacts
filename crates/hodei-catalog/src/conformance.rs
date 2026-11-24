@@ -121,6 +121,7 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
             "oci_index_contract",
             "oci_e2e_contract",
         ],
+        (RepositoryFormat::Oci, RepositoryMode::Group) => &["hsp229_oci_group"],
         (RepositoryFormat::Maven2, RepositoryMode::Hosted) => {
             &["hsp109_maven_e2e", "hsp109_maven_cli"]
         }

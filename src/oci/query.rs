@@ -75,26 +75,40 @@ pub async fn the_tags(
 
     let parsed = the_tags_query(query)?;
     let (reader, _) = the_catalog(state)?;
-    let tags = reader
-        .tags(context.account().as_str(), name)
-        .await
-        .map_err(|error| crate::oci::the_catalog_error(&error))?;
 
-    // En el canal trusted solo se listan las etiquetas cuyo **destino**
-    // tiene concesion activa: una etiqueta hacia un digest no concedido
-    // delataria que existe.
-    let servable = crate::trust::servable(state, context.account().as_str(), &repository)
-        .await
-        .map_err(the_admission_failure)?;
-    let mut names: Vec<String> = tags
-        .into_iter()
-        .filter(|tag| {
-            servable
-                .as_ref()
-                .is_none_or(|digests| digests.contains(&tag.coordinates.package_version))
-        })
-        .map(|tag| tag.tag_name)
-        .collect();
+    // Un grupo no guarda etiquetas: las compone con las de sus miembros.
+    // La lista es la **union** de las de sus miembros, una entrada por
+    // nombre, y **no se sirve parcial**: si la lista de un miembro no se
+    // puede obtener, el listado entero es un error, porque una lista a
+    // medias parece completa y no lo es.
+    let tags: Vec<String> = if repository.mode == hodei_catalog::RepositoryMode::Group {
+        crate::oci::group::the_tags(state, context, &repository)
+            .await?
+            .into_iter()
+            .map(|(name, _member)| name)
+            .collect()
+    } else {
+        let tags = reader
+            .tags(context.account().as_str(), name)
+            .await
+            .map_err(|error| crate::oci::the_catalog_error(&error))?;
+
+        // En el canal trusted solo se listan las etiquetas cuyo **destino**
+        // tiene concesion activa: una etiqueta hacia un digest no concedido
+        // delataria que existe.
+        let servable = crate::trust::servable(state, context.account().as_str(), &repository)
+            .await
+            .map_err(the_admission_failure)?;
+        tags.into_iter()
+            .filter(|tag| {
+                servable
+                    .as_ref()
+                    .is_none_or(|digests| digests.contains(&tag.coordinates.package_version))
+            })
+            .map(|tag| tag.tag_name)
+            .collect()
+    };
+    let mut names: Vec<String> = tags;
     names.sort_by(|left, right| the_order(left).cmp(&the_order(right)));
 
     // El cursor: la lista empieza **despues** de `last`. El cursor se
