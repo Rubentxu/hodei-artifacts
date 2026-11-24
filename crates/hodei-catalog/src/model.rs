@@ -79,12 +79,14 @@ pub enum RepositoryFormat {
     Galaxy,
     /// Hugging Face, modelos por el dialecto de lectura del hub.
     ///
-    /// La modalidad servida es la hosted: un cliente `hf` (`huggingface_hub`)
-    /// resuelve con `hf download` contra la superficie del hub de Hodei,
-    /// revision JSON y resolve con redirects relativos hacia el CAS. La
-    /// escritura no se declara: el dialecto de upload clasico y el xet
-    /// quedan fuera de este release, y el contenido entra por la siembra
-    /// del hub.
+    /// Es una superficie de **lectura de contenido sembrado**, no una
+    /// modalidad servida: un cliente `hf` (`huggingface_hub`) resuelve con
+    /// `hf download` contra la superficie del hub de Hodei (revision JSON y
+    /// resolve con redirects relativos hacia el CAS), pero el release no
+    /// tiene ingesta por API —el handler solo admite GET/HEAD y el
+    /// contenido entra por la siembra del operador—. Por eso `serves_modes`
+    /// es vacio, no se ofrece al crear repositorios y la matriz de
+    /// conformidad lo marca como no soportado en las tres modalidades.
     Hf,
 }
 
@@ -204,12 +206,12 @@ impl RepositoryFormat {
             // proxy no se declara: el upstream real entrega por redirects
             // firmados, un dialecto que no se ha probado con cliente.
             RepositoryFormat::Galaxy => &[RepositoryMode::Hosted],
-            // Hf sirve la hosted: el cliente lee con `hf download` y el
-            // contenido entra por la siembra del hub. La escritura del
-            // dialecto (upload clasico y xet) no se declara en este
-            // release, y sin escritura no hay proxy ni group que
-            // prometer.
-            RepositoryFormat::Hf => &[RepositoryMode::Hosted],
+            // Hf no sirve ninguna modalidad: sin ingesta por API (el
+            // handler solo lee y el contenido lo siembra el operador) no
+            // hay un hosted que prometer, y sin escritura tampoco proxy ni
+            // group. La lectura del contenido sembrado existe y esta
+            // probada con cliente real, pero no es una modalidad.
+            RepositoryFormat::Hf => &[],
             RepositoryFormat::Helm => &[],
         }
     }
@@ -244,7 +246,6 @@ impl RepositoryFormat {
             RepositoryFormat::Terraform,
             RepositoryFormat::Conan,
             RepositoryFormat::Galaxy,
-            RepositoryFormat::Hf,
         ]
     }
 
@@ -860,7 +861,18 @@ mod tests {
             RepositoryFormat::Rpm,
             RepositoryFormat::Terraform,
             RepositoryFormat::Conan,
+            RepositoryFormat::Galaxy,
+            RepositoryFormat::Hf,
         ];
+        // The round trip covers every declared format: a format added to the
+        // registry without a line here is a format whose name nobody reads back.
+        for declared in RepositoryFormat::declared() {
+            assert!(
+                formats.contains(declared),
+                "{} is declared but not in the round trip",
+                declared.as_str()
+            );
+        }
         for format in formats {
             assert_eq!(
                 RepositoryFormat::parse(format.as_str()),

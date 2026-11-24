@@ -150,7 +150,6 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
         (RepositoryFormat::Rpm, RepositoryMode::Hosted) => &["hsp122_yum_e2e", "hsp122_yum_client"],
         (RepositoryFormat::Conan, RepositoryMode::Hosted) => &["hsp159_conan_client"],
         (RepositoryFormat::Galaxy, RepositoryMode::Hosted) => &["hsp217_galaxy_client"],
-        (RepositoryFormat::Hf, RepositoryMode::Hosted) => &["hsp218_hf_client"],
         (RepositoryFormat::Terraform, RepositoryMode::Hosted) => {
             &["hsp158_terraform_modules_client"]
         }
@@ -190,6 +189,11 @@ fn note_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static str {
         }
         (RepositoryFormat::NuGet, RepositoryMode::Group) => {
             "a nuget group is refused in the dialect of nuget: it never degrades to a raw answer"
+        }
+        (RepositoryFormat::Hf, _) => {
+            "hf is read-only seeded content, not a served modality: there is no ingestion by API, \
+             so no repository can be created; the read dialect is proven with the real client by \
+             hsp218_hf_client"
         }
         (RepositoryFormat::Helm, _) => {
             "no helm repository is served: charts ride on the OCI surface (hsp121_helm_oci)"

@@ -793,9 +793,19 @@ La selección se sustenta en uso real contrastado en el spike:
 
 ## HF — repositorios Hugging Face hosted (lectura)
 
+> **Limitación vigente (HSP-218, revisión de integración).** El release **no
+> tiene ingesta por API** para HF: el handler solo admite `GET`/`HEAD` y el
+> contenido entra únicamente por la siembra del operador
+> (`HODEI_SEED_HF`, usada por la suite). Por eso `hf` **no es una modalidad
+> servida**: `serves_modes` es vacío, no se ofrece en `/api/v1/capabilities`,
+> no se puede crear un repositorio `hf` por API y la matriz de conformidad
+> lo marca `NOT_SUPPORTED` en hosted, proxy y group. Lo que sí está probado
+> con cliente real (`hsp218_hf_client`, `hf` 1.2.3) es la **lectura** del
+> contenido sembrado. Declarar `hosted` exige antes una ingesta por API.
+
 ### 1. Qué afirma este contrato
 
-Un repositorio `hf` en modalidad **hosted** es un **hub de modelos en el
+Un repositorio `hf` (sembrado, de solo lectura) es un **hub de modelos en el
 dialecto de lectura de Hugging Face**: `hf download` del CLI `hf`
 (`huggingface_hub` 1.2.3, que habla httpx) resuelve un modelo contra
 Hodei con el cliente real. El dialecto es el que el spike de HSP-169
