@@ -127,6 +127,10 @@ const THE_CASES: &[(&str, &str)] = &[
         "ac3-a-real-oci-client-pulls-from-the-group",
         "un cliente OCI real saca la imagen del grupo",
     ),
+    (
+        "ac3-the-referrers-of-the-group-are-the-ones-of-its-members",
+        "los referrers del grupo son los de sus miembros",
+    ),
 ];
 
 /// El seeder del catálogo.
@@ -1733,4 +1737,112 @@ fn the_real_client() -> Option<TheClient> {
         }
     }
     None
+}
+
+/// Publica un manifiesto arbitrario en un repositorio OCI.
+///
+/// Es lo que hace falta para colgar un referrer: un manifiesto con
+/// `subject` es lo que el protocolo llama referrer.
+fn publish_manifest(
+    deployment: &Deployment,
+    port: u16,
+    repository: &str,
+    reference: &str,
+    bytes: &[u8],
+) {
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let file = deployment.directory.path().join("referrer.json");
+    std::fs::write(&file, bytes).expect("the manifest is written");
+    let answer = Curl::call(
+        port,
+        "PUT",
+        &format!("/v2/{repository}/manifests/{reference}"),
+        &token,
+        Some(&file),
+        Some(MANIFEST_MEDIA_TYPE),
+        None,
+    )
+    .run();
+    assert!(
+        (200..300).contains(&answer.status),
+        "el referrer no se publico: {}\n{}",
+        answer.status,
+        deployment.the_log()
+    );
+}
+
+#[test]
+fn ac3_the_referrers_of_the_group_are_the_ones_of_its_members() {
+    a_case(
+        "ac3-the-referrers-of-the-group-are-the-ones-of-its-members",
+        "los referrers del grupo son los de sus miembros",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let deployment = the_deployment(&[]);
+            let mut service = deployment.start(&[]);
+            let port = service.port;
+
+            // El sujeto: una imagen en el primer miembro.
+            let layer = b"la-capa-del-primer-miembro".to_vec();
+            let subject = publish(&deployment, port, FIRST, &layer);
+            let subject_digest = the_digest(&subject);
+
+            // El referrer: un manifiesto que cuelga del sujeto, con los
+            // mismos blobs (que ya estan en el repositorio).
+            let config = b"{\"architecture\":\"amd64\",\"os\":\"linux\"}".to_vec();
+            let referrer = json!({
+                "schemaVersion": 2,
+                "mediaType": MANIFEST_MEDIA_TYPE,
+                "artifactType": "application/vnd.hodei.signature.v1+json",
+                "config": {
+                    "mediaType": "application/vnd.oci.image.config.v1+json",
+                    "digest": format!("sha256:{}", the_digest(&config)),
+                    "size": config.len()
+                },
+                "layers": [{
+                    "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+                    "digest": format!("sha256:{}", the_digest(&layer)),
+                    "size": layer.len()
+                }],
+                "subject": {
+                    "mediaType": MANIFEST_MEDIA_TYPE,
+                    "digest": format!("sha256:{subject_digest}"),
+                    "size": subject.len()
+                }
+            })
+            .to_string()
+            .into_bytes();
+            publish_manifest(&deployment, port, FIRST, "firma", &referrer);
+
+            // El grupo responde con los referrers de **sus miembros**: un
+            // grupo no guarda nada, asi que los suyos propios no existen.
+            let token = support::token(FIRST_ACCOUNT, "alice");
+            let into = deployment.directory.path().join("referrers.json");
+            let answer = Curl::download(
+                port,
+                &format!("/v2/{GROUP}/referrers/sha256:{subject_digest}"),
+                &token,
+                Some(&into),
+            )
+            .run();
+            assert_eq!(answer.status, 200, "el grupo no responde los referrers");
+            let body = std::fs::read_to_string(&into).unwrap_or_default();
+            assert!(
+                body.contains(&the_digest(&referrer)),
+                "los referrers del grupo no son los de sus miembros: {body}"
+            );
+            assert!(
+                body.contains("application/vnd.hodei.signature.v1+json"),
+                "el referrer no dice su artifactType: {body}"
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac3-the-referrers-of-the-group-are-the-ones-of-its-members",
+                "los referrers del grupo son los de sus miembros",
+            )
+            .passed()
+        },
+    );
 }
