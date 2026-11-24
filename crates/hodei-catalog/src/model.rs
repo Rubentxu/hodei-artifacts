@@ -112,9 +112,13 @@ impl RepositoryFormat {
     /// declara su configuracion. The cargo one serves only the hosted
     /// one for now: a push is a write, and a write lands where the client
     /// publishes. The proxy semantics of cargo need a client-verified
-    /// upstream before they can be declared. The go and nuget surfaces
-    /// serve the hosted one and the proxy one —their protocol documents
-    /// were verified byte for byte— and neither assembles a group yet.
+    /// upstream before they can be declared. The go surface serves the
+    /// hosted one, the proxy one and the group one: a go group assembles
+    /// the union of the versions of its members and resolves a version
+    /// from a single member, so the `go.sum` of the client always
+    /// describes one and the same version. The nuget surface serves the
+    /// hosted one and the proxy one —its protocol documents were verified
+    /// byte for byte— and does not assemble a group yet.
     ///
     /// The formats that are declared but not served yet —helm— have no
     /// modality at all: a repository of one of them can be declared, and
@@ -134,9 +138,12 @@ impl RepositoryFormat {
             RepositoryFormat::Oci => &[RepositoryMode::Hosted, RepositoryMode::Group],
             RepositoryFormat::Cargo => &[RepositoryMode::Hosted],
             RepositoryFormat::Apt | RepositoryFormat::Rpm => &[RepositoryMode::Hosted],
-            RepositoryFormat::NuGet | RepositoryFormat::Go => {
-                &[RepositoryMode::Hosted, RepositoryMode::Proxy]
-            }
+            RepositoryFormat::NuGet => &[RepositoryMode::Hosted, RepositoryMode::Proxy],
+            RepositoryFormat::Go => &[
+                RepositoryMode::Hosted,
+                RepositoryMode::Proxy,
+                RepositoryMode::Group,
+            ],
             RepositoryFormat::Helm => &[],
         }
     }

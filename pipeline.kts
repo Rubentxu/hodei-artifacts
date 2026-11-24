@@ -264,6 +264,7 @@ pipeline {
                         "--test hsp120_nuget_e2e",
                         "--test hsp121_go_client",
                         "--test hsp121_go_e2e",
+                        "--test hsp232_go_group",
                         "--test hsp121_helm_oci",
                         "--test hsp122_apt_client",
                         "--test hsp122_apt_e2e",

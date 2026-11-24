@@ -415,6 +415,28 @@ async fn the_governed(
         .map_err(Failure::from)
 }
 
+/// Los bytes que un miembro proxy trae de su upstream.
+///
+/// El camino es el de la superficie cruda: la cache, los recibos, el
+/// single-flight y el modo offline son los mismos, y lo que baja se publica
+/// en el namespace del miembro.
+async fn the_proxy_bytes(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    member: &RepositoryDescriptor,
+    asset_path: &str,
+    correlation: &str,
+) -> Result<Vec<u8>, Failure> {
+    let served =
+        super::raw::the_proxy_asset(state, context, member, asset_path, correlation).await?;
+    let bytes = the_content_store(state)?
+        .get(&served.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?
+        .to_vec();
+    Ok(bytes)
+}
+
 /// Las versiones de un miembro, con la misma regla que un hosted: una
 /// version es una version si tiene `.info`.
 ///
@@ -429,37 +451,15 @@ async fn the_member_versions(
 ) -> Result<Offering, Failure> {
     if member.mode == hodei_catalog::RepositoryMode::Proxy {
         let asset_path = format!("{module}/@v/list");
-        let upstream = UpstreamConfig::of(&member.config)
-            .ok()
-            .flatten()
-            .ok_or_else(|| {
-                Failure::plain(StatusCode::BAD_GATEWAY, "the member proxy is not configured")
-            })?;
-        let url = upstream.target(&asset_path).ok_or(RawApiError::NotFound)?;
-        let served = match super::raw::the_proxy_asset_at(
-            state,
-            context,
-            member,
-            &asset_path,
-            Some(url),
-            Some("text/plain"),
-            correlation,
-        )
-        .await
-        {
-            Ok(served) => served,
+        let bytes = match the_proxy_bytes(state, context, member, &asset_path, correlation).await {
+            Ok(bytes) => bytes,
             // Un 404 del upstream es un MISS: se sigue con el siguiente
             // miembro. Cualquier otro fallo es un ERROR y detiene la
             // resolucion: un fallo transitorio no puede cambiar en silencio
             // lo que se descarga.
-            Err(RawApiError::NotFound) => return Ok(Offering::Missing),
-            Err(other) => return Err(other.into()),
+            Err(Failure::Raw(RawApiError::NotFound)) => return Ok(Offering::Missing),
+            Err(other) => return Err(other),
         };
-        let bytes = the_content_store(state)?
-            .get(&served.asset.digest)
-            .await
-            .map_err(|error| the_blob_error(&error))?
-            .to_vec();
         let text = String::from_utf8_lossy(&bytes);
         let mut versions = Vec::new();
         for line in text.lines() {
@@ -514,9 +514,11 @@ async fn the_known_digest(
     member: &RepositoryDescriptor,
     asset_path: &str,
 ) -> Result<Option<String>, Failure> {
-    Ok(super::raw::the_current_asset(state, context, &member.repo_key, asset_path)
-        .await?
-        .map(|asset| asset.digest.to_string()))
+    Ok(
+        super::raw::the_current_asset(state, context, &member.repo_key, asset_path)
+            .await?
+            .map(|asset| asset.digest.to_string()),
+    )
 }
 
 /// La divergencia entre miembros: la misma version con contenido distinto.
@@ -540,8 +542,7 @@ async fn the_divergence(
         let asset_path = format!("{module}/@v/{version}.{extension}");
         let mut seen: Option<(String, String)> = None;
         for member in leaves {
-            let Some(digest) = the_known_digest(state, context, member, &asset_path).await?
-            else {
+            let Some(digest) = the_known_digest(state, context, member, &asset_path).await? else {
                 continue;
             };
             match &seen {
@@ -583,30 +584,10 @@ async fn the_owner_of(
             // Un miembro proxy responde con su upstream: un 404 es un MISS
             // (el miembro no tiene esa version) y lo demas es un ERROR que
             // detiene la resolucion.
-            let upstream = UpstreamConfig::of(&member.config)
-                .ok()
-                .flatten()
-                .ok_or_else(|| {
-                    Failure::plain(
-                        StatusCode::BAD_GATEWAY,
-                        "the member proxy is not configured",
-                    )
-                })?;
-            let url = upstream.target(&asset_path).ok_or(RawApiError::NotFound)?;
-            match super::raw::the_proxy_asset_at(
-                state,
-                context,
-                member,
-                &asset_path,
-                Some(url),
-                Some("application/json"),
-                correlation,
-            )
-            .await
-            {
+            match the_proxy_bytes(state, context, member, &asset_path, correlation).await {
                 Ok(_) => true,
-                Err(RawApiError::NotFound) => false,
-                Err(other) => return Err(other.into()),
+                Err(Failure::Raw(RawApiError::NotFound)) => false,
+                Err(other) => return Err(other),
             }
         } else {
             super::raw::the_current_asset(state, context, &member.repo_key, &asset_path)
@@ -639,21 +620,18 @@ async fn read_group(
     let (leaves, denied, judgement) = the_governed(state, context, group, &module).await?;
     match route {
         Route::List { .. } => {
-            let versions = the_group_versions(state, context, &leaves, &module, correlation).await?;
+            let versions =
+                the_group_versions(state, context, &leaves, &module, correlation).await?;
             if versions.is_empty() {
                 // Un caso reservado no hace fallback: se explica por que no
                 // se sirve en vez de parecer un modulo que no existe.
                 if !denied.is_empty()
                     && let Some(judgement) = judgement
                 {
-                    return Err(
-                        super::raw_group::the_group_reservation_explanation(
-                            group,
-                            &judgement,
-                            &denied,
-                        )
-                        .into(),
-                    );
+                    return Err(super::raw_group::the_group_reservation_explanation(
+                        group, &judgement, &denied,
+                    )
+                    .into());
                 }
                 return Err(Failure::plain(
                     StatusCode::NOT_FOUND,
@@ -669,19 +647,16 @@ async fn read_group(
         Route::Latest { .. } => {
             // El "latest" de un grupo es el latest de la **union**, no el del
             // ultimo miembro que responda.
-            let versions = the_group_versions(state, context, &leaves, &module, correlation).await?;
+            let versions =
+                the_group_versions(state, context, &leaves, &module, correlation).await?;
             let Some((_, latest)) = versions.last() else {
                 if !denied.is_empty()
                     && let Some(judgement) = judgement
                 {
-                    return Err(
-                        super::raw_group::the_group_reservation_explanation(
-                            group,
-                            &judgement,
-                            &denied,
-                        )
-                        .into(),
-                    );
+                    return Err(super::raw_group::the_group_reservation_explanation(
+                        group, &judgement, &denied,
+                    )
+                    .into());
                 }
                 return Err(Failure::plain(
                     StatusCode::NOT_FOUND,

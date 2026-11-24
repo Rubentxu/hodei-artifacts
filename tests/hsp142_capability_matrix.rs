@@ -528,12 +528,6 @@ fn the_matrix_selects_the_suites_that_accredit_each_cell() {
 
     // The refusals that were proven against the wire are named where the
     // proof lives.
-    let go_group = hodei_catalog::conformance_cell(RepositoryFormat::Go, RepositoryMode::Group);
-    assert_eq!(
-        go_group.refusal_evidence,
-        &["hsp121_go_e2e"],
-        "the refusal of a go group was proven in the dialect of go"
-    );
     let nuget_group =
         hodei_catalog::conformance_cell(RepositoryFormat::NuGet, RepositoryMode::Group);
     assert_eq!(

@@ -144,6 +144,7 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
         (RepositoryFormat::NuGet, RepositoryMode::Proxy) => &["hsp120_nuget_e2e"],
         (RepositoryFormat::Go, RepositoryMode::Hosted) => &["hsp121_go_e2e", "hsp121_go_client"],
         (RepositoryFormat::Go, RepositoryMode::Proxy) => &["hsp121_go_e2e", "hsp121_go_client"],
+        (RepositoryFormat::Go, RepositoryMode::Group) => &["hsp232_go_group"],
         (RepositoryFormat::Apt, RepositoryMode::Hosted) => &["hsp122_apt_e2e", "hsp122_apt_client"],
         (RepositoryFormat::Rpm, RepositoryMode::Hosted) => &["hsp122_yum_e2e", "hsp122_yum_client"],
         _ => &[],
@@ -162,7 +163,6 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
 fn refusal_evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'static str] {
     match (format, mode) {
         (RepositoryFormat::NuGet, RepositoryMode::Group) => &["hsp120_nuget_e2e"],
-        (RepositoryFormat::Go, RepositoryMode::Group) => &["hsp121_go_e2e"],
         _ => &[],
     }
 }
@@ -178,7 +178,7 @@ fn note_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static str {
             "cargo has no group until a client-verified surface declares one (HSP-156)"
         }
         (RepositoryFormat::Go, RepositoryMode::Group) => {
-            "a go group is refused in the dialect of go: it never degrades to a raw repository"
+            "a go group resolves a version from a single member: its .info, .mod and .zip              never come from two members, so the go.sum of the client describes one version"
         }
         (RepositoryFormat::NuGet, RepositoryMode::Group) => {
             "a nuget group is refused in the dialect of nuget: it never degrades to a raw answer"
@@ -726,24 +726,24 @@ mod tests {
         );
     }
 
-    /// A refusal proven in the dialect of the format: the go group suite
-    /// speaks of go and of the group it refuses.
+    /// A refusal proven in the dialect of the format: the nuget group suite
+    /// speaks of nuget and of the group it refuses.
     #[test]
     fn a_refusal_suite_must_speak_of_the_format_and_the_modality() {
-        let go_group = cell(RepositoryFormat::Go, RepositoryMode::Group);
-        assert_eq!(go_group.refusal_evidence, &["hsp121_go_e2e"]);
-        accredits(&go_group, "hsp121_go_e2e", "a go group is refused")
+        let nuget_group = cell(RepositoryFormat::NuGet, RepositoryMode::Group);
+        assert_eq!(nuget_group.refusal_evidence, &["hsp120_nuget_e2e"]);
+        accredits(&nuget_group, "hsp120_nuget_e2e", "a nuget group is refused")
             .expect_err("accredits refuses what refuses is for");
         refuses(
-            &go_group,
-            "hsp121_go_e2e",
-            "a go group is refused explicitly",
+            &nuget_group,
+            "hsp120_nuget_e2e",
+            "a nuget group is refused explicitly",
         )
-        .expect("the suite speaks of go and of the group it refuses");
+        .expect("the suite speaks of nuget and of the group it refuses");
         let failure = refuses(
-            &go_group,
-            "hsp121_go_e2e",
-            "go, refusing a composed answer without naming it",
+            &nuget_group,
+            "hsp120_nuget_e2e",
+            "nuget, refusing a composed answer without naming it",
         )
         .expect_err("the suite does not name the modality it refuses");
         assert!(
