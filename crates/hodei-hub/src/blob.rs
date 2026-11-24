@@ -190,6 +190,81 @@ pub trait BlobWriteSession: Send {
     /// fichero: es lo que garantiza que dos productores del mismo
     /// contenido no se pisen.
     fn the_staging_path(&self) -> Option<&Path>;
+
+    /// El identificador **persistible** de este staging.
+    ///
+    /// Un registro de sesiones durable guarda este handle y, al
+    /// reabrir la sesion en otro proceso, se lo devuelve a
+    /// [`BlobStore::resume`] para que el almacén recupere la escritura
+    /// exacta: la ruta del fichero en el almacen de ficheros, el par
+    /// `key`/`upload_id` del multipart en el object store. `None` dice
+    /// que este almacen no puede reabrir una escritura: sus sesiones
+    /// mueren con el proceso, como siempre.
+    fn the_staging_handle(&self) -> Option<String> {
+        None
+    }
+
+    /// Si el digest de la sesion cubre **todos** los bytes del staging.
+    ///
+    /// Una sesion reabierta en frio puede no tener el hasher del
+    /// contenido que ya esta en el almacén —es el caso del multipart
+    /// reanudado, cuyos trozos ya subidos no vuelven a pasar por aqui—.
+    /// Quien cierra no debe comparar un digest parcial contra lo
+    /// declarado: el almacén comprueba el contenido entero al publicar,
+    /// que es la promesa de siempre —no se publica nada que no cuadre—.
+    fn the_digest_covers_all(&self) -> bool {
+        true
+    }
+
+    /// Marca la escritura como **durable**: su staging sobrevive al
+    /// Drop del mango.
+    ///
+    /// Un registro con journal puede quedarse sin mango local (cache
+    /// desalojado, réplica cambiada) sin que eso signifique que nadie
+    /// abandonó la subida: lo que decide el destino del staging es el
+    /// journal —commit, abort explicito o barrido—, no el último Drop.
+    fn mark_durable(&mut self) {}
+
+    /// Suelta el mango local **sin borrar** el staging durable.
+    ///
+    /// Es la mano que cambia de réplica: el registro deja el almacén
+    /// cerrado —y su bloqueo advisory libre para que otra réplica lo
+    /// reclame— despues de cada peticion, cuando ya no queda nada por
+    /// debajo del offset que la autoridad declaro
+    /// ([`BlobWriteSession::flush_durable`]). Un mango soltado aqui no
+    /// es un abandono: la autoridad sigue abierta y el reanudado retoma
+    /// la escritura por su handle.
+    fn detach(&mut self) -> Result<(), BlobError> {
+        // Por defecto no hay staging durable que soltar: cerrar es
+        // cerrar, y el Drop del almacén hace su limpieza de siempre.
+        Ok(())
+    }
+
+    /// Los bytes que **ya estan** en el almacén, no en el buffer del
+    /// mango.
+    ///
+    /// En un multipart, un trozo subido es durable y lo que queda en el
+    /// buffer no: si el proceso muere, la autoridad del journal solo
+    /// puede declarar lo que el almacén tiene. El registro usa esto para
+    /// saber si **puede soltar** el mango sin perder bytes: solo cuando
+    /// lo durable llega a lo escrito. Un journal avanza hasta aqui, nunca
+    /// mas alla.
+    fn the_durable_offset(&self) -> u64 {
+        self.bytes_written()
+    }
+
+    /// Deja en el almacén lo que ya es durable y devuelve ese offset: lo
+    /// que sobrevive a la muerte de este proceso.
+    ///
+    /// El journal solo puede avanzar hasta aqui. En el almacen de
+    /// ficheros es el fichero sincronizado —todo lo escrito—. En el
+    /// multipart son los trozos **confirmados** por el servidor, con los
+    /// que estaban en vuelo ya recogidos: lo que queda en el buffer no
+    /// salio del proceso, y el cliente lo reenvia contra el `Range` que
+    /// la autoridad declara.
+    async fn flush_durable(&mut self) -> Result<u64, BlobError> {
+        Ok(self.bytes_written())
+    }
 }
 
 /// El almacen de contenido.
@@ -221,6 +296,31 @@ pub trait BlobStore: Send + Sync {
     /// La sesion es la via para subir contenido que no cabe en memoria:
     /// los bytes van entrando a trozos y el commit publica el todo.
     async fn begin(&self) -> Result<Box<dyn BlobWriteSession>, BlobError>;
+
+    /// Reabre una escritura en curso por el handle que dejo
+    /// [`BlobWriteSession::the_staging_handle`].
+    ///
+    /// Es la via de un registro de sesiones **durable**: una sesion
+    /// abierta en una réplica se reanuda en otra sin perder los bytes
+    /// que ya estan en el almacén. El handle es opaco para el
+    /// llamante —una ruta propia del almacen, un par
+    /// `key`/`upload_id`— y el offset `written` es lo que el journal
+    /// declaro: el almacén lo acepta como verdad **solo si lo que hay
+    /// en el staging cuadra con él**; si no, el resume falla y el
+    /// registro aborta la sesion, nunca la reanuda sobre bytes
+    /// dudosos.
+    ///
+    /// El default dice que este almacen no reabre: una sesion suya
+    /// muere con el proceso.
+    async fn resume(
+        &self,
+        _handle: &str,
+        _written: u64,
+    ) -> Result<Box<dyn BlobWriteSession>, BlobError> {
+        Err(BlobError::Unavailable(
+            "this store cannot reopen an in-progress write".to_owned(),
+        ))
+    }
 
     /// Lee el contenido aplicando una politica explicita.
     async fn get_with(
@@ -484,12 +584,98 @@ pub struct FileBlobWriteSession {
     hasher: Sha256,
     written: u64,
     open: bool,
+    /// El journal del registro declaro la sesion durable: el Drop del
+    /// mango **no** toca el staging. Su destino lo decide el journal.
+    durable: bool,
+    /// Si el hasher local cubre el staging entero. Un mango reabierto en
+    /// frio no volvio a ver los bytes que ya estaban en el fichero: su
+    /// digest local es parcial, y el commit comprueba el contenido
+    /// completo antes de publicar.
+    covers_all: bool,
 }
 
 impl FileBlobWriteSession {
     /// El fichero de staging de esta escritura.
     pub fn the_staging_path(&self) -> &Path {
         &self.staging_path
+    }
+
+    /// El mango sobre un fichero de staging ya existente, en append.
+    ///
+    /// El resume de un journal pasa por aqui: se reclama el bloqueo del
+    /// fichero —el `try_lock` del `begin`— y se recorta al offset que la
+    /// autoridad declaro. Sin el bloqueo, la subida sigue escribiendo en
+    /// otra réplica y este resume falla: no hay dos escritores del mismo
+    /// staging.
+    ///
+    /// Un fichero **mas largo** que lo declarado no es un error: son los
+    /// bytes que un escritor escribio y no alcanzo a registrar antes de
+    /// morir. Se recortan —nunca se publican por delante de la
+    /// autoridad—, y la subida sigue desde el offset declarado. Mas
+    /// corto si lo seria: la autoridad no puede deber bytes al disco.
+    ///
+    /// El hasher NO se recorre aqui: un resume puede darse en cada
+    /// peticion y recalcular el fichero entero seria pagar el doble. La
+    /// sesion reabierta se marca como **parcial** y el commit comprueba
+    /// el digest releyendo el staging —la verificacion es la misma, se
+    /// paga una sola vez, al publicar—.
+    fn reopen(
+        root: PathBuf,
+        gate: Arc<tokio::sync::Mutex<()>>,
+        staging_path: PathBuf,
+        declared: u64,
+    ) -> Result<Self, BlobError> {
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&staging_path)
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        if let Err(error) = file.try_lock() {
+            // El bloqueo es la prueba de que el dueno anterior murio:
+            // un staging que otra escritura tiene tomado NO se reabre.
+            return Err(BlobError::Unavailable(match error {
+                std::fs::TryLockError::WouldBlock => {
+                    "the staging file is being written by another process".to_owned()
+                }
+                std::fs::TryLockError::Error(error) => error.to_string(),
+            }));
+        }
+        let length = file
+            .metadata()
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?
+            .len();
+        if length < declared {
+            let _ = file.unlock();
+            return Err(BlobError::Unavailable(format!(
+                "the staging file holds {length} bytes and the journal declared {declared}"
+            )));
+        }
+        if length > declared {
+            // Lo que la autoridad no registro no se publica: se recorta
+            // al offset declarado. Son los bytes de un escritor muerto
+            // —vivo no seria, el bloqueo lo impide— que no llego a
+            // registrar su avance, o un duplicado que el CAS ya revento.
+            // El cliente los reenvia contra el `Range` declarado.
+            file.set_len(declared)
+                .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        }
+        // El hasher no se recalcula aqui: un resume puede darse en cada
+        // peticion y releer el fichero entero seria pagarlo dos veces.
+        // La sesion reabierta se marca como **parcial** —`covers_all`
+        // abajo— y el commit comprueba el digest contra el staging
+        // completo, que es la misma verificacion honesta, una sola vez,
+        // al publicar.
+        let file = tokio::fs::File::from_std(file);
+        Ok(Self {
+            root,
+            gate,
+            staging_path,
+            file: Some(file),
+            hasher: Sha256::new(),
+            written: declared,
+            open: true,
+            durable: true,
+            covers_all: false,
+        })
     }
 
     /// Cierra la sesion y borra el staging, sin publicar nada.
@@ -502,7 +688,7 @@ impl FileBlobWriteSession {
 
 impl Drop for FileBlobWriteSession {
     fn drop(&mut self) {
-        if self.open {
+        if self.open && !self.durable {
             self.discard();
         }
     }
@@ -547,7 +733,21 @@ impl BlobWriteSession for FileBlobWriteSession {
                 .map_err(|error| BlobError::Unavailable(error.to_string()))?;
         }
 
-        let found = ContentDigest::sha256(hex_of(&self.hasher.finalize_reset()));
+        // La comprobacion honesta del digest. Cuando el mango paso por
+        // todos los bytes, el hasher local es la verdad y no hay que
+        // volver a leer. Cuando la sesion se reablo en frio —otro
+        // proceso escribio los primeros bytes—, el hasher local NO los
+        // cubre: comparar ese digest parcial contra lo declarado daria
+        // un `DigestMismatch` falso y abortaria una subida buena. Se
+        // recalcula sobre el staging completo, una sola vez, al publicar.
+        let found = if self.covers_all {
+            ContentDigest::sha256(hex_of(&self.hasher.finalize_reset()))
+        } else {
+            let bytes = tokio::fs::read(&self.staging_path)
+                .await
+                .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+            ContentDigest::of_bytes(&bytes)
+        };
 
         // La longitud se comprueba contra la declarada.
         if self.written != expectation.length {
@@ -637,6 +837,53 @@ impl BlobWriteSession for FileBlobWriteSession {
 
     fn the_staging_path(&self) -> Option<&Path> {
         Some(&self.staging_path)
+    }
+
+    /// El handle persistible: la ruta del fichero de staging.
+    ///
+    /// Otro proceso que comparta el disco puede reclamar la escritura
+    /// exacta por esta ruta, y la marca del fichero —el `try_lock`—
+    /// dice si el dueño anterior sigue vivo: no hay dos escritores de
+    /// un mismo staging.
+    fn the_staging_handle(&self) -> Option<String> {
+        Some(self.staging_path.display().to_string())
+    }
+
+    /// El journal toma la propiedad del staging: el Drop del mango ya
+    /// no lo borra, su ciclo de vida lo decide el journal.
+    fn mark_durable(&mut self) {
+        self.durable = true;
+    }
+
+    /// Suelta el fichero **sin borrarlo**: cerrar el descriptor libera el
+    /// bloqueo advisory, y la autoridad del journal decide cuando el
+    /// staging dejo de tener dueño. Es la mano que cambia de réplica.
+    fn detach(&mut self) -> Result<(), BlobError> {
+        self.open = false;
+        self.file = None;
+        Ok(())
+    }
+
+    /// Un mango reabierto en frio no volvio a pasar los primeros bytes
+    /// por el hasher: su digest local es parcial y el commit comprueba
+    /// el fichero completo.
+    fn the_digest_covers_all(&self) -> bool {
+        self.covers_all
+    }
+
+    /// El fichero de staging es durable byte a byte: soltar el mango —o
+    /// que muera el proceso— no pierde bytes, y la autoridad puede
+    /// declarar todo lo escrito. Lo que queda por debajo es la pagina
+    /// del sistema: se fuerza antes de declarar.
+    async fn flush_durable(&mut self) -> Result<u64, BlobError> {
+        let file = self.file.as_mut().ok_or(BlobError::SessionClosed)?;
+        file.flush()
+            .await
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        file.sync_all()
+            .await
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        Ok(self.written)
     }
 }
 
@@ -733,7 +980,47 @@ impl BlobStore for FileBlobStore {
             hasher: Sha256::new(),
             written: 0,
             open: true,
+            durable: false,
+            covers_all: true,
         }))
+    }
+
+    /// Reabrir una escritura en curso a partir del handle que guardo
+    /// un journal: la ruta del fichero de staging.
+    ///
+    /// Solo una réplica puede tener el fichero tomado —el bloqueo
+    /// advisory del `begin`—. Un resume que llega despues de la muerte
+    /// del dueno anterior reclava el bloqueo y sigue escribiendo donde
+    /// lo dejo; uno que llega mientras el dueno vive, falla.
+    async fn resume(
+        &self,
+        handle: &str,
+        written: u64,
+    ) -> Result<Box<dyn BlobWriteSession>, BlobError> {
+        let path = std::path::Path::new(handle);
+        // El handle debe ser un staging de este almacen, no una ruta
+        // arbitraria: se rechaza todo lo que no cuelgue del directorio
+        // de staging propio.
+        let staging_dir = tokio::fs::canonicalize(self.the_staging_dir())
+            .await
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        let canonical = tokio::fs::canonicalize(path)
+            .await
+            .map_err(|error| BlobError::Unavailable(error.to_string()))?;
+        if !canonical.starts_with(&staging_dir)
+            || canonical.extension() != Some(std::ffi::OsStr::new("part"))
+        {
+            return Err(BlobError::Unavailable(
+                "the session handle is not a staging file of this store".to_owned(),
+            ));
+        }
+        let session = FileBlobWriteSession::reopen(
+            self.root.clone(),
+            Arc::clone(&self.gate),
+            canonical,
+            written,
+        )?;
+        Ok(Box::new(session))
     }
 
     async fn get_with(
