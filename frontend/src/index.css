@@ -1,6 +1,19 @@
 @import 'tailwindcss';
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
+  --hodei-slate: #152731;
+  --hodei-teal: #1b716e;
+  --hodei-teal-hover: #155b58;
+  --hodei-canvas: #f7f9fb;
+  --hodei-surface: #ffffff;
+  --hodei-surface-muted: #eef2f6;
+  --hodei-border: #d8e1e8;
+  --hodei-text: #152731;
+  --hodei-text-muted: #4a606d;
+  --hodei-focus-ring: #1b716e;
+
   font-family: 'Inter', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -8,6 +21,16 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.dark {
+  --hodei-canvas: #0e1a22;
+  --hodei-surface: #152731;
+  --hodei-surface-muted: #1d3340;
+  --hodei-border: #2b4554;
+  --hodei-text: #f7f9fb;
+  --hodei-text-muted: #9cb0bc;
+  --hodei-focus-ring: #3ab4af;
 }
 
 * {

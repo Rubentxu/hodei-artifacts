@@ -1,4 +1,8 @@
-import { createBrowserRouter } from 'react-router-dom';
+import {
+  createBrowserRouter,
+  Navigate,
+  type RouteObject,
+} from 'react-router-dom';
 
 // Import from index files for consistency
 import { Login } from '@/pages/Login';
@@ -9,7 +13,7 @@ import { NotFound } from '@/pages/NotFound';
 import { SearchPage } from '@/pages/search';
 import { ProfilePage } from '@/pages/profile';
 import { TokensPage } from '@/pages/settings/tokens';
-import { UsersPage } from '@/pages/admin/users';
+import { AdminPage, UsersPage } from '@/pages/admin';
 import { PoliciesPage } from '@/pages/settings/policies';
 import { OpenAPIDemoPage } from '@/pages/OpenAPIDemoPage';
 import Artifacts from '@/pages/Artifacts/Artifacts';
@@ -20,7 +24,7 @@ import ConsolePackagePage from '@/pages/console/ConsolePackagePage';
 
 import { MainLayout } from '@/components/templates/MainLayout';
 
-export const router = createBrowserRouter([
+export const routeConfig: RouteObject[] = [
   {
     path: '/login', // Login page
     element: <Login />,
@@ -29,10 +33,57 @@ export const router = createBrowserRouter([
     element: <MainLayout />, // Layout for authenticated routes
     children: [
       {
-        path: '/', // Dashboard at root for now
+        path: '/', // Overview (primary landing)
         element: <Dashboard />,
       },
       {
+        path: '/dashboard',
+        element: <Navigate to="/" replace />,
+      },
+      {
+        path: '/overview',
+        element: <Navigate to="/" replace />,
+      },
+      {
+        // Primary Repositories experience (Catalog Console: /api/v1/catalog/repositories)
+        path: '/console/repositories',
+        element: <ConsoleRepositoriesPage />,
+      },
+      {
+        path: '/catalog/repositories',
+        element: <Navigate to="/console/repositories" replace />,
+      },
+      {
+        // Primary Artifacts experience (Catalog Console browser & asset detail)
+        path: '/console/browse',
+        element: <ConsoleBrowsePage />,
+      },
+      {
+        path: '/browse',
+        element: <Navigate to="/console/browse" replace />,
+      },
+      {
+        // The path of the asset is a wildcard: the slashes are part of
+        // the name of the content inside the repository.
+        path: '/console/packages/:repository/*',
+        element: <ConsolePackagePage />,
+      },
+      {
+        // Legacy artifact upload/validation workspace preserved
+        path: '/artifacts',
+        element: <Artifacts />,
+      },
+      {
+        path: '/search',
+        element: <SearchPage />,
+      },
+      {
+        // Administration hub
+        path: '/admin',
+        element: <AdminPage />,
+      },
+      {
+        // Registry Admin (/api/v1/repositories) — semantically distinct from Catalog Repositories
         path: '/repositories',
         element: <Repositories />,
       },
@@ -41,12 +92,28 @@ export const router = createBrowserRouter([
         element: <RepositoryDetail />,
       },
       {
-        path: '/search',
-        element: <SearchPage />,
+        path: '/admin/registry',
+        element: <Navigate to="/repositories" replace />,
       },
       {
-        path: '/artifacts',
-        element: <Artifacts />,
+        path: '/admin/users',
+        element: <UsersPage />,
+      },
+      {
+        path: '/users',
+        element: <Navigate to="/admin/users" replace />,
+      },
+      {
+        path: '/settings/tokens',
+        element: <TokensPage />,
+      },
+      {
+        path: '/tokens',
+        element: <Navigate to="/settings/tokens" replace />,
+      },
+      {
+        path: '/settings/policies',
+        element: <PoliciesPage />,
       },
       {
         path: '/policies',
@@ -57,36 +124,8 @@ export const router = createBrowserRouter([
         element: <ProfilePage />,
       },
       {
-        path: '/settings/tokens',
-        element: <TokensPage />,
-      },
-      {
-        path: '/admin/users',
-        element: <UsersPage />,
-      },
-      {
-        path: '/settings/policies',
-        element: <PoliciesPage />,
-      },
-      {
         path: '/openapi-demo',
         element: <OpenAPIDemoPage />,
-      },
-      {
-        // The console of the catalog: the repositories, the browser of
-        // the assets and the detail of each one.
-        path: '/console/repositories',
-        element: <ConsoleRepositoriesPage />,
-      },
-      {
-        path: '/console/browse',
-        element: <ConsoleBrowsePage />,
-      },
-      {
-        // The path of the asset is a wildcard: the slashes are part of
-        // the name of the content inside the repository.
-        path: '/console/packages/:repository/*',
-        element: <ConsolePackagePage />,
       },
     ],
   },
@@ -94,4 +133,6 @@ export const router = createBrowserRouter([
     path: '*', // Catch-all for 404
     element: <NotFound />,
   },
-]);
+];
+
+export const router = createBrowserRouter(routeConfig);
