@@ -25,6 +25,7 @@ import type {
   PromotionResult,
   RepositoryList,
   RepositorySummary,
+  RevokeResult,
   SearchPage,
 } from './types';
 
@@ -193,8 +194,12 @@ export const promote = async (
 export const revoke = async (
   body: RevokeBody,
   signal?: AbortSignal
-): Promise<unknown> => {
-  const response = await client.post('/promotions/revoke', body, { signal });
+): Promise<RevokeResult> => {
+  const response = await client.post<RevokeResult>(
+    '/promotions/revoke',
+    body,
+    { signal }
+  );
   return response.data;
 };
 

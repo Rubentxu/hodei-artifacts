@@ -97,4 +97,30 @@ describe('ConfirmDialog', () => {
 
     expect(confirmed).not.toHaveBeenCalled();
   });
+
+  it('does not close or re-confirm while pending', async () => {
+    const user = userEvent.setup();
+    const confirmed = vi.fn();
+    const closed = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        pending
+        title="Promote"
+        description="The content will be served as trusted."
+        confirmLabel="Promote"
+        onConfirm={confirmed}
+        onClose={closed}
+      />
+    );
+
+    const confirm = await screen.findByRole('button', { name: /Loading/ });
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(confirm).toBeDisabled();
+    expect(cancel).toBeDisabled();
+
+    await user.keyboard('{Escape}');
+    expect(closed).not.toHaveBeenCalled();
+    expect(confirmed).not.toHaveBeenCalled();
+  });
 });

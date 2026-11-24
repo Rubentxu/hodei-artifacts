@@ -183,15 +183,12 @@ export const usePromote = () => {
       path: string;
       digest: string;
     }) =>
-      runGuardedMutation(signal =>
-        api.promote(repository, path, digest, signal)
-      ),
+      runGuardedMutation(signal => api.promote(repository, path, digest, signal)),
     onSuccess: (_data, _variables, context) => {
-      // The console's own queries for the active session, and not the
-      // whole application: a promotion does not change what the rest of
-      // the frontend asks for.
+      // Invalidate only the active principal's queries and keep the mutation
+      // pending until the refreshed trust state has been fetched.
       if (context && useAuthStore.getState().sessionEpoch === context.epoch) {
-        void client.invalidateQueries({
+        return client.invalidateQueries({
           queryKey: KEYS.root(context.session),
         });
       }
@@ -209,11 +206,10 @@ export const useRevoke = () => {
     mutationFn: (body: RevokeBody) =>
       runGuardedMutation(signal => api.revoke(body, signal)),
     onSuccess: (_data, _variables, context) => {
-      // The console's own queries for the active session, and not the
-      // whole application: a revocation does not change what the rest of
-      // the frontend asks for.
+      // Keep the mutation pending until the active session sees its refreshed
+      // trust state; never invalidate queries belonging to another principal.
       if (context && useAuthStore.getState().sessionEpoch === context.epoch) {
-        void client.invalidateQueries({
+        return client.invalidateQueries({
           queryKey: KEYS.root(context.session),
         });
       }

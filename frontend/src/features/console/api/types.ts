@@ -186,6 +186,12 @@ export interface PromotionResult {
   decision_id: string;
   digest: string;
   granted: string[];
+  risk_version?: number;
+}
+
+/** The answer of a revocation. */
+export interface RevokeResult {
+  revoked: number;
 }
 
 /** The body of a creation of a repository. */

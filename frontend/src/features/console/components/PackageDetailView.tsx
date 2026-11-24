@@ -16,7 +16,7 @@
  * not from a link with the credential inside it.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -72,6 +72,36 @@ const theMoment = (value: string): string => {
   return Number.isNaN(moment.getTime()) ? value : moment.toISOString();
 };
 
+/** Canonical sha256 digest format accepted by `src/handlers/promotions.rs`. */
+const CANONICAL_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+
+/** Validates non-empty bounded text without control characters. */
+const isSaneText = (value: string, max: number): boolean => {
+  if (value.length === 0 || value.length > max) return false;
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 32 || code === 127) return false;
+  }
+  return true;
+};
+
+type RevokeTargetKind = 'decision' | 'digest';
+
+type TrustOutcome =
+  | {
+      kind: 'promoted';
+      decision_id: string;
+      digest: string;
+      granted: string[];
+      risk_version?: number;
+    }
+  | {
+      kind: 'revoked';
+      revoked: number;
+      repository: string;
+      target: string;
+    };
+
 export interface PackageDetailViewProps {
   repository: string;
   path: string;
@@ -91,13 +121,31 @@ export const PackageDetailView = ({
   const [promoting, setPromoting] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [reason, setReason] = useState('');
+  const [revokeTarget, setRevokeTarget] =
+    useState<RevokeTargetKind>('decision');
+  const [revokeDecisionId, setRevokeDecisionId] = useState('');
+  const [revokeDigest, setRevokeDigest] = useState('');
+  const [lastOutcome, setLastOutcome] = useState<TrustOutcome | null>(null);
+  const [promoteRefusal, setPromoteRefusal] = useState<string | null>(null);
+  const [revokeRefusal, setRevokeRefusal] = useState<string | null>(null);
+  const [checkingDecision, setCheckingDecision] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadFailure, setDownloadFailure] = useState<unknown>(null);
   const [copiedKey, setCopiedKey] = useState<
     'digest' | 'reference' | 'link' | null
   >(null);
-
   const pinnedDigest = expectedDigest ?? searchParams.get('digest') ?? '';
+  const promoteLock = useRef(false);
+  const revokeLock = useRef(false);
+
+  useEffect(() => {
+    setPromoting(false);
+    setRevoking(false);
+    setReason('');
+    setLastOutcome(null);
+    setPromoteRefusal(null);
+    setRevokeRefusal(null);
+  }, [repository, path]);
 
   if (detail.isLoading) {
     return (
@@ -130,6 +178,15 @@ export const PackageDetailView = ({
     asset.asset_path,
     digest
   );
+  const trimmedReason = reason.trim();
+  const trimmedDecisionId = revokeDecisionId.trim();
+  const trimmedDigest = revokeDigest.trim();
+  const isReasonValid = isSaneText(trimmedReason, 1024);
+  const isGrantRefValid =
+    revokeTarget === 'decision'
+      ? isSaneText(trimmedDecisionId, 128)
+      : CANONICAL_DIGEST_RE.test(trimmedDigest);
+  const actionBusy = promote.isPending || revoke.isPending || detail.isFetching;
 
   const copyText = async (
     key: 'digest' | 'reference' | 'link',
@@ -144,6 +201,22 @@ export const PackageDetailView = ({
     } catch {
       setCopiedKey(null);
     }
+  };
+
+  const openPromoteDialog = () => {
+    promote.reset();
+    setPromoteRefusal(null);
+    setPromoting(true);
+  };
+
+  const openRevokeDialog = () => {
+    revoke.reset();
+    setRevokeRefusal(null);
+    setReason('');
+    setRevokeTarget(asset.trust.decision?.decision_id ? 'decision' : 'digest');
+    setRevokeDecisionId(asset.trust.decision?.decision_id ?? '');
+    setRevokeDigest(digest);
+    setRevoking(true);
   };
 
   const download = async () => {
@@ -204,14 +277,16 @@ export const PackageDetailView = ({
           {asset.trust.state === 'trusted' ? (
             <Button
               variant="destructive"
-              onClick={() => setRevoking(true)}
+              onClick={openRevokeDialog}
+              disabled={actionBusy}
               leftIcon={<ShieldOff />}
             >
               Revoke
             </Button>
           ) : (
             <Button
-              onClick={() => setPromoting(true)}
+              onClick={openPromoteDialog}
+              disabled={actionBusy}
               leftIcon={<ShieldCheck />}
             >
               Promote
@@ -219,6 +294,41 @@ export const PackageDetailView = ({
           )}
         </div>
       </div>
+
+      {lastOutcome && (
+        <div
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"
+        >
+          {lastOutcome.kind === 'promoted' ? (
+            <div className="flex flex-col gap-1">
+              <p className="font-semibold">Promotion granted</p>
+              <p>
+                Decision{' '}
+                <span className="font-mono">{lastOutcome.decision_id}</span> for{' '}
+                <span className="font-mono">{lastOutcome.digest}</span>
+                {lastOutcome.risk_version !== undefined &&
+                  ` (risk version ${lastOutcome.risk_version})`}
+                .
+              </p>
+              {lastOutcome.granted.length > 0 && (
+                <p className="text-xs text-emerald-800">
+                  Granted digests: {lastOutcome.granted.join(', ')}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <p className="font-semibold">Trust grant revoked</p>
+              <p>
+                Revoked {lastOutcome.revoked} grant(s) in{' '}
+                <span className="font-mono">{lastOutcome.repository}</span> for{' '}
+                <span className="font-mono">{lastOutcome.target}</span>.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {downloadFailure !== null && (
         <FailureNotice failure={failureOf(downloadFailure)} />
@@ -304,6 +414,32 @@ export const PackageDetailView = ({
             the exact content bytes. Shareable links pin the expected digest and
             never include credentials.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Trust decision</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {asset.trust.decision ? (
+            <dl className="grid gap-3 md:grid-cols-3">
+              <TheFact
+                label="Decision ID"
+                value={asset.trust.decision.decision_id}
+                mono
+              />
+              <TheFact label="Granted by" value={asset.trust.decision.actor} />
+              <TheFact
+                label="Granted at"
+                value={theMoment(asset.trust.decision.granted_at)}
+              />
+            </dl>
+          ) : (
+            <p className="text-sm text-gray-500">
+              No active trust grant decision.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -419,35 +555,70 @@ export const PackageDetailView = ({
       <ConfirmDialog
         open={promoting}
         title="Promote to the trusted channel"
-        description="The content will be served as trusted to everybody who reads the repository. This changes what the repository serves, and the person who promoted it cannot undo it from here."
+        description="The server evaluates your permission and trust policy before granting trusted distribution for this asset."
         confirmLabel="Promote"
         pending={promote.isPending}
-        onClose={() => setPromoting(false)}
+        onClose={() => {
+          if (promote.isPending) return;
+          setPromoting(false);
+          setPromoteRefusal(null);
+          promote.reset();
+        }}
         onConfirm={async () => {
+          if (promote.isPending || promoteLock.current) return;
+          promoteLock.current = true;
+          setLastOutcome(null);
+          setPromoteRefusal(null);
           try {
-            await promote.mutateAsync({
+            const result = await promote.mutateAsync({
               repository: asset.repository,
               path: asset.asset_path,
               digest,
             });
+            if (!result.promoted) {
+              setPromoteRefusal('The server did not grant the promotion.');
+              return;
+            }
+            setLastOutcome({
+              kind: 'promoted',
+              decision_id: result.decision_id,
+              digest: result.digest,
+              granted: result.granted,
+              risk_version: result.risk_version,
+            });
             setPromoting(false);
           } catch {
             // The failure is shown by the dialog.
+          } finally {
+            promoteLock.current = false;
           }
         }}
       >
-        <p>
-          The digest <span className="font-mono">{digest}</span> will be granted
-          as trusted.
-        </p>
-        {promote.error && <FailureNotice failure={failureOf(promote.error)} />}
-        {theReasonsOf(promote.error).length > 0 && (
-          <ul className="list-disc space-y-1 pl-5 text-sm text-red-700">
-            {theReasonsOf(promote.error).map(reason => (
-              <li key={reason}>{reason}</li>
-            ))}
-          </ul>
-        )}
+        <div className="flex flex-col gap-3">
+          <dl className="grid gap-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+            <TheFact label="Repository" value={asset.repository} mono />
+            <TheFact label="Path" value={asset.asset_path} mono />
+            <TheFact label="Digest" value={digest} mono />
+          </dl>
+          {promote.error && (
+            <FailureNotice failure={failureOf(promote.error)} />
+          )}
+          {promoteRefusal && (
+            <div
+              role="alert"
+              className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            >
+              {promoteRefusal}
+            </div>
+          )}
+          {theReasonsOf(promote.error).length > 0 && (
+            <ul className="list-disc space-y-1 pl-5 text-sm text-red-700">
+              {theReasonsOf(promote.error).map(item => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          )}
+        </div>
       </ConfirmDialog>
 
       <ConfirmDialog
@@ -456,37 +627,145 @@ export const PackageDetailView = ({
         description="The content will stop being served as trusted. The repository keeps it, but nobody may read it as trusted anymore."
         confirmLabel="Revoke"
         destructive
-        pending={revoke.isPending}
-        disabled={reason.trim().length === 0}
-        onClose={() => setRevoking(false)}
+        pending={revoke.isPending || checkingDecision}
+        disabled={!isReasonValid || !isGrantRefValid || checkingDecision}
+        onClose={() => {
+          if (revoke.isPending || checkingDecision) return;
+          setRevoking(false);
+          setReason('');
+          revoke.reset();
+        }}
         onConfirm={async () => {
+          if (
+            revoke.isPending ||
+            revokeLock.current ||
+            !isReasonValid ||
+            !isGrantRefValid
+          ) {
+            return;
+          }
+          revokeLock.current = true;
+          setLastOutcome(null);
+          setRevokeRefusal(null);
           try {
-            await revoke.mutateAsync({
+            if (revokeTarget === 'decision') {
+              setCheckingDecision(true);
+              const latest = await detail.refetch();
+              setCheckingDecision(false);
+              const currentDecisionId = latest.isError
+                ? undefined
+                : latest.data?.trust.decision?.decision_id;
+              if (!currentDecisionId || currentDecisionId !== trimmedDecisionId) {
+                setRevokeRefusal(
+                  'The trust decision changed. Reopen the dialog before revoking.'
+                );
+                return;
+              }
+            }
+            const payload =
+              revokeTarget === 'decision'
+                ? {
+                    repository: asset.repository,
+                    decision_id: trimmedDecisionId,
+                    reason: trimmedReason,
+                  }
+                : {
+                    repository: asset.repository,
+                    digest: trimmedDigest,
+                    reason: trimmedReason,
+                  };
+            const result = await revoke.mutateAsync(payload);
+            setLastOutcome({
+              kind: 'revoked',
+              revoked: result.revoked,
               repository: asset.repository,
-              digest,
-              reason: reason.trim(),
+              target:
+                revokeTarget === 'decision' ? trimmedDecisionId : trimmedDigest,
             });
             setRevoking(false);
             setReason('');
           } catch {
             // The failure is shown by the dialog.
+          } finally {
+            setCheckingDecision(false);
+            revokeLock.current = false;
           }
         }}
       >
-        <div className="flex flex-col gap-2">
-          <p>
-            The concession over <span className="font-mono">{digest}</span> will
-            be withdrawn.
-          </p>
+        <div className="flex flex-col gap-3">
+          <dl className="grid gap-2 rounded-md border border-gray-200 bg-gray-50 p-3">
+            <TheFact label="Repository" value={asset.repository} mono />
+            <TheFact label="Path" value={asset.asset_path} mono />
+            <TheFact label="Digest" value={digest} mono />
+            {asset.trust.decision && (
+              <TheFact
+                label="Decision ID"
+                value={asset.trust.decision.decision_id}
+                mono
+              />
+            )}
+          </dl>
           <Input
             label="Reason"
             value={reason}
             onChange={event => setReason(event.target.value)}
             placeholder="The signature does not hold"
-            helperText="The reason is kept with the revocation."
+            helperText="Required. The reason is kept with the revocation."
           />
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-xs font-medium uppercase tracking-wide text-gray-600">
+              Grant reference
+            </legend>
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm text-gray-800">
+                <input
+                  type="radio"
+                  name="revoke-target"
+                  value="decision"
+                  checked={revokeTarget === 'decision'}
+                  onChange={() => setRevokeTarget('decision')}
+                />
+                By decision ID
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-800">
+                <input
+                  type="radio"
+                  name="revoke-target"
+                  value="digest"
+                  checked={revokeTarget === 'digest'}
+                  onChange={() => setRevokeTarget('digest')}
+                />
+                By digest
+              </label>
+            </div>
+          </fieldset>
+          {revokeTarget === 'decision' ? (
+            <Input
+              label="Grant decision ID"
+              value={revokeDecisionId}
+              onChange={event => setRevokeDecisionId(event.target.value)}
+              placeholder="decision-1"
+              helperText="Required when revoking by decision."
+            />
+          ) : (
+            <Input
+              label="Grant digest"
+              value={revokeDigest}
+              onChange={event => setRevokeDigest(event.target.value)}
+              placeholder="sha256:..."
+              helperText="Canonical lowercase sha256 digest."
+            />
+          )}
+          {revokeRefusal && (
+            <div
+              role="alert"
+              className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+            >
+              {revokeRefusal}
+            </div>
+          )}
+          {revoke.error && <FailureNotice failure={failureOf(revoke.error)} />}
         </div>
-        {revoke.error && <FailureNotice failure={failureOf(revoke.error)} />}
       </ConfirmDialog>
     </div>
   );

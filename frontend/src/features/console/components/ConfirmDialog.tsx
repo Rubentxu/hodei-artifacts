@@ -64,7 +64,12 @@ export const ConfirmDialog = ({
   const confirms = useRef<HTMLButtonElement>(null);
 
   return (
-    <Modal open={open} onOpenChange={(next: boolean) => !next && onClose()}>
+    <Modal
+      open={open}
+      onOpenChange={(next: boolean) => {
+        if (!next && !pending) onClose();
+      }}
+    >
       <ModalContent
         ref={content}
         onOpenAutoFocus={event => {
@@ -92,7 +97,9 @@ export const ConfirmDialog = ({
           <Button
             ref={confirms}
             variant={destructive ? 'destructive' : 'primary'}
-            onClick={onConfirm}
+            onClick={() => {
+              if (!disabled && !pending) onConfirm();
+            }}
             isLoading={pending}
             disabled={disabled || pending}
           >

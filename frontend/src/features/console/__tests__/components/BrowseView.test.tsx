@@ -99,6 +99,31 @@ describe('BrowseView', () => {
     expect(summary).not.toHaveTextContent(/\b0\b/);
   });
 
+  it('reports zero when the API counted an empty result', async () => {
+    server.use(
+      http.get('/api/v1/search', () =>
+        HttpResponse.json({
+          total: 0,
+          more: false,
+          limit: 20,
+          offset: 0,
+          results: [],
+        })
+      )
+    );
+
+    render(
+      <MemoryRouter>
+        <BrowseView />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('0 results')).toBeInTheDocument();
+    expect(
+      screen.getByText('Nothing matches what was asked for.')
+    ).toBeInTheDocument();
+  });
+
   it('names the asset that was found', async () => {
     server.use(
       http.get('/api/v1/search', () =>

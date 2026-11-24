@@ -9,7 +9,7 @@
  */
 
 import { http, HttpResponse } from 'msw';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -120,17 +120,40 @@ describe('PackageDetailView', () => {
     expect(screen.getByText('missing')).toBeInTheDocument();
   });
 
-  it('asks before it promotes, and promotes what was confirmed', async () => {
+  it('asks before it promotes with repository, path, and digest, and refreshes state on grant', async () => {
     const user = userEvent.setup();
     let promoted: unknown = null;
+    let isTrusted = false;
+    let detailFetches = 0;
+
     server.use(
+      http.get('/api/v1/packages/:repository/*', () => {
+        detailFetches += 1;
+        return HttpResponse.json(
+          isTrusted
+            ? {
+                ...thePackage,
+                trust: {
+                  state: 'trusted',
+                  decision: {
+                    decision_id: 'decision-1',
+                    actor: 'hrn:hodei:iam::acme:User/alice',
+                    granted_at: '2026-11-17T00:00:00Z',
+                  },
+                },
+              }
+            : thePackage
+        );
+      }),
       http.post('/api/v1/promotions', async ({ request }) => {
         promoted = await request.json();
+        isTrusted = true;
         return HttpResponse.json({
           promoted: true,
           decision_id: 'decision-1',
           digest: `sha256:${theDigest}`,
           granted: [`sha256:${theDigest}`],
+          risk_version: 42,
         });
       })
     );
@@ -143,12 +166,19 @@ describe('PackageDetailView', () => {
 
     await user.click(await screen.findByRole('button', { name: /Promote/ }));
 
+    const dialog = await screen.findByRole('dialog');
     expect(
-      await screen.findByText('Promote to the trusted channel')
+      within(dialog).getByText('Promote to the trusted channel')
     ).toBeInTheDocument();
+    expect(within(dialog).getByText('libs')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('requests/2.32.3/requests-2.32.3.tar.gz')
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(`sha256:${theDigest}`)).toBeInTheDocument();
     expect(promoted).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: 'Promote' }));
+    const fetchesBefore = detailFetches;
+    await user.click(within(dialog).getByRole('button', { name: 'Promote' }));
 
     await waitFor(() =>
       expect(promoted).toEqual({
@@ -157,11 +187,89 @@ describe('PackageDetailView', () => {
         digest: `sha256:${theDigest}`,
       })
     );
+
+    expect(await screen.findByText('Trusted')).toBeInTheDocument();
+    expect(screen.getByText('Promotion granted')).toBeInTheDocument();
+    expect(screen.getAllByText('decision-1').length).toBeGreaterThan(0);
+    expect(detailFetches).toBeGreaterThan(fetchesBefore);
   });
 
-  it('asks for a reason before it revokes', async () => {
+  it('requires both reason and grant reference before revoking, and refreshes state', async () => {
     const user = userEvent.setup();
     let revoked: unknown = null;
+    let isTrusted = true;
+
+    server.use(
+      http.get('/api/v1/packages/:repository/*', () =>
+        HttpResponse.json(
+          isTrusted
+            ? {
+                ...thePackage,
+                trust: {
+                  state: 'trusted',
+                  decision: {
+                    decision_id: 'decision-1',
+                    actor: 'hrn:hodei:iam::acme:User/alice',
+                    granted_at: '2026-11-17T00:00:00Z',
+                  },
+                },
+              }
+            : thePackage
+        )
+      ),
+      http.post('/api/v1/promotions/revoke', async ({ request }) => {
+        revoked = await request.json();
+        isTrusted = false;
+        return HttpResponse.json({ revoked: 1 });
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole('button', { name: /Revoke/ }));
+
+    expect(
+      await screen.findByText('Revoke the concession')
+    ).toBeInTheDocument();
+    const confirm = screen.getByRole('button', { name: 'Revoke' });
+    expect(confirm).toBeDisabled();
+    expect(revoked).toBeNull();
+
+    // Reason alone is not enough if grant decision ID is cleared.
+    await user.type(
+      screen.getByLabelText('Reason'),
+      'the signature does not hold'
+    );
+    expect(confirm).toBeEnabled();
+
+    const decisionInput = screen.getByLabelText('Grant decision ID');
+    await user.clear(decisionInput);
+    expect(confirm).toBeDisabled();
+
+    await user.type(decisionInput, 'decision-1');
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+
+    await waitFor(() =>
+      expect(revoked).toEqual({
+        repository: 'libs',
+        decision_id: 'decision-1',
+        reason: 'the signature does not hold',
+      })
+    );
+
+    expect(await screen.findByText('Quarantined')).toBeInTheDocument();
+    expect(screen.getByText('Trust grant revoked')).toBeInTheDocument();
+  });
+
+  it('supports revoking by canonical digest when selected', async () => {
+    const user = userEvent.setup();
+    let revoked: unknown = null;
+
     server.use(
       http.get('/api/v1/packages/:repository/*', () =>
         HttpResponse.json({
@@ -189,38 +297,40 @@ describe('PackageDetailView', () => {
     );
 
     await user.click(await screen.findByRole('button', { name: /Revoke/ }));
-
-    expect(
-      await screen.findByText('Revoke the concession')
-    ).toBeInTheDocument();
-    const confirm = screen.getByRole('button', { name: 'Revoke' });
-    expect(confirm).toBeDisabled();
-    expect(revoked).toBeNull();
-
-    await user.type(
-      screen.getByLabelText('Reason'),
-      'the signature does not hold'
-    );
-    await user.click(confirm);
+    await user.type(screen.getByLabelText('Reason'), 'compromised key');
+    await user.click(screen.getByRole('radio', { name: 'By digest' }));
+    await user.click(screen.getByRole('button', { name: 'Revoke' }));
 
     await waitFor(() =>
       expect(revoked).toEqual({
         repository: 'libs',
         digest: `sha256:${theDigest}`,
-        reason: 'the signature does not hold',
+        reason: 'compromised key',
       })
     );
   });
 
-  it('says what the API refused when the promotion does not go through', async () => {
+  it('prevents duplicate promotion submissions while the mutation is in flight', async () => {
     const user = userEvent.setup();
+    let postCount = 0;
+    const deferred: { resolve?: () => void } = {};
+
     server.use(
-      http.post('/api/v1/promotions', () =>
-        HttpResponse.json(
-          { error: 'permission', message: 'forbidden' },
-          { status: 403 }
-        )
-      )
+      http.post('/api/v1/promotions', () => {
+        postCount += 1;
+        return new Promise(resolve => {
+          deferred.resolve = () =>
+            resolve(
+              HttpResponse.json({
+                promoted: true,
+                decision_id: 'decision-1',
+                digest: `sha256:${theDigest}`,
+                granted: [`sha256:${theDigest}`],
+                risk_version: 1,
+              })
+            );
+        });
+      })
     );
 
     render(
@@ -230,10 +340,16 @@ describe('PackageDetailView', () => {
     );
 
     await user.click(await screen.findByRole('button', { name: /Promote/ }));
-    await user.click(await screen.findByRole('button', { name: 'Promote' }));
+    const confirm = await screen.findByRole('button', { name: 'Promote' });
+    await user.click(confirm);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'You are not allowed to do this'
+    await waitFor(() => expect(confirm).toBeDisabled());
+    await user.click(confirm);
+    expect(postCount).toBe(1);
+
+    deferred.resolve?.();
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     );
   });
 
@@ -373,4 +489,102 @@ describe('PackageDetailView', () => {
       `/console/packages/npm-hosted/%40scope/pkg/1.0.0%2Bbuild%201/foo%252Fbar.tgz?digest=sha256%3A${theDigest}`
     );
   });
+  it('fails closed when the trust decision changed before revocation', async () => {
+    const user = userEvent.setup();
+    let packageReads = 0;
+    let revokeCalls = 0;
+
+    server.use(
+      http.get('/api/v1/packages/:repository/*', () => {
+        packageReads += 1;
+        const decisionId = packageReads === 1 ? 'decision-1' : 'decision-2';
+        return HttpResponse.json({
+          ...thePackage,
+          trust: {
+            state: 'trusted',
+            decision: {
+              decision_id: decisionId,
+              actor: 'hrn:hodei:iam::acme:User/alice',
+              granted_at: '2026-11-17T00:00:00Z',
+            },
+          },
+        });
+      }),
+      http.post('/api/v1/promotions/revoke', () => {
+        revokeCalls += 1;
+        return HttpResponse.json({ revoked: 1 });
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole('button', { name: /Revoke/ }));
+    await user.type(
+      await screen.findByLabelText('Reason'),
+      'the trust decision changed'
+    );
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Revoke' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The trust decision changed. Reopen the dialog before revoking.'
+    );
+    expect(revokeCalls).toBe(0);
+    expect(screen.getAllByText('decision-2').length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    {
+      label: '403 permission denial',
+      status: 403,
+      body: { error: 'permission', message: 'forbidden' },
+      expectedText: 'You are not allowed to do this',
+    },
+    {
+      label: '409 conflict',
+      status: 409,
+      body: { error: 'conflict', message: 'conflict' },
+      expectedText: 'It already exists',
+    },
+    {
+      label: '422 trust refusal',
+      status: 422,
+      body: { error: 'refused', message: 'policy refused' },
+      expectedText: 'The trust policy did not allow it',
+    },
+    {
+      label: '503 service unavailable',
+      status: 503,
+      body: { error: 'unavailable', message: 'promotions are not available' },
+      expectedText: 'The service cannot answer right now',
+    },
+  ])(
+    'never shows grant or success on $label',
+    async ({ status, body, expectedText }) => {
+      const user = userEvent.setup();
+      server.use(
+        http.post('/api/v1/promotions', () =>
+          HttpResponse.json(body, { status })
+        )
+      );
+
+      render(
+        <MemoryRouter>
+          <PackageDetailView repository="libs" path="requests/2.32.3" />
+        </MemoryRouter>
+      );
+
+      await user.click(await screen.findByRole('button', { name: /Promote/ }));
+      await user.click(await screen.findByRole('button', { name: 'Promote' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(expectedText);
+      expect(screen.queryByText('Promotion granted')).not.toBeInTheDocument();
+      expect(screen.getByText('Quarantined')).toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    }
+  );
 });
