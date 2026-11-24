@@ -243,7 +243,7 @@ pub async fn bootstrap(
         // directory, because content that silently lives in two places
         // is content the GC deletes as garbage and the health probe
         // reports as fine.
-        let chosen = the_content_store(config).await?;
+        let (chosen, content_check) = the_content_store(config).await?;
         let content: Arc<dyn hodei_hub::blob::BlobStore> = chosen.as_blob();
         // The staging that an interrupted upload leaves behind is not a
         // reason to not start, and it is not left to rot either. The
@@ -400,7 +400,21 @@ pub async fn bootstrap(
             .with_trust_ledger(trust_ledger)
             .with_proxy_plane(proxy_plane)
             .with_trust_plane(plane)
-            .with_content_store(content);
+            .with_content_store(content)
+            // El probe de readiness del perfil activo. Lo que exige este
+            // despliegue es el catalogo --que vive en el motor embebido-- y
+            // el almacen de contenido. La politica de confianza se carga
+            // en memoria al arrancar y no se puede perder en caliente, asi
+            // que no es una dependencia de readiness.
+            //
+            // El probe va envuelto en el cache corto: dos sondeos
+            // seguidos no gastan el presupuesto dos veces, y el handler no
+            // tiene estado.
+            .with_readiness(Arc::new(crate::readiness::CachedProbe::new(Arc::new(
+                crate::readiness::ProfileProbe::new()
+                    .with_catalog(schema_storage.db().clone())
+                    .with_content(content_check),
+            ))));
         let app_state = match scrub {
             Ok(scrub) => app_state.with_scrub(Arc::new(scrub)),
             Err(error) => {
@@ -517,13 +531,20 @@ impl ChosenContentStore {
 /// without a bucket policy could hang the boot inside a retry loop, so
 /// the check itself carries one bounded deadline; a bucket that does not
 /// answer in time is an unreachable bucket, and unreachable is an error.
-async fn the_content_store(config: &AppConfig) -> Result<ChosenContentStore, BootstrapError> {
+async fn the_content_store(
+    config: &AppConfig,
+) -> Result<(ChosenContentStore, crate::readiness::ContentCheck), BootstrapError> {
     use crate::config::ContentBackend;
     match config.content.backend {
         ContentBackend::Filesystem => {
             let store = FileBlobStore::new(&config.content.cas_path)
                 .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
-            Ok(ChosenContentStore::Filesystem(Arc::new(store)))
+            // La comprobacion de readiness del almacen: el directorio
+            // existe y es un directorio. No se lee nada de dentro.
+            let check = crate::readiness::ContentCheck::Filesystem {
+                root: std::path::PathBuf::from(&config.content.cas_path),
+            };
+            Ok((ChosenContentStore::Filesystem(Arc::new(store)), check))
         }
         ContentBackend::S3 => {
             let table = config
@@ -606,7 +627,15 @@ async fn the_content_store(config: &AppConfig) -> Result<ChosenContentStore, Boo
                     )));
                 }
             }
-            Ok(ChosenContentStore::S3(Arc::new(store)))
+            // La comprobacion de readiness del almacen: `head_bucket`,
+            // la llamada mas barata que existe. El presupuesto de red es
+            // el del probe: un bucket que no contesta produce un
+            // `timeout`, no una peticion colgada.
+            let check = crate::readiness::ContentCheck::S3 {
+                client: client.clone(),
+                bucket: table.bucket.clone(),
+            };
+            Ok((ChosenContentStore::S3(Arc::new(store)), check))
         }
     }
 }

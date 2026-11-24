@@ -136,6 +136,12 @@ pub struct AppState {
     /// Optional for the same reason the catalog is: without it there are no
     /// bytes to serve.
     pub(crate) content_store: Option<Arc<dyn BlobStore>>,
+    /// El probe de readiness del despliegue.
+    ///
+    /// Es un puerto y no una comprobacion: el handler de
+    /// `/health/ready` no sabe que dependencias exige el perfil activo, y
+    /// el perfil activo no se entera de que hay un handler.
+    pub(crate) readiness: Arc<dyn crate::readiness::ReadinessProbe>,
     /// The garbage collection of the store of content.
     ///
     /// Optional: it needs the durable catalog (the roots) and a store that
@@ -319,6 +325,7 @@ impl AppState {
             catalog_writer: None,
             catalog_search: None,
             content_store: None,
+            readiness: Arc::new(crate::readiness::NothingRequired),
             gc: None,
             scrub: None,
             trust_ledger: None,
@@ -389,6 +396,7 @@ impl AppState {
             catalog_writer: None,
             catalog_search: None,
             content_store: None,
+            readiness: Arc::new(crate::readiness::NothingRequired),
             gc: None,
             scrub: None,
             trust_ledger: None,
@@ -561,6 +569,15 @@ impl AppState {
     /// Inject the store of content by digest.
     pub fn with_content_store(mut self, store: Arc<dyn BlobStore>) -> Self {
         self.content_store = Some(store);
+        self
+    }
+
+    /// El probe de readiness del despliegue.
+    ///
+    /// Lo inyecta el arranque, que es donde se decide que dependencias
+    /// exige el perfil activo.
+    pub fn with_readiness(mut self, probe: Arc<dyn crate::readiness::ReadinessProbe>) -> Self {
+        self.readiness = probe;
         self
     }
 

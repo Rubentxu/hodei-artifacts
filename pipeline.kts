@@ -265,6 +265,11 @@ pipeline {
                         "--test hsp121_go_client",
                         "--test hsp121_go_e2e",
                         "--test hsp232_go_group",
+                        // La readiness y la liveness son dos preguntas
+                        // distintas (HSP-237): con el almacen desconectado
+                        // en caliente, la readiness deja de ser 200 y la
+                        // liveness no.
+                        "--test hsp237_readiness",
                         "--test hsp121_helm_oci",
                         "--test hsp122_apt_client",
                         "--test hsp122_apt_e2e",

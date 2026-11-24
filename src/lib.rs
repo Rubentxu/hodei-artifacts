@@ -38,6 +38,7 @@ pub mod proxy;
 pub mod public_url;
 pub mod quota;
 pub mod raw;
+pub mod readiness;
 pub mod recovery;
 pub mod repository;
 pub mod repository_surreal;

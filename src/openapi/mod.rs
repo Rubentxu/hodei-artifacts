@@ -39,6 +39,8 @@ use utoipa::OpenApi;
     paths(
         // Health endpoints
         crate::handlers::health::health_check,
+        crate::handlers::health::liveness,
+        crate::handlers::health::readiness,
 
         // Schema management endpoints
         crate::handlers::schemas::build_schema,
@@ -64,6 +66,9 @@ use utoipa::OpenApi;
         schemas(
             // Health schemas
             crate::handlers::health::HealthResponse,
+            crate::handlers::health::LivenessResponse,
+            crate::handlers::health::ReadinessResponse,
+            crate::handlers::health::DependencyStatus,
 
             // Schema management schemas
             crate::handlers::schemas::BuildSchemaRequest,
