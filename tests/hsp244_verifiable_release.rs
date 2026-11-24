@@ -343,12 +343,24 @@ fn external_clean_dir_verification_passes_and_rejects_tampering() {
         String::from_utf8_lossy(&gpgv_out.stderr)
     );
 
-    // 3. Tampering rejection: (a) OCI archive, (b) SPDX SBOM, (c) SHA256SUMS.
+    // 3. Tampering rejection: (a) OCI archive, (b) SPDX SBOM, (c) SHA256SUMS, (d) tarball,
+    // (e) provenance, (f) license matrix, (g) public key.
     let (_, manifest) = find_manifest(dist);
     let oci_archive_name = manifest["oci"]["archive"].as_str().unwrap();
     let oci_spdx_name = manifest["sbom"]["oci_spdx"]["filename"].as_str().unwrap();
 
-    for target_file in [oci_archive_name, oci_spdx_name, "SHA256SUMS"] {
+    let tarball_name = manifest["tarball"]["filename"].as_str().unwrap();
+    let provenance_name = manifest["provenance"]["filename"].as_str().unwrap();
+    let license_name = manifest["license_matrix"]["filename"].as_str().unwrap();
+    for target_file in [
+        oci_archive_name,
+        oci_spdx_name,
+        "SHA256SUMS",
+        tarball_name,
+        provenance_name,
+        license_name,
+        "release-signing-key.asc",
+    ] {
         let tampered_dir = TempDir::new().expect("temp tampered dir");
         copy_dist_files(dist, tampered_dir.path());
         let mut f = fs::OpenOptions::new()
