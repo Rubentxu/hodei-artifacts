@@ -15,9 +15,11 @@
 //!   silencio;
 //! - un caso **reservado** no se pide al upstream publico del grupo: los
 //!   miembros hosted son la fuente interna y no la toca;
-//! - un upstream **caido** detiene la resolucion: el grupo no salta al
-//!   siguiente miembro, porque un fallo transitorio no puede cambiar en
-//!   silencio lo que se descarga.
+//! - un miembro **caido** no detiene la resolucion: el grupo salta al
+//!   siguiente miembro, y el error sale solo si **nada** respondio;
+//! - la compuerta de confianza tambien se aplica en el camino **proxy**:
+//!   un proxy en el canal **trusted** no sirve lo que no tiene concesion;
+//! - el **HEAD** de una ruta proxy declara el tamano real del asset.
 //!
 //! Y, con el cliente `go` **real**:
 //!
@@ -53,6 +55,13 @@ const CENTRAL: &str = "go-central";
 
 /// El grupo.
 const GROUP: &str = "go-all";
+
+/// El grupo con el miembro **proxy primero**: la precedencia manda, y es el
+/// proxy caido el que se consulta antes que el hosted.
+const GROUP_FALLEN: &str = "go-fallen";
+
+/// Un proxy go en el canal **trusted**.
+const TRUSTED_PROXY: &str = "go-trusted";
 
 /// El modulo que el miembro hosted publica.
 const OWNED: &str = "example.com/hello";
@@ -110,6 +119,18 @@ const THE_CASES: &[(&str, &str)] = &[
     (
         "ac3-without-upstream-the-cache-serves-what-was-downloaded-and-no-more",
         "sin upstream, la cache sirve lo descargado y no inventa lo que no se descarg",
+    ),
+    (
+        "ac3-a-fallen-member-does-not-stop-the-group",
+        "un miembro caido del grupo no detiene la resolucion",
+    ),
+    (
+        "ac2-a-trusted-proxy-does-not-serve-what-was-not-granted",
+        "un proxy en el canal trusted no sirve lo que no tiene concesion",
+    ),
+    (
+        "ac1-the-head-of-a-proxy-path-carries-the-content-length",
+        "el HEAD de una ruta proxy declara el tamano real del asset",
     ),
 ];
 
@@ -964,6 +985,248 @@ fn a_reserved_namespace_never_falls_back_to_the_public_member() {
                 ));
             }
             LabCase::new(id, title).refused(text_of(&answer))
+        },
+    );
+}
+
+/// Un miembro caido del grupo no detiene la resolucion.
+///
+/// El grupo tiene el miembro **proxy primero**, y el servicio arranca **sin
+/// red**: el proxy no sale a la red y no tiene copia en cache del modulo que
+/// publica el hosted. Un miembro caido es un MISS: el grupo sigue con el
+/// siguiente miembro, y solo si **nada** respondio sale el error.
+#[test]
+fn a_fallen_member_of_the_group_does_not_stop_the_resolution() {
+    let upstream = support::lab::Upstream::start();
+    let deployment = Deployment::new();
+    deployment.seed_go(&[(INTERNAL, Value::Null)]);
+    deployment.seed_go_proxies(&[(CENTRAL, proxy_of(&upstream))]);
+    // El proxy va **primero**: la precedencia es la que decide, y es el
+    // miembro caido el que se consulta antes que el hosted.
+    deployment.seed_go_group(GROUP_FALLEN, &[CENTRAL, INTERNAL]);
+    let token = support::token(support::FIRST_ACCOUNT, "alice");
+
+    // El servicio arranca sin red: el proxy no sale a la red y no tiene
+    // copia en cache del modulo del hosted.
+    let environment = the_environment(&upstream);
+    let mut environment: Vec<(&str, &str)> = environment
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    environment.push(("HODEI_PROXY__OFFLINE", "true"));
+    let service = deployment.start(&environment);
+    let port = service.port;
+
+    // El miembro hosted publica su modulo **despues** de arrancar el
+    // servicio: asi el modulo no esta en la cache del proxy, y el caso
+    // mide que el grupo se sigue con el siguiente miembro.
+    publish_version(
+        port,
+        INTERNAL,
+        &token,
+        OWNED,
+        OWNED_VERSION,
+        &module_zip(OWNED, OWNED_VERSION, &go_mod(OWNED)),
+    );
+
+    a_case(
+        "ac3-a-fallen-member-does-not-stop-the-group",
+        "un miembro caido del grupo no detiene la resolucion",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let id = "ac3-a-fallen-member-does-not-stop-the-group";
+            let title = "un miembro caido del grupo no detiene la resolucion";
+            let answer = call(
+                port,
+                "GET",
+                &format!("/go/{GROUP_FALLEN}/{OWNED}/@v/list"),
+                &token,
+                None,
+            );
+            if answer.status != 200 {
+                return LabCase::new(id, title).failed(format!(
+                    "the list answered {}: {}",
+                    answer.status,
+                    text_of(&answer)
+                ));
+            }
+            let body = text_of(&answer);
+            if !body.contains(OWNED_VERSION) {
+                return LabCase::new(id, title)
+                    .failed(format!("the list of the hosted module is {body:?}"));
+            }
+            LabCase::new(id, title).passed()
+        },
+    );
+}
+
+/// Un proxy en el canal **trusted** no sirve lo que no tiene concesion.
+///
+/// El caso trae **dos** proxy al mismo upstream: uno en el canal abierto (el
+/// control) y otro en el canal de confianza. El control es lo que
+/// distingue "la compuerta funciona" de "el proxy esta roto".
+#[test]
+fn a_trusted_proxy_does_not_serve_what_was_not_granted() {
+    let upstream = support::lab::Upstream::start();
+    let deployment = Deployment::new();
+    // Los dos proxy apuntan al mismo upstream: lo que los separa es el
+    // canal, y nada mas.
+    deployment.seed_go_proxies_trusted(
+        &[TRUSTED_PROXY],
+        &[
+            (CENTRAL, proxy_of(&upstream)),
+            (TRUSTED_PROXY, proxy_of(&upstream)),
+        ],
+    );
+    let token = support::token(support::FIRST_ACCOUNT, "alice");
+
+    upstream.put(
+        &format!("{PUBLIC}/@v/list"),
+        format!("{PUBLIC_VERSION}\n").as_bytes(),
+        None,
+    );
+    upstream.put(
+        &format!("{PUBLIC}/@v/{PUBLIC_VERSION}.info"),
+        &info_document(PUBLIC_VERSION),
+        None,
+    );
+    upstream.put(
+        &format!("{PUBLIC}/@v/{PUBLIC_VERSION}.mod"),
+        &go_mod(PUBLIC),
+        None,
+    );
+    upstream.put(
+        &format!("{PUBLIC}/@v/{PUBLIC_VERSION}.zip"),
+        &module_zip(PUBLIC, PUBLIC_VERSION, &go_mod(PUBLIC)),
+        None,
+    );
+
+    let environment = the_environment(&upstream);
+    let service = deployment.start(
+        &environment
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    let port = service.port;
+
+    a_case(
+        "ac2-a-trusted-proxy-does-not-serve-what-was-not-granted",
+        "un proxy en el canal trusted no sirve lo que no tiene concesion",
+        Scope::Product,
+        Expectation::Refused,
+        || {
+            let id = "ac2-a-trusted-proxy-does-not-serve-what-was-not-granted";
+            let title = "un proxy en el canal trusted no sirve lo que no tiene concesion";
+            let trusted = call(
+                port,
+                "GET",
+                &format!("/go/{TRUSTED_PROXY}/{PUBLIC}/@v/{PUBLIC_VERSION}.zip"),
+                &token,
+                None,
+            );
+            if trusted.status == 200 {
+                return LabCase::new(id, title)
+                    .failed("the trusted proxy served content that was not granted");
+            }
+            // El control: el mismo upstream, el mismo contenido y el canal
+            // abierto **si** se sirve. Sin esto, el caso no distinguiria la
+            // compuerta de un proxy roto.
+            let open = call(
+                port,
+                "GET",
+                &format!("/go/{CENTRAL}/{PUBLIC}/@v/{PUBLIC_VERSION}.zip"),
+                &token,
+                None,
+            );
+            if open.status != 200 {
+                return LabCase::new(id, title).failed(format!(
+                    "the open proxy did not serve the content: {}",
+                    text_of(&open)
+                ));
+            }
+            LabCase::new(id, title)
+                .refused(format!("the trusted proxy answered {}", trusted.status))
+        },
+    );
+}
+
+/// El **HEAD** de una ruta proxy declara el tamano real del asset.
+///
+/// Sin cuerpo, un HEAD solo puede decir el tamano por cabecera: un
+/// `Content-Length` de cero describe un asset vacio, no un zip que si tiene
+/// tamano.
+#[test]
+fn the_head_of_a_proxy_path_carries_the_content_length() {
+    let upstream = support::lab::Upstream::start();
+    let deployment = Deployment::new();
+    deployment.seed_go(&[(INTERNAL, Value::Null)]);
+    deployment.seed_go_proxies(&[(CENTRAL, proxy_of(&upstream))]);
+    deployment.seed_go_group(GROUP, &[INTERNAL, CENTRAL]);
+    let token = support::token(support::FIRST_ACCOUNT, "alice");
+
+    upstream.put(
+        &format!("{PUBLIC}/@v/list"),
+        format!("{PUBLIC_VERSION}\n").as_bytes(),
+        None,
+    );
+    upstream.put(
+        &format!("{PUBLIC}/@v/{PUBLIC_VERSION}.info"),
+        &info_document(PUBLIC_VERSION),
+        None,
+    );
+    upstream.put(
+        &format!("{PUBLIC}/@v/{PUBLIC_VERSION}.mod"),
+        &go_mod(PUBLIC),
+        None,
+    );
+    upstream.put(
+        &format!("{PUBLIC}/@v/{PUBLIC_VERSION}.zip"),
+        &module_zip(PUBLIC, PUBLIC_VERSION, &go_mod(PUBLIC)),
+        None,
+    );
+
+    let environment = the_environment(&upstream);
+    let service = deployment.start(
+        &environment
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    let port = service.port;
+
+    a_case(
+        "ac1-the-head-of-a-proxy-path-carries-the-content-length",
+        "el HEAD de una ruta proxy declara el tamano real del asset",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let id = "ac1-the-head-of-a-proxy-path-carries-the-content-length";
+            let title = "el HEAD de una ruta proxy declara el tamano real del asset";
+            let path = format!("/go/{GROUP}/{PUBLIC}/@v/{PUBLIC_VERSION}.zip");
+            // El GET dice el tamano de verdad: el cuerpo que se sirve.
+            let body = call(port, "GET", &path, &token, None);
+            if body.status != 200 {
+                return LabCase::new(id, title)
+                    .failed(format!("the zip answered {}", text_of(&body)));
+            }
+            let length = body.body.len();
+            let head = call(port, "HEAD", &path, &token, None);
+            if head.status != 200 {
+                return LabCase::new(id, title)
+                    .failed(format!("the head answered {}", text_of(&head)));
+            }
+            let Some(declared) = head.header("content-length") else {
+                return LabCase::new(id, title)
+                    .failed("the head of the proxy path did not declare the content length");
+            };
+            if declared != length.to_string() {
+                return LabCase::new(id, title).failed(format!(
+                    "the head declared {declared} and the zip served {length} bytes"
+                ));
+            }
+            LabCase::new(id, title).passed()
         },
     );
 }
