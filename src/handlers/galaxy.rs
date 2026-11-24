@@ -399,8 +399,14 @@ async fn assets_under(
     prefix: &str,
 ) -> Result<Vec<AssetRecord>, Failure> {
     let (reader, _) = the_catalog(state)?;
+    // A scan stops at the segment boundary: `c` must not match `c2`.
+    let prefix = if prefix.ends_with('/') {
+        prefix.to_string()
+    } else {
+        format!("{prefix}/")
+    };
     reader
-        .assets_under(context.account().as_str(), &repository.repo_key, prefix)
+        .assets_under(context.account().as_str(), &repository.repo_key, &prefix)
         .await
         .map_err(|error| Failure::from(the_publication_error(&error)))
 }
