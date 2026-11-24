@@ -271,6 +271,11 @@ pipeline {
                         // en caliente, la readiness deja de ser 200 y la
                         // liveness no.
                         "--test hsp237_readiness",
+                        // El recorrido del perfil externo (HSP-237): con
+                        // HSP237_PROFILE_E2E=1 levanta con podman un Dgraph
+                        // de laboratorio y un S3 y mide la readiness al
+                        // pararlos; sin la variable se salta (exit 0).
+                        "--test hsp237_profile_external_e2e",
                         "--test hsp121_helm_oci",
                         "--test hsp122_apt_client",
                         "--test hsp122_apt_e2e",
