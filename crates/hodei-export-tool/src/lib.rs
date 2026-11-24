@@ -21,8 +21,9 @@
 //! 2. **The manifest is deterministic.** Nothing wall-clock enters it: the
 //!    same source content always produces byte-identical manifests, which
 //!    is what makes "same input, same SHA256" a testable contract.
-//! 3. **The work is bounded.** Rows are read by keyset pagination in
-//!    batches of a bounded size; no table is ever materialized in memory
+//! 3. **The work is bounded.** Rows are read by keyset pagination over
+//!    record-id ranges (an `Iterate Range` the planner seeks, measured in
+//!    `tests/hsp179_keyset_plan.rs`) in batches of a bounded size; no table is ever materialized in memory
 //!    (the HSP-174 lesson). The same bound scopes the duplicate check:
 //!    a repeated canonical identity inside one batch stops the export;
 //!    a pair spread across two batches is stopped by the import, when
@@ -53,7 +54,8 @@ pub mod manifest;
 
 pub use error::ExportError;
 pub use export::{
-    DEFAULT_BATCH_ROWS, ExportConfig, ExportRun, capture_frontier, export, export_with_frontier,
+    DEFAULT_BATCH_ROWS, ExportConfig, ExportRun, batch_range, batch_sql, capture_frontier, export,
+    export_with_frontier,
 };
 pub use manifest::{
     BATCHES_DIR, BatchEntry, ExportManifest, FORMAT, Frontier, MANIFEST_FILE, PROGRESS_FILE,
