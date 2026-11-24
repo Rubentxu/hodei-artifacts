@@ -58,6 +58,8 @@ use hodei_graph_client::{
 use kernel::application::ports::clock::Identity;
 use sha2::{Digest as _, Sha256};
 
+mod gc_ledger;
+
 /// Cuántas veces la publicación relee y reintenta antes de rendirse.
 const WRITE_ATTEMPTS: usize = 6;
 
@@ -1714,6 +1716,13 @@ impl DgraphCatalogStore {
             .map_err(the_guard_error)?;
         client
             .alter_schema(&catalog_schema_dql())
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        // El DDL aditivo del libro de la recoleccion coordinada
+        // (HSP-192): tipos y claves propias, idempotente, sin tocar el
+        // esquema versionado del grafo.
+        client
+            .alter_schema(&gc_ledger::gc_schema_dql())
             .await
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
         Ok(Self {
