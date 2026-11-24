@@ -563,8 +563,8 @@ async fn the_capabilities_say_what_can_be_created() {
     );
     assert_eq!(
         of("oci")["modes"],
-        json!(["hosted"]),
-        "the OCI surface serves only the hosted one"
+        json!(["hosted", "group"]),
+        "the OCI surface serves the hosted and the group one"
     );
     assert_eq!(of("npm")["modes"], json!(["hosted", "proxy", "group"]));
     assert_eq!(
@@ -572,7 +572,11 @@ async fn the_capabilities_say_what_can_be_created() {
         json!(["hosted"]),
         "the sparse index serves what cargo reads and what cargo publishes"
     );
-    assert_eq!(of("go")["modes"], json!(["hosted", "proxy"]));
+    assert_eq!(
+        of("go")["modes"],
+        json!(["hosted", "proxy", "group"]),
+        "the go surface serves the three modalities"
+    );
     assert_eq!(of("nuget")["modes"], json!(["hosted", "proxy"]));
     assert_eq!(
         of("apt")["modes"],

@@ -618,11 +618,15 @@ fn the_proxy_caches_the_module_and_survives_without_network() {
     assert_eq!(upstream.total(), before, "offline toco la red");
 }
 
-/// Una modalidad que la release no sabe servir se rechaza **en el
-/// dialecto go**, con un `405` que dice por que: no se convierte en un
-/// repositorio crudo que sirva rutas sueltas y finja ser un grupo.
+/// Un grupo go es un grupo go: ensambla la union de las versiones de sus
+/// miembros y **no** se convierte en un repositorio crudo que sirva rutas
+/// sueltas.
+///
+/// El grupo que no tiene ningun modulo publicado responde con el `404` del
+/// protocolo go --"no hay ningun modulo con ese nombre"-, y no con el `405`
+/// de una modalidad que la release no sabe servir: HSP-232 lo sirvio.
 #[test]
-fn a_go_group_is_refused_explicitly_and_never_degrades_to_raw() {
+fn a_go_group_answers_in_the_dialect_of_go_and_never_degrades_to_raw() {
     let deployment = Deployment::new();
     deployment.seed_go(&[("go-member", Value::Null)]);
     deployment.seed_go_group("go-all", &["go-member"]);
@@ -637,11 +641,11 @@ fn a_go_group_is_refused_explicitly_and_never_degrades_to_raw() {
         &token,
         None,
     );
-    assert_eq!(answer.status, 405, "{}", text_of(&answer));
+    assert_eq!(answer.status, 404, "{}", text_of(&answer));
     let body = text_of(&answer);
     assert!(
-        body.contains("group"),
-        "el rechazo debe decir que es un grupo: {body}"
+        body.contains("module"),
+        "el rechazo debe hablar de modulos: {body}"
     );
 
     // Y no es la superficie cruda hablando: la misma ruta por `/raw/`

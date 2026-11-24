@@ -237,14 +237,12 @@ async fn read(
         hodei_catalog::RepositoryMode::Proxy => {
             return read_proxy(state, context, repository, route, head, correlation).await;
         }
-        // Un grupo de go todavia no sabe ensamblar una lista de versiones
-        // entre sus miembros, y lo dice: no se convierte en un Raw que
-        // sirve rutas sueltas y finge ser un proxy.
+        // Un grupo de go ensambla la union de las versiones de sus miembros
+        // y resuelve cada ruta por precedencia. La precedencia, el MISS
+        // distinto del ERROR y la reserva de namespaces son los del motor de
+        // grupo de la superficie cruda: aqui no se reimplementan.
         hodei_catalog::RepositoryMode::Group => {
-            return Err(RawApiError::MethodNotAllowed(
-                "this go repository is a group, and groups do not assemble module version lists yet",
-            )
-            .into());
+            return read_group(state, context, repository, route, head, correlation).await;
         }
         _ => {}
     }
@@ -382,6 +380,423 @@ async fn read_asset_named(
 }
 
 // ---------------------------------------------------------------------------
+// Grupo
+// ---------------------------------------------------------------------------
+
+/// Lo que un miembro del grupo ofrece de un modulo.
+enum Offering {
+    /// El miembro tiene el modulo, con estas versiones.
+    Versions(Vec<(semver::Version, String)>),
+    /// El miembro no lo tiene: un 404 del upstream, un MISS.
+    Missing,
+    /// El miembro esta caido: sin red y sin copia en cache.
+    ///
+    /// Un miembro caido es un MISS mas: se sigue con el siguiente, y el
+    /// error sale solo si **nada** respondio.
+    Offline(RawApiError),
+}
+
+/// Las hojas que el grupo deja pasar para un modulo, con la reserva de
+/// namespaces ya aplicada.
+///
+/// La reserva se consulta **antes** que los miembros: un modulo reservado no
+/// se pide al upstream publico del grupo, y los miembros hosted son la
+/// fuente interna y no la toca.
+async fn the_governed(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    group: &RepositoryDescriptor,
+    module: &str,
+) -> Result<
+    (
+        Vec<RepositoryDescriptor>,
+        Vec<String>,
+        Option<hodei_catalog::Judgement>,
+    ),
+    Failure,
+> {
+    super::raw_group::the_governed_leaves(state, context, group, module)
+        .await
+        .map_err(Failure::from)
+}
+
+/// Los bytes que un miembro proxy trae de su upstream.
+///
+/// El camino es el de la superficie cruda: la cache, los recibos, el
+/// single-flight y el modo offline son los mismos, y lo que baja se publica
+/// en el namespace del miembro.
+async fn the_proxy_bytes(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    member: &RepositoryDescriptor,
+    asset_path: &str,
+    correlation: &str,
+) -> Result<Vec<u8>, Failure> {
+    let served =
+        super::raw::the_proxy_asset(state, context, member, asset_path, correlation).await?;
+    let bytes = the_content_store(state)?
+        .get(&served.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?
+        .to_vec();
+    Ok(bytes)
+}
+
+/// Las versiones de un miembro, con la misma regla que un hosted: una
+/// version es una version si tiene `.info`.
+///
+/// Un miembro proxy pregunta a su upstream por el **nombre del modulo**, no
+/// por el nombre del grupo: el grupo no renombra a su miembro.
+async fn the_member_versions(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    member: &RepositoryDescriptor,
+    module: &str,
+    correlation: &str,
+) -> Result<Offering, Failure> {
+    if member.mode == hodei_catalog::RepositoryMode::Proxy {
+        let asset_path = format!("{module}/@v/list");
+        let bytes = match the_proxy_bytes(state, context, member, &asset_path, correlation).await {
+            Ok(bytes) => bytes,
+            // Un 404 del upstream es un MISS: se sigue con el siguiente
+            // miembro. Un miembro caido tambien es un MISS: se sigue con
+            // el siguiente, y el error sale solo si nada respondio.
+            // Cualquier otro fallo es un ERROR y detiene la resolucion: un
+            // fallo transitorio no puede cambiar en silencio lo que se
+            // descarga.
+            Err(Failure::Raw(RawApiError::NotFound)) => return Ok(Offering::Missing),
+            Err(Failure::Raw(RawApiError::Offline(reason))) => {
+                return Ok(Offering::Offline(RawApiError::Offline(reason)));
+            }
+            Err(other) => return Err(other),
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        let mut versions = Vec::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if let Some(parsed) = gomod::parse_version(line) {
+                versions.push((parsed, line.to_string()));
+            }
+        }
+        return Ok(Offering::Versions(versions));
+    }
+    Ok(Offering::Versions(
+        hosted_versions(state, context, member, module).await?,
+    ))
+}
+
+/// La union de las versiones de los miembros del grupo, en orden semver.
+///
+/// La union no es destructiva: si dos miembros tienen la misma version, sale
+/// **una** vez. Un upstream caido es un MISS: se sigue con el siguiente
+/// miembro, y su error sale solo si **nada** respondio.
+async fn the_group_versions(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    leaves: &[RepositoryDescriptor],
+    module: &str,
+    correlation: &str,
+) -> Result<Vec<(semver::Version, String)>, Failure> {
+    let mut versions: Vec<(semver::Version, String)> = Vec::new();
+    // El primer miembro caido: su error se recuerda para salir con el si
+    // al final no respondio ninguno.
+    let mut offline: Option<RawApiError> = None;
+    for member in leaves {
+        match the_member_versions(state, context, member, module, correlation).await? {
+            Offering::Versions(found) => {
+                for entry in found {
+                    if !versions.iter().any(|(_, known)| known == &entry.1) {
+                        versions.push(entry);
+                    }
+                }
+            }
+            Offering::Missing => {}
+            Offering::Offline(error) => {
+                if offline.is_none() {
+                    offline = Some(error);
+                }
+            }
+        }
+    }
+    // Si nada respondio, el error del que esta caido es el veredicto: un
+    // listado vacio no puede ser la respuesta a un modulo que existe.
+    if versions.is_empty()
+        && let Some(error) = offline
+    {
+        return Err(Failure::Raw(error));
+    }
+    versions.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(versions)
+}
+
+/// El digest que el catalogo conoce de un artefacto de una version.
+///
+/// `None` es que ese miembro no tiene (o no ha descargado) el artefacto: no
+/// se compara con nadie.
+async fn the_known_digest(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    member: &RepositoryDescriptor,
+    asset_path: &str,
+) -> Result<Option<String>, Failure> {
+    Ok(
+        super::raw::the_current_asset(state, context, &member.repo_key, asset_path)
+            .await?
+            .map(|asset| asset.digest.to_string()),
+    )
+}
+
+/// La divergencia entre miembros: la misma version con contenido distinto.
+///
+/// El protocolo go no tiene forma de decir "hay dos": el cliente no puede
+/// saber cual de los dos es el bueno. Por eso el grupo **rechaza** con un
+/// error definido en vez de elegir en silencio.
+///
+/// Se comparan los `.mod` y los `.zip`, que son los dos digests que el
+/// cliente escribe en su `go.sum`. Solo se comparan los miembros cuyo
+/// contenido el catalogo conoce; el que aun no ha descargado esa version no
+/// se compara, y ahi la precedencia decide.
+async fn the_divergence(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    leaves: &[RepositoryDescriptor],
+    module: &str,
+    version: &str,
+) -> Result<Option<String>, Failure> {
+    for extension in ["mod", "zip"] {
+        let asset_path = format!("{module}/@v/{version}.{extension}");
+        let mut seen: Option<(String, String)> = None;
+        for member in leaves {
+            let Some(digest) = the_known_digest(state, context, member, &asset_path).await? else {
+                continue;
+            };
+            match &seen {
+                None => seen = Some((member.repo_key.clone(), digest)),
+                Some((known_key, known_digest)) if known_digest != &digest => {
+                    return Ok(Some(format!(
+                        "the version {version} of {module} has different content in the members {known_key} and {}",
+                        member.repo_key
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// El estado de un grupo go frente a un modulo.
+///
+/// Son las hojas que la reserva de namespaces deja pasar, los miembros que
+/// dejo fuera y el veredicto de la reserva: la resolucion los consulta
+/// siempre, y no se repregunta en cada artefacto.
+struct TheGroup<'a> {
+    /// El repositorio de grupo.
+    group: &'a RepositoryDescriptor,
+    /// Las hojas que se consultan, en el orden de precedencia.
+    leaves: Vec<RepositoryDescriptor>,
+    /// Los miembros proxy que la reserva de namespaces dejo fuera.
+    denied: Vec<String>,
+    /// El veredicto de la reserva, si la hubo.
+    judgement: Option<hodei_catalog::Judgement>,
+}
+
+/// El miembro que duena una version: el primero, en el orden configurado, que
+/// la tiene.
+///
+/// La version se reconoce por su `.info`, que es el mismo criterio que usa
+/// `hosted_versions`: un `.info` con version parseable es una version.
+///
+/// El dueno decide **que** se sirve: los tres artefactos (`.info`, `.mod` y
+/// `.zip`) salen de ese mismo miembro. Nunca se mezcla el `.mod` de un
+/// miembro con el `.zip` de otro, porque un `go.sum` que no cuadra es un
+/// cliente que falla con un error que no explica.
+async fn the_owner_of(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    group: &TheGroup<'_>,
+    module: &str,
+    version: &str,
+    correlation: &str,
+) -> Result<RepositoryDescriptor, Failure> {
+    // El primer miembro caido: un miembro sin red y sin copia en cache no
+    // tiene todavia la version, asi que se sigue con el siguiente. Su error
+    // sale solo si **ningun** miembro la duena.
+    let mut offline: Option<RawApiError> = None;
+    for member in &group.leaves {
+        let asset_path = format!("{module}/@v/{version}.info");
+        let has = if member.mode == hodei_catalog::RepositoryMode::Proxy {
+            // Un miembro proxy responde con su upstream: un 404 es un MISS
+            // (el miembro no tiene esa version), un miembro caido tambien
+            // es un MISS, y lo demas es un ERROR que detiene la
+            // resolucion.
+            match the_proxy_bytes(state, context, member, &asset_path, correlation).await {
+                Ok(_) => true,
+                Err(Failure::Raw(RawApiError::NotFound)) => false,
+                Err(Failure::Raw(RawApiError::Offline(reason))) => {
+                    if offline.is_none() {
+                        offline = Some(RawApiError::Offline(reason));
+                    }
+                    false
+                }
+                Err(other) => return Err(other),
+            }
+        } else {
+            super::raw::the_current_asset(state, context, &member.repo_key, &asset_path)
+                .await?
+                .is_some()
+        };
+        if has {
+            return Ok(member.clone());
+        }
+    }
+    // Un miembro caido gana sobre la explicacion de reserva: el veredicto
+    // dice que no se pudo saber, no que el namespace estaba reservado.
+    if let Some(error) = offline {
+        return Err(Failure::Raw(error));
+    }
+    // Un caso reservado no hace fallback: se explica por que no se sirve.
+    if !group.denied.is_empty()
+        && let Some(judgement) = &group.judgement
+    {
+        return Err(super::raw_group::the_group_reservation_explanation(
+            group.group,
+            judgement,
+            &group.denied,
+        )
+        .into());
+    }
+    Err(Failure::plain(
+        StatusCode::NOT_FOUND,
+        "this module has no such version in this group",
+    ))
+}
+
+/// Lo que un grupo go sirve en una ruta.
+///
+/// Un grupo no es un proxy con otro nombre: ensambla la **union** de las
+/// versiones de sus miembros y resuelve cada version por precedencia.
+async fn read_group(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    group: &RepositoryDescriptor,
+    route: &Route,
+    head: bool,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    let module = route.module().to_string();
+    let (leaves, denied, judgement) = the_governed(state, context, group, &module).await?;
+    let governed = TheGroup {
+        group,
+        leaves,
+        denied,
+        judgement,
+    };
+    match route {
+        Route::List { .. } => {
+            let versions =
+                the_group_versions(state, context, &governed.leaves, &module, correlation).await?;
+            if versions.is_empty() {
+                // Un caso reservado no hace fallback: se explica por que no
+                // se sirve en vez de parecer un modulo que no existe.
+                if !governed.denied.is_empty()
+                    && let Some(judgement) = &governed.judgement
+                {
+                    return Err(super::raw_group::the_group_reservation_explanation(
+                        governed.group,
+                        judgement,
+                        &governed.denied,
+                    )
+                    .into());
+                }
+                return Err(Failure::plain(
+                    StatusCode::NOT_FOUND,
+                    "there is no module of that name in this group",
+                ));
+            }
+            let body = versions
+                .iter()
+                .map(|(_, version)| format!("{version}\n"))
+                .collect::<String>();
+            Ok(text_response(body, head, correlation))
+        }
+        Route::Latest { .. } => {
+            // El "latest" de un grupo es el latest de la **union**, no el del
+            // ultimo miembro que responda.
+            let versions =
+                the_group_versions(state, context, &governed.leaves, &module, correlation).await?;
+            let Some((_, latest)) = versions.last() else {
+                if !governed.denied.is_empty()
+                    && let Some(judgement) = &governed.judgement
+                {
+                    return Err(super::raw_group::the_group_reservation_explanation(
+                        governed.group,
+                        judgement,
+                        &governed.denied,
+                    )
+                    .into());
+                }
+                return Err(Failure::plain(
+                    StatusCode::NOT_FOUND,
+                    "this module has no published versions",
+                ));
+            };
+            let owned = Route::Info {
+                module: module.clone(),
+                version: latest.clone(),
+            };
+            serve_owned(state, context, &governed, &owned, head, correlation).await
+        }
+        Route::Info { .. } | Route::Mod { .. } | Route::Zip { .. } => {
+            serve_owned(state, context, &governed, route, head, correlation).await
+        }
+    }
+}
+
+/// Sirve un artefacto de version desde el miembro que la duena.
+async fn serve_owned(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    group: &TheGroup<'_>,
+    route: &Route,
+    head: bool,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    let (module, version) = match route {
+        Route::Info { module, version }
+        | Route::Mod { module, version }
+        | Route::Zip { module, version } => (module.clone(), version.clone()),
+        _ => return Err(RawApiError::NotFound.into()),
+    };
+    if let Some(conflict) = the_divergence(state, context, &group.leaves, &module, &version).await?
+    {
+        // La divergencia se rechaza con un error definido: el cliente puede
+        // distinguir "no lo tengo" de "esto esta en conflicto".
+        return Err(Failure::plain(StatusCode::CONFLICT, &conflict));
+    }
+    let owner = the_owner_of(state, context, group, &module, &version, correlation).await?;
+    match owner.mode {
+        hodei_catalog::RepositoryMode::Proxy => {
+            read_proxy(state, context, &owner, route, head, correlation).await
+        }
+        _ => {
+            let path = route.asset_path().expect("a version route names its asset");
+            let extension = path.rsplit('.').next().unwrap_or_default();
+            read_asset_named(
+                state,
+                context,
+                &owner,
+                &path,
+                gomod::content_type(extension),
+                head,
+                correlation,
+            )
+            .await
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Proxy
 // ---------------------------------------------------------------------------
 
@@ -426,6 +841,17 @@ async fn read_proxy(
         correlation,
     )
     .await?;
+    // La compuerta de confianza: un proxy tambien es un repositorio, y su
+    // canal decide si ese digest puede servirse. Sin esta pregunta, un
+    // proxy en el canal trusted serviria contenido sin concesion.
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        repository,
+        &served.asset.digest,
+    )
+    .await
+    .map_err(the_admission_error)?;
     let bytes = if head {
         Vec::new()
     } else {
@@ -435,9 +861,17 @@ async fn read_proxy(
             .map_err(|error| the_blob_error(&error))?
             .to_vec()
     };
+    let length = if head {
+        served.asset.size_bytes as usize
+    } else {
+        bytes.len()
+    };
     let etag = conditional::the_etag(&served.asset.digest);
     let mut response = body_response(StatusCode::OK, bytes, content_type, &etag, correlation);
     apply_cache_headers(&mut response, &Some((served.status, served.provenance)));
+    if head && let Ok(value) = HeaderValue::from_str(&length.to_string()) {
+        response.headers_mut().insert(header::CONTENT_LENGTH, value);
+    }
     Ok(response)
 }
 
