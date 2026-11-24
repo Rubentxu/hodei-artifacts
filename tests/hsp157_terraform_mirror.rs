@@ -212,3 +212,75 @@ fn the_terraform_mirror_proxy_caches_the_provider_and_serves_it_byte_for_byte() 
 
     support::stop(&mut service);
 }
+
+/// G1: a mirror is a repository too, and its channel decides whether a
+/// digest may be served. In the trusted channel, a digest nobody promoted
+/// is not served: the mirror answers 404 as every other proxy does.
+#[test]
+fn a_trusted_mirror_does_not_serve_a_digest_without_a_concession() {
+    let zip = b"PK\x03\x04 unpromoted provider zip".to_vec();
+    let mut pages = HashMap::new();
+    pages.insert(
+        format!("/{PROVIDER}/terraform-provider-null_3.2.1_linux_amd64.zip"),
+        zip,
+    );
+    pages.insert(
+        format!("/{PROVIDER}/index.json"),
+        b"{\"versions\":{}}".to_vec(),
+    );
+    let upstream = start_upstream(pages);
+
+    let deployment = Deployment::new();
+    let proxy = json!({
+        "upstream": {
+            "id": "lab",
+            "url": format!("http://127.0.0.1:{}/", upstream.port),
+            "scopes": ["/"],
+            "max_bytes": 65536,
+        },
+    });
+    deployment.seed_terraform_proxies_trusted(
+        &["tf-trusted"],
+        &[("tf-trusted", proxy.clone()), ("tf-open", proxy)],
+    );
+    let token = support::token(support::FIRST_ACCOUNT, "alice");
+    let allowed = format!("127.0.0.1:{};private;http", upstream.port);
+    let mut service = deployment.start(&[("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str())]);
+    let port = service.port;
+    let file = "terraform-provider-null_3.2.1_linux_amd64.zip";
+
+    let open = call(
+        port,
+        "GET",
+        &format!("/terraform/tf-open/{PROVIDER}/{file}"),
+        &token,
+    );
+    assert_eq!(
+        open.status,
+        200,
+        "the open channel serves: {}",
+        text_of(&open)
+    );
+
+    for method in ["GET", "HEAD"] {
+        let trusted = call(
+            port,
+            method,
+            &format!("/terraform/tf-trusted/{PROVIDER}/{file}"),
+            &token,
+        );
+        assert_eq!(
+            trusted.status, 404,
+            "{method}: a digest without a concession is not served by the trusted channel"
+        );
+    }
+    let index = call(
+        port,
+        "GET",
+        &format!("/terraform/tf-trusted/{PROVIDER}/index.json"),
+        &token,
+    );
+    assert_eq!(index.status, 404, "the documents go through the same gate");
+
+    support::stop(&mut service);
+}

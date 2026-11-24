@@ -30,8 +30,8 @@ use hodei_catalog::{
 };
 
 use super::raw::{
-    RawApiError, apply_cache_headers, apply_common_headers, the_blob_error, the_content_store,
-    the_context, the_decision, the_proxy_asset_at, the_repository_in,
+    RawApiError, apply_cache_headers, apply_common_headers, the_admission_error, the_blob_error,
+    the_content_store, the_context, the_decision, the_proxy_asset_at, the_repository_in,
 };
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
@@ -230,6 +230,16 @@ async fn read(
         correlation,
     )
     .await?;
+    // The trust gate: a mirror is a repository too, and its channel decides
+    // whether this digest may be served.
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        repository,
+        &served.asset.digest,
+    )
+    .await
+    .map_err(the_admission_error)?;
     let bytes = if head {
         Vec::new()
     } else {

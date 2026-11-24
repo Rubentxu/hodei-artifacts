@@ -735,6 +735,27 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the terraform mirrors");
     }
 
+    /// Like [`Self::seed_terraform_proxies`], with some of the mirrors in
+    /// the **trusted** channel (`config_settings.trust.serve`).
+    pub fn seed_terraform_proxies_trusted(
+        &self,
+        trusted: &[&str],
+        repositories: &[(&str, serde_json::Value)],
+    ) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, proxy)| {
+                serde_json::json!({
+                    "key": key,
+                    "proxy": proxy,
+                    "format": "terraform",
+                    "trusted": trusted.contains(key),
+                })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the terraform mirrors");
+    }
+
     pub fn seed_galaxy(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
