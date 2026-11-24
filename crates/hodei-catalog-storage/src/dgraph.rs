@@ -39,12 +39,15 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use hodei_audit::{
     AuditContext, AuditEntry, AuditError, AuditEvent, AuditOutbox, AuditResult, EntryState,
 };
+use hodei_catalog::search::{
+    RepositoryAttribute, SearchHit, SearchPage, SearchQuery, parse_search_cursor,
+};
 use hodei_catalog::{
     AccessDecision, AccessRequest, AssetDisposition, AssetRecord, BlobIntegrityProbe, BlobLocation,
     BlobProbeError, BlobReference, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader,
-    CatalogResource, CatalogWriter, DigestScope, MutableTag, PackageCoordinates, PackageVersion,
-    Precondition, Publication, PublishOutcome, ReferrerRecord, RepositoryConfig,
-    RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustState,
+    CatalogResource, CatalogSearch, CatalogWriter, DigestScope, MutableTag, PackageCoordinates,
+    PackageVersion, Precondition, Publication, PublishOutcome, ReferrerRecord, RepositoryConfig,
+    RepositoryDescriptor, RepositoryFormat, RepositoryMode, ServeChannel, TrustState,
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_graph_client::guard::{GuardKind, GuardScope, GuardedEffect};
@@ -2923,6 +2926,426 @@ impl CatalogWriter for DgraphCatalogStore {
         Err(CatalogError::invalid(
             "the dgraph raw slice does not serve asset moves",
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// La búsqueda indexada (HSP-191).
+// ---------------------------------------------------------------------------
+
+/// Cuántos repositorios pueden compartir una etiqueta que la búsqueda
+/// resuelve, la misma frontera que la referencia Surreal.
+const MAX_TAG_TARGETS: usize = 64;
+
+/// La coordenada a la que apunta una etiqueta, leída del grafo.
+struct TagTarget {
+    repository: String,
+    package_name: String,
+    package_version: String,
+}
+
+impl DgraphCatalogStore {
+    /// El repositorio de la cuenta, por el índice exacto de la cuenta, en
+    /// el orden de su clave: el mismo orden que la referencia Surreal.
+    async fn the_repository_listing(
+        &self,
+        principal_account: &str,
+    ) -> Result<Vec<RepositoryDescriptor>, CatalogError> {
+        let query = format!(
+            "{{ q(func: eq(hodei.catalog.repository.account, {}), \
+             orderasc: hodei.catalog.repository.repo_key) {{ {REPOSITORY_FIELDS} }} }}",
+            dql_string(principal_account),
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let nodes = response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut repositories = Vec::with_capacity(nodes.len());
+        for node in &nodes {
+            let row = RepositoryRow::from_node(node)?;
+            let repo_key = row.repo_key.clone();
+            repositories.push(row.into_descriptor(principal_account, &repo_key)?);
+        }
+        Ok(repositories)
+    }
+
+    /// Las coordenadas que una etiqueta nombra, por el índice exacto de su
+    /// nombre: una etiqueta que no existe no estrecha nada.
+    async fn the_tag_targets(
+        &self,
+        principal_account: &str,
+        tag: &str,
+    ) -> Result<Vec<TagTarget>, CatalogError> {
+        let query = format!(
+            "{{ q(func: eq(hodei.catalog.tag.tag_name, {}), first: {}) \
+             @filter(eq(hodei.catalog.tag.account, {})) {{ \
+             hodei.catalog.tag.repository hodei.catalog.tag.package_name \
+             hodei.catalog.tag.package_version }} }}",
+            dql_string(tag),
+            MAX_TAG_TARGETS,
+            dql_string(principal_account),
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let nodes = response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut targets = Vec::with_capacity(nodes.len());
+        for node in &nodes {
+            targets.push(TagTarget {
+                repository: node_text(node, "hodei.catalog.tag.repository")?,
+                package_name: node_text(node, "hodei.catalog.tag.package_name")?,
+                package_version: node_text(node, "hodei.catalog.tag.package_version")?,
+            });
+        }
+        Ok(targets)
+    }
+
+    /// La ventana de filas de UN repositorio, por los índices exactos: la
+    /// cuenta y el repositorio en la raíz (el índice que las sirve), el
+    /// resto en el filtro del mismo índice. La página es **por clave**
+    /// (HSP-191): con cursor, la ventana empieza DESPUÉS de la clave que
+    /// ya se vio, y una inserción antes de esa clave no la mueve.
+    async fn the_asset_window(
+        &self,
+        principal_account: &str,
+        repo_key: &str,
+        query: &SearchQuery,
+        target: Option<&TagTarget>,
+        after_path: Option<&str>,
+        window: usize,
+    ) -> Result<Vec<AssetRow>, CatalogError> {
+        let mut filters = vec![format!(
+            "eq(hodei.catalog.asset.account, {})",
+            dql_string(principal_account)
+        )];
+        if let Some(name) = &query.package_name {
+            filters.push(format!(
+                "eq(hodei.catalog.asset.package_name, {})",
+                dql_string(name)
+            ));
+        }
+        if let Some(version) = &query.package_version {
+            filters.push(format!(
+                "eq(hodei.catalog.asset.package_version, {})",
+                dql_string(version)
+            ));
+        }
+        if let Some(digest) = &query.digest {
+            filters.push(format!(
+                "eq(hodei.catalog.asset.digest_algorithm, \"{algorithm}\") AND \
+                 eq(hodei.catalog.asset.digest, {value})",
+                algorithm = digest.algorithm,
+                value = dql_string(&digest.value),
+            ));
+        }
+        if let Some(target) = target {
+            filters.push(format!(
+                "eq(hodei.catalog.asset.package_name, {name}) AND \
+                 eq(hodei.catalog.asset.package_version, {version})",
+                name = dql_string(&target.package_name),
+                version = dql_string(&target.package_version),
+            ));
+        }
+        if let Some(after) = after_path {
+            filters.push(format!(
+                "gt(hodei.catalog.asset.asset_path, {})",
+                dql_string(after)
+            ));
+        }
+        let query_dql = format!(
+            "{{ q(func: eq(hodei.catalog.asset.repository, {repository}), \
+             orderasc: hodei.catalog.asset.asset_path, first: {window}) \
+             @filter({filters}) {{ {ASSET_FIELDS} }} }}",
+            repository = dql_string(repo_key),
+            filters = filters.join(" AND "),
+        );
+        let response = self
+            .client
+            .execute_dql(&query_dql)
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let nodes = response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        nodes
+            .iter()
+            .map(AssetRow::from_node)
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    /// Cuántas filas quedan por recorrer, contadas en el adaptador con un
+    /// índice que solo pide el camino: el mismo conteo acotado que la
+    /// referencia Surreal.
+    async fn the_remaining_count(
+        &self,
+        principal_account: &str,
+        repo_key: &str,
+        query: &SearchQuery,
+        target: Option<&TagTarget>,
+        after_path: Option<&str>,
+        cap: usize,
+    ) -> Result<usize, CatalogError> {
+        let rows = self
+            .the_asset_window(
+                principal_account,
+                repo_key,
+                query,
+                target,
+                after_path,
+                cap + 1,
+            )
+            .await?;
+        Ok(rows.len())
+    }
+}
+
+/// Si un filtro con índice propio le gana el orden al camino. La búsqueda
+/// del grafo SIEMPRE sale en el orden del camino (`orderasc: asset_path`),
+/// que es total dentro de la cuenta: el orden es el mismo para todos los
+/// filtros, y una página no repite ni pierde un resultado.
+fn the_attribute_matches(
+    attribute: &RepositoryAttribute,
+    repository: &RepositoryDescriptor,
+) -> bool {
+    match attribute {
+        RepositoryAttribute::Format(format) => repository.format == *format,
+        RepositoryAttribute::Mode(mode) => repository.mode == *mode,
+        RepositoryAttribute::Channel(channel) => ServeChannel::of(&repository.config) == *channel,
+    }
+}
+
+/// El formato del repositorio que salió en la página, del descriptor que
+/// la cuenta ya nombró.
+fn repository_format(candidates: &[&RepositoryDescriptor], repository: &str) -> RepositoryFormat {
+    candidates
+        .iter()
+        .find(|candidate| candidate.repo_key == repository)
+        .map(|candidate| candidate.format)
+        .unwrap_or(RepositoryFormat::Raw)
+}
+
+#[async_trait]
+impl CatalogSearch for DgraphCatalogStore {
+    async fn repositories(
+        &self,
+        principal_account: &str,
+    ) -> Result<Vec<RepositoryDescriptor>, CatalogError> {
+        self.the_repository_listing(principal_account).await
+    }
+
+    async fn search(
+        &self,
+        principal_account: &str,
+        repositories: &[RepositoryDescriptor],
+        query: &SearchQuery,
+    ) -> Result<SearchPage, CatalogError> {
+        query
+            .validate()
+            .map_err(|error| CatalogError::invalid(error.to_string()))?;
+
+        // Un principal que no puede leer ni un repositorio no ve nada: la
+        // búsqueda no es el camino de vuelta alrededor del permiso.
+        if repositories.is_empty() {
+            return Ok(SearchPage::empty(query));
+        }
+        // La búsqueda del grafo es EXACTA: cada filtro que pide es una
+        // igualdad sobre un índice exacto. El texto es otra búsqueda.
+        if query.text.is_some() {
+            return Err(CatalogError::invalid(
+                "the dgraph search serves exact filters, not text searches",
+            ));
+        }
+
+        // Los repositorios que toman parte, en el orden en que se
+        // recorren. El atributo se decide con el descriptor, como en la
+        // referencia: el motor no tiene que resolverlo.
+        let mut candidates: Vec<&RepositoryDescriptor> = repositories.iter().collect();
+        candidates.sort_by(|left, right| left.repo_key.cmp(&right.repo_key));
+        if let Some(named) = &query.repository {
+            candidates.retain(|repository| &repository.repo_key == named);
+        }
+        if let Some(attribute) = &query.attribute {
+            candidates.retain(|repository| the_attribute_matches(attribute, repository));
+        }
+        if candidates.is_empty() {
+            return Ok(SearchPage::empty(query));
+        }
+        // El canal de confianza lo sirve el libro de concesiones, que este
+        // slice no lleva: lo dice, no lo finge.
+        for repository in &candidates {
+            if ServeChannel::of(&repository.config) == ServeChannel::Trusted {
+                return Err(CatalogError::invalid(
+                    "the dgraph slice does not serve the trusted channel",
+                ));
+            }
+        }
+
+        // La etiqueta se resuelve primero: lo que estrecha son sus
+        // coordenadas, no su nombre.
+        let targets = match &query.tag {
+            Some(tag) => self.the_tag_targets(principal_account, tag).await?,
+            None => Vec::new(),
+        };
+        if query.tag.is_some() && targets.is_empty() {
+            return Ok(SearchPage::empty(query));
+        }
+
+        // El cursor: la página empieza DESPUÉS de la clave ya vista, en el
+        // orden total (repositorio, camino) en que las filas salen.
+        let cursor = match &query.cursor {
+            Some(cursor) => Some(parse_search_cursor(cursor).map_err(|error| {
+                CatalogError::invalid(format!("the cursor cannot be read: {error}"))
+            })?),
+            None => None,
+        };
+
+        // La ventana que se pide, y una fila más para saber si hay más.
+        let window = query.offset + query.limit + 1;
+
+        let mut collected: Vec<AssetRow> = Vec::new();
+        let mut counted = 0usize;
+        let mut exact = true;
+
+        for repository in &candidates {
+            // La clave ya vista deja detrás los repositorios que van antes
+            // en el orden y estrecha el suyo.
+            let after_path = match cursor.as_ref() {
+                Some((cursor_repository, cursor_path)) => {
+                    if repository.repo_key.as_str() < cursor_repository.as_str() {
+                        continue;
+                    }
+                    (repository.repo_key.as_str() == cursor_repository.as_str())
+                        .then_some(cursor_path.as_str())
+                }
+                None => None,
+            };
+
+            // La etiqueta, en este repositorio. Una etiqueta que no apunta
+            // aquí no estrecha nada aquí.
+            let target = targets
+                .iter()
+                .find(|target| target.repository == repository.repo_key);
+            if query.tag.is_some() && target.is_none() {
+                continue;
+            }
+
+            let rows = self
+                .the_asset_window(
+                    principal_account,
+                    &repository.repo_key,
+                    query,
+                    target,
+                    after_path,
+                    window,
+                )
+                .await?;
+
+            if exact {
+                if rows.len() < window {
+                    counted += rows.len();
+                } else {
+                    let remaining = hodei_catalog::search::MAX_COUNTED.saturating_sub(counted);
+                    if remaining == 0 {
+                        exact = false;
+                    } else {
+                        let found = self
+                            .the_remaining_count(
+                                principal_account,
+                                &repository.repo_key,
+                                query,
+                                target,
+                                after_path,
+                                remaining,
+                            )
+                            .await?;
+                        if found > remaining {
+                            counted += remaining;
+                            exact = false;
+                        } else {
+                            counted += found;
+                        }
+                    }
+                }
+            }
+
+            collected.extend(rows);
+            collected.truncate(window);
+        }
+
+        if counted > hodei_catalog::search::MAX_COUNTED {
+            exact = false;
+        }
+
+        // La página: la ventana entera, menos lo que queda detrás. El corte
+        // es sobre el orden total de las filas: una página no repite ni
+        // pierde un resultado, y el que pide por clave re-pagina sin
+        // saltos.
+        let start = if query.cursor.is_some() {
+            0
+        } else {
+            query.offset.min(collected.len())
+        };
+        let end = if query.cursor.is_some() {
+            query.limit.min(collected.len())
+        } else {
+            (query.offset + query.limit).min(collected.len())
+        };
+        let more = if query.cursor.is_some() {
+            collected.len() > query.limit
+        } else {
+            collected.len() > query.offset + query.limit
+        };
+        let rows = &collected[start..end];
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let asset = AssetRow::into_record(
+                row.clone(),
+                principal_account,
+                &row.repository,
+                &row.asset_path,
+            )?;
+            let format = repository_format(&candidates, &asset.repository);
+            // La confianza la declara el libro de concesiones, que este
+            // slice no lleva: lo que sale por aquí es lo que la referencia
+            // declaró al publicar, y sin concesión eso es cuarentena.
+            results.push(SearchHit {
+                repository: asset.repository,
+                format,
+                asset_path: asset.asset_path,
+                package_name: asset.coordinates.package_name,
+                package_version: asset.coordinates.package_version,
+                digest: asset.digest,
+                size_bytes: asset.size_bytes,
+                trust_state: TrustState::Quarantined,
+                updated_at: asset.updated_at,
+            });
+        }
+
+        Ok(SearchPage {
+            total: if exact { Some(counted) } else { None },
+            more,
+            limit: query.limit,
+            offset: query.offset,
+            results,
+        })
     }
 }
 
