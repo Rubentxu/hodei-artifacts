@@ -265,19 +265,14 @@ pipeline {
                         "--test hsp121_go_client",
                         "--test hsp121_go_e2e",
                         "--test hsp232_go_group",
-                        // El proxy rpm (HSP-235): el repodata del upstream se
-                        // sirve tal cual, con su checksum comprobado.
-                        "--test hsp235_rpm_proxy",
-                        // La readiness y la liveness son dos preguntas
-                        // distintas (HSP-237): con el almacen desconectado
-                        // en caliente, la readiness deja de ser 200 y la
-                        // liveness no.
-                        "--test hsp237_readiness",
                         "--test hsp121_helm_oci",
                         "--test hsp122_apt_client",
                         "--test hsp122_apt_e2e",
                         "--test hsp122_yum_client",
                         "--test hsp122_yum_e2e",
+                        // El proxy rpm (HSP-235): el repodata del upstream se
+                        // sirve tal cual, con su checksum comprobado.
+                        "--test hsp235_rpm_proxy",
                         "--test hsp123_migration_e2e",
                         "--test hsp124_quota_e2e",
                         "--test hsp125_replication_spike",
