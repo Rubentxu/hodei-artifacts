@@ -48,7 +48,8 @@ use super::raw::{
     the_repository_in, the_resolved_asset, write_the_content,
 };
 use crate::app_state::AppState;
-use crate::handlers::correlation_id;
+use crate::audit::AuditResult;
+use crate::handlers::{correlation_id, record_audit};
 
 /// Lo que pasa con una petición que no se puede servir.
 #[derive(Debug)]
@@ -166,19 +167,38 @@ pub async fn handle(
             .await
         }
         (Route::RecipeFile(_, _, _) | Route::PackageFile(_, _, _, _, _), false, true) => {
-            the_decision(
-                &state,
-                &context,
-                crate::actions::upload_asset(),
-                &repository,
-            )?;
-            if !repository.mode.accepts_client_writes() {
-                return Err(RawApiError::MethodNotAllowed(
-                    "this repository does not accept uploads",
-                )
-                .into());
+            let outcome = async {
+                the_decision(
+                    &state,
+                    &context,
+                    crate::actions::upload_asset(),
+                    &repository,
+                )?;
+                if !repository.mode.accepts_client_writes() {
+                    return Err(RawApiError::MethodNotAllowed(
+                        "this repository does not accept uploads",
+                    )
+                    .into());
+                }
+                put_file(&state, &context, &repository, route, request, &correlation).await
             }
-            put_file(&state, &context, &repository, route, request, &correlation).await
+            .await;
+            // Every write leaves a trace, accepted or not.
+            let result = match &outcome {
+                Ok(_) => AuditResult::Allowed,
+                Err(Failure::Raw(RawApiError::Forbidden)) => AuditResult::Denied,
+                Err(_) => AuditResult::Failed,
+            };
+            record_audit(
+                &state,
+                context.principal().subject().as_str(),
+                context.account().as_str(),
+                "publish",
+                &format!("{repository_key}/{rest}"),
+                result,
+                &correlation,
+            );
+            outcome
         }
         _ => Err(RawApiError::MethodNotAllowed("this conan operation is not supported").into()),
     }

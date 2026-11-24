@@ -344,6 +344,7 @@ pipeline {
                         // Terraform, Conan, Ansible Galaxy y Hugging Face.
                         // Los clientes reales se saltan sin su herramienta.
                         "--test hsp157_terraform_mirror",
+                        "--test hsp296_formats_audit",
                         "--test hsp158_terraform_modules_client",
                         "--test hsp159_conan_client",
                         "--test hsp217_galaxy_client",
