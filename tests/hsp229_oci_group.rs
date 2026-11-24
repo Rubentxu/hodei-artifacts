@@ -41,6 +41,17 @@
 //!   descarga del miembro que gano;
 //! - un upstream **caido** no deja servir el listado a medias: el listado
 //!   entero es un error.
+//!
+//! Y, con el listado de un proxy **directo** --el incremento 4--:
+//!
+//! - el listado de un proxy directo trae las etiquetas de su **upstream**,
+//!   que se pregunta con el nombre del proxy;
+//! - el listado y la resolucion cuentan la misma historia: lo que el listado
+//!   dice se descarga del upstream;
+//! - un upstream **caido** no se sirve como una lista vacia: el listado
+//!   entero es un error;
+//! - un upstream cuyo **ambito** no cubre el listado hace un proxy que no
+//!   puede enumerar, y su listado es la lista vacia.
 
 mod support;
 
