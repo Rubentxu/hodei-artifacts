@@ -448,17 +448,52 @@ pub fn error_document(code: &str, detail: &str) -> Value {
 /// and the dependencies. An artifact that is not a readable tarball of
 /// this shape is not a collection artifact: the caller answers for it.
 pub fn the_collection_identity(artifact: &[u8]) -> Option<CollectionIdentity> {
-    let tar = the_tar_of(artifact)?;
-    let manifest = the_member(&tar, "MANIFEST.json")?;
-    let value: Value = serde_json::from_slice(manifest).ok()?;
-    let info = value.get("collection_info")?;
-    let namespace = info.get("namespace")?.as_str()?;
-    let name = info.get("name")?.as_str()?;
-    let version = info.get("version")?.as_str()?;
+    the_collection_identity_checked(artifact).ok()
+}
+
+/// The most a gzipped artifact may expand to when its identity is read.
+///
+/// The reader inflates the whole tarball to find `MANIFEST.json`, so a
+/// gzip of zeros could turn a small upload into gigabytes of memory. The
+/// limit is generous for a collection (they are source and docs) and finite.
+pub const MAX_EXPANDED_BYTES: usize = 256 * 1024 * 1024;
+
+/// Why the identity of an artifact could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityError {
+    /// The artifact expands past [`MAX_EXPANDED_BYTES`]: a decompression
+    /// bomb, or a collection no one should publish here.
+    TooLarge,
+    /// The artifact is not a readable collection tarball of the shape the
+    /// dialect names.
+    Unreadable,
+}
+
+/// [`the_collection_identity`], with the reason it failed.
+pub fn the_collection_identity_checked(
+    artifact: &[u8],
+) -> Result<CollectionIdentity, IdentityError> {
+    the_collection_identity_within(artifact, MAX_EXPANDED_BYTES)
+}
+
+/// [`the_collection_identity_checked`] with an explicit expansion limit.
+pub fn the_collection_identity_within(
+    artifact: &[u8],
+    limit: usize,
+) -> Result<CollectionIdentity, IdentityError> {
+    let tar = the_tar_of(artifact, limit)?;
+    let unreadable = IdentityError::Unreadable;
+    let manifest = the_member(&tar, "MANIFEST.json").ok_or(unreadable)?;
+    let value: Value = serde_json::from_slice(manifest).map_err(|_| unreadable)?;
+    let info = value.get("collection_info").ok_or(unreadable)?;
+    let text = |key: &str| info.get(key).and_then(Value::as_str).ok_or(unreadable);
+    let namespace = text("namespace")?;
+    let name = text("name")?;
+    let version = text("version")?;
     if !valid_namespace_name(namespace) || !valid_namespace_name(name) || !valid_version(version) {
-        return None;
+        return Err(unreadable);
     }
-    Some(CollectionIdentity {
+    Ok(CollectionIdentity {
         namespace: namespace.to_string(),
         name: name.to_string(),
         version: version.to_string(),
@@ -467,16 +502,21 @@ pub fn the_collection_identity(artifact: &[u8]) -> Option<CollectionIdentity> {
 }
 
 /// The tarball inside an artifact: gunzipped when the magic says gzip,
-/// the bytes as they are when it does not.
-fn the_tar_of(artifact: &[u8]) -> Option<Vec<u8>> {
+/// the bytes as they are when it does not. The inflation is bounded by
+/// `limit`: one byte past it is already too much.
+fn the_tar_of(artifact: &[u8], limit: usize) -> Result<Vec<u8>, IdentityError> {
     if artifact.len() >= 2 && artifact[0] == 0x1f && artifact[1] == 0x8b {
         let mut tar = Vec::new();
         flate2::read::GzDecoder::new(artifact)
+            .take(limit as u64 + 1)
             .read_to_end(&mut tar)
-            .ok()?;
-        Some(tar)
+            .map_err(|_| IdentityError::Unreadable)?;
+        if tar.len() > limit {
+            return Err(IdentityError::TooLarge);
+        }
+        Ok(tar)
     } else {
-        Some(artifact.to_vec())
+        Ok(artifact.to_vec())
     }
 }
 
@@ -793,6 +833,26 @@ mod tests {
         let padding = the_padding_of(content.len());
         member.extend(std::iter::repeat_n(0u8, padding));
         member
+    }
+
+    /// G6: a gzip of zeros that expands past the limit is refused as too
+    /// large, and what stays under it still reads.
+    #[test]
+    fn a_gzip_that_expands_past_the_limit_is_refused() {
+        let mut bomb = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        bomb.write_all(&vec![0u8; 8 * 1024 * 1024])
+            .expect("the zeros");
+        let bomb = bomb.finish().expect("the gzip finish");
+        assert!(bomb.len() < 64 * 1024, "the bomb is small on the wire");
+        assert_eq!(
+            the_collection_identity_within(&bomb, 1024 * 1024),
+            Err(IdentityError::TooLarge)
+        );
+        // Under the limit it is only an unreadable tarball, not a bomb.
+        assert_eq!(
+            the_collection_identity_within(&bomb, 16 * 1024 * 1024),
+            Err(IdentityError::Unreadable)
+        );
     }
 
     #[test]

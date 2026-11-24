@@ -557,12 +557,24 @@ async fn publish(
         other => other.into(),
     })?;
 
-    let Some(identity) = galaxy::the_collection_identity(&bytes) else {
-        return Err(Failure::the_failure(
-            StatusCode::BAD_REQUEST,
-            "invalid",
-            "the artifact does not carry a MANIFEST.json this release can read",
-        ));
+    let identity = match galaxy::the_collection_identity_checked(&bytes) {
+        Ok(identity) => identity,
+        // A small upload that inflates past the limit is a decompression
+        // bomb, not a malformed form: it is refused as too large.
+        Err(galaxy::IdentityError::TooLarge) => {
+            return Err(Failure::the_failure(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "too_large",
+                "the artifact expands past the limit this hub reads",
+            ));
+        }
+        Err(galaxy::IdentityError::Unreadable) => {
+            return Err(Failure::the_failure(
+                StatusCode::BAD_REQUEST,
+                "invalid",
+                "the artifact does not carry a MANIFEST.json this release can read",
+            ));
+        }
     };
     let reference = CollectionRef {
         namespace: identity.namespace.clone(),
