@@ -429,11 +429,20 @@ async fn resolve_manifest(
                     }
                 });
             }
+            // Los bytes se leen **despues** de la compuerta: lo que no se
+            // puede servir no se materializa.
+            let bytes = match crate::oci::proxy::the_bytes(state, &resolved.asset).await {
+                Ok(bytes) => bytes,
+                Err(failure) => {
+                    trail.push((key, Step::Error));
+                    return Err(failure);
+                }
+            };
             trail.push((key.clone(), Step::Hit));
             return Ok(Won {
                 member,
                 digest: resolved.asset.digest,
-                bytes: resolved.bytes,
+                bytes,
             });
         }
         // El digest se resuelve **dentro** del namespace del miembro: cada
@@ -571,11 +580,20 @@ async fn resolve_blob(
                     }
                 });
             }
+            // Los bytes se leen **despues** de la compuerta: lo que no se
+            // puede servir no se materializa.
+            let bytes = match crate::oci::proxy::the_bytes(state, &resolved.asset).await {
+                Ok(bytes) => bytes,
+                Err(failure) => {
+                    trail.push((key, Step::Error));
+                    return Err(failure);
+                }
+            };
             trail.push((key.clone(), Step::Hit));
             return Ok(Won {
                 member,
                 digest: resolved.asset.digest,
-                bytes: resolved.bytes,
+                bytes,
             });
         }
         let asset =

@@ -159,15 +159,18 @@ pub async fn the_blob(
 /// El contenido que el upstream resuelve, con su procedencia.
 ///
 /// Es la resolucion **sin** la respuesta HTTP: el camino de un grupo OCI
-/// necesita los bytes y el digest que gano un miembro proxy, no una
-/// `Response` que ya sabe servir. La procedencia es la del recibo que deja el
-/// resolvedor, y el contenido se publica en el namespace del **miembro**,
-/// no en el de quien pregunta.
+/// necesita el digest que gano un miembro proxy, no una `Response` que ya
+/// sabe servir. La procedencia es la del recibo que deja el resolvedor, y el
+/// contenido se publica en el namespace del **miembro**, no en el de quien
+/// pregunta.
+///
+/// Los bytes **no** vienen aqui: se leen despues de la compuerta de
+/// confianza, que es la que decide si lo que se resolvedo se puede servir.
+/// Leerlos antes seria materializar lo que todavia no se puede servir, y
+/// hacer pagar al camino condicional una lectura que no necesita.
 pub struct Resolved {
     /// La fila del asset, en el namespace del repositorio resuelto.
     pub asset: hodei_catalog::AssetRecord,
-    /// Los bytes del contenido.
-    pub bytes: Vec<u8>,
 }
 
 /// El manifiesto que el upstream resuelve, con su procedencia.
@@ -228,8 +231,8 @@ pub async fn the_resolved_blob(
 ///
 /// La resolucion va aparte de la respuesta: quien necesita el contenido
 /// --un grupo OCI, que consulta a un miembro proxy-- no quiere una
-/// `Response`, sino los bytes con su digest. La respuesta se arma despues,
-/// con lo que la resolucion devuelve.
+/// `Response`, sino la fila del asset con su digest. La respuesta se arma
+/// despues, con lo que la resolucion devuelve.
 #[allow(clippy::too_many_arguments)]
 async fn the_content(
     state: &AppState,
@@ -247,7 +250,6 @@ async fn the_content(
         context,
         repository,
         &resolved.asset,
-        resolved.bytes,
         kind,
         headers,
         head,
@@ -401,8 +403,7 @@ async fn the_resolved(
             let asset = current.ok_or_else(|| {
                 OciFailure::unavailable("the catalog and the cache disagree about the content")
             })?;
-            let bytes = the_bytes(state, &asset).await?;
-            return Ok(Resolved { asset, bytes });
+            return Ok(Resolved { asset });
         }
         CacheDecision::OfflineServe => {
             let asset = current.ok_or_else(|| {
@@ -418,8 +419,7 @@ async fn the_resolved(
                 ));
             }
             plane.metrics.record_offline_hit();
-            let bytes = the_bytes(state, &asset).await?;
-            return Ok(Resolved { asset, bytes });
+            return Ok(Resolved { asset });
         }
         CacheDecision::OfflineMiss => {
             plane.metrics.record_offline_miss();
@@ -547,15 +547,16 @@ async fn the_resolved(
         )
         .await
         .map_err(|_| kind.the_unknown(reference))?;
-    let bytes = the_bytes(state, &asset).await?;
-    Ok(Resolved { asset, bytes })
+    Ok(Resolved { asset })
 }
 
 /// Los bytes que la fila del asset referencia.
 ///
 /// Los bytes son los de la fila, no los que dice la peticion: la fila es la
-/// referencia de lo que el repositorio tiene.
-async fn the_bytes(
+/// referencia de lo que el repositorio tiene. Y se leen **despues** de la
+/// compuerta de confianza: lo que no se puede servir no se materializa, y
+/// el camino condicional no paga una lectura que no necesita.
+pub async fn the_bytes(
     state: &AppState,
     asset: &hodei_catalog::AssetRecord,
 ) -> Result<Vec<u8>, OciFailure> {
@@ -852,14 +853,14 @@ fn the_failure(error: resolution::ResolveError) -> OciFailure {
 /// El contenido que se sirve, con las cabeceras de la distribucion.
 ///
 /// La compuerta de confianza va **antes** de las condiciones de lectura: un
-/// `304` o un `412` dirian que el contenido existe.
-#[allow(clippy::too_many_arguments)]
+/// `304` o un `412` dirian que el contenido existe. Y los bytes se leen
+/// **despues** de las dos: lo que no se puede servir no se materializa, y
+/// un `304` no paga la lectura del blob.
 async fn the_served(
     state: &AppState,
     context: &VerifiedContext,
     repository: &RepositoryDescriptor,
     asset: &hodei_catalog::AssetRecord,
-    bytes: Vec<u8>,
     kind: TheKind,
     headers: &HeaderMap,
     head: bool,
@@ -902,6 +903,11 @@ async fn the_served(
         }
         crate::raw::conditional::ReadOutcome::Serve => {}
     }
+
+    // Los bytes se leen aqui, y no antes: la compuerta ya ha dicho que este
+    // contenido se puede servir, y el camino condicional no ha pagado la
+    // lectura.
+    let bytes = the_bytes(state, asset).await?;
 
     // El tipo de medio lo dice el manifiesto, no el cliente: el manifiesto
     // es la verdad de que es. Y son los mismos tipos que el registro
