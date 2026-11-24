@@ -45,7 +45,7 @@ use hodei_catalog::{
     ReferrerRecord, RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode,
     repository_hrn,
 };
-use hodei_catalog_storage::{DgraphCatalogStore, SurrealCatalogStore};
+use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::FileBlobStore;
@@ -99,6 +99,17 @@ async fn fresh_client() -> Option<Arc<GraphClient>> {
     client.login().await.expect("Dgraph ACL login succeeds");
     Some(Arc::new(client))
 }
+
+// El almacén Dgraph del catálogo: la apertura condicionada que comparten
+// las suites gated del stack (HSP-219). El flake probado vive aquí — este
+// binario y el de HSP-187 fallaban en el `open` al correr los dos en
+// paralelo con threads por defecto (2/8 observado; 5/8 replicado 21-11)—:
+// los `alter` del DDL concurrentes caen en la ventana de reindexado de
+// Dgraph y vuelven `errIndexingInProgress`. El helper serializa los opens
+// del proceso y reintenta lo transitorio. **Carril recomendado**: suites
+// que alter-ean el mismo tipo, de una en una; threads por defecto dentro
+// de cada binario.
+include!("support/hsp219_concurrent_open.rs");
 
 /// El directorio de la evidencia: `target/uat/hsp190/`.
 fn the_evidence_dir() -> PathBuf {
@@ -198,11 +209,7 @@ struct Vertical {
 impl Vertical {
     async fn mount(account: &str, repo_key: &str) -> Self {
         let client = fresh_client().await.expect("the dgraph client connects");
-        let store = Arc::new(
-            DgraphCatalogStore::open(client, Arc::new(AllowAllAuthorizer))
-                .await
-                .expect("the dgraph catalog store opens"),
-        );
+        let store = Arc::new(open_store(client).await);
         store
             .create_repository(account, an_oci_descriptor(account, repo_key))
             .await
@@ -566,11 +573,7 @@ async fn two_writers_moving_the_same_tag_keep_one_row_and_the_referrers() {
     let account = account("race");
     let repo = "images";
     let client = fresh_client().await.expect("the client connects");
-    let store = Arc::new(
-        DgraphCatalogStore::open(client, Arc::new(AllowAllAuthorizer))
-            .await
-            .expect("the store opens"),
-    );
+    let store = Arc::new(open_store(client).await);
     store
         .create_repository(&account, an_oci_descriptor(&account, repo))
         .await
@@ -801,11 +804,7 @@ async fn a_referrer_of_another_account_does_not_cross_and_a_retry_writes_nothing
     let account_b = account("tenant-b");
     let repo = "images";
     let client = fresh_client().await.expect("the client connects");
-    let store = Arc::new(
-        DgraphCatalogStore::open(client, Arc::new(AllowAllAuthorizer))
-            .await
-            .expect("the store opens"),
-    );
+    let store = Arc::new(open_store(client).await);
     store
         .create_repository(&account_a, an_oci_descriptor(&account_a, repo))
         .await
@@ -1290,9 +1289,7 @@ async fn the_dgraph_oci_reads_match_the_surreal_reference_for_the_same_state() {
     let repo = "images";
 
     let client = fresh_client().await.expect("the client connects");
-    let dgraph = DgraphCatalogStore::open(client, Arc::new(AllowAllAuthorizer))
-        .await
-        .expect("the dgraph store");
+    let dgraph = open_store(client).await;
     dgraph
         .create_repository(&account, an_oci_descriptor(&account, repo))
         .await

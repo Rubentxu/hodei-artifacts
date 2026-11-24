@@ -126,22 +126,17 @@ fn record_evidence(test: &str, line: &str) {
     }
 }
 
-/// El almacén Dgraph del catálogo, con la apertura acotada: bajo carga,
-/// la apertura de la guarda es el flake preexistente del stack (lección
-/// HSP-190); la suite lo absorbe con tres intentos y un respiro.
-async fn open_store(client: Arc<GraphClient>) -> DgraphCatalogStore {
-    let mut last = String::new();
-    for _attempt in 0..3 {
-        match DgraphCatalogStore::open(client.clone(), Arc::new(AllowAllAuthorizer)).await {
-            Ok(store) => return store,
-            Err(error) => {
-                last = error.to_string();
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            }
-        }
-    }
-    panic!("the dgraph catalog store does not open: {last}");
-}
+// El almacén Dgraph del catálogo: la apertura condicionada que comparten
+// las suites gated del stack (HSP-219). La receta nacida en esta suite —el
+// retry acotado del `open`— se generaliza en el helper incluido: puerta de
+// serialización intra-proceso (los opens del binario comparten la
+// preparación del schema de uno en uno) y hasta ocho intentos con backoff
+// lineal creciente sobre los errores transitorios (`Unavailable`, que es
+// la clase con la que el alter rechazado por `errIndexingInProgress` se
+// dice). **Carril recomendado**: este binario con threads por defecto,
+// pero solo contra el alpha; dos suites gated a la vez siguen siendo el
+// terreno del flake entre procesos (lección HSP-190).
+include!("support/hsp219_concurrent_open.rs");
 
 fn actor(account: &str) -> String {
     format!("hrn:hodei:iam:{account}:User/alice")
