@@ -2,8 +2,6 @@
 #
 # Build context is expected to be a clean staging directory containing:
 #   bin/hodei-artifacts-api
-#   bin/ensure-iam-index
-#   bin/ensure-graph-index
 #   config/default.toml
 #   config/release.toml
 #   config/standalone.toml
@@ -35,7 +33,7 @@ RUN apt-get update -qq \
     && chown 10001:10001 /app/data \
     && chmod 0750 /app/data
 
-COPY --chown=0:0 --chmod=0755 bin/ /app/bin/
+COPY --chown=0:0 --chmod=0755 bin/hodei-artifacts-api /app/bin/hodei-artifacts-api
 COPY --chown=0:0 --chmod=0644 config/ /app/config/
 
 WORKDIR /app
