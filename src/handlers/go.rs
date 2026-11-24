@@ -389,6 +389,11 @@ enum Offering {
     Versions(Vec<(semver::Version, String)>),
     /// El miembro no lo tiene: un 404 del upstream, un MISS.
     Missing,
+    /// El miembro esta caido: sin red y sin copia en cache.
+    ///
+    /// Un miembro caido es un MISS mas: se sigue con el siguiente, y el
+    /// error sale solo si **nada** respondio.
+    Offline(RawApiError),
 }
 
 /// Las hojas que el grupo deja pasar para un modulo, con la reserva de
@@ -454,10 +459,15 @@ async fn the_member_versions(
         let bytes = match the_proxy_bytes(state, context, member, &asset_path, correlation).await {
             Ok(bytes) => bytes,
             // Un 404 del upstream es un MISS: se sigue con el siguiente
-            // miembro. Cualquier otro fallo es un ERROR y detiene la
-            // resolucion: un fallo transitorio no puede cambiar en silencio
-            // lo que se descarga.
+            // miembro. Un miembro caido tambien es un MISS: se sigue con
+            // el siguiente, y el error sale solo si nada respondio.
+            // Cualquier otro fallo es un ERROR y detiene la resolucion: un
+            // fallo transitorio no puede cambiar en silencio lo que se
+            // descarga.
             Err(Failure::Raw(RawApiError::NotFound)) => return Ok(Offering::Missing),
+            Err(Failure::Raw(RawApiError::Offline(reason))) => {
+                return Ok(Offering::Offline(RawApiError::Offline(reason)));
+            }
             Err(other) => return Err(other),
         };
         let text = String::from_utf8_lossy(&bytes);
@@ -478,8 +488,8 @@ async fn the_member_versions(
 /// La union de las versiones de los miembros del grupo, en orden semver.
 ///
 /// La union no es destructiva: si dos miembros tienen la misma version, sale
-/// **una** vez. Un upstream caido detiene la resolucion y no deja un listado
-/// a medias.
+/// **una** vez. Un upstream caido es un MISS: se sigue con el siguiente
+/// miembro, y su error sale solo si **nada** respondio.
 async fn the_group_versions(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -488,6 +498,9 @@ async fn the_group_versions(
     correlation: &str,
 ) -> Result<Vec<(semver::Version, String)>, Failure> {
     let mut versions: Vec<(semver::Version, String)> = Vec::new();
+    // El primer miembro caido: su error se recuerda para salir con el si
+    // al final no respondio ninguno.
+    let mut offline: Option<RawApiError> = None;
     for member in leaves {
         match the_member_versions(state, context, member, module, correlation).await? {
             Offering::Versions(found) => {
@@ -498,7 +511,19 @@ async fn the_group_versions(
                 }
             }
             Offering::Missing => {}
+            Offering::Offline(error) => {
+                if offline.is_none() {
+                    offline = Some(error);
+                }
+            }
         }
+    }
+    // Si nada respondio, el error del que esta caido es el veredicto: un
+    // listado vacio no puede ser la respuesta a un modulo que existe.
+    if versions.is_empty()
+        && let Some(error) = offline
+    {
+        return Err(Failure::Raw(error));
     }
     versions.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(versions)
@@ -594,15 +619,26 @@ async fn the_owner_of(
     version: &str,
     correlation: &str,
 ) -> Result<RepositoryDescriptor, Failure> {
+    // El primer miembro caido: un miembro sin red y sin copia en cache no
+    // tiene todavia la version, asi que se sigue con el siguiente. Su error
+    // sale solo si **ningun** miembro la duena.
+    let mut offline: Option<RawApiError> = None;
     for member in &group.leaves {
         let asset_path = format!("{module}/@v/{version}.info");
         let has = if member.mode == hodei_catalog::RepositoryMode::Proxy {
             // Un miembro proxy responde con su upstream: un 404 es un MISS
-            // (el miembro no tiene esa version) y lo demas es un ERROR que
-            // detiene la resolucion.
+            // (el miembro no tiene esa version), un miembro caido tambien
+            // es un MISS, y lo demas es un ERROR que detiene la
+            // resolucion.
             match the_proxy_bytes(state, context, member, &asset_path, correlation).await {
                 Ok(_) => true,
                 Err(Failure::Raw(RawApiError::NotFound)) => false,
+                Err(Failure::Raw(RawApiError::Offline(reason))) => {
+                    if offline.is_none() {
+                        offline = Some(RawApiError::Offline(reason));
+                    }
+                    false
+                }
                 Err(other) => return Err(other),
             }
         } else {
@@ -613,6 +649,11 @@ async fn the_owner_of(
         if has {
             return Ok(member.clone());
         }
+    }
+    // Un miembro caido gana sobre la explicacion de reserva: el veredicto
+    // dice que no se pudo saber, no que el namespace estaba reservado.
+    if let Some(error) = offline {
+        return Err(Failure::Raw(error));
     }
     // Un caso reservado no hace fallback: se explica por que no se sirve.
     if !group.denied.is_empty()
