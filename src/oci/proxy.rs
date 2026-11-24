@@ -244,7 +244,29 @@ pub async fn the_resolved_tags(
             .open_conditional_with_token(&upstream, url.clone(), None, None, token.as_deref())
             .await;
         match fetched {
-            Ok(Fetched::Content(opened)) => break the_body(*opened).await?,
+            Ok(Fetched::Content(opened)) => {
+                // Una lista **paginada** no se sirve como si fuera la lista
+                // entera: el upstream lo dice con la cabecera `Link`, y lo
+                // que se tiene es la primera pagina. Servirla seria un
+                // listado parcial presentado como completo.
+                //
+                // El listado **no se sirve**. El camino de resolucion ya
+                // tiene su cache y su presupuesto, y una paginacion mal
+                // seguida --un cursor que decide el upstream-- es peor que
+                // un listado que se niega a servirse.
+                if opened.link().is_some() {
+                    tracing::warn!(
+                        target: "hodei_artifacts::oci",
+                        repository = %repository.repo_key,
+                        correlation_id = %correlation,
+                        "the upstream paginates its tag list, so the listing is not served"
+                    );
+                    return Err(OciFailure::unavailable(
+                        "the upstream paginates its tag list and the listing is not served",
+                    ));
+                }
+                break the_body(*opened).await?;
+            }
             // El upstream pide una credencial: se resuelve el reto y se
             // reintenta **una** vez. Un reto que no se puede satisfacer es un
             // upstream que no sirve, no un bucle.
