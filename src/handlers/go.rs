@@ -841,6 +841,17 @@ async fn read_proxy(
         correlation,
     )
     .await?;
+    // La compuerta de confianza: un proxy tambien es un repositorio, y su
+    // canal decide si ese digest puede servirse. Sin esta pregunta, un
+    // proxy en el canal trusted serviria contenido sin concesion.
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        repository,
+        &served.asset.digest,
+    )
+    .await
+    .map_err(the_admission_error)?;
     let bytes = if head {
         Vec::new()
     } else {
