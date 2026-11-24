@@ -352,6 +352,19 @@ fn ac1_the_first_member_with_the_tag_wins_and_the_provenance_is_said() {
             assert_eq!(other.status, 200, "el blob del segundo miembro no se sirve");
             assert_eq!(other.body, second_layer);
 
+            // La lista de etiquetas del grupo es la union de las de sus
+            // miembros: una entrada por nombre, y no se sirve a medias.
+            let token = support::token(FIRST_ACCOUNT, "alice");
+            let into = deployment.directory.path().join("tags.json");
+            let tags =
+                Curl::download(port, &format!("/v2/{GROUP}/tags/list"), &token, Some(&into)).run();
+            assert_eq!(tags.status, 200, "el grupo no lista sus etiquetas");
+            let body = std::fs::read_to_string(&into).unwrap_or_default();
+            assert!(
+                body.contains(TAG),
+                "la etiqueta del miembro no esta en la lista del grupo: {body}"
+            );
+
             // Y la ruta directa de cada miembro no cambia: el grupo no le
             // da acceso a nada que su propia ruta no tenga.
             let direct = the_manifest(&deployment, port, FIRST);
