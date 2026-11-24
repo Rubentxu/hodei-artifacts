@@ -341,7 +341,6 @@ struct Client {
     binary: std::path::PathBuf,
     tunnel_port: u16,
     certificate: std::path::PathBuf,
-    token: String,
 }
 
 impl Client {
@@ -375,7 +374,6 @@ impl Client {
             binary: the_go_binary().expect("the Go SDK is installed"),
             tunnel_port: tunnel.port,
             certificate: tunnel.certificate.clone(),
-            token: token.to_string(),
         }
     }
 
@@ -913,7 +911,6 @@ fn a_reserved_namespace_never_falls_back_to_the_public_member() {
         "format": "go",
         "namespaces": { "reserved": ["example.com"] },
     })]);
-    let token = support::token(support::FIRST_ACCOUNT, "alice");
     let environment = the_environment(&upstream);
     let service = deployment.start(
         &environment
