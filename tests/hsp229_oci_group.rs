@@ -158,6 +158,22 @@ const THE_CASES: &[(&str, &str)] = &[
         "ac4-an-upstream-that-is-down-does-not-serve-a-partial-listing",
         "un upstream caido no sirve el listado a medias",
     ),
+    (
+        "ac5-the-listing-of-a-direct-proxy-has-the-tags-of-the-upstream",
+        "el listado de un proxy directo trae las etiquetas de su upstream",
+    ),
+    (
+        "ac5-a-tag-of-the-listing-can-be-pulled-from-the-direct-proxy",
+        "una etiqueta del listado de un proxy directo se descarga de su upstream",
+    ),
+    (
+        "ac5-an-upstream-that-is-down-does-not-serve-an-empty-listing",
+        "un upstream caido no hace que un proxy directo sirva una lista vacia",
+    ),
+    (
+        "ac5-a-proxy-whose-scope-does-not-cover-the-listing-serves-an-empty-list",
+        "un proxy cuyo ambito no cubre el listado sirve la lista vacia",
+    ),
 ];
 
 /// El seeder del catálogo.
@@ -867,6 +883,12 @@ const PROXY_GROUP: &str = "oci-proxy-group";
 /// El miembro proxy cuyo upstream esta caido.
 const DOWN: &str = "oci-proxy-down";
 
+/// El proxy directo cuyo ambito no cubre el listado.
+///
+/// Su upstream tiene un ambito que no alcanza `v2/<nombre>/tags/list`: el
+/// repositorio **no puede enumerar**, y su listado es la lista vacia.
+const SCOPED: &str = "oci-proxy-scoped";
+
 /// La credencial que el upstream exige en su realm.
 const CREDENTIAL: &str = "secreto-del-laboratorio";
 
@@ -1252,11 +1274,21 @@ fn a_closed_port() -> u16 {
 /// origen, porque un upstream que pide el token en otro sitio no es el
 /// upstream declarado.
 fn the_proxy(base: &str) -> serde_json::Value {
+    the_proxy_with_scopes(base, &["v2/"])
+}
+
+/// La configuracion de un repositorio proxy, con los ambitos que se le
+/// declaran.
+///
+/// El ambito es lo que decide si una ruta se puede pedir al upstream: lo
+/// que no cae en un scope no se pide. Un ambito que no cubre el listado
+/// hace un proxy que **no puede enumerar**.
+fn the_proxy_with_scopes(base: &str, scopes: &[&str]) -> serde_json::Value {
     json!({
         "upstream": {
             "id": "lab",
             "url": base,
-            "scopes": ["v2/"],
+            "scopes": scopes,
             "credential_ref": format!("env:{CREDENTIAL_VARIABLE}"),
             "auth": {
                 "realm": format!("{base}token"),
@@ -1313,6 +1345,13 @@ impl TheLab {
                 "key": DOWN,
                 "format": "oci",
                 "proxy": the_proxy(&down_base),
+            }),
+            // El ambito de este proxy no cubre el listado: el
+            // repositorio **no puede enumerar**.
+            json!({
+                "key": SCOPED,
+                "format": "oci",
+                "proxy": the_proxy_with_scopes(&registry.base(), &["v2/manifests/"]),
             }),
         ]);
         let mut group = json!({
@@ -2171,6 +2210,200 @@ fn ac4_an_upstream_that_is_down_does_not_serve_a_partial_listing() {
             LabCase::new(
                 "ac4-an-upstream-that-is-down-does-not-serve-a-partial-listing",
                 "un upstream caido no sirve el listado a medias",
+            )
+            .passed()
+        },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AC5: el listado de etiquetas de un proxy **directo**.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ac5_the_listing_of_a_direct_proxy_has_the_tags_of_the_upstream() {
+    a_case(
+        "ac5-the-listing-of-a-direct-proxy-has-the-tags-of-the-upstream",
+        "el listado de un proxy directo trae las etiquetas de su upstream",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            // El upstream tiene una etiqueta que el catalogo no tiene: un
+            // proxy no guarda filas de etiqueta.
+            lab.publish_upstream_tag("solo-en-el-upstream", b"la-capa-del-upstream");
+
+            // El listado del proxy **directo**: el mismo camino que el del
+            // grupo, pero sin grupo delante.
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY);
+            assert_eq!(
+                status,
+                200,
+                "el proxy directo no lista sus etiquetas:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert!(
+                tags.contains(&"solo-en-el-upstream".to_string()),
+                "la etiqueta que solo tiene el upstream no esta en la lista: {tags:?}"
+            );
+
+            // Y el upstream se pregunta con el nombre del **proxy**, no con
+            // el del grupo.
+            assert!(
+                lab.registry.hits(&format!("{PROXY}/tags/list")) > 0,
+                "el upstream no se consulto por su lista: {:?}",
+                lab.registry.paths()
+            );
+            assert_eq!(
+                lab.registry.hits(&format!("{PROXY_GROUP}/tags/list")),
+                0,
+                "el upstream se consulto con el nombre del grupo: {:?}",
+                lab.registry.paths()
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac5-the-listing-of-a-direct-proxy-has-the-tags-of-the-upstream",
+                "el listado de un proxy directo trae las etiquetas de su upstream",
+            )
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac5_a_tag_of_the_listing_can_be_pulled_from_the_direct_proxy() {
+    a_case(
+        "ac5-a-tag-of-the-listing-can-be-pulled-from-the-direct-proxy",
+        "una etiqueta del listado de un proxy directo se descarga de su upstream",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            let proxied = lab.publish_upstream_tag("solo-en-el-upstream", b"la-capa-del-upstream");
+
+            // El listado trae la etiqueta.
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY);
+            assert_eq!(
+                status, 200,
+                "el proxy directo no lista sus etiquetas:\n{body}"
+            );
+            assert!(
+                tags.contains(&"solo-en-el-upstream".to_string()),
+                "la etiqueta que solo tiene el upstream no esta en la lista: {tags:?}"
+            );
+
+            // Y lo que el listado dice se puede descargar: el listado y la
+            // resolucion cuentan la misma historia.
+            let answer = the_manifest_of(&lab.deployment, port, PROXY, "solo-en-el-upstream");
+            assert_eq!(
+                answer.status,
+                200,
+                "la etiqueta del listado no se descarga:\n{}\n{}",
+                lab.deployment.the_log(),
+                String::from_utf8_lossy(&answer.body)
+            );
+            assert_eq!(answer.body, proxied, "el manifiesto no es el del upstream");
+            assert_eq!(
+                answer.content_digest.as_deref(),
+                Some(format!("sha256:{}", the_digest(&proxied)).as_str()),
+                "la respuesta no dice el digest del contenido servido"
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac5-a-tag-of-the-listing-can-be-pulled-from-the-direct-proxy",
+                "una etiqueta del listado de un proxy directo se descarga de su upstream",
+            )
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac5_an_upstream_that_is_down_does_not_serve_an_empty_listing() {
+    a_case(
+        "ac5-an-upstream-that-is-down-does-not-serve-an-empty-listing",
+        "un upstream caido no hace que un proxy directo sirva una lista vacia",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            // El upstream del proxy caido no responde: el listado **no**
+            // se sirve parcial. Una lista vacia pareceria completa, y el
+            // cliente creeria que el upstream no tiene nada.
+            let (status, tags, body) = the_tags(&lab.deployment, port, DOWN);
+            assert_eq!(
+                status,
+                503,
+                "un upstream caido no detiene el listado:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert!(
+                !body.contains("\"tags\""),
+                "el listado se sirvio como una lista vacia: {body}"
+            );
+            assert!(tags.is_empty(), "el listado se sirvio a medias: {tags:?}");
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac5-an-upstream-that-is-down-does-not-serve-an-empty-listing",
+                "un upstream caido no hace que un proxy directo sirva una lista vacia",
+            )
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac5_a_proxy_whose_scope_does_not_cover_the_listing_serves_an_empty_list() {
+    a_case(
+        "ac5-a-proxy-whose-scope-does-not-cover-the-listing-serves-an-empty-list",
+        "un proxy cuyo ambito no cubre el listado sirve la lista vacia",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            // El ambito de este proxy no cubre `v2/<nombre>/tags/list`: el
+            // repositorio **no puede enumerar**. En un proxy directo no
+            // hay "los demas" que listar, asi que la lista vacia es la
+            // unica respuesta honesta.
+            let (status, tags, body) = the_tags(&lab.deployment, port, SCOPED);
+            assert_eq!(
+                status,
+                200,
+                "un proxy que no puede enumerar no deberia fallar:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert!(
+                tags.is_empty(),
+                "un proxy que no puede enumerar no deberia listar etiquetas: {tags:?}"
+            );
+
+            // Y lo que no cae en el ambito no se pregunta al upstream.
+            assert_eq!(
+                lab.registry.hits(&format!("{SCOPED}/tags/list")),
+                0,
+                "se pidio al upstream una ruta fuera de su ambito: {:?}",
+                lab.registry.paths()
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac5-a-proxy-whose-scope-does-not-cover-the-listing-serves-an-empty-list",
+                "un proxy cuyo ambito no cubre el listado sirve la lista vacia",
             )
             .passed()
         },
