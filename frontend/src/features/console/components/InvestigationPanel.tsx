@@ -11,7 +11,7 @@
  */
 
 import { useState, type FormEvent } from 'react';
-import { Search } from 'lucide-react';
+import { RefreshCw, Search } from 'lucide-react';
 
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -20,11 +20,13 @@ import { Input } from '@/components/ui/Input';
 
 import { failureOf } from '../api/errors';
 import type {
+  FreshnessResponse,
   InvestigationCoverage,
   InvestigationFindingKind,
+  InvestigationFreshnessStatus,
   InvestigationVerificationStatus,
 } from '../api/types';
-import { useInvestigate } from '../hooks/useConsole';
+import { useInvestigate, useInvestigateFreshness } from '../hooks/useConsole';
 import { FailureNotice } from './FailureNotice';
 
 /** Maximum question length accepted by the investigation contract. */
@@ -75,6 +77,98 @@ const isPartialCoverage = (
 ): coverage is { partial: { omitted: number } } =>
   typeof coverage === 'object' && coverage !== null && 'partial' in coverage;
 
+const FRESHNESS_LABELS: Record<InvestigationFreshnessStatus, string> = {
+  current: 'Freshness: Current',
+  stale: 'Freshness: Stale',
+  unknown: 'Freshness: Unknown',
+};
+
+const FRESHNESS_VARIANTS: Record<
+  InvestigationFreshnessStatus,
+  'success' | 'danger' | 'warning'
+> = {
+  current: 'success',
+  stale: 'danger',
+  unknown: 'warning',
+};
+
+const FreshnessDetails = ({
+  freshness,
+  failure,
+}: {
+  freshness: FreshnessResponse | undefined;
+  failure: ReturnType<typeof failureOf> | null;
+}) => {
+  if (failure !== null) {
+    return (
+      <div className="flex flex-col gap-2">
+        <FailureNotice failure={failure} />
+        <p className="text-xs text-gray-600">
+          Freshness check failed; the existing investigation report is preserved
+          above, and its freshness remains unverified.
+        </p>
+      </div>
+    );
+  }
+
+  if (!freshness) {
+    return (
+      <p className="text-xs text-gray-600">
+        Freshness has not been verified yet. Run an on-demand check to compare
+        the recorded read-set against current sources.
+      </p>
+    );
+  }
+
+  if (freshness.status === 'current') {
+    return (
+      <p role="status" className="text-xs text-green-800">
+        Current: the recorded read-set still matches the current sources.
+      </p>
+    );
+  }
+
+  if (freshness.status === 'stale') {
+    const changed = freshness.changed ?? [];
+    return (
+      <div
+        role="status"
+        className="flex flex-col gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900"
+      >
+        <p className="font-medium">
+          Stale: the world moved under one or more references in this report.
+        </p>
+        {changed.length > 0 && (
+          <ul className="flex flex-col gap-1">
+            {changed.map((ref, index) => (
+              <li
+                key={`${ref.source}-${ref.resource}-${index}`}
+                className="font-mono"
+              >
+                [{ref.what}] {ref.kind} {ref.resource} (source: {ref.source},
+                evidence: {ref.evidence})
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role="status"
+      className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-900"
+    >
+      <span className="font-medium">Unknown (not verified as current): </span>
+      <span>
+        {freshness.reason ??
+          'A source could not be consulted; an unverified source is not current.'}
+      </span>
+    </div>
+  );
+};
+
 export interface InvestigationPanelProps {
   /** Canonical HRN of the artefact from the backend authority. */
   subject: string;
@@ -83,6 +177,7 @@ export interface InvestigationPanelProps {
 export const InvestigationPanel = ({ subject }: InvestigationPanelProps) => {
   const [question, setQuestion] = useState('');
   const investigation = useInvestigate();
+  const freshness = useInvestigateFreshness();
 
   const trimmedSubject = subject.trim();
   const trimmedQuestion = question.trim();
@@ -93,6 +188,7 @@ export const InvestigationPanel = ({ subject }: InvestigationPanelProps) => {
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!canInvestigate) return;
+    freshness.reset();
     try {
       await investigation.mutateAsync(
         trimmedQuestion.length > 0
@@ -106,6 +202,20 @@ export const InvestigationPanel = ({ subject }: InvestigationPanelProps) => {
 
   const failure = investigation.error ? failureOf(investigation.error) : null;
   const report = investigation.data;
+  const freshnessFailure = freshness.error ? failureOf(freshness.error) : null;
+  const freshnessResult = freshness.data;
+
+  const handleCheckFreshness = async () => {
+    if (!report || freshness.isPending) return;
+    try {
+      await freshness.mutateAsync({
+        subject: report.subject,
+        read_set: report.read_set,
+      });
+    } catch {
+      // Failure state is rendered from `freshness.error` while keeping `report`.
+    }
+  };
 
   return (
     <Card>
@@ -172,13 +282,36 @@ export const InvestigationPanel = ({ subject }: InvestigationPanelProps) => {
                 ) : (
                   <Badge variant="success">Complete coverage</Badge>
                 )}
+                {freshnessResult ? (
+                  <Badge variant={FRESHNESS_VARIANTS[freshnessResult.status]}>
+                    {FRESHNESS_LABELS[freshnessResult.status]}
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary">Freshness: Unchecked</Badge>
+                )}
                 <span className="text-xs text-gray-500">
                   Schema v{report.schema_version} ·{' '}
                   {report.read_set.stamps.length} read stamp(s) ·{' '}
                   {report.read_set.generations.length} source generation(s)
                 </span>
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={freshness.isPending}
+                isLoading={freshness.isPending}
+                leftIcon={<RefreshCw />}
+                onClick={handleCheckFreshness}
+              >
+                Check freshness
+              </Button>
             </div>
+
+            <FreshnessDetails
+              freshness={freshnessResult}
+              failure={freshnessFailure}
+            />
 
             {isPartialCoverage(report.coverage) && (
               <div

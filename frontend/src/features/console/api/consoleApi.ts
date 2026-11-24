@@ -21,6 +21,8 @@ import { encodeAssetPath } from '../lib/packageReference';
 import type {
   Capabilities,
   CreateRepositoryBody,
+  FreshnessRequest,
+  FreshnessResponse,
   InvestigationReport,
   InvestigationRequest,
   PackageView,
@@ -214,6 +216,22 @@ export const investigate = async (
 ): Promise<InvestigationReport> => {
   const response = await client.post<InvestigationReport>(
     '/investigations',
+    body
+  );
+  return response.data;
+};
+
+/**
+ * On-demand freshness verification of an investigation report.
+ *
+ * Sends the report's original `subject` and `read_set` verbatim without
+ * mutating or reconstructing them. Nothing is written or invalidated.
+ */
+export const investigateFreshness = async (
+  body: FreshnessRequest
+): Promise<FreshnessResponse> => {
+  const response = await client.post<FreshnessResponse>(
+    '/investigations/freshness',
     body
   );
   return response.data;

@@ -265,3 +265,31 @@ export interface InvestigationReport {
   coverage: InvestigationCoverage;
   read_set: InvestigationReadSet;
 }
+
+/** The verdict of an on-demand investigation freshness check. */
+export type InvestigationFreshnessStatus = 'current' | 'stale' | 'unknown';
+
+/** How a referenced item changed when an investigation report is stale. */
+export type InvestigationChangeKind = 'added' | 'removed' | 'gone' | 'changed';
+
+/** A reference that moved since the investigation report was produced. */
+export interface InvestigationChangedReference {
+  source: string;
+  kind: InvestigationReadStampKind;
+  resource: string;
+  evidence: string;
+  what: InvestigationChangeKind;
+}
+
+/** The request body for `POST /api/v1/investigations/freshness`. */
+export interface FreshnessRequest {
+  subject: string;
+  read_set: InvestigationReadSet;
+}
+
+/** The response returned by `POST /api/v1/investigations/freshness`. */
+export interface FreshnessResponse {
+  status: InvestigationFreshnessStatus;
+  changed?: InvestigationChangedReference[];
+  reason?: string;
+}

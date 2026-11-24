@@ -224,3 +224,9 @@ export const useInvestigate = () =>
   useMutation({
     mutationFn: api.investigate,
   });
+
+/** On-demand freshness check for an existing investigation report. */
+export const useInvestigateFreshness = () =>
+  useMutation({
+    mutationFn: api.investigateFreshness,
+  });

@@ -925,4 +925,172 @@ describe('PackageDetailView', () => {
       screen.queryByText('Digest evidence is verified.')
     ).not.toBeInTheDocument();
   });
+
+  it('shows unchecked freshness initially and sends the exact subject and read_set verbatim for current/stale/unknown verdicts', async () => {
+    const user = userEvent.setup();
+    const verbatimReadSet = {
+      generations: [
+        ['evidence', 7],
+        ['relations', 12],
+      ],
+      stamps: [
+        { kind: 'evidence', resource: 'ev-1', verified_by: 'sha256:111' },
+        { kind: 'relation', resource: 'rel-9', verified_by: 'gen:12' },
+      ],
+    };
+    const freshnessRequests: unknown[] = [];
+    let verdictQueue: Array<Record<string, unknown>> = [
+      { status: 'current' },
+      {
+        status: 'stale',
+        changed: [
+          {
+            source: 'evidence',
+            kind: 'evidence',
+            resource: 'ev-1',
+            evidence: 'sha256:999',
+            what: 'changed',
+          },
+        ],
+      },
+      {
+        status: 'unknown',
+        reason: 'evidence store timed out',
+      },
+    ];
+
+    server.use(
+      http.post('/api/v1/investigations', () =>
+        HttpResponse.json({
+          schema_version: '1',
+          subject: thePackage.capsule.subject,
+          findings: [
+            {
+              kind: 'verified_fact',
+              statement: 'The digest matches the recorded evidence.',
+              citations: ['ev-1'],
+              status: 'verified',
+              basis: 'Deterministic check against read-set stamps.',
+            },
+          ],
+          coverage: 'complete',
+          read_set: verbatimReadSet,
+        })
+      ),
+      http.post('/api/v1/investigations/freshness', async ({ request }) => {
+        freshnessRequests.push(await request.json());
+        const next = verdictQueue[0];
+        verdictQueue = verdictQueue.slice(1);
+        return HttpResponse.json(next);
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Investigate' })
+    );
+
+    // AC3: Unchecked report is never presented as current.
+    expect(await screen.findByText('Freshness: Unchecked')).toBeInTheDocument();
+    expect(screen.queryByText('Freshness: Current')).not.toBeInTheDocument();
+
+    // AC1 + AC2 (current): Verbatim subject and read_set sent on demand.
+    await user.click(screen.getByRole('button', { name: 'Check freshness' }));
+
+    await waitFor(() =>
+      expect(freshnessRequests[0]).toEqual({
+        subject: thePackage.capsule.subject,
+        read_set: verbatimReadSet,
+      })
+    );
+    expect(await screen.findByText('Freshness: Current')).toBeInTheDocument();
+    expect(
+      screen.getByText(/recorded read-set still matches the current sources/i)
+    ).toBeInTheDocument();
+
+    // AC2 (stale): Distinct state with changed references.
+    await user.click(screen.getByRole('button', { name: 'Check freshness' }));
+    expect(await screen.findByText('Freshness: Stale')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /\[changed\] evidence ev-1 \(source: evidence, evidence: sha256:999\)/
+      )
+    ).toBeInTheDocument();
+
+    // AC2 (unknown): Distinct state with reason, never presented as current.
+    await user.click(screen.getByRole('button', { name: 'Check freshness' }));
+    expect(await screen.findByText('Freshness: Unknown')).toBeInTheDocument();
+    expect(screen.getByText('evidence store timed out')).toBeInTheDocument();
+    expect(screen.queryByText('Freshness: Current')).not.toBeInTheDocument();
+  });
+
+  it('preserves the existing report and shows the failure when freshness check fails', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post('/api/v1/investigations', () =>
+        HttpResponse.json({
+          schema_version: '1',
+          subject: thePackage.capsule.subject,
+          findings: [
+            {
+              kind: 'verified_fact',
+              statement: 'Preserved finding statement.',
+              citations: ['ev-1'],
+              status: 'verified',
+              basis: 'Preserved basis.',
+            },
+          ],
+          coverage: 'complete',
+          read_set: {
+            generations: [['evidence', 1]],
+            stamps: [
+              { kind: 'evidence', resource: 'ev-1', verified_by: 'sha256:111' },
+            ],
+          },
+        })
+      ),
+      http.post('/api/v1/investigations/freshness', () =>
+        HttpResponse.json(
+          {
+            error: 'unavailable',
+            message: 'freshness store unreachable',
+          },
+          { status: 503 }
+        )
+      )
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Investigate' })
+    );
+    expect(
+      await screen.findByText('Preserved finding statement.')
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Check freshness' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The service cannot answer right now'
+    );
+    expect(
+      screen.getByText(/existing investigation report is preserved above/i)
+    ).toBeInTheDocument();
+    expect(screen.getByText('Freshness: Unchecked')).toBeInTheDocument();
+    expect(screen.queryByText('Freshness: Current')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Preserved finding statement.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('Preserved basis.')).toBeInTheDocument();
+  });
 });
