@@ -309,6 +309,7 @@ tempfile = { workspace = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [dev-dependencies]
+tonic = { version = "=0.13.1", default-features = false }
 hodei-hrn = "0.2.1"
 # Las pruebas de arranque sobre S3 observan el cubo desde fuera del
 # servicio, con credenciales fijas de LocalStack: el tipo de credenciales

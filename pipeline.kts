@@ -323,6 +323,10 @@ pipeline {
                         // en caliente, la readiness deja de ser 200 y la
                         // liveness no.
                         "--test hsp237_readiness",
+                        // La readiness del perfil de grafo (HSP-237): con un
+                        // Dgraph de mentira que cae y se recupera, la
+                        // readiness depende del alpha y la liveness no.
+                        "--test hsp237_graph_readiness",
                         // El recorrido del perfil externo (HSP-237): con
                         // HSP237_PROFILE_E2E=1 levanta con podman un Dgraph
                         // de laboratorio y un S3 y mide la readiness al

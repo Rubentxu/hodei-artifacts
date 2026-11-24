@@ -575,9 +575,7 @@ async fn bootstrap_graph_profile(
     // embedded profile makes of its content store: an S3 deployment that
     // cannot reach its bucket does not boot, and never writes the
     // filesystem CAS on the side.
-    // The graph profile reports readiness through its own probes, so the
-    // content check of the embedded profile is not used here.
-    let (content, _content_check) = open_content_store(config).await?;
+    let (content, content_check) = open_content_store(config).await?;
 
     // Step 3: the use cases over the graph. The IAM ports of the
     // composition root are the Dgraph adapter's; the schema provider is
@@ -599,6 +597,15 @@ async fn bootstrap_graph_profile(
     // production security bundle, which on this profile is the file-based
     // gate without the persistence step.
     let app_state = app_state.with_body_limit(config.server.max_body_size);
+    // Readiness of the graph profile: the alpha (reachable + valid ACL
+    // login, one authenticated read) and the content store. Without this the
+    // default `NothingRequired` probe would report ready with the alpha down.
+    let app_state =
+        app_state.with_readiness(Arc::new(crate::readiness::CachedProbe::new(Arc::new(
+            crate::readiness::ProfileProbe::new()
+                .with_graph(graph.client.clone())
+                .with_content(content_check),
+        ))));
     let app_state = app_state.with_quota(config.quota.the_limits());
     if config.quota.max_stored_bytes_per_account.is_some()
         || config.quota.max_concurrent_uploads_per_account.is_some()
