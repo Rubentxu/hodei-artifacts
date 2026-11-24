@@ -719,11 +719,7 @@ impl Deployment {
     /// y no hay una ruta HTTP que lo fije: se fija al sembrar, como lo
     /// haria quien opera el despliegue. Los que no estan en la lista de
     /// confianza se siembran en el canal abierto.
-    pub fn seed_yum_proxies(
-        &self,
-        trusted: &[&str],
-        repositories: &[(&str, serde_json::Value)],
-    ) {
+    pub fn seed_yum_proxies(&self, trusted: &[&str], repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
             .map(|(key, proxy)| {

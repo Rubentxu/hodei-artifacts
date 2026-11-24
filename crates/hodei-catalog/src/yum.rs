@@ -482,9 +482,10 @@ fn is_safe_upstream_path(path: &str) -> bool {
         && !path.ends_with('/')
         && !path.contains("//")
         && !path.contains("..")
-        && path
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'/' | b'+' | b'-' | b'_' | b'~' | b':'))
+        && path.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'.' | b'/' | b'+' | b'-' | b'_' | b'~' | b':')
+        })
 }
 
 /// El checksum que el **nombre** de una ruta declara, si lo declara.
@@ -937,12 +938,18 @@ mod tests {
         assert_eq!(document.matches("<data ").count(), 1);
         let declared = declared_metadata(&document);
         assert_eq!(declared.len(), 1);
-        assert_eq!(declared[0].location, format!("repodata/{sha}-primary.xml.gz"));
+        assert_eq!(
+            declared[0].location,
+            format!("repodata/{sha}-primary.xml.gz")
+        );
         assert_eq!(declared[0].checksum, sha);
         assert_eq!(
             declared_checksum(&document, &format!("repodata/{sha}-primary.xml.gz")).as_deref(),
             Some(sha.as_str())
         );
-        assert_eq!(declared_checksum(&document, "repodata/primary.xml.gz"), None);
+        assert_eq!(
+            declared_checksum(&document, "repodata/primary.xml.gz"),
+            None
+        );
     }
 }
