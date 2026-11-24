@@ -192,23 +192,52 @@ pub async fn the_referrers(
     let subject = ContentDigest::sha256(the_digest_of_reference(digest)?);
 
     let (reader, _) = the_catalog(state)?;
-    let referrers = reader
-        .referrers(context.account().as_str(), name, &subject)
-        .await
-        .map_err(|error| crate::oci::the_catalog_error(&error))?;
+    let account = context.account().as_str();
+    // Los referrers de un grupo son los de sus **miembros**: un grupo no
+    // guarda nada, asi que los suyos propios no existen. Y el filtro de
+    // confianza es por miembro: un referrer hacia un digest no concedido
+    // delataria que existe.
+    let mut referrers: Vec<hodei_catalog::ReferrerRecord> = Vec::new();
+    if repository.mode == hodei_catalog::RepositoryMode::Group {
+        for member in crate::oci::group::the_leaves(state, context, &repository).await? {
+            let rows = reader
+                .referrers(account, &member.repo_key, &subject)
+                .await
+                .map_err(|error| crate::oci::the_catalog_error(&error))?;
+            let servable = crate::trust::servable(state, account, &member)
+                .await
+                .map_err(the_admission_failure)?;
+            for row in rows {
+                if let Some(digests) = &servable
+                    && !digests.contains(&row.digest.value)
+                {
+                    continue;
+                }
+                referrers.push(row);
+            }
+        }
+    } else {
+        let rows = reader
+            .referrers(account, name, &subject)
+            .await
+            .map_err(|error| crate::oci::the_catalog_error(&error))?;
+        // Un referrer es un manifiesto: solo se lista el que se podria servir.
+        let servable = crate::trust::servable(state, account, &repository)
+            .await
+            .map_err(the_admission_failure)?;
+        for row in rows {
+            if let Some(digests) = &servable
+                && !digests.contains(&row.digest.value)
+            {
+                continue;
+            }
+            referrers.push(row);
+        }
+    }
 
-    // Un referrer es un manifiesto: solo se lista el que se podria servir.
-    let servable = crate::trust::servable(state, context.account().as_str(), &repository)
-        .await
-        .map_err(the_admission_failure)?;
     let store = the_content_store(state)?;
     let mut manifests = Vec::with_capacity(referrers.len());
     for referrer in referrers {
-        if let Some(digests) = &servable
-            && !digests.contains(&referrer.digest.value)
-        {
-            continue;
-        }
         let bytes = store.get(&referrer.digest).await.map_err(|_| {
             OciFailure::unavailable("the catalog and the store disagree about a referrer")
         })?;

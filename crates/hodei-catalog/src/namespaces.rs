@@ -204,6 +204,19 @@ impl NamespacePolicy {
             RepositoryFormat::Maven2 => self.judge_maven(path),
             RepositoryFormat::Npm => self.judge_npm(path),
             RepositoryFormat::PyPi => self.judge_pypi(path),
+            // OCI no tiene una nocion de namespace con alias: el namespace es
+            // el primer segmento del **nombre del repositorio**, no la ruta de
+            // un asset dentro de el. Un repositorio se llama "team/demo" y su
+            // namespace es "team"; el juicio se hace sobre el nombre, y por eso
+            // el mismo nombre "manifests/sha256:abc" --que es una ruta de asset
+            // y no un nombre-- no casa con ninguna reserva.
+            //
+            // Y la reserva no puede llevar barras: un namespace es el primer
+            // segmento, y "team/demo" no es un namespace declarable. Por eso la
+            // regla es la plana, que ya compara el primer segmento por
+            // prefijo de segmento: "team" cubre "team/demo" y "team/demo/x",
+            // y no cubre "teamx" ni "teammate".
+            RepositoryFormat::Oci => self.judge_flat(path),
             // Los demas formatos no tienen una nocion de namespace con
             // alias: el primer segmento de la ruta es el nombre, y se
             // compara tal cual.
@@ -287,8 +300,8 @@ impl NamespacePolicy {
         Judgement::Unreserved
     }
 
-    /// Los formatos sin namespace propio: el primer segmento de la ruta es
-    /// el nombre, y se compara tal cual.
+    /// The formats without a namespace of their own: the first segment of the
+    /// path is the name, and it is compared literally.
     fn judge_flat(&self, path: &str) -> Judgement {
         let name = path.split('/').next().unwrap_or_default();
         if name.is_empty() {
@@ -498,6 +511,33 @@ mod tests {
         );
         assert_eq!(
             policy.judge(RepositoryFormat::Raw, "laboratory/file.bin"),
+            Judgement::Unreserved
+        );
+    }
+
+    #[test]
+    fn an_oci_reservation_is_matched_over_the_name_of_the_repository() {
+        // Un namespace reservado no puede llevar barras: es el primer
+        // segmento, y "team/demo" no es un namespace declarable. La reserva
+        // que protege al grupo se escribe "team", y cubre "team/demo".
+        let policy = reserved(&["team"]);
+        for name in ["team", "team/demo", "team/demo/extra"] {
+            assert!(
+                policy.judge(RepositoryFormat::Oci, name).is_reserved(),
+                "{name}"
+            );
+        }
+        for free in ["teamx", "teammate", "other/demo"] {
+            assert_eq!(
+                policy.judge(RepositoryFormat::Oci, free),
+                Judgement::Unreserved,
+                "{free}"
+            );
+        }
+        // The judgement is made over the name of the repository, and not over
+        // the path of an asset inside it.
+        assert_eq!(
+            policy.judge(RepositoryFormat::Oci, "manifests/sha256:abc"),
             Judgement::Unreserved
         );
     }
