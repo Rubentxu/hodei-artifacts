@@ -221,6 +221,12 @@ fn repository_root() -> PathBuf {
 
 /// The fixture: a git repository with a kernel, a policy crate and an API.
 fn fixture() -> Fixture {
+    fixture_with("", "kernel = { path = \"crates/kernel\" }\n")
+}
+
+/// The same fixture, with extra root manifest text (appended at the end) and
+/// the line that makes the API depend on the kernel.
+fn fixture_with(root_extra: &str, api_dependency: &str) -> Fixture {
     let directory = tempfile::tempdir().expect("a temporary directory");
     let repository = directory.path().join("fixture");
     let target = directory.path().join("target");
@@ -240,9 +246,11 @@ fn fixture() -> Fixture {
 
     write(
         &repository.join("Cargo.toml"),
-        "[workspace]\nmembers = [\"crates/kernel\", \"crates/hodei-policies\"]\nresolver = \"2\"\n\n\
+        &format!(
+            "[workspace]\nmembers = [\"crates/kernel\", \"crates/hodei-policies\"]\nresolver = \"2\"\n\n\
          [package]\nname = \"fixture-api\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n\
-         [dependencies]\nkernel = { path = \"crates/kernel\" }\n",
+         [dependencies]\n{api_dependency}{root_extra}"
+        ),
     );
     write(
         &repository.join("crates/kernel/Cargo.toml"),
@@ -602,49 +610,43 @@ fn the_gate_runs_what_it_said_it_would_run() {
     );
 }
 
-/// The path of a tool, as the shell would find it.
-fn path_of(tool: &str) -> PathBuf {
-    let output = Command::new("bash")
-        .arg("-c")
-        .arg(format!("command -v {tool}"))
-        .output()
-        .expect("the shell runs");
-    let found = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    assert!(!found.is_empty(), "the tool {tool} has to be installed");
-    PathBuf::from(found)
-}
-
-/// A PATH where `bounded` is not installed.
+/// A PATH where `bounded` is not installed, whatever the host has.
 ///
-/// The tool is **optional**: where it is, the gates run with the resource
-/// limit of the machine; where it is not, they run anyway. The detection is
-/// the part that rots silently --a machine without the tool would keep
-/// running the gates without saying so-- so it is checked where the tool is
-/// really absent.
+/// Every directory of the current PATH that contains a `bounded` is replaced
+/// by a shadow directory with symlinks to everything else in it. If the host
+/// has no `bounded` the PATH is unchanged, so the test never depends on the
+/// tool being installed.
 fn path_without_bounded(fixture: &Fixture) -> String {
-    let directory = path_of("bounded")
-        .parent()
-        .expect("the tool has a directory")
-        .to_path_buf();
-
-    // The shadow directory has everything the real one has, except the tool.
-    let shadow = fixture.directory.path().join("path-without-bounded");
-    fs::create_dir_all(&shadow).expect("the directory is created");
-    for entry in fs::read_dir(&directory).expect("the directory is readable") {
-        let entry = entry.expect("the entry is readable");
-        if entry.file_name() == "bounded" {
+    let original = std::env::var("PATH").unwrap_or_default();
+    let mut parts = Vec::new();
+    // One shadow per distinct directory: PATH may repeat an entry, and a
+    // wrapper that skips "its own directory" loops if the copies differ.
+    let mut shadows: std::collections::HashMap<String, String> = Default::default();
+    for (index, entry) in original.split(':').enumerate() {
+        let directory = Path::new(entry);
+        if entry.is_empty() || !directory.join("bounded").exists() {
+            parts.push(entry.to_string());
             continue;
         }
-        let _ = std::os::unix::fs::symlink(entry.path(), shadow.join(entry.file_name()));
+        if let Some(shadow) = shadows.get(entry) {
+            parts.push(shadow.clone());
+            continue;
+        }
+        let shadow = fixture
+            .directory
+            .path()
+            .join(format!("path-without-bounded-{index}"));
+        fs::create_dir_all(&shadow).expect("the directory is created");
+        for item in fs::read_dir(directory).expect("the directory is readable") {
+            let item = item.expect("the entry is readable");
+            if item.file_name() == "bounded" {
+                continue;
+            }
+            let _ = std::os::unix::fs::symlink(item.path(), shadow.join(item.file_name()));
+        }
+        shadows.insert(entry.to_string(), shadow.to_string_lossy().into_owned());
+        parts.push(shadow.to_string_lossy().into_owned());
     }
-
-    let original = std::env::var("PATH").unwrap_or_default();
-    let kept: Vec<&str> = original
-        .split(':')
-        .filter(|entry| *entry != directory.to_str().unwrap_or_default())
-        .collect();
-    let mut parts = vec![shadow.to_string_lossy().into_owned()];
-    parts.extend(kept.iter().map(|entry| entry.to_string()));
     parts.join(":")
 }
 
@@ -731,4 +733,397 @@ fn the_report_records_the_commit_the_base_and_the_reason() {
         report["duration_ms"].as_u64().is_some(),
         "the report has to record how long it took"
     );
+}
+
+// ───────────────────────── HSP-293: the exit code ─────────────────────────
+
+/// Commits `files` on a new branch off the base and makes it HEAD.
+fn change(fixture: &Fixture, name: &str, files: &[(&str, &str)]) -> String {
+    git(
+        &fixture.repository,
+        &["checkout", "-q", "-b", name, &fixture.base],
+    );
+    for (file, content) in files {
+        write(&fixture.repository.join(file), content);
+    }
+    let changed = commit(
+        &fixture.repository,
+        Some(&fixture.base),
+        &format!("chore: the change {name}"),
+    );
+    branch(&fixture.repository, name, &changed);
+    changed
+}
+
+fn report_path(fixture: &Fixture, name: &str) -> PathBuf {
+    fixture.directory.path().join(format!("report-{name}.json"))
+}
+
+fn run_with_report(fixture: &Fixture, name: &str, extra: &[&str]) -> (Outcome, PathBuf) {
+    let report = report_path(fixture, name);
+    let mut arguments: Vec<&str> = vec!["--report", report.to_str().expect("a valid path")];
+    arguments.extend_from_slice(extra);
+    arguments.push(&fixture.base);
+    (run_script(fixture, &arguments), report)
+}
+
+fn assert_no_pass_report(report: &Path) {
+    if report.exists() {
+        assert_ne!(
+            read_report(report)["result"],
+            "PASS",
+            "no report may say PASS"
+        );
+    }
+}
+
+const BROKEN_POLICIES: &str = "pub fn policies() -> u32 {\n    2\n}\n";
+
+#[test]
+fn a_failing_test_makes_the_script_exit_non_zero() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/fail",
+        &[("crates/hodei-policies/src/lib.rs", BROKEN_POLICIES)],
+    );
+    let (outcome, report) = run_with_report(&fixture, "fail", &["--no-bounded", "--no-clippy"]);
+
+    assert!(
+        !outcome.succeeded(),
+        "a FAIL gate cannot exit 0: {}",
+        outcome.stdout
+    );
+    assert_eq!(outcome.code, Some(1));
+    assert_eq!(read_report(&report)["result"], "FAIL");
+}
+
+#[test]
+fn a_gate_that_is_not_run_makes_the_script_exit_non_zero() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/not-run",
+        &[("frontend/src/App.tsx", "export const App = () => null;\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "not-run", &["--no-bounded"]);
+
+    assert!(
+        !outcome.succeeded(),
+        "a NOT_RUN gate cannot exit 0: {}",
+        outcome.stdout
+    );
+    assert_eq!(read_report(&report)["result"], "NOT_RUN");
+}
+
+#[test]
+fn the_plan_mode_keeps_exiting_zero_with_not_run_gates() {
+    // Deliberate contract: a plan runs nothing, so NOT_RUN is expected.
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/plan",
+        &[("frontend/src/App.tsx", "export const App = () => null;\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "plan", &["--plan"]);
+
+    assert!(
+        outcome.succeeded(),
+        "{}\n{}",
+        outcome.stdout,
+        outcome.stderr
+    );
+    assert_eq!(read_report(&report)["result"], "NOT_RUN");
+}
+
+// ───────────────────────── HSP-293: ownership ─────────────────────────
+
+#[test]
+fn a_build_script_belongs_to_its_package() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/build-rs",
+        &[("crates/kernel/build.rs", "fn main() {}\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "build-rs", &["--plan"]);
+    assert!(outcome.succeeded(), "{}", outcome.stderr);
+    let report = read_report(&report);
+
+    assert!(
+        gates(&report).contains("test:kernel"),
+        "{:?}",
+        gates(&report)
+    );
+    assert!(gates(&report).contains("test:fixture-api"));
+    assert!(names(&report, "affected_crates").contains("kernel"));
+}
+
+#[test]
+fn an_included_asset_belongs_to_the_member_that_contains_it() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/asset",
+        &[("crates/kernel/data/table.json", "{}\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "asset", &["--plan"]);
+    assert!(outcome.succeeded(), "{}", outcome.stderr);
+    assert!(gates(&read_report(&report)).contains("test:kernel"));
+}
+
+#[test]
+fn a_member_readme_selects_nothing() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/readme",
+        &[("crates/kernel/README.md", "# kernel\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "readme", &["--plan"]);
+    assert!(outcome.succeeded(), "{}", outcome.stderr);
+    assert!(gates(&read_report(&report)).is_empty());
+}
+
+#[test]
+fn a_rust_file_outside_every_package_fails_explicitly() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/orphan",
+        &[("stray/helper.rs", "pub fn helper() {}\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "orphan", &["--plan"]);
+
+    assert!(!outcome.succeeded(), "an unclassified .rs cannot be silent");
+    assert!(
+        outcome.stderr.contains("stray/helper.rs"),
+        "the file has to be named: {}",
+        outcome.stderr
+    );
+    assert_no_pass_report(&report);
+}
+
+// ───────────────────────── HSP-293: honest failures ─────────────────────────
+
+#[test]
+fn broken_cargo_metadata_fails_without_a_pass_report() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/broken",
+        &[("Cargo.toml", "this is not toml [[[\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "broken", &["--no-bounded"]);
+
+    assert!(!outcome.succeeded(), "broken metadata cannot be green");
+    assert_no_pass_report(&report);
+}
+
+#[test]
+fn an_unresolvable_diff_fails_without_a_pass_report() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/no-diff",
+        &[("config/default.toml", "[server]\nport = 3001\n")],
+    );
+    // Remove the root tree of the base: its commit still resolves and the
+    // merge base is found, but the diff cannot be computed.
+    let tree = git(
+        &fixture.repository,
+        &["rev-parse", &format!("{}^{{tree}}", fixture.base)],
+    )
+    .trim()
+    .to_string();
+    let object = fixture
+        .repository
+        .join(".git/objects")
+        .join(&tree[..2])
+        .join(&tree[2..]);
+    let mut permissions = fs::metadata(&object).expect("loose object").permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    fs::set_permissions(&object, permissions).expect("writable");
+    fs::remove_file(&object).expect("the tree is removed");
+
+    let (outcome, report) = run_with_report(&fixture, "no-diff", &["--no-bounded"]);
+
+    assert!(
+        !outcome.succeeded(),
+        "an unresolvable diff cannot be green: {}",
+        outcome.stdout
+    );
+    assert_no_pass_report(&report);
+}
+
+#[test]
+fn no_common_ancestor_fails_without_a_pass_report() {
+    let fixture = fixture();
+    git(
+        &fixture.repository,
+        &["checkout", "-q", "-b", "case/orphan-history", &fixture.base],
+    );
+    write(
+        &fixture.repository.join("config/default.toml"),
+        "[server]\nport = 9\n",
+    );
+    let unrelated = commit(&fixture.repository, None, "chore: an unrelated history");
+    branch(&fixture.repository, "case/orphan-history", &unrelated);
+    git(
+        &fixture.repository,
+        &["checkout", "-q", "case/orphan-history"],
+    );
+
+    let (outcome, report) = run_with_report(&fixture, "orphan-history", &["--no-bounded"]);
+
+    assert!(!outcome.succeeded(), "no common ancestor cannot be green");
+    assert!(
+        outcome.stderr.contains("ancestro comun"),
+        "{}",
+        outcome.stderr
+    );
+    assert_no_pass_report(&report);
+}
+
+// ───────────────────────── HSP-293: graph, bounded, mixed ─────────────────────────
+
+#[test]
+fn workspace_and_versioned_dependencies_build_the_graph() {
+    let styles: [(&str, &str, &str); 2] = [
+        (
+            "workspace",
+            "kernel.workspace = true\n",
+            "\n[workspace.dependencies]\nkernel = { path = \"crates/kernel\" }\n",
+        ),
+        (
+            "version",
+            "kernel = { path = \"crates/kernel\", version = \"0.1.0\" }\n",
+            "",
+        ),
+    ];
+    for (name, dependency, extra) in styles {
+        let fixture = fixture_with(extra, dependency);
+        change(
+            &fixture,
+            &format!("case/graph-{name}"),
+            &[(
+                "crates/kernel/src/lib.rs",
+                "pub fn kernel() -> u32 {\n    1\n}\n// x\n",
+            )],
+        );
+        let (outcome, report) = run_with_report(&fixture, name, &["--plan"]);
+        assert!(outcome.succeeded(), "{name}: {}", outcome.stderr);
+        assert!(
+            names(&read_report(&report), "affected_crates").contains("fixture-api"),
+            "{name}: the API depends on the kernel and has to be reached"
+        );
+    }
+}
+
+/// A `bounded` that records how it was invoked and then runs the command.
+fn fake_bounded(fixture: &Fixture) -> (String, PathBuf) {
+    let directory = fixture.directory.path().join("fake-bin");
+    let log = fixture.directory.path().join("bounded.log");
+    fs::create_dir_all(&directory).expect("directory");
+    let script = directory.join("bounded");
+    fs::write(
+        &script,
+        format!(
+            "#!/usr/bin/env bash\necho \"$*\" >> '{}'\nexec \"$@\"\n",
+            log.display()
+        ),
+    )
+    .expect("script");
+    let mut permissions = fs::metadata(&script).expect("metadata").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    fs::set_permissions(&script, permissions).expect("executable");
+    let path = format!(
+        "{}:{}",
+        directory.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    (path, log)
+}
+
+fn run_with_path(fixture: &Fixture, path: &str, report: &Path, extra: &[&str]) -> Outcome {
+    let output = Command::new("bash")
+        .arg("scripts/test-affected.sh")
+        .args(extra)
+        .arg("--report")
+        .arg(report)
+        .arg(&fixture.base)
+        .current_dir(&fixture.repository)
+        .env("CARGO_TARGET_DIR", &fixture.target)
+        .env("PATH", path)
+        .output()
+        .expect("the script runs");
+    Outcome {
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+#[test]
+fn bounded_wraps_the_gates_when_it_is_installed() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/bounded",
+        &[("config/default.toml", "[server]\nport = 3001\n")],
+    );
+    let (path, log) = fake_bounded(&fixture);
+    let report = report_path(&fixture, "bounded");
+    let outcome = run_with_path(&fixture, &path, &report, &[]);
+
+    assert!(
+        outcome.succeeded(),
+        "{}\n{}",
+        outcome.stdout,
+        outcome.stderr
+    );
+    assert!(
+        outcome.stdout.contains("bounded: los gates"),
+        "{}",
+        outcome.stdout
+    );
+    let invoked = fs::read_to_string(&log).expect("bounded was invoked");
+    assert!(invoked.contains("cargo test -p fixture-api"), "{invoked}");
+    assert_eq!(read_report(&report)["limits"], "bounded");
+}
+
+#[test]
+fn a_mixed_run_reports_pass_fail_and_not_run() {
+    let fixture = fixture();
+    let head = change(
+        &fixture,
+        "case/mixed",
+        &[
+            ("crates/hodei-policies/src/lib.rs", BROKEN_POLICIES),
+            ("config/default.toml", "[server]\nport = 3001\n"),
+            ("frontend/src/App.tsx", "export const App = () => null;\n"),
+        ],
+    );
+    let (path, _log) = fake_bounded(&fixture);
+    let report = report_path(&fixture, "mixed");
+    let outcome = run_with_path(&fixture, &path, &report, &["--no-clippy"]);
+
+    assert!(!outcome.succeeded(), "{}", outcome.stdout);
+    let report = read_report(&report);
+    assert_eq!(report["result"], "FAIL");
+    assert_eq!(report["limits"], "bounded");
+    assert_eq!(report["repository"]["commit"], head.as_str());
+
+    let status_of = |gate: &str| {
+        report["gates"]
+            .as_array()
+            .expect("gates")
+            .iter()
+            .find(|entry| entry["gate"] == gate)
+            .map(|entry| entry["status"].as_str().expect("status").to_string())
+    };
+    assert_eq!(status_of("test:fixture-api").as_deref(), Some("PASS"));
+    assert_eq!(status_of("test:hodei-policies").as_deref(), Some("FAIL"));
+    assert_eq!(status_of("frontend").as_deref(), Some("NOT_RUN"));
 }

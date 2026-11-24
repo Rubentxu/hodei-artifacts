@@ -25,6 +25,26 @@ Códigos de salida:
   0  el plan se ha escrito, o el informe dice PASS
   1  el informe dice FAIL o NOT_RUN
   2  el plan no se se ha podido calcular; el shell lo trata como fallo
+
+`main()` PROPAGA el codigo del subcomando (`sys.exit`): descartarlo hacia que
+`report` saliera siempre con 0 aunque el informe dijera FAIL o NOT_RUN.
+
+Contrato del modo `--plan` (HSP-293): un plan no ejecuta nada, asi que todos
+sus gates son NOT_RUN por construccion. Eso NO es un fallo: `report --mode plan`
+sale con 0 de forma deliberada, y el informe sigue diciendo result NOT_RUN.
+Solo el modo `run` convierte FAIL o NOT_RUN en un codigo distinto de 0.
+
+Propiedad de los ficheros (HSP-293):
+  - `build.rs` de un paquete es del paquete (`Package.owns`).
+  - Un fichero que no es Markdown dentro del directorio de un miembro que no
+    es la raiz (por ejemplo un `.sql` o `.json` leido con `include_str!`) es
+    del miembro: el codigo puede incluirlo en tiempo de compilacion.
+  - Un `.rs` que no es de ningun paquete NO se descarta como `other`: el plan
+    falla (codigo 2) con el motivo, porque no se sabe que gate lo prueba. No
+    se intenta adivinar el dueno de los ficheros incluidos desde fuera del
+    directorio de su paquete (`include_str!("../../x")`): ese caso no es
+    viable sin analizar el codigo, y queda cubierto por el fallo explicito
+    solo si el fichero es `.rs`.
 """
 import argparse
 import json
@@ -90,7 +110,20 @@ class Package:
         """
         if path in self.src_paths or path == self.manifest_path:
             return True
+        if path == os.path.join(self.directory, "build.rs"):
+            return True
         return any(path.startswith(directory + "/") for directory in self.code_directories)
+
+    def owns_asset(self, path):
+        """Si el fichero esta dentro del directorio del paquete y no es doc.
+
+        Cubre los ficheros que el codigo incluye con `include_str!` o
+        `include_bytes!`. Los Markdown se excluyen: documentar no cambia el
+        resultado de las pruebas.
+        """
+        if path.endswith(".md"):
+            return False
+        return path.startswith(self.directory + "/")
 
 
 def load_metadata(root):
@@ -174,6 +207,18 @@ def detect_causes(files, packages, root):
             if package.owns(absolute):
                 owned.setdefault(package.name, []).append(path)
                 break
+        else:
+            # Ficheros incluidos en tiempo de compilacion: el miembro mas
+            # especifico (directorio mas largo) que no es la raiz.
+            candidates = [
+                package
+                for package in packages
+                if os.path.normpath(package.directory) != os.path.normpath(root)
+                and package.owns_asset(absolute)
+            ]
+            if candidates:
+                best = max(candidates, key=lambda package: len(package.directory))
+                owned.setdefault(best.name, []).append(path)
 
     add(
         "lockfile",
@@ -224,6 +269,12 @@ def detect_causes(files, packages, root):
     for cause in causes:
         classified.update(cause["files"])
     unclassified = [path for path in files if path not in classified]
+    orphan_sources = sorted(path for path in unclassified if path.endswith(".rs"))
+    if orphan_sources:
+        fail(
+            "hay ficheros .rs que no son de ningun paquete del workspace y no se sabe que gate "
+            "los prueba: " + ", ".join(orphan_sources)
+        )
     add(
         "other",
         unclassified,
@@ -618,6 +669,10 @@ def cmd_report(args):
           f"{sum(1 for g in gates if g['status'] == 'NOT_RUN')} not_run)")
     print(f"  informe: {args.out}")
 
+    if args.mode == "plan":
+        # Un plan no ejecuta nada: sus NOT_RUN son por construccion y no un
+        # fallo. Contrato deliberado: el modo plan sale con 0.
+        return 0
     if result == "PASS":
         return 0
     if result == "FAIL":
@@ -664,7 +719,8 @@ def main():
     report.set_defaults(handler=cmd_report)
 
     args = parser.parse_args()
-    args.handler(args)
+    code = args.handler(args)
+    sys.exit(code or 0)
 
 
 if __name__ == "__main__":
