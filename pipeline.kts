@@ -265,6 +265,9 @@ pipeline {
                         "--test hsp121_go_client",
                         "--test hsp121_go_e2e",
                         "--test hsp232_go_group",
+                        // El proxy rpm (HSP-235): el repodata del upstream se
+                        // sirve tal cual, con su checksum comprobado.
+                        "--test hsp235_rpm_proxy",
                         "--test hsp121_helm_oci",
                         "--test hsp122_apt_client",
                         "--test hsp122_apt_e2e",
