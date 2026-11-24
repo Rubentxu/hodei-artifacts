@@ -88,6 +88,36 @@ pub async fn the_tags(
             .into_iter()
             .map(|(name, _member)| name)
             .collect()
+    } else if repository.mode == hodei_catalog::RepositoryMode::Proxy {
+        // Un proxy **no** tiene filas de etiqueta en el catalogo: su
+        // etiqueta es un **puntero** que solo existe si alguien ya la
+        // pidio, y su lista vive en el **upstream**. Por eso la lista se
+        // pregunta ahi, con el nombre del repositorio proxy: el mismo
+        // nombre con el que se piden sus manifiestos y sus blobs.
+        //
+        // Y el listado **no se sirve parcial**: si la lista no se puede
+        // obtener --un upstream caido, una credencial que no se puede
+        // usar-- el listado entero es un error, porque una lista vacia
+        // parece completa y no lo es. Es la misma regla que aplica el
+        // grupo a sus miembros.
+        let listed =
+            crate::oci::proxy::the_resolved_tags(state, &repository, name, headers).await?;
+        // El filtro de confianza **no** se puede aplicar por etiqueta: la
+        // lista del upstream son nombres, no digest, y no hay digest al que
+        // mirar. Es la misma decision que el grupo toma con sus miembros
+        // proxy: la compuerta se aplica al **contenido**, en la
+        // resolucion, que es donde se decide si los bytes se pueden
+        // servir. No se inventa un filtro que no se puede aplicar.
+        match listed {
+            crate::oci::proxy::TheUpstreamTags::Listed(tags) => tags,
+            // El ambito del upstream no cubre el listado: el repositorio
+            // **no puede enumerar**. En un grupo eso no tumba el listado
+            // --los demas miembros se listan igual--, pero en un proxy
+            // directo no hay "los demas": la lista vacia es la unica
+            // respuesta honesta, porque lo que el upstream no deja
+            // enumerar no existe para este repositorio.
+            crate::oci::proxy::TheUpstreamTags::NotInScope => Vec::new(),
+        }
     } else {
         let tags = reader
             .tags(context.account().as_str(), name)
