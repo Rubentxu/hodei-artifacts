@@ -535,7 +535,6 @@ fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool
 }
 
 /// La negociacion del `Accept`.
-
 ///
 /// Un cliente que no nombra tipos (`*/*`, `application/*` o nada) acepta
 /// lo que haya. Uno que solo nombra tipos que este registro no sirve
