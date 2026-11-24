@@ -30,6 +30,17 @@
 //! - un upstream que pide el token en un realm que no es el declarado no
 //!   recibe la credencial, ni dentro de un grupo;
 //! - un cliente OCI **real** (`skopeo`) saca la imagen del grupo.
+//!
+//! Y, con el listado de etiquetas --el incremento 3--:
+//!
+//! - el listado del grupo trae las etiquetas de los hosted **y** las del
+//!   upstream de su miembro proxy, que se pregunta con el nombre del
+//!   miembro;
+//! - una etiqueta que tienen dos miembros sale **una** vez, y el listado y
+//!   la resolucion cuentan la misma historia: lo que el listado dice se
+//!   descarga del miembro que gano;
+//! - un upstream **caido** no deja servir el listado a medias: el listado
+//!   entero es un error.
 
 mod support;
 
@@ -131,6 +142,22 @@ const THE_CASES: &[(&str, &str)] = &[
         "ac3-the-referrers-of-the-group-are-the-ones-of-its-members",
         "los referrers del grupo son los de sus miembros",
     ),
+    (
+        "ac4-the-listing-of-the-group-has-the-tags-of-the-proxy",
+        "el listado del grupo trae las etiquetas de los hosted y las del proxy",
+    ),
+    (
+        "ac4-the-list-has-one-entry-per-name",
+        "una etiqueta que tienen dos miembros sale una vez",
+    ),
+    (
+        "ac4-a-tag-of-the-listing-can-be-pulled-from-the-group",
+        "una etiqueta del listado se descarga y devuelve el digest del miembro que gano",
+    ),
+    (
+        "ac4-an-upstream-that-is-down-does-not-serve-a-partial-listing",
+        "un upstream caido no sirve el listado a medias",
+    ),
 ];
 
 /// El seeder del catálogo.
@@ -199,6 +226,17 @@ fn the_deployment(trusted: &[&str]) -> Deployment {
 /// Los blobs primero y el manifiesto despues: es el orden del protocolo, y
 /// el manifiesto se publica con la etiqueta que lo nombra.
 fn publish(deployment: &Deployment, port: u16, repository: &str, layer: &[u8]) -> Vec<u8> {
+    publish_as(deployment, port, repository, TAG, layer)
+}
+
+/// Publica una imagen en un repositorio OCI, con una etiqueta propia.
+fn publish_as(
+    deployment: &Deployment,
+    port: u16,
+    repository: &str,
+    tag: &str,
+    layer: &[u8],
+) -> Vec<u8> {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let (manifest, config) = the_image(layer);
 
@@ -232,7 +270,7 @@ fn publish(deployment: &Deployment, port: u16, repository: &str, layer: &[u8]) -
     let answer = Curl::call(
         port,
         "PUT",
-        &format!("/v2/{repository}/manifests/{TAG}"),
+        &format!("/v2/{repository}/manifests/{tag}"),
         &token,
         Some(&file),
         Some(MANIFEST_MEDIA_TYPE),
@@ -264,12 +302,17 @@ struct Reply {
 
 /// Una lectura del grupo por la etiqueta.
 fn the_manifest(deployment: &Deployment, port: u16, repository: &str) -> Reply {
+    the_manifest_of(deployment, port, repository, TAG)
+}
+
+/// Una lectura del grupo por una etiqueta.
+fn the_manifest_of(deployment: &Deployment, port: u16, repository: &str, tag: &str) -> Reply {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let into = deployment.directory.path().join("answer.bin");
     let _ = std::fs::remove_file(&into);
     let answer = Curl::download(
         port,
-        &format!("/v2/{repository}/manifests/{TAG}"),
+        &format!("/v2/{repository}/manifests/{tag}"),
         &token,
         Some(&into),
     )
@@ -281,6 +324,33 @@ fn the_manifest(deployment: &Deployment, port: u16, repository: &str) -> Reply {
         resolved_from: answer.header("x-hodei-resolved-from"),
         group_version: answer.header("x-hodei-group-version"),
     }
+}
+
+/// La lista de etiquetas de un repositorio: el estado, los nombres y el
+/// cuerpo crudo.
+///
+/// El cuerpo crudo importa: un listado que se sirve a medias se reconoceria
+/// por lo que **dice**, no por lo que deja de decir.
+fn the_tags(deployment: &Deployment, port: u16, repository: &str) -> (u16, Vec<String>, String) {
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let into = deployment.directory.path().join("tags-list.json");
+    let _ = std::fs::remove_file(&into);
+    let answer = Curl::download(
+        port,
+        &format!("/v2/{repository}/tags/list"),
+        &token,
+        Some(&into),
+    )
+    .run();
+    let body = std::fs::read_to_string(&into).unwrap_or_default();
+    let tags = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| value.get("tags").and_then(|tags| tags.as_array()).cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|tag| tag.as_str().map(str::to_string))
+        .collect();
+    (answer.status, tags, body)
 }
 
 /// Una lectura de un blob por su digest.
@@ -833,6 +903,8 @@ struct TheWorld {
     manifests: Mutex<HashMap<String, Vec<u8>>>,
     /// Los blobs, por digest hexadecimal.
     blobs: Mutex<HashMap<String, Vec<u8>>>,
+    /// Las etiquetas de cada repositorio del upstream.
+    tags: Mutex<HashMap<String, Vec<String>>>,
     /// Lo que el upstream ha recibido.
     seen: Mutex<Vec<Seen>>,
     /// Como se comporta.
@@ -861,6 +933,7 @@ impl TheRegistry {
         let world = Arc::new(TheWorld {
             manifests: Mutex::new(HashMap::new()),
             blobs: Mutex::new(HashMap::new()),
+            tags: Mutex::new(HashMap::new()),
             seen: Mutex::new(Vec::new()),
             behaviour: Mutex::new(TheBehaviour::Normal),
             elsewhere: Mutex::new(String::new()),
@@ -903,6 +976,18 @@ impl TheRegistry {
             .lock()
             .expect("the blobs")
             .insert(digest.to_string(), bytes);
+    }
+
+    /// Registra una etiqueta en un repositorio del upstream.
+    ///
+    /// Es lo que el upstream responde en su `tags/list`: la lista de lo que
+    /// tiene cada repositorio.
+    fn tag(&self, repository: &str, tag: &str) {
+        let mut tags = self.world.tags.lock().expect("the tags");
+        let entry = tags.entry(repository.to_string()).or_default();
+        if !entry.iter().any(|one| one == tag) {
+            entry.push(tag.to_string());
+        }
     }
 
     /// Cambia el comportamiento del upstream.
@@ -1077,6 +1162,25 @@ async fn the_distribution(
             StatusCode::UNAUTHORIZED,
             [(header::WWW_AUTHENTICATE, challenge.as_str())],
             "{}".to_string(),
+        )
+            .into_response();
+    }
+
+    // `v2/<nombre>/tags/list`: la lista de etiquetas del repositorio.
+    if let Some((name, tail)) = path.split_once("/tags/list")
+        && tail.is_empty()
+    {
+        let tags = world
+            .tags
+            .lock()
+            .expect("the tags")
+            .get(name)
+            .cloned()
+            .unwrap_or_default();
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            json!({ "name": name, "tags": tags }).to_string(),
         )
             .into_response();
     }
@@ -1258,12 +1362,21 @@ impl TheLab {
 
     /// Publica en el upstream una imagen, con su etiqueta.
     fn publish_upstream(&self, layer: &[u8]) -> Vec<u8> {
+        self.publish_upstream_tag(TAG, layer)
+    }
+
+    /// Publica en el upstream una imagen, con una etiqueta propia.
+    ///
+    /// La etiqueta se registra tambien en la lista del upstream: es lo que
+    /// el grupo enumera cuando pregunta a su miembro proxy.
+    fn publish_upstream_tag(&self, tag: &str, layer: &[u8]) -> Vec<u8> {
         let (manifest, config) = the_image(layer);
-        self.registry.publish(TAG, manifest.clone());
+        self.registry.publish(tag, manifest.clone());
         self.registry
             .publish_blob(&the_digest(&config), config.clone());
         self.registry
             .publish_blob(&the_digest(layer), layer.to_vec());
+        self.registry.tag(PROXY, tag);
         manifest
     }
 }
@@ -1841,6 +1954,223 @@ fn ac3_the_referrers_of_the_group_are_the_ones_of_its_members() {
             LabCase::new(
                 "ac3-the-referrers-of-the-group-are-the-ones-of-its-members",
                 "los referrers del grupo son los de sus miembros",
+            )
+            .passed()
+        },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AC4: el listado de etiquetas del grupo, con un miembro proxy delante.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ac4_the_listing_of_the_group_has_the_tags_of_the_proxy() {
+    a_case(
+        "ac4-the-listing-of-the-group-has-the-tags-of-the-proxy",
+        "el listado del grupo trae las etiquetas de los hosted y las del proxy",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            // El miembro hosted tiene su etiqueta, y el upstream tiene una
+            // que solo existe en el upstream.
+            publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            lab.publish_upstream_tag("solo-en-el-proxy", b"la-capa-del-upstream");
+
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
+            assert_eq!(
+                status,
+                200,
+                "el grupo no lista sus etiquetas:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert!(
+                tags.contains(&TAG.to_string()),
+                "la etiqueta del miembro hosted no esta en la lista: {tags:?}"
+            );
+            assert!(
+                tags.contains(&"solo-en-el-proxy".to_string()),
+                "la etiqueta que solo tiene el proxy no esta en la lista: {tags:?}"
+            );
+
+            // Y el upstream se pregunta con el nombre del **miembro**, no con
+            // el del grupo: el grupo no renombra a su miembro.
+            assert!(
+                lab.registry.hits(&format!("{PROXY}/tags/list")) > 0,
+                "el upstream no se consulto por su lista: {:?}",
+                lab.registry.paths()
+            );
+            assert_eq!(
+                lab.registry.hits(&format!("{PROXY_GROUP}/tags/list")),
+                0,
+                "el upstream se consulto con el nombre del grupo: {:?}",
+                lab.registry.paths()
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac4-the-listing-of-the-group-has-the-tags-of-the-proxy",
+                "el listado del grupo trae las etiquetas de los hosted y las del proxy",
+            )
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac4_the_listing_has_one_entry_per_name() {
+    a_case(
+        "ac4-the-list-has-one-entry-per-name",
+        "una etiqueta que tienen dos miembros sale una vez",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            // Los dos miembros tienen la misma etiqueta: la del primero en
+            // el orden configurado es la que cuenta.
+            publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            lab.publish_upstream(b"la-capa-del-upstream");
+
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
+            assert_eq!(
+                status,
+                200,
+                "el grupo no lista sus etiquetas:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert_eq!(
+                tags.iter().filter(|one| one.as_str() == TAG).count(),
+                1,
+                "la etiqueta que tienen dos miembros sale mas de una vez: {tags:?}"
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac4-the-list-has-one-entry-per-name",
+                "una etiqueta que tienen dos miembros sale una vez",
+            )
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac4_a_tag_of_the_listing_can_be_pulled_from_the_group() {
+    a_case(
+        "ac4-a-tag-of-the-listing-can-be-pulled-from-the-group",
+        "una etiqueta del listado se descarga y devuelve el digest del miembro que gano",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            let hosted = publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            let proxied = lab.publish_upstream_tag("solo-en-el-proxy", b"la-capa-del-upstream");
+
+            // El listado trae las dos etiquetas.
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
+            assert_eq!(status, 200, "el grupo no lista sus etiquetas:\n{body}");
+            assert!(
+                tags.contains(&"solo-en-el-proxy".to_string()),
+                "la etiqueta que solo tiene el proxy no esta en la lista: {tags:?}"
+            );
+
+            // Y lo que el listado dice se puede descargar: la etiqueta que
+            // solo tiene el proxy sale del proxy, con su digest, y la
+            // respuesta dice de que miembro salio.
+            let answer = the_manifest_of(&lab.deployment, port, PROXY_GROUP, "solo-en-el-proxy");
+            assert_eq!(
+                answer.status,
+                200,
+                "la etiqueta del listado no se descarga:\n{}\n{}",
+                lab.deployment.the_log(),
+                String::from_utf8_lossy(&answer.body)
+            );
+            assert_eq!(
+                answer.body, proxied,
+                "el manifiesto no es el del miembro que gano"
+            );
+            assert_eq!(
+                answer.resolved_from.as_deref(),
+                Some(PROXY),
+                "la respuesta no dice que miembro sirvio el contenido"
+            );
+            assert_eq!(
+                answer.content_digest.as_deref(),
+                Some(format!("sha256:{}", the_digest(&proxied)).as_str()),
+                "la respuesta no dice el digest del contenido servido"
+            );
+
+            // Y la del hosted sale del hosted: el listado y la resolucion
+            // cuentan la misma historia.
+            let other = the_manifest_of(&lab.deployment, port, PROXY_GROUP, TAG);
+            assert_eq!(other.status, 200, "la etiqueta del hosted no se descarga");
+            assert_eq!(other.body, hosted, "el manifiesto no es el del hosted");
+            assert_eq!(other.resolved_from.as_deref(), Some(FIRST));
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac4-a-tag-of-the-listing-can-be-pulled-from-the-group",
+                "una etiqueta del listado se descarga y devuelve el digest del miembro que gano",
+            )
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac4_an_upstream_that_is_down_does_not_serve_a_partial_listing() {
+    a_case(
+        "ac4-an-upstream-that-is-down-does-not-serve-a-partial-listing",
+        "un upstream caido no sirve el listado a medias",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            // El primer miembro es un proxy cuyo upstream no esta: el
+            // segundo miembro tiene una etiqueta.
+            let lab = TheLab::new(&[DOWN, FIRST], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            // El miembro hosted tiene su etiqueta: si el listado se sirviera
+            // a medias, apareceria sola.
+            publish_as(
+                &lab.deployment,
+                port,
+                FIRST,
+                "solo-en-el-hosted",
+                b"la-capa-del-primer-miembro",
+            );
+
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
+            assert_eq!(
+                status,
+                503,
+                "un upstream caido no detiene el listado:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert!(
+                !body.contains("solo-en-el-hosted"),
+                "el listado se sirvio a medias: {body}"
+            );
+            assert!(
+                !tags.contains(&"solo-en-el-hosted".to_string()),
+                "el listado se sirvio a medias: {tags:?}"
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac4-an-upstream-that-is-down-does-not-serve-a-partial-listing",
+                "un upstream caido no sirve el listado a medias",
             )
             .passed()
         },
