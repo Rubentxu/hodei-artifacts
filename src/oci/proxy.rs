@@ -313,6 +313,17 @@ async fn the_body(mut opened: crate::proxy::fetch::Opened) -> Result<Vec<u8>, Oc
 /// La lista de la distribucion es `{"name": ..., "tags": [...]}`. Lo que
 /// importa son los nombres: una lista sin `tags` es una lista vacia, y un
 /// nombre que no es texto no es una etiqueta.
+///
+/// El listado solo anuncia **lo que se puede descargar**: un nombre se
+/// filtra por la misma regla que usa la resolucion ([`the_tag_name`]), de
+/// modo que la lista y la resolucion cuentan la misma historia. Un nombre que
+/// la resolucion rechaza --una barra, un caracter de control, mas de 128
+/// caracteres-- se descarga con un `400` que **detiene** la resolucion del
+/// grupo entero, asi que anunciarlo seria prometer algo que no se puede
+/// pedir.
+///
+/// No es un fallo: un upstream puede tener basura en su lista, y el listado
+/// no se rompe por eso. Lo que no se puede descargar no se anuncia.
 fn the_tag_names(body: &[u8]) -> Result<Vec<String>, OciFailure> {
     let answer: serde_json::Value = serde_json::from_slice(body)
         .map_err(|_| OciFailure::unavailable("the tag list of the upstream is not readable"))?;
@@ -321,7 +332,9 @@ fn the_tag_names(body: &[u8]) -> Result<Vec<String>, OciFailure> {
     };
     Ok(tags
         .iter()
-        .filter_map(|tag| tag.as_str().map(str::to_string))
+        .filter_map(|tag| tag.as_str())
+        .filter(|tag| the_tag_name(tag).is_ok())
+        .map(str::to_string)
         .collect())
 }
 
