@@ -383,6 +383,18 @@ async fn read_asset_named(
 // Grupo
 // ---------------------------------------------------------------------------
 
+/// La politica de ambito del contenido de un miembro del grupo.
+///
+/// Esta release solo sirve el ambito global, asi que un miembro de ambito
+/// particionado **no** se sirve. Su fallo es un ERROR que detiene la
+/// resolucion del grupo, no un MISS que pasa al siguiente miembro: es la
+/// semantica y el mensaje de la superficie cruda, y dos superficies no
+/// pueden responder distinto ante el mismo repositorio.
+fn the_member_scope(member: &RepositoryDescriptor) -> Result<(), Failure> {
+    super::raw_group::global_only(member)?;
+    Ok(())
+}
+
 /// Lo que un miembro del grupo ofrece de un modulo.
 enum Offering {
     /// El miembro tiene el modulo, con estas versiones.
@@ -502,6 +514,10 @@ async fn the_group_versions(
     // al final no respondio ninguno.
     let mut offline: Option<RawApiError> = None;
     for member in leaves {
+        // El ambito se comprueba **antes** de consultar al miembro: un
+        // miembro de ambito particionado no se sirve, y su error detiene la
+        // resolucion del grupo.
+        the_member_scope(member)?;
         match the_member_versions(state, context, member, module, correlation).await? {
             Offering::Versions(found) => {
                 for entry in found {
@@ -567,6 +583,10 @@ async fn the_divergence(
         let asset_path = format!("{module}/@v/{version}.{extension}");
         let mut seen: Option<(String, String)> = None;
         for member in leaves {
+            // El mismo ambito que en el listado: un miembro de ambito
+            // particionado no se compara con nadie, y su error detiene la
+            // resolucion.
+            the_member_scope(member)?;
             let Some(digest) = the_known_digest(state, context, member, &asset_path).await? else {
                 continue;
             };
@@ -624,6 +644,10 @@ async fn the_owner_of(
     // sale solo si **ningun** miembro la duena.
     let mut offline: Option<RawApiError> = None;
     for member in &group.leaves {
+        // El dueno se decide con la misma politica de ambito: un miembro de
+        // ambito particionado no puede ser el dueno de una version, y su
+        // error detiene la resolucion.
+        the_member_scope(member)?;
         let asset_path = format!("{module}/@v/{version}.info");
         let has = if member.mode == hodei_catalog::RepositoryMode::Proxy {
             // Un miembro proxy responde con su upstream: un 404 es un MISS
