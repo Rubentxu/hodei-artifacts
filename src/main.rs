@@ -20,18 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = match AppConfig::new() {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("❌ Configuration error: {}", e);
-            eprintln!();
-            eprintln!("💡 Configuration tips:");
-            eprintln!("   - Set environment variables with HODEI_ prefix");
-            eprintln!("   - Create config/default.toml for default values");
-            eprintln!("   - Use RUN_MODE=development for development settings");
-            eprintln!();
-            eprintln!("📖 Example environment variables:");
-            eprintln!("   HODEI_SERVER__PORT=3000");
-            eprintln!("   HODEI_ROCKSDB__PATH=./data/hodei.rocksdb");
-            eprintln!("   HODEI_DATABASE__NAMESPACE=hodei");
-            eprintln!("   HODEI_DATABASE__DATABASE=artifacts");
+            let run_mode = std::env::var("RUN_MODE").unwrap_or_else(|_| "development".into());
+            let base = std::env::current_dir().unwrap_or_else(|_| ".".into());
+            eprintln!(
+                "{}",
+                hodei_artifacts_api::config::explain_config_error(&e, &base, &run_mode)
+            );
             std::process::exit(1);
         }
     };
@@ -79,7 +73,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = match bootstrap(&config, bootstrap_config).await {
         Ok(state) => state,
         Err(error) => {
-            eprintln!("Bootstrap failed: {error}");
+            eprintln!(
+                "Bootstrap failed: {}",
+                hodei_artifacts_api::config::redact_secrets(&error.to_string())
+            );
             return Err(error.to_string().into());
         }
     };

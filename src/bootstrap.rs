@@ -537,8 +537,12 @@ async fn the_content_store(
     use crate::config::ContentBackend;
     match config.content.backend {
         ContentBackend::Filesystem => {
-            let store = FileBlobStore::new(&config.content.cas_path)
-                .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+            let store = FileBlobStore::new(&config.content.cas_path).map_err(|error| {
+                BootstrapError::Initialization(crate::config::redact_secrets(&format!(
+                    "content directory '{}' cannot be opened: {error}. Check that it exists and the service user can write to it, or set HODEI_CONTENT__CAS_PATH.",
+                    config.content.cas_path
+                )))
+            })?;
             // La comprobacion de readiness del almacen: el directorio
             // existe y es un directorio. No se lee nada de dentro.
             let check = crate::readiness::ContentCheck::Filesystem {
@@ -615,15 +619,15 @@ async fn the_content_store(
                 // often than 404, which is why both are distinguished--:
                 // still an error, never a fallback.
                 Ok(Err(error)) => {
-                    return Err(BootstrapError::Initialization(format!(
-                        "the content bucket {:?} cannot be used: {}",
-                        table.bucket, error
+                    return Err(BootstrapError::Initialization(the_bucket_failure(
+                        &table.bucket,
+                        &format!("cannot be used: {error:?}"),
                     )));
                 }
                 Err(_elapsed) => {
-                    return Err(BootstrapError::Initialization(format!(
-                        "the content bucket {:?} did not answer within 10 seconds",
-                        table.bucket
+                    return Err(BootstrapError::Initialization(the_bucket_failure(
+                        &table.bucket,
+                        "did not answer within 10 seconds",
                     )));
                 }
             }
@@ -638,6 +642,14 @@ async fn the_content_store(
             Ok((ChosenContentStore::S3(Arc::new(store)), check))
         }
     }
+}
+
+/// The startup error for a content bucket that cannot be used: what failed,
+/// and what to check. Credentials never appear: the detail is redacted.
+fn the_bucket_failure(bucket: &str, detail: &str) -> String {
+    crate::config::redact_secrets(&format!(
+        "the content bucket {bucket:?} {detail}. Check [content.s3] endpoint/region/bucket (HODEI_CONTENT__S3__ENDPOINT, HODEI_CONTENT__S3__BUCKET), that the endpoint is reachable from this host, and that the credentials of the AWS provider chain (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or an IAM role) may access the bucket."
+    ))
 }
 
 /// Configure the production JWT authenticator and Cedar authorizer when the
@@ -1190,6 +1202,53 @@ async fn register_iam_schema(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn an_unreachable_s3_backend_fails_with_an_actionable_redacted_message() {
+        use crate::config::{ContentBackend, S3ContentConfig};
+        let mut config = AppConfig::default();
+        config.content.backend = ContentBackend::S3;
+        config.content.s3 = Some(S3ContentConfig {
+            bucket: "missing-bucket".to_string(),
+            endpoint: Some("127.0.0.1:1".to_string()),
+            region: Some("us-east-1".to_string()),
+            tls: false,
+        });
+        let error = match the_content_store(&config).await {
+            Ok(_) => panic!("an unreachable store must be an error"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("missing-bucket"), "{error}");
+        assert!(error.contains("HODEI_CONTENT__S3__ENDPOINT"), "{error}");
+    }
+
+    #[test]
+    fn the_bucket_failure_never_echoes_credentials() {
+        let text = the_bucket_failure("b", "cannot be used: secret_access_key=abc123 token=zzz9");
+        assert!(!text.contains("abc123") && !text.contains("zzz9"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn an_unwritable_content_directory_stops_the_bootstrap_with_the_path() {
+        let tmp = tempdir().unwrap();
+        let blocker = tmp.path().join("file");
+        std::fs::write(&blocker, "x").unwrap();
+        let mut config = AppConfig::default();
+        config.rocksdb.path = tmp.path().join("db").to_string_lossy().to_string();
+        // A path below a regular file can never be created.
+        config.content.cas_path = blocker.join("cas").to_string_lossy().to_string();
+        let bootstrap_config = BootstrapConfig {
+            register_iam_schema: false,
+            schema_version: None,
+            validate_schemas: false,
+        };
+        let error = match bootstrap(&config, bootstrap_config).await {
+            Ok(_) => panic!("must fail"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("HODEI_CONTENT__CAS_PATH"), "{error}");
+        assert!(error.contains(&blocker.display().to_string()), "{error}");
+    }
+
     use super::*;
     use tempfile::tempdir;
 

@@ -301,6 +301,40 @@ impl ContentConfig {
     }
 }
 
+impl ContentConfig {
+    /// Check that the content directory can be written when the backend is
+    /// the filesystem.
+    ///
+    /// The S3 backend has its own preflight at bootstrap (it needs the
+    /// network); here only the local machine is asked. The message names
+    /// the path, the cause and the corrective action.
+    pub fn preflight_storage(&self) -> Result<(), ConfigError> {
+        if self.backend != ContentBackend::Filesystem {
+            return Ok(());
+        }
+        let path = std::path::Path::new(&self.cas_path);
+        if let Err(error) = std::fs::create_dir_all(path) {
+            return Err(ConfigError::Message(format!(
+                "Content directory '{}' cannot be created: {error}. \
+                 Create it and give the service user write permission, or set HODEI_CONTENT__CAS_PATH to a writable directory.",
+                path.display()
+            )));
+        }
+        let probe = path.join(".hodei_test_write");
+        match std::fs::write(&probe, b"probe") {
+            Ok(()) => {
+                let _ = std::fs::remove_file(probe);
+                Ok(())
+            }
+            Err(error) => Err(ConfigError::Message(format!(
+                "Content directory '{}' is not writable: {error}. \
+                 Fix its ownership or permissions (for example chown/chmod for the service user), or set HODEI_CONTENT__CAS_PATH to a writable directory.",
+                path.display()
+            ))),
+        }
+    }
+}
+
 impl Default for ContentConfig {
     fn default() -> Self {
         Self {
@@ -1107,7 +1141,8 @@ impl AppConfig {
     /// validates a configuration, and its failures say that the problem is
     /// the storage and not the configuration.
     pub fn preflight_storage(&self) -> Result<(), ConfigError> {
-        self.rocksdb.preflight_storage()
+        self.rocksdb.preflight_storage()?;
+        self.content.preflight_storage()
     }
 
     /// Get the server bind address
@@ -1230,6 +1265,120 @@ impl DatabaseConfig {
 
         Ok(())
     }
+}
+
+/// The configuration files the loader looks for, relative to the working
+/// directory, in ascending precedence.
+fn the_config_file_names(run_mode: &str) -> [String; 3] {
+    [
+        "config/default.toml".to_string(),
+        format!("config/{run_mode}.toml"),
+        "config/local.toml".to_string(),
+    ]
+}
+
+/// Replace the value of anything that looks like a secret with `[REDACTED]`.
+///
+/// Startup errors can echo what the underlying library saw: a connection
+/// string, an `Authorization` header, an environment dump. Whatever the
+/// source, the text goes through here before it reaches the operator.
+pub fn redact_secrets(text: &str) -> String {
+    const SENSITIVE: [&str; 8] = [
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "private_key",
+        "api_key",
+        "apikey",
+        "credential",
+    ];
+    let is_sensitive = |key: &str| {
+        let key = key.to_ascii_lowercase();
+        SENSITIVE.iter().any(|word| key.contains(word)) || key.ends_with("_key")
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut redact_next = false;
+    for word in text.split(' ') {
+        if redact_next && !word.is_empty() {
+            out.push("[REDACTED]".to_string());
+            redact_next = false;
+            continue;
+        }
+        let lowered = word.to_ascii_lowercase();
+        if lowered == "bearer" || lowered == "basic" {
+            redact_next = true;
+            out.push(word.to_string());
+            continue;
+        }
+        if let Some(index) = word.find(['=', ':']) {
+            let (key, rest) = word.split_at(index);
+            let value = &rest[1..];
+            if is_sensitive(key) {
+                if value.is_empty() {
+                    // `password: hunter2` -- the value is the next word.
+                    redact_next = true;
+                    out.push(word.to_string());
+                } else {
+                    out.push(format!("{key}{}[REDACTED]", &rest[..1]));
+                }
+                continue;
+            }
+        }
+        if word.starts_with("AKIA") && word.len() >= 16 {
+            out.push("[REDACTED]".to_string());
+            continue;
+        }
+        out.push(word.to_string());
+    }
+    out.join(" ")
+}
+
+/// Explain a failed configuration load to the operator.
+///
+/// Names the files that were looked for (and which of them exist under
+/// `base`), the environment variable that would supply a missing value, and
+/// the action to take. The text is redacted before it is returned.
+pub fn explain_config_error(error: &ConfigError, base: &std::path::Path, run_mode: &str) -> String {
+    let raw = error.to_string();
+    let mut lines = vec![format!("Configuration error: {}", redact_secrets(&raw))];
+    let files = the_config_file_names(run_mode);
+    let found: Vec<&String> = files.iter().filter(|f| base.join(f).is_file()).collect();
+    if found.is_empty() {
+        lines.push(format!(
+            "No configuration file found. Expected '{}' (working directory: '{}'); also looked for '{}' and '{}'.",
+            base.join(&files[0]).display(),
+            base.display(),
+            files[1],
+            files[2]
+        ));
+        lines.push(
+            "Action: run the service from the directory that contains config/ (the distribution ships config/default.toml), or copy config/default.toml there, or provide every required value through HODEI_<SECTION>__<KEY> environment variables."
+                .to_string(),
+        );
+    } else {
+        let names: Vec<&str> = found.iter().map(|f| f.as_str()).collect();
+        lines.push(format!("Configuration files read: {}.", names.join(", ")));
+    }
+    if let Some(field) = raw
+        .split("missing field `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+    {
+        const SECTIONS: [&str; 5] = ["server", "database", "schema", "logging", "rocksdb"];
+        if SECTIONS.contains(&field) {
+            lines.push(format!(
+                "Required section missing: '[{field}]'. Add it to config/default.toml, or set its keys as HODEI_{}__<KEY> (for example HODEI_SERVER__PORT=3000).",
+                field.to_ascii_uppercase()
+            ));
+        } else {
+            lines.push(format!(
+                "Required key missing: '{field}'. Set it in its section of config/default.toml, or as HODEI_<SECTION>__{} (for example HODEI_ROCKSDB__CREATE_IF_MISSING=true).",
+                field.to_ascii_uppercase()
+            ));
+        }
+    }
+    lines.join("\n")
 }
 
 impl RocksDbConfig {
@@ -1373,6 +1522,82 @@ impl LoggingConfig {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_missing_config_file_names_the_expected_path_and_the_action() {
+        let tmp = tempfile::tempdir().unwrap();
+        let error = ConfigError::Message("missing field `server`".to_string());
+        let text = explain_config_error(&error, tmp.path(), "development");
+        let expected = tmp.path().join("config/default.toml");
+        assert!(text.contains(&expected.display().to_string()), "{text}");
+        assert!(text.contains("Action:"), "{text}");
+        assert!(text.contains("HODEI_SERVER__"), "{text}");
+    }
+
+    #[test]
+    fn a_present_config_file_is_reported_as_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("config")).unwrap();
+        std::fs::write(tmp.path().join("config/default.toml"), "").unwrap();
+        let error = ConfigError::Message("missing field `database`".to_string());
+        let text = explain_config_error(&error, tmp.path(), "development");
+        assert!(text.contains("config/default.toml"), "{text}");
+        assert!(!text.contains("No configuration file found"), "{text}");
+        assert!(text.contains("HODEI_DATABASE__"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unwritable_content_directory_names_the_path_and_the_fix() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("cas");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Root ignores permission bits; skip the assertion there.
+        if std::fs::write(dir.join("probe"), b"x").is_ok() {
+            return;
+        }
+        let content = ContentConfig {
+            cas_path: dir.to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let error = content.preflight_storage().expect_err("not writable");
+        let text = error.to_string();
+        assert!(text.contains(&dir.display().to_string()), "{text}");
+        assert!(text.contains("HODEI_CONTENT__CAS_PATH"), "{text}");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn a_writable_content_directory_passes_the_preflight_and_is_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let content = ContentConfig {
+            cas_path: tmp.path().join("new/cas").to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        content.preflight_storage().expect("created and writable");
+    }
+
+    #[test]
+    fn startup_messages_never_print_secrets() {
+        let raw = "connect failed: password=hunter2 token:abc123 Authorization: Bearer eyJhbGciOi.secret.sig \
+                   AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI aws_access_key=AKIAIOSFODNN7EXAMPLE endpoint=http://h:9000";
+        let redacted = redact_secrets(raw);
+        for secret in [
+            "hunter2",
+            "abc123",
+            "eyJhbGciOi",
+            "wJalrXUtnFEMI",
+            "AKIAIOSFODNN7EXAMPLE",
+        ] {
+            assert!(!redacted.contains(secret), "{secret} leaked: {redacted}");
+        }
+        assert!(redacted.contains("endpoint=http://h:9000"), "{redacted}");
+        let error = ConfigError::Message("bad value password=hunter2".to_string());
+        let text =
+            explain_config_error(&error, std::path::Path::new("/nonexistent"), "development");
+        assert!(!text.contains("hunter2"), "{text}");
+    }
     use super::*;
 
     /// The environment variables that must override the file configuration.
