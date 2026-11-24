@@ -711,6 +711,29 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the yum repositories");
     }
 
+    /// Crea repositorios **yum proxy** de la primera cuenta. Cada uno es
+    /// una clave, su `config_settings.proxy` (el upstream y su cache) y el
+    /// canal de confianza en el que se siembra.
+    ///
+    /// El canal es un ajuste del repositorio (`config_settings.trust.serve`)
+    /// y no hay una ruta HTTP que lo fije: se fija al sembrar, como lo
+    /// haria quien opera el despliegue. Los que no estan en la lista de
+    /// confianza se siembran en el canal abierto.
+    pub fn seed_yum_proxies(&self, trusted: &[&str], repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, proxy)| {
+                serde_json::json!({
+                    "key": key,
+                    "proxy": proxy,
+                    "format": "rpm",
+                    "trusted": trusted.contains(key),
+                })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the yum proxies");
+    }
+
     /// Crea repositorios **go hosted** de la primera cuenta. Cada entrada
     /// es una clave y su config (`null` si no tiene).
     pub fn seed_go(&self, repositories: &[(&str, serde_json::Value)]) {
