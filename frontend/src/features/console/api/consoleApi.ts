@@ -17,6 +17,7 @@ import axios, {
 } from 'axios';
 
 import { useAuthStore } from '@/shared/stores/auth.store';
+import { encodeAssetPath } from '../lib/packageReference';
 import type {
   Capabilities,
   CreateRepositoryBody,
@@ -163,7 +164,7 @@ export const packageDetail = async (
   signal?: AbortSignal
 ): Promise<PackageView> => {
   const response = await client.get<PackageView>(
-    `/packages/${encodeURIComponent(repository)}/${thePathOf(path)}`,
+    `/packages/${encodeURIComponent(repository)}/${encodeAssetPath(path)}`,
     { signal }
   );
   return response.data;
@@ -210,22 +211,8 @@ export const downloadAsset = async (
   signal?: AbortSignal
 ): Promise<Blob> => {
   const response = await content.get(
-    `/repository/${encodeURIComponent(repository)}/${thePathOf(path)}`,
+    `/repository/${encodeURIComponent(repository)}/${encodeAssetPath(path)}`,
     { responseType: 'blob', signal }
   );
   return response.data as Blob;
 };
-
-/**
- * The path of an asset, with its slashes.
- *
- * The route is a wildcard: the path names the content inside the
- * repository, and the slashes are part of that name. Each segment is
- * escaped on its own, so a segment cannot escape its own place.
- */
-const thePathOf = (path: string): string =>
-  path
-    .split('/')
-    .filter(segment => segment.length > 0)
-    .map(segment => encodeURIComponent(segment))
-    .join('/');

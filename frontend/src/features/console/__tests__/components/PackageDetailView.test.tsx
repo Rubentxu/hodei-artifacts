@@ -11,9 +11,11 @@
 import { http, HttpResponse } from 'msw';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import ConsolePackagePage from '@/pages/console/ConsolePackagePage';
+import { useAuthStore } from '@/shared/stores/auth.store';
 import { server } from '@/shared/test/mocks/server';
 import { render } from '@/shared/test/test-utils';
 
@@ -195,7 +197,10 @@ describe('PackageDetailView', () => {
     expect(confirm).toBeDisabled();
     expect(revoked).toBeNull();
 
-    await user.type(screen.getByLabelText('Reason'), 'the signature does not hold');
+    await user.type(
+      screen.getByLabelText('Reason'),
+      'the signature does not hold'
+    );
     await user.click(confirm);
 
     await waitFor(() =>
@@ -229,6 +234,143 @@ describe('PackageDetailView', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'You are not allowed to do this'
+    );
+  });
+
+  it('consolidates identity and size without duplicating equivalent facts', async () => {
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(`sha256:${theDigest}`)).toBeInTheDocument();
+    expect(screen.getAllByText(`sha256:${theDigest}`)).toHaveLength(1);
+    expect(screen.queryByText(theDigest)).not.toBeInTheDocument();
+    expect(screen.getAllByText('2.0 KiB')).toHaveLength(1);
+    expect(screen.getByText('libs')).toBeInTheDocument();
+    expect(
+      screen.getByText('requests/2.32.3/requests-2.32.3.tar.gz')
+    ).toBeInTheDocument();
+  });
+
+  it('copies digest, reference, and clean shareable link without credentials', async () => {
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, 'writeText')
+      .mockResolvedValue(undefined);
+    useAuthStore.setState({ token: 'secret-bearer-token' });
+
+    render(
+      <MemoryRouter
+        initialEntries={['/console/packages/libs/requests/2.32.3?token=leak']}
+      >
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await screen.findByText(`sha256:${theDigest}`);
+
+    await user.click(screen.getByRole('button', { name: 'Copy digest' }));
+    expect(writeText).toHaveBeenLastCalledWith(`sha256:${theDigest}`);
+
+    await user.click(screen.getByRole('button', { name: 'Copy reference' }));
+    expect(writeText).toHaveBeenLastCalledWith(
+      'libs/requests/2.32.3/requests-2.32.3.tar.gz'
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Copy link' }));
+    const copiedLink = writeText.mock.calls.at(-1)?.[0] ?? '';
+    expect(copiedLink).toContain(
+      `/console/packages/libs/requests/2.32.3/requests-2.32.3.tar.gz?digest=sha256%3A${theDigest}`
+    );
+    expect(copiedLink).not.toContain('secret-bearer-token');
+    expect(copiedLink).not.toContain('leak');
+
+    useAuthStore.setState({ token: null });
+  });
+
+  it('warns when the expected digest in the URL does not match the current content', async () => {
+    const expected = `sha256:${'f'.repeat(64)}`;
+    render(
+      <MemoryRouter
+        initialEntries={[
+          `/console/packages/libs/requests/2.32.3?digest=${encodeURIComponent(expected)}`,
+        ]}
+      >
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Content changed: this path no longer matches the expected digest'
+    );
+    expect(alert).toHaveTextContent(expected);
+    expect(alert).toHaveTextContent(`sha256:${theDigest}`);
+  });
+
+  it('does not warn when the expected digest in the URL matches the current content', async () => {
+    const expected = `sha256:${theDigest}`;
+    render(
+      <MemoryRouter
+        initialEntries={[
+          `/console/packages/libs/requests/2.32.3?digest=${encodeURIComponent(expected)}`,
+        ]}
+      >
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await screen.findByText(`sha256:${theDigest}`);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('preserves special characters in paths across router navigation and link generation', async () => {
+    const user = userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, 'writeText')
+      .mockResolvedValue(undefined);
+    const specialPath = '@scope/pkg/1.0.0+build 1/foo%2Fbar.tgz';
+    let requestedUrl = '';
+
+    server.use(
+      http.get('/api/v1/packages/:repository/*', ({ request }) => {
+        requestedUrl = new URL(request.url).pathname;
+        return HttpResponse.json({
+          ...thePackage,
+          repository: 'npm-hosted',
+          asset_path: specialPath,
+          package_name: '@scope/pkg',
+          package_version: '1.0.0+build 1',
+        });
+      })
+    );
+
+    render(
+      <MemoryRouter
+        initialEntries={[
+          '/console/packages/npm-hosted/%40scope/pkg/1.0.0%2Bbuild%201/foo%252Fbar.tgz',
+        ]}
+      >
+        <Routes>
+          <Route
+            path="/console/packages/:repository/*"
+            element={<ConsolePackagePage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(specialPath)).toBeInTheDocument();
+    expect(requestedUrl).toBe(
+      '/api/v1/packages/npm-hosted/%40scope/pkg/1.0.0%2Bbuild%201/foo%252Fbar.tgz'
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Copy link' }));
+    const copiedLink = writeText.mock.calls.at(-1)?.[0] ?? '';
+    expect(copiedLink).toContain(
+      `/console/packages/npm-hosted/%40scope/pkg/1.0.0%2Bbuild%201/foo%252Fbar.tgz?digest=sha256%3A${theDigest}`
     );
   });
 });

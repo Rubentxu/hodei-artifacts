@@ -17,7 +17,16 @@
  */
 
 import { useState } from 'react';
-import { Download, ShieldCheck, ShieldOff } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  Download,
+  Link2,
+  ShieldCheck,
+  ShieldOff,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -28,11 +37,13 @@ import { Spinner } from '@/components/ui/Spinner';
 import { failureOf, theReasonsOf } from '../api/errors';
 import { downloadAsset } from '../api/consoleApi';
 import type { TrustState } from '../api/types';
+import { usePackage, usePromote, useRevoke } from '../hooks/useConsole';
 import {
-  usePackage,
-  usePromote,
-  useRevoke,
-} from '../hooks/useConsole';
+  buildCanonicalReference,
+  buildShareablePackageUrl,
+  digestsMatch,
+  formatDigest,
+} from '../lib/packageReference';
 import { ConfirmDialog } from './ConfirmDialog';
 import { FailureNotice } from './FailureNotice';
 
@@ -64,12 +75,16 @@ const theMoment = (value: string): string => {
 export interface PackageDetailViewProps {
   repository: string;
   path: string;
+  /** Optional expected digest override (defaults to `?digest=` query param). */
+  expectedDigest?: string;
 }
 
 export const PackageDetailView = ({
   repository,
   path,
+  expectedDigest,
 }: PackageDetailViewProps) => {
+  const [searchParams] = useSearchParams();
   const detail = usePackage(repository, path);
   const promote = usePromote();
   const revoke = useRevoke();
@@ -78,6 +93,11 @@ export const PackageDetailView = ({
   const [reason, setReason] = useState('');
   const [downloading, setDownloading] = useState(false);
   const [downloadFailure, setDownloadFailure] = useState<unknown>(null);
+  const [copiedKey, setCopiedKey] = useState<
+    'digest' | 'reference' | 'link' | null
+  >(null);
+
+  const pinnedDigest = expectedDigest ?? searchParams.get('digest') ?? '';
 
   if (detail.isLoading) {
     return (
@@ -95,7 +115,36 @@ export const PackageDetailView = ({
   const asset = detail.data;
   if (!asset) return null;
 
-  const digest = `${asset.digest.algorithm}:${asset.digest.value}`;
+  const digest = formatDigest(asset.digest);
+  const blobDigest = formatDigest(asset.blob.digest);
+  const publishedDigest = formatDigest(asset.published.digest);
+  const hasDigestMismatch =
+    pinnedDigest.trim().length > 0 && !digestsMatch(pinnedDigest, asset.digest);
+  const canonicalReference = buildCanonicalReference(
+    asset.repository,
+    asset.asset_path
+  );
+  const shareableUrl = buildShareablePackageUrl(
+    window.location.origin,
+    asset.repository,
+    asset.asset_path,
+    digest
+  );
+
+  const copyText = async (
+    key: 'digest' | 'reference' | 'link',
+    value: string
+  ) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedKey(key);
+      setTimeout(() => {
+        setCopiedKey(current => (current === key ? null : current));
+      }, 2000);
+    } catch {
+      setCopiedKey(null);
+    }
+  };
 
   const download = async () => {
     setDownloading(true);
@@ -175,19 +224,86 @@ export const PackageDetailView = ({
         <FailureNotice failure={failureOf(downloadFailure)} />
       )}
 
+      {hasDigestMismatch && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950"
+        >
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div className="flex flex-col gap-1 text-sm">
+            <p className="font-semibold">
+              Content changed: this path no longer matches the expected digest
+            </p>
+            <p className="text-amber-900">
+              Repository paths are mutable and can be updated to point to new
+              bytes. Verify the digest before trusting or downloading this
+              artifact.
+            </p>
+            <dl className="mt-1 grid gap-1 text-xs">
+              <div className="flex flex-wrap gap-2">
+                <dt className="font-medium">Expected digest:</dt>
+                <dd className="break-all font-mono">{pinnedDigest.trim()}</dd>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <dt className="font-medium">Current digest:</dt>
+                <dd className="break-all font-mono">{digest}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      )}
+
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle>Identity</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => copyText('digest', digest)}
+              leftIcon={copiedKey === 'digest' ? <Check /> : <Copy />}
+            >
+              {copiedKey === 'digest' ? 'Copied digest' : 'Copy digest'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => copyText('reference', canonicalReference)}
+              leftIcon={copiedKey === 'reference' ? <Check /> : <Copy />}
+            >
+              {copiedKey === 'reference'
+                ? 'Copied reference'
+                : 'Copy reference'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => copyText('link', shareableUrl)}
+              leftIcon={copiedKey === 'link' ? <Check /> : <Link2 />}
+            >
+              {copiedKey === 'link' ? 'Copied link' : 'Copy link'}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <dl className="grid gap-3 md:grid-cols-2">
+            <TheFact label="Repository" value={asset.repository} />
+            <TheFact label="Path" value={asset.asset_path} mono />
+            <TheFact label="Package" value={asset.package_name || '—'} />
+            <TheFact label="Version" value={asset.package_version || '—'} />
             <TheFact label="Digest" value={digest} mono />
             <TheFact label="Size" value={theSize(asset.size_bytes)} />
-            <TheFact label="Version" value={asset.package_version} />
             <TheFact label="Updated" value={theMoment(asset.updated_at)} />
             <TheFact label="Blob scope" value={asset.blob.scope} />
-            <TheFact label="Blob digest" value={asset.blob.digest.value} mono />
+            {blobDigest !== digest && (
+              <TheFact label="Blob digest" value={blobDigest} mono />
+            )}
           </dl>
+          <p className="mt-3 text-xs text-gray-500">
+            The repository path is a mutable coordinate; the digest identifies
+            the exact content bytes. Shareable links pin the expected digest and
+            never include credentials.
+          </p>
         </CardContent>
       </Card>
 
@@ -198,19 +314,25 @@ export const PackageDetailView = ({
         <CardContent>
           <dl className="grid gap-3 md:grid-cols-2">
             <TheFact
-              label="Package"
-              value={`${asset.published.package_name} ${asset.published.package_version}`}
-            />
-            <TheFact
               label="Published"
               value={theMoment(asset.published.published_at)}
             />
-            <TheFact
-              label="Published digest"
-              value={asset.published.digest.value}
-              mono
-            />
-            <TheFact label="Published size" value={theSize(asset.published.size_bytes)} />
+            {(asset.published.package_name !== asset.package_name ||
+              asset.published.package_version !== asset.package_version) && (
+              <TheFact
+                label="Published package"
+                value={`${asset.published.package_name} ${asset.published.package_version}`}
+              />
+            )}
+            {publishedDigest !== digest && (
+              <TheFact label="Published digest" value={publishedDigest} mono />
+            )}
+            {asset.published.size_bytes !== asset.size_bytes && (
+              <TheFact
+                label="Published size"
+                value={theSize(asset.published.size_bytes)}
+              />
+            )}
           </dl>
         </CardContent>
       </Card>
@@ -221,9 +343,9 @@ export const PackageDetailView = ({
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <p className="text-sm text-gray-600">
-            The profile is the reading of the evidence, dimension by
-            dimension. A dimension without evidence is not satisfied, and
-            it is not read as a favourable one.
+            The profile is the reading of the evidence, dimension by dimension.
+            A dimension without evidence is not satisfied, and it is not read as
+            a favourable one.
           </p>
           {asset.capsule.profile.dimensions.length === 0 ? (
             <p className="text-sm text-gray-500">
@@ -236,7 +358,9 @@ export const PackageDetailView = ({
                   key={dimension.name}
                   className="flex flex-wrap items-center justify-between gap-2 py-2"
                 >
-                  <span className="text-sm text-gray-800">{dimension.name}</span>
+                  <span className="text-sm text-gray-800">
+                    {dimension.name}
+                  </span>
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-gray-600">
                       {dimension.state}
@@ -313,8 +437,8 @@ export const PackageDetailView = ({
         }}
       >
         <p>
-          The digest <span className="font-mono">{digest}</span> will be
-          granted as trusted.
+          The digest <span className="font-mono">{digest}</span> will be granted
+          as trusted.
         </p>
         {promote.error && <FailureNotice failure={failureOf(promote.error)} />}
         {theReasonsOf(promote.error).length > 0 && (
@@ -351,8 +475,8 @@ export const PackageDetailView = ({
       >
         <div className="flex flex-col gap-2">
           <p>
-            The concession over{' '}
-            <span className="font-mono">{digest}</span> will be withdrawn.
+            The concession over <span className="font-mono">{digest}</span> will
+            be withdrawn.
           </p>
           <Input
             label="Reason"

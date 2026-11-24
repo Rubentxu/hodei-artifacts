@@ -5,13 +5,20 @@
  * path is what names the content inside the repository.
  */
 
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 
 import { PageHeader } from '@/components/layout/PageHeader';
 import { PackageDetailView } from '@/features/console/components/PackageDetailView';
+import { decodePackageRouteParams } from '@/features/console/lib/packageReference';
 
 const ConsolePackagePage = () => {
-  const { repository = '', '*': path = '' } = useParams();
+  const { pathname } = useLocation();
+  const { repository: paramRepo = '', '*': paramPath = '' } = useParams();
+  const { repository, path } = decodePackageRouteParams(
+    pathname,
+    paramRepo,
+    paramPath
+  );
 
   return (
     <div className="p-6">

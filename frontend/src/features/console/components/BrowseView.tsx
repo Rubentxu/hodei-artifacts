@@ -28,6 +28,7 @@ import type { SearchParams } from '../api/consoleApi';
 import { failureOf } from '../api/errors';
 import type { RepositoryFormat, SearchHit, TrustState } from '../api/types';
 import { useSearch } from '../hooks/useConsole';
+import { buildPackageDetailPath } from '../lib/packageReference';
 import { FailureNotice } from './FailureNotice';
 
 /** How many results the page brings. */
@@ -408,7 +409,7 @@ const TheResult = ({ hit }: TheResultProps) => (
   <li className="flex flex-wrap items-center justify-between gap-3 py-3">
     <div className="flex flex-col">
       <Link
-        to={`/console/packages/${encodeURIComponent(hit.repository)}/${thePathOf(hit.asset_path)}`}
+        to={buildPackageDetailPath(hit.repository, hit.asset_path)}
         className="text-sm font-medium text-gray-900 hover:text-blue-700"
       >
         {hit.package_name || hit.asset_path}
@@ -427,17 +428,3 @@ const TheResult = ({ hit }: TheResultProps) => (
     </div>
   </li>
 );
-
-/**
- * The path of an asset, with its slashes.
- *
- * The route is a wildcard and the path names the content inside the
- * repository, so the slashes are part of the name and each segment is
- * escaped on its own.
- */
-const thePathOf = (path: string): string =>
-  path
-    .split('/')
-    .filter(segment => segment.length > 0)
-    .map(segment => encodeURIComponent(segment))
-    .join('/');
