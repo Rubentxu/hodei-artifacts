@@ -560,6 +560,22 @@ async fn the_divergence(
     Ok(None)
 }
 
+/// El estado de un grupo go frente a un modulo.
+///
+/// Son las hojas que la reserva de namespaces deja pasar, los miembros que
+/// dejo fuera y el veredicto de la reserva: la resolucion los consulta
+/// siempre, y no se repregunta en cada artefacto.
+struct TheGroup<'a> {
+    /// El repositorio de grupo.
+    group: &'a RepositoryDescriptor,
+    /// Las hojas que se consultan, en el orden de precedencia.
+    leaves: Vec<RepositoryDescriptor>,
+    /// Los miembros proxy que la reserva de namespaces dejo fuera.
+    denied: Vec<String>,
+    /// El veredicto de la reserva, si la hubo.
+    judgement: Option<hodei_catalog::Judgement>,
+}
+
 /// El miembro que duena una version: el primero, en el orden configurado, que
 /// la tiene.
 ///
@@ -573,12 +589,12 @@ async fn the_divergence(
 async fn the_owner_of(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
-    leaves: &[RepositoryDescriptor],
+    group: &TheGroup<'_>,
     module: &str,
     version: &str,
     correlation: &str,
 ) -> Result<RepositoryDescriptor, Failure> {
-    for member in leaves {
+    for member in &group.leaves {
         let asset_path = format!("{module}/@v/{version}.info");
         let has = if member.mode == hodei_catalog::RepositoryMode::Proxy {
             // Un miembro proxy responde con su upstream: un 404 es un MISS
@@ -597,6 +613,17 @@ async fn the_owner_of(
         if has {
             return Ok(member.clone());
         }
+    }
+    // Un caso reservado no hace fallback: se explica por que no se sirve.
+    if !group.denied.is_empty()
+        && let Some(judgement) = &group.judgement
+    {
+        return Err(super::raw_group::the_group_reservation_explanation(
+            group.group,
+            judgement,
+            &group.denied,
+        )
+        .into());
     }
     Err(Failure::plain(
         StatusCode::NOT_FOUND,
@@ -618,18 +645,26 @@ async fn read_group(
 ) -> Result<Response, Failure> {
     let module = route.module().to_string();
     let (leaves, denied, judgement) = the_governed(state, context, group, &module).await?;
+    let governed = TheGroup {
+        group,
+        leaves,
+        denied,
+        judgement,
+    };
     match route {
         Route::List { .. } => {
             let versions =
-                the_group_versions(state, context, &leaves, &module, correlation).await?;
+                the_group_versions(state, context, &governed.leaves, &module, correlation).await?;
             if versions.is_empty() {
                 // Un caso reservado no hace fallback: se explica por que no
                 // se sirve en vez de parecer un modulo que no existe.
-                if !denied.is_empty()
-                    && let Some(judgement) = judgement
+                if !governed.denied.is_empty()
+                    && let Some(judgement) = &governed.judgement
                 {
                     return Err(super::raw_group::the_group_reservation_explanation(
-                        group, &judgement, &denied,
+                        governed.group,
+                        judgement,
+                        &governed.denied,
                     )
                     .into());
                 }
@@ -648,13 +683,15 @@ async fn read_group(
             // El "latest" de un grupo es el latest de la **union**, no el del
             // ultimo miembro que responda.
             let versions =
-                the_group_versions(state, context, &leaves, &module, correlation).await?;
+                the_group_versions(state, context, &governed.leaves, &module, correlation).await?;
             let Some((_, latest)) = versions.last() else {
-                if !denied.is_empty()
-                    && let Some(judgement) = judgement
+                if !governed.denied.is_empty()
+                    && let Some(judgement) = &governed.judgement
                 {
                     return Err(super::raw_group::the_group_reservation_explanation(
-                        group, &judgement, &denied,
+                        governed.group,
+                        judgement,
+                        &governed.denied,
                     )
                     .into());
                 }
@@ -667,10 +704,10 @@ async fn read_group(
                 module: module.clone(),
                 version: latest.clone(),
             };
-            serve_owned(state, context, &leaves, &owned, head, correlation).await
+            serve_owned(state, context, &governed, &owned, head, correlation).await
         }
         Route::Info { .. } | Route::Mod { .. } | Route::Zip { .. } => {
-            serve_owned(state, context, &leaves, route, head, correlation).await
+            serve_owned(state, context, &governed, route, head, correlation).await
         }
     }
 }
@@ -679,7 +716,7 @@ async fn read_group(
 async fn serve_owned(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
-    leaves: &[RepositoryDescriptor],
+    group: &TheGroup<'_>,
     route: &Route,
     head: bool,
     correlation: &str,
@@ -690,12 +727,13 @@ async fn serve_owned(
         | Route::Zip { module, version } => (module.clone(), version.clone()),
         _ => return Err(RawApiError::NotFound.into()),
     };
-    if let Some(conflict) = the_divergence(state, context, leaves, &module, &version).await? {
+    if let Some(conflict) = the_divergence(state, context, &group.leaves, &module, &version).await?
+    {
         // La divergencia se rechaza con un error definido: el cliente puede
         // distinguir "no lo tengo" de "esto esta en conflicto".
         return Err(Failure::plain(StatusCode::CONFLICT, &conflict));
     }
-    let owner = the_owner_of(state, context, leaves, &module, &version, correlation).await?;
+    let owner = the_owner_of(state, context, group, &module, &version, correlation).await?;
     match owner.mode {
         hodei_catalog::RepositoryMode::Proxy => {
             read_proxy(state, context, &owner, route, head, correlation).await

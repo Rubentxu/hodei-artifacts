@@ -944,6 +944,19 @@ fn a_reserved_namespace_never_falls_back_to_the_public_member() {
                 return LabCase::new(id, title)
                     .failed("the reserved module was served from the public member");
             }
+            // Y tampoco por la ruta de una version: el caso reservado no
+            // hace fallback ni por el listado ni por el artefacto.
+            let version = call(
+                port,
+                "GET",
+                &format!("/go/{GROUP}/{PUBLIC}/@v/{PUBLIC_VERSION}.zip"),
+                &support::token(support::FIRST_ACCOUNT, "alice"),
+                None,
+            );
+            if version.status == 200 {
+                return LabCase::new(id, title)
+                    .failed("the reserved version was served from the public member");
+            }
             let asked = upstream.hits(&format!("{PUBLIC}/@v/list"));
             if asked != 0 {
                 return LabCase::new(id, title).failed(format!(
