@@ -204,10 +204,19 @@ impl NamespacePolicy {
             RepositoryFormat::Maven2 => self.judge_maven(path),
             RepositoryFormat::Npm => self.judge_npm(path),
             RepositoryFormat::PyPi => self.judge_pypi(path),
-            // OCI: the namespace is the name of the repository itself, and
-            // the judgement is made over that name, not over the path of an
-            // asset inside it.
-            RepositoryFormat::Oci => self.judge_oci(path),
+            // OCI no tiene una nocion de namespace con alias: el namespace es
+            // el primer segmento del **nombre del repositorio**, no la ruta de
+            // un asset dentro de el. Un repositorio se llama "team/demo" y su
+            // namespace es "team"; el juicio se hace sobre el nombre, y por eso
+            // el mismo nombre "manifests/sha256:abc" --que es una ruta de asset
+            // y no un nombre-- no casa con ninguna reserva.
+            //
+            // Y la reserva no puede llevar barras: un namespace es el primer
+            // segmento, y "team/demo" no es un namespace declarable. Por eso la
+            // regla es la plana, que ya compara el primer segmento por
+            // prefijo de segmento: "team" cubre "team/demo" y "team/demo/x",
+            // y no cubre "teamx" ni "teammate".
+            RepositoryFormat::Oci => self.judge_flat(path),
             // Los demas formatos no tienen una nocion de namespace con
             // alias: el primer segmento de la ruta es el nombre, y se
             // compara tal cual.
@@ -285,33 +294,6 @@ impl NamespacePolicy {
                 return Judgement::Reserved {
                     matched: reserved.clone(),
                     alias_of,
-                };
-            }
-        }
-        Judgement::Unreserved
-    }
-
-    /// OCI: the namespace is the name of the repository.
-    ///
-    /// A repository name is a path of its own (`team/demo`), and the
-    /// reservation is written the same way it is written for the other
-    /// formats: a reserved name covers itself and everything below it, so
-    /// `team` covers `team/demo` and `team/demo` does not cover
-    /// `team/demo-extra`.
-    fn judge_oci(&self, path: &str) -> Judgement {
-        let name = path.trim_matches('/');
-        if name.is_empty() {
-            return Judgement::Unreserved;
-        }
-        for reserved in &self.reserved {
-            if name == reserved
-                || name
-                    .strip_prefix(reserved.as_str())
-                    .is_some_and(|rest| rest.starts_with('/'))
-            {
-                return Judgement::Reserved {
-                    matched: reserved.clone(),
-                    alias_of: None,
                 };
             }
         }
@@ -535,7 +517,10 @@ mod tests {
 
     #[test]
     fn an_oci_reservation_is_matched_over_the_name_of_the_repository() {
-        let policy = reserved(&["team", "team/demo"]);
+        // Un namespace reservado no puede llevar barras: es el primer
+        // segmento, y "team/demo" no es un namespace declarable. La reserva
+        // que protege al grupo se escribe "team", y cubre "team/demo".
+        let policy = reserved(&["team"]);
         for name in ["team", "team/demo", "team/demo/extra"] {
             assert!(
                 policy.judge(RepositoryFormat::Oci, name).is_reserved(),
