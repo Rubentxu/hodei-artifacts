@@ -1,23 +1,49 @@
 # Hodei Artifacts
 
-> **Parte de Hodei Security Platform** · [English version](README.md)
+> **Parte de la plataforma de seguridad [Hodei](https://github.com/hodei-security-platform)** · [English version](README.md)
 
-**Hodei Artifacts** es un registro de artefactos nativo en Rust y base de seguridad para la cadena de suministro: cuentas aisladas, políticas Cedar ABAC, auditoría de seguridad, almacén direccionado por contenido y superficies conformes para los principales ecosistemas de paquetes.
-
-> **Estado actual:** lo que está implementado, verificado y excluido se detalla en **[ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)**.
+**hodei-artifacts** es el registro de artefactos nativo en Rust de **Hodei**: alojamiento multiformato de paquetes, almacén direccionado por contenido, autorización Cedar ABAC y auditoría de seguridad en un único binario independiente.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Rust Edition: 2024](https://img.shields.io/badge/Rust-Edition%202024-orange)](https://www.rust-lang.org/)
 
+> **Estado actual:** lo que está implementado, verificado y excluido se detalla en **[ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)**.
+
 ---
 
-## Quickstart y guías de usuario
+## Quickstart en 60 segundos (sin compilar Rust)
 
-- **Quickstart comunitario (sin compilar Rust):** [`docs/community/quickstart.md`](docs/community/quickstart.md) (`scripts/community-quickstart.sh run`)
-- **Guías de usuario por ecosistema (rutas reales, límites, credenciales y ejemplos offline):** [`docs/community/ecosystems.md`](docs/community/ecosystems.md)
-  - [Maven 2](docs/community/ecosystems.md#maven-2-maven2) · [npm](docs/community/ecosystems.md#npm-npm) · [PyPI](docs/community/ecosystems.md#pypi-pypi) · [OCI](docs/community/ecosystems.md#oci-oci) · [Cargo](docs/community/ecosystems.md#cargo-cargo) · [NuGet](docs/community/ecosystems.md#nuget-nuget) · [Go](docs/community/ecosystems.md#go-go) · [APT](docs/community/ecosystems.md#apt-apt) · [RPM / Yum](docs/community/ecosystems.md#rpm--yum-rpm) · [Helm-OCI](docs/community/ecosystems.md#helm-oci-oci--helm)
+Levanta un laboratorio local aislado desde el paquete de release: arranca el servidor, acuña un JWT efímero, crea repositorios `raw` + `maven2`, publica y descarga paquetes y verifica sus digests:
 
-> **Regla de producción (TLS y firmas):** en producción expón siempre Hodei sobre **HTTPS/TLS** (`public_base_url = "https://..."`) y mantén activa la verificación de firmas e integridad (GPG en APT/RPM, digests/firmas en OCI y Helm-OCI, `integrity` SRI en npm, SHA-1/SHA-256 en Maven y PyPI). Los ejemplos con `http://127.0.0.1` están acotados exclusivamente a desarrollo y laboratorio offline.
+```bash
+sha256sum -c hodei-artifacts-api-<version>-<target>.tar.gz.sha256
+tar -xzf hodei-artifacts-api-<version>-<target>.tar.gz && cd hodei-artifacts-api-<version>-<target>
+./community-quickstart.sh run
+```
+
+<!-- demo:hsp-265 -->
+```text
+==> The summary
+    raw blob:    sha256:<digest>
+    maven jar:   sha256:<digest>
+    maven sha1:  <digest>
+    lab:         /tmp/hodei-community-lab.XXXXXX
+```
+*Resumen final que imprime el script (los digests varían en cada ejecución). La demo visual se regenera con [`docs/community/quickstart-demo.tape`](docs/community/quickstart-demo.tape) (VHS); la guía paso a paso y los comandos `serve` y `cleanup` están en `docs/community/quickstart.md`.*
+
+- **Guía completa de Quickstart:** [`docs/community/quickstart.md`](docs/community/quickstart.md) (o desde un checkout del repositorio: `scripts/community-quickstart.sh run --archive dist/hodei-artifacts-api-<version>-<target>.tar.gz`)
+- **Guías de usuario por ecosistema:** [`docs/community/ecosystems.md`](docs/community/ecosystems.md) — [Maven 2](docs/community/ecosystems.md#maven-2-maven2) · [npm](docs/community/ecosystems.md#npm-npm) · [PyPI](docs/community/ecosystems.md#pypi-pypi) · [OCI](docs/community/ecosystems.md#oci-oci) · [Cargo](docs/community/ecosystems.md#cargo-cargo) · [NuGet](docs/community/ecosystems.md#nuget-nuget) · [Go](docs/community/ecosystems.md#go-go) · [APT](docs/community/ecosystems.md#apt-apt) · [RPM / Yum](docs/community/ecosystems.md#rpm--yum-rpm) · [Helm-OCI](docs/community/ecosystems.md#helm-oci-oci--helm)
+
+---
+
+## Por qué hodei-artifacts
+
+- **Seguridad *fail-closed* por defecto:** la superficie administrativa (`/api/v1` IAM, políticas, esquemas, playground) está cerrada por defecto (`admin_api_enabled = false`); las rutas de negocio exigen JWT Bearer verificado y políticas Cedar ABAC por repositorio.
+- **Direccionado por contenido y auditable:** hub de blobs deduplicado por SHA-256 (`hodei-hub` con CAS local o backend compatible con S3), registro de auditoría de seguridad y CLI `hodei-recovery` para copia, restauración y verificación (`scrub`).
+- **10 ecosistemas de paquetes en un solo binario:** superficies de protocolo nativas para `raw`, `oci`, `maven2`, `npm`, `pypi`, `cargo`, `go`, `nuget`, `apt` y `rpm` (además de charts Helm sobre OCI), sin JVM ni pausas de GC.
+- **Gobierno estricto de dirección pública:** `public_base_url` y `trusted_proxies` se controlan exclusivamente por configuración, nunca por cabeceras `Host` o `X-Forwarded-*` no confiables.
+
+> **Regla de producción (TLS y firmas):** el servicio no termina TLS: en producción ponlo siempre detrás de un proxy inverso que termine TLS y declara la URL pública (`public_base_url = "https://..."`; ver [`docs/community/configuration.md`](docs/community/configuration.md)) y mantén activa la verificación de firmas e integridad (GPG en APT/RPM, digests/firmas en OCI y Helm-OCI, `integrity` SRI en npm, SHA-1/SHA-256 en Maven y PyPI). Los ejemplos con `http://127.0.0.1` están acotados exclusivamente a desarrollo y laboratorio offline.
 
 ---
 
@@ -41,7 +67,35 @@ Derivada de [`RepositoryFormat::served()`](crates/hodei-catalog/src/model.rs), [
 
 ---
 
-## Arquitectura del workspace
+## Seguridad y operaciones
+
+- **Referencia de configuración:** [`docs/community/configuration.md`](docs/community/configuration.md) · **Operación:** [`docs/community/operations.md`](docs/community/operations.md) · **Plantilla de notas de release:** [`docs/community/release-notes-template.md`](docs/community/release-notes-template.md)
+- **Superficie administrativa:** [`docs/security/admin-surface.md`](docs/security/admin-surface.md) y [`docs/security/production-auth.md`](docs/security/production-auth.md)
+- **Acceso a repositorios y eventos de auditoría:** [`docs/security/repository-read.md`](docs/security/repository-read.md) y [`docs/security/audit-events.md`](docs/security/audit-events.md)
+- **Copia de seguridad, restauración, scrub y reparación (`hodei-recovery`):** [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación)
+- **Actualización y empaquetado de release:** [`scripts/package-release.sh`](scripts/package-release.sh) y [`docs/community/ecosystems.md`](docs/community/ecosystems.md#3-operaciones-copia-de-seguridad-restauración-y-actualización)
+- **Visión general de arquitectura y seguridad:** [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md)
+
+---
+
+## Desarrollo y contribución
+
+```bash
+# Compilar todo el workspace
+cargo build --workspace
+
+# Ejecutar pruebas afectadas (puerta del día a día)
+./scripts/test-affected.sh
+
+# Arrancar el servidor API desde código fuente
+cargo run --bin hodei-artifacts-api
+```
+
+- **CI local:** [`pipeline.kts`](pipeline.kts) (PipelineK) y [`docs/ci-strategy.md`](docs/ci-strategy.md)
+- **Organización de tests:** [`docs/testing-organization.md`](docs/testing-organization.md)
+- **Contratos UAT:** [`uat/README.md`](uat/README.md), [`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md)
+
+### Arquitectura del workspace
 
 El workspace activo en [`Cargo.toml`](Cargo.toml) contiene 26 miembros (25 crates en `crates/` más el crate raíz `.`). Nueve crates heredados en `crates/` están excluidos del workspace (ver [ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)).
 
@@ -71,36 +125,6 @@ El workspace activo en [`Cargo.toml`](Cargo.toml) contiene 26 miembros (25 crate
 - `crates/hodei-counterfactual` — Evaluación contrafactual de políticas
 - `crates/hodei-spike-ladybug` — Spike de almacenamiento en grafo
 - `crates/hodei-graph-client` — Cliente de consultas de grafo
-
----
-
-## Seguridad por defecto y dirección pública
-
-- **Superficie administrativa (`/api/v1` IAM, políticas, esquemas, playground):** cerrada por defecto (`admin_api_enabled = false`) y exige authenticator y autorizador Cedar. Ver [docs/security/admin-surface.md](docs/security/admin-surface.md) y [docs/security/production-auth.md](docs/security/production-auth.md).
-- **Rutas de negocio (`/api/v1/repositories`, `/api/v1/catalog/repositories`, `/api/v1/search`):** exigen Bearer verificado y permiso Cedar por repositorio. Ver [docs/security/repository-read.md](docs/security/repository-read.md) y [docs/security/audit-events.md](docs/security/audit-events.md).
-- **Dirección pública (`[public_url]`):** `public_base_url` y `trusted_proxies` se gobiernan exclusivamente por configuración, nunca por cabeceras `Host` o `X-Forwarded-*` no confiables.
-
----
-
-## Desarrollo, pruebas y operaciones
-
-```bash
-# Compilar todo el workspace
-cargo build --workspace
-
-# Ejecutar pruebas afectadas (puerta del día a día)
-./scripts/test-affected.sh
-
-# Arrancar el servidor API
-cargo run --bin hodei-artifacts-api
-```
-
-- **CI local:** [`pipeline.kts`](pipeline.kts) (PipelineK) y [`docs/ci-strategy.md`](docs/ci-strategy.md)
-- **Organización de tests:** [`docs/testing-organization.md`](docs/testing-organization.md)
-- **Contratos UAT:** [`uat/README.md`](uat/README.md), [`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md)
-- **Copia de seguridad, restauración, scrub y reparación (`hodei-recovery`):** [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación)
-- **Actualización y empaquetado de release:** [`scripts/package-release.sh`](scripts/package-release.sh) y [`docs/community/ecosystems.md`](docs/community/ecosystems.md#3-operaciones-copia-de-seguridad-restauración-y-actualización)
-- **Documentación de arquitectura y seguridad:** [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md)
 
 ## Licencia
 

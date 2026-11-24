@@ -1,23 +1,49 @@
 # Hodei Artifacts
 
-> **Part of Hodei Security Platform** · [Versión en español](README.es.md)
+> **Part of the [Hodei](https://github.com/hodei-security-platform) security platform** · [Versión en español](README.es.md)
 
-**Hodei Artifacts** is a Rust-native artifact registry and supply-chain security foundation: isolated accounts, Cedar ABAC policies, security audit logging, content-addressed storage, and protocol-conformant surfaces across major package ecosystems.
-
-> **Current status:** what is implemented, verified, and excluded is tracked in **[ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)**.
+**hodei-artifacts** is the Rust-native artifact registry of **Hodei**: multi-format package hosting, content-addressed storage, Cedar ABAC authorization, and security audit logging in a single standalone binary.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Rust Edition: 2024](https://img.shields.io/badge/Rust-Edition%202024-orange)](https://www.rust-lang.org/)
 
+> **Implementation status:** implemented, verified, and excluded capabilities are tracked in **[ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)**.
+
 ---
 
-## Quickstart & User Guides
+## 60-Second Quickstart (No Rust Required)
 
-- **Community Quickstart (no Rust compilation required):** [`docs/community/quickstart.md`](docs/community/quickstart.md) (`scripts/community-quickstart.sh run`)
-- **Ecosystem User Guides (routes, limits, credentials, offline examples):** [`docs/community/ecosystems.md`](docs/community/ecosystems.md)
-  - [Maven 2](docs/community/ecosystems.md#maven-2-maven2) · [npm](docs/community/ecosystems.md#npm-npm) · [PyPI](docs/community/ecosystems.md#pypi-pypi) · [OCI](docs/community/ecosystems.md#oci-oci) · [Cargo](docs/community/ecosystems.md#cargo-cargo) · [NuGet](docs/community/ecosystems.md#nuget-nuget) · [Go](docs/community/ecosystems.md#go-go) · [APT](docs/community/ecosystems.md#apt-apt) · [RPM / Yum](docs/community/ecosystems.md#rpm--yum-rpm) · [Helm-OCI](docs/community/ecosystems.md#helm-oci-oci--helm)
+Run an isolated local lab from the release archive — starts the server, mints an ephemeral JWT, creates `raw` + `maven2` repositories, publishes & pulls packages, and verifies digests:
 
-> **Production Security Rule:** Always serve Hodei over **HTTPS/TLS** (`public_base_url = "https://..."`) and keep signature/checksum verification enabled (GPG for APT/RPM, digests/signatures for OCI and Helm-OCI, SRI `integrity` for npm, SHA-1/SHA-256 for Maven and PyPI). Local `http://127.0.0.1` examples are strictly scoped to offline development/lab environments.
+```bash
+sha256sum -c hodei-artifacts-api-<version>-<target>.tar.gz.sha256
+tar -xzf hodei-artifacts-api-<version>-<target>.tar.gz && cd hodei-artifacts-api-<version>-<target>
+./community-quickstart.sh run
+```
+
+<!-- demo:hsp-265 -->
+```text
+==> The summary
+    raw blob:    sha256:<digest>
+    maven jar:   sha256:<digest>
+    maven sha1:  <digest>
+    lab:         /tmp/hodei-community-lab.XXXXXX
+```
+*Final summary printed by the script (digests vary per run). Re-record the visual demo with [`docs/community/quickstart-demo.tape`](docs/community/quickstart-demo.tape) (VHS); step-by-step walkthrough and `serve`/`cleanup` commands in `docs/community/quickstart.md`.*
+
+- **Full Quickstart Guide:** [`docs/community/quickstart.md`](docs/community/quickstart.md) (or from a source checkout: `scripts/community-quickstart.sh run --archive dist/hodei-artifacts-api-<version>-<target>.tar.gz`)
+- **Ecosystem User Guides:** [`docs/community/ecosystems.md`](docs/community/ecosystems.md) — [Maven 2](docs/community/ecosystems.md#maven-2-maven2) · [npm](docs/community/ecosystems.md#npm-npm) · [PyPI](docs/community/ecosystems.md#pypi-pypi) · [OCI](docs/community/ecosystems.md#oci-oci) · [Cargo](docs/community/ecosystems.md#cargo-cargo) · [NuGet](docs/community/ecosystems.md#nuget-nuget) · [Go](docs/community/ecosystems.md#go-go) · [APT](docs/community/ecosystems.md#apt-apt) · [RPM / Yum](docs/community/ecosystems.md#rpm--yum-rpm) · [Helm-OCI](docs/community/ecosystems.md#helm-oci-oci--helm)
+
+---
+
+## Why hodei-artifacts?
+
+- **Fail-closed security by default:** Admin surface (`/api/v1` IAM, policies, schemas, playground) is closed by default (`admin_api_enabled = false`); business routes require verified Bearer JWTs and per-repository Cedar ABAC policies.
+- **Content-addressed & auditable:** SHA-256 deduplicated blob hub (`hodei-hub` with local CAS or S3-compatible backend), security audit log, and `hodei-recovery` backup/restore/scrub CLI.
+- **10 package ecosystems in one binary:** Native protocol surfaces for `raw`, `oci`, `maven2`, `npm`, `pypi`, `cargo`, `go`, `nuget`, `apt`, and `rpm` (plus Helm charts over OCI), without JVM or GC overhead.
+- **Strict public URL governance:** `public_base_url` and `trusted_proxies` are controlled strictly by configuration, never by untrusted `Host` or `X-Forwarded-*` headers.
+
+> **Production Security Rule:** The service does not terminate TLS itself: always put it behind a TLS-terminating reverse proxy and declare the public URL (`public_base_url = "https://..."`; see [`docs/community/configuration.md`](docs/community/configuration.md)) and keep signature/checksum verification enabled (GPG for APT/RPM, digests/signatures for OCI and Helm-OCI, SRI `integrity` for npm, SHA-1/SHA-256 for Maven and PyPI). Local `http://127.0.0.1` examples are strictly scoped to offline development/lab environments.
 
 ---
 
@@ -41,7 +67,35 @@ Derived from [`RepositoryFormat::served()`](crates/hodei-catalog/src/model.rs), 
 
 ---
 
-## Workspace Architecture
+## Security & Operations
+
+- **Configuration reference:** [`docs/community/configuration.md`](docs/community/configuration.md) · **Operations:** [`docs/community/operations.md`](docs/community/operations.md) · **Release notes template:** [`docs/community/release-notes-template.md`](docs/community/release-notes-template.md)
+- **Admin surface:** [`docs/security/admin-surface.md`](docs/security/admin-surface.md) and [`docs/security/production-auth.md`](docs/security/production-auth.md)
+- **Repository access & audit events:** [`docs/security/repository-read.md`](docs/security/repository-read.md) and [`docs/security/audit-events.md`](docs/security/audit-events.md)
+- **Backup, restore, scrub & repair (`hodei-recovery`):** [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación)
+- **Upgrade & release packaging:** [`scripts/package-release.sh`](scripts/package-release.sh) and [`docs/community/ecosystems.md`](docs/community/ecosystems.md#3-operaciones-copia-de-seguridad-restauración-y-actualización)
+- **Architecture & Security overview:** [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md)
+
+---
+
+## Development & Contributing
+
+```bash
+# Build workspace
+cargo build --workspace
+
+# Run affected tests (day-to-day gate)
+./scripts/test-affected.sh
+
+# Run API server from source
+cargo run --bin hodei-artifacts-api
+```
+
+- **Local CI:** [`pipeline.kts`](pipeline.kts) (PipelineK) and [`docs/ci-strategy.md`](docs/ci-strategy.md)
+- **Testing organization:** [`docs/testing-organization.md`](docs/testing-organization.md)
+- **UAT contracts:** [`uat/README.md`](uat/README.md), [`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md)
+
+### Workspace Architecture
 
 The active Rust workspace in [`Cargo.toml`](Cargo.toml) contains 26 members (25 crates under `crates/` plus the root API crate `.`). Nine legacy crates in `crates/` are excluded from the workspace (see [ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)).
 
@@ -71,36 +125,6 @@ The active Rust workspace in [`Cargo.toml`](Cargo.toml) contains 26 members (25 
 - `crates/hodei-counterfactual` — Counterfactual policy evaluation
 - `crates/hodei-spike-ladybug` — Graph storage spike
 - `crates/hodei-graph-client` — Graph query client
-
----
-
-## Security by Default & Public URL
-
-- **Admin surface (`/api/v1` IAM, policies, schemas, playground)** is closed by default (`admin_api_enabled = false`) and requires both authenticator and Cedar authorizer. See [docs/security/admin-surface.md](docs/security/admin-surface.md) and [docs/security/production-auth.md](docs/security/production-auth.md).
-- **Business routes (`/api/v1/repositories`, `/api/v1/catalog/repositories`, `/api/v1/search`)** require a verified Bearer token and per-repository Cedar authorization. See [docs/security/repository-read.md](docs/security/repository-read.md) and [docs/security/audit-events.md](docs/security/audit-events.md).
-- **Public URL (`[public_url]`)**: `public_base_url` and `trusted_proxies` are controlled strictly by configuration, never by untrusted `Host` or `X-Forwarded-*` headers.
-
----
-
-## Development, Testing & Operations
-
-```bash
-# Build workspace
-cargo build --workspace
-
-# Run affected tests (day-to-day gate)
-./scripts/test-affected.sh
-
-# Run API server
-cargo run --bin hodei-artifacts-api
-```
-
-- **Local CI:** [`pipeline.kts`](pipeline.kts) (PipelineK) and [`docs/ci-strategy.md`](docs/ci-strategy.md)
-- **Testing organization:** [`docs/testing-organization.md`](docs/testing-organization.md)
-- **UAT contracts:** [`uat/README.md`](uat/README.md), [`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md)
-- **Backup, restore, scrub & repair (`hodei-recovery`):** [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación)
-- **Upgrade & release packaging:** [`scripts/package-release.sh`](scripts/package-release.sh) and [`docs/community/ecosystems.md`](docs/community/ecosystems.md#3-operaciones-copia-de-seguridad-restauración-y-actualización)
-- **Architecture & Security docs:** [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md)
 
 ## License
 
