@@ -1503,7 +1503,15 @@ impl DgraphGraphStore {
     /// at their far end, both deduplicated and sorted (relations by
     /// identity, nodes by key), so the answer does not depend on the
     /// order the server walks its edges in.
-    async fn expand_frontier(
+    ///
+    /// Public for the readers that walk the SAME graph in an order of
+    /// their own — the risk impact walk goes up the dependency edges —
+    /// under the same bounds and the same trace contract as the
+    /// bounded reads of HSP-200: the frontier is named by its node
+    /// keys, the account and the asserted status are filters on every
+    /// hop, and `first_per_node` caps what comes back, so a walk can
+    /// never transport the whole graph.
+    pub async fn expand_frontier(
         &self,
         tenant: &Hrn,
         frontier_keys: &[String],

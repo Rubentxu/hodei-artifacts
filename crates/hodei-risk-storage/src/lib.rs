@@ -12,6 +12,7 @@
 use async_trait::async_trait;
 use hodei_evidence::domain::graph::{GraphChangeSet, RelationType};
 use hodei_evidence::ports::graph::{GraphQuery, GraphWriter};
+pub mod dgraph_view;
 pub mod impact_view;
 pub mod reactions;
 pub mod subject_risk;
