@@ -140,9 +140,19 @@ async fn ac2_invalid_auth_fails_explicitly() {
     );
     let rendered = error.to_string();
     let secret = std::env::var("HODEI_GRAPH_IT_PASSWORD").unwrap_or_default();
+    // The server's own rejection text ("invalid username or password") is
+    // legitimate and may contain a weak password as a substring (the
+    // default guardian password is literally `password`). Remove that
+    // fixed boilerplate before looking for an echo of the credentials, so
+    // the check is about leaks and not about English words.
+    let without_server_text = rendered.replace("invalid username or password", "");
     assert!(
-        secret.is_empty() || !rendered.contains(&secret),
+        secret.is_empty() || !without_server_text.contains(&secret),
         "the login failure leaked the password: {rendered}"
+    );
+    assert!(
+        !without_server_text.contains("wrong-"),
+        "the login failure echoed the wrong password sent: {rendered}"
     );
     eprintln!("invalid auth produced: {rendered}");
 }
