@@ -291,6 +291,7 @@ struct LeaseRow {
     lease_until: DateTime<Utc>,
 }
 
+#[derive(Default)]
 struct Inner {
     roots: Vec<ContentRoot>,
     holds: Vec<ContentHold>,
@@ -310,26 +311,6 @@ struct Inner {
     renew_calls: usize,
     /// Sabotaje: una accion disparada al registrar una intencion.
     on_record: Option<Box<dyn Fn() + Send + Sync>>,
-}
-
-impl Default for Inner {
-    fn default() -> Self {
-        Self {
-            roots: Vec::new(),
-            holds: Vec::new(),
-            runs: Vec::new(),
-            tombstones: Vec::new(),
-            quarantines: Vec::new(),
-            leases: HashMap::new(),
-            generations: HashMap::new(),
-            tokens: 0,
-            issued: Vec::new(),
-            page_calls: Vec::new(),
-            renew_failures_after: None,
-            renew_calls: 0,
-            on_record: None,
-        }
-    }
 }
 
 #[derive(Default)]
@@ -676,10 +657,10 @@ impl ContentLedger for MockLedger {
     ) -> Result<(), CatalogError> {
         let mut inner = self.inner.lock().unwrap();
         Self::fence(&inner, scope, lease, Utc::now())?;
-        if deletion.state == DeletionState::Intended {
-            if let Some(hook) = &inner.on_record {
-                hook();
-            }
+        if deletion.state == DeletionState::Intended
+            && let Some(hook) = &inner.on_record
+        {
+            hook();
         }
         inner
             .tombstones
@@ -709,7 +690,7 @@ impl ContentLedger for MockLedger {
         let mut inner = self.inner.lock().unwrap();
         inner.page_calls.push(limit);
         let mut roots = inner.roots.clone();
-        roots.sort_by(|a, b| a.digest.to_string().cmp(&b.digest.to_string()));
+        roots.sort_by_key(|root| root.digest.to_string());
         let start = match after {
             Some(cursor) => roots
                 .iter()
@@ -913,7 +894,7 @@ async fn a_zombie_with_an_expired_generation_cannot_act() {
     let ledger: &dyn ContentLedger = &*w.ledger;
     assert!(matches!(
         ledger
-            .mark_run_fenced(SCOPE, &zombie, &run, &[orphan.clone()])
+            .mark_run_fenced(SCOPE, &zombie, &run, std::slice::from_ref(&orphan))
             .await,
         Err(CatalogError::PreconditionFailed { .. })
     ));
@@ -1025,7 +1006,7 @@ async fn a_republished_blob_survives_the_resume_of_an_older_mark() {
         generation: Some(1),
     };
     w.ledger
-        .mark_run_fenced(SCOPE, &lease1, &run, &[orphan.clone()])
+        .mark_run_fenced(SCOPE, &lease1, &run, std::slice::from_ref(&orphan))
         .await
         .expect("durable mark");
     w.ledger.force_expire();
@@ -1216,7 +1197,7 @@ async fn a_restarted_worker_resumes_from_the_durable_mark() {
         generation: Some(1),
     };
     w.ledger
-        .mark_run_fenced(SCOPE, &lease1, &run, &[orphan.clone()])
+        .mark_run_fenced(SCOPE, &lease1, &run, std::slice::from_ref(&orphan))
         .await
         .expect("mark");
 
