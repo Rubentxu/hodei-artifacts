@@ -489,6 +489,71 @@ impl TheLab {
         self.deployment.start_on(port, &borrowed)
     }
 
+    /// Un laboratorio **sin** el repositorio proxy sembrado: el catalogo
+    /// solo tiene las cuentas, y la politica deja a la primera persona
+    /// crear repositorios. Lo que haya de existir lo crea la API publica.
+    fn unseeded() -> Self {
+        let deployment = Deployment::new();
+        let registry = TheRegistry::start();
+        let hostile = TheHostile::start();
+        deployment.seed();
+        deployment.write_policy(&format!(
+            "{}permit(principal == Iam::User::\"hrn:hodei:iam::{FIRST_ACCOUNT}:User/alice\", action == Artifacts::Action::\"CreateRepository\", resource);\n",
+            support::the_policy()
+        ));
+        Self {
+            deployment,
+            registry,
+            hostile,
+        }
+    }
+
+    /// El cuerpo publico que crea el repositorio OCI proxy del laboratorio.
+    fn the_creation(&self, upstream_url: &str) -> serde_json::Value {
+        json!({
+            "name": REPOSITORY,
+            "format": "oci",
+            "mode": "proxy",
+            "settings": {
+                "proxy": {
+                    "upstream": {
+                        "id": "lab",
+                        "url": upstream_url,
+                        "scopes": ["v2/"],
+                        "credential_ref": format!("env:{CREDENTIAL_VARIABLE}"),
+                        "auth": {
+                            "realm": format!("{}token", self.registry.base()),
+                            "service": "lab",
+                            "username": "lab"
+                        },
+                        "redirects": { "max": 3, "cross_origin": true }
+                    },
+                    "cache": {
+                        "ttl": { "content_secs": 0, "metadata_secs": 0 },
+                        "negative_secs": 0
+                    }
+                }
+            }
+        })
+    }
+
+    /// Crea un repositorio por `POST /api/v1/catalog/repositories`.
+    fn create(&self, port: u16, body: &serde_json::Value) -> support::Answer {
+        let file = self.a_file("creation.json");
+        std::fs::write(&file, body.to_string()).expect("the body is written");
+        let into = self.a_file("creation-answer");
+        Curl::call(
+            port,
+            "POST",
+            "/api/v1/catalog/repositories",
+            &the_client_token(),
+            Some(&file),
+            Some("application/json"),
+            Some(&into),
+        )
+        .run()
+    }
+
     /// Un fichero del despliegue donde dejar el cuerpo de una respuesta.
     fn a_file(&self, name: &str) -> PathBuf {
         self.deployment.directory.path().join(name)
@@ -631,6 +696,14 @@ const THE_CASES: &[(&str, &str)] = &[
     (
         "ac3_gate_on_hit",
         "Las puertas se ejecutan tambien en un acierto de la cache",
+    ),
+    (
+        "ac4_public_creation",
+        "El proxy OCI se crea por la API publica y se descarga",
+    ),
+    (
+        "ac4_public_creation_refused",
+        "Un proxy OCI con upstream invalido se rechaza con diagnostico",
     ),
 ];
 
@@ -1389,6 +1462,192 @@ fn ac3_gate_on_hit() {
             }
             case()
                 .command("curl /v2/oci-proxy/manifests/latest (politica cerrada)")
+                .origin(&lab.registry.origin())
+                .passed()
+        },
+    );
+}
+
+#[test]
+fn ac4_public_creation() {
+    run_registry_lab_case(
+        THE_CASES,
+        "ac4_public_creation",
+        "El proxy OCI se crea por la API publica y se descarga",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            the_report();
+            let lab = TheLab::unseeded();
+            let (manifest, _) = the_content(&lab.registry);
+            let (_, blobs) = the_manifest();
+            let case = || {
+                LabCase::new(
+                    "ac4_public_creation",
+                    "El proxy OCI se crea por la API publica y se descarga",
+                )
+            };
+            let mut service = lab.start();
+
+            // The capability is announced: OCI proxy is creatable.
+            let capabilities = lab.a_file("capabilities");
+            let announced = Curl::call(
+                service.port,
+                "GET",
+                "/api/v1/capabilities",
+                &the_client_token(),
+                None,
+                None,
+                Some(&capabilities),
+            )
+            .run();
+            let text = String::from_utf8_lossy(&announced.body).into_owned();
+            let document: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            let oci_proxy = document.to_string().contains("\"oci\"")
+                && document
+                    .get("formats")
+                    .and_then(|formats| formats.as_array())
+                    .map(|formats| {
+                        formats.iter().any(|format| {
+                            format.to_string().contains("\"oci\"")
+                                && format.to_string().contains("\"proxy\"")
+                        })
+                    })
+                    .unwrap_or(false);
+            if !oci_proxy {
+                support::stop(&mut service);
+                return case().failed(format!("capabilities no anuncia oci proxy: {text}"));
+            }
+
+            let created = lab.create(service.port, &lab.the_creation(&lab.registry.base()));
+            if created.status != 201 {
+                support::stop(&mut service);
+                return case().failed(format!(
+                    "la creacion por la API publica fallo: {} {}",
+                    created.status,
+                    String::from_utf8_lossy(&created.body)
+                ));
+            }
+
+            let into = lab.a_file("manifiesto");
+            let answer = Curl::call(
+                service.port,
+                "GET",
+                &the_manifest_path(TAG),
+                &the_client_token(),
+                None,
+                None,
+                Some(&into),
+            )
+            .run();
+            let first_blob = blobs[0].1.clone();
+            let blob_digest = format!("sha256:{}", blobs[0].0);
+            let into_blob = lab.a_file("blob");
+            let blob = Curl::call(
+                service.port,
+                "GET",
+                &the_blob_path(&blob_digest),
+                &the_client_token(),
+                None,
+                None,
+                Some(&into_blob),
+            )
+            .run();
+            support::stop(&mut service);
+
+            if answer.status != 200 || answer.body != manifest {
+                return case().failed(format!(
+                    "el manifiesto no llego integro: {} ({} bytes)",
+                    answer.status,
+                    answer.body.len()
+                ));
+            }
+            if blob.status != 200 || blob.body != first_blob {
+                return case().failed(format!("el blob no llego integro: {}", blob.status));
+            }
+            case()
+                .command("curl POST /api/v1/catalog/repositories; GET manifest + blob")
+                .origin(&lab.registry.origin())
+                .sha256(&sha256_of(&manifest))
+                .passed()
+        },
+    );
+}
+
+#[test]
+fn ac4_public_creation_refused() {
+    run_registry_lab_case(
+        THE_CASES,
+        "ac4_public_creation_refused",
+        "Un proxy OCI con upstream invalido se rechaza con diagnostico",
+        Scope::Product,
+        Expectation::Refused,
+        || {
+            the_report();
+            let lab = TheLab::unseeded();
+            let case = || {
+                LabCase::new(
+                    "ac4_public_creation_refused",
+                    "Un proxy OCI con upstream invalido se rechaza con diagnostico",
+                )
+            };
+            let mut service = lab.start();
+
+            // Without upstream: refused with a diagnosis.
+            let missing = lab.create(
+                service.port,
+                &json!({
+                    "name": REPOSITORY,
+                    "format": "oci",
+                    "mode": "proxy",
+                    "settings": { "proxy": {} }
+                }),
+            );
+            // An upstream whose URL is not a URL: refused with a diagnosis.
+            let invalid = lab.create(service.port, &lab.the_creation("no es una url"));
+            // An upstream outside the egress allowlist: the pull is refused.
+            let outside = lab.create(service.port, &lab.the_creation("http://203.0.113.9:5000/"));
+            let pulled = if outside.status == 201 {
+                Some(
+                    Curl::call(
+                        service.port,
+                        "GET",
+                        &the_manifest_path(TAG),
+                        &the_client_token(),
+                        None,
+                        None,
+                        None,
+                    )
+                    .run(),
+                )
+            } else {
+                None
+            };
+            support::stop(&mut service);
+
+            for (name, answer) in [("sin upstream", &missing), ("url invalida", &invalid)] {
+                let text = String::from_utf8_lossy(&answer.body).into_owned();
+                if answer.status != 400 || text.trim().is_empty() {
+                    return case().failed(format!(
+                        "{name}: se esperaba 400 con diagnostico y fue {} {text}",
+                        answer.status
+                    ));
+                }
+            }
+            let rejected_at_creation = outside.status == 400;
+            let refused_at_pull = pulled
+                .as_ref()
+                .map(|answer| answer.status >= 400 && lab.registry.seen().is_empty())
+                .unwrap_or(false);
+            if !rejected_at_creation && !refused_at_pull {
+                return case().failed(format!(
+                    "un upstream fuera de la allowlist no se rechazo: creacion {} y descarga {:?}",
+                    outside.status,
+                    pulled.map(|answer| answer.status)
+                ));
+            }
+            case()
+                .command("curl POST /api/v1/catalog/repositories (config invalida)")
                 .origin(&lab.registry.origin())
                 .passed()
         },

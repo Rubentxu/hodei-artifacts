@@ -48,7 +48,7 @@ Derivada de [`RepositoryFormat::served()`](crates/hodei-catalog/src/model.rs), [
 | Formato | `hosted` | `proxy` | `group` | Prefijo de ruta HTTP |
 | --- | --- | --- | --- | --- |
 | `raw` | Sí | Sí | Sí | `/repository/{repo}/...` |
-| `oci` | Sí | No | Sí | `/v2/{repo}/...` |
+| `oci` | Sí | Sí | Sí | `/v2/{repo}/...` |
 | `maven2` | Sí | Sí | Sí | `/repository/{repo}/...` |
 | `npm` | Sí | Sí | Sí | `/npm/{repo}/...` |
 | `pypi` | Sí | Sí | Sí | `/pypi/{repo}/...` |

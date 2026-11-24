@@ -107,9 +107,9 @@ impl RepositoryFormat {
     /// The raw surface, and the npm and PyPI ones that ride on it, serve
     /// the three modalities: what a client publishes, what a proxy brings
     /// from its upstream, and what a group composes of its members. The
-    /// OCI surface serves the hosted one and the group one: un grupo OCI
-    /// resuelve la referencia entre sus miembros con la precedencia que
-    /// declara su configuracion. The cargo one serves only the hosted
+    /// OCI surface serves the hosted one, the proxy one and the group one:
+    /// un grupo OCI resuelve la referencia entre sus miembros con la
+    /// precedencia que declara su configuracion. The cargo one serves only the hosted
     /// one for now: a push is a write, and a write lands where the client
     /// publishes. The proxy semantics of cargo need a client-verified
     /// upstream before they can be declared. The go surface serves the
@@ -135,7 +135,11 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
-            RepositoryFormat::Oci => &[RepositoryMode::Hosted, RepositoryMode::Group],
+            RepositoryFormat::Oci => &[
+                RepositoryMode::Hosted,
+                RepositoryMode::Proxy,
+                RepositoryMode::Group,
+            ],
             RepositoryFormat::Cargo => &[RepositoryMode::Hosted],
             RepositoryFormat::Apt | RepositoryFormat::Rpm => &[RepositoryMode::Hosted],
             RepositoryFormat::NuGet => &[RepositoryMode::Hosted, RepositoryMode::Proxy],
