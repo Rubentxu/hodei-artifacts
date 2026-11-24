@@ -1,0 +1,117 @@
+# El perfil productivo sobre la autoridad única del grafo (HSP-209).
+#
+# Este es el fichero que dice RUN_MODE=dgraph. Declara `[graph]`, y esa
+# declaración ES el perfil: con ella el motor embebido queda rechazado
+# (el `[database]` no puede reclamar `rocksdb`, y si lo reclama el arranque
+# muere nombrando el motor rechazado), su path no se crea ni se toca, y
+# todas las tiendas de metadato se abren contra el alpha declarado. Sin
+# `[graph]`, este mismo binario corre sobre el motor embebido como siempre.
+#
+# Las credenciales del alpha viajan por el entorno del proceso, nunca por
+# aquí: HODEI_GRAPH__CREDENTIALS__PASSWORD (y HODEI_GRAPH__CREDENTIALS__
+# USERID si el operador no es el guardian). El endpoint, el CA y el
+# server name se declaran aquí o por HODEI_GRAPH__*; lo que no se declara
+# no se adivina: no hay localhost implícito ni CA del sistema.
+
+[server]
+host = "0.0.0.0"
+port = 3000
+request_timeout_secs = 30
+max_body_size = 52428800  # 50MB: los artefactos por el borde raw/OCI
+
+# El perfil: la autoridad del metadato es este alpha.
+[graph]
+# El host:port del gRPC del Alpha, sin esquema. TLS es una decisión
+# escrita, no un defecto de configuración.
+endpoint = "127.0.0.1:9080"
+
+[graph.tls]
+enabled = true
+# El CA propio del clúster Dgraph: el almacén del sistema nunca lo
+# contiene. Sin ca_cert_path con enabled = true, la validación falla.
+ca_cert_path = "/etc/hodei/dgraph/ca.crt"
+# El nombre con el que se verifica el certificado del servidor. Cuando el
+# alpha se alcanza por dirección pero su certificado se emitió para el
+# nombre del nodo (`dgraph cert --nodes ...`), omitirlo produce
+# InvalidCertificate(NotValidForName): hay que declararlo.
+server_name = "dgraph-alpha"
+
+# La cuenta ACL del servicio. La contraseña NUNCA va aquí: se inyecta con
+# HODEI_GRAPH__CREDENTIALS__PASSWORD.
+[graph.credentials]
+userid = "groot"
+
+# El namespace ACL del login. 0 es el namespace guardian estándar.
+namespace = 0
+
+# La sección del motor embebido se mantiene porque la configuración es
+# estricta y compartida entre perfiles, pero su db_type DECLARA el grafo:
+# poner "rocksdb" aquí con [graph] presente es rechazado en el arranque
+# con el error que nombra el motor rechazado (HSP-209).
+[database]
+db_type = "dgraph"
+namespace = "hodei"
+database = "artifacts"
+pool_size = 10
+
+# Los bytes no viven en el grafo: el backend del contenido se declara como
+# en cualquier otro perfil. El productivo es S3; un bucket inalcanzable
+# detiene el arranque, no degrada al filesystem.
+[content]
+backend = "s3"
+cas_path = "/var/lib/hodei/cas"
+gc_grace_secs = 3600
+staging_max_age_secs = 86400
+
+[content.s3]
+bucket = "hodei-artifacts"
+region = "eu-west-1"
+endpoint = "https://s3.eu-west-1.amazonaws.com"
+# tls = true por defecto; un object store real con tls = false llevaría
+# las credenciales del SDK en claro.
+tls = true
+
+# El perfil de grafo no puede registrar el esquema Cedar sobre el alpha
+# (bloqueador HSP-209: SchemaStoragePort sin implementación en Dgraph).
+# Pedirlo es un error de arranque, no una degradación.
+[schema]
+register_iam_on_startup = false
+validate = true
+storage_type = "dgraph"
+
+[security]
+admin_api_enabled = false
+raw_api_enabled = true
+oci_api_enabled = true
+# El bundle de producción (los cinco juntos o el arranque falla cerrado):
+# auth_jwks_path, auth_issuer, auth_audience, authorization_policy_path y
+# authorization_schema_path. Sobre este perfil el esquema autoriza desde
+# el fichero declarado; no se persiste sobre el grafo.
+# auth_jwks_path = "/etc/hodei/jwks.json"
+# auth_issuer = "https://issuer.example"
+# auth_audience = "hodei-artifacts"
+# authorization_policy_path = "/etc/hodei/policies.cedar"
+# authorization_schema_path = "/etc/hodei/schema.json"
+cors_allowed_origins = []
+
+[repository]
+# Las modalidades verticales (raw, OCI y las demás) son la superficie de
+# este perfil; el registro legacy `/repositories` no tiene puerto sobre
+# Dgraph (bloqueador registrado) y responde cerrado.
+durable = false
+
+[logging]
+level = "info"
+format = "json"
+include_timestamps = true
+include_location = false
+
+# El path del motor embebido existe en el esquema de configuración pero
+# este perfil no lo crea, no lo abre y no lo toca: con [graph] declarado,
+# el preflight del motor embebido no corre (HSP-209).
+[rocksdb]
+path = "/var/lib/hodei/unused.rocksdb"
+create_if_missing = true
+compression = true
+max_open_files = 1000
+write_buffer_size = 67108864
