@@ -485,14 +485,16 @@ fn the_group_headers(
     member: &str,
 ) {
     if let Ok(value) = HeaderValue::from_str(member) {
-        response
-            .headers_mut()
-            .insert(header::HeaderName::from_static("x-hodei-resolved-from"), value);
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-hodei-resolved-from"),
+            value,
+        );
     }
     if let Ok(value) = HeaderValue::from_str(&group.config.version.to_string()) {
-        response
-            .headers_mut()
-            .insert(header::HeaderName::from_static("x-hodei-group-version"), value);
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-hodei-group-version"),
+            value,
+        );
     }
 }
 

@@ -2538,6 +2538,8 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
                             hodei_catalog::RepositoryFormat::Go
                         } else if group["format"].as_str() == Some("nuget") {
                             hodei_catalog::RepositoryFormat::NuGet
+                        } else if group["format"].as_str() == Some("oci") {
+                            hodei_catalog::RepositoryFormat::Oci
                         } else {
                             hodei_catalog::RepositoryFormat::Raw
                         },

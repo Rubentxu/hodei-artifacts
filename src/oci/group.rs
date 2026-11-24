@@ -167,7 +167,11 @@ async fn the_members(
                     let members = if descriptor.mode == RepositoryMode::Group {
                         match GroupConfig::of(&descriptor.config) {
                             Ok(Some(nested)) => nested.members,
-                            _ => return Err(OciFailure::unavailable("the group is not well configured")),
+                            _ => {
+                                return Err(OciFailure::unavailable(
+                                    "the group is not well configured",
+                                ));
+                            }
                         }
                     } else {
                         Vec::new()
@@ -209,7 +213,11 @@ pub async fn the_leaves(
     .map_err(the_group_failure)?;
     walk.leaves
         .iter()
-        .map(|key| found.remove(key).ok_or_else(|| OciFailure::unavailable("the catalog is not available")))
+        .map(|key| {
+            found
+                .remove(key)
+                .ok_or_else(|| OciFailure::unavailable("the catalog is not available"))
+        })
         .collect()
 }
 
@@ -229,11 +237,10 @@ pub async fn the_governed_leaves(
     asset_path: &str,
 ) -> Result<(Vec<RepositoryDescriptor>, Vec<String>), OciFailure> {
     let leaves = the_leaves(state, context, group).await?;
-    let policy = hodei_catalog::NamespacePolicy::of(&group.config)
-        .map_err(|error| {
-            tracing::warn!(error = %error, "the namespace policy of a group cannot be read");
-            OciFailure::unavailable("the group is not well configured")
-        })?;
+    let policy = hodei_catalog::NamespacePolicy::of(&group.config).map_err(|error| {
+        tracing::warn!(error = %error, "the namespace policy of a group cannot be read");
+        OciFailure::unavailable("the group is not well configured")
+    })?;
     let Some(policy) = policy else {
         return Ok((leaves, Vec::new()));
     };
@@ -382,7 +389,14 @@ async fn resolve_manifest(
                 return Err(failure);
             }
         };
-        let asset = match the_asset(reader.as_ref(), account, &key, &format!("manifests/{digest}")).await {
+        let asset = match the_asset(
+            reader.as_ref(),
+            account,
+            &key,
+            &format!("manifests/{digest}"),
+        )
+        .await
+        {
             Ok(Some(asset)) => the_asset_of(asset, &digest),
             Ok(None) => None,
             Err(failure) => {
@@ -460,14 +474,15 @@ async fn resolve_blob(
 
     for member in leaves {
         let key = member.repo_key.clone();
-        let asset = match the_asset(reader.as_ref(), account, &key, &format!("blobs/{digest}")).await {
-            Ok(Some(asset)) => the_asset_of(asset, digest),
-            Ok(None) => None,
-            Err(failure) => {
-                trail.push((key, Step::Error));
-                return Err(failure);
-            }
-        };
+        let asset =
+            match the_asset(reader.as_ref(), account, &key, &format!("blobs/{digest}")).await {
+                Ok(Some(asset)) => the_asset_of(asset, digest),
+                Ok(None) => None,
+                Err(failure) => {
+                    trail.push((key, Step::Error));
+                    return Err(failure);
+                }
+            };
         let Some(asset) = asset else {
             trail.push((key, Step::Miss));
             continue;
