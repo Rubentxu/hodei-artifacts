@@ -250,6 +250,7 @@ impl RepositoryFormat {
             RepositoryFormat::Rpm,
             RepositoryFormat::Terraform,
             RepositoryFormat::Conan,
+            RepositoryFormat::Galaxy,
         ]
     }
 }
