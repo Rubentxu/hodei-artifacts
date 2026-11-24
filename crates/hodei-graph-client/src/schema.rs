@@ -48,13 +48,17 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// marker (`hodei.operation.*`), both `@upsert` guarded so the server
 /// itself forces the conflict between concurrent writers.
 ///
-/// v3 adds the sequenced evidence ledger: one event node per stream
-/// position (`hodei.ledger.*`), whose composite key is `@upsert` guarded
-/// so the server itself refuses two writers claiming the same position.
-/// The head of a stream is not a stored row but the revision of the
-/// stream's guard ([`crate::guard`]): an append demands the exact
-/// revision its position sequenced at, so the guard IS the sequence.
-pub const SCHEMA_VERSION: u64 = 3;
+/// v3 adds the sequenced evidence ledger and IAM carriers. v4 adds
+/// immutable evidence metadata and its producer/external-identity index;
+/// content bytes remain in the existing CAS and are never stored here.
+///
+/// v5 adds the reified graph projection (`hodei.graph.*`): graph nodes,
+/// reified relations with their asserted/unknown status, one support node
+/// per (relation, evidence) pair, and the two native navigable edges
+/// (`hodei.graph.out` from the source node to the relation,
+/// `hodei.graph.to` from the relation to the target node), both reverse
+/// indexed. Purely additive over v4: nothing is renamed or dropped.
+pub const SCHEMA_VERSION: u64 = 5;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -530,6 +534,377 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // IAM carriers (v3): the discriminator plus the fields the
+            // IAM adapters of `hodei-iam` store. The IAM nodes reuse the
+            // identity key (unique, `@upsert`) and the identity revision
+            // (CAS) — there is no second uniqueness or versioning anchor.
+            // `hodei.iam.hrn` is exact-indexed (no `@upsert`): the same
+            // resource HRN under a different tenant key is legal and
+            // must be able to coexist; the tenant|HRN composite stays
+            // the uniqueness anchor.
+            spec(
+                "hodei.iam.kind",
+                "hodei.iam.kind: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.hrn",
+                "hodei.iam.hrn: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.content",
+                "hodei.iam.content: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.description",
+                "hodei.iam.description: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.email",
+                "hodei.iam.email: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.tags",
+                "hodei.iam.tags: [string] .",
+                "string",
+                None,
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.attachment",
+                "hodei.iam.attachment: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.created_at",
+                "hodei.iam.created_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.updated_at",
+                "hodei.iam.updated_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.key",
+                "hodei.evidence.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.evidence.tenant",
+                "hodei.evidence.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.producer_id",
+                "hodei.evidence.producer_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.external_id",
+                "hodei.evidence.external_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.type",
+                "hodei.evidence.type: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.content_digest",
+                "hodei.evidence.content_digest: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.account",
+                "hodei.evidence.account: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.subject",
+                "hodei.evidence.subject: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.record",
+                "hodei.evidence.record: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.external_key",
+                "hodei.evidence.external_key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.evidence.external_evidence_id",
+                "hodei.evidence.external_evidence_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            // HSP-189: the reified graph projection. Nodes carry their
+            // tenant-scoped identity key (`tenant|HRN`, exact and `@upsert`
+            // so two creators of one node conflict server-side); relations
+            // carry their hashed identity key and their asserted/unknown
+            // status (UNINDEXED on purpose: every writer of one relation
+            // writes the same data key, which is what makes concurrent
+            // writers of the SAME edge abort — the per-edge conflict the
+            // changeset upsert relies on); supports are one node per
+            // (relation, evidence) pair. The two native edges are the
+            // navigable projection: source node -> relation (`out`) and
+            // relation -> target node (`to`), both reverse indexed so
+            // relations_from and relations_to are traversals, never scans.
+            spec(
+                "hodei.graph.node.key",
+                "hodei.graph.node.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.node.tenant",
+                "hodei.graph.node.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.kind",
+                "hodei.graph.node.kind: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.attributes",
+                "hodei.graph.node.attributes: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.observed_at",
+                "hodei.graph.node.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.out",
+                "hodei.graph.out: [uid] @reverse .",
+                "uid",
+                None,
+                true,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.key",
+                "hodei.graph.rel.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.rel.tenant",
+                "hodei.graph.rel.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.type",
+                "hodei.graph.rel.type: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.status",
+                "hodei.graph.rel.status: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.from_hrn",
+                "hodei.graph.rel.from_hrn: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.to_hrn",
+                "hodei.graph.rel.to_hrn: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.evidence",
+                "hodei.graph.rel.evidence: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.observed_at",
+                "hodei.graph.rel.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.to",
+                "hodei.graph.to: uid @reverse .",
+                "uid",
+                None,
+                false,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.supports",
+                "hodei.graph.supports: [uid] @reverse .",
+                "uid",
+                None,
+                true,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.support.key",
+                "hodei.graph.support.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.support.evidence",
+                "hodei.graph.support.evidence: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.support.observed_at",
+                "hodei.graph.support.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -557,6 +932,34 @@ pub fn hodei_schema() -> HodeiSchema {
              hodei.ledger.event_type\n  hodei.ledger.schema_version\n  hodei.ledger.occurred_at\n  \
              hodei.ledger.recorded_at\n  hodei.ledger.producer\n  hodei.ledger.correlation_id\n  \
              hodei.ledger.causation_id\n  hodei.ledger.idempotency_key\n  hodei.ledger.payload\n}"
+                .to_owned(),
+            // The IAM carriers are identity nodes: they keep the composite
+            // key and the CAS revision (the uniqueness and versioning
+            // anchors) and add the IAM payload.
+            "type HodeiIam {\n  hodei.identity.key\n  hodei.identity.hrn\n  \
+             hodei.identity.tenant\n  hodei.identity.digest\n  hodei.identity.name\n  \
+             hodei.identity.revision\n  hodei.identity.created_at\n  hodei.iam.kind\n  \
+             hodei.iam.hrn\n  hodei.iam.content\n  hodei.iam.description\n  \
+             hodei.iam.email\n  hodei.iam.tags\n  hodei.iam.attachment\n  \
+             hodei.iam.created_at\n  hodei.iam.updated_at\n}"
+                .to_owned(),
+            "type HodeiEvidence {\n  hodei.evidence.key\n  hodei.evidence.tenant\n  hodei.evidence.producer_id\n  hodei.evidence.external_id\n  hodei.evidence.type\n  hodei.evidence.content_digest\n  hodei.evidence.account\n  hodei.evidence.subject\n  hodei.evidence.record\n}"
+                .to_owned(),
+            "type HodeiEvidenceExternal {\n  hodei.evidence.external_key\n  hodei.evidence.external_evidence_id\n}"
+                .to_owned(),
+            // The reified graph projection (v5): nodes, relations and
+            // their supports, with the two native navigable edges.
+            "type HodeiGraphNode {\n  hodei.graph.node.key\n  hodei.graph.node.tenant\n  \
+             hodei.graph.node.kind\n  hodei.graph.node.attributes\n  \
+             hodei.graph.node.observed_at\n  hodei.graph.out\n}"
+                .to_owned(),
+            "type HodeiGraphRelation {\n  hodei.graph.rel.key\n  hodei.graph.rel.tenant\n  \
+             hodei.graph.rel.type\n  hodei.graph.rel.status\n  hodei.graph.rel.from_hrn\n  \
+             hodei.graph.rel.to_hrn\n  hodei.graph.rel.evidence\n  hodei.graph.rel.observed_at\n  \
+             hodei.graph.to\n  hodei.graph.supports\n}"
+                .to_owned(),
+            "type HodeiGraphSupport {\n  hodei.graph.support.key\n  \
+             hodei.graph.support.evidence\n  hodei.graph.support.observed_at\n}"
                 .to_owned(),
         ],
     )
@@ -726,7 +1129,7 @@ pub struct SchemaBootReport {
 /// More than one metadata node is corruption: the versioning bookkeeping
 /// must be unique, so a duplicate refuses the boot instead of letting
 /// boot pick one silently.
-async fn read_stored_schema(
+pub async fn read_stored_schema(
     client: &GraphClient,
 ) -> Result<Option<(u64, String)>, SchemaBootError> {
     let response = client
@@ -973,10 +1376,10 @@ fn rfc3339_now() -> String {
 /// quotes, backslashes and control characters. Keys, HRNs and digests
 /// are built from safe charsets, but the escaping is uniform so no
 /// caller-side string can inject DQL.
-/// Escapes a Rust string as a DQL string literal: quoted, with the
-/// backslash, quote and control characters DQL reserves escaped. The
-/// helpers that build upsert transactions and the ledger adapters of
-/// consumers use it, so the escaping is done in exactly one place.
+///
+/// Public because the IAM adapters (and any future graph consumer)
+/// compose DQL literals from caller text (policy content, tags, names)
+/// and must not re-implement the escaping.
 pub fn dql_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');

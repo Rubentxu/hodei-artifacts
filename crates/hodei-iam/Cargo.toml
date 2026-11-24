@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 # Internal crates
+hodei-graph-client = { path = "../hodei-graph-client" }
 hodei-policies = { path = "../hodei-policies" }
 kernel = { path = "../kernel" }
 
