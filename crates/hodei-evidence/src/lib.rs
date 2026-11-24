@@ -40,7 +40,8 @@ pub use application::capsule::{CapsuleAssembler, FreshnessThreshold};
 pub use application::delta::{SupportSnapshot, relation_deltas};
 pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionRequest};
 pub use application::projection::{
-    ProjectionCheckpoints, ProjectionError, ProjectionReport, project_stream,
+    ProjectionCheckpoints, ProjectionDelivery, ProjectionError, ProjectionFrontier,
+    ProjectionReceipt, ProjectionReport, project_stream, project_stream_via_frontier,
 };
 pub use application::projector::{EvidenceGraphProjector, evidence_hrn};
 pub use application::rebuild::{GraphFingerprint, RebuildError, RebuildReport, rebuild_graph};

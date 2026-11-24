@@ -85,10 +85,20 @@ pub const STATUS_UNKNOWN: &str = "unknown";
 /// The bound is the Surreal adapter's [`crate::CONFLICT_RETRIES`].
 const MAX_ATTEMPTS: usize = 8;
 
+/// The name of the projection that is in use: the one the deployment
+/// serves and the one the frontier emits deltas for. A rebuild builds
+/// into a projection of its own name ([`DgraphGraphStore::named`]); the
+/// name rides on every record (`hodei.graph.projection`) and, for the
+/// named ones, on the front of every identity key, so the two
+/// projections never meet — neither by key nor by scan — and the graph
+/// in use keeps answering while the rebuild runs.
+pub const ACTIVE_PROJECTION: &str = "graph";
+
 /// The graph of evidence, over the graph authority.
 #[derive(Debug)]
 pub struct DgraphGraphStore {
     client: Arc<GraphClient>,
+    projection: String,
 }
 
 impl DgraphGraphStore {
@@ -96,7 +106,43 @@ impl DgraphGraphStore {
     /// boot is the caller's readiness gate, like every adapter of this
     /// crate; the store itself carries no state.
     pub fn new(client: Arc<GraphClient>) -> Self {
-        Self { client }
+        Self::named(client, ACTIVE_PROJECTION)
+    }
+
+    /// A projection with a name of its own: the rebuild builds into one,
+    /// and the deployment promotes it by serving it, the same decision
+    /// the Surreal adapter leaves to whoever orchestrates the rebuild.
+    pub fn named(client: Arc<GraphClient>, projection: impl Into<String>) -> Self {
+        Self {
+            client,
+            projection: projection.into(),
+        }
+    }
+
+    /// The name of the projection this store serves.
+    pub fn projection(&self) -> &str {
+        &self.projection
+    }
+
+    /// The prefix the identity keys of THIS projection carry. The active
+    /// projection keeps the bare keys the projection has always had; a
+    /// named one namespaces its own so a lookup can never meet the
+    /// active record of the same identity.
+    fn key_prefix(&self) -> String {
+        if self.projection == ACTIVE_PROJECTION {
+            String::new()
+        } else {
+            format!("{}|", self.projection)
+        }
+    }
+
+    /// The identity key of a graph node of this projection.
+    fn node_key_scoped(&self, tenant_hrn: &str, node_hrn: &str) -> String {
+        format!(
+            "{}{}",
+            self.key_prefix(),
+            Self::node_key(tenant_hrn, node_hrn)
+        )
     }
 
     /// The identity key of a graph node: the account and the HRN, the
@@ -193,13 +239,16 @@ impl DgraphGraphStore {
             }
         }
 
-        // The live supports, read from the asserted relations.
+        // The live supports, read from the asserted relations. The scan
+        // is the projection's own: another projection building apart
+        // holds records the fingerprint must never see.
         let tenant_literal = dql_string(&tenant.to_string());
         let query = format!(
             "{{ q(func: eq(hodei.graph.rel.tenant, {tenant_literal})) \
-             @filter(eq(hodei.graph.rel.status, {status})) {{ \
+             @filter(eq(hodei.graph.rel.status, {status}) AND eq(hodei.graph.projection, {projection})) {{ \
              hodei.graph.rel.key hodei.graph.supports {{ hodei.graph.support.evidence }} }} }}",
             status = dql_string(STATUS_ASSERTED),
+            projection = dql_string(&self.projection),
         );
         let response = self
             .client
@@ -253,7 +302,7 @@ impl DgraphGraphStore {
     /// Whether the graph holds the node with this identity, under this
     /// account.
     async fn node_exists(&self, tenant: &Hrn, id: &Hrn) -> Result<bool, GraphError> {
-        let key = Self::node_key(&tenant.to_string(), &id.to_string());
+        let key = self.node_key_scoped(&tenant.to_string(), &id.to_string());
         let query = format!(
             "{{ q(func: eq(hodei.graph.node.key, {})) {{ uid }} }}",
             dql_string(&key)
@@ -286,7 +335,7 @@ impl DgraphGraphStore {
         forward: bool,
     ) -> Result<Vec<GraphRelation>, GraphError> {
         let tenant_literal = dql_string(&tenant.to_string());
-        let node_key = Self::node_key(&tenant.to_string(), &node.to_string());
+        let node_key = self.node_key_scoped(&tenant.to_string(), &node.to_string());
         let edge = if forward {
             "hodei.graph.out"
         } else {
@@ -328,7 +377,7 @@ impl DgraphGraphStore {
         id: &Hrn,
         kind: NodeKind,
     ) -> Result<Vec<GraphNode>, GraphError> {
-        let node_key = Self::node_key(&tenant.to_string(), &id.to_string());
+        let node_key = self.node_key_scoped(&tenant.to_string(), &id.to_string());
         let query = format!(
             "{{ q(func: eq(hodei.graph.node.key, {})) {{ {NODE_FIELDS} }} }}",
             dql_string(&node_key),
@@ -417,8 +466,10 @@ struct ChangePlan<'a> {
 
 /// Builds the plan of a changeset. Identities are deduplicated: two
 /// evidences on one relation are ONE relation with TWO supports; the
-/// same support withdrawn by two entries is ONE deletion.
-fn plan_changeset(changes: &GraphChangeSet) -> ChangePlan<'_> {
+/// same support withdrawn by two entries is ONE deletion. The `prefix`
+/// namespaces every identity key, so a named projection plans against
+/// its own records.
+fn plan_changeset<'a>(changes: &'a GraphChangeSet, prefix: &'a str) -> ChangePlan<'a> {
     let mut node_count = 0usize;
     let mut node_index_of_key: BTreeMap<String, usize> = BTreeMap::new();
     let mut nodes = Vec::new();
@@ -426,7 +477,10 @@ fn plan_changeset(changes: &GraphChangeSet) -> ChangePlan<'_> {
 
     // The nodes the changeset carries: upserted and bound.
     for node in &changes.nodes {
-        let key = DgraphGraphStore::node_key(&node.tenant_hrn.to_string(), &node.id.to_string());
+        let key = format!(
+            "{prefix}{}",
+            DgraphGraphStore::node_key(&node.tenant_hrn.to_string(), &node.id.to_string())
+        );
         let index = *node_index_of_key.entry(key.clone()).or_insert(node_count);
         if index == node_count {
             node_count += 1;
@@ -446,9 +500,12 @@ fn plan_changeset(changes: &GraphChangeSet) -> ChangePlan<'_> {
     for relation in &changes.relations {
         for endpoint in [&relation.from, &relation.to] {
             endpoints.entry(endpoint.to_string()).or_insert_with(|| {
-                let key = DgraphGraphStore::node_key(
-                    &relation.tenant_hrn.to_string(),
-                    &endpoint.to_string(),
+                let key = format!(
+                    "{prefix}{}",
+                    DgraphGraphStore::node_key(
+                        &relation.tenant_hrn.to_string(),
+                        &endpoint.to_string(),
+                    )
                 );
                 let index = *node_index_of_key.entry(key.clone()).or_insert(node_count);
                 if index == node_count {
@@ -465,9 +522,12 @@ fn plan_changeset(changes: &GraphChangeSet) -> ChangePlan<'_> {
     for withdrawal in &changes.withdrawals {
         for endpoint in [&withdrawal.from, &withdrawal.to] {
             endpoints.entry(endpoint.to_string()).or_insert_with(|| {
-                let key = DgraphGraphStore::node_key(
-                    &withdrawal.tenant_hrn.to_string(),
-                    &endpoint.to_string(),
+                let key = format!(
+                    "{prefix}{}",
+                    DgraphGraphStore::node_key(
+                        &withdrawal.tenant_hrn.to_string(),
+                        &endpoint.to_string(),
+                    )
                 );
                 let index = *node_index_of_key.entry(key.clone()).or_insert(node_count);
                 if index == node_count {
@@ -537,8 +597,16 @@ impl DgraphGraphStore {
     /// IS a live one, so the only possible overcount still answers
     /// `asserted`, and every live support is counted by at least one of
     /// the two terms.
-    fn changeset_upsert(changes: &GraphChangeSet) -> GraphUpsertTransaction {
-        let plan = plan_changeset(changes);
+    /// The upsert transaction of one changeset, for the projection the
+    /// caller names. The frontier composes it into the guarded
+    /// transaction that also carries the deltas and the checkpoint, so
+    /// it is shared with [`crate::dgraph::frontier`].
+    pub(crate) fn changeset_upsert_scoped(
+        changes: &GraphChangeSet,
+        prefix: &str,
+        projection: &str,
+    ) -> GraphUpsertTransaction {
+        let plan = plan_changeset(changes, prefix);
         let mut query = String::from("{\n");
         let mut blocks: Vec<GraphMutationBlock> = Vec::new();
 
@@ -563,16 +631,19 @@ impl DgraphGraphStore {
         for (index, identity, relation, supports) in &plan.relations {
             query.push_str(&format!(
                 "  r{index} as var(func: eq(hodei.graph.rel.key, {}))\n",
-                dql_string(&Self::relation_key(
-                    &relation.tenant_hrn.to_string(),
-                    identity
+                dql_string(&format!(
+                    "{prefix}{}",
+                    Self::relation_key(&relation.tenant_hrn.to_string(), identity)
                 ))
             ));
             for (position, support) in supports.iter().enumerate() {
-                let key = Self::support_key(
-                    &support.tenant_hrn.to_string(),
-                    identity,
-                    support.evidence_id.as_str(),
+                let key = format!(
+                    "{prefix}{}",
+                    Self::support_key(
+                        &support.tenant_hrn.to_string(),
+                        identity,
+                        support.evidence_id.as_str(),
+                    )
                 );
                 query.push_str(&format!(
                     "  s{index}_{position} as var(func: eq(hodei.graph.support.key, {}))\n",
@@ -582,7 +653,10 @@ impl DgraphGraphStore {
         }
         for (index, identity, withdrawal, evidences) in &plan.withdrawals {
             for (position, evidence) in evidences.iter().enumerate() {
-                let key = Self::support_key(&withdrawal.tenant_hrn.to_string(), identity, evidence);
+                let key = format!(
+                    "{prefix}{}",
+                    Self::support_key(&withdrawal.tenant_hrn.to_string(), identity, evidence)
+                );
                 query.push_str(&format!(
                     "  w{index}_{position} as var(func: eq(hodei.graph.support.key, {}))\n",
                     dql_string(&key)
@@ -601,9 +675,9 @@ impl DgraphGraphStore {
             if rel_var.starts_with("rw") {
                 query.push_str(&format!(
                     "  {rel_var} as var(func: eq(hodei.graph.rel.key, {}))\n",
-                    dql_string(&Self::relation_key(
-                        &withdrawal.tenant_hrn.to_string(),
-                        identity
+                    dql_string(&format!(
+                        "{prefix}{}",
+                        Self::relation_key(&withdrawal.tenant_hrn.to_string(), identity)
                     ))
                 ));
             }
@@ -632,11 +706,11 @@ impl DgraphGraphStore {
         for (index, _key, node) in &plan.nodes {
             blocks.push(GraphMutationBlock::set_if(
                 format!("eq(len(n{index}), 0)"),
-                node_nquads(&format!("n{index}"), node),
+                node_nquads(&format!("n{index}"), node, prefix, projection),
             ));
             blocks.push(GraphMutationBlock::set_if(
                 format!("eq(len(n{index}), 1)"),
-                node_update_nquads(&format!("n{index}"), node),
+                node_update_nquads(&format!("n{index}"), node, projection),
             ));
         }
 
@@ -657,11 +731,11 @@ impl DgraphGraphStore {
             // changeset or be co-created by it.
             blocks.push(GraphMutationBlock::set_if(
                 format!("eq(len(r{index}), 0)"),
-                relation_nquads(&format!("r{index}"), relation, identity),
+                relation_nquads(&format!("r{index}"), relation, identity, prefix, projection),
             ));
             blocks.push(GraphMutationBlock::set_if(
                 format!("eq(len(r{index}), 1)"),
-                relation_update_nquads(&format!("r{index}"), relation),
+                relation_update_nquads(&format!("r{index}"), relation, projection),
             ));
 
             // The native edges, one branch per presence combination of
@@ -679,11 +753,14 @@ impl DgraphGraphStore {
                 } else {
                     format!(
                         "_:{} <hodei.graph.node.key> {} .\n\
-                         _:{} <hodei.graph.node.tenant> {} .\n",
+                         _:{} <hodei.graph.node.tenant> {} .\n\
+                         _:{} <hodei.graph.projection> {} .\n",
                         endpoint.var,
                         dql_string(&endpoint.key),
                         endpoint.var,
                         dql_string(&relation.tenant_hrn.to_string()),
+                        endpoint.var,
+                        dql_string(projection),
                     )
                 }
             };
@@ -728,6 +805,8 @@ impl DgraphGraphStore {
                         support,
                         identity,
                         Some(format!("uid(r{index})")),
+                        prefix,
+                        projection,
                     ),
                 ));
                 blocks.push(GraphMutationBlock::set_if(
@@ -735,9 +814,11 @@ impl DgraphGraphStore {
                     format!(
                         "uid(r{index}) <hodei.graph.supports> uid({support_var}) .\n\
                          uid({support_var}) <hodei.graph.support.evidence> {} .\n\
-                         uid({support_var}) <hodei.graph.support.observed_at> {} .\n",
+                         uid({support_var}) <hodei.graph.support.observed_at> {} .\n\
+                         uid({support_var}) <hodei.graph.projection> {} .\n",
                         dql_string(support.evidence_id.as_str()),
                         dql_string(&support.observed_at.to_rfc3339()),
+                        dql_string(projection),
                     ),
                 ));
                 // The link from a co-created relation: written in its
@@ -932,7 +1013,7 @@ fn observed_at_of(row: &serde_json::Value, field: &str) -> chrono::DateTime<chro
 }
 
 /// The N-Quads that create one graph node, by its blank label.
-fn node_nquads(blank: &str, node: &GraphNode) -> String {
+fn node_nquads(blank: &str, node: &GraphNode, prefix: &str, projection: &str) -> String {
     let attributes = serde_json::to_string(&node.attributes).unwrap_or_default();
     format!(
         "_:{blank} <dgraph.type> \"{GRAPH_NODE_TYPE}\" .\n\
@@ -940,36 +1021,46 @@ fn node_nquads(blank: &str, node: &GraphNode) -> String {
          _:{blank} <hodei.graph.node.tenant> {} .\n\
          _:{blank} <hodei.graph.node.kind> {} .\n\
          _:{blank} <hodei.graph.node.attributes> {} .\n\
-         _:{blank} <hodei.graph.node.observed_at> {} .\n",
-        dql_string(&DgraphGraphStore::node_key(
-            &node.tenant_hrn.to_string(),
-            &node.id.to_string()
+         _:{blank} <hodei.graph.node.observed_at> {} .\n\
+         _:{blank} <hodei.graph.projection> {} .\n",
+        dql_string(&format!(
+            "{prefix}{}",
+            DgraphGraphStore::node_key(&node.tenant_hrn.to_string(), &node.id.to_string())
         )),
         dql_string(&node.tenant_hrn.to_string()),
         dql_string(node.kind.as_str()),
         dql_string(&attributes),
         dql_string(&node.observed_at.to_rfc3339()),
+        dql_string(projection),
     )
 }
 
 /// The N-Quads that refresh the fields of one graph node, by its uid.
-fn node_update_nquads(var: &str, node: &GraphNode) -> String {
+fn node_update_nquads(var: &str, node: &GraphNode, projection: &str) -> String {
     let attributes = serde_json::to_string(&node.attributes).unwrap_or_default();
     format!(
         "uid({var}) <hodei.graph.node.tenant> {} .\n\
          uid({var}) <hodei.graph.node.kind> {} .\n\
          uid({var}) <hodei.graph.node.attributes> {} .\n\
-         uid({var}) <hodei.graph.node.observed_at> {} .\n",
+         uid({var}) <hodei.graph.node.observed_at> {} .\n\
+         uid({var}) <hodei.graph.projection> {} .\n",
         dql_string(&node.tenant_hrn.to_string()),
         dql_string(node.kind.as_str()),
         dql_string(&attributes),
         dql_string(&node.observed_at.to_rfc3339()),
+        dql_string(projection),
     )
 }
 
 /// The N-Quads that CREATE one relation record: the identity key and
 /// the asserted status, with both ends recorded as text.
-fn relation_nquads(blank: &str, relation: &GraphRelation, identity: &str) -> String {
+fn relation_nquads(
+    blank: &str,
+    relation: &GraphRelation,
+    identity: &str,
+    prefix: &str,
+    projection: &str,
+) -> String {
     format!(
         "_:{blank} <dgraph.type> \"{GRAPH_RELATION_TYPE}\" .\n\
          _:{blank} <hodei.graph.rel.key> {} .\n\
@@ -979,10 +1070,11 @@ fn relation_nquads(blank: &str, relation: &GraphRelation, identity: &str) -> Str
          _:{blank} <hodei.graph.rel.from_hrn> {} .\n\
          _:{blank} <hodei.graph.rel.to_hrn> {} .\n\
          _:{blank} <hodei.graph.rel.evidence> {} .\n\
-         _:{blank} <hodei.graph.rel.observed_at> {} .\n",
-        dql_string(&DgraphGraphStore::relation_key(
-            &relation.tenant_hrn.to_string(),
-            identity
+         _:{blank} <hodei.graph.rel.observed_at> {} .\n\
+         _:{blank} <hodei.graph.projection> {} .\n",
+        dql_string(&format!(
+            "{prefix}{}",
+            DgraphGraphStore::relation_key(&relation.tenant_hrn.to_string(), identity)
         )),
         dql_string(&relation.tenant_hrn.to_string()),
         dql_string(relation.relation.as_str()),
@@ -991,6 +1083,7 @@ fn relation_nquads(blank: &str, relation: &GraphRelation, identity: &str) -> Str
         dql_string(&relation.to.to_string()),
         dql_string(relation.evidence_id.as_str()),
         dql_string(&relation.observed_at.to_rfc3339()),
+        dql_string(projection),
     )
 }
 
@@ -998,7 +1091,7 @@ fn relation_nquads(blank: &str, relation: &GraphRelation, identity: &str) -> Str
 /// status re-affirmed (the writers of one relation never disagree about
 /// `asserted` here; the withdrawal branches write `unknown` when and
 /// only when nothing remains).
-fn relation_update_nquads(var: &str, relation: &GraphRelation) -> String {
+fn relation_update_nquads(var: &str, relation: &GraphRelation, projection: &str) -> String {
     format!(
         "uid({var}) <hodei.graph.rel.tenant> {} .\n\
          uid({var}) <hodei.graph.rel.type> {} .\n\
@@ -1006,7 +1099,8 @@ fn relation_update_nquads(var: &str, relation: &GraphRelation) -> String {
          uid({var}) <hodei.graph.rel.from_hrn> {} .\n\
          uid({var}) <hodei.graph.rel.to_hrn> {} .\n\
          uid({var}) <hodei.graph.rel.evidence> {} .\n\
-         uid({var}) <hodei.graph.rel.observed_at> {} .\n",
+         uid({var}) <hodei.graph.rel.observed_at> {} .\n\
+         uid({var}) <hodei.graph.projection> {} .\n",
         dql_string(&relation.tenant_hrn.to_string()),
         dql_string(relation.relation.as_str()),
         dql_string(STATUS_ASSERTED),
@@ -1014,6 +1108,7 @@ fn relation_update_nquads(var: &str, relation: &GraphRelation) -> String {
         dql_string(&relation.to.to_string()),
         dql_string(relation.evidence_id.as_str()),
         dql_string(&relation.observed_at.to_rfc3339()),
+        dql_string(projection),
     )
 }
 
@@ -1026,6 +1121,8 @@ fn support_create_nquads(
     support: &GraphRelation,
     identity: &str,
     from_relation: Option<String>,
+    prefix: &str,
+    projection: &str,
 ) -> String {
     let mut nquads = String::new();
     if let Some(subject) = from_relation {
@@ -1035,14 +1132,19 @@ fn support_create_nquads(
         "_:{blank} <dgraph.type> \"{GRAPH_SUPPORT_TYPE}\" .\n\
          _:{blank} <hodei.graph.support.key> {} .\n\
          _:{blank} <hodei.graph.support.evidence> {} .\n\
-         _:{blank} <hodei.graph.support.observed_at> {} .\n",
-        dql_string(&DgraphGraphStore::support_key(
-            &support.tenant_hrn.to_string(),
-            identity,
-            support.evidence_id.as_str()
+         _:{blank} <hodei.graph.support.observed_at> {} .\n\
+         _:{blank} <hodei.graph.projection> {} .\n",
+        dql_string(&format!(
+            "{prefix}{}",
+            DgraphGraphStore::support_key(
+                &support.tenant_hrn.to_string(),
+                identity,
+                support.evidence_id.as_str()
+            )
         )),
         dql_string(support.evidence_id.as_str()),
         dql_string(&support.observed_at.to_rfc3339()),
+        dql_string(projection),
     ));
     nquads
 }
@@ -1080,7 +1182,15 @@ impl GraphWriter for DgraphGraphStore {
         // the fresh bindings are the revalidation — the same loop the
         // Surreal adapter runs on its SQL conflicts.
         for attempt in 0..MAX_ATTEMPTS {
-            match self.client.upsert(Self::changeset_upsert(&changes)).await {
+            match self
+                .client
+                .upsert(Self::changeset_upsert_scoped(
+                    &changes,
+                    &self.key_prefix(),
+                    &self.projection,
+                ))
+                .await
+            {
                 Ok(_) => return Ok(()),
                 Err(hodei_graph_client::GraphClientError::UpsertConflict { detail })
                     if attempt + 1 < MAX_ATTEMPTS =>
@@ -1125,13 +1235,16 @@ impl GraphWriter for DgraphGraphStore {
 
 #[async_trait]
 impl GraphQuery for DgraphGraphStore {
-    /// The nodes of a kind, of an account.
+    /// The nodes of a kind, of an account. The scan is the projection's
+    /// own: a rebuild building apart holds nodes this projection never
+    /// answers with.
     async fn nodes(&self, tenant: &Hrn, kind: NodeKind) -> Result<Vec<GraphNode>, GraphError> {
         let query = format!(
             "{{ q(func: eq(hodei.graph.node.tenant, {tenant_literal})) \
-             @filter(eq(hodei.graph.node.kind, {kind_literal})) {{ {NODE_FIELDS} }} }}",
+             @filter(eq(hodei.graph.node.kind, {kind_literal}) AND eq(hodei.graph.projection, {projection})) {{ {NODE_FIELDS} }} }}",
             tenant_literal = dql_string(&tenant.to_string()),
             kind_literal = dql_string(kind.as_str()),
+            projection = dql_string(&self.projection),
         );
         let response = self
             .client
@@ -1393,7 +1506,8 @@ mod tests {
             .with_node(node(to, NodeKind::Artifact))
             .with_relation(relation(from, RelationType::Produced, to, "ev-1"))
             .with_relation(relation(from, RelationType::Produced, to, "ev-2"));
-        let transaction = DgraphGraphStore::changeset_upsert(&changes);
+        let transaction =
+            DgraphGraphStore::changeset_upsert_scoped(&changes, "", ACTIVE_PROJECTION);
         assert_eq!(
             transaction
                 .query
@@ -1440,7 +1554,8 @@ mod tests {
             EvidenceId::new("ev-1".to_owned()),
             now,
         ));
-        let transaction = DgraphGraphStore::changeset_upsert(&changes);
+        let transaction =
+            DgraphGraphStore::changeset_upsert_scoped(&changes, "", ACTIVE_PROJECTION);
         let blocks: String = transaction
             .blocks
             .iter()
@@ -1494,7 +1609,8 @@ mod tests {
                 EvidenceId::new("ev-1".to_owned()),
                 now,
             ));
-        let transaction = DgraphGraphStore::changeset_upsert(&changes);
+        let transaction =
+            DgraphGraphStore::changeset_upsert_scoped(&changes, "", ACTIVE_PROJECTION);
         let blocks: String = transaction
             .blocks
             .iter()
@@ -1518,7 +1634,8 @@ mod tests {
             .with_node(node(from, NodeKind::Build))
             .with_node(node(to, NodeKind::Artifact))
             .with_relation(relation(from, RelationType::Produced, to, "ev-1"));
-        let transaction = DgraphGraphStore::changeset_upsert(&changes);
+        let transaction =
+            DgraphGraphStore::changeset_upsert_scoped(&changes, "", ACTIVE_PROJECTION);
         let blocks: String = transaction
             .blocks
             .iter()

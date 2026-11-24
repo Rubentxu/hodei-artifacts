@@ -58,7 +58,16 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// (`hodei.graph.out` from the source node to the relation,
 /// `hodei.graph.to` from the relation to the target node), both reverse
 /// indexed. Purely additive over v4: nothing is renamed or dropped.
-pub const SCHEMA_VERSION: u64 = 5;
+///
+/// v6 adds the projection frontier (`hodei.checkpoint.*`, `hodei.delta.*`)
+/// and the projection marker (`hodei.graph.projection`): the checkpoint
+/// row one per (consumer, stream) whose next position commits in the SAME
+/// transaction as the graph changeset it certifies; the durable relation
+/// delta (`added | removed | support_changed`) keyed by its dedup
+/// identity; and the name of the projection every graph record belongs
+/// to, so a rebuild builds into its own namespace while the active one
+/// keeps serving. Purely additive over v5: nothing is renamed or dropped.
+pub const SCHEMA_VERSION: u64 = 6;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -905,6 +914,191 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // v6: the projection a graph record belongs to. Every record
+            // the graph writers create carries it, so a rebuild into a
+            // named projection never bleeds into the scans of the active
+            // one and the active one never reads the rebuild.
+            spec(
+                "hodei.graph.projection",
+                "hodei.graph.projection: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            // v6: the projection frontier. One checkpoint row per
+            // (tenant, consumer, stream); the key is exact and `@upsert`,
+            // so the server itself refuses two rows claiming one
+            // checkpoint. The next position moves ONLY inside the
+            // transaction that applied the changeset it certifies.
+            spec(
+                "hodei.checkpoint.key",
+                "hodei.checkpoint.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.checkpoint.consumer",
+                "hodei.checkpoint.consumer: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.stream_id",
+                "hodei.checkpoint.stream_id: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.tenant",
+                "hodei.checkpoint.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.next_position",
+                "hodei.checkpoint.next_position: int @index(int) .",
+                "int",
+                Some("int"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.last_event",
+                "hodei.checkpoint.last_event: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.last_fingerprint",
+                "hodei.checkpoint.last_fingerprint: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.updated_at",
+                "hodei.checkpoint.updated_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            // v6: the durable relation delta. One node per dedup identity
+            // (`tenant#cause#kind#relation#evidence`), exact and
+            // `@upsert`: the same change said twice is ONE node, so a
+            // replay never duplicates a delta. The sequence is the
+            // per-tenant order the consumers read from.
+            spec(
+                "hodei.delta.key",
+                "hodei.delta.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.delta.seq",
+                "hodei.delta.seq: int @index(int) .",
+                "int",
+                Some("int"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.tenant",
+                "hodei.delta.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.kind",
+                "hodei.delta.kind: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.relation",
+                "hodei.delta.relation: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.from",
+                "hodei.delta.from: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.to",
+                "hodei.delta.to: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.evidence",
+                "hodei.delta.evidence: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.cause",
+                "hodei.delta.cause: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.observed_at",
+                "hodei.delta.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -948,18 +1142,32 @@ pub fn hodei_schema() -> HodeiSchema {
             "type HodeiEvidenceExternal {\n  hodei.evidence.external_key\n  hodei.evidence.external_evidence_id\n}"
                 .to_owned(),
             // The reified graph projection (v5): nodes, relations and
-            // their supports, with the two native navigable edges.
+            // their supports, with the two native navigable edges. Every
+            // record names the projection it belongs to (v6), so a
+            // rebuild builds into its own namespace.
             "type HodeiGraphNode {\n  hodei.graph.node.key\n  hodei.graph.node.tenant\n  \
              hodei.graph.node.kind\n  hodei.graph.node.attributes\n  \
-             hodei.graph.node.observed_at\n  hodei.graph.out\n}"
+             hodei.graph.node.observed_at\n  hodei.graph.projection\n  hodei.graph.out\n}"
                 .to_owned(),
             "type HodeiGraphRelation {\n  hodei.graph.rel.key\n  hodei.graph.rel.tenant\n  \
              hodei.graph.rel.type\n  hodei.graph.rel.status\n  hodei.graph.rel.from_hrn\n  \
              hodei.graph.rel.to_hrn\n  hodei.graph.rel.evidence\n  hodei.graph.rel.observed_at\n  \
-             hodei.graph.to\n  hodei.graph.supports\n}"
+             hodei.graph.projection\n  hodei.graph.to\n  hodei.graph.supports\n}"
                 .to_owned(),
             "type HodeiGraphSupport {\n  hodei.graph.support.key\n  \
-             hodei.graph.support.evidence\n  hodei.graph.support.observed_at\n}"
+             hodei.graph.support.evidence\n  hodei.graph.support.observed_at\n  \
+             hodei.graph.projection\n}"
+                .to_owned(),
+            // The projection frontier (v6): the checkpoint row and the
+            // durable relation deltas.
+            "type HodeiCheckpoint {\n  hodei.checkpoint.key\n  hodei.checkpoint.consumer\n  \
+             hodei.checkpoint.stream_id\n  hodei.checkpoint.tenant\n  \
+             hodei.checkpoint.next_position\n  hodei.checkpoint.last_event\n  \
+             hodei.checkpoint.last_fingerprint\n  hodei.checkpoint.updated_at\n}"
+                .to_owned(),
+            "type HodeiDelta {\n  hodei.delta.key\n  hodei.delta.seq\n  hodei.delta.tenant\n  \
+             hodei.delta.kind\n  hodei.delta.relation\n  hodei.delta.from\n  hodei.delta.to\n  \
+             hodei.delta.evidence\n  hodei.delta.cause\n  hodei.delta.observed_at\n}"
                 .to_owned(),
         ],
     )
