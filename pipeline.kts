@@ -410,6 +410,7 @@ pipeline {
                         // script sale 77 y la prueba lo dice: NOT_RUN visible).
                         // Con la documentacion que lee HSP-243, que no
                         // necesita ni Dgraph ni legacy.
+                        "--test hsp236_rpm_group",
                         "--test hsp241_community_quickstart",
                         "--test hsp243_user_guides",
                         // Release verificable: SBOM SPDX/CycloneDX, provenance,

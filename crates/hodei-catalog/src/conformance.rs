@@ -148,6 +148,8 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
         (RepositoryFormat::Go, RepositoryMode::Group) => &["hsp232_go_group"],
         (RepositoryFormat::Apt, RepositoryMode::Hosted) => &["hsp122_apt_e2e", "hsp122_apt_client"],
         (RepositoryFormat::Rpm, RepositoryMode::Hosted) => &["hsp122_yum_e2e", "hsp122_yum_client"],
+        (RepositoryFormat::Rpm, RepositoryMode::Proxy) => &["hsp235_rpm_proxy"],
+        (RepositoryFormat::Rpm, RepositoryMode::Group) => &["hsp236_rpm_group"],
         (RepositoryFormat::Conan, RepositoryMode::Hosted) => &["hsp159_conan_client"],
         (RepositoryFormat::Galaxy, RepositoryMode::Hosted) => &["hsp217_galaxy_client"],
         (RepositoryFormat::Terraform, RepositoryMode::Hosted) => {

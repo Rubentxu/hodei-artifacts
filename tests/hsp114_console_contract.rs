@@ -613,7 +613,11 @@ async fn the_capabilities_say_what_can_be_created() {
         json!(["hosted"]),
         "the distro client installs from what this hub publishes"
     );
-    assert_eq!(of("rpm")["modes"], json!(["hosted"]));
+    assert_eq!(
+        of("rpm")["modes"],
+        json!(["hosted", "proxy", "group"]),
+        "the rpm surface serves the three modalities"
+    );
     assert_eq!(
         of("conan")["modes"],
         json!(["hosted"]),

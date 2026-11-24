@@ -187,7 +187,11 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
-            RepositoryFormat::Rpm => &[RepositoryMode::Hosted],
+            RepositoryFormat::Rpm => &[
+                RepositoryMode::Hosted,
+                RepositoryMode::Proxy,
+                RepositoryMode::Group,
+            ],
             RepositoryFormat::NuGet => &[RepositoryMode::Hosted, RepositoryMode::Proxy],
             RepositoryFormat::Go => &[
                 RepositoryMode::Hosted,
