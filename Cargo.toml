@@ -174,6 +174,11 @@ description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation o
 
 
 
+[features]
+default = []
+# Statically link OpenSSL for portable container/release binaries (e.g. Debian Bookworm).
+vendored-openssl = ["dep:openssl"]
+
 [dependencies]
 kernel = { path = "crates/kernel" }
 hodei-iam = { path = "crates/hodei-iam" }
@@ -288,6 +293,7 @@ bytes = { workspace = true }
 
 # Testing utilities
 tempfile = { workspace = true }
+openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [dev-dependencies]
 hodei-hrn = "0.2.1"

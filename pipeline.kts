@@ -289,6 +289,9 @@ pipeline {
                         // contra el binario real: publica, descarga,
                         // comprueba los digests, reinicia y limpia.
                         "--test hsp241_community_quickstart",
+                        // Imagen OCI reproducible, perfiles declarativos y
+                        // smoke de despliegue real con Podman (HSP-242).
+                        "--test hsp242_oci_image",
                         // Prueba contra Dgraph real (HSP-181): sin
                         // HODEI_GRAPH_IT_ENDPOINT la suite se salta a si
                         // misma (exit 0); con la variable corre los tres
