@@ -44,7 +44,7 @@ use crate::app_state::AppState;
 use crate::oci::failure::OciFailure;
 use crate::oci::target::{is_a_digest, the_digest_of_reference, the_tag_name};
 use crate::oci::{the_catalog, the_content_store};
-use crate::proxy::fetch::FetchError;
+use crate::proxy::fetch::{FetchError, Fetched};
 use crate::proxy::resolution::{self, Outcome};
 
 /// El prefijo de la ruta del asset de un manifiesto.
@@ -65,6 +65,11 @@ const BLOBS: &str = "blobs";
 /// la procedencia del contenido es una sola, se haya pedido por etiqueta o
 /// por digest.
 const TAGS: &str = "manifests/tag";
+
+/// El camino de la lista de etiquetas en la superficie de la distribucion.
+///
+/// `v2/<nombre>/tags/list`: la lista de lo que el upstream tiene.
+const TAGS_LIST: &str = "tags/list";
 
 /// Los recibos que se leen para saber si un contenido tiene procedencia.
 const RECEIPTS_READ_ON_THE_HOT_PATH: usize = 4;
@@ -154,6 +159,186 @@ pub async fn the_blob(
         head,
     )
     .await
+}
+
+/// Lo que el upstream responde cuando se le pregunta por sus etiquetas.
+///
+/// La distincion es la que decide si el listado de un grupo se sirve: un
+/// upstream que **responde** con su lista aporta etiquetas, y un upstream que
+/// no se puede preguntar por la lista --su ambito no la cubre-- es un
+/// miembro que no puede enumerar, no un fallo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TheUpstreamTags {
+    /// El upstream dio la lista de sus etiquetas.
+    Listed(Vec<String>),
+    /// El upstream **no** se puede preguntar por su lista.
+    NotInScope,
+}
+
+/// Las etiquetas que el upstream del proxy tiene.
+///
+/// `GET /v2/<nombre>/tags/list` en el upstream del **miembro**: el grupo no
+/// renombra a su miembro, y el nombre que se pregunta es el del miembro.
+///
+/// Es el camino de la resolucion **sin** la respuesta: lo que un grupo OCI
+/// consulta en un miembro proxy para enumerar lo que hay. Un proxy no tiene
+/// filas de etiqueta en el catalogo --su etiqueta es un puntero que solo
+/// existe si alguien ya la pidio--, asi que la lista del proxy vive en su
+/// upstream.
+///
+/// La lista es **metadata**, no contenido: no se guarda, no se publica como
+/// asset del miembro y no se sirve. Lo que se comprueba es lo de siempre: la
+/// salida a la red, el ambito del upstream y la credencial, que solo viaja al
+/// origen declarado.
+pub async fn the_resolved_tags(
+    state: &AppState,
+    repository: &RepositoryDescriptor,
+    name: &str,
+    headers: &HeaderMap,
+) -> Result<TheUpstreamTags, OciFailure> {
+    let plane = state
+        .proxy_plane
+        .as_ref()
+        .ok_or_else(|| OciFailure::unavailable("this service has no egress for remote proxies"))?;
+    let correlation = crate::handlers::correlation_id(headers, &state.identity);
+
+    // La configuracion del upstream. Una configuracion que no se entiende no
+    // se sustituye por un valor por defecto: un ajuste de salida a la red
+    // ilegible no puede degradar a "permitido".
+    let upstream = match UpstreamConfig::of(&repository.config) {
+        Ok(Some(upstream)) => upstream,
+        Ok(None) => return Err(OciFailure::unavailable("the proxy is not configured")),
+        Err(_) => {
+            return Err(OciFailure::unavailable(
+                "the proxy configuration is not valid",
+            ));
+        }
+    };
+
+    // El camino del upstream: `v2/<nombre>/tags/list`.
+    let upstream_path = format!("v2/{name}/{TAGS_LIST}");
+    // Lo que no cae en un scope no se pide al upstream: un upstream que no
+    // cubre el listado es un miembro que no puede enumerar.
+    if !upstream.in_scope(&upstream_path) {
+        return Ok(TheUpstreamTags::NotInScope);
+    }
+    let Some(url) = upstream.target(&upstream_path) else {
+        return Ok(TheUpstreamTags::NotInScope);
+    };
+
+    // El token: el que el upstream ya pidio, si sigue valiendo.
+    let token_key = format!("{}|{}", repository.repo_key, upstream.origin());
+    let mut token = plane.tokens.get(&token_key);
+    let mut challenged = false;
+
+    let body = loop {
+        let fetched = plane
+            .fetcher
+            .open_conditional_with_token(&upstream, url.clone(), None, None, token.as_deref())
+            .await;
+        match fetched {
+            Ok(Fetched::Content(opened)) => break the_body(*opened).await?,
+            // El upstream pide una credencial: se resuelve el reto y se
+            // reintenta **una** vez. Un reto que no se puede satisfacer es un
+            // upstream que no sirve, no un bucle.
+            Ok(Fetched::Unauthorized { challenge }) => {
+                if challenged {
+                    return Err(OciFailure::unavailable(
+                        "the upstream asks for a credential that could not be used",
+                    ));
+                }
+                challenged = true;
+                let challenge = challenge.unwrap_or_default();
+                let Some(credential) = plane.fetcher.the_credential(&upstream) else {
+                    return Err(OciFailure::unavailable(
+                        "the upstream asks for a credential and the repository has none",
+                    ));
+                };
+                let fresh = the_token(plane, &upstream, &challenge, &credential).await?;
+                plane.tokens.put(
+                    &token_key,
+                    fresh.clone(),
+                    std::time::Duration::from_secs(300),
+                );
+                token = Some(fresh);
+            }
+            Ok(Fetched::NotModified(_)) => {
+                return Err(OciFailure::unavailable(
+                    "the upstream answered a conditional question that was not asked",
+                ));
+            }
+            // Un upstream que no tiene ese repositorio no tiene etiquetas:
+            // es un miembro sin nada que enumerar, no un fallo.
+            Err(FetchError::NotFound) => return Ok(TheUpstreamTags::Listed(Vec::new())),
+            Err(error) => return Err(the_fetch_failure(error)),
+        }
+    };
+
+    tracing::debug!(
+        target: "hodei_artifacts::oci",
+        repository = %repository.repo_key,
+        correlation_id = %correlation,
+        "the tag list of an upstream was read"
+    );
+    Ok(TheUpstreamTags::Listed(the_tag_names(&body)?))
+}
+
+/// Los bytes del cuerpo de la respuesta del upstream.
+///
+/// Los bytes se leen con el guardian de siempre: el presupuesto del cliente
+/// y el checksum que el upstream declare. Lo que no se declara no se exige:
+/// una lista de etiquetas es metadata, y el protocolo no le pide un digest.
+async fn the_body(mut opened: crate::proxy::fetch::Opened) -> Result<Vec<u8>, OciFailure> {
+    let mut guard = opened.guard(false);
+    let mut body = Vec::new();
+    while let Some(chunk) = opened
+        .chunk()
+        .await
+        .map_err(|_| OciFailure::unavailable("the answer of the upstream could not be read"))?
+    {
+        guard.push(chunk.len()).map_err(|_| {
+            OciFailure::unavailable("the answer of the upstream is larger than allowed")
+        })?;
+        body.extend_from_slice(&chunk);
+    }
+    let digest = ContentDigest::of_bytes(&body);
+    guard
+        .finish(&digest.value)
+        .map_err(|_| OciFailure::unavailable("the answer of the upstream is not usable"))?;
+    Ok(body)
+}
+
+/// Los nombres de etiqueta de la lista del upstream.
+///
+/// La lista de la distribucion es `{"name": ..., "tags": [...]}`. Lo que
+/// importa son los nombres: una lista sin `tags` es una lista vacia, y un
+/// nombre que no es texto no es una etiqueta.
+fn the_tag_names(body: &[u8]) -> Result<Vec<String>, OciFailure> {
+    let answer: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|_| OciFailure::unavailable("the tag list of the upstream is not readable"))?;
+    let Some(tags) = answer.get("tags").and_then(|value| value.as_array()) else {
+        return Ok(Vec::new());
+    };
+    Ok(tags
+        .iter()
+        .filter_map(|tag| tag.as_str().map(str::to_string))
+        .collect())
+}
+
+/// El fallo de la salida a la red, en el dialecto de la distribucion.
+///
+/// Lo que el cliente ve no dice ni la URL del upstream ni el motivo exacto:
+/// el upstream es la red interna del servicio.
+fn the_fetch_failure(error: FetchError) -> OciFailure {
+    match error {
+        FetchError::Unauthorized(_) => {
+            OciFailure::unavailable("the upstream asks for a credential that could not be used")
+        }
+        FetchError::Offline => {
+            OciFailure::unavailable("the proxy is offline and does not reach any upstream")
+        }
+        _ => OciFailure::unavailable("the upstream did not deliver a usable answer"),
+    }
 }
 
 /// El contenido que el upstream resuelve, con su procedencia.

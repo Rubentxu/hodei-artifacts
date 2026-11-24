@@ -123,7 +123,14 @@ pub async fn content(
         // preguntas por el repositorio, y las responde la superficie de
         // las consultas.
         Target::Tags { name } => {
-            crate::oci::query::the_tags(&state, &context, &name, uri.query().unwrap_or("")).await
+            crate::oci::query::the_tags(
+                &state,
+                &context,
+                &name,
+                uri.query().unwrap_or(""),
+                &headers,
+            )
+            .await
         }
         Target::Referrers { name, digest } => {
             crate::oci::query::the_referrers(

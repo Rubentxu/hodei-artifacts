@@ -646,10 +646,16 @@ async fn resolve_blob(
 /// resuelve al descargar. Y el listado del grupo **no se sirve parcial**: si
 /// la lista de un miembro no se puede obtener, el listado entero es un
 /// error, porque una lista a medias parece completa y no lo es.
+///
+/// Un miembro **proxy** aporta las etiquetas de su **upstream**: en un proxy
+/// la etiqueta es un puntero, no una fila del catalogo, asi que la unica
+/// lista que hay es la del upstream. Se pregunta con el nombre del **miembro**,
+/// que es el nombre que el upstream conoce.
 pub async fn the_tags(
     state: &AppState,
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
+    headers: &HeaderMap,
 ) -> Result<Vec<(String, String)>, OciFailure> {
     let reader = state
         .catalog_reader
@@ -659,6 +665,42 @@ pub async fn the_tags(
     let (leaves, _denied) = the_governed_leaves(state, context, group).await?;
     let mut names: Vec<(String, String)> = Vec::new();
     for member in leaves {
+        // Un miembro **proxy** no tiene filas de etiqueta en el catalogo: su
+        // lista vive en el upstream, y se pregunta con el nombre del
+        // miembro.
+        if member.mode == RepositoryMode::Proxy {
+            let listed = crate::oci::proxy::the_resolved_tags(
+                state,
+                &member,
+                &member.repo_key,
+                headers,
+            )
+            .await
+            // El listado del grupo **no se sirve parcial**: si la lista de un
+            // miembro no se puede obtener --un upstream caido, una credencial
+            // que no se puede usar-- el listado entero es un error. Una
+            // lista a medias parece completa y no lo es.
+            ?;
+            let crate::oci::proxy::TheUpstreamTags::Listed(tags) = listed else {
+                // El upstream no se puede preguntar por su lista: es un
+                // miembro que **no puede enumerar**, no un fallo. No aporta
+                // etiquetas y los demas miembros se listan igual.
+                continue;
+            };
+            // El filtro de confianza no se puede aplicar por etiqueta: la
+            // lista del upstream son nombres, no digest. La compuerta se
+            // aplica al **contenido**, en la resolucion, que es donde se
+            // decide si los bytes se pueden servir.
+            for tag in tags {
+                // Una entrada por nombre: el primer miembro que tiene la
+                // etiqueta es el que gana, y es el que la resuelve al
+                // descargar.
+                if !names.iter().any(|(name, _)| *name == tag) {
+                    names.push((tag, member.repo_key.clone()));
+                }
+            }
+            continue;
+        }
         let tags = reader
             .tags(account, &member.repo_key)
             .await

@@ -16,7 +16,7 @@
 //! repositorio de otra cuenta no existe para esta, y se responde con el
 //! `NAME_UNKNOWN` de la distribucion.
 
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use hodei_evidence::ContentDigest;
 use hodei_hub::oci::{DOCKER_MANIFEST_LIST_MEDIA_TYPE, INDEX_MEDIA_TYPE};
@@ -64,6 +64,7 @@ pub async fn the_tags(
     context: &hodei_authz::VerifiedContext,
     name: &str,
     query: &str,
+    headers: &HeaderMap,
 ) -> Result<Response, OciFailure> {
     let repository = the_repository(state, context, name).await?;
     the_decision(
@@ -82,7 +83,7 @@ pub async fn the_tags(
     // puede obtener, el listado entero es un error, porque una lista a
     // medias parece completa y no lo es.
     let tags: Vec<String> = if repository.mode == hodei_catalog::RepositoryMode::Group {
-        crate::oci::group::the_tags(state, context, &repository)
+        crate::oci::group::the_tags(state, context, &repository, headers)
             .await?
             .into_iter()
             .map(|(name, _member)| name)
