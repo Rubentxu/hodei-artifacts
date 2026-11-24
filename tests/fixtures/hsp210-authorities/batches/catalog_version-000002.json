@@ -1,0 +1,1 @@
+[{"id":"catalog_version:acme|main|widget|2.0.0","account":"acme","repository":"main","package_name":"widget","package_version":"2.0.0","release_digest":"sha256:rel200"},{"id":"catalog_version:globex|main|gadget|0.1.0","account":"globex","repository":"main","package_name":"gadget","package_version":"0.1.0","release_digest":"sha256:rel010"}]

@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.6.0",
+  "id": "GHSA-hodei-intel-0001",
+  "aliases": ["CVE-2026-22222"],
+  "published": "2026-09-30T00:00:00Z",
+  "modified": "2026-10-05T00:00:00Z",
+  "affected": [
+    {
+      "package": {
+        "ecosystem": "Maven",
+        "name": "org.example:lib-maven",
+        "purl": "pkg:maven/org.example/lib-maven@1.5.0"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [{ "introduced": "1.2" }, { "fixed": "2" }]
+        }
+      ]
+    },
+    {
+      "package": {
+        "ecosystem": "npm",
+        "name": "left-pad"
+      },
+      "ranges": [
+        {
+          "type": "ECOSYSTEM",
+          "events": [{ "introduced": "1.0.0" }, { "last_affected": "2.3.4" }]
+        }
+      ]
+    }
+  ],
+  "references": [
+    { "type": "ADVISORY", "url": "https://example.test/advisories/GHSA-hodei-intel-0001" }
+  ],
+  "database_specific": { "severity": "HIGH" }
+}

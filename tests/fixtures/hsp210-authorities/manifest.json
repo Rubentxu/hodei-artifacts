@@ -1,0 +1,228 @@
+{
+  "format": 1,
+  "tool_version": "0.1.0",
+  "source": {
+    "engine": "surrealdb",
+    "engine_version": "2.3.9",
+    "backend": "rocksdb",
+    "namespace": "hodei",
+    "database": "artifacts"
+  },
+  "frontier": {
+    "tables": {
+      "iam_account": 2,
+      "iam_policy": 2,
+      "catalog_repository": 3,
+      "catalog_version": 4,
+      "catalog_asset": 2,
+      "catalog_reference": 1,
+      "catalog_tag": 2,
+      "trust_grant": 2,
+      "trust_decision": 3,
+      "provenance_receipt": 2,
+      "catalog_audit_outbox": 2,
+      "event_ledger": 4,
+      "event_ledger_head": 2
+    },
+    "ledger_rows": 4,
+    "ledger_max_position": 2,
+    "head_rows": 2
+  },
+  "tables": [
+    {
+      "table": "iam_account",
+      "rows": 2,
+      "batches": [
+        {
+          "file": "batches/iam_account-000001.json",
+          "sha256": "8a9615e0be0fad730c63f34069312a7e771429457f1f9cef6ea388de3cd4b85c",
+          "rows": 2,
+          "first_id": "iam_account:acme",
+          "last_id": "iam_account:globex"
+        }
+      ]
+    },
+    {
+      "table": "iam_policy",
+      "rows": 2,
+      "batches": [
+        {
+          "file": "batches/iam_policy-000001.json",
+          "sha256": "369fccb46d5b6e1982f622ac0688ef668dab68b52b39db74c3b5c460a45bddcd",
+          "rows": 2,
+          "first_id": "iam_policy:admin",
+          "last_id": "iam_policy:read-artifacts"
+        }
+      ]
+    },
+    {
+      "table": "catalog_repository",
+      "rows": 3,
+      "batches": [
+        {
+          "file": "batches/catalog_repository-000001.json",
+          "sha256": "e925e4c397308f287de05b7585bf613129ca096c284cb7d6bea07a457b922884",
+          "rows": 2,
+          "first_id": "catalog_repository:acme|main",
+          "last_id": "catalog_repository:acme|proxy"
+        },
+        {
+          "file": "batches/catalog_repository-000002.json",
+          "sha256": "709348890d2204a4f0b09d81c5189dcfe0c5df0c769c9533aea411ea45cfb820",
+          "rows": 1,
+          "first_id": "catalog_repository:globex|main",
+          "last_id": "catalog_repository:globex|main"
+        }
+      ]
+    },
+    {
+      "table": "catalog_version",
+      "rows": 4,
+      "batches": [
+        {
+          "file": "batches/catalog_version-000001.json",
+          "sha256": "caff586255f321f165269e4a4abf7be3855f73529731ccd44c8aa93ed43c6647",
+          "rows": 2,
+          "first_id": "catalog_version:acme|main|widget|1.0.0",
+          "last_id": "catalog_version:acme|main|widget|1.1.0"
+        },
+        {
+          "file": "batches/catalog_version-000002.json",
+          "sha256": "b3fc9fd8126eeda63d575d2f8bbdd47ac7d4a79f1405f8610d729b9c722f5a01",
+          "rows": 2,
+          "first_id": "catalog_version:acme|main|widget|2.0.0",
+          "last_id": "catalog_version:globex|main|gadget|0.1.0"
+        }
+      ]
+    },
+    {
+      "table": "catalog_asset",
+      "rows": 2,
+      "batches": [
+        {
+          "file": "batches/catalog_asset-000001.json",
+          "sha256": "69411ff9a09ef2d2ad97dcc5d6670bd18882de257507f764a8d54fe78a3c9c3f",
+          "rows": 2,
+          "first_id": "catalog_asset:acme|main|widget-1.0.0.bin",
+          "last_id": "catalog_asset:acme|main|widget-1.1.0.bin"
+        }
+      ]
+    },
+    {
+      "table": "catalog_reference",
+      "rows": 1,
+      "batches": [
+        {
+          "file": "batches/catalog_reference-000001.json",
+          "sha256": "8beb6c2d383350832b488677b455b7509614c439e5c73f915984ceba1ea62fb8",
+          "rows": 1,
+          "first_id": "catalog_reference:acme|main|dep.txt",
+          "last_id": "catalog_reference:acme|main|dep.txt"
+        }
+      ]
+    },
+    {
+      "table": "catalog_tag",
+      "rows": 2,
+      "batches": [
+        {
+          "file": "batches/catalog_tag-000001.json",
+          "sha256": "43e06ec3d8fe43a04d9a0a6247e6c5c6f12dc906fb7152b438c23d3f9d8b11af",
+          "rows": 2,
+          "first_id": "catalog_tag:acme|main|latest",
+          "last_id": "catalog_tag:acme|main|stable"
+        }
+      ]
+    },
+    {
+      "table": "trust_grant",
+      "rows": 2,
+      "batches": [
+        {
+          "file": "batches/trust_grant-000001.json",
+          "sha256": "d862aed847a800d1dcc5f03dc63d9ae018573937b658308d9399278ab999f094",
+          "rows": 2,
+          "first_id": "trust_grant:acme|widget-allow",
+          "last_id": "trust_grant:globex|deny-all"
+        }
+      ]
+    },
+    {
+      "table": "trust_decision",
+      "rows": 3,
+      "batches": [
+        {
+          "file": "batches/trust_decision-000001.json",
+          "sha256": "d91cdec742ef30d16f57627369f9ce930aee4052c1c9dd030dc3dafb6315cca6",
+          "rows": 3,
+          "first_id": "trust_decision:d-0001",
+          "last_id": "trust_decision:d-0003"
+        }
+      ]
+    },
+    {
+      "table": "provenance_receipt",
+      "rows": 2,
+      "batches": [
+        {
+          "file": "batches/provenance_receipt-000001.json",
+          "sha256": "3a3bbc2c3a0acc7ca76bbbbbaed247253d3e2a627e2c38ef73839dce40ce5706",
+          "rows": 2,
+          "first_id": "provenance_receipt:pr-0001",
+          "last_id": "provenance_receipt:pr-0002"
+        }
+      ]
+    },
+    {
+      "table": "catalog_audit_outbox",
+      "rows": 2,
+      "batches": [
+        {
+          "file": "batches/catalog_audit_outbox-000001.json",
+          "sha256": "4916459e82d9e9e696986fc6b4f52d2629e1052a19bfca138c06160adee19d0f",
+          "rows": 2,
+          "first_id": "catalog_audit_outbox:o-0001",
+          "last_id": "catalog_audit_outbox:o-0002"
+        }
+      ]
+    },
+    {
+      "table": "event_ledger",
+      "rows": 4,
+      "batches": [
+        {
+          "file": "batches/event_ledger-000001.json",
+          "sha256": "ed311c5c1a466b939aafc5f90f386dbf1209d1d9282bdf379053ab52ea0d9ebf",
+          "rows": 2,
+          "first_id": "event_ledger:stream_a,0",
+          "last_id": "event_ledger:stream_a,1"
+        },
+        {
+          "file": "batches/event_ledger-000002.json",
+          "sha256": "cdf29a2c15ca76bb81ab5b2c851bca7899a69d2a55a1eb1d321f1b249e3bef31",
+          "rows": 2,
+          "first_id": "event_ledger:stream_a,2",
+          "last_id": "event_ledger:stream_b,0"
+        }
+      ]
+    },
+    {
+      "table": "event_ledger_head",
+      "rows": 2,
+      "batches": [
+        {
+          "file": "batches/event_ledger_head-000001.json",
+          "sha256": "6c9f6248b9297638fc07bd7cd72973e5c8496c62e122f6ac893fa66eb3c198f5",
+          "rows": 2,
+          "first_id": "event_ledger_head:stream_a",
+          "last_id": "event_ledger_head:stream_b"
+        }
+      ]
+    }
+  ],
+  "blobs": {
+    "policy": "referenced-by-digest",
+    "copied": false
+  },
+  "content_sha256": "0fafe522ffc67a13ab6c9241f6030cbbb33a0bb36f8ad0d0e1fb9fdba78b4484"
+}
