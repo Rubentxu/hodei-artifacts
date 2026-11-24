@@ -82,7 +82,7 @@ deploy/dgraph/sbom-scan.sh   # syft 1.57.2 + trivy 0.76.2, ambos fijados por dig
 ## TLS cliente↔Alpha y nodo↔nodo (HSP-177)
 
 Estado: **PASS en laboratorio** (16/16 comprobaciones, salida en
-[`evidence/tls-verify.out`](evidence/tls-verify.out)).
+[`evidence/tls-verify.txt`](evidence/tls-verify.txt)).
 
 ```sh
 cd deploy/dgraph
