@@ -3,8 +3,9 @@
 //!
 //! # The shape of the work
 //!
-//! Every table is read by keyset pagination -- `WHERE id > $after ORDER
-//! BY id ASC LIMIT $n` -- so the memory of the run is one batch, never a
+//! Every table is read by keyset pagination over a record-id range --
+//! `SELECT * FROM $range LIMIT $n`, `$range` being `table:'after'>..` --
+//! so the memory of the run is one batch, never a
 //! table (the HSP-174 lesson: a full catalog materialized in memory is a
 //! timeout with extra steps). The batch bytes are canonical JSON (sorted
 //! keys, compact), hashed with SHA-256 as they are written, and recorded
@@ -31,9 +32,11 @@
 //! reconciles every referenced digest against it.
 
 use std::collections::{BTreeMap, HashSet};
+use std::ops::Bound;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use surrealdb::sql::{Id, IdRange, Thing};
 use surrealdb::{Connection, Surreal};
 
 use crate::error::ExportError;
@@ -305,42 +308,80 @@ fn table_iter(
     EXPORTED_TABLES.iter().skip(skip).copied()
 }
 
-/// Reads one batch of a table, by keyset pagination.
+/// The statement of every batch: a read of one record-id range, bound
+/// as `$range`, with the batch size in the `LIMIT`.
+///
+/// No `WHERE` and no `ORDER BY`: the range itself is the keyset
+/// predicate, and the engine walks a record-id range in key order.
+pub fn batch_sql(limit: usize) -> String {
+    format!("SELECT * FROM $range LIMIT {limit}")
+}
+
+/// The record-id range a batch reads: every key of `table` strictly after
+/// `after`, or from the start of the table when there is no `after`.
+///
+/// Bound as a record id whose key is a range (`table:'after'>..`), the
+/// planner answers with `Iterate Range`: the scan starts at the key and
+/// stops at the limit, so the work per batch is what the limit says, not
+/// what the table has.
+pub fn batch_range(table: &str, after: Option<Id>) -> Result<Thing, ExportError> {
+    let beg = match after {
+        Some(key) => Bound::Excluded(key),
+        None => Bound::Unbounded,
+    };
+    let range = IdRange::try_from((beg, Bound::Unbounded)).map_err(db_error)?;
+    Ok(Thing::from((table.to_string(), Id::Range(Box::new(range)))))
+}
+
+/// Reads one batch of a table, by keyset pagination on the record id.
 ///
 /// The first batch of a table has no `$after`; the rest continue strictly
-/// after the last id read. The query is `ORDER BY id ASC LIMIT $n`.
+/// after the last id read. The statement is [`batch_sql`] over
+/// [`batch_range`].
 ///
-/// COST WARNING (measured, `tests/hsp179_keyset_plan.rs`, SurrealDB 2.7):
-/// the planner does NOT seek on record-id predicates — both batch forms
-/// plan `Iterate Table` with no range bound, so every batch walks the
-/// whole table and a full export is quadratic in rows per table. Correct
-/// under quiesce, expensive on big corpora; the replacement strategy
-/// (range on a real indexed field, or record-id ranges once EXPLAIN
-/// proves they seek) is a decision recorded for the import slice
-/// (HSP-210).
+/// COST (measured, `tests/hsp179_keyset_plan.rs`, SurrealDB 2.7): the
+/// planner does NOT seek on a `WHERE id > $after` predicate (it plans
+/// `Iterate Table` and walks the whole table per batch, so the export was
+/// quadratic), but it DOES seek on a record-id range: `Iterate Range`
+/// with the bound in its detail and the limit pushed into the scan. The
+/// rows come back in key order, which for the string keys of every
+/// exported table is the order `ORDER BY id ASC` gave, so the manifest
+/// bytes do not change. The rows of a batch are distinct by key (the
+/// range cannot repeat one) and [`write_batch`] still rejects a repeated
+/// id or identity.
 async fn read_batch<C: Connection>(
     db: &Surreal<C>,
     table: &str,
     after: Option<&str>,
     limit: usize,
 ) -> Result<Vec<Value>, ExportError> {
-    let sql = match after {
-        None => format!("SELECT * FROM {table} ORDER BY id ASC LIMIT {limit}"),
-        Some(_) => format!("SELECT * FROM {table} WHERE id > $after ORDER BY id ASC LIMIT {limit}"),
+    let key = match after {
+        None => None,
+        Some(last_id) => {
+            // The parse error of the engine's id grammar is opaque (`()`),
+            // so the message names the id itself and what it is for.
+            let thing: Thing = last_id.parse().map_err(|_| ExportError::RowDecode {
+                table: table.to_string(),
+                id: last_id.to_string(),
+                detail: "the last id of the previous batch is not a record id this engine can read"
+                    .to_string(),
+            })?;
+            if thing.tb != table {
+                return Err(ExportError::RowDecode {
+                    table: table.to_string(),
+                    id: last_id.to_string(),
+                    detail: "the last id of the previous batch belongs to another table"
+                        .to_string(),
+                });
+            }
+            Some(thing.id)
+        }
     };
-    let mut query = db.query(sql);
-    if let Some(last_id) = after {
-        // The parse error of the engine's id grammar is opaque (`()`),
-        // so the message names the id itself and what it is for.
-        let thing: surrealdb::sql::Thing = last_id.parse().map_err(|_| ExportError::RowDecode {
-            table: table.to_string(),
-            id: last_id.to_string(),
-            detail: "the last id of the previous batch is not a record id this engine can read"
-                .to_string(),
-        })?;
-        query = query.bind(("after", thing));
-    }
-    let mut response = query.await.map_err(db_error)?;
+    let mut response = db
+        .query(batch_sql(limit))
+        .bind(("range", batch_range(table, key)?))
+        .await
+        .map_err(db_error)?;
     result_rows(&mut response)
 }
 
