@@ -843,4 +843,71 @@ describe('PackageDetailView', () => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     }
   );
+
+  it('investigates the canonical subject from the Evidence tab', async () => {
+    const user = userEvent.setup();
+    let investigationRequest: unknown;
+    server.use(
+      http.post('/api/v1/investigations', async ({ request }) => {
+        investigationRequest = await request.json();
+        return HttpResponse.json({
+          schema_version: '1',
+          subject: thePackage.capsule.subject,
+          findings: [
+            {
+              kind: 'verified_fact',
+              statement: 'Digest evidence is verified.',
+              citations: ['ev-1'],
+              status: 'verified',
+              basis: 'Deterministic check.',
+            },
+          ],
+          coverage: 'complete',
+          read_set: { generations: [], stamps: [] },
+        });
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Evidence' }));
+    await user.click(await screen.findByRole('button', { name: 'Investigate' }));
+
+    expect(await screen.findByText('Digest evidence is verified.')).toBeInTheDocument();
+    expect(investigationRequest).toEqual({
+      subject: thePackage.capsule.subject,
+    });
+    expect(screen.getByText('Complete coverage')).toBeInTheDocument();
+  });
+
+  it('does not simulate investigation results when the route is unavailable', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post('/api/v1/investigations', () =>
+        HttpResponse.json(
+          { error: 'unavailable', message: 'investigation unavailable' },
+          { status: 503 }
+        )
+      )
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Evidence' }));
+    await user.click(await screen.findByRole('button', { name: 'Investigate' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The service cannot answer right now'
+    );
+    expect(screen.getByText(/No results were simulated\./)).toBeInTheDocument();
+    expect(screen.queryByText('Digest evidence is verified.')).not.toBeInTheDocument();
+  });
 });

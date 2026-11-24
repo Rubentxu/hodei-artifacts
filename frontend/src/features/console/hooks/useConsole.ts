@@ -218,3 +218,9 @@ export const useRevoke = () => {
   useSessionMutationGuard(mutation.reset);
   return mutation;
 };
+
+/** A read-only investigation of an artefact. */
+export const useInvestigate = () =>
+  useMutation({
+    mutationFn: api.investigate,
+  });

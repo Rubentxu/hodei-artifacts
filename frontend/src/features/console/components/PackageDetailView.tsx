@@ -45,9 +45,9 @@ import {
   encodeAssetPath,
   formatDigest,
 } from '../lib/packageReference';
-
 import { ConfirmDialog } from './ConfirmDialog';
 import { FailureNotice } from './FailureNotice';
+import { InvestigationPanel } from './InvestigationPanel';
 
 type PackageTab = 'overview' | 'evidence' | 'trust' | 'relationships';
 
@@ -549,7 +549,12 @@ export const PackageDetailView = ({
         className="flex flex-col gap-6"
       >
         {activeTab === 'overview' && <OverviewTab asset={asset} />}
-        {activeTab === 'evidence' && <EvidenceTab asset={asset} />}
+        {activeTab === 'evidence' && (
+          <>
+            <EvidenceTab asset={asset} />
+            <InvestigationPanel subject={asset.capsule.subject} />
+          </>
+        )}
         {activeTab === 'trust' && <TrustTab asset={asset} />}
         {activeTab === 'relationships' && <RelationshipsTab asset={asset} />}
       </div>

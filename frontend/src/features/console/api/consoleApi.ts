@@ -21,6 +21,8 @@ import { encodeAssetPath } from '../lib/packageReference';
 import type {
   Capabilities,
   CreateRepositoryBody,
+  InvestigationReport,
+  InvestigationRequest,
   PackageView,
   PromotionResult,
   RepositoryList,
@@ -150,13 +152,11 @@ export const createRepository = async (
 };
 
 /** A page of the search of the catalog. */
-
 export const search = async (
   params: SearchParams,
   signal?: AbortSignal
 ): Promise<SearchPage> => {
   const response = await client.get<SearchPage>('/search', { params, signal });
-
   return response.data;
 };
 
@@ -200,6 +200,22 @@ export const revoke = async (
   const response = await client.post<RevokeResult>('/promotions/revoke', body, {
     signal,
   });
+  return response.data;
+};
+
+/**
+ * A read-only investigation of an artefact.
+ *
+ * The subject is the canonical HRN provided by the service, and the
+ * question is optional and bounded. Nothing is written or promoted.
+ */
+export const investigate = async (
+  body: InvestigationRequest
+): Promise<InvestigationReport> => {
+  const response = await client.post<InvestigationReport>(
+    '/investigations',
+    body
+  );
   return response.data;
 };
 

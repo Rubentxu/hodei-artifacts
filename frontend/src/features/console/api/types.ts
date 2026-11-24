@@ -202,3 +202,66 @@ export interface CreateRepositoryBody {
   region?: string;
   settings?: Record<string, unknown>;
 }
+
+/** The class of an investigation finding. */
+export type InvestigationFindingKind =
+  | 'verified_fact'
+  | 'evidence_backed_claim'
+  | 'inference'
+  | 'uncertainty'
+  | 'recommendation';
+
+/** The verification status of an investigation finding. */
+export type InvestigationVerificationStatus =
+  | 'verified'
+  | 'unverified'
+  | 'contradicted'
+  | 'unverifiable';
+
+/** A finding returned by an investigation report. */
+export interface InvestigationFinding {
+  kind: InvestigationFindingKind;
+  statement: string;
+  citations: string[];
+  status: InvestigationVerificationStatus;
+  basis: string;
+}
+
+/** How much of the available scope was included in the report. */
+export type InvestigationCoverage =
+  | 'complete'
+  | { partial: { omitted: number } };
+
+/** The kind of resource stamped in an investigation read-set. */
+export type InvestigationReadStampKind = 'evidence' | 'relation' | 'policy';
+
+/** A digest-verified stamp of a resource read during investigation. */
+export interface InvestigationReadStamp {
+  kind: InvestigationReadStampKind;
+  resource: string;
+  verified_by: string;
+}
+
+/** The manifest of sources and stamps read during investigation. */
+export interface InvestigationReadSet {
+  generations: Array<[string, number]>;
+  stamps: InvestigationReadStamp[];
+}
+
+/** The request body for `POST /api/v1/investigations`. */
+export interface InvestigationRequest {
+  subject: string;
+  question?: string;
+  max_evidence?: number;
+  max_relations?: number;
+  max_bytes?: number;
+}
+
+/** The versioned report returned by `POST /api/v1/investigations`. */
+export interface InvestigationReport {
+  schema_version: string;
+  subject: string;
+  findings: InvestigationFinding[];
+  coverage: InvestigationCoverage;
+  read_set: InvestigationReadSet;
+}
