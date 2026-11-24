@@ -308,11 +308,9 @@ impl UpstreamConfig {
 
         // La clave del upstream es publica: es la que el cliente pide por
         // HTTP para verificar la firma del repodata. Una en blanco no es
-        // una clave: es una configuracion que nadie ha escrito.
-        let gpg_key_armor = raw
-            .gpg_key_armor
-            .map(|armor| armor.trim().to_string())
-            .filter(|armor| !armor.is_empty());
+        // una clave: es una configuracion que nadie ha escrito. El texto
+        // se guarda tal cual: lo que se sirve es lo que se configuro.
+        let gpg_key_armor = raw.gpg_key_armor.filter(|armor| !armor.trim().is_empty());
 
         Ok(Self {
             id: raw.id,
