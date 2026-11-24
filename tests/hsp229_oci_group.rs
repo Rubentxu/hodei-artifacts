@@ -1000,7 +1000,9 @@ fn serve(world: Arc<TheWorld>) -> u16 {
         .with_state(world);
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("the upstream binds");
     let port = listener.local_addr().expect("the address").port();
-    listener.set_nonblocking(true).expect("the upstream accepts");
+    listener
+        .set_nonblocking(true)
+        .expect("the upstream accepts");
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1281,14 +1283,20 @@ fn ac3_with_a_proxy_in_the_group_the_first_member_wins() {
             // Los tres miembros tienen la misma etiqueta y distinto digest.
             let first_manifest =
                 publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
-            publish(&lab.deployment, port, SECOND, b"la-capa-del-segundo-miembro");
+            publish(
+                &lab.deployment,
+                port,
+                SECOND,
+                b"la-capa-del-segundo-miembro",
+            );
             let proxy_manifest = lab.publish_upstream(b"la-capa-del-upstream");
             assert_ne!(first_manifest, proxy_manifest);
 
             // Gana el primero en el orden configurado.
             let answer = the_manifest(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
-                answer.status, 200,
+                answer.status,
+                200,
                 "el grupo no resuelve la etiqueta:\n{}",
                 lab.deployment.the_log()
             );
@@ -1333,12 +1341,14 @@ fn ac3_the_proxy_wins_when_it_is_the_first_member() {
 
             // Los dos miembros tienen la misma etiqueta y distinto digest.
             let proxy_manifest = lab.publish_upstream(b"la-capa-del-upstream");
-            let hosted_manifest = publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            let hosted_manifest =
+                publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
             assert_ne!(proxy_manifest, hosted_manifest);
 
             let answer = the_manifest(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
-                answer.status, 200,
+                answer.status,
+                200,
                 "el grupo no resuelve la etiqueta:\n{}",
                 lab.deployment.the_log()
             );
@@ -1402,7 +1412,8 @@ fn ac3_an_upstream_that_is_down_stops_the_resolution() {
             let mut service = lab.start();
             let port = service.port;
 
-            let hosted_manifest = publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            let hosted_manifest =
+                publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
 
             // El upstream caido es un ERROR: la resolucion se detiene y se
             // contesta el error. No se salta al siguiente miembro, porque un
@@ -1410,7 +1421,8 @@ fn ac3_an_upstream_that_is_down_stops_the_resolution() {
             // descarga.
             let answer = the_manifest(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
-                answer.status, 503,
+                answer.status,
+                503,
                 "un upstream caido no detiene la resolucion:\n{}\n{}",
                 answer.body.len(),
                 lab.deployment.the_log()
@@ -1448,11 +1460,13 @@ fn ac3_an_upstream_without_the_reference_is_a_miss() {
 
             // El upstream **no** tiene la etiqueta: lo dice con certeza, y
             // es un MISS. El segundo miembro la tiene.
-            let hosted_manifest = publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            let hosted_manifest =
+                publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
 
             let answer = the_manifest(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
-                answer.status, 200,
+                answer.status,
+                200,
                 "el grupo no resuelve la etiqueta:\n{}",
                 lab.deployment.the_log()
             );
@@ -1497,11 +1511,13 @@ fn ac3_a_reserved_name_is_not_served_from_the_proxy() {
 
             // El upstream tiene la etiqueta, y el segundo miembro tambien.
             lab.publish_upstream(b"la-capa-del-upstream");
-            let hosted_manifest = publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            let hosted_manifest =
+                publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
 
             let answer = the_manifest(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
-                answer.status, 200,
+                answer.status,
+                200,
                 "el grupo no resuelve la etiqueta:\n{}",
                 lab.deployment.the_log()
             );
@@ -1545,8 +1561,7 @@ fn ac3_the_credential_does_not_travel_to_a_foreign_realm() {
             // El upstream pide el token en un realm que **no** es el
             // declarado: la credencial no puede viajar ahi.
             lab.hostile_port();
-            lab.registry
-                .behave(TheBehaviour::HostileRealm);
+            lab.registry.behave(TheBehaviour::HostileRealm);
             lab.registry.elsewhere(&lab.hostile.origin());
             let mut service = lab.start();
             let port = service.port;
@@ -1555,7 +1570,8 @@ fn ac3_the_credential_does_not_travel_to_a_foreign_realm() {
 
             let answer = the_manifest(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
-                answer.status, 503,
+                answer.status,
+                503,
                 "un realm que no es el declarado no detiene la resolucion:\n{}",
                 lab.deployment.the_log()
             );

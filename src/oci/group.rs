@@ -394,12 +394,7 @@ async fn resolve_manifest(
         // miembro**: el grupo no renombra a su miembro.
         if member.mode == RepositoryMode::Proxy {
             let resolved = match crate::oci::proxy::the_resolved_manifest(
-                state,
-                context,
-                &member,
-                &key,
-                reference,
-                headers,
+                state, context, &member, &key, reference, headers,
             )
             .await
             {
@@ -426,9 +421,9 @@ async fn resolve_manifest(
             {
                 trail.push((key, Step::Error));
                 return Err(match admission {
-                    crate::trust::Admission::Hidden => {
-                        OciFailure::manifest_unknown(format!("the manifest {reference:?} is unknown"))
-                    }
+                    crate::trust::Admission::Hidden => OciFailure::manifest_unknown(format!(
+                        "the manifest {reference:?} is unknown"
+                    )),
                     crate::trust::Admission::Unavailable => {
                         OciFailure::unavailable("the trust ledger is not available")
                     }
@@ -549,12 +544,7 @@ async fn resolve_blob(
         // nombre del miembro y no con el del grupo.
         if member.mode == RepositoryMode::Proxy {
             let resolved = match crate::oci::proxy::the_resolved_blob(
-                state,
-                context,
-                &member,
-                &key,
-                digest,
-                headers,
+                state, context, &member, &key, digest, headers,
             )
             .await
             {
@@ -573,9 +563,9 @@ async fn resolve_blob(
             {
                 trail.push((key, Step::Error));
                 return Err(match admission {
-                    crate::trust::Admission::Hidden => {
-                        OciFailure::blob_unknown(format!("the repository does not reference {digest}"))
-                    }
+                    crate::trust::Admission::Hidden => OciFailure::blob_unknown(format!(
+                        "the repository does not reference {digest}"
+                    )),
                     crate::trust::Admission::Unavailable => {
                         OciFailure::unavailable("the trust ledger is not available")
                     }
