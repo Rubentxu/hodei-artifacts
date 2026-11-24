@@ -19,6 +19,7 @@ import axios, {
 import { useAuthStore } from '@/shared/stores/auth.store';
 import { encodeAssetPath } from '../lib/packageReference';
 import type {
+  AccountUsage,
   Capabilities,
   CreateRepositoryBody,
   FreshnessRequest,
@@ -137,6 +138,19 @@ export const capabilities = async (
   signal?: AbortSignal
 ): Promise<Capabilities> => {
   const response = await client.get<Capabilities>('/capabilities', { signal });
+  return response.data;
+};
+
+/**
+ * The usage and quota limits of the authenticated principal's own account.
+ *
+ * There is no account parameter: the server derives the account from the
+ * verified credential in the Authorization header.
+ */
+export const accountUsage = async (
+  signal?: AbortSignal
+): Promise<AccountUsage> => {
+  const response = await client.get<AccountUsage>('/account/usage', { signal });
   return response.data;
 };
 

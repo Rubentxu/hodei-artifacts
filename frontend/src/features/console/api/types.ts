@@ -293,3 +293,29 @@ export interface FreshnessResponse {
   changed?: InvestigationChangedReference[];
   reason?: string;
 }
+
+/**
+ * The quota limits declared by the deployment.
+ *
+ * Unconfigured limits are `null` rather than invented ceilings.
+ */
+export interface QuotaLimits {
+  max_stored_bytes_per_account: number | null;
+  max_concurrent_uploads_per_account: number | null;
+  retry_after_secs: number;
+}
+
+/**
+ * The usage and quota ledger of the caller's own account.
+ *
+ * A deployment without quotas returns `null` for unconfigured limits,
+ * and an account with no uploads yet returns zeros rather than a 404.
+ */
+export interface AccountUsage {
+  account: string;
+  stored_bytes: number;
+  in_flight_bytes: number;
+  active_uploads: number;
+  limits: QuotaLimits;
+  note: string;
+}

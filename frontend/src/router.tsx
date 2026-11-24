@@ -20,6 +20,7 @@ import Artifacts from '@/pages/Artifacts/Artifacts';
 import ConsoleRepositoriesPage from '@/pages/console/ConsoleRepositoriesPage';
 import ConsoleBrowsePage from '@/pages/console/ConsoleBrowsePage';
 import ConsolePackagePage from '@/pages/console/ConsolePackagePage';
+import ConsoleAccountUsagePage from '@/pages/console/ConsoleAccountUsagePage';
 
 import { MainLayout } from '@/components/templates/MainLayout';
 
@@ -125,6 +126,10 @@ export const routeConfig: RouteObject[] = [
       {
         path: '/openapi-demo',
         element: <OpenAPIDemoPage />,
+      },
+      {
+        path: '/console/usage',
+        element: <ConsoleAccountUsagePage />,
       },
     ],
   },
