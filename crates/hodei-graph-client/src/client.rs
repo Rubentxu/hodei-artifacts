@@ -169,14 +169,26 @@ impl GraphClient {
             namespace: self.config.namespace,
         };
         let mut client = DgraphClient::new(self.channel.clone());
-        let response =
-            client
-                .login(request)
-                .await
-                .map_err(|status| GraphClientError::LoginRejected {
+        let response = client.login(request).await.map_err(|status| {
+            // A server that cannot be reached did not reject anyone:
+            // keep the transport failure distinguishable from a
+            // refused credential so callers (readiness) can tell an
+            // outage from a misconfiguration.
+            if matches!(
+                status.code(),
+                tonic::Code::Unavailable | tonic::Code::DeadlineExceeded
+            ) {
+                GraphClientError::Request {
+                    phase: "login",
+                    source: status,
+                }
+            } else {
+                GraphClientError::LoginRejected {
                     userid,
                     detail: status.message().to_owned(),
-                })?;
+                }
+            }
+        })?;
         // Dgraph v25 packs the login answer as a protobuf-marshaled
         // `api.Jwt` inside the response's `json` bytes (not JSON): the
         // wire format is the server's, and this is the only place the
