@@ -207,6 +207,47 @@ pipeline {
             }
         }
 
+        // Los `*_it` de Dgraph de las slices HSP-187 a HSP-220 (HSP-209 y
+        // HSP-192 siguen en su sitio de "integration (database)"). Cada
+        // target se salta a si mismo (exit 0) sin HODEI_GRAPH_IT_ENDPOINT,
+        // asi que el primer paso declara NOT_RUN de forma visible y deja
+        // target/uat/dgraph-it-status.txt: un salto no se hace pasar por
+        // verde. Con el endpoint exportado corren contra el Zero+Alpha de
+        // deploy/dgraph/compose.yaml. Un solo hilo: las claves propias se
+        // leen por membresia sobre el alpha compartido.
+        stage("integration (dgraph)") {
+            timestamps {
+                sh("bash scripts/dgraph-it-gate.sh")
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp187_catalog_dgraph_it",
+                        "--test hsp189_dgraph_graph_it",
+                        "--test hsp189_upsert_probe_it",
+                        "--test hsp190_oci_catalog_dgraph_it",
+                        "--test hsp191_maven_dgraph_it",
+                        "--test hsp193_npm_dgraph_it",
+                        "--test hsp194_pypi_dgraph_it",
+                        "--test hsp195_apt_dgraph_it",
+                        "--test hsp196_proxy_dgraph_it",
+                        "--test hsp197_yum_dgraph_it",
+                        "--test hsp198_quota_dgraph_it",
+                        "--test hsp199_dgraph_frontier_it",
+                        "--test hsp200_dgraph_bounded_it",
+                        "--test hsp201_sessions_dgraph_it",
+                        "--test hsp202_dgraph_failclosed_it",
+                        "--test hsp202_dgraph_impact_it",
+                        "--test hsp203_trust_ledger_dgraph_it",
+                        "--test hsp204_dgraph_reachability_it",
+                        "--test hsp205_intents_dgraph_it",
+                        "--test hsp206_dgraph_investigation_it",
+                        "--test hsp207_capsule_dgraph_it",
+                        "--test hsp208_simulation_dgraph_it",
+                        "--test hsp220_drain_outbox_it",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
+            }
+        }
+
         stage("infrastructure (boot and processes)") {
             timestamps {
                 // El informe de una ejecución anterior no es evidencia de
@@ -343,6 +384,9 @@ pipeline {
                         // HODEI_GRAPH_IT_ENDPOINT se salta; con el perfil
                         // real valida recibos, identidad, scope e integridad CAS.
                         "--test hsp188_dgraph_evidence_it",
+                        // Sesiones OCI reanudables de punta a punta (HSP-201),
+                        // sin Dgraph.
+                        "--test hsp201_oci_sessions_e2e",
                     ).joinToString(" ")
                 )
                 // Prueba del libro coordinado de GC (HSP-192): sin
