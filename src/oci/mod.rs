@@ -29,6 +29,7 @@
 //! habla dos idiomas.
 
 pub mod failure;
+pub mod group;
 pub mod proxy;
 pub mod push;
 pub mod query;
@@ -153,6 +154,12 @@ pub async fn the_repository(
 /// siempre. Un repositorio **proxy** solo si su formato es de imagen o de
 /// chart: un proxy crudo lo sirve la superficie cruda, y un proxy de otro
 /// formato no significa nada en la distribucion.
+///
+/// Un repositorio **grupo** de imagen se sirve tambien: un grupo OCI es una
+/// lista ordenada de repositorios OCI y la distribucion lo lee con la misma
+/// precedencia que cualquier otro grupo. Un grupo de chart no: los charts
+/// Helm no tienen superficie propia y su formato no sirve ninguna
+/// modalidad.
 trait ServesTheDistribution {
     fn serves_the_distribution(&self) -> bool;
 }
@@ -164,9 +171,24 @@ impl ServesTheDistribution for RepositoryDescriptor {
             RepositoryMode::Proxy => {
                 matches!(self.format, RepositoryFormat::Oci | RepositoryFormat::Helm)
             }
-            RepositoryMode::Group => false,
+            RepositoryMode::Group => matches!(self.format, RepositoryFormat::Oci),
         }
     }
+}
+
+/// Que el repositorio acepte escritura.
+///
+/// Un grupo no guarda nada: es una lista de repositorios que se consultan.
+/// Escribir contra un grupo no tiene destino, y se dice con el error del
+/// dialecto que la distribucion reserva para lo que no se puede hacer en un
+/// repositorio de solo lectura.
+pub fn the_writable(repository: &RepositoryDescriptor) -> Result<(), OciFailure> {
+    if repository.mode == RepositoryMode::Group {
+        return Err(OciFailure::unsupported(
+            "a group repository does not accept writes",
+        ));
+    }
+    Ok(())
 }
 
 /// La decision de Cedar sobre el repositorio.

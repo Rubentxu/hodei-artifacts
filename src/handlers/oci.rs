@@ -181,6 +181,22 @@ async fn blob(
         .await;
     }
 
+    // Un grupo no guarda lo que se publico en el: lo resuelve entre sus
+    // miembros, en el orden en que estan configurados, y dice de que
+    // miembro salio lo que se sirve.
+    if repository.mode == RepositoryMode::Group {
+        let resolution = crate::oci::group::the_blob(state, context, &repository, &digest).await;
+        let won = resolution.outcome?;
+        let mut response = oci_bytes_response(
+            won.bytes,
+            "application/octet-stream",
+            &won.digest.value,
+            head,
+        );
+        the_group_headers(&mut response, &repository, &won.member.repo_key);
+        return Ok(response);
+    }
+
     // La fila del asset es la referencia: sin ella, el blob no es
     // contenido de este repositorio, esten sus bytes donde esten.
     let (reader, _) = the_catalog(state)?;
@@ -277,6 +293,21 @@ async fn manifest(
             head,
         )
         .await;
+    }
+
+    // Un grupo no guarda lo que se publico en el: lo resuelve entre sus
+    // miembros, en el orden en que estan configurados. El manifiesto se
+    // sirve **entero** de un solo miembro, y la respuesta dice de que
+    // miembro salio.
+    if repository.mode == RepositoryMode::Group {
+        let resolution =
+            crate::oci::group::the_manifest(state, context, &repository, reference).await;
+        let won = resolution.outcome?;
+        let media_type = the_declared_media_type(&won.bytes)?;
+        the_negotiation(headers, &media_type)?;
+        let mut response = oci_bytes_response(won.bytes, &media_type, &won.digest.value, head);
+        the_group_headers(&mut response, &repository, &won.member.repo_key);
+        return Ok(response);
     }
 
     let (reader, _) = the_catalog(state)?;
@@ -438,6 +469,32 @@ pub(crate) fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure
             );
             Ok(kind.to_string())
         }
+    }
+}
+
+/// Que miembro de un grupo sirvio el contenido, y en que version de la
+/// configuracion del grupo se resolvio.
+///
+/// Va en `X-Hodei-Resolved-From` y `X-Hodei-Group-Version`: quien descarga
+/// sabe de que repositorio salio lo que tiene, y una resolucion distinta
+/// tras reconfigurar el grupo es visible. Es la misma convencion que usa la
+/// superficie cruda.
+fn the_group_headers(
+    response: &mut Response,
+    group: &hodei_catalog::RepositoryDescriptor,
+    member: &str,
+) {
+    if let Ok(value) = HeaderValue::from_str(member) {
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-hodei-resolved-from"),
+            value,
+        );
+    }
+    if let Ok(value) = HeaderValue::from_str(&group.config.version.to_string()) {
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-hodei-group-version"),
+            value,
+        );
     }
 }
 

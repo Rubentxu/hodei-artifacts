@@ -136,6 +136,10 @@ async fn start_upload(
         ));
     };
     let repository = the_repository(&state, &context, &name).await?;
+    // Un grupo no guarda nada: escribir contra el se rechaza con el
+    // error del dialecto que la distribucion reserva para lo que no se
+    // puede hacer en un repositorio de solo lectura.
+    crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
         &context,
@@ -409,6 +413,10 @@ async fn append_chunk(
         ));
     };
     let repository = the_repository(&state, &context, &name).await?;
+    // Un grupo no guarda nada: escribir contra el se rechaza con el
+    // error del dialecto que la distribucion reserva para lo que no se
+    // puede hacer en un repositorio de solo lectura.
+    crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
         &context,
@@ -489,6 +497,10 @@ pub async fn upload_status(
         ));
     };
     let repository = the_repository(&state, &context, &name).await?;
+    // Un grupo no guarda nada: escribir contra el se rechaza con el
+    // error del dialecto que la distribucion reserva para lo que no se
+    // puede hacer en un repositorio de solo lectura.
+    crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
         &context,
@@ -539,6 +551,10 @@ async fn cancel_upload(
         ));
     };
     let repository = the_repository(&state, &context, &name).await?;
+    // Un grupo no guarda nada: escribir contra el se rechaza con el
+    // error del dialecto que la distribucion reserva para lo que no se
+    // puede hacer en un repositorio de solo lectura.
+    crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
         &context,
@@ -595,6 +611,10 @@ async fn close_upload(
 ) -> Result<Response, OciFailure> {
     let context = the_context(&state, &headers).await?;
     let repository = the_repository(&state, &context, &name).await?;
+    // Un grupo no guarda nada: escribir contra el se rechaza con el
+    // error del dialecto que la distribucion reserva para lo que no se
+    // puede hacer en un repositorio de solo lectura.
+    crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
         &context,
@@ -733,6 +753,10 @@ async fn put_manifest(
 ) -> Result<Response, OciFailure> {
     let context = the_context(&state, &headers).await?;
     let repository = the_repository(&state, &context, &name).await?;
+    // Un grupo no guarda nada: escribir contra el se rechaza con el
+    // error del dialecto que la distribucion reserva para lo que no se
+    // puede hacer en un repositorio de solo lectura.
+    crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
         &context,

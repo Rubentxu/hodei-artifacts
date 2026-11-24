@@ -234,6 +234,7 @@ pipeline {
                         "--test hsp226_pypi_registry_real",
                         "--test hsp227_raw_external",
                         "--test hsp228_oci_proxy",
+                        "--test hsp229_oci_group",
                         "--test hsp105_trust_e2e",
                         "--test hsp106_proxy_e2e",
                         "--test hsp107_proxy_cache_e2e",
