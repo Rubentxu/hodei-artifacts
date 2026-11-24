@@ -61,7 +61,8 @@ use async_trait::async_trait;
 use hodei_evidence::domain::graph::{GraphRelation, NodeKind, RelationType};
 use hodei_evidence::ports::graph::{
     BoundedGraphQuery, BoundedLineage, BoundedTraversal, GraphError, GraphQuery, GraphReadLimits,
-    GraphWriter, Lineage, WalkBudget,
+    GraphWriter, Lineage, PathReachability, ReachabilityAnswer, ReachabilityHop, ReachabilityQuery,
+    WalkBudget,
 };
 use hodei_evidence::{
     EvidenceId, GraphChangeSet, GraphNode, GraphRelationWithdrawal, evidence_hrn,
@@ -1788,6 +1789,200 @@ impl BoundedGraphQuery for DgraphGraphStore {
         }
         out.trace = budget.trace();
         Ok(out)
+    }
+}
+
+#[async_trait]
+impl ReachabilityQuery for DgraphGraphStore {
+    /// Whether the destination is reachable from the origin through
+    /// asserted relations, and the proof of whatever the answer says.
+    ///
+    /// The walk is the bounded dependency walk aimed at a destination:
+    /// hop by hop at the server, the account and the asserted status
+    /// filter every expansion, and one budget accounts it. The answer
+    /// holds the epistemology of the reachability contract:
+    ///
+    /// - a path found is REACHABLE, and every hop of it names the edge
+    ///   it crossed and the evidence that supports that edge;
+    /// - a frontier explored whole without meeting the destination is
+    ///   UNREACHABLE — a proven absence, within the limits the trace
+    ///   names;
+    /// - a walk that had to stop is UNKNOWN — a frontier that was not
+    ///   explored is not a proof of absence, and the trace says which
+    ///   limit bound it and how much was left behind.
+    async fn reachability(
+        &self,
+        tenant: &Hrn,
+        origin: &Hrn,
+        destination: &Hrn,
+        limits: &GraphReadLimits,
+    ) -> Result<ReachabilityAnswer, GraphError> {
+        let mut budget = WalkBudget::new(*limits);
+
+        // The origin costs the first round trip. A walk that starts
+        // nowhere has looked at everything there was to look at: no
+        // path can start at a node the account's graph does not hold,
+        // and that absence is proven, not guessed.
+        budget.round_trip();
+        let origin_held = self.node_by_key(tenant, origin).await?.is_some();
+        if !origin_held {
+            return Ok(ReachabilityAnswer {
+                state: PathReachability::Unreachable,
+                path: Vec::new(),
+                reason: format!(
+                    "the origin {origin} is not in this account's graph, so no path can start there; the frontier it would have opened is empty and the absence is proven within the limits of the trace"
+                ),
+                trace: budget.trace(),
+            });
+        };
+
+        // A node reaches itself without crossing any edge: the answer
+        // is proven by the origin being in the graph at all.
+        if origin == destination {
+            return Ok(ReachabilityAnswer {
+                state: PathReachability::Reachable,
+                path: Vec::new(),
+                reason: format!("{origin} is the destination itself"),
+                trace: budget.trace(),
+            });
+        }
+
+        let origin_key = self.node_key_scoped(&tenant.to_string(), &origin.to_string());
+        let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        visited.insert(origin.to_string());
+        // The parent of every node the walk reached, keyed by node HRN:
+        // the asserted relation that carried the walk there. Walking
+        // the parents back from the destination rebuilds the path, and
+        // breadth-first arrival keeps it the shortest one.
+        let mut parents: BTreeMap<String, GraphRelation> = BTreeMap::new();
+        // The node records of what the walk admitted, so every hop of
+        // the path carries the node it reached.
+        let mut records: BTreeMap<String, GraphNode> = BTreeMap::new();
+        let mut frontier = vec![origin_key];
+        let mut proven_path: Option<Vec<ReachabilityHop>> = None;
+
+        while !frontier.is_empty() {
+            if !budget.may_expand() {
+                budget.leave_frontier(frontier.len());
+                break;
+            }
+            budget.hop();
+            budget.round_trip();
+            // One more than the budget allows, so the answer that had
+            // edges the budget does not keep says so.
+            let first = budget.edges_remaining() + 1;
+            let (relations, far) = self
+                .expand_frontier(tenant, &frontier, &[], true, first)
+                .await?;
+
+            // The first edge that crosses to the destination answers
+            // the question, whichever hop it arrives at: what the walk
+            // SAW is accounted, and the caps stop governing an answer
+            // that is already proven. The crossing only counts when the
+            // node it ends at came back with it — an edge without its
+            // far end is not a hop the answer can carry.
+            let crossing = relations
+                .iter()
+                .find(|relation| relation.to == *destination)
+                .filter(|_| far.iter().any(|node| node.id == *destination));
+            if let Some(final_edge) = crossing.cloned() {
+                budget.observe_edges(relations.len());
+                budget.observe_nodes(far.len());
+
+                let mut edge_chain = vec![final_edge.clone()];
+                let mut cursor = final_edge.from.to_string();
+                while cursor != origin.to_string() {
+                    let Some(parent_edge) = parents.get(&cursor) else {
+                        break;
+                    };
+                    cursor = parent_edge.from.to_string();
+                    edge_chain.push(parent_edge.clone());
+                }
+                edge_chain.reverse();
+
+                let mut path = Vec::with_capacity(edge_chain.len());
+                for edge in edge_chain {
+                    let node = if edge.to == *destination {
+                        far.iter().find(|node| node.id == *destination).cloned()
+                    } else {
+                        records.get(&edge.to.to_string()).cloned()
+                    };
+                    let Some(node) = node else {
+                        break;
+                    };
+                    path.push(ReachabilityHop { node, via: edge });
+                }
+                if !path.is_empty() {
+                    proven_path = Some(path);
+                    break;
+                }
+            }
+
+            let keep = budget.admit_edges(relations.len());
+            // The parent of a node is the first relation that crossed
+            // to it: the answer says the same thing every time.
+            for relation in &relations[..keep] {
+                let reached = relation.to.to_string();
+                if !visited.contains(&reached) {
+                    parents.entry(reached).or_insert_with(|| relation.clone());
+                }
+            }
+
+            // The nodes the walk has not met yet, in the order the
+            // answer carries them. Whatever the walk cannot keep or go
+            // on with is left behind, and the trace says so.
+            let mut fresh: Vec<GraphNode> = Vec::new();
+            for candidate in &far {
+                let key = candidate.id.to_string();
+                if !visited.contains(&key) && !fresh.iter().any(|held| held.id.to_string() == key) {
+                    fresh.push(candidate.clone());
+                }
+            }
+            let admitted = budget.admit_nodes(fresh.len()).min(fresh.len());
+            let mut next_frontier = Vec::new();
+            for reached in fresh[..admitted].iter() {
+                let key = reached.id.to_string();
+                visited.insert(key.clone());
+                records.insert(key.clone(), reached.clone());
+                next_frontier.push(self.node_key_scoped(&tenant.to_string(), &key));
+            }
+            if budget.stopped() {
+                budget.leave_frontier(fresh.len());
+                break;
+            }
+            frontier = next_frontier;
+        }
+
+        let trace = budget.trace();
+        if let Some(path) = proven_path {
+            Ok(ReachabilityAnswer {
+                state: PathReachability::Reachable,
+                path,
+                reason: format!(
+                    "there is a path of asserted relations from {origin} to {destination}; every hop of it names the edge it crossed and the evidence that supports that edge, and the trace says how the walk that proved it was spent"
+                ),
+                trace,
+            })
+        } else if trace.incomplete {
+            let binding = trace.reasons.join(", ");
+            Ok(ReachabilityAnswer {
+                state: PathReachability::Unknown,
+                path: Vec::new(),
+                reason: format!(
+                    "the walk from {origin} stopped before it could say anything about {destination}: {binding} bound it, and a frontier that was not explored is not a proof of absence"
+                ),
+                trace,
+            })
+        } else {
+            Ok(ReachabilityAnswer {
+                state: PathReachability::Unreachable,
+                path: Vec::new(),
+                reason: format!(
+                    "the frontier reachable from {origin} was exhausted within the budget and {destination} was never met: the absence is proven under the limits of the trace"
+                ),
+                trace,
+            })
+        }
     }
 }
 

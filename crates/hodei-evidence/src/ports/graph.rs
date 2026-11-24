@@ -355,6 +355,22 @@ impl WalkBudget {
             frontier_left: self.frontier_left,
         }
     }
+
+    /// Accounts edges the walk RECEIVED from the store without keeping
+    /// any of them, and without stopping: the walk answered the question
+    /// with what it saw, so the caps no longer govern the answer. What
+    /// was received is still accounted, because the receipt counts what
+    /// came back, kept or not.
+    pub fn observe_edges(&mut self, received: usize) {
+        self.edges_seen += received;
+    }
+
+    /// Accounts nodes the walk RECEIVED from the store without keeping
+    /// any of them, and without stopping, for the same reason as
+    /// [`WalkBudget::observe_edges`].
+    pub fn observe_nodes(&mut self, received: usize) {
+        self.nodes_seen += received;
+    }
 }
 
 /// The lineage of an artefact, read under limits, with the receipt of
@@ -410,6 +426,103 @@ pub trait BoundedGraphQuery: Send + Sync {
         node: &Hrn,
         limits: &GraphReadLimits,
     ) -> Result<BoundedTraversal, GraphError>;
+}
+
+/// The state of the reachability of one node from another, over the
+/// asserted graph.
+///
+/// It holds the same epistemology the reachability contract holds for
+/// symbols -- a path is a proof of reaching, a frontier explored whole
+/// is a proof of absence, and anything the walk could not explore is a
+/// declaration that nobody knows -- because a walk that ran out of
+/// budget is NOT a weaker proof of absence: it is no proof at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathReachability {
+    /// There is a path of asserted relations from the origin to the
+    /// destination, and the answer carries it.
+    Reachable,
+    /// There is no path, and the walk that looked for one exhausted the
+    /// whole reachable frontier within its budget: the absence is
+    /// proven under the limits the trace names, not guessed.
+    Unreachable,
+    /// The walk could not explore the whole frontier: its budget ran
+    /// out, and what was not explored could have held a path. Nobody
+    /// knows, and the trace says why.
+    Unknown,
+}
+
+impl PathReachability {
+    /// The name of the state.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Reachable => "REACHABLE",
+            Self::Unreachable => "UNREACHABLE",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+
+    /// Whether the state is a proof that the destination is not reached.
+    /// Only a whole frontier is: an exhausted budget is not.
+    pub fn is_proof_of_absence(&self) -> bool {
+        matches!(self, Self::Unreachable)
+    }
+}
+
+/// One hop of a proven path: the node the walk reached and the asserted
+/// relation it crossed to reach it, with the evidence that supports the
+/// relation. The path is the chain of its hops, and every hop answers
+/// "how do you know this edge is there".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReachabilityHop {
+    /// The node the walk reached through the relation.
+    pub node: GraphNode,
+    /// The asserted relation the walk crossed, with the evidence that
+    /// supports it.
+    pub via: GraphRelation,
+}
+
+/// The answer of a reachability question, with the receipt of the walk
+/// that answered it.
+///
+/// A REACHABLE answer carries the path. An UNREACHABLE one carries the
+/// trace of a frontier explored whole. An UNKNOWN one carries the trace
+/// of a walk that had to stop: the answer says which limit bound it and
+/// how much was left behind, and never passes for an absence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReachabilityAnswer {
+    /// The state of the answer.
+    pub state: PathReachability,
+    /// The path, origin excluded and destination included, in the order
+    /// the walk crossed it: the first path that arrives is the shortest
+    /// one. Empty unless the state is [`PathReachability::Reachable`].
+    #[serde(default)]
+    pub path: Vec<ReachabilityHop>,
+    /// Why the answer is what it is: what was proven, from what, and
+    /// under which limits.
+    pub reason: String,
+    /// How the walk that produced the answer was resolved: what it
+    /// spent, what it saw and what, if anything, it had to leave behind.
+    pub trace: TraversalTrace,
+}
+
+/// The reachability question of the graph.
+///
+/// Whether the destination can be reached from the origin by following
+/// asserted relations forward -- relations whose evidence still supports
+/// them, of the account, and of no other. The walk runs at the store,
+/// hop by hop under limits, and the answer always says whether it
+/// looked at everything there was to look at.
+#[async_trait::async_trait]
+pub trait ReachabilityQuery: Send + Sync {
+    /// Whether `destination` is reachable from `origin` under limits.
+    async fn reachability(
+        &self,
+        tenant: &Hrn,
+        origin: &Hrn,
+        destination: &Hrn,
+        limits: &GraphReadLimits,
+    ) -> Result<ReachabilityAnswer, GraphError>;
 }
 
 /// The relations that the projector of M1 knows how to build.
@@ -564,5 +677,22 @@ mod tests {
             budget.admit_nodes(500);
         }
         assert!(!budget.trace().incomplete);
+    }
+
+    /// What a walk observed without keeping is accounted as seen, and
+    /// seeing the answer is not a limit: the receipt counts what came
+    /// back and does not call the answer incomplete for it.
+    #[test]
+    fn observing_what_the_walk_saw_does_not_stop_it() {
+        let mut budget = WalkBudget::new(limits());
+        budget.hop();
+        budget.round_trip();
+        budget.observe_edges(9);
+        budget.observe_nodes(7);
+        let trace = budget.trace();
+        assert_eq!(trace.edges_seen, 9);
+        assert_eq!(trace.nodes_seen, 7);
+        assert!(!trace.incomplete, "seeing the answer is not a truncation");
+        assert!(trace.reasons.is_empty());
     }
 }
