@@ -12,7 +12,7 @@
 
 use crate::app_state::AppState;
 use crate::config::AppConfig;
-use crate::handlers::health::health_check;
+use crate::handlers::health::{health_check, liveness, readiness};
 use crate::openapi::create_api_doc;
 use axum::{
     Router,
@@ -73,11 +73,21 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
         Router::new()
     };
 
+    // The health surface. The three endpoints answer three different
+    // questions: `/health` is the legacy check, `/health/live` says that
+    // the process lives and `/health/ready` says that the deployment can
+    // serve. The last two are not the same answer, and answering the
+    // readiness with the liveness is a lie that takes the deployment out
+    // of rotation when it could still recover.
+    let health = Router::new()
+        .route("/health", get(health_check))
+        .route("/health/ready", get(readiness))
+        .route("/health/live", get(liveness))
+        .with_state(app_state.clone());
+
     Router::new()
         // Health check endpoints
-        .route("/health", get(health_check))
-        .route("/health/ready", get(health_check))
-        .route("/health/live", get(health_check))
+        .merge(health)
         // API v1 routes
         .nest("/api/v1", api)
         // The raw content surface.
