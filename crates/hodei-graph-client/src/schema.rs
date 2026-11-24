@@ -48,13 +48,35 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// marker (`hodei.operation.*`), both `@upsert` guarded so the server
 /// itself forces the conflict between concurrent writers.
 ///
-/// v3 adds the sequenced evidence ledger: one event node per stream
-/// position (`hodei.ledger.*`), whose composite key is `@upsert` guarded
-/// so the server itself refuses two writers claiming the same position.
-/// The head of a stream is not a stored row but the revision of the
-/// stream's guard ([`crate::guard`]): an append demands the exact
-/// revision its position sequenced at, so the guard IS the sequence.
-pub const SCHEMA_VERSION: u64 = 3;
+/// v3 adds the sequenced evidence ledger and IAM carriers. v4 adds
+/// immutable evidence metadata and its producer/external-identity index;
+/// content bytes remain in the existing CAS and are never stored here.
+///
+/// v5 adds the reified graph projection (`hodei.graph.*`): graph nodes,
+/// reified relations with their asserted/unknown status, one support node
+/// per (relation, evidence) pair, and the two native navigable edges
+/// (`hodei.graph.out` from the source node to the relation,
+/// `hodei.graph.to` from the relation to the target node), both reverse
+/// indexed. Purely additive over v4: nothing is renamed or dropped.
+///
+/// v6 adds the projection frontier (`hodei.checkpoint.*`, `hodei.delta.*`)
+/// and the projection marker (`hodei.graph.projection`): the checkpoint
+/// row one per (consumer, stream) whose next position commits in the SAME
+/// transaction as the graph changeset it certifies; the durable relation
+/// delta (`added | removed | support_changed`) keyed by its dedup
+/// identity; and the name of the projection every graph record belongs
+/// to, so a rebuild builds into its own namespace while the active one
+/// keeps serving. Purely additive over v5: nothing is renamed or dropped.
+///
+/// v7 adds the impact view of the risk (`hodei.impact.*`): ONE route node
+/// per (tenant, advisory) materialized in the SAME graph the walk reads —
+/// not a second database. The node carries the subjects with their
+/// depths, the path that explains each one, and the route of support
+/// (relation identities, evidences and node endpoints) the walk used, so
+/// a relation delta invalidates ONLY the advisories whose route it
+/// touches, and the watermark says up to which delta version the view is
+/// complete. Purely additive over v6: nothing is renamed or dropped.
+pub const SCHEMA_VERSION: u64 = 7;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -530,6 +552,668 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // IAM carriers (v3): the discriminator plus the fields the
+            // IAM adapters of `hodei-iam` store. The IAM nodes reuse the
+            // identity key (unique, `@upsert`) and the identity revision
+            // (CAS) — there is no second uniqueness or versioning anchor.
+            // `hodei.iam.hrn` is exact-indexed (no `@upsert`): the same
+            // resource HRN under a different tenant key is legal and
+            // must be able to coexist; the tenant|HRN composite stays
+            // the uniqueness anchor.
+            spec(
+                "hodei.iam.kind",
+                "hodei.iam.kind: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.hrn",
+                "hodei.iam.hrn: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.content",
+                "hodei.iam.content: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.description",
+                "hodei.iam.description: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.email",
+                "hodei.iam.email: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.tags",
+                "hodei.iam.tags: [string] .",
+                "string",
+                None,
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.attachment",
+                "hodei.iam.attachment: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.created_at",
+                "hodei.iam.created_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.iam.updated_at",
+                "hodei.iam.updated_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.key",
+                "hodei.evidence.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.evidence.tenant",
+                "hodei.evidence.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.producer_id",
+                "hodei.evidence.producer_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.external_id",
+                "hodei.evidence.external_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.type",
+                "hodei.evidence.type: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.content_digest",
+                "hodei.evidence.content_digest: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.account",
+                "hodei.evidence.account: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.subject",
+                "hodei.evidence.subject: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.record",
+                "hodei.evidence.record: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.evidence.external_key",
+                "hodei.evidence.external_key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.evidence.external_evidence_id",
+                "hodei.evidence.external_evidence_id: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            // HSP-189: the reified graph projection. Nodes carry their
+            // tenant-scoped identity key (`tenant|HRN`, exact and `@upsert`
+            // so two creators of one node conflict server-side); relations
+            // carry their hashed identity key and their asserted/unknown
+            // status (UNINDEXED on purpose: every writer of one relation
+            // writes the same data key, which is what makes concurrent
+            // writers of the SAME edge abort — the per-edge conflict the
+            // changeset upsert relies on); supports are one node per
+            // (relation, evidence) pair. The two native edges are the
+            // navigable projection: source node -> relation (`out`) and
+            // relation -> target node (`to`), both reverse indexed so
+            // relations_from and relations_to are traversals, never scans.
+            spec(
+                "hodei.graph.node.key",
+                "hodei.graph.node.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.node.tenant",
+                "hodei.graph.node.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.kind",
+                "hodei.graph.node.kind: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.attributes",
+                "hodei.graph.node.attributes: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.node.observed_at",
+                "hodei.graph.node.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.out",
+                "hodei.graph.out: [uid] @reverse .",
+                "uid",
+                None,
+                true,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.key",
+                "hodei.graph.rel.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.rel.tenant",
+                "hodei.graph.rel.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.type",
+                "hodei.graph.rel.type: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.status",
+                "hodei.graph.rel.status: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.from_hrn",
+                "hodei.graph.rel.from_hrn: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.to_hrn",
+                "hodei.graph.rel.to_hrn: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.evidence",
+                "hodei.graph.rel.evidence: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.rel.observed_at",
+                "hodei.graph.rel.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.to",
+                "hodei.graph.to: uid @reverse .",
+                "uid",
+                None,
+                false,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.supports",
+                "hodei.graph.supports: [uid] @reverse .",
+                "uid",
+                None,
+                true,
+                true,
+                false,
+            ),
+            spec(
+                "hodei.graph.support.key",
+                "hodei.graph.support.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.graph.support.evidence",
+                "hodei.graph.support.evidence: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.graph.support.observed_at",
+                "hodei.graph.support.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            // v6: the projection a graph record belongs to. Every record
+            // the graph writers create carries it, so a rebuild into a
+            // named projection never bleeds into the scans of the active
+            // one and the active one never reads the rebuild.
+            spec(
+                "hodei.graph.projection",
+                "hodei.graph.projection: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            // v6: the projection frontier. One checkpoint row per
+            // (tenant, consumer, stream); the key is exact and `@upsert`,
+            // so the server itself refuses two rows claiming one
+            // checkpoint. The next position moves ONLY inside the
+            // transaction that applied the changeset it certifies.
+            spec(
+                "hodei.checkpoint.key",
+                "hodei.checkpoint.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.checkpoint.consumer",
+                "hodei.checkpoint.consumer: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.stream_id",
+                "hodei.checkpoint.stream_id: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.tenant",
+                "hodei.checkpoint.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.next_position",
+                "hodei.checkpoint.next_position: int @index(int) .",
+                "int",
+                Some("int"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.last_event",
+                "hodei.checkpoint.last_event: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.last_fingerprint",
+                "hodei.checkpoint.last_fingerprint: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.checkpoint.updated_at",
+                "hodei.checkpoint.updated_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            // v6: the durable relation delta. One node per dedup identity
+            // (`tenant#cause#kind#relation#evidence`), exact and
+            // `@upsert`: the same change said twice is ONE node, so a
+            // replay never duplicates a delta. The sequence is the
+            // per-tenant order the consumers read from.
+            spec(
+                "hodei.delta.key",
+                "hodei.delta.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.delta.seq",
+                "hodei.delta.seq: int @index(int) .",
+                "int",
+                Some("int"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.tenant",
+                "hodei.delta.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.kind",
+                "hodei.delta.kind: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.relation",
+                "hodei.delta.relation: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.from",
+                "hodei.delta.from: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.to",
+                "hodei.delta.to: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.evidence",
+                "hodei.delta.evidence: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.cause",
+                "hodei.delta.cause: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.delta.observed_at",
+                "hodei.delta.observed_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            // v7: the impact view of the risk, ONE route node per
+            // (tenant, advisory) in the SAME graph. The key is exact and
+            // `@upsert`: two rebuilds of one advisory meet on the server
+            // and the loser retries on top of whatever committed. The
+            // route lists are exact-indexed so the invalidation of a
+            // relation delta is a lookup by the relation identity, the
+            // evidence or the endpoints the delta moved — never a scan.
+            spec(
+                "hodei.impact.key",
+                "hodei.impact.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.impact.tenant",
+                "hodei.impact.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.advisory",
+                "hodei.impact.advisory: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.route_relation",
+                "hodei.impact.route_relation: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.route_evidence",
+                "hodei.impact.route_evidence: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.route_node",
+                "hodei.impact.route_node: [string] @index(exact) .",
+                "string",
+                Some("exact"),
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.subjects",
+                "hodei.impact.subjects: [string] .",
+                "string",
+                None,
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.paths",
+                "hodei.impact.paths: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.deployments",
+                "hodei.impact.deployments: [string] .",
+                "string",
+                None,
+                true,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.watermark",
+                "hodei.impact.watermark: int .",
+                "int",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.impact.updated_at",
+                "hodei.impact.updated_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -557,6 +1241,57 @@ pub fn hodei_schema() -> HodeiSchema {
              hodei.ledger.event_type\n  hodei.ledger.schema_version\n  hodei.ledger.occurred_at\n  \
              hodei.ledger.recorded_at\n  hodei.ledger.producer\n  hodei.ledger.correlation_id\n  \
              hodei.ledger.causation_id\n  hodei.ledger.idempotency_key\n  hodei.ledger.payload\n}"
+                .to_owned(),
+            // The IAM carriers are identity nodes: they keep the composite
+            // key and the CAS revision (the uniqueness and versioning
+            // anchors) and add the IAM payload.
+            "type HodeiIam {\n  hodei.identity.key\n  hodei.identity.hrn\n  \
+             hodei.identity.tenant\n  hodei.identity.digest\n  hodei.identity.name\n  \
+             hodei.identity.revision\n  hodei.identity.created_at\n  hodei.iam.kind\n  \
+             hodei.iam.hrn\n  hodei.iam.content\n  hodei.iam.description\n  \
+             hodei.iam.email\n  hodei.iam.tags\n  hodei.iam.attachment\n  \
+             hodei.iam.created_at\n  hodei.iam.updated_at\n}"
+                .to_owned(),
+            "type HodeiEvidence {\n  hodei.evidence.key\n  hodei.evidence.tenant\n  hodei.evidence.producer_id\n  hodei.evidence.external_id\n  hodei.evidence.type\n  hodei.evidence.content_digest\n  hodei.evidence.account\n  hodei.evidence.subject\n  hodei.evidence.record\n}"
+                .to_owned(),
+            "type HodeiEvidenceExternal {\n  hodei.evidence.external_key\n  hodei.evidence.external_evidence_id\n}"
+                .to_owned(),
+            // The reified graph projection (v5): nodes, relations and
+            // their supports, with the two native navigable edges. Every
+            // record names the projection it belongs to (v6), so a
+            // rebuild builds into its own namespace.
+            "type HodeiGraphNode {\n  hodei.graph.node.key\n  hodei.graph.node.tenant\n  \
+             hodei.graph.node.kind\n  hodei.graph.node.attributes\n  \
+             hodei.graph.node.observed_at\n  hodei.graph.projection\n  hodei.graph.out\n}"
+                .to_owned(),
+            "type HodeiGraphRelation {\n  hodei.graph.rel.key\n  hodei.graph.rel.tenant\n  \
+             hodei.graph.rel.type\n  hodei.graph.rel.status\n  hodei.graph.rel.from_hrn\n  \
+             hodei.graph.rel.to_hrn\n  hodei.graph.rel.evidence\n  hodei.graph.rel.observed_at\n  \
+             hodei.graph.projection\n  hodei.graph.to\n  hodei.graph.supports\n}"
+                .to_owned(),
+            "type HodeiGraphSupport {\n  hodei.graph.support.key\n  \
+             hodei.graph.support.evidence\n  hodei.graph.support.observed_at\n  \
+             hodei.graph.projection\n}"
+                .to_owned(),
+            // The projection frontier (v6): the checkpoint row and the
+            // durable relation deltas.
+            "type HodeiCheckpoint {\n  hodei.checkpoint.key\n  hodei.checkpoint.consumer\n  \
+             hodei.checkpoint.stream_id\n  hodei.checkpoint.tenant\n  \
+             hodei.checkpoint.next_position\n  hodei.checkpoint.last_event\n  \
+             hodei.checkpoint.last_fingerprint\n  hodei.checkpoint.updated_at\n}"
+                .to_owned(),
+            "type HodeiDelta {\n  hodei.delta.key\n  hodei.delta.seq\n  hodei.delta.tenant\n  \
+             hodei.delta.kind\n  hodei.delta.relation\n  hodei.delta.from\n  hodei.delta.to\n  \
+             hodei.delta.evidence\n  hodei.delta.cause\n  hodei.delta.observed_at\n}"
+                .to_owned(),
+            // The impact view (v7): one route node per advisory of one
+            // account, materialized from the authoritative walk of the
+            // SAME graph, invalidated by the deltas of the frontier.
+            "type HodeiImpactRoute {\n  hodei.impact.key\n  hodei.impact.tenant\n  \
+             hodei.impact.advisory\n  hodei.impact.route_relation\n  \
+             hodei.impact.route_evidence\n  hodei.impact.route_node\n  \
+             hodei.impact.subjects\n  hodei.impact.paths\n  hodei.impact.deployments\n  \
+             hodei.impact.watermark\n  hodei.impact.updated_at\n}"
                 .to_owned(),
         ],
     )
@@ -726,7 +1461,7 @@ pub struct SchemaBootReport {
 /// More than one metadata node is corruption: the versioning bookkeeping
 /// must be unique, so a duplicate refuses the boot instead of letting
 /// boot pick one silently.
-async fn read_stored_schema(
+pub async fn read_stored_schema(
     client: &GraphClient,
 ) -> Result<Option<(u64, String)>, SchemaBootError> {
     let response = client
@@ -973,10 +1708,10 @@ fn rfc3339_now() -> String {
 /// quotes, backslashes and control characters. Keys, HRNs and digests
 /// are built from safe charsets, but the escaping is uniform so no
 /// caller-side string can inject DQL.
-/// Escapes a Rust string as a DQL string literal: quoted, with the
-/// backslash, quote and control characters DQL reserves escaped. The
-/// helpers that build upsert transactions and the ledger adapters of
-/// consumers use it, so the escaping is done in exactly one place.
+///
+/// Public because the IAM adapters (and any future graph consumer)
+/// compose DQL literals from caller text (policy content, tags, names)
+/// and must not re-implement the escaping.
 pub fn dql_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');

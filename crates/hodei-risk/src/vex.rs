@@ -94,6 +94,14 @@ pub struct VexStatement {
     /// silence a finding on its own.
     #[serde(default)]
     pub verified: bool,
+    /// Who made the statement, as the document wrote it.
+    ///
+    /// OpenVEX carries the author at the document level. A statement
+    /// whose author is not known is a statement that cannot be checked
+    /// against the authors the platform trusts, and that is said out
+    /// loud rather than smoothed away.
+    #[serde(default)]
+    pub author: Option<String>,
 }
 
 impl VexStatement {
@@ -112,6 +120,7 @@ impl VexStatement {
             justification: None,
             timestamp: None,
             verified,
+            author: None,
         }
     }
 
@@ -132,6 +141,87 @@ impl VexStatement {
     /// Whether the statement was verified.
     pub fn is_verified(&self) -> bool {
         self.verified
+    }
+
+    /// The reasons a statement is not valid, checked one by one.
+    ///
+    /// A statement is valid when it has a subject (the vulnerability it
+    /// is about), a scope (the products it covers), a reason (the
+    /// justification it declares), an author (the name the document
+    /// says made it), and that author is one the platform recognizes
+    /// when the platform recognizes any.
+    ///
+    /// The reasons are a LIST and not a boolean, because "the document
+    /// did not say who wrote it" and "the statement covers nothing" are
+    /// two different things a reader needs told apart.
+    pub fn invalid_because(
+        &self,
+        vulnerability: &str,
+        component: &str,
+        trusted_authors: Option<&[&str]>,
+    ) -> Vec<String> {
+        let mut reasons = Vec::new();
+
+        if self.vulnerability.is_empty() {
+            reasons.push("the statement has no subject".to_string());
+        } else if self.vulnerability != vulnerability {
+            reasons.push(format!(
+                "the statement is about {} and not about {vulnerability}",
+                self.vulnerability
+            ));
+        }
+
+        if self.products.is_empty() {
+            reasons.push("the statement has no scope".to_string());
+        } else if self.does_not_apply_to(component) {
+            reasons.push(format!(
+                "the statement does not cover the component {component}"
+            ));
+        }
+
+        match self.status {
+            // The statuses that say the vulnerability does not apply
+            // have to say WHY; an empty reason is the statement the
+            // finding must not accept.
+            VexStatus::NotAffected | VexStatus::Fixed | VexStatus::Affected => {
+                if self.justification.is_none() {
+                    reasons.push("the statement gives no justification".to_string());
+                }
+            }
+            // Under investigation says nothing about the finding, and
+            // asks for nothing.
+            VexStatus::UnderInvestigation => {}
+        }
+
+        let Some(author) = self
+            .author
+            .as_deref()
+            .filter(|author| !author.trim().is_empty())
+        else {
+            reasons.push("the document does not say who made the statement".to_string());
+            return reasons;
+        };
+
+        if let Some(trusted) = trusted_authors
+            && !trusted.iter().any(|trusted| trusted == &author)
+        {
+            reasons.push(format!(
+                "the author {author} is not one the platform trusts"
+            ));
+        }
+
+        reasons
+    }
+
+    /// Whether the statement is valid for the finding it is asked about.
+    pub fn is_valid_for(
+        &self,
+        vulnerability: &str,
+        component: &str,
+        trusted_authors: Option<&[&str]>,
+    ) -> bool {
+        self.invalid_because(vulnerability, component, trusted_authors)
+            .is_empty()
     }
 }
 
@@ -176,6 +266,23 @@ pub fn read_vex(document: &str, id: &str) -> Result<VexStatement, VexError> {
         })?;
     if statement.id.is_empty() {
         statement.id = id.to_string();
+    }
+
+    // The author of the statement is the author of the document, which
+    // OpenVEX carries once at the top level. A statement whose document
+    // does not name an author keeps the absence: the validity check says
+    // the author is not known instead of inventing one.
+    if statement.author.is_none() {
+        statement.author = parsed
+            .get("author")
+            .and_then(|value| match value {
+                serde_json::Value::String(text) => Some(text.as_str()),
+                other => other
+                    .get("@id")
+                    .and_then(|id| id.as_str())
+                    .or_else(|| other.get("name").and_then(|name| name.as_str())),
+            })
+            .map(str::to_string);
     }
     Ok(statement)
 }

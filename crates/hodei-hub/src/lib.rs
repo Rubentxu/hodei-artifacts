@@ -54,4 +54,6 @@ pub use hub::{
     ArtifactHub, Availability, HubArtifact, PromotionAudit, PromotionError, TrustVerdict,
 };
 pub use oci::{OciDescriptor, OciError, OciManifest, OciSupport};
-pub use reclaim::{BlobReclaim, Reclaimed, StoredBlob};
+pub use reclaim::{
+    BlobReclaim, ConditionalBlob, ConditionalOutcome, Reclaimed, StoredBlob, VersionMarker,
+};

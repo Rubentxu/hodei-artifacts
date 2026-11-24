@@ -19,6 +19,7 @@
 //!   configuracion, y los recibos ya nacen sin secretos.
 
 pub mod capsule;
+pub mod capsule_dgraph;
 pub mod export;
 pub mod import;
 pub mod manifest;

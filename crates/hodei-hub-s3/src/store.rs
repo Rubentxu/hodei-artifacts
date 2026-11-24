@@ -12,7 +12,9 @@ use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_hub::blob::{
     BlobError, BlobStore, BlobWriteSession, CommitExpectation, ReadPolicy, StagingCleanup,
 };
-use hodei_hub::reclaim::{BlobReclaim, Reclaimed, StoredBlob};
+use hodei_hub::reclaim::{
+    BlobReclaim, ConditionalBlob, ConditionalOutcome, Reclaimed, StoredBlob, VersionMarker,
+};
 use sha2::{Digest, Sha256};
 
 /// El prefijo bajo el que vive el contenido dentro del cubo.
@@ -671,6 +673,117 @@ impl BlobStore for S3BlobStore {
             hasher: Sha256::new(),
             written: 0,
             open: true,
+            durable: false,
+            covers_all: true,
+        }))
+    }
+
+    /// Reabrir una subida multiple en curso a partir del handle del
+    /// journal: `staging/<pid>-<nanos>-<counter>` y su `upload_id`.
+    ///
+    /// El almacén es la autoridad de lo que hay: se listan los trozos y
+    /// se toma el **prefijo** —ordenado por numero— cuya suma es
+    /// exactamente el offset que el journal declara. Un multipart con
+    /// mas bytes que los declarados no es un error mientras exista ese
+    /// prefijo: los trozos que la autoridad no registro son los de un
+    /// proceso que murio entre el upload y el avance, se quedan fuera de
+    /// la lista del complete y no se publican nunca; el ciclo de vida
+    /// del cubo los recoge. Si ningun prefijo suma lo declarado —bytes
+    /// solapados de dos escritoras—, el resume falla y la subida se
+    /// rehace: publicar por delante de la autoridad esta prohibido.
+    async fn resume(
+        &self,
+        handle: &str,
+        written: u64,
+    ) -> Result<Box<dyn hodei_hub::blob::BlobWriteSession>, BlobError> {
+        let (key, upload_id) = handle.split_once('\u{0}').ok_or_else(|| {
+            BlobError::Unavailable("the session handle is not a multipart".to_owned())
+        })?;
+        // Solo staging propio: una clave ajena bajo el prefijo no es una
+        // subida que este almacen reanude, y tocarla no entra en el
+        // contrato.
+        if !is_a_staging_key(key) {
+            return Err(BlobError::Unavailable(
+                "the session handle is not a staging upload of this store".to_owned(),
+            ));
+        }
+        let mut listed: Vec<(i32, u64, String)> = Vec::new();
+        let mut marker: Option<String> = None;
+        loop {
+            let mut request = self
+                .client
+                .list_parts()
+                .bucket(&self.config.bucket)
+                .key(key)
+                .upload_id(upload_id)
+                .max_parts(1000);
+            if let Some(marker) = &marker {
+                request = request.part_number_marker(marker.clone());
+            }
+            let page = match request.send().await {
+                Ok(page) => page,
+                Err(error) if is_not_found(&error) => {
+                    return Err(BlobError::Unavailable(
+                        "the staging upload does not exist".to_owned(),
+                    ));
+                }
+                Err(error) => {
+                    return Err(Self::unavailable("list the parts of the session", error));
+                }
+            };
+            for part in page.parts() {
+                let number = part.part_number().unwrap_or(0);
+                let size = part.size().unwrap_or(0) as u64;
+                let e_tag = part.e_tag().unwrap_or_default().to_owned();
+                listed.push((number, size, e_tag));
+            }
+            if page.is_truncated() != Some(true) {
+                break;
+            }
+            marker = page.next_part_number_marker.map(|value| value.to_string());
+            if marker.is_none() {
+                break;
+            }
+        }
+        listed.sort_by_key(|(number, _size, _tag)| *number);
+        let mut parts: Vec<CompletedPart> = Vec::new();
+        let mut highest = 0i32;
+        let mut total = 0u64;
+        for (number, size, e_tag) in &listed {
+            if total + size > written {
+                break;
+            }
+            total += size;
+            highest = *number;
+            parts.push(
+                CompletedPart::builder()
+                    .part_number(*number)
+                    .e_tag(e_tag)
+                    .build(),
+            );
+        }
+        if total != written {
+            return Err(BlobError::Unavailable(format!(
+                "the staging upload does not hold a prefix of exactly {written} bytes and the journal declared {written}"
+            )));
+        }
+        Ok(Box::new(S3BlobWriteSession {
+            client: self.client.clone(),
+            config: self.config.clone(),
+            gate: Arc::clone(&self.gate),
+            staging_key: key.to_owned(),
+            upload_id: upload_id.to_owned(),
+            buffer: Vec::new(),
+            pending: VecDeque::new(),
+            completed: parts,
+            part_number: highest,
+            hasher: Sha256::new(),
+            written,
+            open: true,
+            // El journal es la autoridad del staging; el hasher local no
+            // vio los trozos que ya estaban.
+            durable: true,
+            covers_all: written == 0,
         }))
     }
 
@@ -744,6 +857,153 @@ impl BlobStore for S3BlobStore {
 
     fn reclaimer(&self) -> Option<&dyn hodei_hub::reclaim::BlobReclaim> {
         Some(self)
+    }
+
+    fn conditional(&self) -> Option<&dyn hodei_hub::reclaim::ConditionalBlob> {
+        Some(self)
+    }
+}
+
+/// Si el error de servicio es la precondicion de `If-Match` (412): la
+/// version actual no es la que el recolector marque.
+fn is_conditional_mismatch(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorMetadata>) -> bool {
+    match ProvideErrorMetadata::code(error) {
+        Some("PreconditionFailed") => true,
+        // S3 devuelve 412 tambien como `If-Match` puro segun endpoint.
+        Some(status) => status.contains("Precondition"),
+        None => false,
+    }
+}
+
+#[async_trait::async_trait]
+impl ConditionalBlob for S3BlobStore {
+    fn supports_conditional_delete(&self) -> bool {
+        // La ultima generacion de S3 (y los endpoints S3-compatibles
+        // que lo implementan) acepta `If-Match` en DELETE y
+        // `x-amz-copy-source-if-match` en COPY. El recolector pregunta
+        // aqui, en el tipo del almacen; no en una bandera que se pueda
+        // poner mal. Un endpoint que no lo soporte se prueba en la
+        // primera condicion fallida: la copia devuelve 412 y NO toca
+        // nada, que es exactamente el contrato de fail-closed.
+        true
+    }
+
+    fn quarantine_key_of(&self, digest: &ContentDigest, run_id: &str) -> String {
+        format!("quarantine/{run_id}/{}", digest.value)
+    }
+
+    async fn head_marker(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<VersionMarker>, BlobError> {
+        let key = self.the_key_of(digest);
+        match self
+            .client
+            .head_object()
+            .bucket(&self.config.bucket)
+            .key(&key)
+            .send()
+            .await
+        {
+            Ok(head) => {
+                let Some(marker) = head.e_tag().map(|etag| etag.to_string()) else {
+                    return Err(Self::unavailable(
+                        "look up the blob version",
+                        "the object store served no ETag to condition on",
+                    ));
+                };
+                Ok(Some(VersionMarker {
+                    key,
+                    marker,
+                    length: head.content_length.unwrap_or(0).max(0) as u64,
+                }))
+            }
+            Err(error) if is_not_found(&error) => Ok(None),
+            Err(error) => Err(Self::unavailable("look up the blob version", error)),
+        }
+    }
+
+    async fn delete_if_untouched(
+        &self,
+        digest: &ContentDigest,
+        marker: &VersionMarker,
+    ) -> Result<ConditionalOutcome, BlobError> {
+        let key = self.the_key_of(digest);
+        match self
+            .client
+            .delete_object()
+            .bucket(&self.config.bucket)
+            .key(&key)
+            .set_if_match(Some(marker.marker.clone()))
+            .send()
+            .await
+        {
+            Ok(_) => Ok(ConditionalOutcome::Applied {
+                length: marker.length,
+            }),
+            Err(error) if is_not_found(&error) => Ok(ConditionalOutcome::Gone),
+            Err(error) if is_conditional_mismatch(&error) => Ok(ConditionalOutcome::NotApplied),
+            Err(error) => Err(Self::unavailable("delete the blob conditionally", error)),
+        }
+    }
+
+    async fn quarantine_if_untouched(
+        &self,
+        digest: &ContentDigest,
+        marker: &VersionMarker,
+        quarantine_key: &str,
+    ) -> Result<ConditionalOutcome, BlobError> {
+        if marker.marker.is_empty() {
+            return Err(Self::unavailable(
+                "quarantine the blob version",
+                "the marked version has no ETag to condition on",
+            ));
+        }
+        let source = self.the_key_of(digest);
+        // Paso 1: COPIA condicionada a la version marcada. Un 412 aqui
+        // significa que la clave original NO es lo que la pasada vio:
+        // no se toca nada. Un 404 significa que ya no esta.
+        let copied = self
+            .client
+            .copy_object()
+            .bucket(&self.config.bucket)
+            .copy_source(format!("{}/{}", self.config.bucket, source))
+            .set_copy_source_if_match(Some(marker.marker.clone()))
+            .key(quarantine_key)
+            .send()
+            .await;
+        match copied {
+            Ok(_) => {}
+            Err(error) if is_conditional_mismatch(&error) => {
+                return Ok(ConditionalOutcome::NotApplied);
+            }
+            Err(error) if is_not_found(&error) => {
+                return Ok(ConditionalOutcome::Gone);
+            }
+            Err(error) => {
+                return Err(Self::unavailable("quarantine the marked version", error));
+            }
+        }
+        // Paso 2: DELETE condicionado a la misma ETag. Si entre la copia
+        // y el delete alguien reescribio la clave, el delete falla con
+        // 412 y la cuarentena queda como copia exacta de la version
+        // marcada: reconciliable, nunca perdida.
+        match self
+            .client
+            .delete_object()
+            .bucket(&self.config.bucket)
+            .key(&source)
+            .set_if_match(Some(marker.marker.clone()))
+            .send()
+            .await
+        {
+            Ok(_) => Ok(ConditionalOutcome::Applied {
+                length: marker.length,
+            }),
+            Err(error) if is_not_found(&error) => Ok(ConditionalOutcome::Gone),
+            Err(error) if is_conditional_mismatch(&error) => Ok(ConditionalOutcome::NotApplied),
+            Err(error) => Err(Self::unavailable("release the quarantined key", error)),
+        }
     }
 }
 
@@ -841,6 +1101,14 @@ pub struct S3BlobWriteSession {
     hasher: Sha256,
     written: u64,
     open: bool,
+    /// El journal del registro es quien decide el destino del multipart:
+    /// el Drop del mango **no** lo aborta.
+    durable: bool,
+    /// Si el hasher local cubre el staging entero. Un multipart reabierto
+    /// en frio no vuelve a ver los trozos que ya volaron: su digest local
+    /// es parcial, y el commit tiene que comprobar los bytes contra el
+    /// almacen, no contra el hasher.
+    covers_all: bool,
 }
 
 impl S3BlobWriteSession {
@@ -1017,6 +1285,49 @@ impl S3BlobWriteSession {
             .send()
             .await
             .map_err(|error| S3BlobStore::unavailable("complete the upload", error))?;
+        // La verificacion honesta de una sesion reabierta en frio —la
+        // marca `covers_all` del mango: su hasher local no paso por los
+        // trozos que otra réplica subio, asi que el commit no pudo
+        // comparar un digest parcial contra lo declarado (daria un
+        // `DigestMismatch` falso y abortaria una subida buena). Se lee
+        // el objeto staging ya completado y se comprueba contra lo
+        // declarado **antes** de copiarlo a la clave del blob. Lo que
+        // no cuadra no se publica: se borra el staging y no queda
+        // referencia.
+        if !self.covers_all {
+            let staged = self
+                .client
+                .get_object()
+                .bucket(&self.config.bucket)
+                .key(&self.staging_key)
+                .send()
+                .await
+                .map_err(|error| S3BlobStore::unavailable("read the staged content", error))?;
+            let bytes = staged
+                .body
+                .collect()
+                .await
+                .map_err(|error| S3BlobStore::unavailable("stream the staged content", error))?
+                .into_bytes()
+                .to_vec();
+            let found = ContentDigest::of_bytes(&bytes);
+            if found != *digest {
+                // El contenido no es el declarado: el staging se borra
+                // y no se copia nada. Un blob con un digest que no es el
+                // suyo no es un blob.
+                let _ = self
+                    .client
+                    .delete_object()
+                    .bucket(&self.config.bucket)
+                    .key(&self.staging_key)
+                    .send()
+                    .await;
+                return Err(BlobError::DigestMismatch {
+                    expected: digest.clone(),
+                    found,
+                });
+            }
+        }
         let copied = if self.written > MAX_SIMPLE_COPY {
             self.copy_as_multipart(target, digest, true).await
         } else {
@@ -1258,7 +1569,6 @@ impl BlobWriteSession for S3BlobWriteSession {
             self.collect_part(tokio::time::timeout(UPLOAD_TIMEOUT, handle).await)?;
         }
 
-        let found = ContentDigest::sha256(hex_of(&self.hasher.clone().finalize()));
         if self.written != expectation.length {
             self.discard().await;
             return Err(BlobError::LengthMismatch {
@@ -1266,22 +1576,36 @@ impl BlobWriteSession for S3BlobWriteSession {
                 found: self.written,
             });
         }
-        if found != expectation.digest {
-            self.discard().await;
-            return Err(BlobError::DigestMismatch {
-                expected: expectation.digest,
-                found,
-            });
+
+        // La comprobacion honesta del digest. Cuando el mango paso por
+        // todos los bytes, el hasher local es la verdad y se compara
+        // aqui, barato. Cuando la sesion se reablo en frio —el journal
+        // la declaro y otra réplica escribio los primeros trozos—, el
+        // hasher local es **parcial**: compararlo contra lo declarado
+        // daria un `DigestMismatch` falso y abortaria una subida buena.
+        // En ese caso la comprobacion la hace `publish` contra el
+        // staging ya completado: la misma verificacion honesta, una
+        // sola vez, al publicar.
+        let declared = expectation.digest;
+        if self.covers_all {
+            let found = ContentDigest::sha256(hex_of(&self.hasher.clone().finalize()));
+            if found != declared {
+                self.discard().await;
+                return Err(BlobError::DigestMismatch {
+                    expected: declared,
+                    found,
+                });
+            }
         }
 
         // Desde aqui hasta publicar, el recolector no puede borrar nada.
         let barrier = self.gate.lock().await;
-        let target = blob_key(&found);
-        let outcome = self.publish(&target, &found).await;
+        let target = blob_key(&declared);
+        let outcome = self.publish(&target, &declared).await;
         drop(barrier);
         self.open = false;
         outcome?;
-        Ok(found)
+        Ok(declared)
     }
 
     async fn abort(&mut self) -> Result<(), BlobError> {
@@ -1312,12 +1636,79 @@ impl BlobWriteSession for S3BlobWriteSession {
         self.written
     }
 
+    /// Lo que el almacén tiene: los bytes en vuelo no son durable hasta
+    /// que el servidor los confirma, y lo que queda en el buffer no salio
+    /// del proceso. Es el offset que el journal puede declarar.
+    fn the_durable_offset(&self) -> u64 {
+        self.written - self.buffer.len() as u64
+    }
+
     fn the_digest(&self) -> ContentDigest {
         ContentDigest::sha256(hex_of(&self.hasher.clone().finalize()))
     }
 
     fn the_staging_path(&self) -> Option<&std::path::Path> {
         None
+    }
+
+    /// El handle del journal: la clave de staging y el `upload_id`, unidos
+    /// por un cero que ninguno de los dos puede llevar.
+    fn the_staging_handle(&self) -> Option<String> {
+        Some(format!("{}\u{0}{}", self.staging_key, self.upload_id))
+    }
+
+    /// Un multipart reabierto en frio no volvio a ver sus trozos: su
+    /// hasher local es parcial, y el commit tiene que comprobar los bytes
+    /// contra el almacén.
+    fn the_digest_covers_all(&self) -> bool {
+        self.covers_all
+    }
+
+    /// Suelta el mango **solo si no queda nada en el buffer**.
+    ///
+    /// El multipart no tiene un staging intermedio al que puedan volver
+    /// los bytes del buffer: soltarse con bytes dentro los perderia, y
+    /// la autoridad del journal no los declaro. Con el buffer vacio y
+    /// las partes en vuelo ya recogidas por `flush_durable`, soltar es
+    /// cerrar sin abortar: el multipart sigue vivo y el proximo `PATCH`
+    /// lo retoma por su handle, aqui o en otra réplica.
+    fn detach(&mut self) -> Result<(), BlobError> {
+        if !self.buffer.is_empty() {
+            return Err(BlobError::Unavailable(
+                "a multipart session with bytes in the buffer does not release its writer"
+                    .to_owned(),
+            ));
+        }
+        self.open = false;
+        for handle in self.pending.drain(..) {
+            handle.abort();
+        }
+        Ok(())
+    }
+
+    /// El journal toma la propiedad del multipart: el Drop ya no lo aborta.
+    ///
+    /// Un mango soltado o un proceso que muere NO aborta la subida de
+    /// otra réplica; su destino lo decide la autoridad: commit, abort
+    /// explicito o barrido. El resume comprueba contra `ListParts` que
+    /// el almacén tiene exactamente los bytes que la autoridad declara
+    /// y rehacer la subida es el unico camino si un trozo duplicado puso
+    /// el staging por delante del journal. No se publica nunca por
+    /// delante de la autoridad.
+    fn mark_durable(&mut self) {
+        self.durable = true;
+    }
+
+    /// Recoge las partes en vuelo y declara el offset durable.
+    ///
+    /// Lo confirmado por el servidor es durable; lo que queda en el
+    /// buffer no sale del proceso, y el cliente lo reenvia contra el
+    /// `Range` que la autoridad declara.
+    async fn flush_durable(&mut self) -> Result<u64, BlobError> {
+        while let Some(handle) = self.pending.pop_front() {
+            self.collect_part(tokio::time::timeout(UPLOAD_TIMEOUT, handle).await)?;
+        }
+        Ok(self.written - self.buffer.len() as u64)
     }
 }
 
@@ -1333,6 +1724,12 @@ impl Drop for S3BlobWriteSession {
         self.open = false;
         for handle in self.pending.drain(..) {
             handle.abort();
+        }
+        // Con journal, el destino del multipart lo decide la autoridad:
+        // un mango local que muere (cache desalojado, réplica que sigue)
+        // NO aborta la subida de otra réplica.
+        if self.durable {
+            return;
         }
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let client = self.client.clone();

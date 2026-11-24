@@ -8,9 +8,14 @@
 //! generacion del mundo se calculo no se puede auditar.
 
 pub mod conformance;
+pub mod dgraph;
 pub mod evaluator;
 
 pub use conformance::SurrealConformance;
+pub use dgraph::{
+    AnchorError, DgraphConformance, DgraphSimulationAnchor, DgraphSimulationGraph,
+    SIMULATION_ANCHOR_TYPE, SIMULATION_SCHEMA_DQL, SimulationAnchor, anchor_key,
+};
 pub use evaluator::CapsuleDecisionEvaluator;
 
 use std::sync::Arc;

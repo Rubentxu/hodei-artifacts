@@ -424,14 +424,22 @@ async fn append_chunk(
         &repository,
     )?;
 
-    let Some(shared) = state.uploads.find(context.account().as_str(), &name, &id) else {
-        return Err(OciFailure::blob_upload_unknown(
-            "the upload session does not exist",
-        ));
-    };
+    // La sesion puede estar **en cualquier réplica**: el cache local va
+    // primero; si aqui no existe —o existe con el mango soltado—, la
+    // autoridad del journal dice su offset y el almacen de contenido
+    // reabre el staging por su handle. Un `404` solo cuando la sesion
+    // tampoco existe para la autoridad.
+    let store = the_content_store(&state)?;
+    let shared = state
+        .uploads
+        .find_or_resume(context.account().as_str(), &name, &id, store.as_ref())
+        .await?
+        .ok_or_else(|| OciFailure::blob_upload_unknown("the upload session does not exist"))?;
     let mut session = shared.lock().await;
     session.touch();
-    let written = session.bytes_written();
+    let written = session
+        .the_local_offset()
+        .expect("a resumed session has its writer");
 
     // Un rango que no se puede leer no se comprueba: se rechaza.
     if the_range_is_malformed(&headers) {
@@ -454,7 +462,12 @@ async fn append_chunk(
 
     // El rango, si el cliente lo manda. El protocolo dice que los trozos
     // van en orden y que un trozo que no encaja recibe un 416: el
-    // cliente recupera el offset con un `GET` y sigue.
+    // cliente recupera el offset con un `GET` y sigue. Con journal, el
+    // offset **es el de la autoridad**: el mango recien reabierto ya
+    // esta en él, y un trozo que llega a destiempo —otro escritor gano
+    // el CAS, o el cliente reenvia lo ya escrito— cae en el mismo 416
+    // con el `Range` de seguir, que es lo que hace que el replay no
+    // duplique parte alguna.
     if let Some(range) = the_content_range(&headers)
         && range.0 != written
     {
@@ -469,7 +482,9 @@ async fn append_chunk(
         .with_range(the_range_header(written)));
     }
 
-    let (writer, ticket) = session.the_writer_and_ticket();
+    let (writer, ticket) = session
+        .the_writer_and_ticket()
+        .expect("a session with an offset has its writer");
     let length = write_the_body(
         writer.as_mut(),
         request.into_body(),
@@ -478,7 +493,56 @@ async fn append_chunk(
     )
     .await?;
 
-    Ok(the_upload_progress(&name, &id, written + length))
+    // El avance lo arbitra la autoridad: el journal solo admite el
+    // offset de lo que ya es **durable** en el almacén —lo escrito en
+    // el fichero sincronizado; en el multipart, lo confirmado por el
+    // servidor—, nunca lo que lleva el buffer del mango. Si otro
+    // escritor gano el CAS, este `PATCH` responde el `416` con el
+    // `Range` real: el trozo escrito por delante de la autoridad no se
+    // publica —se recorta al reabrir, o se queda fuera del complete—,
+    // y el cliente lo reenvia desde el offset declarado.
+    let durable = session
+        .flush_durable()
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    match state
+        .uploads
+        .advance(&id, session.the_journal_version(), durable)
+        .await
+    {
+        crate::oci::uploads::Advance::Admitted(version) => {
+            session.set_journal_version(version);
+            // Con journal y handle, el mango se suelta: la proxima
+            // peticion —aqui o en otra réplica— lo retoma por el
+            // handle. Un multipart con bytes en el buffer no suelta;
+            // el registro lo sabe.
+            session.release_writer_when_possible();
+            // El progreso que se anuncia es el cursor de **este**
+            // mango: lo que el cliente debe seguir enviando desde
+            // aqui. El journal declara el offset durable —por debajo
+            // en el multipart—, y ese es el que dira el `Range` si el
+            // proceso muere con el buffer: el cliente reenvia desde lo
+            // confirmado, y lo confirmado es lo unico que se publica.
+            Ok(the_upload_progress(&name, &id, written + length))
+        }
+        crate::oci::uploads::Advance::Conflict(offset) => {
+            // La autoridad ya tiene otro offset: lo que este mango
+            // escribio por delante no es de esta sesion. Se suelta el
+            // mango sin publicar —el resume recorta lo que sobre—, y
+            // el 416 dice por donde seguir.
+            session.release_writer_when_possible();
+            Err(OciFailure::blob_upload_range_mismatch(
+                "another writer advanced this session; the chunk was not admitted",
+            )
+            .with_range(the_range_header(offset)))
+        }
+        crate::oci::uploads::Advance::Gone => Err(OciFailure::blob_upload_unknown(
+            "the upload session does not exist",
+        )),
+        crate::oci::uploads::Advance::Unavailable(message) => Err(OciFailure::unavailable(
+            format!("the session journal did not admit the chunk: {message}"),
+        )),
+    }
 }
 
 /// `GET /v2/<name>/blobs/uploads/<uuid>`
@@ -508,14 +572,36 @@ pub async fn upload_status(
         &repository,
     )?;
 
-    let Some(shared) = state.uploads.find(context.account().as_str(), &name, &id) else {
-        return Err(OciFailure::blob_upload_unknown(
-            "the upload session does not exist",
-        ));
+    // El estado puede consultarse **desde cualquier réplica**: si el
+    // cache local no tiene la sesion escrita, la autoridad del journal
+    // dice el offset sin reabrir el almacén —consultar cuanto lleva
+    // una subida no necesita tomar el mango ni excluir a quien lo
+    // tiene—. Un `GET` que no reanudara no podria decir el progreso de
+    // una sesion abierta en otra réplica, y el cliente perderia el
+    // `Range` de reanudar.
+    let written = match state.uploads.find(context.account().as_str(), &name, &id) {
+        Some(shared) => {
+            let mut session = shared.lock().await;
+            session.touch();
+            match session.the_local_offset() {
+                Some(offset) => offset,
+                // El mango esta soltado: la autoridad dice el offset
+                // durable, que es el `Range` de seguir.
+                None => state
+                    .uploads
+                    .the_journal_offset(context.account().as_str(), &name, &id)
+                    .await?
+                    .ok_or_else(|| {
+                        OciFailure::blob_upload_unknown("the upload session does not exist")
+                    })?,
+            }
+        }
+        None => state
+            .uploads
+            .the_journal_offset(context.account().as_str(), &name, &id)
+            .await?
+            .ok_or_else(|| OciFailure::blob_upload_unknown("the upload session does not exist"))?,
     };
-    let mut session = shared.lock().await;
-    session.touch();
-    let written = session.bytes_written();
 
     let mut response = StatusCode::NO_CONTENT.into_response();
     let headers = response.headers_mut();
@@ -562,18 +648,29 @@ async fn cancel_upload(
         &repository,
     )?;
 
-    let Some(shared) = state.uploads.find(context.account().as_str(), &name, &id) else {
-        return Err(OciFailure::blob_upload_unknown(
-            "the upload session does not exist",
-        ));
-    };
-    // La sesion se aborta antes de salir del registro: al soltarse, su
-    // escritura del CAS se cierra y el staging se borra.
+    // Cancelar es abortar la subida **segun la autoridad**: la sesion
+    // puede estar abierta en otra réplica, y un DELETE que solo mirase
+    // el cache local no podria cancelar nunca lo que otro proceso
+    // escribio. El reavivamiento toma el mango —el bloqueo advisory
+    // excluye a la réplica que lo sostiene, y ese DELETE se responde
+    // 503 con reintento—; lo que se aborta es el staging del almacén,
+    // y la autoridad se cierra con el.
+    let store = the_content_store(&state)?;
+    let shared = state
+        .uploads
+        .find_or_resume(context.account().as_str(), &name, &id, store.as_ref())
+        .await?
+        .ok_or_else(|| OciFailure::blob_upload_unknown("the upload session does not exist"))?;
     {
         let mut session = shared.lock().await;
-        let _ = session.the_writer().abort().await;
+        // El abort de la escritura cierra el staging sin publicar: un
+        // fichero de staging se borra, un multipart se aborta en el
+        // object store. La cuota se suelta con la reserva del mango.
+        if let Some(writer) = session.the_writer() {
+            let _ = writer.abort().await;
+        }
     }
-    state.uploads.remove(&id);
+    state.uploads.close(&id).await?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -630,18 +727,28 @@ async fn close_upload(
     };
     let declared = the_digest_of_reference(declared)?;
 
-    let Some(shared) = state.uploads.find(context.account().as_str(), &name, &id) else {
-        return Err(OciFailure::blob_upload_unknown(
-            "the upload session does not exist",
-        ));
-    };
+    // La sesion que cierra puede estar en **cualquier réplica**: se
+    // reanima por el handle de la autoridad, se escriben los bytes que
+    // aun falten y se comprueba contra lo declarado. El mango que
+    // cierra no es dueno de la verdad del offset: lo es el journal.
+    let store = the_content_store(&state)?;
+    let shared = state
+        .uploads
+        .find_or_resume(context.account().as_str(), &name, &id, store.as_ref())
+        .await?
+        .ok_or_else(|| OciFailure::blob_upload_unknown("the upload session does not exist"))?;
     let mut session = shared.lock().await;
     session.touch();
 
     // Lo que ya lleva la sesion: el `PUT` que cierra puede no traer
     // cuerpo (es lo que hacen los clientes que suben por trozos), y lo
-    // que se declara es el **blob entero**, no el ultimo trozo.
-    let already = session.bytes_written();
+    // que se declara es el **blob entero**, no el ultimo trozo. Con
+    // journal, ademas, el mango puede venir reabierto en frio: los
+    // primeros bytes los escribio otra réplica, y este solo ha visto
+    // los que faltaban.
+    let already = session
+        .the_local_offset()
+        .expect("a resumed session has its writer");
 
     // Un rango que no se puede leer no se comprueba: se rechaza.
     if the_range_is_malformed(&headers) {
@@ -676,7 +783,9 @@ async fn close_upload(
     }
 
     // El ultimo trozo puede venir en el `PUT` que cierra.
-    let (writer, ticket) = session.the_writer_and_ticket();
+    let (writer, ticket) = session
+        .the_writer_and_ticket()
+        .expect("a session with an offset has its writer");
     let last = write_the_body(
         writer.as_mut(),
         request.into_body(),
@@ -686,37 +795,107 @@ async fn close_upload(
     .await?;
     let length = already + last;
 
-    let found = session.the_writer().the_digest();
-    if found.value != declared {
-        // El digest no cuadra: la subida se descarta y no queda ninguna
-        // referencia visible. Un blob con un digest que no es el suyo no
-        // es un blob.
-        let _ = session.the_writer().abort().await;
-        drop(session);
-        state.uploads.remove(&id);
-        return Err(OciFailure::digest_invalid(
-            "the content does not match the declared digest",
-        ));
+    // El digest declarado: lo que el cliente dice que es el blob entero.
+    // El commit del almacén lo comprueba contra el staging completo —
+    // sea cual sea el mango que cierra—; la comprobacion local de aqui
+    // es una优化 barata para el mango que paso por todos los bytes.
+    let expectation = ContentDigest::sha256(declared.clone());
+
+    // Antes de publicar, la autoridad tiene que admitir el offset: un
+    // cierre que publicase por delante de ella publicaria bytes que
+    // nadie declaro. El journal admite hasta lo **durable** del mango;
+    // un `416` aqui dice que otro escritor gano y este cierre no
+    // publica nada.
+    let durable = session
+        .flush_durable()
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    match state
+        .uploads
+        .advance(&id, session.the_journal_version(), durable)
+        .await
+    {
+        crate::oci::uploads::Advance::Admitted(version) => {
+            session.set_journal_version(version);
+        }
+        crate::oci::uploads::Advance::Conflict(offset) => {
+            session.release_writer_when_possible();
+            return Err(OciFailure::blob_upload_range_mismatch(
+                "another writer advanced this session; the close was not admitted",
+            )
+            .with_range(the_range_header(offset)));
+        }
+        crate::oci::uploads::Advance::Gone => {
+            return Err(OciFailure::blob_upload_unknown(
+                "the upload session does not exist",
+            ));
+        }
+        crate::oci::uploads::Advance::Unavailable(message) => {
+            return Err(OciFailure::unavailable(format!(
+                "the session journal did not admit the close: {message}"
+            )));
+        }
+    }
+
+    if session.the_digest_covers_all() {
+        let found = session
+            .the_writer()
+            .expect("a session that covers all has its writer")
+            .the_digest();
+        if found.value != declared {
+            // El digest no cuadra: la subida se descarta y no queda
+            // ninguna referencia visible. Un blob con un digest que no
+            // es el suyo no es un blob. El cierre explicito quita
+            // tambien la autoridad: una sesion rechazada no queda
+            // reanudable.
+            let _ = session.the_writer().expect("the writer").abort().await;
+            drop(session);
+            let _ = state.uploads.close(&id).await;
+            return Err(OciFailure::digest_invalid(
+                "the content does not match the declared digest",
+            ));
+        }
     }
     // Lo que el almacén gana es lo que la cuenta paga: una capa que ya
     // estaba empujada por otro no añade bytes. Se mira antes del
     // commit, y se asienta en cuanto el blob existe: lo que el catálogo
     // publique después es otra transacción, y los bytes ya están.
     let already_had = the_content_store(&state)?
-        .exists(&found)
+        .exists(&expectation)
         .await
         .map_err(|error| the_blob_error(&error))?;
-    let digest = session
+    let commit = session
         .the_writer()
+        .expect("a session with an offset has its writer")
         .commit(CommitExpectation {
-            digest: found.clone(),
+            digest: expectation.clone(),
             length,
         })
-        .await
-        .map_err(|error| the_blob_error(&error))?;
+        .await;
+    let digest = match commit {
+        Ok(digest) => digest,
+        Err(error) => {
+            // El commit rechazo el contenido —o el almacén fallo—: la
+            // autoridad de la sesion deja de existir. Un staging no
+            // verificado no es una sesion reanudable.
+            drop(session);
+            let _ = state.uploads.close(&id).await;
+            return Err(the_blob_error(&error));
+        }
+    };
     session.settle(if already_had { 0 } else { length });
     drop(session);
-    state.uploads.remove(&id);
+    // La autoridad se cierra con el blob ya publicado: lo que el
+    // journal declaraba es exactamente lo que el almacén verifico. Si
+    // el cierre falla, el blob **esta** publicado —la promesa del
+    // commit es mas fuerte que la marca del journal—: se quita el
+    // asiento local y la bandera de abierta la resuelve el barrido por
+    // TTL, cuyo resume del staging ya consumido no publica nada. El
+    // cliente recibe su 201.
+    if let Err(error) = state.uploads.close(&id).await {
+        state.uploads.remove(&id);
+        let _ = error;
+    }
 
     publish_blob(&state, &context, &name, &digest, length, &headers).await?;
 
@@ -1495,7 +1674,7 @@ async fn publish_blob(
 }
 
 /// Un error del almacen de contenido, traducido al dialecto.
-fn the_blob_error(error: &BlobError) -> OciFailure {
+pub(crate) fn the_blob_error(error: &BlobError) -> OciFailure {
     match error {
         BlobError::NotFound => OciFailure::blob_unknown("the content is not there"),
         // El contenido no es el que se declaro: es un error del

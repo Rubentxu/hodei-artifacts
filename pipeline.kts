@@ -148,6 +148,7 @@ pipeline {
                     "cargo test --workspace " + listOf(
                         "--test admin_surface",
                         "--test atomic_projection",
+                        "--test dgraph_profile_failclosed",
                         "--test audit_events",
                         "--test backend_selection_failclosed",
                         "--test http_contract",
@@ -185,6 +186,16 @@ pipeline {
                         "--test hsp146_put_transaction",
                         "--test hsp149_lifecycle",
                         "--test hsp179_keyset_plan",
+                        "--test hsp192_gc_coordinated_pass",
+                        "--test hsp210_idempotent_import",
+                        "--test hsp211_projection_reconcile",
+                        "--test hsp212_cutover_rehearsal",
+                        "--test hsp154_trust_root_rotation",
+                        "--test hsp155_intelligence_sla",
+                        "--test hsp166_dataset",
+                        "--test intelligence_oracle",
+                        "--test slsa_contract",
+                        "--test trust_chain_contract",
                         "--test hsp105_trust_ledger_contract",
                         "--test hsp106_provenance_ledger_contract",
                         "--test hsp108_group_contract",
@@ -201,6 +212,47 @@ pipeline {
                         "--test hsp142_capability_matrix",
                         "--test hsp243_user_guides",
                     ).joinToString(" ")
+                )
+            }
+        }
+
+        // Los `*_it` de Dgraph de las slices HSP-187 a HSP-220 (HSP-209 y
+        // HSP-192 siguen en su sitio de "integration (database)"). Cada
+        // target se salta a si mismo (exit 0) sin HODEI_GRAPH_IT_ENDPOINT,
+        // asi que el primer paso declara NOT_RUN de forma visible y deja
+        // target/uat/dgraph-it-status.txt: un salto no se hace pasar por
+        // verde. Con el endpoint exportado corren contra el Zero+Alpha de
+        // deploy/dgraph/compose.yaml. Un solo hilo: las claves propias se
+        // leen por membresia sobre el alpha compartido.
+        stage("integration (dgraph)") {
+            timestamps {
+                sh("bash scripts/dgraph-it-gate.sh")
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp187_catalog_dgraph_it",
+                        "--test hsp189_dgraph_graph_it",
+                        "--test hsp189_upsert_probe_it",
+                        "--test hsp190_oci_catalog_dgraph_it",
+                        "--test hsp191_maven_dgraph_it",
+                        "--test hsp193_npm_dgraph_it",
+                        "--test hsp194_pypi_dgraph_it",
+                        "--test hsp195_apt_dgraph_it",
+                        "--test hsp196_proxy_dgraph_it",
+                        "--test hsp197_yum_dgraph_it",
+                        "--test hsp198_quota_dgraph_it",
+                        "--test hsp199_dgraph_frontier_it",
+                        "--test hsp200_dgraph_bounded_it",
+                        "--test hsp201_sessions_dgraph_it",
+                        "--test hsp202_dgraph_failclosed_it",
+                        "--test hsp202_dgraph_impact_it",
+                        "--test hsp203_trust_ledger_dgraph_it",
+                        "--test hsp204_dgraph_reachability_it",
+                        "--test hsp205_intents_dgraph_it",
+                        "--test hsp206_dgraph_investigation_it",
+                        "--test hsp207_capsule_dgraph_it",
+                        "--test hsp208_simulation_dgraph_it",
+                        "--test hsp220_drain_outbox_it",
+                    ).joinToString(" ") + " -- --test-threads=1"
                 )
             }
         }
@@ -271,6 +323,10 @@ pipeline {
                         // en caliente, la readiness deja de ser 200 y la
                         // liveness no.
                         "--test hsp237_readiness",
+                        // La readiness del perfil de grafo (HSP-237): con un
+                        // Dgraph de mentira que cae y se recupera, la
+                        // readiness depende del alpha y la liveness no.
+                        "--test hsp237_graph_readiness",
                         // El recorrido del perfil externo (HSP-237): con
                         // HSP237_PROFILE_E2E=1 levanta con podman un Dgraph
                         // de laboratorio y un S3 y mide la readiness al
@@ -333,7 +389,42 @@ pipeline {
                         // clientes con ACK perdido contra el mismo
                         // Zero+Alpha.
                         "--test hsp185_ledger_it",
+                        // Prueba de IAM sobre Dgraph (HSP-186): sin
+                        // HODEI_GRAPH_IT_ENDPOINT se salta; con el perfil
+                        // real valida persistencia y aislamiento tras reconexion.
+                        "--test hsp186_dgraph_iam_it",
+                        // Prueba del EvidenceStore Dgraph (HSP-188): sin
+                        // HODEI_GRAPH_IT_ENDPOINT se salta; con el perfil
+                        // real valida recibos, identidad, scope e integridad CAS.
+                        "--test hsp188_dgraph_evidence_it",
+                        // Sesiones OCI reanudables de punta a punta (HSP-201),
+                        // sin Dgraph.
+                        "--test hsp201_oci_sessions_e2e",
                     ).joinToString(" ")
+                )
+                // Prueba del libro coordinado de GC (HSP-192): sin
+                // HODEI_GRAPH_IT_ENDPOINT se salta; con el perfil real
+                // ejercita el claim CAS durable, el zombie con lease
+                // vencido, las guardas de referencia en la misma
+                // transaccion y el censo paginado por membresia contra
+                // el mismo Zero+Alpha. Va en comando aparte porque las
+                // claves de GC comparten el alpha con otras slices y
+                // necesita un solo hilo.
+                sh(
+                    "cargo test --workspace --test hsp192_gc_ledger_dgraph_it -- --test-threads=1"
+                )
+                // El humo del perfil productivo sobre la autoridad unica
+                // (HSP-209): sin HODEI_GRAPH_IT_ENDPOINT se salta; con el
+                // alpha real arranca el binario con RUN_MODE=dgraph
+                // contra el mismo Zero+Alpha y el object store de la
+                // serie HSP-116, y fija que Raw, OCI y confianza sirven
+                // juntos sobre la autoridad unica, que el arranque no
+                // toca RocksDB y que el fallback rechazado muere
+                // nombrandolo. La evidencia queda en target/uat/hsp209/.
+                // Un solo hilo: las claves propias se leen por membresia
+                // sobre el alpha compartido.
+                sh(
+                    "cargo test --workspace --test hsp209_profile_smoke_it -- --test-threads=1"
                 )
                 sh(
                     "if [ ! -f target/uat/raw-conformity.md ]; then " +

@@ -33,6 +33,7 @@ pub mod group;
 pub mod proxy;
 pub mod push;
 pub mod query;
+pub mod session_journal;
 pub mod target;
 pub mod token;
 pub mod uploads;

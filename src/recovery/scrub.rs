@@ -257,6 +257,10 @@ pub fn assess(evidence: &Evidence<'_>, elapsed: Duration) -> ScrubReport {
             Verdict::InGrace { .. } => true,
             Verdict::Reclaimable { .. } => false,
             Verdict::Retained { .. } => continue,
+            // El censo del scrub es completo: un desconocido aqui solo
+            // puede ser una degradacion del paginado, y eso nunca es
+            // huerfano.
+            Verdict::Unknown { .. } => continue,
         };
         // Un huerfano danado ya esta en la lista como corrupto.
         if corrupt.contains(&entry.digest) {

@@ -6,8 +6,10 @@
 //! - [`resolution`]: traer, verificar, guardar y dejar constancia.
 //! - [`cache`]: coalescencia de descargas, cache negativa y metricas.
 //! - [`token`]: los tokens que un upstream exige y ya se han pedido.
+//! - [`dgraph_ledger`]: el libro de recibos durable sobre el grafo (HSP-196).
 
 pub mod cache;
+pub mod dgraph_ledger;
 pub mod egress;
 pub mod fetch;
 pub mod resolution;

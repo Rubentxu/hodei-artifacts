@@ -108,6 +108,9 @@ pub enum ReasonCode {
     VulnerabilityImpacted,
     /// An exception that expired.
     ExceptionExpired,
+    /// A trust root was rotated, and the decisions that rested on the
+    /// superseded revision have to be reevaluated against the new one.
+    TrustRootRotated,
 }
 
 /// The reaction to a vulnerability that was accepted.

@@ -367,6 +367,44 @@ pub enum Route {
     Key,
 }
 
+/// Normaliza los escapes percent que el propio cliente anade al href del
+/// primary: `dnf5` (libcurl) escapa los caracteres reservados al construir
+/// la URL, asi que `:` llega como `%3a` y `+` como `%2b`. Solo se sustituyen
+/// las secuencias `%XX` con hex validos; un `%` suelto o con hex invalido
+/// se deja tal cual y cae fuera del charset en la validacion de la ruta.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    if !bytes.contains(&b'%') {
+        return text.to_string();
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+        {
+            out.push(hi << 4 | lo);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    // Una secuencia que no decodifica a UTF-8 valido no es una ruta: se
+    // devuelve el crudo para que la validacion de charset lo rechace.
+    String::from_utf8(out).unwrap_or_else(|_| text.to_string())
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 impl Route {
     /// Interpreta el resto de `/yum/{repositorio}/...`, crudo.
     pub fn parse(rest: &str) -> Result<Route, YumError> {
@@ -374,6 +412,11 @@ impl Route {
             return Ok(Route::Key);
         }
         if let Some(path) = rest.strip_prefix("pool/") {
+            // El charset de la gramatica es la frontera de seguridad: la
+            // ruta se normaliza primero (`percent_decode`) y se valida
+            // despues, de modo que un escape hostil (`%2e%2e`, `%2f`) no
+            // abre la puerta a nada que la forma cruda no abriera ya.
+            let path = percent_decode(path);
             if !path.ends_with(".rpm")
                 || path.is_empty()
                 || path.contains("..")
@@ -840,6 +883,43 @@ mod tests {
             Route::parse("pool/hello-hodei-1.0.0-1.fc40.x86_64.rpm").unwrap(),
             Route::Pool {
                 path: "pool/hello-hodei-1.0.0-1.fc40.x86_64.rpm".into()
+            }
+        );
+        // dnf5 escapa los reservados del href al pedir el paquete: la
+        // misma ruta llega con `%3a` (epoch) y `%2b` (plus) y debe
+        // interpretarse como la ruta cruda del catalogo.
+        assert_eq!(
+            Route::parse("pool/hello-tilde-1%3a1.0.0~rc1%2bdfsg-1.x86_64.rpm").unwrap(),
+            Route::Pool {
+                path: "pool/hello-tilde-1:1.0.0~rc1+dfsg-1.x86_64.rpm".into()
+            }
+        );
+    }
+
+    #[test]
+    fn percent_escapes_never_widen_the_path() {
+        // Un escape que produciria `..` cae igual que la forma cruda: la
+        // normalizacion no abre ninguna puerta.
+        assert!(Route::parse("pool/%2e%2e/etc/passwd.rpm").is_err());
+        assert!(Route::parse("pool/main/%2e%2e/secret.rpm").is_err());
+        // `%` suelto, hex invalido o secuencia incompleta: fuera del
+        // charset, jamas una ruta.
+        assert!(Route::parse("pool/a%zzb.rpm").is_err());
+        assert!(Route::parse("pool/a%2.rpm").is_err());
+        assert!(Route::parse("pool/a%b.rpm").is_err());
+        // Doble percent: una unica pasada, `%252e` deja `%` en la ruta y
+        // el charset lo rechaza.
+        assert!(Route::parse("pool/a%252eb.rpm").is_err());
+        // La invariante: lo que la forma escapada acepta es exactamente lo
+        // que aceptaria la forma cruda decodificada, ni mas ni menos.
+        assert_eq!(
+            Route::parse("pool/a%2fb.rpm").unwrap(),
+            Route::parse("pool/a/b.rpm").unwrap()
+        );
+        assert_eq!(
+            Route::parse("pool/aa%41b.rpm").unwrap(),
+            Route::Pool {
+                path: "pool/aaAb.rpm".into()
             }
         );
     }

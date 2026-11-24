@@ -74,5 +74,6 @@ pub use port::{
 };
 pub use schema::{
     BootDecision, HodeiSchema, PredicateSpec, SCHEMA_VERSION, SchemaBootError, SchemaBootReport,
-    decide_boot, dql_string, ensure_ready, hodei_schema, verify_predicates, write_schema_meta,
+    decide_boot, dql_string, ensure_ready, hodei_schema, read_stored_schema, verify_predicates,
+    write_schema_meta,
 };

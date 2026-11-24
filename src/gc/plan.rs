@@ -85,6 +85,15 @@ pub enum Verdict {
         /// Cuanto lleva en el almacen, en segundos.
         age_secs: u64,
     },
+    /// No se pudo saber si esta vivo: el censo no cubrio su alcance, la
+    /// lectura de una raiz fallo, o el grafo dijo "paginemos y no
+    /// terminemos". **Jamais reclamable** (HSP-192, AC3): ante la duda
+    /// no se borra, y el veredicto lo dice en el tipo para que ninguna
+    /// pasada pueda interpretarlo como huerfano.
+    Unknown {
+        /// Por que no se sabe, dicho con la boca pequena pero dicha.
+        reason: String,
+    },
 }
 
 /// El veredicto de un blob.
@@ -112,6 +121,8 @@ pub struct Summary {
     pub reclaimable: u64,
     /// Los bytes que se liberarian.
     pub reclaimable_bytes: u64,
+    /// Cuantos quedan en estado desconocido: **nunca** se borran.
+    pub unknown: u64,
 }
 
 /// El plan completo.
@@ -148,6 +159,13 @@ pub struct Input<'a> {
     pub grace: Duration,
     /// El instante contra el que caducan las retenciones.
     pub now: DateTime<Utc>,
+    /// Si `roots` es el censo **completo** de raices. Con un censo por
+    /// paginas (HSP-192, AC3) cada pagina solo responde por su lote: lo
+    /// que aqui parece huerfano puede estar vivo en una pagina que aun
+    /// no se leyó. Con `false`, nada se declara reclamable por
+    /// ignorancia: el veredicto se degrada a `Unknown`, y el barrido
+    /// coordinado exige el censo completo antes de borrar.
+    pub roots_are_complete: bool,
 }
 
 /// Calcula el plan.
@@ -245,6 +263,11 @@ pub fn plan(input: &Input<'_>) -> Plan {
                 let omitted = reasons.len().saturating_sub(MAX_REASONS);
                 reasons.truncate(MAX_REASONS);
                 Verdict::Retained { reasons, omitted }
+            } else if !input.roots_are_complete {
+                Verdict::Unknown {
+                    reason: "the root census is partial: nothing unseen can be called orphan"
+                        .to_string(),
+                }
             } else if blob.age < input.grace {
                 Verdict::InGrace {
                     age_secs: blob.age.as_secs(),
@@ -269,13 +292,14 @@ pub fn plan(input: &Input<'_>) -> Plan {
         ..Summary::default()
     };
     for entry in &entries {
-        match entry.verdict {
+        match &entry.verdict {
             Verdict::Retained { .. } => summary.retained += 1,
             Verdict::InGrace { .. } => summary.in_grace += 1,
             Verdict::Reclaimable { .. } => {
                 summary.reclaimable += 1;
                 summary.reclaimable_bytes += entry.length;
             }
+            Verdict::Unknown { .. } => summary.unknown += 1,
         }
     }
 
@@ -416,6 +440,18 @@ mod tests {
         holds: &[ContentHold],
         edges: &HashMap<ContentDigest, Vec<ContentDigest>>,
     ) -> Plan {
+        run_with(blobs, roots, holds, edges, true)
+    }
+
+    /// El mismo plano, declarando si el censo de raices es completo o
+    /// solo un paginado parcial (HSP-192, AC3).
+    fn run_with(
+        blobs: &[StoredBlob],
+        roots: &[ContentRoot],
+        holds: &[ContentHold],
+        edges: &HashMap<ContentDigest, Vec<ContentDigest>>,
+        roots_are_complete: bool,
+    ) -> Plan {
         plan(&Input {
             blobs,
             roots,
@@ -423,6 +459,7 @@ mod tests {
             edges,
             grace: GRACE,
             now: Utc::now(),
+            roots_are_complete,
         })
     }
 
@@ -450,6 +487,36 @@ mod tests {
         assert_eq!(plan.summary.reclaimable, 1);
         assert_eq!(plan.summary.reclaimable_bytes, 10);
         assert_eq!(plan.summary.in_grace, 1);
+    }
+
+    #[test]
+    fn a_partial_root_census_never_calls_anything_reclaimable() {
+        // HSP-192, AC3: el censo paginado que aun no termino no puede
+        // declarar huerfanos. Un viejo sin raiz en esta pagina sigue
+        // siendo Unknown hasta que el paginado se complete.
+        let plan = run_with(&[blob(1, 99_999)], &[], &[], &HashMap::new(), false);
+        assert!(matches!(verdict_of(&plan, 1), Verdict::Unknown { .. }));
+        assert_eq!(plan.summary.reclaimable, 0);
+        assert_eq!(plan.summary.unknown, 1);
+    }
+
+    #[test]
+    fn a_partial_census_still_honors_roots_and_holds() {
+        // Lo que SI se vio vivo, vive; lo que no se vio, se desconoce.
+        // La degradacion a Unknown no borra una retencion real.
+        let roots = [root(RootKind::Asset, "app", 1)];
+        let holds = [hold("h", HoldScope::Digest { digest: digest(2) }, None)];
+        let plan = run_with(
+            &[blob(1, 99_999), blob(2, 99_999)],
+            &roots,
+            &holds,
+            &HashMap::new(),
+            false,
+        );
+        assert!(matches!(verdict_of(&plan, 1), Verdict::Retained { .. }));
+        assert!(matches!(verdict_of(&plan, 2), Verdict::Retained { .. }));
+        let plan = run_with(&[blob(3, 99_999)], &roots, &[], &HashMap::new(), false);
+        assert!(matches!(verdict_of(&plan, 3), Verdict::Unknown { .. }));
     }
 
     #[test]

@@ -18,6 +18,7 @@
 //!   autentica.
 
 use async_trait::async_trait;
+use hodei_graph_client::{GraphClientError, GraphHealthPort};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -56,6 +57,8 @@ pub enum Dependency {
     Catalog,
     /// El almacen de contenido: los bytes.
     ContentStore,
+    /// La autoridad de grafo (Dgraph): alcanzable y con el login ACL valido.
+    Graph,
     /// El almacen de confianza, cuando su lectura ocurre en caliente.
     ///
     /// En este despliegue la politica de confianza se carga en memoria al
@@ -73,6 +76,7 @@ impl Dependency {
         match self {
             Self::Catalog => "catalog",
             Self::ContentStore => "content_store",
+            Self::Graph => "graph",
             Self::TrustPolicy => "trust_policy",
         }
     }
@@ -312,6 +316,7 @@ impl ContentCheck {
 pub struct ProfileProbe {
     catalog: Option<Surreal<Db>>,
     content: Option<ContentCheck>,
+    graph: Option<Arc<dyn GraphHealthPort>>,
 }
 
 impl ProfileProbe {
@@ -320,7 +325,16 @@ impl ProfileProbe {
         Self {
             catalog: None,
             content: None,
+            graph: None,
         }
+    }
+
+    /// The profile requires the graph authority (Dgraph). The check is the
+    /// port's own readiness: reachable, ACL login accepted and one
+    /// authenticated read-only round-trip; no data is scanned.
+    pub fn with_graph(mut self, graph: Arc<dyn GraphHealthPort>) -> Self {
+        self.graph = Some(graph);
+        self
     }
 
     /// El perfil exige el catalogo, que vive en este motor.
@@ -348,6 +362,9 @@ impl ReadinessProbe for ProfileProbe {
         let mut required = Vec::new();
         if self.catalog.is_some() {
             required.push(Dependency::Catalog);
+        }
+        if self.graph.is_some() {
+            required.push(Dependency::Graph);
         }
         if self.content.is_some() {
             required.push(Dependency::ContentStore);
@@ -384,8 +401,40 @@ impl ReadinessProbe for ProfileProbe {
                 };
                 content.check().await
             }
+            Dependency::Graph => {
+                let Some(graph) = self.graph.as_ref() else {
+                    return Err(DependencyFailure::Misconfigured);
+                };
+                // The driver error can carry the endpoint and the user, so
+                // only its class travels, never its text.
+                match graph.ready().await {
+                    Ok(readiness) if readiness.authenticated_query_served => Ok(()),
+                    Ok(_) => Err(DependencyFailure::Unreachable),
+                    Err(error) => Err(graph_failure(&error)),
+                }
+            }
             Dependency::TrustPolicy => Err(DependencyFailure::Misconfigured),
         }
+    }
+}
+
+/// Classify a graph client error into the coarse readiness failure.
+fn graph_failure(error: &GraphClientError) -> DependencyFailure {
+    match error {
+        GraphClientError::LoginRejected { .. } | GraphClientError::LoginWithoutToken => {
+            DependencyFailure::Misconfigured
+        }
+        GraphClientError::ConnectTimeout { .. } | GraphClientError::RequestTimeout { .. } => {
+            DependencyFailure::Timeout
+        }
+        GraphClientError::Request { source, .. }
+            // gRPC codes 16 (Unauthenticated) and 7 (PermissionDenied): the
+            // ACL refused the session, which is configuration, not outage.
+            if matches!(source.code() as i32, 16 | 7) =>
+        {
+            DependencyFailure::Misconfigured
+        }
+        _ => DependencyFailure::Unreachable,
     }
 }
 

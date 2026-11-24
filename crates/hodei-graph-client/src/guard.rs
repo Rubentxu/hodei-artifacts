@@ -83,6 +83,14 @@ pub enum GuardKind {
     Quota,
     /// Ledger appends over one event stream.
     Ledger,
+    /// Projection checkpoint advances over one (consumer, stream).
+    Checkpoint,
+    /// Trust grant activations over one digest aggregate.
+    Grant,
+    /// Repository creation over one (account, repository key).
+    CatalogRepository,
+    /// Catalog publication over one asset path of a repository.
+    CatalogAsset,
 }
 
 impl GuardKind {
@@ -94,6 +102,10 @@ impl GuardKind {
             GuardKind::GcHold => "gc-hold",
             GuardKind::Quota => "quota",
             GuardKind::Ledger => "ledger",
+            GuardKind::Checkpoint => "checkpoint",
+            GuardKind::Grant => "grant",
+            GuardKind::CatalogRepository => "catalog-repository",
+            GuardKind::CatalogAsset => "catalog-asset",
         }
     }
 }
@@ -391,6 +403,33 @@ impl GuardStore {
         demand: RevisionDemand,
         effect: GuardedEffect,
     ) -> Result<GuardedOutcome, GuardError> {
+        self.execute_guarded_composite(scope, operation, demand, effect, &|_| Vec::new())
+            .await
+    }
+
+    /// Runs one guarded operation that carries EXTRA mutation blocks in
+    /// the same transaction: the composite frontier write, where the
+    /// guard advance, the operation marker, the caller's effect AND the
+    /// extra blocks (a graph changeset, its deltas, its checkpoint) are
+    /// ONE atomic fact.
+    ///
+    /// The `extra` builder runs once per attempt, with the revision that
+    /// attempt's pre-read observed, because the reserved query variables
+    /// differ per shape: a fresh scope (revision 0) binds `g` (the
+    /// unfiltered guard lookup) while an existing scope binds `gv`
+    /// (filtered by the expected revision). Extra blocks that want to
+    /// stay consistent with the guarded block gate themselves on
+    /// `eq(len(op), 0)` plus the guard conjunct of the shape they were
+    /// built for; everything they write must be idempotent by key, so a
+    /// block that skips costs a retry and never a duplicate.
+    pub async fn execute_guarded_composite(
+        &self,
+        scope: &GuardScope,
+        operation: &OperationId,
+        demand: RevisionDemand,
+        effect: GuardedEffect,
+        extra: &(dyn Fn(u64) -> Vec<GraphMutationBlock> + Send + Sync),
+    ) -> Result<GuardedOutcome, GuardError> {
         let key = guard_key(scope);
         let mut last_failure = "no detail".to_owned();
         for attempt in 1..=MAX_ATTEMPTS {
@@ -427,7 +466,8 @@ impl GuardStore {
                     current_revision: current,
                 });
             }
-            let transaction = guarded_upsert(&key, operation.as_str(), current, &effect);
+            let transaction =
+                guarded_upsert(&key, operation.as_str(), current, &effect, extra(current));
             match self.client.upsert(transaction).await {
                 Ok(response) => {
                     // The response carries the query results evaluated
@@ -619,6 +659,7 @@ fn guarded_upsert(
     operation_id: &str,
     expected_revision: u64,
     effect: &GuardedEffect,
+    extra_blocks: Vec<GraphMutationBlock>,
 ) -> GraphUpsertTransaction {
     let key_literal = crate::schema::dql_string(key);
     let id_literal = crate::schema::dql_string(operation_id);
@@ -674,11 +715,11 @@ fn guarded_upsert(
             "eq(len(op), 0) AND eq(len(g), 0)",
             format!(
                 "_:guard <dgraph.type> \"{GUARD_TYPE}\" .\n\
-                 _:guard <hodei.guard.key> {key_literal} .\n\
-                 _:guard <hodei.guard.revision> \"{next_revision}\" .\n\
-                 _:guard <hodei.guard.token> {token_literal} .\n\
-                 _:guard <hodei.guard.updated_at> \"{now}\" .\n\
-                 {marker_and_effect}"
+                     _:guard <hodei.guard.key> {key_literal} .\n\
+                     _:guard <hodei.guard.revision> \"{next_revision}\" .\n\
+                     _:guard <hodei.guard.token> {token_literal} .\n\
+                     _:guard <hodei.guard.updated_at> \"{now}\" .\n\
+                     {marker_and_effect}"
             ),
         )]
     } else {
@@ -690,12 +731,18 @@ fn guarded_upsert(
             "eq(len(op), 0) AND eq(len(gv), 1)",
             format!(
                 "uid(gv) <hodei.guard.revision> \"{next_revision}\" .\n\
-                 uid(gv) <hodei.guard.token> {token_literal} .\n\
-                 uid(gv) <hodei.guard.updated_at> \"{now}\" .\n\
-                 {marker_and_effect}"
+                     uid(gv) <hodei.guard.token> {token_literal} .\n\
+                     uid(gv) <hodei.guard.updated_at> \"{now}\" .\n\
+                     {marker_and_effect}"
             ),
         )]
     };
+    // The caller's extra blocks ride in the SAME transaction, after the
+    // guarded block: they share its query namespace (the reserved names
+    // plus whatever the effect bound) and carry their own gates, derived
+    // from the same pre-read revision the guarded block was built for.
+    let mut blocks = blocks;
+    blocks.extend(extra_blocks);
     GraphUpsertTransaction {
         query,
         blocks,
@@ -904,7 +951,7 @@ mod tests {
             set_nquads: "uid(e) <hodei.identity.owner> _:ref .\n".to_owned(),
             recorded_result: "committed".to_owned(),
         };
-        let advance = guarded_upsert("tag|tenant-a|t@1", "op-1", 4, &effect);
+        let advance = guarded_upsert("tag|tenant-a|t@1", "op-1", 4, &effect, Vec::new());
         assert!(
             advance.commit_now,
             "the guarded write commits now: the answer decides"
@@ -978,7 +1025,7 @@ mod tests {
     #[test]
     fn a_fresh_scope_creates_the_guard_with_the_first_token() {
         let effect = GuardedEffect::default();
-        let create = guarded_upsert("tag|tenant-a|t@1", "op-1", 0, &effect);
+        let create = guarded_upsert("tag|tenant-a|t@1", "op-1", 0, &effect, Vec::new());
         let block = &create.blocks[0];
         let cond = block.cond.as_deref().expect("the create block is gated");
         assert!(
@@ -1045,6 +1092,51 @@ mod tests {
             matches!(error, GuardError::CorruptState { .. }),
             "unexpected: {error}"
         );
+    }
+
+    /// The composite write: the caller's extra blocks ride in the SAME
+    /// transaction, after the guarded block, keeping their own gates.
+    /// The once-only gate of the guarded block does not gate them — the
+    /// reserved variables they name live in the shared query namespace
+    /// of the one upsert.
+    #[test]
+    fn the_composite_write_carries_the_extra_blocks() {
+        let extra = vec![GraphMutationBlock::set_if(
+            "eq(len(op), 0) AND eq(len(gv), 1) AND eq(len(ck), 0)",
+            "_:ck <hodei.checkpoint.key> \"key\" .\n".to_owned(),
+        )];
+        let tx = guarded_upsert(
+            "checkpoint|tenant-a|c/s",
+            "op-1",
+            2,
+            &GuardedEffect::default(),
+            extra,
+        );
+        assert_eq!(
+            tx.blocks.len(),
+            2,
+            "the guarded block and the extra one, one transaction"
+        );
+        let last = tx.blocks.last().expect("a block");
+        assert!(
+            last.cond
+                .as_deref()
+                .expect("the extra block is gated")
+                .contains("eq(len(ck), 0)"),
+            "the extra block keeps its own gate"
+        );
+        assert!(
+            last.set_nquads.contains("hodei.checkpoint.key"),
+            "the extra block carries its content"
+        );
+        let plain = guarded_upsert(
+            "checkpoint|tenant-a|c/s",
+            "op-1",
+            2,
+            &GuardedEffect::default(),
+            Vec::new(),
+        );
+        assert_eq!(plain.blocks.len(), 1, "without extra blocks, one block");
     }
 
     /// The outcome of a replay carries the committed answer and no new

@@ -211,6 +211,9 @@ hodei-trust-policy = { path = "crates/hodei-trust-policy" }
 hodei-trust-policy-storage = { path = "crates/hodei-trust-policy-storage" }
 # Los hechos de riesgo de la promocion: la lectura del grafo de impacto.
 hodei-risk-storage = { path = "crates/hodei-risk-storage" }
+# El cliente del grafo: el ledger durable de cuota arbitra sus reservas con
+# el mecanismo de guardas G06 que vive aqui.
+hodei-graph-client = { path = "crates/hodei-graph-client" }
 # El dominio del riesgo (lectura OSV, proyeccion al grafo) y el motor
 # reactivo firmado (intents, outbox, executor): el ciclo CVE -> reevalua-
 # cion -> bloqueo se cablea en el arranque sobre ellos, sin motor nuevo
@@ -306,6 +309,7 @@ tempfile = { workspace = true }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [dev-dependencies]
+tonic = { version = "=0.13.1", default-features = false }
 hodei-hrn = "0.2.1"
 # Las pruebas de arranque sobre S3 observan el cubo desde fuera del
 # servicio, con credenciales fijas de LocalStack: el tipo de credenciales
@@ -320,3 +324,6 @@ flate2 = "1.1.11"
 # que el contrato declara con lo que la ruta sirve necesita leerlo, y no
 # adivinarlo.
 serde_yaml = "0.9"
+# El IT del catálogo Dgraph (HSP-187) abre el motor de verdad: el cliente
+# autenticado y la guarda versionada viven aquí.
+hodei-graph-client = { path = "crates/hodei-graph-client" }

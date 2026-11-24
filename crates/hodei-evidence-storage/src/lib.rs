@@ -17,8 +17,12 @@ pub mod surreal;
 
 pub use authenticator::{HmacEnvelopeAuthenticator, ProducerCredentials};
 pub use content_store::InMemoryContentStore;
-pub use dgraph::ledger::{
-    DgraphEventLedger, DgraphLedgerError, LEDGER_EVENT_TYPE, LedgerEventRecord,
+pub use dgraph::{
+    CHECKPOINT_TYPE, DELTA_TYPE, DgraphDeltaLedger, DgraphEventLedger, DgraphEvidenceError,
+    DgraphEvidenceStore, DgraphGraphStore, DgraphLedgerError, DgraphProjectionFrontier,
+    EVIDENCE_EXTERNAL_TYPE, EVIDENCE_TYPE, FrontierCommit, FrontierError, GRAPH_NODE_TYPE,
+    GRAPH_RELATION_TYPE, GRAPH_SUPPORT_TYPE, LEDGER_EVENT_TYPE, LedgerEventRecord, STATUS_ASSERTED,
+    STATUS_UNKNOWN,
 };
 pub use surreal::{
     ACTIVE_PROJECTION, CHECKPOINT_TABLE, EVIDENCE_SUBJECT_TABLE, EVIDENCE_TABLE, EvidenceRow,

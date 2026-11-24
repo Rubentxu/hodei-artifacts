@@ -18,9 +18,14 @@
 #![forbid(unsafe_code)]
 
 pub mod audit_outbox;
+// El puerto Dgraph del catálogo (HSP-187, slice Raw): el mismo contrato
+// de HAR-02/HAR-03 sobre el grafo nativo, con el outbox de auditoría en
+// la MISMA transacción que el commit.
+pub mod dgraph;
 pub mod surreal;
 
 pub use audit_outbox::{AUDIT_OUTBOX_TABLE, AuditRow, SurrealAuditOutbox};
+pub use dgraph::{CATALOG_DGRAPH_SCHEMA_VERSION, DgraphAuditOutbox, DgraphCatalogStore};
 pub use surreal::{
     SCHEMA_VERSION, SurrealCatalogStore, the_assets_under_read, the_guard_fetch, the_prefix_end,
 };

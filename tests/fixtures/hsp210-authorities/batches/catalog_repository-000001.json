@@ -1,0 +1,1 @@
+[{"id":"catalog_repository:acme|main","account":"acme","repo_key":"main","format":"raw","modality":"hosted"},{"id":"catalog_repository:acme|proxy","account":"acme","repo_key":"proxy","format":"cargo","modality":"proxy"}]

@@ -171,6 +171,35 @@ pub fn apply_vex(finding: &mut Finding, statement: &VexStatement) {
     });
 }
 
+/// Applies a VEX statement to a finding only if the statement is VALID.
+///
+/// This is the seam the intelligence consumers use, and it is the one
+/// that keeps the CVE visible: a statement that does not name its
+/// subject, does not cover the component, gives no justification, or
+/// comes from an author the platform does not recognize is NOT APPLIED,
+/// and the reasons are given back so the report can say WHICH check
+/// failed. A finding silenced by a statement nobody can stand behind is
+/// a finding that was never closed: the declaration is the thing under
+/// investigation, not the vulnerability.
+///
+/// `apply_vex` stays as the raw rule the graph and the cases already
+/// use; this function adds the validity check in front of it and does
+/// not change what the raw rule means.
+pub fn apply_valid_vex(
+    finding: &mut Finding,
+    statement: &crate::vex::VexStatement,
+    vulnerability: &str,
+    trusted_authors: Option<&[&str]>,
+) -> Result<(), Vec<String>> {
+    let reasons = statement.invalid_because(vulnerability, &finding.component, trusted_authors);
+    if reasons.is_empty() {
+        apply_vex(finding, statement);
+        Ok(())
+    } else {
+        Err(reasons)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

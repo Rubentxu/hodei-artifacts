@@ -186,6 +186,9 @@ impl RunRow {
             deleted: u64::try_from(self.deleted).unwrap_or(0),
             bytes_freed: u64::try_from(self.bytes_freed).unwrap_or(0),
             swept_at: self.swept_at.map(|at| at.0),
+            // The Surreal ledger is the legacy mode: no coordinated scope.
+            scope: None,
+            generation: None,
         })
     }
 }
@@ -224,6 +227,8 @@ impl TombstoneRow {
             account: self.account,
             state,
             at: self.at.0,
+            // The Surreal ledger is the legacy mode: no version marker.
+            marker: None,
         })
     }
 }
