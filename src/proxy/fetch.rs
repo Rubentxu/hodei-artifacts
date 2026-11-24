@@ -758,6 +758,7 @@ impl ProxyFetcher {
         };
         let etag = header_text(&response, reqwest::header::ETAG, 200);
         let last_modified = header_text(&response, reqwest::header::LAST_MODIFIED, 100);
+        let link = header_text(&response, reqwest::header::LINK, 200);
         Ok(Opened {
             response,
             final_url,
@@ -766,6 +767,7 @@ impl ProxyFetcher {
             declared,
             etag,
             last_modified,
+            link,
             budget,
             _permit: permit,
         })
@@ -781,6 +783,7 @@ pub struct Opened {
     declared: Option<String>,
     etag: Option<String>,
     last_modified: Option<String>,
+    link: Option<String>,
     budget: u64,
     _permit: OwnedSemaphorePermit,
 }
@@ -852,6 +855,15 @@ impl Opened {
     /// El `Last-Modified` que declaro el upstream.
     pub fn last_modified(&self) -> Option<&str> {
         self.last_modified.as_deref()
+    }
+
+    /// La cabecera `Link` que declaro el upstream, si la declaro.
+    ///
+    /// Es la que dice que una respuesta **paginada** tiene mas paginas: un
+    /// listado que la trae no se puede servir como si fuera la lista
+    /// entera.
+    pub fn link(&self) -> Option<&str> {
+        self.link.as_deref()
     }
 }
 
