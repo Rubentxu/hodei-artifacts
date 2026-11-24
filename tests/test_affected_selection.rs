@@ -767,14 +767,14 @@ fn run_with_report(fixture: &Fixture, name: &str, extra: &[&str]) -> (Outcome, P
     (run_script(fixture, &arguments), report)
 }
 
-fn assert_no_pass_report(report: &Path) {
-    if report.exists() {
-        assert_ne!(
-            read_report(report)["result"],
-            "PASS",
-            "no report may say PASS"
-        );
-    }
+/// The input failures abort before any report is written: the report path
+/// must not exist at all (so it cannot say PASS).
+fn assert_no_report(report: &Path) {
+    assert!(
+        !report.exists(),
+        "an input failure must not leave a report: {}",
+        fs::read_to_string(report).unwrap_or_default()
+    );
 }
 
 const BROKEN_POLICIES: &str = "pub fn policies() -> u32 {\n    2\n}\n";
@@ -901,7 +901,7 @@ fn a_rust_file_outside_every_package_fails_explicitly() {
         "the file has to be named: {}",
         outcome.stderr
     );
-    assert_no_pass_report(&report);
+    assert_no_report(&report);
 }
 
 // ───────────────────────── HSP-293: honest failures ─────────────────────────
@@ -917,7 +917,14 @@ fn broken_cargo_metadata_fails_without_a_pass_report() {
     let (outcome, report) = run_with_report(&fixture, "broken", &["--no-bounded"]);
 
     assert!(!outcome.succeeded(), "broken metadata cannot be green");
-    assert_no_pass_report(&report);
+    assert!(
+        outcome
+            .stderr
+            .contains("los metadatos del workspace no se pudieron leer"),
+        "the metadata failure has to be said: {}",
+        outcome.stderr
+    );
+    assert_no_report(&report);
 }
 
 #[test]
@@ -954,7 +961,7 @@ fn an_unresolvable_diff_fails_without_a_pass_report() {
         "an unresolvable diff cannot be green: {}",
         outcome.stdout
     );
-    assert_no_pass_report(&report);
+    assert_no_report(&report);
 }
 
 #[test]
@@ -983,7 +990,7 @@ fn no_common_ancestor_fails_without_a_pass_report() {
         "{}",
         outcome.stderr
     );
-    assert_no_pass_report(&report);
+    assert_no_report(&report);
 }
 
 // ───────────────────────── HSP-293: graph, bounded, mixed ─────────────────────────
@@ -1105,7 +1112,7 @@ fn a_mixed_run_reports_pass_fail_and_not_run() {
             ("frontend/src/App.tsx", "export const App = () => null;\n"),
         ],
     );
-    let (path, _log) = fake_bounded(&fixture);
+    let (path, log) = fake_bounded(&fixture);
     let report = report_path(&fixture, "mixed");
     let outcome = run_with_path(&fixture, &path, &report, &["--no-clippy"]);
 
@@ -1126,4 +1133,10 @@ fn a_mixed_run_reports_pass_fail_and_not_run() {
     assert_eq!(status_of("test:fixture-api").as_deref(), Some("PASS"));
     assert_eq!(status_of("test:hodei-policies").as_deref(), Some("FAIL"));
     assert_eq!(status_of("frontend").as_deref(), Some("NOT_RUN"));
+
+    let invoked = fs::read_to_string(&log).expect("bounded was invoked");
+    assert!(
+        invoked.contains("cargo test -p hodei-policies"),
+        "the failing gate has to go through bounded: {invoked}"
+    );
 }
