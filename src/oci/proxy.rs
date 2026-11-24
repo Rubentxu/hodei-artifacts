@@ -74,6 +74,9 @@ const TAGS_LIST: &str = "tags/list";
 /// Los recibos que se leen para saber si un contenido tiene procedencia.
 const RECEIPTS_READ_ON_THE_HOT_PATH: usize = 4;
 
+/// Media types accepted when fetching an OCI or Docker manifest from an upstream registry.
+const OCI_MANIFEST_ACCEPT: &str = "application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v1+json";
+
 /// Que se pide al upstream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TheKind {
@@ -278,12 +281,7 @@ pub async fn the_resolved_tags(
                 }
                 challenged = true;
                 let challenge = challenge.unwrap_or_default();
-                let Some(credential) = plane.fetcher.the_credential(&upstream) else {
-                    return Err(OciFailure::unavailable(
-                        "the upstream asks for a credential and the repository has none",
-                    ));
-                };
-                let fresh = the_token(plane, &upstream, &challenge, &credential).await?;
+                let fresh = resolve_challenge_token(plane, &upstream, &challenge).await?;
                 plane.tokens.put(
                     &token_key,
                     fresh.clone(),
@@ -856,12 +854,7 @@ async fn the_fetched(
             let Some(challenge) = the_challenge(&error) else {
                 return Err(the_failure(error));
             };
-            let Some(credential) = plane.fetcher.the_credential(upstream) else {
-                return Err(OciFailure::unavailable(
-                    "the upstream asks for a credential and the repository has none",
-                ));
-            };
-            let token = the_token(plane, upstream, &challenge, &credential).await?;
+            let token = resolve_challenge_token(plane, upstream, &challenge).await?;
             plane.tokens.put(
                 &token_key,
                 token.clone(),
@@ -920,7 +913,10 @@ fn the_request<'a>(
         config_version: repository.config.version,
         actor: context.principal().subject().as_str(),
         correlation_id: correlation,
-        accept: None,
+        accept: match kind {
+            TheKind::Manifest => Some(OCI_MANIFEST_ACCEPT),
+            TheKind::Blob => None,
+        },
         authorization,
         expect_digest: requested,
         digest_path_prefix: Some(kind.the_prefix()),
@@ -940,6 +936,26 @@ fn the_challenge(error: &resolution::ResolveError) -> Option<String> {
     }
 }
 
+/// Resolves a Bearer token challenge, using the configured credential if
+/// `credential_ref` is declared, or an anonymous token request otherwise.
+async fn resolve_challenge_token(
+    plane: &crate::proxy::ProxyPlane,
+    upstream: &UpstreamConfig,
+    challenge: &str,
+) -> Result<String, OciFailure> {
+    let credential = if upstream.credential.is_some() {
+        let Some(secret) = plane.fetcher.the_credential(upstream) else {
+            return Err(OciFailure::unavailable(
+                "the upstream asks for a credential and the repository has none",
+            ));
+        };
+        Some(secret)
+    } else {
+        None
+    };
+    the_token(plane, upstream, challenge, credential.as_ref()).await
+}
+
 /// El token del realm, si el realm es el que la configuracion declara.
 ///
 /// El realm del reto lo dice el upstream, y un upstream puede decir
@@ -950,7 +966,7 @@ async fn the_token(
     plane: &crate::proxy::ProxyPlane,
     upstream: &UpstreamConfig,
     challenge: &str,
-    credential: &crate::proxy::fetch::Secret,
+    credential: Option<&crate::proxy::fetch::Secret>,
 ) -> Result<String, OciFailure> {
     let declared = upstream.auth.as_ref().ok_or_else(|| {
         OciFailure::unavailable("the upstream asks for a credential and no realm is declared")
@@ -985,26 +1001,25 @@ async fn the_token(
             query.append_pair("scope", scope);
         }
     }
-    let user = declared.the_username(&upstream.id).to_string();
-    let mut opened = plane
-        .fetcher
-        .open_with_basic(
-            upstream,
-            url,
-            &origin_of(&declared.realm),
-            &user,
-            credential,
-        )
-        .await
-        .map_err(|error| {
-            tracing::warn!(
-                target: "hodei_artifacts::proxy",
-                upstream = %upstream.id,
-                error = %error,
-                "the token could not be asked for"
-            );
-            OciFailure::unavailable("the credential of the upstream could not be used")
-        })?;
+    let opened_result = match credential {
+        Some(secret) => {
+            let user = declared.the_username(&upstream.id).to_string();
+            plane
+                .fetcher
+                .open_with_basic(upstream, url, &origin_of(&declared.realm), &user, secret)
+                .await
+        }
+        None => plane.fetcher.open_anonymous_token(upstream, url).await,
+    };
+    let mut opened = opened_result.map_err(|error| {
+        tracing::warn!(
+            target: "hodei_artifacts::proxy",
+            upstream = %upstream.id,
+            error = %error,
+            "the token could not be asked for"
+        );
+        OciFailure::unavailable("the credential of the upstream could not be used")
+    })?;
     let mut body = Vec::new();
     while let Some(chunk) = opened.chunk().await.map_err(|_| {
         OciFailure::unavailable("the answer of the token endpoint could not be read")
