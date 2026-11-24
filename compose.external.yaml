@@ -1,0 +1,124 @@
+# Declarative external-backend deployment for hodei-artifacts-api (Dgraph + S3/Garage).
+#
+# Uses external Dgraph metadata and S3-compatible object storage (Garage with
+# separated `meta` and `data` volumes, or an external S3 endpoint via env vars).
+# Never configures RocksDB or local filesystem CAS paths, and contains no
+# hardcoded credentials (provide runtime credentials via environment / `.env`).
+#
+# KNOWN LIMITATION: the hodei-artifacts-api service currently only supports the
+# embedded `rocksdb` metadata backend; with RUN_MODE=external it rejects
+# `db_type = dgraph` at startup and exits non-zero (fail closed). This file
+# declares the target topology and is validated (`compose config`), but the API
+# container will not become healthy until the Dgraph backend lands. Dgraph and
+# Garage themselves start independently of the API.
+
+name: hodei-artifacts-external
+
+services:
+  dgraph-zero:
+    image: ${DGRAPH_IMAGE:-docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb}
+    hostname: dgraph-zero
+    restart: unless-stopped
+    command: dgraph zero --my=dgraph-zero:5080 --wal=/dgraph-data/zero --telemetry "reports=false"
+    volumes:
+      - dgraph-zero-data:/dgraph-data
+    networks:
+      - hodei-external
+
+  dgraph-alpha:
+    image: ${DGRAPH_IMAGE:-docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb}
+    hostname: dgraph-alpha
+    restart: unless-stopped
+    depends_on:
+      - dgraph-zero
+    command: >
+      dgraph alpha --my=dgraph-alpha:7080 --zero=dgraph-zero:5080
+      --postings=/dgraph-data/p --wal=/dgraph-data/w
+      --telemetry "reports=false"
+    ports:
+      - "${HODEI_BIND_ADDR:-127.0.0.1}:${DGRAPH_ALPHA_HTTP_PORT:-8080}:8080"
+      - "${HODEI_BIND_ADDR:-127.0.0.1}:${DGRAPH_ALPHA_GRPC_PORT:-9080}:9080"
+    volumes:
+      - dgraph-alpha-data:/dgraph-data
+      - dgraph-backups:/dgraph-backups
+    networks:
+      - hodei-external
+
+  garage:
+    image: ${GARAGE_IMAGE:-docker.io/dxflrs/garage:v1.0.1}
+    hostname: garage
+    restart: unless-stopped
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?set GARAGE_RPC_SECRET in .env}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?set GARAGE_ADMIN_TOKEN in .env}
+    ports:
+      - "${HODEI_BIND_ADDR:-127.0.0.1}:${GARAGE_S3_PORT:-3900}:3900"
+      - "${HODEI_BIND_ADDR:-127.0.0.1}:${GARAGE_ADMIN_PORT:-3903}:3903"
+    volumes:
+      - ./deploy/garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    networks:
+      - hodei-external
+
+  hodei-artifacts-api:
+    image: ${HODEI_IMAGE:-localhost/hodei-artifacts-api:latest}
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    depends_on:
+      - dgraph-alpha
+      - garage
+    ports:
+      - "${HODEI_BIND_ADDR:-127.0.0.1}:${HODEI_PORT:-3000}:3000"
+    environment:
+      RUN_MODE: external
+      HODEI_DATABASE__DB_TYPE: dgraph
+      HODEI_SCHEMA__STORAGE_TYPE: dgraph
+      HODEI_CONTENT__BACKEND: s3
+      HODEI_CONTENT__S3__BUCKET: ${HODEI_CONTENT__S3__BUCKET:-hodei-content}
+      HODEI_CONTENT__S3__ENDPOINT: ${HODEI_CONTENT__S3__ENDPOINT:-garage:3900}
+      HODEI_CONTENT__S3__REGION: ${HODEI_CONTENT__S3__REGION:-garage}
+      HODEI_CONTENT__S3__TLS: ${HODEI_CONTENT__S3__TLS:-false}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY in .env}
+      HODEI_SERVER__REQUEST_TIMEOUT_SECS: ${HODEI_SERVER__REQUEST_TIMEOUT_SECS:-30}
+      HODEI_SERVER__MAX_BODY_SIZE: ${HODEI_SERVER__MAX_BODY_SIZE:-10485760}
+      HODEI_LOGGING__LEVEL: ${HODEI_LOGGING__LEVEL:-info}
+      HODEI_LOGGING__FORMAT: ${HODEI_LOGGING__FORMAT:-json}
+      HODEI_LOGGING__INCLUDE_TIMESTAMPS: ${HODEI_LOGGING__INCLUDE_TIMESTAMPS:-true}
+      HODEI_LOGGING__INCLUDE_LOCATION: ${HODEI_LOGGING__INCLUDE_LOCATION:-false}
+      HODEI_SECURITY__ADMIN_API_ENABLED: ${HODEI_SECURITY__ADMIN_API_ENABLED:-false}
+      HODEI_SECURITY__RAW_API_ENABLED: ${HODEI_SECURITY__RAW_API_ENABLED:-false}
+      HODEI_SECURITY__OCI_API_ENABLED: ${HODEI_SECURITY__OCI_API_ENABLED:-false}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/bash",
+          "-c",
+          "exec 3<>/dev/tcp/127.0.0.1/3000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q '200'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - hodei-external
+
+networks:
+  hodei-external:
+    driver: bridge
+
+volumes:
+  dgraph-zero-data:
+  dgraph-alpha-data:
+  dgraph-backups:
+  garage-meta:
+  garage-data:

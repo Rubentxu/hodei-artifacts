@@ -307,7 +307,33 @@ existan, trata la copia de la sección 4 tomada **antes** de actualizar como la
 única red de seguridad, y no asumas que el binario anterior abre los datos del
 nuevo.
 
-## 6. Documentos relacionados
+## 6. Despliegue declarativo con Compose
+
+El repositorio incluye dos ficheros Compose y un `compose.env.example` sin secretos (un `.env.example` lo veta la politica de ficheros de la maquina).
+Copia `compose.env.example` a `.env` y ajústalo antes de levantar nada.
+
+- `compose.yaml` (standalone): `podman compose up -d` levanta
+  `hodei-artifacts-api` como usuario `10001:10001`, con el rootfs de solo
+  lectura, un volumen con nombre (`hodei-artifacts-data`) para RocksDB y el CAS,
+  y un healthcheck sobre `/health/ready`. RocksDB y el CAS de ficheros son de
+  escritor único: no escales por encima de una réplica.
+- `compose.external.yaml` (Dgraph + S3 compatible con Garage): declara el
+  perfil externo sin rutas de RocksDB ni credenciales; `GARAGE_RPC_SECRET`,
+  `GARAGE_ADMIN_TOKEN`, `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY` son
+  obligatorias y no tienen valor por defecto. Garage usa volúmenes separados
+  para `meta` y `data`.
+
+Límite conocido: hoy la API solo admite el backend de metadatos `rocksdb`;
+con `RUN_MODE=external` rechaza `dgraph` y termina con código distinto de cero
+(fallo cerrado). El perfil externo está declarado y validado, pero su camino
+feliz no se ha ejecutado.
+
+`scripts/compose-smoke.sh` comprueba con un runtime real el arranque no root con
+rootfs de solo lectura, el healthcheck, la persistencia tras `down`/`up` y el
+fallo cerrado ante un S3 inalcanzable y ante el perfil externo. Termina con 77
+(`NOT_RUN`) si no hay Podman, proveedor de Compose o imagen.
+
+## 7. Documentos relacionados
 
 - [`configuration.md`](configuration.md): claves, variables y perfiles.
 - [`release-notes-template.md`](release-notes-template.md): plantilla de notas de versión.

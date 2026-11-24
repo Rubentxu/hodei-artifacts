@@ -1,0 +1,56 @@
+# Declarative standalone deployment for hodei-artifacts-api.
+#
+# IMPORTANT — Single-writer constraint (max 1 replica):
+#   Standalone mode uses embedded RocksDB (/app/data/hodei.rocksdb) and local
+#   filesystem CAS (/app/data/hodei.cas). RocksDB acquires an exclusive lock on
+#   its data directory, so this service MUST run as a single writer
+#   (deploy.replicas: 1, never scale > 1).
+#   For multi-replica or external storage deployments, use compose.external.yaml.
+
+name: hodei-artifacts-standalone
+
+services:
+  hodei-artifacts-api:
+    image: ${HODEI_IMAGE:-localhost/hodei-artifacts-api:latest}
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    # Single-writer invariant: RocksDB + filesystem CAS support at most 1 replica.
+    deploy:
+      replicas: 1
+    ports:
+      - "${HODEI_BIND_ADDR:-127.0.0.1}:${HODEI_PORT:-3000}:3000"
+    volumes:
+      - hodei-artifacts-data:/app/data
+    environment:
+      RUN_MODE: ${RUN_MODE:-standalone}
+      HODEI_SERVER__REQUEST_TIMEOUT_SECS: ${HODEI_SERVER__REQUEST_TIMEOUT_SECS:-30}
+      HODEI_SERVER__MAX_BODY_SIZE: ${HODEI_SERVER__MAX_BODY_SIZE:-10485760}
+      HODEI_LOGGING__LEVEL: ${HODEI_LOGGING__LEVEL:-info}
+      HODEI_LOGGING__FORMAT: ${HODEI_LOGGING__FORMAT:-json}
+      HODEI_LOGGING__INCLUDE_TIMESTAMPS: ${HODEI_LOGGING__INCLUDE_TIMESTAMPS:-true}
+      HODEI_LOGGING__INCLUDE_LOCATION: ${HODEI_LOGGING__INCLUDE_LOCATION:-false}
+      HODEI_SECURITY__ADMIN_API_ENABLED: ${HODEI_SECURITY__ADMIN_API_ENABLED:-false}
+      HODEI_SECURITY__RAW_API_ENABLED: ${HODEI_SECURITY__RAW_API_ENABLED:-false}
+      HODEI_SECURITY__OCI_API_ENABLED: ${HODEI_SECURITY__OCI_API_ENABLED:-false}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/bash",
+          "-c",
+          "exec 3<>/dev/tcp/127.0.0.1/3000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q '200'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  hodei-artifacts-data:
