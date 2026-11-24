@@ -59,7 +59,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hodei_evidence::domain::graph::{GraphRelation, NodeKind, RelationType};
-use hodei_evidence::ports::graph::{GraphError, GraphQuery, GraphWriter, Lineage};
+use hodei_evidence::ports::graph::{
+    BoundedGraphQuery, BoundedLineage, BoundedTraversal, GraphError, GraphQuery, GraphReadLimits,
+    GraphWriter, Lineage, WalkBudget,
+};
 use hodei_evidence::{
     EvidenceId, GraphChangeSet, GraphNode, GraphRelationWithdrawal, evidence_hrn,
 };
@@ -1370,13 +1373,20 @@ impl GraphQuery for DgraphGraphStore {
     }
 
     /// The artefacts a build produced.
+    ///
+    /// The produced relation goes FROM the build TO the artefact, so the
+    /// walk starts at the build and follows `hodei.graph.out` forward.
+    /// HSP-189 had replicated the reference walk verbatim, which read the
+    /// relations that END at the build and found nothing under the
+    /// projector's direction; HSP-200 corrected the walk in both ports
+    /// (see the task evidence for the decision).
     async fn artifacts_of_build(
         &self,
         tenant: &Hrn,
         build: &Hrn,
     ) -> Result<Vec<GraphNode>, GraphError> {
         let mut artifacts = Vec::new();
-        for relation in self.relations_to(tenant, build).await? {
+        for relation in self.relations_from(tenant, build).await? {
             if relation.relation == RelationType::Produced {
                 artifacts.extend(
                     self.node_of_kind(tenant, &relation.to, NodeKind::Artifact)
@@ -1411,6 +1421,365 @@ impl GraphQuery for DgraphGraphStore {
             }
         }
         Ok(artifacts)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bounded reads (HSP-200)
+// ---------------------------------------------------------------------------
+
+/// The DQL of one hop of a bounded walk, expanded at the server.
+///
+/// The frontier is bound by its node keys; the hop expands the native
+/// edges of those nodes with the account, the asserted status and the
+/// relation types as filters ON the expansion, and reads the far end of
+/// every crossed relation in the same round trip. The `first` bound
+/// caps the expansion per frontier node, so the server answers a
+/// bounded question and only the bounded frontier comes back — the
+/// whole graph never travels.
+///
+/// The account rides on every hop: the relations and the far nodes are
+/// both filtered by tenant, so a walk cannot leak across accounts even
+/// where an edge would reach.
+fn frontier_expansion_query(
+    tenant: &str,
+    projection: &str,
+    keys: &[String],
+    types: &[RelationType],
+    forward: bool,
+    first_per_node: usize,
+) -> String {
+    let forward_edge = if forward {
+        "hodei.graph.out"
+    } else {
+        "~hodei.graph.to"
+    };
+    // The far end of the relation: the node the relation points at
+    // (forward) or the node the relation starts at (backward).
+    let far_edge = if forward {
+        "hodei.graph.to"
+    } else {
+        "~hodei.graph.out"
+    };
+    let tenant_literal = dql_string(tenant);
+    let projection_literal = dql_string(projection);
+    let keys_literal = keys
+        .iter()
+        .map(|key| dql_string(key))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut relation_filter = format!(
+        "eq(hodei.graph.rel.tenant, {tenant_literal}) AND \
+         eq(hodei.graph.rel.status, {status_literal})",
+        status_literal = dql_string(STATUS_ASSERTED),
+    );
+    if !types.is_empty() {
+        let wanted = types
+            .iter()
+            .map(|kind| dql_string(kind.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        relation_filter.push_str(&format!(" AND eq(hodei.graph.rel.type, [{wanted}])"));
+    }
+    let node_filter = format!(
+        "eq(hodei.graph.node.tenant, {tenant_literal}) AND \
+         eq(hodei.graph.projection, {projection_literal})"
+    );
+    format!(
+        "{{ q(func: eq(hodei.graph.node.key, [{keys_literal}])) @filter({node_filter}) {{\n\
+           hodei.graph.node.key\n\
+           {forward_edge} (first: {first_per_node}) @filter({relation_filter}) {{\n\
+             {RELATION_FIELDS}\n\
+             {far_edge} @filter({node_filter}) {{ {NODE_FIELDS} }}\n\
+           }}\n\
+        }} }}"
+    )
+}
+
+impl DgraphGraphStore {
+    /// One hop of a bounded walk, expanded at the server.
+    ///
+    /// Returns the relations the frontier crossed and the node records
+    /// at their far end, both deduplicated and sorted (relations by
+    /// identity, nodes by key), so the answer does not depend on the
+    /// order the server walks its edges in.
+    async fn expand_frontier(
+        &self,
+        tenant: &Hrn,
+        frontier_keys: &[String],
+        types: &[RelationType],
+        forward: bool,
+        first_per_node: usize,
+    ) -> Result<(Vec<GraphRelation>, Vec<GraphNode>), GraphError> {
+        if frontier_keys.is_empty() || first_per_node == 0 {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let query = frontier_expansion_query(
+            &tenant.to_string(),
+            &self.projection,
+            frontier_keys,
+            types,
+            forward,
+            first_per_node,
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        let rows = response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut relations: BTreeMap<String, GraphRelation> = BTreeMap::new();
+        let mut far: BTreeMap<String, GraphNode> = BTreeMap::new();
+        let far_edge = if forward {
+            "hodei.graph.to"
+        } else {
+            "~hodei.graph.out"
+        };
+        for row in &rows {
+            let crossed = row
+                .get(if forward {
+                    "hodei.graph.out"
+                } else {
+                    "~hodei.graph.to"
+                })
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for relation_row in &crossed {
+                if let Some(relation) = relation_of(relation_row) {
+                    relations.insert(relation.identity(), relation);
+                }
+                // The far end travels as an object when the edge
+                // points at one node (`hodei.graph.to` is a scalar uid)
+                // and as an array when it points at many: both shapes
+                // are one node here.
+                let far_row = match relation_row.get(far_edge) {
+                    Some(serde_json::Value::Array(rows)) => rows.first().cloned(),
+                    Some(row @ serde_json::Value::Object(_)) => Some(row.clone()),
+                    _ => None,
+                };
+                if let Some(node) = far_row.as_ref().and_then(node_of) {
+                    far.insert(node.id.to_string(), node);
+                }
+            }
+        }
+        Ok((
+            relations.into_values().collect(),
+            far.into_values().collect(),
+        ))
+    }
+
+    /// A node of this projection by its identity, whatever kind it is.
+    async fn node_by_key(&self, tenant: &Hrn, id: &Hrn) -> Result<Option<GraphNode>, GraphError> {
+        let node_key = self.node_key_scoped(&tenant.to_string(), &id.to_string());
+        let node_filter = format!(
+            "eq(hodei.graph.node.tenant, {}) AND eq(hodei.graph.projection, {})",
+            dql_string(&tenant.to_string()),
+            dql_string(&self.projection),
+        );
+        let query = format!(
+            "{{ q(func: eq(hodei.graph.node.key, {key_literal})) @filter({node_filter}) {{ {NODE_FIELDS} }} }}",
+            key_literal = dql_string(&node_key),
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| GraphError::Unavailable(error.to_string()))?;
+        Ok(response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(node_of))
+    }
+}
+
+#[async_trait]
+impl BoundedGraphQuery for DgraphGraphStore {
+    /// The lineage of an artefact under limits.
+    ///
+    /// The walk is the reference lineage walk, hop by hop, with every
+    /// hop expanded at the server and accounted by one budget: what the
+    /// walk spent and what it had to leave behind travels in the trace,
+    /// and a result that hit a limit says so instead of passing for
+    /// whole.
+    async fn bounded_lineage(
+        &self,
+        tenant: &Hrn,
+        artifact: &Hrn,
+        limits: &GraphReadLimits,
+    ) -> Result<BoundedLineage, GraphError> {
+        let mut budget = WalkBudget::new(*limits);
+        let mut lineage = Lineage::default();
+
+        // The artefact itself costs the first round trip.
+        budget.round_trip();
+        lineage.artifact = self.node_by_key(tenant, artifact).await?;
+        let artifact_key = self.node_key_scoped(&tenant.to_string(), &artifact.to_string());
+
+        // One hop of the walk, with the shapes the lineage answers with:
+        // the relations that END at the nodes say what produced and used
+        // them, the ones that START at the artefact say where it is
+        // deployed.
+        macro_rules! hop {
+            ($frontier:expr, $types:expr, $forward:expr) => {{
+                if !budget.may_expand() {
+                    budget.leave_frontier($frontier.len());
+                    (Vec::new(), Vec::new())
+                } else {
+                    budget.hop();
+                    budget.round_trip();
+                    let first = budget.edges_remaining() + 1;
+                    let (relations, far) = self
+                        .expand_frontier(tenant, $frontier, $types, $forward, first)
+                        .await?;
+                    let keep = budget.admit_edges(relations.len());
+                    let kept = &relations[..keep];
+                    let admitted = budget.admit_nodes(far.len());
+                    let kept_nodes: Vec<GraphNode> = far[..admitted.min(far.len())].to_vec();
+                    if budget.stopped() {
+                        // Whatever the frontier reached, the walk does
+                        // not go on: say what was left behind.
+                        budget.leave_frontier(kept_nodes.len());
+                    }
+                    (kept.to_vec(), kept_nodes)
+                }
+            }};
+        }
+
+        // Hop 1: everything asserted that ends at the artefact is
+        // evidence of its lineage; the produced ones name its builds.
+        let (evidence, sources) = hop!(std::slice::from_ref(&artifact_key), &[], false);
+        lineage.evidence = evidence;
+        let mut builds: Vec<GraphNode> = sources
+            .iter()
+            .filter(|node| node.kind == NodeKind::Build)
+            .cloned()
+            .collect();
+        builds.sort_by_key(|node| node.id.to_string());
+
+        // Hop 2: the revisions the builds used or were triggered by.
+        let build_keys: Vec<String> = builds
+            .iter()
+            .map(|node| self.node_key_scoped(&tenant.to_string(), &node.id.to_string()))
+            .collect();
+        let (_, revision_candidates) = hop!(
+            &build_keys,
+            &[RelationType::UsedSource, RelationType::Triggered],
+            false
+        );
+        let mut revisions: Vec<GraphNode> = revision_candidates
+            .iter()
+            .filter(|node| node.kind == NodeKind::SourceRevision)
+            .cloned()
+            .collect();
+        revisions.sort_by_key(|node| node.id.to_string());
+
+        // Hop 3: the repository the revisions belong to.
+        let revision_keys: Vec<String> = revisions
+            .iter()
+            .map(|node| self.node_key_scoped(&tenant.to_string(), &node.id.to_string()))
+            .collect();
+        let (_, repositories) = hop!(&revision_keys, &[RelationType::HasRevision], false);
+        lineage.repository = repositories
+            .iter()
+            .find(|node| node.kind == NodeKind::Repository)
+            .cloned();
+
+        // Hop 4: where the artefact is deployed.
+        let (_, deployments) = hop!(
+            std::slice::from_ref(&artifact_key),
+            &[RelationType::DeployedAs],
+            true
+        );
+        lineage.deployments = deployments
+            .iter()
+            .filter(|node| node.kind == NodeKind::Deployment)
+            .cloned()
+            .collect();
+
+        // The shapes the reference lineage answers with, whatever the
+        // budget let the walk keep.
+        lineage.builds = builds;
+        lineage.revisions = revisions;
+        Ok(BoundedLineage {
+            lineage,
+            trace: budget.trace(),
+        })
+    }
+
+    /// The dependency graph that starts at a node under limits: the
+    /// walk follows the asserted relations forward, hop by hop, at the
+    /// server, and never visits a node twice — a cycle in the graph
+    /// neither hangs the walk nor duplicates a node in the answer.
+    async fn bounded_dependencies(
+        &self,
+        tenant: &Hrn,
+        node: &Hrn,
+        limits: &GraphReadLimits,
+    ) -> Result<BoundedTraversal, GraphError> {
+        let mut budget = WalkBudget::new(*limits);
+        let mut out = BoundedTraversal::default();
+
+        budget.round_trip();
+        out.root = self.node_by_key(tenant, node).await?;
+        let root_key = self.node_key_scoped(&tenant.to_string(), &node.to_string());
+        // The visited set is the domain of node HRNs, the same domain
+        // the far nodes are deduplicated in.
+        let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        visited.insert(node.to_string());
+        let mut frontier = vec![root_key];
+
+        while !frontier.is_empty() {
+            if !budget.may_expand() {
+                budget.leave_frontier(frontier.len());
+                break;
+            }
+            budget.hop();
+            budget.round_trip();
+            // One more than the budget allows: when the server comes
+            // back with it, the answer had edges the budget does not,
+            // and the trace says so.
+            let first = budget.edges_remaining() + 1;
+            let (relations, far) = self
+                .expand_frontier(tenant, &frontier, &[], true, first)
+                .await?;
+            let keep = budget.admit_edges(relations.len());
+            out.edges.extend(relations[..keep].to_vec());
+
+            // The nodes the walk has not met yet, in the order the
+            // answer carries them. Whatever the walk cannot keep or go
+            // on with is left behind, and the trace says so.
+            let mut fresh: Vec<GraphNode> = Vec::new();
+            for candidate in &far {
+                let key = candidate.id.to_string();
+                if !visited.contains(&key) && !fresh.iter().any(|held| held.id.to_string() == key) {
+                    fresh.push(candidate.clone());
+                }
+            }
+            let admitted = budget.admit_nodes(fresh.len()).min(fresh.len());
+            let mut next_frontier = Vec::new();
+            for reached in fresh[..admitted].iter() {
+                visited.insert(reached.id.to_string());
+                out.nodes.push(reached.clone());
+                next_frontier
+                    .push(self.node_key_scoped(&tenant.to_string(), &reached.id.to_string()));
+            }
+            if budget.stopped() {
+                budget.leave_frontier(fresh.len());
+                break;
+            }
+            frontier = next_frontier;
+        }
+        out.trace = budget.trace();
+        Ok(out)
     }
 }
 

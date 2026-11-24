@@ -65,7 +65,10 @@ pub use domain::idempotency::{IdempotencyKey, Redelivery};
 pub use domain::ingestion::{IngestionEnvelope, IngestionOutcome, RejectionReason};
 pub use domain::read_set::{ReadKind, ReadSet, ReadStamp};
 pub use domain::version::{SchemaVersion, Upcaster, Upcasters, VersionError};
-pub use ports::graph::{GraphError, GraphProjector, GraphQuery, GraphWriter, Lineage};
+pub use ports::graph::{
+    BoundedGraphQuery, BoundedLineage, BoundedTraversal, GraphError, GraphProjector, GraphQuery,
+    GraphReadLimits, GraphWriter, Lineage, TraversalTrace, WalkBudget,
+};
 pub use ports::{
     AuthenticationError, ContentStore, DeliveryGuarantee, EnvelopeAuthenticator, EventLedger,
     EventPage, EvidenceStore, ExpectedVersion, LedgerCursor, LedgerError, StoreError,
