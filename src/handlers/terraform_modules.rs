@@ -442,6 +442,19 @@ async fn read(
         Route::Download { reference, version } => {
             let asset_path = reference.artifact_path(&version);
             let record = the_version_asset(state, context, repository, &asset_path).await?;
+            // The download names the digest of the artifact: what the
+            // channel does not admit is not found.
+            let record = match record {
+                Some(record) => super::raw::the_admitted(
+                    state,
+                    context.account().as_str(),
+                    repository,
+                    vec![record],
+                )
+                .await?
+                .pop(),
+                None => None,
+            };
             let Some(record) = record else {
                 return Err(Failure::Plain(
                     StatusCode::NOT_FOUND,
@@ -716,10 +729,15 @@ async fn assets_under(
     prefix: &str,
 ) -> Result<Vec<AssetRecord>, Failure> {
     let (reader, _) = the_catalog(state)?;
-    reader
+    let records = reader
         .assets_under(context.account().as_str(), &repository.repo_key, prefix)
         .await
-        .map_err(|error| Failure::from(the_publication_error(&error)))
+        .map_err(|error| Failure::from(the_publication_error(&error)))?;
+    // A listing exposes digests and existence: what the channel does not
+    // admit is not in it.
+    super::raw::the_admitted(state, context.account().as_str(), repository, records)
+        .await
+        .map_err(Failure::from)
 }
 
 /// The asset of one version, if it is there.

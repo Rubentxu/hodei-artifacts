@@ -396,10 +396,15 @@ async fn assets_under(
     } else {
         format!("{prefix}/")
     };
-    reader
+    let records = reader
         .assets_under(context.account().as_str(), &repository.repo_key, &prefix)
         .await
-        .map_err(|error| Failure::from(the_publication_error(&error)))
+        .map_err(|error| Failure::from(the_publication_error(&error)))?;
+    // A listing exposes digests and existence: what the channel does not
+    // admit is not in it.
+    super::raw::the_admitted(state, context.account().as_str(), repository, records)
+        .await
+        .map_err(Failure::from)
 }
 
 /// La `302` del resolve: la metadata viaja en cabeceras y la `Location`

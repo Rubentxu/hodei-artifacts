@@ -756,6 +756,24 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the terraform mirrors");
     }
 
+    /// Crea repositorios **hosted** de un formato adicional (`conan`,
+    /// `galaxy`, `terraform`) en el canal **trusted**: la config es la del
+    /// formato (`null` si no lleva).
+    pub fn seed_format_trusted(&self, format: &str, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, config)| {
+                serde_json::json!({
+                    "key": key,
+                    "format": format,
+                    format: config,
+                    "trusted": true,
+                })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the trusted repositories");
+    }
+
     pub fn seed_galaxy(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -772,11 +790,30 @@ impl Deployment {
     /// escritura del dialecto no se declara (la superficie hf es de
     /// lectura), y por eso el contenido entra por la siembra del hub.
     pub fn seed_hf(&self, repositories: &[(&str, Vec<(&str, std::path::PathBuf)>)]) {
+        self.seed_hf_in(&[], repositories);
+    }
+
+    /// Like [`Self::seed_hf`], with the repositories in `trusted` in the
+    /// **trusted** channel (`config_settings.trust.serve`).
+    pub fn seed_hf_trusted(
+        &self,
+        trusted: &[&str],
+        repositories: &[(&str, Vec<(&str, std::path::PathBuf)>)],
+    ) {
+        self.seed_hf_in(trusted, repositories);
+    }
+
+    fn seed_hf_in(
+        &self,
+        trusted: &[&str],
+        repositories: &[(&str, Vec<(&str, std::path::PathBuf)>)],
+    ) {
         let entries: Vec<serde_json::Value> = repositories
             .iter()
             .map(|(key, assets)| {
                 serde_json::json!({
                     "key": key,
+                    "trusted": trusted.contains(key),
                     "assets": assets
                         .iter()
                         .map(|(asset, file)| {
@@ -2895,7 +2932,11 @@ fn seed_the_hf(path: &str, cas: &str, repositories: &[serde_json::Value]) {
             let key = repository["key"].as_str().expect("the key");
             let mut config =
                 hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
-            config.config_settings = serde_json::Value::Object(serde_json::Map::new());
+            let mut settings = serde_json::Map::new();
+            if repository["trusted"].as_bool() == Some(true) {
+                settings.insert("trust".into(), serde_json::json!({ "serve": "trusted" }));
+            }
+            config.config_settings = serde_json::Value::Object(settings);
             store
                 .create_repository(
                     FIRST_ACCOUNT,

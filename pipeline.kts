@@ -346,6 +346,7 @@ pipeline {
                         "--test hsp157_terraform_mirror",
                         "--test hsp296_formats_audit",
                         "--test hsp297_format_prefixes",
+                        "--test hsp297_trusted_listings",
                         "--test hsp158_terraform_modules_client",
                         "--test hsp159_conan_client",
                         "--test hsp217_galaxy_client",
