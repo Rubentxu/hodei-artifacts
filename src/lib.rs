@@ -37,6 +37,7 @@ pub mod openpgp;
 pub mod proxy;
 pub mod public_url;
 pub mod quota;
+pub mod quota_dgraph;
 pub mod raw;
 pub mod readiness;
 pub mod recovery;

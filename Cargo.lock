@@ -3644,6 +3644,7 @@ dependencies = [
  "chrono",
  "hodei-evidence",
  "hodei-evidence-storage",
+ "hodei-graph-client",
  "hodei-investigator",
  "hodei-trust-policy",
  "kernel",
