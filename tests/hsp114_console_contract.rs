@@ -563,8 +563,8 @@ async fn the_capabilities_say_what_can_be_created() {
     );
     assert_eq!(
         of("oci")["modes"],
-        json!(["hosted", "group"]),
-        "the OCI surface serves the hosted and the group one"
+        json!(["hosted", "proxy", "group"]),
+        "the OCI surface serves the hosted, the proxy and the group one (HSP-228)"
     );
     assert_eq!(of("npm")["modes"], json!(["hosted", "proxy", "group"]));
     assert_eq!(
