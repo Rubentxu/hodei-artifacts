@@ -36,7 +36,6 @@ use cedar_policy::Entities;
 use chrono::Utc;
 use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
-use hodei_audit::AuditOutbox;
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
 use hodei_authz::{
@@ -49,7 +48,7 @@ use hodei_catalog::{
     PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor, RepositoryFormat,
     RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::{DgraphAuditOutbox, DgraphCatalogStore, SurrealCatalogStore};
+use hodei_catalog_storage::{DgraphCatalogStore, SurrealCatalogStore};
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::FileBlobStore;
@@ -513,17 +512,38 @@ fn sha1_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Cuántos eventos pendientes nombra el recurso pedido: el outbox del
-/// servidor acumula los de todas las ejecuciones, y el censo cuenta solo
-/// los hechos que nombran lo publicado por ESTA corrida (el grupo Maven
+/// Cuántos eventos del outbox de ESTA cuenta nombra el recurso pedido.
+///
+/// El censo va POR TENANT (índice exacto), no por el `pending()` global:
+/// el outbox del servidor compartido acumula los hechos de TODAS las
+/// corridas —ninguna prueba los marca entregados— y su respuesta llegó a
+/// desbordar el límite de mensaje gRPC (4 MiB; hallazgo de HSP-194,
+/// drenado y documentado por HSP-220). La cuenta es única por corrida,
+/// así que la raíz `eq(tenant)` trae por índice solo los hechos de ESTA
+/// prueba, y el filtro del recurso va en el adaptador (el grupo Maven
 /// lleva el pid, así que el camino es único por ejecución).
-async fn the_events_of(outbox: &DgraphAuditOutbox, resource_needle: &str) -> usize {
-    outbox
-        .pending(Utc::now())
+async fn the_events_of(client: &GraphClient, tenant: &str, resource_needle: &str) -> usize {
+    let escaped = tenant.replace('\\', "\\\\").replace('"', "\\\"");
+    let response = client
+        .execute_dql(&format!(
+            "{{ q(func: eq(hodei.catalog.outbox.tenant, \"{escaped}\")) \
+             {{ hodei.catalog.outbox.resource }} }}"
+        ))
         .await
-        .expect("the pending events")
-        .into_iter()
-        .filter(|entry| entry.event.resource.contains(resource_needle))
+        .expect("the outbox census answers");
+    let nodes = response
+        .json
+        .get("q")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    nodes
+        .iter()
+        .filter(|node| {
+            node.get("hodei.catalog.outbox.resource")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|resource| resource.contains(resource_needle))
+        })
         .count()
 }
 
@@ -683,9 +703,9 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
     // ficheros desplegados (jar, pom y sus checksums absorbidos) dicen los
     // hechos de esta ejecución, y ningún evento de otra corrida entra en
     // el censo.
-    let outbox = DgraphAuditOutbox::new(fresh_client().await.expect("client"));
+    let client = fresh_client().await.expect("client");
     let needle = format!("{repo}/{group_prefix}/lib/1.0/");
-    let said = the_events_of(&outbox, &needle).await;
+    let said = the_events_of(&client, &account, &needle).await;
     assert!(said > 0, "the publish commits carried their audit events");
     record_evidence(
         "the_real_maven_client_deploys_and_resolves_over_dgraph",
@@ -738,7 +758,7 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
         "the same content republished is idempotent: {}",
         redeployed.output
     );
-    let events_after = the_events_of(&outbox, &needle).await;
+    let events_after = the_events_of(&client, &account, &needle).await;
     assert_eq!(
         events_before, events_after,
         "an idempotent republication says no new fact"

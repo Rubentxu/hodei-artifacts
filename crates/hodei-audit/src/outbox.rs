@@ -178,6 +178,16 @@ pub trait AuditOutbox: Send + Sync {
 
     /// Los eventos que están esperando: los `pending` y los `claimed` cuyo
     /// lease expiró.
+    ///
+    /// **El censo es sin acotar**: trae cada entrada con su `AuditEvent`
+    /// completo. En un servidor compartido que no drena, la respuesta
+    /// crece hasta desbordar el límite de mensaje del transporte (4 MiB
+    /// en Dgraph; HSP-194 lo probó). Un consumidor de producción
+    /// (`AuditDispatcher::dispatch_pending`) que lo llame contra ese
+    /// servidor necesita paginación o drenaje periódico (HSP-220 dejó el
+    /// drenaje del laboratorio y el censo por tenant para las ITs; la
+    /// paginación del censo global queda como decisión de seguimiento del
+    /// supervisor).
     async fn pending(&self, now: DateTime<Utc>) -> Result<Vec<AuditEntry>, AuditError>;
 
     /// La entrada de un evento, para el que pregunta qué fue de él.
