@@ -721,6 +721,28 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go repositories");
     }
 
+    /// Crea repositorios **go hosted** de la primera cuenta con el **ambito
+    /// del contenido particionado**.
+    ///
+    /// Existe para el caso que mide la politica de ambito: esta release solo
+    /// sirve el ambito global, y un miembro de ambito particionado tiene que
+    /// declararse con el diagnostico del ambito, no con un 404 que seria
+    /// mentir.
+    pub fn seed_go_partitioned(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, go)| {
+                serde_json::json!({
+                    "key": key,
+                    "format": "go",
+                    "go": go,
+                    "scope": "partitioned",
+                })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go repositories");
+    }
+
     /// Crea repositorios **go proxy** de la primera cuenta: la clave y su
     /// `config_settings.proxy` (el upstream y su cache).
     pub fn seed_go_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
@@ -883,7 +905,8 @@ impl Deployment {
     ///
     /// Cada entrada es el JSON que `seed_the_maven` entiende: `key`,
     /// `format` (`raw`, `npm`, `pypi`, `maven2`...), `proxy` (si es proxy),
-    /// `namespaces` (la politica de reserva, si la declara) y los ajustes
+    /// `namespaces` (la politica de reserva, si la declara), `scope` (el
+    /// ambito del contenido: `partitioned` si lo declara) y los ajustes
     /// propios del formato (`maven`, `npm`, `pypi`). Es la puerta que usan
     /// las suites que mezclan formato y reserva sin multiplicar sembradores.
     pub fn seed_repositories(&self, entries: &[serde_json::Value]) {
@@ -2602,8 +2625,16 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
         store.initialize().await.expect("initialize");
         for repository in repositories {
             let key = repository["key"].as_str().expect("the key");
-            let mut config =
-                hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
+            // El ambito del contenido: por defecto el global, que es el
+            // unico que sirve esta release. Una suite que mide la politica
+            // de ambito siembra un miembro **particionado**, y lo declara
+            // aqui: no hay otra puerta para ello.
+            let scope = if repository["scope"].as_str() == Some("partitioned") {
+                hodei_catalog::DigestScope::AccountPartitioned
+            } else {
+                hodei_catalog::DigestScope::Global
+            };
+            let mut config = hodei_catalog::RepositoryConfig::new(scope);
             let mut settings = serde_json::Map::new();
             if !repository["maven"].is_null() {
                 settings.insert("maven".into(), repository["maven"].clone());

@@ -15,6 +15,9 @@
 //!   silencio;
 //! - un caso **reservado** no se pide al upstream publico del grupo: los
 //!   miembros hosted son la fuente interna y no la toca;
+//! - un miembro de **ambito particionado** no se sirve: el grupo responde con
+//!   el diagnostico del ambito, no con bytes y no con un 404 que seria
+//!   mentir;
 //! - un miembro **caido** no detiene la resolucion: el grupo salta al
 //!   siguiente miembro, y el error sale solo si **nada** respondio;
 //! - la compuerta de confianza tambien se aplica en el camino **proxy**:
@@ -62,6 +65,16 @@ const GROUP_FALLEN: &str = "go-fallen";
 
 /// Un proxy go en el canal **trusted**.
 const TRUSTED_PROXY: &str = "go-trusted";
+
+/// El miembro del grupo con el **ambito del contenido particionado**.
+const PARTITIONED: &str = "go-partitioned";
+
+/// El grupo con el miembro de ambito particionado.
+const GROUP_SCOPE: &str = "go-scoped";
+
+/// El diagnostico del ambito: el mismo que dice la superficie cruda.
+const SCOPE_DIAGNOSTIC: &str =
+    "this service serves the content of a repository only in the global scope";
 
 /// El modulo que el miembro hosted publica.
 const OWNED: &str = "example.com/hello";
@@ -127,6 +140,10 @@ const THE_CASES: &[(&str, &str)] = &[
     (
         "ac2-a-trusted-proxy-does-not-serve-what-was-not-granted",
         "un proxy en el canal trusted no sirve lo que no tiene concesion",
+    ),
+    (
+        "ac2-a-member-with-a-partitioned-scope-is-not-served",
+        "un miembro de ambito particionado no se sirve: el grupo lo dice con el diagnostico del ambito",
     ),
     (
         "ac1-the-head-of-a-proxy-path-carries-the-content-length",
@@ -1227,6 +1244,106 @@ fn the_head_of_a_proxy_path_carries_the_content_length() {
                 ));
             }
             LabCase::new(id, title).passed()
+        },
+    );
+}
+
+/// Un miembro de ambito particionado no se sirve: el grupo lo dice con el
+/// diagnostico del ambito.
+///
+/// Esta release solo sirve el **ambito global**. Un miembro cuyo contenido
+/// es de ambito particionado no se sirve, y se dice claro: un 404 seria
+/// mentir, porque el repositorio existe y lo que no se sirve es su
+/// contenido.
+///
+/// El caso trae el **control**: el mismo modulo, publicado por el miembro
+/// de ambito global, se sirve por el grupo sin el miembro particionado. Sin
+/// ese control, el caso no distinguiria "la politica de ambito" de "un grupo
+/// que no tiene nada que servir".
+#[test]
+fn a_member_with_a_partitioned_scope_is_not_served() {
+    let deployment = Deployment::new();
+    deployment.seed_go(&[(INTERNAL, Value::Null)]);
+    // El miembro de ambito particionado: su contenido no lo sirve esta
+    // release, y el sembrador lo declara como tal.
+    deployment.seed_go_partitioned(&[(PARTITIONED, Value::Null)]);
+    // Dos grupos con el mismo miembro global: uno con el miembro
+    // particionado y otro sin el.
+    deployment.seed_go_group(GROUP, &[INTERNAL]);
+    deployment.seed_go_group(GROUP_SCOPE, &[INTERNAL, PARTITIONED]);
+    let token = support::token(support::FIRST_ACCOUNT, "alice");
+    let environment: Vec<(&str, &str)> = Vec::new();
+    let service = deployment.start(&environment);
+    let port = service.port;
+
+    // El miembro de ambito global publica su modulo: es lo que el grupo
+    // sirve, y lo que el grupo con el miembro particionado tiene que
+    // **declarar** que no sirve.
+    publish_version(
+        port,
+        INTERNAL,
+        &token,
+        OWNED,
+        OWNED_VERSION,
+        &module_zip(OWNED, OWNED_VERSION, &go_mod(OWNED)),
+    );
+
+    a_case(
+        "ac2-a-member-with-a-partitioned-scope-is-not-served",
+        "un miembro de ambito particionado no se sirve: el grupo lo dice con el diagnostico del ambito",
+        Scope::Product,
+        Expectation::Refused,
+        || {
+            let id = "ac2-a-member-with-a-partitioned-scope-is-not-served";
+            let title = "un miembro de ambito particionado no se sirve: el grupo lo dice con el diagnostico del ambito";
+            // El control: el grupo sin el miembro particionado sirve el
+            // modulo, y el listado es el mismo que serviria el otro grupo.
+            let control = the_list(port, OWNED);
+            if control.status != 200 {
+                return LabCase::new(id, title).failed(format!(
+                    "the group without the partitioned member answered {}: {}",
+                    control.status,
+                    text_of(&control)
+                ));
+            }
+            // El listado del grupo con el miembro particionado: no se
+            // sirve, y el motivo es el ambito.
+            let list = call(
+                port,
+                "GET",
+                &format!("/go/{GROUP_SCOPE}/{OWNED}/@v/list"),
+                &token,
+                None,
+            );
+            if list.status != 501 {
+                return LabCase::new(id, title).failed(format!(
+                    "the list of the group with the partitioned member answered {}: {}",
+                    list.status,
+                    text_of(&list)
+                ));
+            }
+            let body = text_of(&list);
+            if !body.contains(SCOPE_DIAGNOSTIC) {
+                return LabCase::new(id, title)
+                    .failed(format!("the refusal does not say the scope: {body}"));
+            }
+            // Y la resolucion de una version: el grupo no puede elegir un
+            // dueno que no se puede servir.
+            let version = call(
+                port,
+                "GET",
+                &format!("/go/{GROUP_SCOPE}/{OWNED}/@v/{OWNED_VERSION}.zip"),
+                &token,
+                None,
+            );
+            if version.status != 501 {
+                return LabCase::new(id, title).failed(format!(
+                    "the version of the group with the partitioned member answered {}: {}",
+                    version.status,
+                    text_of(&version)
+                ));
+            }
+            LabCase::new(id, title).refused(body)
         },
     );
 }
