@@ -199,6 +199,7 @@ pipeline {
                         "--test hsp92_surreal_conformance",
                         "--test hsp134_risk_facts_e2e",
                         "--test hsp142_capability_matrix",
+                        "--test hsp243_user_guides",
                     ).joinToString(" ")
                 )
             }
