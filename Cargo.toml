@@ -170,7 +170,17 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT"
 publish = false
+repository = "https://github.com/Rubentxu/hodei-artifacts"
 description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation over HRN identities"
+
+# cargo-binstall resolves the prebuilt archive produced by
+# scripts/package-release.sh: `<name>-<version>-<target>.tar.gz`, whose single
+# top-level directory carries the binaries under `bin/`. Signature and SHA256
+# verification is the job of scripts/install.sh; binstall fetches the same asset.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
+bin-dir = "{ name }-{ version }-{ target }/bin/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
 
 
 
