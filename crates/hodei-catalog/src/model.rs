@@ -272,6 +272,7 @@ impl RepositoryFormat {
             RepositoryFormat::Terraform,
             RepositoryFormat::Conan,
             RepositoryFormat::Galaxy,
+            RepositoryFormat::Hf,
         ]
     }
 }

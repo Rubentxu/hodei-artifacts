@@ -723,6 +723,18 @@ impl Deployment {
         );
     }
 
+    /// Crea repositorios **terraform proxy** (mirror de providers) de la
+    /// primera cuenta: la clave y su `config_settings.proxy`.
+    pub fn seed_terraform_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, proxy)| {
+                serde_json::json!({ "key": key, "proxy": proxy, "format": "terraform" })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the terraform mirrors");
+    }
+
     pub fn seed_galaxy(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()

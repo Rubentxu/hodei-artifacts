@@ -150,6 +150,11 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
         (RepositoryFormat::Rpm, RepositoryMode::Hosted) => &["hsp122_yum_e2e", "hsp122_yum_client"],
         (RepositoryFormat::Conan, RepositoryMode::Hosted) => &["hsp159_conan_client"],
         (RepositoryFormat::Galaxy, RepositoryMode::Hosted) => &["hsp217_galaxy_client"],
+        (RepositoryFormat::Hf, RepositoryMode::Hosted) => &["hsp218_hf_client"],
+        (RepositoryFormat::Terraform, RepositoryMode::Hosted) => {
+            &["hsp158_terraform_modules_client"]
+        }
+        (RepositoryFormat::Terraform, RepositoryMode::Proxy) => &["hsp157_terraform_mirror"],
         _ => &[],
     }
 }
@@ -492,6 +497,7 @@ fn aliases_of(format: RepositoryFormat) -> &'static [&'static str] {
         RepositoryFormat::Terraform => &["terraform", "tofu", "opentofu"],
         RepositoryFormat::Conan => &["conan"],
         RepositoryFormat::Galaxy => &["galaxy", "ansible"],
+        RepositoryFormat::Hf => &["hf", "huggingface"],
     }
 }
 
