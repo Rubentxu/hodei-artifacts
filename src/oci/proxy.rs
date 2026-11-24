@@ -156,6 +156,68 @@ pub async fn the_blob(
     .await
 }
 
+/// El contenido que el upstream resuelve, con su procedencia.
+///
+/// Es la resolucion **sin** la respuesta HTTP: el camino de un grupo OCI
+/// necesita los bytes y el digest que gano un miembro proxy, no una
+/// `Response` que ya sabe servir. La procedencia es la del recibo que deja el
+/// resolvedor, y el contenido se publica en el namespace del **miembro**,
+/// no en el de quien pregunta.
+pub struct Resolved {
+    /// La fila del asset, en el namespace del repositorio resuelto.
+    pub asset: hodei_catalog::AssetRecord,
+    /// Los bytes del contenido.
+    pub bytes: Vec<u8>,
+}
+
+/// El manifiesto que el upstream resuelve, con su procedencia.
+///
+/// Es el camino de [`the_manifest`] sin la respuesta: lo que un grupo OCI
+/// consulta en un miembro proxy.
+pub async fn the_resolved_manifest(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    name: &str,
+    reference: &str,
+    headers: &HeaderMap,
+) -> Result<Resolved, OciFailure> {
+    the_resolved(
+        state,
+        context,
+        repository,
+        name,
+        reference,
+        TheKind::Manifest,
+        headers,
+    )
+    .await
+}
+
+/// El blob que el upstream resuelve, con su procedencia.
+///
+/// Es el camino de [`the_blob`] sin la respuesta: lo que un grupo OCI
+/// consulta en un miembro proxy.
+pub async fn the_resolved_blob(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    name: &str,
+    digest: &str,
+    headers: &HeaderMap,
+) -> Result<Resolved, OciFailure> {
+    the_resolved(
+        state,
+        context,
+        repository,
+        name,
+        digest,
+        TheKind::Blob,
+        headers,
+    )
+    .await
+}
+
 /// El contenido del upstream, resuelto y verificado.
 ///
 /// El camino es el mismo que el de un repositorio **hosted**: la cuenta
@@ -163,6 +225,11 @@ pub async fn the_blob(
 /// la compuerta de confianza decide sobre el **digest** que se va a servir.
 /// Lo que cambia es de donde salen los bytes: de un upstream, y con las
 /// reglas de la distribucion por delante.
+///
+/// La resolucion va aparte de la respuesta: quien necesita el contenido
+/// --un grupo OCI, que consulta a un miembro proxy-- no quiere una
+/// `Response`, sino los bytes con su digest. La respuesta se arma despues,
+/// con lo que la resolucion devuelve.
 #[allow(clippy::too_many_arguments)]
 async fn the_content(
     state: &AppState,
@@ -174,6 +241,40 @@ async fn the_content(
     headers: &HeaderMap,
     head: bool,
 ) -> Result<Response, OciFailure> {
+    let resolved = the_resolved(state, context, repository, name, reference, kind, headers).await?;
+    the_served(
+        state,
+        context,
+        repository,
+        &resolved.asset,
+        resolved.bytes,
+        kind,
+        headers,
+        head,
+    )
+    .await
+}
+
+/// La resolucion del contenido del upstream, con su procedencia.
+///
+/// Es el cuerpo del camino: el mismo que el de un repositorio **hosted**,
+/// con la cuenta del principal verificado y la compuerta de confianza
+/// aplicada al digest que se va a servir. Lo que cambia es de donde salen
+/// los bytes: de un upstream, y con las reglas de la distribucion por
+/// delante.
+///
+/// El contenido se publica en el namespace del **repositorio** al que se
+/// pregunta --el miembro, cuando quien pregunta es un grupo-- y el recibo
+/// que lo respalda va con el.
+async fn the_resolved(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    name: &str,
+    reference: &str,
+    kind: TheKind,
+    headers: &HeaderMap,
+) -> Result<Resolved, OciFailure> {
     let plane = state
         .proxy_plane
         .as_ref()
@@ -300,7 +401,8 @@ async fn the_content(
             let asset = current.ok_or_else(|| {
                 OciFailure::unavailable("the catalog and the cache disagree about the content")
             })?;
-            return the_served(state, context, repository, &asset, kind, headers, head).await;
+            let bytes = the_bytes(state, &asset).await?;
+            return Ok(Resolved { asset, bytes });
         }
         CacheDecision::OfflineServe => {
             let asset = current.ok_or_else(|| {
@@ -316,7 +418,8 @@ async fn the_content(
                 ));
             }
             plane.metrics.record_offline_hit();
-            return the_served(state, context, repository, &asset, kind, headers, head).await;
+            let bytes = the_bytes(state, &asset).await?;
+            return Ok(Resolved { asset, bytes });
         }
         CacheDecision::OfflineMiss => {
             plane.metrics.record_offline_miss();
@@ -444,7 +547,23 @@ async fn the_content(
         )
         .await
         .map_err(|_| kind.the_unknown(reference))?;
-    the_served(state, context, repository, &asset, kind, headers, head).await
+    let bytes = the_bytes(state, &asset).await?;
+    Ok(Resolved { asset, bytes })
+}
+
+/// Los bytes que la fila del asset referencia.
+///
+/// Los bytes son los de la fila, no los que dice la peticion: la fila es la
+/// referencia de lo que el repositorio tiene.
+async fn the_bytes(
+    state: &AppState,
+    asset: &hodei_catalog::AssetRecord,
+) -> Result<Vec<u8>, OciFailure> {
+    let store = the_content_store(state)?;
+    store
+        .get(&asset.digest)
+        .await
+        .map_err(|_| OciFailure::unavailable("the content is not in the store"))
 }
 
 /// El contenido que se trae del upstream, verificado y con recibo.
@@ -734,11 +853,13 @@ fn the_failure(error: resolution::ResolveError) -> OciFailure {
 ///
 /// La compuerta de confianza va **antes** de las condiciones de lectura: un
 /// `304` o un `412` dirian que el contenido existe.
+#[allow(clippy::too_many_arguments)]
 async fn the_served(
     state: &AppState,
     context: &VerifiedContext,
     repository: &RepositoryDescriptor,
     asset: &hodei_catalog::AssetRecord,
+    bytes: Vec<u8>,
     kind: TheKind,
     headers: &HeaderMap,
     head: bool,
@@ -781,12 +902,6 @@ async fn the_served(
         }
         crate::raw::conditional::ReadOutcome::Serve => {}
     }
-
-    let store = the_content_store(state)?;
-    let bytes = store
-        .get(&asset.digest)
-        .await
-        .map_err(|_| OciFailure::unavailable("the content is not in the store"))?;
 
     // El tipo de medio lo dice el manifiesto, no el cliente: el manifiesto
     // es la verdad de que es. Y son los mismos tipos que el registro

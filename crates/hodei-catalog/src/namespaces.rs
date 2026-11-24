@@ -204,6 +204,10 @@ impl NamespacePolicy {
             RepositoryFormat::Maven2 => self.judge_maven(path),
             RepositoryFormat::Npm => self.judge_npm(path),
             RepositoryFormat::PyPi => self.judge_pypi(path),
+            // OCI: the namespace is the name of the repository itself, and
+            // the judgement is made over that name, not over the path of an
+            // asset inside it.
+            RepositoryFormat::Oci => self.judge_oci(path),
             // Los demas formatos no tienen una nocion de namespace con
             // alias: el primer segmento de la ruta es el nombre, y se
             // compara tal cual.
@@ -287,8 +291,35 @@ impl NamespacePolicy {
         Judgement::Unreserved
     }
 
-    /// Los formatos sin namespace propio: el primer segmento de la ruta es
-    /// el nombre, y se compara tal cual.
+    /// OCI: the namespace is the name of the repository.
+    ///
+    /// A repository name is a path of its own (`team/demo`), and the
+    /// reservation is written the same way it is written for the other
+    /// formats: a reserved name covers itself and everything below it, so
+    /// `team` covers `team/demo` and `team/demo` does not cover
+    /// `team/demo-extra`.
+    fn judge_oci(&self, path: &str) -> Judgement {
+        let name = path.trim_matches('/');
+        if name.is_empty() {
+            return Judgement::Unreserved;
+        }
+        for reserved in &self.reserved {
+            if name == reserved
+                || name
+                    .strip_prefix(reserved.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+            {
+                return Judgement::Reserved {
+                    matched: reserved.clone(),
+                    alias_of: None,
+                };
+            }
+        }
+        Judgement::Unreserved
+    }
+
+    /// The formats without a namespace of their own: the first segment of the
+    /// path is the name, and it is compared literally.
     fn judge_flat(&self, path: &str) -> Judgement {
         let name = path.split('/').next().unwrap_or_default();
         if name.is_empty() {
@@ -498,6 +529,30 @@ mod tests {
         );
         assert_eq!(
             policy.judge(RepositoryFormat::Raw, "laboratory/file.bin"),
+            Judgement::Unreserved
+        );
+    }
+
+    #[test]
+    fn an_oci_reservation_is_matched_over_the_name_of_the_repository() {
+        let policy = reserved(&["team", "team/demo"]);
+        for name in ["team", "team/demo", "team/demo/extra"] {
+            assert!(
+                policy.judge(RepositoryFormat::Oci, name).is_reserved(),
+                "{name}"
+            );
+        }
+        for free in ["teamx", "teammate", "other/demo"] {
+            assert_eq!(
+                policy.judge(RepositoryFormat::Oci, free),
+                Judgement::Unreserved,
+                "{free}"
+            );
+        }
+        // The judgement is made over the name of the repository, and not over
+        // the path of an asset inside it.
+        assert_eq!(
+            policy.judge(RepositoryFormat::Oci, "manifests/sha256:abc"),
             Judgement::Unreserved
         );
     }
