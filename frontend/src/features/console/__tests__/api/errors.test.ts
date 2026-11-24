@@ -39,10 +39,36 @@ describe('failureOf', () => {
   });
 
   it('falls back to the status when the body does not name a kind', () => {
+    expect(failureOf(failed(401, {})).kind).toBe('unauthenticated');
     expect(failureOf(failed(403, {})).kind).toBe('permission');
     expect(failureOf(failed(404, {})).kind).toBe('absence');
     expect(failureOf(failed(400, {})).kind).toBe('invalid');
     expect(failureOf(failed(503, {})).kind).toBe('unavailable');
+  });
+
+  it('distinguishes 401 from 403 without leaking resource existence or credentials', () => {
+    const unauthenticated = failureOf(
+      failed(401, {
+        message: 'Bearer secret-token-123 rejected for repository private-repo',
+      })
+    );
+    const forbidden = failureOf(
+      failed(403, {
+        message: 'Principal alice cannot read repository private-repo',
+      })
+    );
+
+    expect(unauthenticated.kind).toBe('unauthenticated');
+    expect(unauthenticated.status).toBe(401);
+    expect(forbidden.kind).toBe('permission');
+    expect(forbidden.status).toBe(403);
+    expect(unauthenticated.message).not.toBe(forbidden.message);
+
+    for (const failure of [unauthenticated, forbidden]) {
+      expect(failure.message).not.toMatch(
+        /secret-token-123|bearer|private-repo|alice|repository|principal/i
+      );
+    }
   });
 
   it('says that it could not be decided when the status is a server error', () => {

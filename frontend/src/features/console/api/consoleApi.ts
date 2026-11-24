@@ -11,7 +11,10 @@
  * same one that serves the API.
  */
 
-import axios, { type AxiosInstance } from 'axios';
+import axios, {
+  type AxiosInstance,
+  type InternalAxiosRequestConfig,
+} from 'axios';
 
 import { useAuthStore } from '@/shared/stores/auth.store';
 import type {
@@ -45,19 +48,58 @@ export interface RevokeBody {
   reason: string;
 }
 
+type SessionGuardedConfig = InternalAxiosRequestConfig & {
+  _sessionEpoch?: number;
+};
+
+const attachSessionGuard = (instance: AxiosInstance): void => {
+  instance.interceptors.request.use(config => {
+    const guarded = config as SessionGuardedConfig;
+    const { token, sessionEpoch } = useAuthStore.getState();
+    guarded._sessionEpoch = sessionEpoch;
+    if (token) {
+      guarded.headers.Authorization = `Bearer ${token}`;
+    }
+    return guarded;
+  });
+
+  instance.interceptors.response.use(
+    response => {
+      const startEpoch = (response.config as SessionGuardedConfig)
+        ._sessionEpoch;
+      if (
+        startEpoch !== undefined &&
+        startEpoch !== useAuthStore.getState().sessionEpoch
+      ) {
+        return Promise.reject(
+          new axios.CanceledError('Session changed while request was in flight')
+        );
+      }
+      return response;
+    },
+    (error: unknown) => {
+      const config = (error as { config?: SessionGuardedConfig } | null)
+        ?.config;
+      const startEpoch = config?._sessionEpoch;
+      if (
+        startEpoch !== undefined &&
+        startEpoch !== useAuthStore.getState().sessionEpoch
+      ) {
+        return Promise.reject(
+          new axios.CanceledError('Session changed while request was in flight')
+        );
+      }
+      return Promise.reject(error);
+    }
+  );
+};
+
 const client: AxiosInstance = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
 });
-
-client.interceptors.request.use(config => {
-  const { token } = useAuthStore.getState();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+attachSessionGuard(client);
 
 /**
  * The client of the content surface.
@@ -72,53 +114,57 @@ const content: AxiosInstance = axios.create({
   baseURL: '/',
   timeout: 120000,
 });
-
-content.interceptors.request.use(config => {
-  const { token } = useAuthStore.getState();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
+attachSessionGuard(content);
 
 /** The repositories of the account that the principal may read. */
-export const listRepositories = async (): Promise<RepositoryList> => {
-  const response = await client.get<RepositoryList>('/catalog/repositories');
+export const listRepositories = async (
+  signal?: AbortSignal
+): Promise<RepositoryList> => {
+  const response = await client.get<RepositoryList>('/catalog/repositories', {
+    signal,
+  });
   return response.data;
 };
 
 /** What can be created. */
-export const capabilities = async (): Promise<Capabilities> => {
-  const response = await client.get<Capabilities>('/capabilities');
+export const capabilities = async (
+  signal?: AbortSignal
+): Promise<Capabilities> => {
+  const response = await client.get<Capabilities>('/capabilities', { signal });
   return response.data;
 };
 
 /** The creation of a repository of the catalog. */
 export const createRepository = async (
-  body: CreateRepositoryBody
+  body: CreateRepositoryBody,
+  signal?: AbortSignal
 ): Promise<RepositorySummary> => {
   const response = await client.post<RepositorySummary>(
     '/catalog/repositories',
-    body
+    body,
+    { signal }
   );
   return response.data;
 };
 
 /** A page of the search of the catalog. */
 export const search = async (
-  params: SearchParams
+  params: SearchParams,
+  signal?: AbortSignal
 ): Promise<SearchPage> => {
-  const response = await client.get<SearchPage>('/search', { params });
+  const response = await client.get<SearchPage>('/search', { params, signal });
   return response.data;
 };
 
 /** The detail of a package. */
 export const packageDetail = async (
   repository: string,
-  path: string
+  path: string,
+  signal?: AbortSignal
 ): Promise<PackageView> => {
   const response = await client.get<PackageView>(
-    `/packages/${encodeURIComponent(repository)}/${thePathOf(path)}`
+    `/packages/${encodeURIComponent(repository)}/${thePathOf(path)}`,
+    { signal }
   );
   return response.data;
 };
@@ -127,19 +173,27 @@ export const packageDetail = async (
 export const promote = async (
   repository: string,
   path: string,
-  digest: string
+  digest: string,
+  signal?: AbortSignal
 ): Promise<PromotionResult> => {
-  const response = await client.post<PromotionResult>('/promotions', {
-    repository,
-    path,
-    digest,
-  });
+  const response = await client.post<PromotionResult>(
+    '/promotions',
+    {
+      repository,
+      path,
+      digest,
+    },
+    { signal }
+  );
   return response.data;
 };
 
 /** The revocation of a concession. */
-export const revoke = async (body: RevokeBody): Promise<unknown> => {
-  const response = await client.post('/promotions/revoke', body);
+export const revoke = async (
+  body: RevokeBody,
+  signal?: AbortSignal
+): Promise<unknown> => {
+  const response = await client.post('/promotions/revoke', body, { signal });
   return response.data;
 };
 
@@ -152,11 +206,12 @@ export const revoke = async (body: RevokeBody): Promise<unknown> => {
  */
 export const downloadAsset = async (
   repository: string,
-  path: string
+  path: string,
+  signal?: AbortSignal
 ): Promise<Blob> => {
   const response = await content.get(
     `/repository/${encodeURIComponent(repository)}/${thePathOf(path)}`,
-    { responseType: 'blob' }
+    { responseType: 'blob', signal }
   );
   return response.data as Blob;
 };
