@@ -52,6 +52,15 @@
 //!   entero es un error;
 //! - un upstream cuyo **ambito** no cubre el listado hace un proxy que no
 //!   puede enumerar, y su listado es la lista vacia.
+//!
+//! Y, con el listado **honesto** --el incremento 5--:
+//!
+//! - el listado solo anuncia las etiquetas que la resolucion acepta: un
+//!   nombre que la resolucion rechaza no se anuncia;
+//! - un miembro cuyo ambito no cubre el listado no aparece en el listado
+//!   del grupo, y la decision deja traza;
+//! - un upstream que **pagina** su lista no sirve un listado a medias: el
+//!   listado no se sirve.
 
 mod support;
 
@@ -184,6 +193,18 @@ const THE_CASES: &[(&str, &str)] = &[
     (
         "ac5-a-proxy-whose-scope-does-not-cover-the-listing-serves-an-empty-list",
         "un proxy cuyo ambito no cubre el listado sirve la lista vacia",
+    ),
+    (
+        "ac6-the-listing-only-announces-the-tags-that-can-be-pulled",
+        "el listado solo anuncia las etiquetas que la resolucion acepta",
+    ),
+    (
+        "ac6-a-member-whose-scope-does-not-cover-the-listing-is-not-listed",
+        "un miembro que no puede enumerar no aparece en el listado, y deja traza",
+    ),
+    (
+        "ac6-a-paginated-upstream-does-not-serve-a-partial-listing",
+        "un upstream que pagina su lista no sirve un listado a medias",
     ),
 ];
 
@@ -919,6 +940,9 @@ enum TheBehaviour {
     Normal,
     /// Su reto apunta a un realm que **no** es el declarado.
     HostileRealm,
+    /// Su lista de etiquetas esta **paginada**: la responde con la cabecera
+    /// `Link`, que dice que hay mas paginas.
+    Paginated,
 }
 
 /// Lo que el upstream ha recibido.
@@ -1210,12 +1234,22 @@ async fn the_distribution(
             .get(name)
             .cloned()
             .unwrap_or_default();
-        return (
+        let mut answer = (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json")],
             json!({ "name": name, "tags": tags }).to_string(),
         )
             .into_response();
+        // Una lista **paginada**: el upstream lo dice con la cabecera
+        // `Link`, que anuncia la pagina siguiente. Lo que se recibe es la
+        // primera pagina, no la lista entera.
+        if behaviour == TheBehaviour::Paginated {
+            answer.headers_mut().insert(
+                header::LINK,
+                header::HeaderValue::from_static("</v2/lab/tags/list?n=1&last=v1>; rel=\"next\""),
+            );
+        }
+        return answer;
     }
 
     // `v2/<nombre>/manifests/<referencia>` y `v2/<nombre>/blobs/<digest>`.
@@ -2415,6 +2449,170 @@ fn ac5_a_proxy_whose_scope_does_not_cover_the_listing_serves_an_empty_list() {
             LabCase::new(
                 "ac5-a-proxy-whose-scope-does-not-cover-the-listing-serves-an-empty-list",
                 "un proxy cuyo ambito no cubre el listado sirve la lista vacia",
+            )
+            .passed()
+        },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AC6: el listado del proxy, honesto y completo.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ac6_the_listing_only_announces_the_tags_that_can_be_pulled() {
+    a_case(
+        "ac6-the-listing-only-announces-the-tags-that-can-be-pulled",
+        "el listado solo anuncia las etiquetas que la resolucion acepta",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            // El upstream tiene una etiqueta buena y una que **no** es una
+            // etiqueta: lleva una barra, y la resolucion la rechaza.
+            publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            lab.publish_upstream_tag("solo-en-el-proxy", b"la-capa-del-upstream");
+            lab.registry.tag(PROXY, "con/barra");
+
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
+            assert_eq!(
+                status,
+                200,
+                "el grupo no lista sus etiquetas:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert!(
+                tags.contains(&"solo-en-el-proxy".to_string()),
+                "la etiqueta que el upstream si tiene no esta en la lista: {tags:?}"
+            );
+            // El listado solo promete lo que se puede descargar: un nombre
+            // que la resolucion rechaza --con una barra-- no se anuncia.
+            assert!(
+                !tags.iter().any(|one| one.contains('/')),
+                "el listado anuncia una etiqueta que la resolucion rechaza: {tags:?}"
+            );
+            assert!(
+                !body.contains("con/barra"),
+                "el listado anuncia una etiqueta que la resolucion rechaza: {body}"
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac6-the-listing-only-announces-the-tags-that-can-be-pulled",
+                "el listado solo anuncia las etiquetas que la resolucion acepta",
+            )
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac6_a_member_whose_scope_does_not_cover_the_listing_is_not_listed() {
+    a_case(
+        "ac6-a-member-whose-scope-does-not-cover-the-listing-is-not-listed",
+        "un miembro que no puede enumerar no aparece en el listado, y deja traza",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            // El primer miembro es un proxy cuyo **ambito** no cubre el
+            // listado: no se puede preguntar por su lista.
+            let lab = TheLab::new(&[SCOPED, FIRST], None);
+            let mut service = lab.start();
+            let port = service.port;
+
+            // El segundo miembro tiene una etiqueta: el listado del grupo
+            // **no se sirve a medias**, se sirve con lo que si se puede
+            // enumerar.
+            publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            // Y el upstream tiene algo bajo el nombre del miembro que no
+            // puede enumerar: no se anuncia, porque no se puede preguntar.
+            lab.registry.tag(SCOPED, "solo-en-el-scoped");
+
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
+            assert_eq!(
+                status,
+                200,
+                "el grupo no lista sus etiquetas:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert!(
+                tags.contains(&TAG.to_string()),
+                "la etiqueta del miembro que si se puede enumerar no esta: {tags:?}"
+            );
+            assert!(
+                !tags.contains(&"solo-en-el-scoped".to_string()),
+                "un miembro que no puede enumerar no aporta etiquetas al listado: {tags:?}"
+            );
+
+            // Lo que no cae en el ambito no se pregunta al upstream.
+            assert_eq!(
+                lab.registry.hits(&format!("{SCOPED}/tags/list")),
+                0,
+                "se pidio al upstream una ruta fuera de su ambito: {:?}",
+                lab.registry.paths()
+            );
+
+            // Y la decision queda **vista**: el servicio avisa de que un
+            // miembro no puede enumerar y de por que.
+            let log = lab.deployment.the_log();
+            assert!(
+                log.contains("cannot be enumerated"),
+                "la decision no ha dejado traza:\n{log}"
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac6-a-member-whose-scope-does-not-cover-the-listing-is-not-listed",
+                "un miembro que no puede enumerar no aparece en el listado, y deja traza",
+            )
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac6_a_paginated_upstream_does_not_serve_a_partial_listing() {
+    a_case(
+        "ac6-a-paginated-upstream-does-not-serve-a-partial-listing",
+        "un upstream que pagina su lista no sirve un listado a medias",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let lab = TheLab::new(&[FIRST, PROXY], None);
+            // El upstream pagina su lista: lo que responde es la primera
+            // pagina, y lo dice con la cabecera `Link`.
+            lab.registry.behave(TheBehaviour::Paginated);
+            let mut service = lab.start();
+            let port = service.port;
+
+            publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
+            lab.publish_upstream_tag("solo-en-el-proxy", b"la-capa-del-upstream");
+
+            // El listado **no se sirve**: una primera pagina presentada como
+            // la lista entera es el defecto que esto cierra.
+            let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
+            assert_eq!(
+                status,
+                503,
+                "una lista paginada no detiene el listado:\n{}\n{body}",
+                lab.deployment.the_log()
+            );
+            assert!(
+                !body.contains("solo-en-el-proxy"),
+                "el listado se sirvio a medias: {body}"
+            );
+            assert!(
+                !tags.contains(&"solo-en-el-proxy".to_string()),
+                "el listado se sirvio a medias: {tags:?}"
+            );
+
+            support::stop(&mut service);
+            LabCase::new(
+                "ac6-a-paginated-upstream-does-not-serve-a-partial-listing",
+                "un upstream que pagina su lista no sirve un listado a medias",
             )
             .passed()
         },
