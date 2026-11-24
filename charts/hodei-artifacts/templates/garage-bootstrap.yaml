@@ -1,0 +1,144 @@
+{{- if and .Values.garage.enabled .Values.garage.bootstrap.enabled }}
+{{- $g := .Values.garage }}
+{{- $name := include "hodei.garage.fullname" . }}
+{{- if not .Values.s3.existingSecret }}
+{{- fail "garage bootstrap requires s3.existingSecret (access-key-id and secret-access-key to import)" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-bootstrap
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: garage-bootstrap
+data:
+  # Idempotent: every step checks the current state before acting, so the
+  # Job can be re-run (helm upgrade, retries) without changing the result.
+  # Talks to the Garage admin API v2 with the admin token from the Secret.
+  bootstrap.sh: |
+    #!/bin/sh
+    set -eu
+    API_BASE="http://{{ $name }}-0.{{ $name }}.{{ .Release.Namespace }}.svc:3903"
+    AUTH="Authorization: Bearer ${GARAGE_ADMIN_TOKEN}"
+    api() { # method path [json-body] -> body on stdout, status in $CODE_FILE
+      if [ $# -ge 3 ]; then
+        curl -sS -o /tmp/body -w '%{http_code}' -X "$1" -H "$AUTH" -H 'Content-Type: application/json' -d "$3" "${API_BASE}$2" > /tmp/code
+      else
+        curl -sS -o /tmp/body -w '%{http_code}' -X "$1" -H "$AUTH" "${API_BASE}$2" > /tmp/code
+      fi
+      cat /tmp/body
+    }
+    code() { cat /tmp/code; }
+
+    echo "waiting for the Garage admin API"
+    i=0
+    until api GET /v2/GetClusterStatus >/dev/null 2>&1 && [ "$(code)" = 200 ]; do
+      i=$((i + 1)); [ "$i" -le 60 ] || { echo "admin API not ready" >&2; exit 1; }
+      sleep 2
+    done
+
+    # 1. Layout: assign every node that has no role yet.
+    status=$(api GET /v2/GetClusterStatus)
+    if echo "$status" | grep -q '"role":null'; then
+      roles=""
+      for id in $(echo "$status" | grep -o '"id":"[0-9a-f]\{64\}"' | sed 's/"id":"\(.*\)"/\1/'); do
+        roles="${roles}${roles:+,}{\"id\":\"${id}\",\"zone\":\"${LAYOUT_ZONE}\",\"capacity\":${LAYOUT_CAPACITY_BYTES},\"tags\":[]}"
+      done
+      api POST /v2/UpdateClusterLayout "{\"roles\":[${roles}]}" >/dev/null
+      [ "$(code)" = 200 ] || { echo "UpdateClusterLayout failed: $(code)" >&2; exit 1; }
+      version=$(echo "$status" | sed -n 's/.*"layoutVersion":\([0-9]*\).*/\1/p')
+      api POST /v2/ApplyClusterLayout "{\"version\":$((version + 1))}" >/dev/null
+      [ "$(code)" = 200 ] || { echo "ApplyClusterLayout failed: $(code)" >&2; exit 1; }
+      echo "layout applied"
+    else
+      echo "layout already applied"
+    fi
+
+    # 2. Bucket: create when the alias does not exist.
+    info=$(api GET "/v2/GetBucketInfo?globalAlias=${BUCKET}")
+    if [ "$(code)" = 404 ]; then
+      info=$(api POST /v2/CreateBucket "{\"globalAlias\":\"${BUCKET}\"}")
+      [ "$(code)" = 200 ] || { echo "CreateBucket failed: $(code)" >&2; exit 1; }
+      echo "bucket created"
+    elif [ "$(code)" != 200 ]; then
+      echo "GetBucketInfo failed: $(code)" >&2; exit 1
+    fi
+    bucket_id=$(echo "$info" | sed -n 's/.*"id":"\([0-9a-f]\{64\}\)".*/\1/p' | head -n 1)
+
+    # 3. Key import from the Secret (never generated inside the cluster).
+    api GET "/v2/GetKeyInfo?id=${ACCESS_KEY_ID}" >/dev/null
+    if [ "$(code)" = 404 ]; then
+      api POST /v2/ImportKey "{\"accessKeyId\":\"${ACCESS_KEY_ID}\",\"secretAccessKey\":\"${SECRET_ACCESS_KEY}\",\"name\":\"${KEY_NAME}\"}" >/dev/null
+      [ "$(code)" = 200 ] || { echo "ImportKey failed: $(code)" >&2; exit 1; }
+      echo "key imported"
+    elif [ "$(code)" != 200 ]; then
+      echo "GetKeyInfo failed: $(code)" >&2; exit 1
+    fi
+
+    # 4. Grant the key read/write on the bucket (idempotent).
+    api POST /v2/AllowBucketKey "{\"bucketId\":\"${bucket_id}\",\"accessKeyId\":\"${ACCESS_KEY_ID}\",\"permissions\":{\"read\":true,\"write\":true,\"owner\":false}}" >/dev/null
+    [ "$(code)" = 200 ] || { echo "AllowBucketKey failed: $(code)" >&2; exit 1; }
+    echo "bootstrap complete"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-bootstrap
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: garage-bootstrap
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ $g.bootstrap.backoffLimit }}
+  ttlSecondsAfterFinished: {{ $g.bootstrap.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: garage-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "hodei.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml $g.podSecurityContext | nindent 8 }}
+      containers:
+        - name: bootstrap
+          image: "{{ $g.bootstrap.image.repository }}:{{ $g.bootstrap.image.tag }}"
+          imagePullPolicy: {{ $g.bootstrap.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/bootstrap.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: BUCKET
+              value: {{ .Values.s3.bucket | quote }}
+            - name: KEY_NAME
+              value: {{ $g.bootstrap.keyName | quote }}
+            - name: LAYOUT_ZONE
+              value: {{ $g.zone | quote }}
+            - name: LAYOUT_CAPACITY_BYTES
+              value: {{ include "hodei.bytes" $g.capacity | quote }}
+            - name: GARAGE_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ $g.existingSecret }}, key: {{ $g.adminTokenKey }}}
+            - name: ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.s3.existingSecret }}, key: {{ .Values.s3.accessKeyIdKey }}}
+            - name: SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.s3.existingSecret }}, key: {{ .Values.s3.secretAccessKeyKey }}}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ $name }}-bootstrap
+        - name: tmp
+          emptyDir: {}
+{{- end }}

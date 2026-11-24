@@ -1,0 +1,10 @@
+# Intermediate profile: API (Recreate, 1 replica, RWO PVC for RocksDB)
+# + in-cluster Garage StatefulSet (separate meta and data PVCs).
+# Create the Secrets first (see README.md); none is embedded here.
+profile: rocksdb-garage
+s3:
+  existingSecret: hodei-s3          # access-key-id, secret-access-key
+  tls: false                        # in-cluster, plain HTTP
+garage:
+  enabled: true
+  existingSecret: hodei-s3          # also holds rpc-secret and admin-token

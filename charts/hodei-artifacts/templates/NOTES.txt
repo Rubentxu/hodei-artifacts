@@ -1,0 +1,15 @@
+hodei-artifacts {{ .Chart.AppVersion }} installed with profile "{{ include "hodei.profile" . }}".
+{{- if eq .Values.profile "external" }}
+
+WARNING: the external profile is declarative only. The service validates
+database.db_type and rejects "dgraph" ("Only 'rocksdb' is supported"), so the
+API pods will crash-loop until a Dgraph adapter ships. Use the standalone or
+rocksdb-garage profile for a working deployment.
+{{- end }}
+{{- if include "hodei.usesRocksdb" . }}
+
+RocksDB profile: 1 replica, Recreate strategy; replicaCount is ignored.
+{{- end }}
+
+The service speaks plain HTTP on port {{ .Values.service.port }} and does not terminate TLS:
+terminate it at the Ingress or load balancer and set config.publicBaseUrl.

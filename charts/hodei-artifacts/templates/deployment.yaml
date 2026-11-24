@@ -1,0 +1,182 @@
+{{- $rocks := include "hodei.usesRocksdb" . -}}
+{{- $profile := include "hodei.profile" . -}}
+{{- $s3 := ne $profile "standalone" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hodei.fullname" . }}
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+    hodei.io/profile: {{ $profile }}
+spec:
+  replicas: {{ include "hodei.replicas" . }}
+  {{- if $rocks }}
+  # RocksDB admits a single writer: never run two pods against the volume.
+  strategy:
+    type: Recreate
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "hodei.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "hodei.selectorLabels" . | nindent 8 }}
+        hodei.io/profile: {{ $profile }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "hodei.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: api
+          image: {{ include "hodei.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.config.server.port }}
+          env:
+            # The image ships config/standalone.toml and config/external.toml.
+            - name: RUN_MODE
+              value: {{ ternary "standalone" "external" (eq $rocks "true") }}
+            - name: HODEI_SERVER__PORT
+              value: {{ .Values.config.server.port | quote }}
+            - name: HODEI_LOGGING__LEVEL
+              value: {{ .Values.config.logging.level | quote }}
+            - name: HODEI_LOGGING__FORMAT
+              value: {{ .Values.config.logging.format | quote }}
+            {{- if $rocks }}
+            - name: HODEI_ROCKSDB__PATH
+              value: {{ .Values.config.rocksdbPath | quote }}
+            - name: HODEI_CONTENT__CAS_PATH
+              value: {{ .Values.config.casPath | quote }}
+            {{- end }}
+            {{- if $s3 }}
+            - name: HODEI_CONTENT__BACKEND
+              value: s3
+            - name: HODEI_CONTENT__S3__BUCKET
+              value: {{ .Values.s3.bucket | quote }}
+            {{- with include "hodei.s3.endpoint" . }}
+            - name: HODEI_CONTENT__S3__ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with include "hodei.s3.region" . }}
+            - name: HODEI_CONTENT__S3__REGION
+              value: {{ . | quote }}
+            {{- end }}
+            - name: HODEI_CONTENT__S3__TLS
+              value: {{ .Values.s3.tls | quote }}
+            {{- if .Values.s3.existingSecret }}
+            # Credentials come from the AWS SDK provider chain.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.existingSecret }}
+                  key: {{ .Values.s3.accessKeyIdKey }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.existingSecret }}
+                  key: {{ .Values.s3.secretAccessKeyKey }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.config.publicBaseUrl }}
+            - name: HODEI_PUBLIC_URL__PUBLIC_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.config.trustedProxies }}
+            - name: HODEI_PUBLIC_URL__TRUSTED_PROXIES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- with .Values.config.corsAllowedOrigins }}
+            - name: HODEI_SECURITY__CORS_ALLOWED_ORIGINS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- if .Values.secrets.existingSecret }}
+            - name: HODEI_SECURITY__AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.jwtSecretKey }}
+                  optional: true
+            - name: HODEI_METADATA_SIGNER_ARMOR
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret }}
+                  key: {{ .Values.secrets.metadataSignerKey }}
+                  optional: true
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet: {path: {{ .Values.probes.startup.path }}, port: http}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet: {path: {{ .Values.probes.liveness.path }}, port: http}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet: {path: {{ .Values.probes.readiness.path }}, port: http}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if $rocks }}
+            - name: data
+              mountPath: /app/data
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if $rocks }}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-data" (include "hodei.fullname" .)) .Values.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

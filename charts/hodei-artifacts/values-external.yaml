@@ -1,0 +1,20 @@
+# External profile: stateless API (>= 2 replicas, no PVC) + Dgraph + S3.
+#
+# NOT RUNNABLE TODAY: the service validates database.db_type and only
+# accepts "rocksdb"; RUN_MODE=external exits with "Unsupported database
+# type 'dgraph'". This overlay is declarative configuration for when a
+# Dgraph adapter exists. See README.md.
+profile: external
+replicaCount: 2
+persistence:
+  enabled: false
+s3:
+  existingSecret: hodei-s3
+  endpoint: s3.example.invalid
+  region: eu-west-1
+  tls: true
+dgraph:
+  enabled: true
+  aclSecret: hodei-dgraph-acl
+garage:
+  enabled: false

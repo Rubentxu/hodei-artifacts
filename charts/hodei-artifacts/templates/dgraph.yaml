@@ -1,0 +1,174 @@
+{{- if .Values.dgraph.enabled }}
+{{- $d := .Values.dgraph }}
+{{- $name := include "hodei.dgraph.fullname" . }}
+{{- if not $d.aclSecret }}
+{{- fail "dgraph.enabled requires dgraph.aclSecret (existing Secret with the ACL HMAC secret)" }}
+{{- end }}
+{{- $image := ternary (printf "%s@%s" $d.image.repository $d.image.digest) (printf "%s:%s" $d.image.repository $d.image.tag) (ne $d.image.digest "") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-zero
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dgraph-zero
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - {name: grpc-zero, port: 5080, targetPort: grpc-zero}
+    - {name: http-zero, port: 6080, targetPort: http-zero}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: dgraph-zero
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-alpha
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dgraph-alpha
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - {name: grpc-int, port: 7080, targetPort: grpc-int}
+    - {name: http, port: 8080, targetPort: http}
+    - {name: grpc, port: 9080, targetPort: grpc}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: dgraph-alpha
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-zero
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dgraph-zero
+spec:
+  serviceName: {{ $name }}-zero
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: dgraph-zero
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "hodei.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: dgraph-zero
+    spec:
+      serviceAccountName: {{ include "hodei.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml $d.podSecurityContext | nindent 8 }}
+      containers:
+        - name: zero
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $d.image.pullPolicy }}
+          command: ["sh", "-c"]
+          # Telemetry is disabled, as in deploy/dgraph/compose.yaml.
+          args:
+            - exec dgraph zero --my=$(hostname).{{ $name }}-zero.{{ .Release.Namespace }}.svc:5080 --wal=/dgraph-data/zero --telemetry "reports=false"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - {name: grpc-zero, containerPort: 5080}
+            - {name: http-zero, containerPort: 6080}
+          readinessProbe:
+            httpGet: {path: /health, port: http-zero}
+            periodSeconds: 10
+          resources:
+            {{- toYaml $d.zero.resources | nindent 12 }}
+          volumeMounts:
+            - {name: zero-data, mountPath: /dgraph-data}
+  volumeClaimTemplates:
+    - metadata:
+        name: zero-data
+      spec:
+        accessModes:
+          {{- toYaml $d.zero.persistence.accessModes | nindent 10 }}
+        {{- with $d.zero.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $d.zero.persistence.size }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-alpha
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dgraph-alpha
+spec:
+  serviceName: {{ $name }}-alpha
+  replicas: {{ $d.alpha.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: dgraph-alpha
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "hodei.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: dgraph-alpha
+    spec:
+      serviceAccountName: {{ include "hodei.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml $d.podSecurityContext | nindent 8 }}
+      containers:
+        - name: alpha
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $d.image.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - >-
+              exec dgraph alpha
+              --my=$(hostname).{{ $name }}-alpha.{{ .Release.Namespace }}.svc:7080
+              --zero={{ $name }}-zero-0.{{ $name }}-zero.{{ .Release.Namespace }}.svc:5080
+              --postings=/dgraph-data/p --wal=/dgraph-data/w
+              --acl "secret-file=/dgraph/secrets/{{ $d.aclSecretKey }}; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256"
+              --telemetry "reports=false"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - {name: grpc-int, containerPort: 7080}
+            - {name: http, containerPort: 8080}
+            - {name: grpc, containerPort: 9080}
+          readinessProbe:
+            httpGet: {path: /probe/graphql, port: http}
+            periodSeconds: 10
+          resources:
+            {{- toYaml $d.alpha.resources | nindent 12 }}
+          volumeMounts:
+            - {name: alpha-data, mountPath: /dgraph-data}
+            - {name: acl, mountPath: /dgraph/secrets, readOnly: true}
+      volumes:
+        - name: acl
+          secret:
+            secretName: {{ $d.aclSecret }}
+            defaultMode: 0440
+  volumeClaimTemplates:
+    - metadata:
+        name: alpha-data
+      spec:
+        accessModes:
+          {{- toYaml $d.alpha.persistence.accessModes | nindent 10 }}
+        {{- with $d.alpha.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $d.alpha.persistence.size }}
+{{- end }}

@@ -1,0 +1,152 @@
+{{- if .Values.garage.enabled }}
+{{- $g := .Values.garage }}
+{{- $name := include "hodei.garage.fullname" . }}
+{{- if not $g.existingSecret }}
+{{- fail "garage.enabled requires garage.existingSecret (keys rpc-secret and admin-token); secrets are never rendered by this chart" }}
+{{- end }}
+{{- if gt (int $g.replicationFactor) (int $g.replicas) }}
+{{- fail "garage.replicationFactor cannot exceed garage.replicas" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: garage
+data:
+  # rpc_secret and the admin token come from GARAGE_RPC_SECRET and
+  # GARAGE_ADMIN_TOKEN (Secret), never from this file.
+  garage.toml: |
+    metadata_dir = "/var/lib/garage/meta"
+    data_dir = "/var/lib/garage/data"
+    db_engine = "lmdb"
+    replication_factor = {{ $g.replicationFactor }}
+    rpc_bind_addr = "[::]:3901"
+    # rpc_public_addr is left unset: Garage advertises the address it sees.
+
+    [s3_api]
+    s3_region = "garage"
+    api_bind_addr = "[::]:3900"
+
+    [admin]
+    api_bind_addr = "[::]:3903"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: garage
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - {name: s3, port: 3900, targetPort: s3}
+    - {name: rpc, port: 3901, targetPort: rpc}
+    - {name: admin, port: 3903, targetPort: admin}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: garage
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "hodei.labels" . | nindent 4 }}
+    app.kubernetes.io/component: garage
+spec:
+  serviceName: {{ $name }}
+  replicas: {{ $g.replicas }}
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: garage
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "hodei.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: garage
+    spec:
+      serviceAccountName: {{ include "hodei.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml $g.podSecurityContext | nindent 8 }}
+      containers:
+        - name: garage
+          image: "{{ $g.image.repository }}:{{ $g.image.tag }}"
+          imagePullPolicy: {{ $g.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - {name: s3, containerPort: 3900}
+            - {name: rpc, containerPort: 3901}
+            - {name: admin, containerPort: 3903}
+          env:
+            - name: GARAGE_RPC_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ $g.existingSecret }}, key: {{ $g.rpcSecretKey }}}
+            - name: GARAGE_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ $g.existingSecret }}, key: {{ $g.adminTokenKey }}}
+          readinessProbe:
+            tcpSocket: {port: s3}
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: rpc}
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml $g.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/garage.toml, subPath: garage.toml, readOnly: true}
+            - {name: meta, mountPath: /var/lib/garage/meta}
+            - {name: data, mountPath: /var/lib/garage/data}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+      {{- with $g.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $g.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $g.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  # Two independent RWO volumes per replica: meta (SSD, low latency) and data.
+  volumeClaimTemplates:
+    - metadata:
+        name: meta
+      spec:
+        accessModes:
+          {{- toYaml $g.persistence.meta.accessModes | nindent 10 }}
+        {{- with $g.persistence.meta.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $g.persistence.meta.size }}
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          {{- toYaml $g.persistence.data.accessModes | nindent 10 }}
+        {{- with $g.persistence.data.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $g.persistence.data.size }}
+{{- end }}

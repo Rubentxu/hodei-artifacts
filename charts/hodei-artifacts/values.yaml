@@ -1,0 +1,203 @@
+# Default values: the "standalone" profile (the only one that boots today).
+#
+# profile selects the storage topology:
+#   standalone      1 replica, RocksDB + filesystem CAS on one RWO PVC (RUN_MODE=standalone)
+#   rocksdb-garage  1 replica, RocksDB on a PVC, content in in-cluster Garage S3
+#   external        stateless API, replicas >= 2, Dgraph + S3 (RUN_MODE=external)
+#
+# See values-rocksdb-garage.yaml and values-external.yaml for the overlays.
+# No secret value lives in this file: secrets are referenced by name only.
+profile: standalone
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: hodei-artifacts-api
+  # Empty tag falls back to .Chart.AppVersion. Prefer a digest in production.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Ignored (forced to 1) by every profile that uses RocksDB.
+replicaCount: 2
+
+# Maps to HODEI_<SECTION>__<KEY>; see docs/community/configuration.md.
+config:
+  server:
+    port: 3000
+  logging:
+    level: info
+    format: json
+  # Only the standalone and rocksdb-garage profiles use this path.
+  rocksdbPath: /app/data/hodei.rocksdb
+  casPath: /app/data/hodei.cas
+  # Public URL announced to clients. The service does NOT terminate TLS:
+  # terminate it at the Ingress or load balancer and set an https URL here.
+  publicBaseUrl: ""
+  trustedProxies: []
+  corsAllowedOrigins: []
+
+# S3 content backend (rocksdb-garage and external profiles).
+s3:
+  bucket: hodei-content
+  # Empty means: in-cluster Garage when garage.enabled, else the AWS default.
+  endpoint: ""
+  region: ""
+  tls: true
+  # Existing Secret with the S3 credentials (keys below). Never inline.
+  existingSecret: ""
+  accessKeyIdKey: access-key-id
+  secretAccessKeyKey: secret-access-key
+
+# Existing Secret with optional runtime secrets. Each key is optional.
+secrets:
+  existingSecret: ""
+  jwtSecretKey: auth-jwt-secret          # -> HODEI_SECURITY__AUTH_JWT_SECRET
+  metadataSignerKey: metadata-signer-armor # -> HODEI_METADATA_SIGNER_ARMOR
+
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+# RocksDB + filesystem CAS volume (standalone and rocksdb-garage only).
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  size: 20Gi
+  accessModes: [ReadWriteOnce]
+
+# UID/GID 10001 matches the OCI image (Containerfile).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: hodei.example.invalid
+      path: /
+      pathType: Prefix
+  tls: []
+
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 1Gi}
+
+# Probes use the distinct contracts of HSP-237.
+probes:
+  startup: {path: /health/live, failureThreshold: 30, periodSeconds: 2}
+  liveness: {path: /health/live, periodSeconds: 10, timeoutSeconds: 2, failureThreshold: 3}
+  readiness: {path: /health/ready, periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 3}
+
+terminationGracePeriodSeconds: 30
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# PodDisruptionBudget, only rendered for the external profile.
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# In-cluster Garage S3 (rocksdb-garage profile, optional for external).
+garage:
+  enabled: false
+  image:
+    repository: docker.io/dxflrs/garage
+    tag: v2.1.0
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Replication factor must not exceed the number of replicas.
+  replicationFactor: 1
+  zone: dc1
+  # Layout capacity advertised to the cluster, e.g. 50G.
+  capacity: 50G
+  # Existing Secret holding rpc-secret and admin-token, plus the S3 key pair
+  # imported by the bootstrap Job (keys are named under s3.* above when
+  # s3.existingSecret is the same Secret).
+  existingSecret: ""
+  rpcSecretKey: rpc-secret
+  adminTokenKey: admin-token
+  # Two separate RWO volumes per replica: meta (small, low latency) and data.
+  persistence:
+    meta: {storageClass: "", size: 5Gi, accessModes: [ReadWriteOnce]}
+    data: {storageClass: "", size: 100Gi, accessModes: [ReadWriteOnce]}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  bootstrap:
+    enabled: true
+    # Needs a POSIX shell and curl; the Garage image has neither.
+    image:
+      repository: docker.io/curlimages/curl
+      tag: 8.11.1
+      pullPolicy: IfNotPresent
+    backoffLimit: 6
+    ttlSecondsAfterFinished: 3600
+    # Display name of the imported key.
+    keyName: hodei-artifacts
+
+# In-cluster Dgraph Zero/Alpha (declarative; see README for the status).
+dgraph:
+  enabled: false
+  image:
+    repository: docker.io/dgraph/dgraph
+    tag: v25.5.1
+    digest: sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb
+    pullPolicy: IfNotPresent
+  # Zero is a single replica; Alpha needs --replicas wiring beyond one.
+  alpha:
+    replicas: 1
+    persistence: {storageClass: "", size: 50Gi, accessModes: [ReadWriteOnce]}
+    resources:
+      requests: {cpu: 250m, memory: 1Gi}
+  zero:
+    persistence: {storageClass: "", size: 10Gi, accessModes: [ReadWriteOnce]}
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+  # Existing Secret with the ACL HMAC secret (key below, >= 32 bytes).
+  aclSecret: ""
+  aclSecretKey: hmac-secret
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
