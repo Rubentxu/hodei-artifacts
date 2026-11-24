@@ -861,9 +861,17 @@ async fn read_proxy(
             .map_err(|error| the_blob_error(&error))?
             .to_vec()
     };
+    let length = if head {
+        served.asset.size_bytes as usize
+    } else {
+        bytes.len()
+    };
     let etag = conditional::the_etag(&served.asset.digest);
     let mut response = body_response(StatusCode::OK, bytes, content_type, &etag, correlation);
     apply_cache_headers(&mut response, &Some((served.status, served.provenance)));
+    if head && let Ok(value) = HeaderValue::from_str(&length.to_string()) {
+        response.headers_mut().insert(header::CONTENT_LENGTH, value);
+    }
     Ok(response)
 }
 
