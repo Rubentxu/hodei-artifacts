@@ -411,6 +411,187 @@ impl Route {
     }
 }
 
+/// Los nombres de metadata que se sirven con el checksum en el nombre.
+///
+/// El layout de `createrepo` direcciona el metadata por su propio
+/// SHA256: `repodata/{sha256}-primary.xml.gz`. Ese nombre es una promesa
+/// sobre los bytes que se sirven, y por eso se puede comprobar sin
+/// preguntar a nadie.
+const SHA256_HEX_LENGTH: usize = 64;
+
+/// Las rutas que la superficie yum sirve en modo **proxy**.
+///
+/// Un repositorio hospedado impone su layout: el `primary` se llama
+/// como sea y el pool es `pool/`. Un proxy no puede imponerlo: el
+/// upstream decide como se llama su metadata y el cliente lo pide por el
+/// nombre que el `repomd.xml` declara. Por eso son **dos** gramaticas y
+/// no una: la hosted sigue siendo estricta (un repositorio alojado no
+/// puede servir `Packages/...`), y la del proxy acepta lo que el
+/// upstream publica.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpstreamRoute {
+    /// La clave publica del upstream, en armor: la que el cliente usa
+    /// para verificar la firma del upstream.
+    Key,
+    /// El `repomd.xml` del upstream, tal cual.
+    Repomd,
+    /// La firma separada del `repomd.xml` del upstream.
+    RepomdSignature,
+    /// Un metadata o un paquete del upstream, por su ruta.
+    Asset {
+        /// La ruta por la que se pide al upstream.
+        path: String,
+    },
+}
+
+impl UpstreamRoute {
+    /// Interpreta el resto de `/yum/{repositorio}/...` en modo proxy.
+    ///
+    /// La regla de seguridad es la del pool hospedado: sin `..`, sin
+    /// barra inicial, sin barras dobles y con un conjunto de caracteres
+    /// acotado. Lo que no la cumple no existe para ese proxy.
+    pub fn parse(rest: &str) -> Result<Self, YumError> {
+        match rest {
+            "key.asc" => return Ok(Self::Key),
+            "repodata/repomd.xml" => return Ok(Self::Repomd),
+            "repodata/repomd.xml.asc" => return Ok(Self::RepomdSignature),
+            _ => {}
+        }
+        // El upstream decide el layout: su `repodata` puede tener mas
+        // indices que el `primary`, y su pool puede ser `Packages/`.
+        let known = rest.starts_with("repodata/")
+            || rest.starts_with("Packages/")
+            || (rest.starts_with("pool/") && rest.ends_with(".rpm"));
+        if !known || !is_safe_upstream_path(rest) {
+            return Err(YumError::BadIdentity(rest.to_string()));
+        }
+        Ok(Self::Asset {
+            path: rest.to_string(),
+        })
+    }
+}
+
+/// Si una ruta relativa es segura para pedirla a un upstream.
+///
+/// Es la misma regla que el pool de un repositorio hospedado: sin
+/// segmentos de punto, sin barra inicial, sin barras dobles, sin final
+/// de barra y con un conjunto de caracteres acotado.
+fn is_safe_upstream_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with('/')
+        && !path.ends_with('/')
+        && !path.contains("//")
+        && !path.contains("..")
+        && path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'/' | b'+' | b'-' | b'_' | b'~' | b':'))
+}
+
+/// El checksum que el **nombre** de una ruta declara, si lo declara.
+///
+/// El nombre de un metadata de `createrepo` es su propio SHA256, y por
+/// eso el nombre es una promesa sobre los bytes. Un proxy que sirve unos
+/// bytes que no la cumplen esta sirviendo metadata corrupto como si
+/// fuera bueno.
+pub fn checksum_of_name(path: &str) -> Option<String> {
+    let name = path.rsplit('/').next()?;
+    let (hex, rest) = name.split_once('-')?;
+    if hex.len() != SHA256_HEX_LENGTH
+        || rest.is_empty()
+        || !hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some(hex.to_lowercase())
+}
+
+/// Un metadata que declara el `repomd.xml` de un upstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredMetadata {
+    /// La ruta por la que se sirve.
+    pub location: String,
+    /// El SHA256 que el `repomd` declara.
+    pub checksum: String,
+}
+
+/// Los metadata que un `repomd.xml` declara, con su checksum.
+///
+/// El documento es de un upstream: se lee tal cual viene, y lo que se
+/// busca es el `location` y el `checksum` de cada `<data>`. Un `repomd`
+/// que no se entiende no declara nada, y lo que no declara no se
+/// sirve.
+pub fn declared_metadata(repomd: &str) -> Vec<DeclaredMetadata> {
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(offset) = repomd[cursor..].find("<data") {
+        let start = cursor + offset;
+        let Some(end) = repomd[start..].find("</data>") else {
+            break;
+        };
+        let inside = &repomd[start..start + end];
+        cursor = start + end + "</data>".len();
+        let Some((head, checksum)) = element_of(inside, "checksum") else {
+            continue;
+        };
+        if !head.contains("type=\"sha256\"") || checksum.len() != SHA256_HEX_LENGTH {
+            continue;
+        }
+        if !checksum.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            continue;
+        }
+        let Some(location) = tag_of(inside, "location") else {
+            continue;
+        };
+        let Some(href) = attribute_of(&location, "href") else {
+            continue;
+        };
+        out.push(DeclaredMetadata {
+            location: href,
+            checksum: checksum.to_lowercase(),
+        });
+    }
+    out
+}
+
+/// El checksum que un `repomd.xml` declara para una ruta, si la declara.
+pub fn declared_checksum(repomd: &str, location: &str) -> Option<String> {
+    declared_metadata(repomd)
+        .into_iter()
+        .find(|entry| entry.location == location)
+        .map(|entry| entry.checksum)
+}
+
+/// La cabecera de un elemento y su texto: `<checksum type="sha256">abc`.
+fn element_of(text: &str, name: &str) -> Option<(String, String)> {
+    let open = format!("<{name}");
+    let start = text.find(&open)?;
+    let after = &text[start..];
+    let head_end = after.find('>')? + 1;
+    let close = format!("</{name}>");
+    let end = after.find(&close)?;
+    Some((
+        after[..head_end].to_string(),
+        after[head_end..end].trim().to_string(),
+    ))
+}
+
+/// La etiqueta de apertura de un elemento: `<location href="..."/>`.
+fn tag_of(text: &str, name: &str) -> Option<String> {
+    let open = format!("<{name}");
+    let start = text.find(&open)?;
+    let after = &text[start..];
+    let head_end = after.find('>')? + 1;
+    Some(after[..head_end].to_string())
+}
+
+/// El valor de un atributo: `href="repodata/abc-primary.xml.gz"`.
+fn attribute_of(text: &str, name: &str) -> Option<String> {
+    let needle = format!("{name}=\"");
+    let start = text.find(&needle)? + needle.len();
+    let end = text[start..].find('"')? + start;
+    Some(text[start..end].to_string())
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) enum HeaderValue<'a> {
@@ -677,5 +858,91 @@ mod tests {
             record_path_for("pool/hello-1.0-1.x86_64.rpm"),
             "pool/hello-1.0-1.x86_64.rpm.record"
         );
+    }
+
+    #[test]
+    fn the_upstream_grammar_accepts_what_the_upstream_publishes() {
+        let sha = "ab".repeat(32);
+        assert_eq!(UpstreamRoute::parse("key.asc").unwrap(), UpstreamRoute::Key);
+        assert_eq!(
+            UpstreamRoute::parse("repodata/repomd.xml").unwrap(),
+            UpstreamRoute::Repomd
+        );
+        assert_eq!(
+            UpstreamRoute::parse("repodata/repomd.xml.asc").unwrap(),
+            UpstreamRoute::RepomdSignature
+        );
+        for path in [
+            format!("repodata/{sha}-primary.xml.gz"),
+            format!("repodata/{sha}-filelists.xml.gz"),
+            "repodata/primary.xml.gz".to_string(),
+            "Packages/hello-1.0-1.x86_64.rpm".to_string(),
+            "pool/hello-1.0-1.x86_64.rpm".to_string(),
+        ] {
+            assert_eq!(
+                UpstreamRoute::parse(&path).unwrap(),
+                UpstreamRoute::Asset { path: path.clone() },
+                "the upstream publishes {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_upstream_grammar_refuses_what_cannot_be_asked() {
+        for path in [
+            "repodata/../etc/passwd",
+            "repodata//x.xml.gz",
+            "/repodata/repomd.xml",
+            "Packages/",
+            "pool/hello.txt",
+            "otra/cosa",
+            "index.html",
+        ] {
+            assert!(
+                UpstreamRoute::parse(path).is_err(),
+                "the upstream grammar accepted {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_name_of_a_metadata_declares_its_checksum() {
+        let sha = "ab".repeat(32);
+        assert_eq!(
+            checksum_of_name(&format!("repodata/{sha}-primary.xml.gz")).as_deref(),
+            Some(sha.as_str())
+        );
+        assert_eq!(
+            checksum_of_name(&format!("repodata/{sha}-filelists.xml.gz")).as_deref(),
+            Some(sha.as_str())
+        );
+        assert_eq!(checksum_of_name("repodata/primary.xml.gz"), None);
+        assert_eq!(checksum_of_name("repodata/repomd.xml"), None);
+        assert_eq!(checksum_of_name("Packages/hello-1.0-1.x86_64.rpm"), None);
+    }
+
+    #[test]
+    fn the_repomd_declares_the_metadata_it_pins() {
+        let sha = "ab".repeat(32);
+        let entry = RepodataEntry {
+            kind: "primary",
+            location: &format!("repodata/{sha}-primary.xml.gz"),
+            checksum: &sha,
+            size: 123,
+            open_checksum: &"cd".repeat(32),
+            open_size: 456,
+            timestamp: 1_700_000_000,
+        };
+        let document = repomd_document(1_700_000_000, &[entry]);
+        assert_eq!(document.matches("<data ").count(), 1);
+        let declared = declared_metadata(&document);
+        assert_eq!(declared.len(), 1);
+        assert_eq!(declared[0].location, format!("repodata/{sha}-primary.xml.gz"));
+        assert_eq!(declared[0].checksum, sha);
+        assert_eq!(
+            declared_checksum(&document, &format!("repodata/{sha}-primary.xml.gz")).as_deref(),
+            Some(sha.as_str())
+        );
+        assert_eq!(declared_checksum(&document, "repodata/primary.xml.gz"), None);
     }
 }

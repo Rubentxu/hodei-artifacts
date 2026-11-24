@@ -160,6 +160,13 @@ pub struct UpstreamConfig {
     /// La politica de cache (`proxy.cache`); los valores por defecto si la
     /// configuracion no la declara.
     pub cache: CachePolicy,
+    /// La clave publica con la que el upstream firma su repodata, en armor.
+    ///
+    /// Es una clave **publica**: no es un secreto y puede ir en la
+    /// configuracion versionada del repositorio. El cliente (dnf) la pide
+    /// por HTTP y la usa para verificar la firma del upstream que Hodei
+    /// sirve sin reescribir.
+    pub gpg_key_armor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +185,10 @@ struct RawUpstream {
     require_checksum: bool,
     #[serde(default)]
     auth: Option<RawAuth>,
+    /// La clave publica del upstream, en armor: la que el cliente usa
+    /// para verificar la firma del repodata que el proxy sirve tal cual.
+    #[serde(default)]
+    gpg_key_armor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -295,6 +306,14 @@ impl UpstreamConfig {
 
         let auth = raw.auth.map(Self::auth).transpose()?;
 
+        // La clave del upstream es publica: es la que el cliente pide por
+        // HTTP para verificar la firma del repodata. Una en blanco no es
+        // una clave: es una configuracion que nadie ha escrito.
+        let gpg_key_armor = raw
+            .gpg_key_armor
+            .map(|armor| armor.trim().to_string())
+            .filter(|armor| !armor.is_empty());
+
         Ok(Self {
             id: raw.id,
             base,
@@ -306,6 +325,7 @@ impl UpstreamConfig {
             require_checksum: raw.require_checksum,
             auth,
             cache: CachePolicy::default(),
+            gpg_key_armor,
         })
     }
 
