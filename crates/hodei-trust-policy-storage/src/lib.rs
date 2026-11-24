@@ -24,7 +24,10 @@ pub mod intents;
 pub mod lifecycle;
 pub mod reactions;
 
-pub use dgraph::{DgraphDecisionStore, DgraphTrustError, DgraphTrustStore, GrantActivation};
+pub use dgraph::{
+    ClaimedIntent, DgraphDecisionStore, DgraphIntentError, DgraphIntentStore, DgraphTrustError,
+    DgraphTrustStore, GrantActivation,
+};
 
 /// The table the decisions live in.
 pub const DECISION_TABLE: &str = "promotion_decision";

@@ -33,6 +33,30 @@
 //! The schema of this adapter is its own DDL slice: additive, idempotent,
 //! applied by [`ensure_trust_schema`] after the versioned schema boot.
 //! The shared schema in `hodei_graph_client::schema` is not touched.
+//!
+//! The same adapter also answers for the reactive work: the intents of
+//! [`hodei_reactive::intent::IntentOutbox`] and the execution records of
+//! [`hodei_reactive::runtime::ExecutionStore`] live here as the third
+//! port of the store, with the SAME mechanics the ledger uses.
+//!
+//! - **The claim is a compare-and-set.** The state transition is gated on
+//!   the state the transaction itself reads, and the state and the lease
+//!   generation are `@upsert` predicates: two workers claiming the same
+//!   intent write the same value on the same node and the server aborts
+//!   one of them. The retry re-reads: if the winner's lease is live the
+//!   loser finds nothing claimable and says so.
+//! - **The lease generation is the fencing token, and it is monotonic.**
+//!   Every claim that lands writes `generation = read + 1` behind the
+//!   in-transaction gate `generation == read`, so a generation can only
+//!   grow. A worker whose lease died cannot write a receipt (the receipt
+//!   is gated on a live lease), and a worker whose token was overtaken
+//!   cannot write even through the fenced API: both refusals are typed
+//!   errors, never silent no-ops.
+//! - **The receipt and the effect are ONE fact.** An `Applied` receipt
+//!   lands with the effect row — keyed by the effect ID, created only
+//!   when absent — in the same transaction. The effect cannot exist
+//!   without its receipt, and a re-claimer that finds either closes the
+//!   intent without applying again.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,6 +71,10 @@ use hodei_graph_client::{
     GraphClient, GraphClientError, GuardError, GuardKind, GuardScope, GuardStore, GuardedEffect,
     OperationId, RevisionDemand, Tenant,
 };
+use hodei_reactive::behavior::Effect;
+use hodei_reactive::execution::ExecutionRecord;
+use hodei_reactive::intent::{Intent, IntentOutbox, Receipt};
+use hodei_reactive::runtime::ExecutionStore;
 use hodei_trust_policy::ports::{DecisionStore, DecisionStoreError};
 use hodei_trust_policy::promotion::{DecisionId, PromotionDecision};
 use serde_json::Value;
@@ -144,6 +172,62 @@ type HodeiPromotionDecision {
   hodei.trust.decision.distribution
   hodei.trust.decision.decided_at
   hodei.trust.decision.payload
+}
+hodei.intent.key: string @index(exact) @upsert .
+hodei.intent.tenant: string @index(exact) .
+hodei.intent.state: string @index(exact) @upsert .
+hodei.intent.kind: string @index(exact) .
+hodei.intent.idempotency: string @index(exact) .
+hodei.intent.lease_owner: string .
+hodei.intent.lease_until: datetime .
+hodei.intent.lease_generation: int @index(int) @upsert .
+hodei.intent.receipt: string .
+hodei.intent.payload: string .
+hodei.effect.key: string @index(exact) @upsert .
+hodei.effect.kind: string .
+hodei.effect.payload: string .
+hodei.effect.generation: int .
+hodei.execution.key: string @index(exact) @upsert .
+hodei.execution.behavior: string @index(exact) .
+hodei.execution.event: string @index(exact) .
+hodei.execution.started_at: datetime @index(year) .
+hodei.execution.payload: string .
+hodei.claim.key: string @index(exact) @upsert .
+hodei.claim.identity: string @index(exact) .
+hodei.claim.owner: string .
+hodei.claim.at: datetime @index(year) .
+hodei.claim.generation: int .
+type HodeiReactiveIntent {
+  hodei.intent.key
+  hodei.intent.tenant
+  hodei.intent.state
+  hodei.intent.kind
+  hodei.intent.idempotency
+  hodei.intent.lease_owner
+  hodei.intent.lease_until
+  hodei.intent.lease_generation
+  hodei.intent.receipt
+  hodei.intent.payload
+}
+type HodeiReactiveEffect {
+  hodei.effect.key
+  hodei.effect.kind
+  hodei.effect.payload
+  hodei.effect.generation
+}
+type HodeiReactiveExecution {
+  hodei.execution.key
+  hodei.execution.behavior
+  hodei.execution.event
+  hodei.execution.started_at
+  hodei.execution.payload
+}
+type HodeiIntentClaim {
+  hodei.claim.key
+  hodei.claim.identity
+  hodei.claim.owner
+  hodei.claim.at
+  hodei.claim.generation
 }
 ";
 
@@ -1131,5 +1215,902 @@ impl DecisionStore for DgraphDecisionStore {
             None => Ok(None),
             Some(node) => Self::decision_of(&node).map(Some).map_err(Into::into),
         }
+    }
+}
+
+/// The node type of a reactive intent.
+pub const INTENT_TYPE: &str = "HodeiReactiveIntent";
+/// The node type of an applied effect.
+pub const EFFECT_TYPE: &str = "HodeiReactiveEffect";
+/// The node type of an execution record.
+pub const EXECUTION_TYPE: &str = "HodeiReactiveExecution";
+/// The node type of a claim marker: the fact that says WHO took an
+/// intent, and at which generation.
+pub const CLAIM_TYPE: &str = "HodeiIntentClaim";
+
+/// The key of the claim marker a claim at `generation` must create:
+/// unique per intent and per generation, so two executors claiming the
+/// same intent at the same generation try to create the SAME marker and
+/// the `@upsert` index decides.
+fn claim_marker_key(identity: &str, generation: u64) -> String {
+    format!("claim|{identity}|{generation}")
+}
+
+/// Why the graph refused an intent write. Every variant is closed: the
+/// caller knows exactly what was refused and why, and nothing was
+/// guessed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DgraphIntentError {
+    /// The authority did not answer, or refused the transaction.
+    #[error("the intent graph is not available: {0}")]
+    Unavailable(String),
+    /// A receipt arrived for an intent nobody holds a claim on: the
+    /// state it found is named, so the operator can see what stood.
+    #[error("the intent {identity} is not claimed (its state is {state}), so nobody can receive this receipt")]
+    NotClaimed {
+        /// The intent the receipt spoke about.
+        identity: String,
+        /// The state the intent actually had.
+        state: String,
+    },
+    /// A receipt arrived while the intent is still claimed but its lease
+    /// is dead: the claim does not exist any more, whatever the state
+    /// field says.
+    #[error(
+        "the claim of intent {identity} has no live lease, so nobody can receive this receipt"
+    )]
+    LeaseDead {
+        /// The intent the receipt spoke about.
+        identity: String,
+    },
+    /// A fenced write presented a token the intent has moved past: a
+    /// worker that was overtaken cannot write.
+    #[error("the write of intent {identity} was refused by fencing: the presented token is {presented} and the intent is at generation {current}")]
+    FencingRejected {
+        /// The intent the write spoke about.
+        identity: String,
+        /// The token the worker presented.
+        presented: u64,
+        /// The generation the intent has reached.
+        current: u64,
+    },
+    /// A reconciliation was asked for an intent that is not unknown.
+    #[error("the intent {identity} is not unknown, so there is nothing to reconcile")]
+    NotUnknown {
+        /// The intent the reconciliation asked for.
+        identity: String,
+    },
+    /// The graph contradicts the outbox contract (duplicate rows for one
+    /// key, a payload that does not parse).
+    #[error("the intent state is corrupt: {0}")]
+    Corrupt(String),
+}
+
+impl DgraphIntentError {
+    fn unavailable(error: impl std::fmt::Display) -> Self {
+        Self::Unavailable(error.to_string())
+    }
+}
+
+impl From<GuardError> for DgraphIntentError {
+    fn from(error: GuardError) -> Self {
+        DgraphIntentError::Unavailable(error.to_string())
+    }
+}
+
+impl From<DgraphIntentError> for String {
+    fn from(error: DgraphIntentError) -> Self {
+        error.to_string()
+    }
+}
+
+/// One intent node as the store reads it.
+#[derive(Debug, Clone)]
+struct IntentNode {
+    state: String,
+    lease_owner: Option<String>,
+    lease_until: Option<DateTime<Utc>>,
+    generation: u64,
+    idempotency_key: String,
+    intent: Option<Intent>,
+}
+
+/// The fields an intent read brings back.
+const INTENT_FIELDS: &str = "
+  uid
+  hodei.intent.state
+  hodei.intent.lease_owner
+  hodei.intent.lease_until
+  hodei.intent.lease_generation
+  hodei.intent.idempotency
+  hodei.intent.payload
+";
+
+/// The intent a stored node names, or corruption when the payload does
+/// not parse: an outbox that cannot rebuild what it said is not kept
+/// quiet, it is reported.
+fn intent_of(node: &Value) -> Result<Option<Intent>, DgraphIntentError> {
+    match text_of(node, "hodei.intent.payload") {
+        None => Ok(None),
+        Some(payload) => serde_json::from_str(&payload).map(Some).map_err(|error| {
+            DgraphIntentError::Corrupt(format!("an intent does not parse: {error}"))
+        }),
+    }
+}
+
+/// The state a stored node says, or corruption when it does not.
+fn state_of(node: &Value) -> Result<String, DgraphIntentError> {
+    text_of(node, "hodei.intent.state").ok_or_else(|| {
+        DgraphIntentError::Corrupt("an intent node without hodei.intent.state".to_string())
+    })
+}
+
+/// The generation a stored node says: an intent node without one is
+/// corrupt, because every intent is born at generation zero.
+fn generation_of(node: &Value) -> Result<u64, DgraphIntentError> {
+    node.get("hodei.intent.lease_generation")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            DgraphIntentError::Corrupt(
+                "an intent node without hodei.intent.lease_generation".to_string(),
+            )
+        })
+}
+
+/// The instant a stored lease names, when it carries one.
+fn lease_until_of(node: &Value) -> Result<Option<DateTime<Utc>>, DgraphIntentError> {
+    match text_of(node, "hodei.intent.lease_until") {
+        None => Ok(None),
+        Some(text) => instant_of(&text)
+            .map(Some)
+            .map_err(|error| DgraphIntentError::Corrupt(error.to_string())),
+    }
+}
+
+/// The idempotency key a stored node names, or corruption.
+fn idempotency_of(node: &Value) -> Result<String, DgraphIntentError> {
+    text_of(node, "hodei.intent.idempotency").ok_or_else(|| {
+        DgraphIntentError::Corrupt("an intent node without hodei.intent.idempotency".to_string())
+    })
+}
+
+/// The N-Quads that write one intent row as a blank node, born pending
+/// at generation zero.
+fn intent_nquads(intent: &Intent, node: &str) -> String {
+    let payload = serde_json::to_string(intent).unwrap_or_else(|_| "null".to_string());
+    format!(
+        "{node} <dgraph.type> \"{INTENT_TYPE}\" .\n\
+         {node} <hodei.intent.key> {key} .\n\
+         {node} <hodei.intent.tenant> {tenant} .\n\
+         {node} <hodei.intent.state> \"pending\" .\n\
+         {node} <hodei.intent.kind> {kind} .\n\
+         {node} <hodei.intent.idempotency> {idempotency} .\n\
+         {node} <hodei.intent.lease_generation> \"0\" .\n\
+         {node} <hodei.intent.payload> {payload} .\n",
+        key = dql_string(&intent.identity),
+        tenant = dql_string(&intent.tenant),
+        kind = dql_string(&intent.kind),
+        idempotency = dql_string(&intent.idempotency_key),
+        payload = dql_string(&payload),
+    )
+}
+
+/// The N-Quads that write one applied effect as a blank node, with the
+/// fencing token of the claim that applied it inside the fact.
+fn effect_nquads(effect: &Effect, generation: u64, node: &str) -> String {
+    let payload = serde_json::to_string(&effect.payload).unwrap_or_else(|_| "null".to_string());
+    format!(
+        "{node} <dgraph.type> \"{EFFECT_TYPE}\" .\n\
+         {node} <hodei.effect.key> {key} .\n\
+         {node} <hodei.effect.kind> {kind} .\n\
+         {node} <hodei.effect.payload> {payload} .\n\
+         {node} <hodei.effect.generation> \"{generation}\" .\n",
+        key = dql_string(&effect.idempotency_key),
+        kind = dql_string(&effect.kind),
+        payload = dql_string(&payload),
+    )
+}
+
+/// The N-Quads that write one execution record as a blank node.
+fn execution_nquads(record: &ExecutionRecord, node: &str) -> String {
+    let payload = serde_json::to_string(record).unwrap_or_else(|_| "null".to_string());
+    format!(
+        "{node} <dgraph.type> \"{EXECUTION_TYPE}\" .\n\
+         {node} <hodei.execution.key> {key} .\n\
+         {node} <hodei.execution.behavior> {behavior} .\n\
+         {node} <hodei.execution.event> {event} .\n\
+         {node} <hodei.execution.started_at> {started} .\n\
+         {node} <hodei.execution.payload> {payload} .\n",
+        key = dql_string(&record.key),
+        behavior = dql_string(&record.behavior),
+        event = dql_string(&record.event_id),
+        started = dql_string(&rfc3339(record.started_at)),
+        payload = dql_string(&payload),
+    )
+}
+
+/// The N-Quads that move one bound intent node to `state`, clearing the
+/// lease it carried.
+fn transition_nquads(uid_var: &str, state: &str, receipt_json: &str) -> String {
+    format!(
+        "uid({uid_var}) <hodei.intent.state> \"{state}\" .\n\
+         uid({uid_var}) <hodei.intent.receipt> {receipt} .\n",
+        uid_var = uid_var,
+        state = state,
+        receipt = dql_string(receipt_json),
+    )
+}
+
+/// The delete N-Quads that clear the lease of one bound intent node: a
+/// terminal or re-marketed intent carries no lease an operator could
+/// mistake for a live claim.
+fn clear_lease_deletes(uid_var: &str) -> String {
+    format!(
+        "uid({uid_var}) <hodei.intent.lease_owner> * .\n\
+         uid({uid_var}) <hodei.intent.lease_until> * .\n",
+        uid_var = uid_var,
+    )
+}
+
+/// Whether a receipt says something the node ALREADY says: el mismo
+/// recibo dos veces es un recibo una vez, exactly as the reference says.
+fn receipt_is_already_true(receipt: &Receipt, state: &str) -> bool {
+    match receipt {
+        Receipt::Applied => state == "applied",
+        Receipt::Failed {
+            retryable: true, ..
+        } => state == "pending",
+        Receipt::Failed { .. } => state == "failed",
+        Receipt::Unknown { .. } => state == "unknown",
+    }
+}
+
+/// The receipt a stored node carries, when it carries one.
+fn receipt_text(receipt: &Receipt) -> String {
+    serde_json::to_string(receipt).unwrap_or_else(|_| "null".to_string())
+}
+
+/// The store of reactive intents and their receipts over the graph
+/// authority.
+///
+/// It answers for [`IntentOutbox`] and [`ExecutionStore`] with the same
+/// mechanics the ledger uses: keyed rows created only when absent, state
+/// transitions gated INSIDE the committing transaction, and every refusal
+/// typed. The claim is the compare-and-set; the lease generation is the
+/// fencing token; the `Applied` receipt and its effect row are ONE fact.
+pub struct DgraphIntentStore {
+    client: Arc<GraphClient>,
+}
+
+/// The claim a worker won, with the fencing token of the generation its
+/// claim wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimedIntent {
+    /// The intent that was claimed.
+    pub intent: Intent,
+    /// The monotonic generation the claim wrote: present it back on every
+    /// fenced write, and a write behind the generation is refused.
+    pub fencing_token: u64,
+}
+
+impl DgraphIntentStore {
+    /// Opens the store on a connected client: the adapter's additive DDL
+    /// slice (the intents share the ledger's) is applied idempotently.
+    pub async fn open(client: Arc<GraphClient>) -> Result<Self, DgraphTrustError> {
+        ensure_trust_schema(&client).await?;
+        Ok(Self { client })
+    }
+
+    /// The intent node of one identity, or None when nobody said it.
+    /// Duplicate nodes for one keyed identity are corruption: the @upsert
+    /// index exists so that cannot happen, and a graph that did it anyway
+    /// is not read as if it were fine.
+    async fn read_intent(&self, identity: &str) -> Result<Option<IntentNode>, DgraphIntentError> {
+        let query = format!(
+            "{{ q(func: eq(hodei.intent.key, {key})) {{ {fields} }} }}",
+            key = dql_string(identity),
+            fields = INTENT_FIELDS,
+        );
+        let response = query_json(&self.client, &query)
+            .await
+            .map_err(DgraphIntentError::unavailable)?;
+        let nodes = response
+            .get("q")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        match nodes.len() {
+            0 => Ok(None),
+            1 => {
+                let node = &nodes[0];
+                Ok(Some(IntentNode {
+                    state: state_of(node)?,
+                    lease_owner: text_of(node, "hodei.intent.lease_owner"),
+                    lease_until: lease_until_of(node)?,
+                    generation: generation_of(node)?,
+                    idempotency_key: idempotency_of(node)?,
+                    intent: intent_of(node)?,
+                }))
+            }
+            n => Err(DgraphIntentError::Corrupt(format!(
+                "{n} intent nodes carry the key '{identity}'"
+            ))),
+        }
+    }
+
+    /// Says an intent, born pending at generation zero. Saying it twice
+    /// is the same as saying it once: the row is keyed and created only
+    /// when absent, so what is already there stays.
+    async fn say_intent(&self, intent: &Intent) -> Result<(), DgraphIntentError> {
+        let query = format!(
+            "{{\n  iv as var(func: eq(hodei.intent.key, {key}))\n}}",
+            key = dql_string(&intent.identity),
+        );
+        let row = intent_nquads(intent, "_:intent");
+        upsert_retrying(&self.client, &|| GraphUpsertTransaction {
+            query: query.clone(),
+            blocks: vec![GraphMutationBlock::set_if("eq(len(iv), 0)", row.clone())],
+            commit_now: true,
+        })
+        .await
+        .map_err(DgraphIntentError::unavailable)?;
+        Ok(())
+    }
+
+    /// Takes an intent from `pending` (or from an expired lease) to
+    /// `claimed`, with the fencing token of the claim.
+    ///
+    /// The claimable set is re-read INSIDE the committing transaction and
+    /// the transition is gated on it naming exactly the generation the
+    /// pre-read saw: an overtaken pre-read writes nothing. Two workers
+    /// claiming the same intent write the same state and the same
+    /// generation value on the same node, and the `@upsert` index aborts
+    /// one of them — the retry re-reads and finds the winner's live
+    /// lease. The generation written is always `read + 1` behind the
+    /// gate `generation == read`, so it can only grow.
+    pub async fn claim_with_token(
+        &self,
+        identity: &str,
+        lease_owner: &str,
+        lease_until: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<Option<ClaimedIntent>, DgraphIntentError> {
+        let Some(node) = self.read_intent(identity).await? else {
+            return Ok(None);
+        };
+        let claimable = node.state == "pending"
+            || (node.state == "claimed" && node.lease_until.is_some_and(|until| until <= now));
+        if !claimable {
+            // Applied, failed or unknown: lo que ya esta resuelto no se
+            // reclama; and a live lease belongs to its owner.
+            return Ok(None);
+        }
+        let expected_generation = node.generation;
+        let next_generation = expected_generation + 1;
+        // The claimable condition is the PRE-READ state, said exactly,
+        // WITH the generation the pre-read saw: a `pending` claim does
+        // not touch a claimed lease, a claim that re-markets an expired
+        // one demands the lease to be dead INSIDE the transaction, and
+        // an overtaken generation matches nothing. The claim marker —
+        // keyed by intent and generation, created only when absent — is
+        // what forces the conflict: two executors claiming the same
+        // intent at the same generation try to create the SAME marker
+        // and the `@upsert` index aborts one of them. The retry re-reads
+        // the winner's live lease and the loser says so.
+        let claimable_condition = match node.state.as_str() {
+            "pending" => "eq(hodei.intent.state, \"pending\")".to_owned(),
+            _ => format!(
+                "eq(hodei.intent.state, \"claimed\") AND le(hodei.intent.lease_until, {now})",
+                now = dql_string(&rfc3339(now)),
+            ),
+        };
+        let query = format!(
+            "{{\n  claimable as var(func: eq(hodei.intent.key, {key})) \
+             @filter({condition} AND eq(hodei.intent.lease_generation, {expected_generation}))\n  \
+             marker as var(func: eq(hodei.claim.key, {marker_key}))\n}}",
+            key = dql_string(identity),
+            condition = claimable_condition,
+            expected_generation = expected_generation,
+            marker_key = dql_string(&claim_marker_key(identity, next_generation)),
+        );
+        let write = format!(
+            "_:claim <dgraph.type> \"{claim_type}\" .\n\
+             _:claim <hodei.claim.key> {marker_key} .\n\
+             _:claim <hodei.claim.identity> {identity_literal} .\n\
+             _:claim <hodei.claim.owner> {owner} .\n\
+             _:claim <hodei.claim.at> {at} .\n\
+             _:claim <hodei.claim.generation> \"{next}\" .\n\
+             _:claim <hodei.claim.intent> uid(claimable) .\n\
+             uid(claimable) <hodei.intent.state> \"claimed\" .\n\
+             uid(claimable) <hodei.intent.lease_owner> {owner} .\n\
+             uid(claimable) <hodei.intent.lease_until> {until} .\n\
+             uid(claimable) <hodei.intent.lease_generation> \"{next}\" .\n",
+            claim_type = CLAIM_TYPE,
+            marker_key = dql_string(&claim_marker_key(identity, next_generation)),
+            identity_literal = dql_string(identity),
+            owner = dql_string(lease_owner),
+            at = dql_string(&rfc3339(Utc::now())),
+            until = dql_string(&rfc3339(lease_until)),
+            next = next_generation,
+        );
+        upsert_retrying(&self.client, &|| GraphUpsertTransaction {
+            query: query.clone(),
+            blocks: vec![GraphMutationBlock::set_if(
+                "eq(len(claimable), 1) AND eq(len(marker), 0)",
+                write.clone(),
+            )],
+            commit_now: true,
+        })
+        .await
+        .map_err(DgraphIntentError::unavailable)?;
+        // The state AFTER the commit decides the answer, never the
+        // response's snapshot: this claim won only if the live lease is
+        // THIS claim's lease at the generation this claim wrote — the
+        // loser of the marker race re-reads the winner's lease and says
+        // so.
+        let after = self.read_intent(identity).await?;
+        let won = after.as_ref().is_some_and(|after| {
+            after.state == "claimed"
+                && after.generation == next_generation
+                && after.lease_owner.as_deref() == Some(lease_owner)
+        });
+        if !won {
+            return Ok(None);
+        }
+        let intent = node.intent.ok_or_else(|| {
+            DgraphIntentError::Corrupt(format!("the intent {identity} does not parse"))
+        })?;
+        Ok(Some(ClaimedIntent {
+            intent,
+            fencing_token: next_generation,
+        }))
+    }
+
+    /// Writes the receipt presenting the fencing token of the claim it
+    /// answers: the explicit path for a worker that knows WHICH claim it
+    /// holds. A token behind the intent's generation is refused with
+    /// [`DgraphIntentError::FencingRejected`], whatever the state field
+    /// says.
+    pub async fn record_receipt_fenced(
+        &self,
+        identity: &str,
+        fencing_token: u64,
+        receipt: &Receipt,
+    ) -> Result<(), DgraphIntentError> {
+        self.answer_claim(identity, Some(fencing_token), receipt, Utc::now())
+            .await
+    }
+
+    /// Writes the receipt of a claimed intent, presenting the fencing
+    /// token of the claim that answers.
+    ///
+    /// The gate demands the state `claimed`, a LIVE lease, and exactly
+    /// the presented generation: a worker whose lease died cannot explain
+    /// anything, and a worker whose token was overtaken cannot close
+    /// somebody else's claim. Both refusals are typed. An `Applied`
+    /// receipt writes the effect row — keyed by the effect ID, created
+    /// only when absent — in the SAME transaction: the effect cannot
+    /// exist without its receipt, and a receipt cannot exist without its
+    /// effect.
+    async fn answer_claim(
+        &self,
+        identity: &str,
+        token: Option<u64>,
+        receipt: &Receipt,
+        now: DateTime<Utc>,
+    ) -> Result<(), DgraphIntentError> {
+        let Some(node) = self.read_intent(identity).await? else {
+            return Err(DgraphIntentError::NotClaimed {
+                identity: identity.to_owned(),
+                state: "absent".to_owned(),
+            });
+        };
+        if receipt_is_already_true(receipt, &node.state) {
+            return Ok(());
+        }
+        if node.state != "claimed" {
+            return Err(DgraphIntentError::NotClaimed {
+                identity: identity.to_owned(),
+                state: node.state,
+            });
+        }
+        let (target_state, receipt_json) = match receipt {
+            Receipt::Applied => ("applied", receipt_text(receipt)),
+            Receipt::Failed {
+                retryable: true, ..
+            } => ("pending", receipt_text(receipt)),
+            Receipt::Failed { .. } => ("failed", receipt_text(receipt)),
+            Receipt::Unknown { .. } => ("unknown", receipt_text(receipt)),
+        };
+        // The fence, conjunct by conjunct: the live lease refuses the
+        // worker that outlived its claim; the exact token refuses the
+        // worker that was overtaken.
+        let mut fence = format!(
+            "eq(hodei.intent.state, \"claimed\") AND gt(hodei.intent.lease_until, {now})",
+            now = dql_string(&rfc3339(now)),
+        );
+        if let Some(presented) = token {
+            fence.push_str(&format!(
+                " AND eq(hodei.intent.lease_generation, {presented})"
+            ));
+        }
+        let mut query = format!(
+            "{{\n  claimed as var(func: eq(hodei.intent.key, {key})) @filter({fence})\n",
+            key = dql_string(identity),
+            fence = fence,
+        );
+        // An `Applied` receipt carries its effect row in the same
+        // transaction: the var of the effect's key goes in the query, its
+        // quads behind the gate of absence.
+        if let Receipt::Applied = receipt {
+            query.push_str(&format!(
+                "  ef as var(func: eq(hodei.effect.key, {key}))\n",
+                key = dql_string(&node.idempotency_key),
+            ));
+        }
+        query.push_str("  answering(func: uid(claimed)) { uid }\n}");
+        let mut blocks = Vec::new();
+        if let Receipt::Applied = receipt {
+            let effect = Effect::new(
+                node.intent
+                    .as_ref()
+                    .map(|one| one.kind.clone())
+                    .unwrap_or_default(),
+                node.idempotency_key.clone(),
+                node.intent
+                    .as_ref()
+                    .map(|one| one.payload.clone())
+                    .unwrap_or(Value::Null),
+            );
+            blocks.push(GraphMutationBlock::set_if(
+                "eq(len(claimed), 1) AND eq(len(ef), 0)",
+                effect_nquads(&effect, token.unwrap_or(node.generation), "_:effect"),
+            ));
+        }
+        blocks.push(GraphMutationBlock {
+            cond: Some("eq(len(claimed), 1)".to_owned()),
+            set_nquads: transition_nquads("claimed", target_state, &receipt_json),
+            delete_nquads: clear_lease_deletes("claimed"),
+        });
+        let json = upsert_retrying(&self.client, &|| GraphUpsertTransaction {
+            query: query.clone(),
+            blocks: blocks.clone(),
+            commit_now: true,
+        })
+        .await
+        .map_err(DgraphIntentError::unavailable)?;
+        self.assert_answered(identity, token, &json, &node).await
+    }
+
+    /// The refusal of a transaction whose gate saw nothing: the typed
+    /// error names whether the token was overtaken, the lease died or the
+    /// claim was never there, read fresh so the operator sees the state
+    /// the intent has NOW.
+    async fn assert_answered(
+        &self,
+        identity: &str,
+        token: Option<u64>,
+        json: &Value,
+        pre_read: &IntentNode,
+    ) -> Result<(), DgraphIntentError> {
+        let answered = json
+            .get("answering")
+            .and_then(Value::as_array)
+            .map(|nodes| !nodes.is_empty())
+            .unwrap_or(false);
+        if answered {
+            return Ok(());
+        }
+        let node = self
+            .read_intent(identity)
+            .await?
+            .unwrap_or_else(|| pre_read.clone());
+        if let Some(presented) = token {
+            if node.generation > presented {
+                return Err(DgraphIntentError::FencingRejected {
+                    identity: identity.to_owned(),
+                    presented,
+                    current: node.generation,
+                });
+            }
+        }
+        if node.state == "claimed" {
+            return Err(DgraphIntentError::LeaseDead {
+                identity: identity.to_owned(),
+            });
+        }
+        Err(DgraphIntentError::NotClaimed {
+            identity: identity.to_owned(),
+            state: node.state,
+        })
+    }
+
+    /// The intents that are waiting: the pending ones, plus the claimed
+    /// ones whose lease died, which are put back on the market first.
+    /// Lo desconocido NO esta aqui: no se reejecuta, se reconcilia. The
+    /// re-marketing and the listing are two steps: the query of an upsert
+    /// runs BEFORE its mutation, so the ones just put back are read after
+    /// the fact, not from a stale snapshot.
+    async fn the_pending(&self, now: DateTime<Utc>) -> Result<Vec<Intent>, DgraphIntentError> {
+        let re_market_query = format!(
+            "{{\n  expired as var(func: eq(hodei.intent.state, \"claimed\")) \
+             @filter(le(hodei.intent.lease_until, {now}))\n  \
+             re_marketed(func: uid(expired)) {{ uid }}\n}}",
+            now = dql_string(&rfc3339(now)),
+        );
+        upsert_retrying(&self.client, &|| GraphUpsertTransaction {
+            query: re_market_query.clone(),
+            blocks: vec![GraphMutationBlock {
+                cond: Some("gt(len(expired), 0)".to_owned()),
+                set_nquads: "uid(expired) <hodei.intent.state> \"pending\" .\n".to_owned(),
+                delete_nquads: clear_lease_deletes("expired"),
+            }],
+            commit_now: true,
+        })
+        .await
+        .map_err(DgraphIntentError::unavailable)?;
+        let query = format!(
+            "{{ q(func: eq(hodei.intent.state, \"pending\")) {{ {fields} }} }}",
+            fields = INTENT_FIELDS,
+        );
+        let response = query_json(&self.client, &query)
+            .await
+            .map_err(DgraphIntentError::unavailable)?;
+        let mut pending: Vec<Intent> = response
+            .get("q")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|node| {
+                intent_of(&node)?.ok_or_else(|| {
+                    DgraphIntentError::Corrupt("a pending intent does not parse".to_string())
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        pending.sort_by(|left, right| left.identity.cmp(&right.identity));
+        Ok(pending)
+    }
+
+    /// Returns an `unknown` intent to `pending`, explicitly: the
+    /// reconciliation happened, somebody looked at the real world, and
+    /// NOW the intent may be tried again. The receipt it carried goes
+    /// away with it: lo que se reconcilia empieza de nuevo.
+    async fn reconcile_unknown(&self, identity: &str) -> Result<(), DgraphIntentError> {
+        let Some(node) = self.read_intent(identity).await? else {
+            return Err(DgraphIntentError::NotUnknown {
+                identity: identity.to_owned(),
+            });
+        };
+        if node.state != "unknown" {
+            return Err(DgraphIntentError::NotUnknown {
+                identity: identity.to_owned(),
+            });
+        }
+        let query = format!(
+            "{{\n  unknown as var(func: eq(hodei.intent.key, {key})) \
+             @filter(eq(hodei.intent.state, \"unknown\"))\n  \
+             answering(func: uid(unknown)) {{ uid }}\n}}",
+            key = dql_string(identity),
+        );
+        let block = GraphMutationBlock {
+            cond: Some("eq(len(unknown), 1)".to_owned()),
+            set_nquads: "uid(unknown) <hodei.intent.state> \"pending\" .\n".to_owned(),
+            delete_nquads: format!(
+                "uid(unknown) <hodei.intent.receipt> * .\n{}",
+                clear_lease_deletes("unknown")
+            ),
+        };
+        let json = upsert_retrying(&self.client, &|| GraphUpsertTransaction {
+            query: query.clone(),
+            blocks: vec![block.clone()],
+            commit_now: true,
+        })
+        .await
+        .map_err(DgraphIntentError::unavailable)?;
+        let answered = json
+            .get("answering")
+            .and_then(Value::as_array)
+            .map(|nodes| !nodes.is_empty())
+            .unwrap_or(false);
+        if !answered {
+            return Err(DgraphIntentError::NotUnknown {
+                identity: identity.to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// The execution record of one key, when it happened.
+    async fn the_execution(&self, key: &str) -> Result<Option<ExecutionRecord>, DgraphIntentError> {
+        let query = format!(
+            "{{ q(func: eq(hodei.execution.key, {key})) {{ hodei.execution.payload }} }}",
+            key = dql_string(key),
+        );
+        let response = query_json(&self.client, &query)
+            .await
+            .map_err(DgraphIntentError::unavailable)?;
+        let nodes = response
+            .get("q")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        match nodes.len() {
+            0 => Ok(None),
+            1 => text_of(&nodes[0], "hodei.execution.payload")
+                .and_then(|payload| serde_json::from_str(&payload).ok())
+                .map(Some)
+                .ok_or_else(|| {
+                    DgraphIntentError::Corrupt("an execution record does not parse".to_string())
+                }),
+            n => Err(DgraphIntentError::Corrupt(format!(
+                "{n} execution nodes carry the key '{key}'"
+            ))),
+        }
+    }
+
+    /// Writes an execution down. The record is keyed and the write
+    /// REPLACES: the same key twice is one record, the one written last,
+    /// exactly as the reference's UPSERT CONTENT.
+    async fn write_execution(&self, record: &ExecutionRecord) -> Result<(), DgraphIntentError> {
+        let query = format!(
+            "{{\n  ex as var(func: eq(hodei.execution.key, {key}))\n}}",
+            key = dql_string(&record.key),
+        );
+        let fresh = execution_nquads(record, "_:execution");
+        let mut update = format!(
+            "uid(ex) <hodei.execution.behavior> {behavior} .\n\
+             uid(ex) <hodei.execution.event> {event} .\n\
+             uid(ex) <hodei.execution.started_at> {started} .\n\
+             uid(ex) <hodei.execution.payload> {payload} .\n",
+            behavior = dql_string(&record.behavior),
+            event = dql_string(&record.event_id),
+            started = dql_string(&rfc3339(record.started_at)),
+            payload =
+                dql_string(&serde_json::to_string(record).unwrap_or_else(|_| "null".to_string())),
+        );
+        update.push_str(&format!(
+            "uid(ex) <hodei.execution.key> {key} .\n",
+            key = dql_string(&record.key),
+        ));
+        upsert_retrying(&self.client, &|| GraphUpsertTransaction {
+            query: query.clone(),
+            blocks: vec![
+                GraphMutationBlock::set_if("eq(len(ex), 1)", update.clone()),
+                GraphMutationBlock::set_if("eq(len(ex), 0)", fresh.clone()),
+            ],
+            commit_now: true,
+        })
+        .await
+        .map_err(DgraphIntentError::unavailable)?;
+        Ok(())
+    }
+
+    /// Records that an effect was applied, keyed by the effect ID and
+    /// created only when absent: recording it twice is recording it once.
+    async fn write_effect(&self, effect: &Effect) -> Result<(), DgraphIntentError> {
+        let query = format!(
+            "{{\n  ef as var(func: eq(hodei.effect.key, {key}))\n}}",
+            key = dql_string(&effect.idempotency_key),
+        );
+        let row = effect_nquads(effect, 0, "_:effect");
+        upsert_retrying(&self.client, &|| GraphUpsertTransaction {
+            query: query.clone(),
+            blocks: vec![GraphMutationBlock::set_if("eq(len(ef), 0)", row.clone())],
+            commit_now: true,
+        })
+        .await
+        .map_err(DgraphIntentError::unavailable)?;
+        Ok(())
+    }
+
+    /// The effects that have already been applied, by their key.
+    async fn the_effects(&self) -> Result<Vec<Effect>, DgraphIntentError> {
+        let query = format!(
+            "{{ q(func: type({EFFECT_TYPE}), orderasc: hodei.effect.key) {{ hodei.effect.key hodei.effect.kind hodei.effect.payload }} }}"
+        );
+        let response = query_json(&self.client, &query)
+            .await
+            .map_err(DgraphIntentError::unavailable)?;
+        response
+            .get("q")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|node| {
+                let key = text_of(&node, "hodei.effect.key").ok_or_else(|| {
+                    DgraphIntentError::Corrupt("an effect node without its key".to_string())
+                })?;
+                let kind = text_of(&node, "hodei.effect.kind").unwrap_or_default();
+                let payload = text_of(&node, "hodei.effect.payload")
+                    .and_then(|payload| serde_json::from_str(&payload).ok())
+                    .unwrap_or(Value::Null);
+                Ok(Effect::new(kind, key, payload))
+            })
+            .collect()
+    }
+
+    /// The executions of the store, the oldest first.
+    async fn the_executions(&self) -> Result<Vec<ExecutionRecord>, DgraphIntentError> {
+        let query = format!(
+            "{{ q(func: type({EXECUTION_TYPE}), orderasc: hodei.execution.started_at) {{ hodei.execution.payload }} }}"
+        );
+        let response = query_json(&self.client, &query)
+            .await
+            .map_err(DgraphIntentError::unavailable)?;
+        response
+            .get("q")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|node| {
+                text_of(&node, "hodei.execution.payload")
+                    .and_then(|payload| serde_json::from_str(&payload).ok())
+                    .ok_or_else(|| {
+                        DgraphIntentError::Corrupt("an execution record does not parse".to_string())
+                    })
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl IntentOutbox for DgraphIntentStore {
+    async fn put_pending(&self, intent: &Intent) -> Result<(), String> {
+        self.say_intent(intent).await.map_err(Into::into)
+    }
+
+    async fn claim(
+        &self,
+        identity: &str,
+        lease_owner: &str,
+        lease_until: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> Result<Option<Intent>, String> {
+        self.claim_with_token(identity, lease_owner, lease_until, now)
+            .await
+            .map(|claimed| claimed.map(|one| one.intent))
+            .map_err(Into::into)
+    }
+
+    async fn record_receipt(&self, identity: &str, receipt: &Receipt) -> Result<(), String> {
+        self.answer_claim(identity, None, receipt, Utc::now())
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn recover_pending(&self, now: DateTime<Utc>) -> Result<Vec<Intent>, String> {
+        self.the_pending(now).await.map_err(Into::into)
+    }
+
+    async fn reconcile(&self, identity: &str) -> Result<(), String> {
+        self.reconcile_unknown(identity).await.map_err(Into::into)
+    }
+}
+
+#[async_trait]
+impl ExecutionStore for DgraphIntentStore {
+    async fn execution_of(&self, key: &str) -> Option<ExecutionRecord> {
+        self.the_execution(key).await.ok().flatten()
+    }
+
+    async fn put(&self, record: ExecutionRecord) {
+        let _ = self.write_execution(&record).await;
+    }
+
+    async fn applied_effects(&self) -> Vec<Effect> {
+        self.the_effects().await.unwrap_or_default()
+    }
+
+    async fn record_effect(&self, effect: Effect) {
+        let _ = self.write_effect(&effect).await;
+    }
+
+    async fn executions(&self) -> Vec<ExecutionRecord> {
+        let mut records = self.the_executions().await.unwrap_or_default();
+        records.sort_by_key(|record| record.started_at);
+        records
     }
 }
