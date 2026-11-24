@@ -19,9 +19,12 @@ use std::sync::Arc;
 use surrealdb::Connection;
 use surrealdb::Surreal;
 
+pub mod dgraph;
 pub mod intents;
 pub mod lifecycle;
 pub mod reactions;
+
+pub use dgraph::{DgraphDecisionStore, DgraphTrustError, DgraphTrustStore, GrantActivation};
 
 /// The table the decisions live in.
 pub const DECISION_TABLE: &str = "promotion_decision";

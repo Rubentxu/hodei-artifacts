@@ -85,6 +85,8 @@ pub enum GuardKind {
     Ledger,
     /// Projection checkpoint advances over one (consumer, stream).
     Checkpoint,
+    /// Trust grant activations over one digest aggregate.
+    Grant,
 }
 
 impl GuardKind {
@@ -97,6 +99,7 @@ impl GuardKind {
             GuardKind::Quota => "quota",
             GuardKind::Ledger => "ledger",
             GuardKind::Checkpoint => "checkpoint",
+            GuardKind::Grant => "grant",
         }
     }
 }

@@ -3801,8 +3801,10 @@ dependencies = [
  "async-trait",
  "chrono",
  "hodei-catalog",
+ "hodei-catalog-storage",
  "hodei-evidence",
  "hodei-evidence-storage",
+ "hodei-graph-client",
  "hodei-reactive",
  "hodei-risk-storage",
  "hodei-trust-policy",
@@ -3811,6 +3813,7 @@ dependencies = [
  "serde_json",
  "surrealdb",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
