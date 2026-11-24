@@ -87,6 +87,10 @@ pub enum GuardKind {
     Checkpoint,
     /// Trust grant activations over one digest aggregate.
     Grant,
+    /// Repository creation over one (account, repository key).
+    CatalogRepository,
+    /// Catalog publication over one asset path of a repository.
+    CatalogAsset,
 }
 
 impl GuardKind {
@@ -100,6 +104,8 @@ impl GuardKind {
             GuardKind::Ledger => "ledger",
             GuardKind::Checkpoint => "checkpoint",
             GuardKind::Grant => "grant",
+            GuardKind::CatalogRepository => "catalog-repository",
+            GuardKind::CatalogAsset => "catalog-asset",
         }
     }
 }
