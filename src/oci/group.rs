@@ -35,6 +35,7 @@
 
 use std::collections::HashMap;
 
+use axum::http::HeaderMap;
 use hodei_authz::VerifiedContext;
 use hodei_catalog::{
     CatalogError, GroupConfig, GroupError, Lookup, Node, RepositoryDescriptor, RepositoryMode,
@@ -230,11 +231,16 @@ pub async fn the_leaves(
 /// desde ningun upstream publico del grupo, y un upstream caido no la
 /// convierte en fallback. Los miembros hosted son la fuente interna y no
 /// los toca la reserva.
+///
+/// El juicio es sobre el **nombre del repositorio** del miembro: en OCI el
+/// namespace es el nombre del repositorio (`team/demo`), no la ruta del
+/// asset (`manifests/<digest>`). Un juicio sobre la ruta del asset era
+/// inerte: el primer segmento de la ruta es siempre `manifests`, `blobs` o
+/// `tags`, y solo casaria con una reserva llamada asi.
 pub async fn the_governed_leaves(
     state: &AppState,
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
-    asset_path: &str,
 ) -> Result<(Vec<RepositoryDescriptor>, Vec<String>), OciFailure> {
     let leaves = the_leaves(state, context, group).await?;
     let policy = hodei_catalog::NamespacePolicy::of(&group.config).map_err(|error| {
@@ -244,20 +250,29 @@ pub async fn the_governed_leaves(
     let Some(policy) = policy else {
         return Ok((leaves, Vec::new()));
     };
-    let judgement = policy.judge(group.format, asset_path);
-    if !judgement.is_reserved() {
-        return Ok((leaves, Vec::new()));
-    }
     let mut consulted = Vec::with_capacity(leaves.len());
     let mut denied = Vec::new();
     for member in leaves {
-        if member.mode == RepositoryMode::Proxy {
+        // La reserva se juzga por el nombre del repositorio del miembro.
+        let judgement = policy.judge(group.format, &member.repo_key);
+        if judgement.is_reserved() && member.mode == RepositoryMode::Proxy {
             denied.push(member.repo_key.clone());
         } else {
             consulted.push(member);
         }
     }
     Ok((consulted, denied))
+}
+
+/// Si el fallo de un miembro es un **MISS**.
+///
+/// Un MISS es lo que el miembro dice con certeza que no tiene: un
+/// manifiesto o un blob que no existen. Lo demas --un upstream caido, un
+/// catalogo que no responde, una confianza que no se puede leer-- es un
+/// ERROR, y el ERROR **detiene** la resolucion: un fallo transitorio no
+/// puede cambiar en silencio lo que se descarga.
+fn is_a_miss(failure: &OciFailure) -> bool {
+    matches!(failure.the_code(), "MANIFEST_UNKNOWN" | "BLOB_UNKNOWN")
 }
 
 /// El digest al que apunta una referencia en un miembro.
@@ -347,9 +362,10 @@ pub async fn the_manifest(
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
     reference: &str,
+    headers: &HeaderMap,
 ) -> Resolution {
     let mut trail: Vec<(String, Step)> = Vec::new();
-    let outcome = resolve_manifest(state, context, group, reference, &mut trail).await;
+    let outcome = resolve_manifest(state, context, group, reference, headers, &mut trail).await;
     Resolution { outcome, trail }
 }
 
@@ -358,6 +374,7 @@ async fn resolve_manifest(
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
     reference: &str,
+    headers: &HeaderMap,
     trail: &mut Vec<(String, Step)>,
 ) -> Result<Won, OciFailure> {
     let reader = state
@@ -368,10 +385,62 @@ async fn resolve_manifest(
 
     // La reserva se consulta antes que los miembros: una ruta reservada no
     // se sirve desde los miembros publicos del grupo.
-    let (leaves, _denied) = the_governed_leaves(state, context, group, "manifests").await?;
+    let (leaves, _denied) = the_governed_leaves(state, context, group).await?;
 
     for member in leaves {
         let key = member.repo_key.clone();
+        // Un miembro **proxy** no tiene filas en el catalogo: lo que tiene
+        // lo resuelve su upstream, y lo resuelve con el **nombre del
+        // miembro**: el grupo no renombra a su miembro.
+        if member.mode == RepositoryMode::Proxy {
+            let resolved = match crate::oci::proxy::the_resolved_manifest(
+                state,
+                context,
+                &member,
+                &key,
+                reference,
+                headers,
+            )
+            .await
+            {
+                Ok(resolved) => resolved,
+                Err(failure) => {
+                    // Un upstream que dice con certeza que no lo tiene es
+                    // un MISS, y se sigue. Un upstream caido es un ERROR, y
+                    // la resolucion se detiene: no se salta al siguiente
+                    // miembro, porque el fallo cambiaria en silencio lo que
+                    // se descarga.
+                    if is_a_miss(&failure) {
+                        trail.push((key, Step::Miss));
+                        continue;
+                    }
+                    trail.push((key, Step::Error));
+                    return Err(failure);
+                }
+            };
+            // La compuerta de confianza se aplica al digest del **miembro
+            // que gano**: si lo oculta, el resultado es un "no existe" y el
+            // grupo **no** pasa al siguiente miembro.
+            if let Err(admission) =
+                crate::trust::admit(state, account, &member, &resolved.asset.digest).await
+            {
+                trail.push((key, Step::Error));
+                return Err(match admission {
+                    crate::trust::Admission::Hidden => {
+                        OciFailure::manifest_unknown(format!("the manifest {reference:?} is unknown"))
+                    }
+                    crate::trust::Admission::Unavailable => {
+                        OciFailure::unavailable("the trust ledger is not available")
+                    }
+                });
+            }
+            trail.push((key.clone(), Step::Hit));
+            return Ok(Won {
+                member,
+                digest: resolved.asset.digest,
+                bytes: resolved.bytes,
+            });
+        }
         // El digest se resuelve **dentro** del namespace del miembro: cada
         // miembro tiene sus propias etiquetas y sus propios digest.
         let digest = match the_digest_of(reader.as_ref(), account, &key, reference).await {
@@ -451,9 +520,10 @@ pub async fn the_blob(
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
     digest: &str,
+    headers: &HeaderMap,
 ) -> Resolution {
     let mut trail: Vec<(String, Step)> = Vec::new();
-    let outcome = resolve_blob(state, context, group, digest, &mut trail).await;
+    let outcome = resolve_blob(state, context, group, digest, headers, &mut trail).await;
     Resolution { outcome, trail }
 }
 
@@ -462,6 +532,7 @@ async fn resolve_blob(
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
     digest: &str,
+    headers: &HeaderMap,
     trail: &mut Vec<(String, Step)>,
 ) -> Result<Won, OciFailure> {
     let reader = state
@@ -470,10 +541,53 @@ async fn resolve_blob(
         .ok_or_else(|| OciFailure::unavailable("the catalog is not wired"))?;
     let account = context.account().as_str();
 
-    let (leaves, _denied) = the_governed_leaves(state, context, group, "blobs").await?;
+    let (leaves, _denied) = the_governed_leaves(state, context, group).await?;
 
     for member in leaves {
         let key = member.repo_key.clone();
+        // Un miembro **proxy** resuelve el blob en su upstream, con el
+        // nombre del miembro y no con el del grupo.
+        if member.mode == RepositoryMode::Proxy {
+            let resolved = match crate::oci::proxy::the_resolved_blob(
+                state,
+                context,
+                &member,
+                &key,
+                digest,
+                headers,
+            )
+            .await
+            {
+                Ok(resolved) => resolved,
+                Err(failure) => {
+                    if is_a_miss(&failure) {
+                        trail.push((key, Step::Miss));
+                        continue;
+                    }
+                    trail.push((key, Step::Error));
+                    return Err(failure);
+                }
+            };
+            if let Err(admission) =
+                crate::trust::admit(state, account, &member, &resolved.asset.digest).await
+            {
+                trail.push((key, Step::Error));
+                return Err(match admission {
+                    crate::trust::Admission::Hidden => {
+                        OciFailure::blob_unknown(format!("the repository does not reference {digest}"))
+                    }
+                    crate::trust::Admission::Unavailable => {
+                        OciFailure::unavailable("the trust ledger is not available")
+                    }
+                });
+            }
+            trail.push((key.clone(), Step::Hit));
+            return Ok(Won {
+                member,
+                digest: resolved.asset.digest,
+                bytes: resolved.bytes,
+            });
+        }
         let asset =
             match the_asset(reader.as_ref(), account, &key, &format!("blobs/{digest}")).await {
                 Ok(Some(asset)) => the_asset_of(asset, digest),
@@ -534,7 +648,7 @@ pub async fn the_tags(
         .as_ref()
         .ok_or_else(|| OciFailure::unavailable("the catalog is not wired"))?;
     let account = context.account().as_str();
-    let (leaves, _denied) = the_governed_leaves(state, context, group, "tags").await?;
+    let (leaves, _denied) = the_governed_leaves(state, context, group).await?;
     let mut names: Vec<(String, String)> = Vec::new();
     for member in leaves {
         let tags = reader

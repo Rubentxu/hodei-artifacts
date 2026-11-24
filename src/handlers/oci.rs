@@ -185,7 +185,8 @@ async fn blob(
     // miembros, en el orden en que estan configurados, y dice de que
     // miembro salio lo que se sirve.
     if repository.mode == RepositoryMode::Group {
-        let resolution = crate::oci::group::the_blob(state, context, &repository, &digest).await;
+        let resolution =
+            crate::oci::group::the_blob(state, context, &repository, &digest, headers).await;
         let won = resolution.outcome?;
         let mut response = oci_bytes_response(
             won.bytes,
@@ -301,7 +302,7 @@ async fn manifest(
     // miembro salio.
     if repository.mode == RepositoryMode::Group {
         let resolution =
-            crate::oci::group::the_manifest(state, context, &repository, reference).await;
+            crate::oci::group::the_manifest(state, context, &repository, reference, headers).await;
         let won = resolution.outcome?;
         let media_type = the_declared_media_type(&won.bytes)?;
         the_negotiation(headers, &media_type)?;
