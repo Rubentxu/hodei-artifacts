@@ -9,6 +9,10 @@
 
 > **Implementation status:** implemented, verified, and excluded capabilities are tracked in **[ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)**.
 
+![Animated demo: hodei-artifacts starts, publishes and pulls a Raw blob and a Maven package, and verifies the digests](docs/community/quickstart-demo.gif)
+
+*Real recording of `scripts/community-quickstart.sh run` (digests and ports vary per run). Re-generate it with [`scripts/render-demo.sh`](scripts/render-demo.sh); source recording: [`quickstart-demo.cast`](docs/community/quickstart-demo.cast).*
+
 ---
 
 ## 60-Second Quickstart (No Rust Required)
@@ -20,16 +24,6 @@ sha256sum -c hodei-artifacts-api-<version>-<target>.tar.gz.sha256
 tar -xzf hodei-artifacts-api-<version>-<target>.tar.gz && cd hodei-artifacts-api-<version>-<target>
 ./community-quickstart.sh run
 ```
-
-<!-- demo:hsp-265 -->
-```text
-==> The summary
-    raw blob:    sha256:<digest>
-    maven jar:   sha256:<digest>
-    maven sha1:  <digest>
-    lab:         /tmp/hodei-community-lab.XXXXXX
-```
-*Final summary printed by the script (digests vary per run). Re-record the visual demo with [`docs/community/quickstart-demo.tape`](docs/community/quickstart-demo.tape) (VHS); step-by-step walkthrough and `serve`/`cleanup` commands in `docs/community/quickstart.md`.*
 
 - **Full Quickstart Guide:** [`docs/community/quickstart.md`](docs/community/quickstart.md) (or from a source checkout: `scripts/community-quickstart.sh run --archive dist/hodei-artifacts-api-<version>-<target>.tar.gz`)
 - **Ecosystem User Guides:** [`docs/community/ecosystems.md`](docs/community/ecosystems.md) — [Maven 2](docs/community/ecosystems.md#maven-2-maven2) · [npm](docs/community/ecosystems.md#npm-npm) · [PyPI](docs/community/ecosystems.md#pypi-pypi) · [OCI](docs/community/ecosystems.md#oci-oci) · [Cargo](docs/community/ecosystems.md#cargo-cargo) · [NuGet](docs/community/ecosystems.md#nuget-nuget) · [Go](docs/community/ecosystems.md#go-go) · [APT](docs/community/ecosystems.md#apt-apt) · [RPM / Yum](docs/community/ecosystems.md#rpm--yum-rpm) · [Helm-OCI](docs/community/ecosystems.md#helm-oci-oci--helm)

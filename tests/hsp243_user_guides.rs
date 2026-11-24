@@ -631,3 +631,31 @@ async fn documented_maven_npm_pypi_recipes_work_against_real_service() {
         "simple index missing wheel: {html_str}"
     );
 }
+
+#[test]
+fn readme_headers_link_the_visual_demo_and_its_generator() {
+    let root = repo_root();
+    let asset = "docs/community/quickstart-demo.gif";
+    for readme_name in ["README.md", "README.es.md"] {
+        let text = fs::read_to_string(root.join(readme_name)).expect(readme_name);
+        let header = text.split("\n## ").next().expect("header");
+        assert!(
+            header.contains(&format!("]({asset})")),
+            "{readme_name} must link the demo asset in its header"
+        );
+        assert!(
+            text.contains("scripts/render-demo.sh"),
+            "{readme_name} must point to the demo generator"
+        );
+    }
+    for rel in [asset, "docs/community/quickstart-demo.cast", "scripts/render-demo.sh"] {
+        let meta = fs::metadata(root.join(rel)).unwrap_or_else(|_| panic!("{rel} must exist"));
+        assert!(meta.len() > 0, "{rel} must not be empty");
+    }
+    let gif = fs::read(root.join(asset)).expect(asset);
+    assert!(gif.starts_with(b"GIF8"), "{asset} must be a GIF");
+    assert!(
+        !root.join("docs/community/quickstart-demo.tape").exists(),
+        "the obsolete VHS tape must not coexist with render-demo.sh"
+    );
+}

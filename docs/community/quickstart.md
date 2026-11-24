@@ -297,3 +297,14 @@ El `guard` comprueba tres cosas con el binario real:
   un fichero local. Central es un modo opt-in y acotado (§5).
 - El `guard` es una comprobación de la plataforma, no del laboratorio: no
   levanta ninguna superficie de contenido.
+
+## 10. Regenerar la demo visual
+
+La animación que enlazan `README.md` y `README.es.md` (`docs/community/quickstart-demo.gif`) no es una captura manual: la produce `scripts/render-demo.sh`, que graba con `asciinema` una ejecución real de `scripts/community-quickstart.sh run` (arranque, token, publicación y descarga con digests, reinicio y 401 anónimo) y renderiza el GIF con `agg`. La grabación de origen se versiona en `docs/community/quickstart-demo.cast`.
+
+```bash
+scripts/render-demo.sh --archive dist/hodei-artifacts-api-<version>-<target>.tar.gz
+scripts/render-demo.sh --render-only   # solo vuelve a renderizar el GIF desde el .cast
+```
+
+Requiere `asciinema` (3.x) y `agg`. La demo no incluye la vista de confianza de la consola: el flujo del quickstart no la ejercita. Los digests, el puerto y la ruta del laboratorio cambian en cada grabación.
