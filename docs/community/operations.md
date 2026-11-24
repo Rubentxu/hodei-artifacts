@@ -333,6 +333,33 @@ rootfs de solo lectura, el healthcheck, la persistencia tras `down`/`up` y el
 fallo cerrado ante un S3 inalcanzable y ante el perfil externo. Termina con 77
 (`NOT_RUN`) si no hay Podman, proveedor de Compose o imagen.
 
+### 6.1 Readiness y liveness con el perfil externo (HSP-237)
+
+`scripts/hsp237-profile-e2e.sh` recorre el perfil con S3 externo y un Dgraph de
+laboratorio levantados con Podman (el Dgraph de `deploy/dgraph/compose.yaml`,
+fijado por digest, en red interna; el S3 es LocalStack, como en HSP-138) contra
+el binario real, y mide por HTTP lo siguiente:
+
+- Con Dgraph y S3 disponibles, `/health/ready` y `/health/live` responden 200.
+- Al parar el S3, `/health/ready` deja de ser 200 (503) y `/health/live` sigue
+  en 200; al devolverlo (y recrear el bucket, porque LocalStack es volátil), la
+  readiness vuelve a 200.
+- Los cuerpos no incluyen URLs, el nombre del bucket ni la credencial, y el log
+  del servicio no repite el secreto.
+- Presupuesto de red: el probe hace **una** llamada `HeadBucket` por
+  veredicto (caché de 1 s, tope de 1 s por dependencia y 2 s por probe) y
+  nunca lista objetos ni recorre el catálogo; 20 sondeos seguidos cuestan como
+  máximo una comprobación.
+
+Límite honesto: el binario aún no conecta con Dgraph (`db_type = "dgraph"` se
+rechaza al arrancar), así que Dgraph **no** es una dependencia que el probe
+compruebe: pararlo no cambia la readiness, y el recorrido lo registra tal cual.
+Cuando el catálogo Dgraph se cablee, ese paso debe pasar a esperar 503.
+
+El test necesita `HSP237_PROFILE_E2E=1` (lo fija el script); sin ella se salta.
+El script termina con 77 (`NOT_RUN`) si falta Podman o las imágenes. La evidencia
+queda en `target/uat/hsp237-profile-e2e/`.
+
 ## 7. Documentos relacionados
 
 - [`configuration.md`](configuration.md): claves, variables y perfiles.
