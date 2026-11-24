@@ -178,7 +178,7 @@ fn note_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static str {
             "cargo has no group until a client-verified surface declares one (HSP-156)"
         }
         (RepositoryFormat::Go, RepositoryMode::Group) => {
-            "a go group resolves a version from a single member: its .info, .mod and .zip              never come from two members, so the go.sum of the client describes one version"
+            "a go group resolves a version from a single member: its .info, .mod and .zip never come from two members, so the go.sum of the client describes one version"
         }
         (RepositoryFormat::NuGet, RepositoryMode::Group) => {
             "a nuget group is refused in the dialect of nuget: it never degrades to a raw answer"
