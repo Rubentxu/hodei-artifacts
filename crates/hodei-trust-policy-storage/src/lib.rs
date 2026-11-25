@@ -30,6 +30,7 @@ use surrealdb::Surreal;
 pub mod dgraph;
 #[cfg(feature = "legacy")]
 pub mod intents;
+#[cfg(feature = "legacy")]
 pub mod lifecycle;
 pub mod reactions;
 

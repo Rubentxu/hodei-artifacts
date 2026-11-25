@@ -22,7 +22,9 @@ use hodei_graph_client::{GraphClientError, GraphHealthPort};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+#[cfg(feature = "legacy")]
 use surrealdb::Surreal;
+#[cfg(feature = "legacy")]
 use surrealdb::engine::local::Db;
 
 /// El presupuesto de red de **una** dependencia.
@@ -314,6 +316,7 @@ impl ContentCheck {
 /// Las que no estan aqui no se exigen: una dependencia que el perfil no
 /// exige no puede hacer fallar el readiness.
 pub struct ProfileProbe {
+    #[cfg(feature = "legacy")]
     catalog: Option<Surreal<Db>>,
     content: Option<ContentCheck>,
     graph: Option<Arc<dyn GraphHealthPort>>,
@@ -323,6 +326,7 @@ impl ProfileProbe {
     /// Un perfil que no exige nada.
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "legacy")]
             catalog: None,
             content: None,
             graph: None,
@@ -338,6 +342,7 @@ impl ProfileProbe {
     }
 
     /// El perfil exige el catalogo, que vive en este motor.
+    #[cfg(feature = "legacy")]
     pub fn with_catalog(mut self, db: Surreal<Db>) -> Self {
         self.catalog = Some(db);
         self
@@ -360,6 +365,7 @@ impl Default for ProfileProbe {
 impl ReadinessProbe for ProfileProbe {
     fn required(&self) -> Vec<Dependency> {
         let mut required = Vec::new();
+        #[cfg(feature = "legacy")]
         if self.catalog.is_some() {
             required.push(Dependency::Catalog);
         }
@@ -374,6 +380,9 @@ impl ReadinessProbe for ProfileProbe {
 
     async fn check(&self, dependency: Dependency) -> Result<(), DependencyFailure> {
         match dependency {
+            #[cfg(not(feature = "legacy"))]
+            Dependency::Catalog => Err(DependencyFailure::Misconfigured),
+            #[cfg(feature = "legacy")]
             Dependency::Catalog => {
                 let Some(db) = self.catalog.as_ref() else {
                     return Err(DependencyFailure::Misconfigured);
