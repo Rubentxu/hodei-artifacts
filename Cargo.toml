@@ -165,13 +165,14 @@ http = "1.1.0"
 infer = "0.19.0"
 
 # HSP-213: el almacen embebido (SurrealDB sobre RocksDB) queda tras la
-# feature `legacy`. El binario y la imagen productivos se construyen con
-# `--no-default-features`: ahi no se enlaza ni surrealdb ni librocksdb, y
+# feature `legacy`. HSP-314 F2: `legacy` ya NO es el defecto. El build por
+# defecto es el perfil productivo: no enlaza ni surrealdb ni librocksdb, y
 # un perfil sin `[graph]` se rechaza con el mensaje de migracion. Las
-# suites historicas y las herramientas de legado se siguen construyendo
-# con el perfil por defecto, que es lo que preserva la evidencia.
+# suites historicas y las herramientas de legado (el motor embebido, hasta
+# F4) se construyen con `--features legacy`; la etapa `legacy` de
+# pipeline.kts las ejecuta.
 [features]
-default = ["legacy"]
+default = []
 legacy = [
     "dep:surrealdb",
     "hodei-iam/legacy",
@@ -828,11 +829,6 @@ path = "tests/audit_events.rs"
 required-features = ["legacy"]
 
 [[test]]
-name = "binary_contract"
-path = "tests/binary_contract.rs"
-required-features = ["legacy"]
-
-[[test]]
 name = "bootstrap_integration"
 path = "tests/bootstrap_integration.rs"
 required-features = ["legacy"]
@@ -840,11 +836,6 @@ required-features = ["legacy"]
 [[test]]
 name = "capsule_read"
 path = "tests/capsule_read.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "distribution_contract"
-path = "tests/distribution_contract.rs"
 required-features = ["legacy"]
 
 [[test]]
@@ -923,11 +914,6 @@ path = "tests/repository_restart_contract.rs"
 required-features = ["legacy"]
 
 [[test]]
-name = "startup_errors"
-path = "tests/startup_errors.rs"
-required-features = ["legacy"]
-
-[[test]]
 name = "hsp196_proxy_dgraph_it"
 path = "tests/hsp196_proxy_dgraph_it.rs"
 required-features = ["legacy"]
@@ -935,4 +921,19 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp304_formats_dgraph_it"
 path = "tests/hsp304_formats_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "binary_contract_embedded"
+path = "tests/binary_contract_embedded.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "distribution_contract_embedded"
+path = "tests/distribution_contract_embedded.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "startup_errors_embedded"
+path = "tests/startup_errors_embedded.rs"
 required-features = ["legacy"]
