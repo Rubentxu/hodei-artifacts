@@ -428,8 +428,7 @@ start_backends() {
   local p="$BACKEND_PREFIX" n="$BACKEND_SUFFIX"
   BACKEND_NETWORK="$p-net-$n"
   local zero="$p-zero-$n" alpha="$p-alpha-$n" s3="$p-s3-$n"
-  local http_port grpc_port s3_port
-  http_port="$(free_port)"; grpc_port="$(free_port)"; s3_port="$(free_port)"
+  local http_port grpc_port s3_port attempt
   mkdir -p "$LAB_DIR/backend"
   openssl rand -hex 32 | tr -d '\n' > "$LAB_DIR/backend/hmac-secret"
   chmod 644 "$LAB_DIR/backend/hmac-secret"
@@ -446,15 +445,37 @@ start_backends() {
   pm run -d --name "$zero" --hostname dgraph-zero --network "$BACKEND_NETWORK" \
     -v "$p-zero-data-$n:/dgraph-data" "$DGRAPH_IMAGE" dgraph zero --my=dgraph-zero:5080 \
     --wal=/dgraph-data/zero --telemetry reports=false >/dev/null || die "Dgraph Zero did not start"
-  pm run -d --name "$alpha" --hostname dgraph-alpha --network "$BACKEND_NETWORK" \
-    -p "127.0.0.1:$http_port:8080" -p "127.0.0.1:$grpc_port:9080" \
-    -v "$p-alpha-data-$n:/dgraph-data" \
-    -v "$LAB_DIR/backend/hmac-secret:/dgraph/secrets/hmac-secret:ro,z" \
-    "$DGRAPH_IMAGE" dgraph alpha --my=dgraph-alpha:7080 --zero=dgraph-zero:5080 \
-    --postings=/dgraph-data/p --wal=/dgraph-data/w \
-    --acl "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256" \
-    --security whitelist=0.0.0.0/0 --telemetry reports=false >/dev/null || die "Dgraph Alpha did not start"
-  pm run -d --name "$s3" -p "127.0.0.1:$s3_port:4566" "$S3_IMAGE" >/dev/null || die "the S3 did not start"
+  # The ports are picked at random and published by the container runtime: another
+  # process (or another lab) can take one between the pick and the bind, so a
+  # bind failure is retried with other ports.
+  local started=""
+  for attempt in 1 2 3 4 5 6; do
+    http_port="$(free_port)"; grpc_port="$(free_port)"
+    [ "$http_port" != "$grpc_port" ] || continue
+    if pm run -d --name "$alpha" --hostname dgraph-alpha --network "$BACKEND_NETWORK" \
+      -p "127.0.0.1:$http_port:8080" -p "127.0.0.1:$grpc_port:9080" \
+      -v "$p-alpha-data-$n:/dgraph-data" \
+      -v "$LAB_DIR/backend/hmac-secret:/dgraph/secrets/hmac-secret:ro,z" \
+      "$DGRAPH_IMAGE" dgraph alpha --my=dgraph-alpha:7080 --zero=dgraph-zero:5080 \
+      --postings=/dgraph-data/p --wal=/dgraph-data/w \
+      --acl "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256" \
+      --security whitelist=0.0.0.0/0 --telemetry reports=false >/dev/null 2>&1; then
+      started=1
+      break
+    fi
+    pm rm -f -t 0 "$alpha" >/dev/null 2>&1
+  done
+  [ -n "$started" ] || die "Dgraph Alpha did not start"
+  started=""
+  for attempt in 1 2 3 4 5 6; do
+    s3_port="$(free_port)"
+    if pm run -d --name "$s3" -p "127.0.0.1:$s3_port:4566" "$S3_IMAGE" >/dev/null 2>&1; then
+      started=1
+      break
+    fi
+    pm rm -f -t 0 "$s3" >/dev/null 2>&1
+  done
+  [ -n "$started" ] || die "the S3 did not start"
   local deadline=$(( SECONDS + 120 ))
   until curl -s -m 3 "http://127.0.0.1:$http_port/health" 2>/dev/null | grep -q healthy; do
     [ "$SECONDS" -lt "$deadline" ] || die "Dgraph Alpha was not healthy in time"
