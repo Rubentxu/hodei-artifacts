@@ -66,6 +66,9 @@ Derivada de [`RepositoryFormat::served()`](crates/hodei-catalog/src/model.rs), [
 | `nuget` | Sí | Sí | No | `/nuget/{repo}/...` |
 | `apt` | Sí | No | No | `/apt/{repo}/...` |
 | `rpm` | Sí | No | No | `/yum/{repo}/...` |
+| `terraform` | Sí | Sí | No | `/terraform/{repo}/...` |
+| `conan` | Sí | No | No | `/conan/{repo}/...` |
+| `galaxy` | Sí | No | No | `/galaxy/{repo}/...` |
 | `helm` | No | No | No | Solo declarado; los charts Helm usan `oci` (`/v2/{repo}/...`) |
 
 ---
