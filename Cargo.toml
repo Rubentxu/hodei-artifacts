@@ -457,7 +457,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp112_pypi_cli"
 path = "tests/hsp112_pypi_cli.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp112_pypi_e2e"
@@ -758,7 +757,6 @@ required-features = ["legacy"]
 [[test]]
 name = "admin_surface"
 path = "tests/admin_surface.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "audit_events"
@@ -826,7 +824,6 @@ required-features = ["legacy"]
 [[test]]
 name = "iam_scope"
 path = "tests/iam_scope.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "playground_isolation"
