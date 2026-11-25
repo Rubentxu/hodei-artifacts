@@ -55,6 +55,23 @@ fn surfaces_of_the_graph_profile() {
         "permit(principal, action, resource);\n",
     )
     .expect("the policy");
+    let mut schema: serde_json::Value =
+        serde_json::from_str(support::SCHEMA).expect("the schema parses");
+    schema["Admin"] = serde_json::json!({
+        "entityTypes": { "AdminApi": { "shape": { "type": "Record", "attributes": {} } } },
+        "actions": {
+            "AccessAdminApi": {
+                "appliesTo": { "principalTypes": ["Iam::User"], "resourceTypes": ["Admin::AdminApi"] }
+            }
+        }
+    });
+    let download = schema["Artifacts"]["actions"]["DownloadAsset"].clone();
+    schema["Artifacts"]["actions"]["Investigate"] = download;
+    std::fs::write(
+        deployment.directory.path().join("schema.json"),
+        schema.to_string(),
+    )
+    .expect("the schema");
     let environment: Vec<(String, String)> = vec![
         ("RUN_MODE".into(), "dgraph".into()),
         ("HODEI_LOGGING__FORMAT".into(), "pretty".into()),
@@ -65,6 +82,7 @@ fn surfaces_of_the_graph_profile() {
         ("HODEI_GRAPH__NAMESPACE".into(), "0".into()),
         ("HODEI_GRAPH__CREDENTIALS__USERID".into(), user),
         ("HODEI_GRAPH__CREDENTIALS__PASSWORD".into(), password),
+        ("HODEI_CONTENT__BACKEND".into(), "filesystem".into()),
         ("HODEI_SECURITY__ADMIN_API_ENABLED".into(), "true".into()),
         (
             "HODEI_SECURITY__INVESTIGATION_API_ENABLED".into(),
