@@ -25,7 +25,23 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# HSP-314: la etapa B construye la imagen en un almacen de podman propio de
+# esta corrida (PODMAN_ROOT/RUNROOT dentro de $WORK), para no retaguear
+# `:latest` del almacen compartido (/var/tmp/podman-root). Para reutilizar
+# otro almacen, exporta HODEI_RELEASE_TEST_SHARED_PODMAN=1.
+if [ "${HODEI_RELEASE_TEST_SHARED_PODMAN:-0}" != "1" ]; then
+  export PODMAN_ROOT="$WORK/podman-root" PODMAN_RUNROOT="$WORK/podman-runroot"
+  mkdir -p "$PODMAN_ROOT" "$PODMAN_RUNROOT"
+fi
+# Los ficheros del almacen vfs pueden pertenecer a subuids: se borran dentro
+# del user namespace de podman, y si no se puede, con rm normal.
+cleanup() {
+  if [ -d "$WORK/podman-root" ]; then
+    podman unshare rm -rf "$WORK/podman-root" "$WORK/podman-runroot" 2>/dev/null || true
+  fi
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
 OUT="$WORK/dist"
 mkdir -p "$OUT"
 
