@@ -1,7 +1,7 @@
 //! Repository read seam.
 //!
 //! The active API owns a small, read-only port. The legacy `crates/repository`
-//! domain is intentionally not reactivated (see
+//! domain was removed and is intentionally not reactivated (see
 //! `docs/security/repository-baseline.md`).
 
 use std::collections::HashMap;

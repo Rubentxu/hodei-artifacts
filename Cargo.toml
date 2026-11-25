@@ -3,11 +3,8 @@
 # contexts, and the API that composes them.
 #
 # The root crate (.) is the API binary and library; it is not a stub. The
-# crates listed under `exclude` live in the tree but are not part of the
-# build: they are a previous generation that does not compile against the
-# current kernel, and pretending they are members would make the workspace
-# fail to load. Their status and the reason for keeping them are in
-# ARCHITECTURE_STATUS.md.
+# previous-generation crates that used to live under `exclude` were removed
+# (HSP-314); see ARCHITECTURE_STATUS.md.
 members = [
     "crates/kernel",
     "crates/hodei-iam",
@@ -35,17 +32,6 @@ members = [
     "crates/hodei-spike-ladybug",
     "crates/hodei-graph-client",
     ".",
-]
-exclude = [
-    "crates/artifact",
-    "crates/distribution",
-    "crates/hodei-authorizer",
-    "crates/hodei-organizations",
-    "crates/policies",
-    "crates/repository",
-    "crates/search",
-    "crates/security",
-    "crates/supply-chain",
 ]
 resolver = "2"
 
