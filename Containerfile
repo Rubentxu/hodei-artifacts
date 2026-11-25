@@ -6,6 +6,7 @@
 #   config/release.toml
 #   config/standalone.toml
 #   config/external.toml
+#   config/dgraph.toml
 #
 # Use `scripts/package-oci.sh` to build reproducibly with SOURCE_DATE_EPOCH.
 

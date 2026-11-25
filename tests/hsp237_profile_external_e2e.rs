@@ -40,99 +40,16 @@ mod support;
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use support::Deployment;
+use support::graph_lab::{
+    DGRAPH_IMAGE, DGRAPH_PASSWORD, DGRAPH_USER, Lab, S3_IMAGE, http, podman, start_dgraph,
+    start_s3, wait_until,
+};
 
-/// Dgraph image of `deploy/dgraph/compose.yaml`, pinned by tag and digest.
-const DGRAPH_IMAGE: &str = "docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb";
-/// S3 image of the HSP-138 series.
-const S3_IMAGE: &str = "docker.io/localstack/localstack:4.14";
 /// The credential secret; it must never show up in a body or in the log.
 const SENTINEL: &str = "hsp237-profile-sentinel-secret-not-for-logs";
-/// The ACL guardian of the lab Dgraph (the default of a fresh cluster).
-const DGRAPH_USER: &str = "groot";
-const DGRAPH_PASSWORD: &str = "password";
-
-fn podman(args: &[&str]) -> Result<String, String> {
-    let out = Command::new("podman")
-        .args(args)
-        .output()
-        .map_err(|error| format!("podman is not available: {error}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        Err(format!(
-            "podman {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr)
-        ))
-    }
-}
-
-/// Everything created for the run; removed on drop even if a step panics.
-struct Lab {
-    suffix: String,
-    network: String,
-    volumes: Vec<String>,
-    containers: Vec<String>,
-    secret_dir: PathBuf,
-}
-
-impl Lab {
-    fn new() -> Self {
-        let suffix = format!("{}", std::process::id());
-        Self {
-            network: format!("hsp237-net-{suffix}"),
-            suffix,
-            volumes: Vec::new(),
-            containers: Vec::new(),
-            secret_dir: std::env::temp_dir(),
-        }
-    }
-}
-
-impl Drop for Lab {
-    fn drop(&mut self) {
-        for container in &self.containers {
-            let _ = podman(&["rm", "-f", "-t", "0", container]);
-        }
-        for volume in &self.volumes {
-            let _ = podman(&["volume", "rm", "-f", volume]);
-        }
-        let _ = podman(&["network", "rm", "-f", &self.network]);
-        let _ = std::fs::remove_dir_all(&self.secret_dir);
-    }
-}
-
-fn http(port: u16, path: &str) -> (u16, String) {
-    let out = Command::new("curl")
-        .args([
-            "-s",
-            "-m",
-            "10",
-            "-w",
-            "\n%{http_code}",
-            &format!("http://127.0.0.1:{port}{path}"),
-        ])
-        .output()
-        .expect("curl runs");
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
-    let (body, code) = text.rsplit_once('\n').unwrap_or(("", "0"));
-    (code.trim().parse().unwrap_or(0), body.to_string())
-}
-
-fn wait_until(what: &str, seconds: u64, mut condition: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(seconds);
-    while Instant::now() < deadline {
-        if condition() {
-            return;
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    }
-    panic!("timed out waiting for {what}");
-}
 
 /// Wait out the one-second verdict cache so a probe measures the deployment.
 fn past_the_cache() {
@@ -183,136 +100,18 @@ async fn the_external_profile_readiness_walk() {
         let _ = writeln!(evidence, "- {line}");
     };
 
-    let mut lab = Lab::new();
-    let suffix = lab.suffix.clone();
-
-    // ---- Dgraph lab (deploy/dgraph/compose.yaml, raw podman mapping).
-    lab.secret_dir = std::env::temp_dir().join(format!("hsp237-secret-{suffix}"));
-    std::fs::create_dir_all(&lab.secret_dir).unwrap();
-    let hmac = lab.secret_dir.join("hmac-secret");
-    let mut bytes = [0u8; 32];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))
-        .expect("random bytes");
-    std::fs::write(&hmac, bytes).unwrap();
-    podman(&["network", "create", "--internal", &lab.network]).expect("the internal network");
-    let zero = format!("hsp237-zero-{suffix}");
-    let alpha = format!("hsp237-alpha-{suffix}");
-    let s3 = format!("hsp237-s3-{suffix}");
-    for name in ["zero", "alpha"] {
-        let volume = format!("hsp237-{name}-data-{suffix}");
-        podman(&["volume", "create", &volume]).expect("the volume");
-        lab.volumes.push(volume);
-    }
-    let alpha_port = support::free_port();
-    let alpha_grpc_port = support::free_port();
-    lab.containers.push(zero.clone());
-    podman(&[
-        "run",
-        "-d",
-        "--name",
-        &zero,
-        "--hostname",
-        "dgraph-zero",
-        "--network",
-        &lab.network,
-        "-v",
-        &format!("hsp237-zero-data-{suffix}:/dgraph-data"),
-        DGRAPH_IMAGE,
-        "dgraph",
-        "zero",
-        "--my=dgraph-zero:5080",
-        "--wal=/dgraph-data/zero",
-        "--telemetry",
-        "reports=false",
-    ])
-    .expect("zero starts");
-    lab.containers.push(alpha.clone());
-    podman(&[
-        "run",
-        "-d",
-        "--name",
-        &alpha,
-        "--hostname",
-        "dgraph-alpha",
-        "--network",
-        &lab.network,
-        "-p",
-        &format!("127.0.0.1:{alpha_port}:8080"),
-        "-p",
-        &format!("127.0.0.1:{alpha_grpc_port}:9080"),
-        "-v",
-        &format!("hsp237-alpha-data-{suffix}:/dgraph-data"),
-        "-v",
-        &format!("{}:/dgraph/secrets/hmac-secret:ro,z", hmac.display()),
-        DGRAPH_IMAGE,
-        "dgraph",
-        "alpha",
-        "--my=dgraph-alpha:7080",
-        "--zero=dgraph-zero:5080",
-        "--postings=/dgraph-data/p",
-        "--wal=/dgraph-data/w",
-        "--acl",
-        "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256",
-        // The login is only accepted from loopback by default; the host
-        // reaches the published port through the podman gateway, so the lab
-        // (ephemeral, internal network, random port) whitelists every source.
-        "--security",
-        "whitelist=0.0.0.0/0",
-        "--telemetry",
-        "reports=false",
-    ])
-    .expect("alpha starts");
-    wait_until("dgraph alpha /health", 90, || {
-        let (code, body) = http(alpha_port, "/health");
-        code == 200 && body.contains("healthy")
-    });
+    let mut lab = Lab::new("hsp237");
+    let dgraph = start_dgraph(&mut lab);
+    let (alpha, alpha_port, alpha_grpc_port) = (dgraph.alpha, dgraph.http_port, dgraph.grpc_port);
     step(&format!(
         "dgraph lab healthy (alpha HTTP on 127.0.0.1:{alpha_port}, image {DGRAPH_IMAGE})"
     ));
 
     // ---- S3 (LocalStack), fixed port so a stop/start keeps the endpoint.
-    let s3_port = support::free_port();
-    lab.containers.push(s3.clone());
-    podman(&[
-        "run",
-        "-d",
-        "--name",
-        &s3,
-        "-p",
-        &format!("127.0.0.1:{s3_port}:4566"),
-        S3_IMAGE,
-    ])
-    .expect("s3 starts");
-    let endpoint = format!("http://127.0.0.1:{s3_port}");
-    wait_until("localstack s3", 120, || {
-        let (code, body) = http(s3_port, "/_localstack/health");
-        code == 200
-            && (body.contains("\"s3\": \"available\"") || body.contains("\"s3\": \"running\""))
-    });
-    let bucket = format!("hsp237-profile-{suffix}");
-    let make_bucket = |endpoint: String, bucket: String| async move {
-        let sdk = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .region(aws_config::Region::new("us-east-1"))
-            .credentials_provider(aws_credential_types::Credentials::from_keys(
-                "test", "test", None,
-            ))
-            .endpoint_url(endpoint)
-            .load()
-            .await;
-        let client = aws_sdk_s3::Client::from_conf(
-            aws_sdk_s3::config::Builder::from(&sdk)
-                .force_path_style(true)
-                .build(),
-        );
-        client
-            .create_bucket()
-            .bucket(bucket)
-            .send()
-            .await
-            .expect("the bucket is created");
-    };
-    make_bucket(endpoint.clone(), bucket.clone()).await;
+    let s3_lab = start_s3(&mut lab);
+    let (s3, endpoint) = (s3_lab.container.clone(), s3_lab.endpoint.clone());
+    let bucket = format!("hsp237-profile-{}", lab.suffix);
+    s3_lab.make_bucket(&bucket).await;
     step(&format!(
         "s3 lab up with bucket {bucket} (image {S3_IMAGE})"
     ));
@@ -449,12 +248,8 @@ async fn the_external_profile_readiness_walk() {
 
     // 5. Restore S3 (LocalStack is in-memory: recreate the bucket as an operator would).
     podman(&["start", &s3]).expect("s3 restarts");
-    wait_until("localstack s3 again", 120, || {
-        let (code, body) = http(s3_port, "/_localstack/health");
-        code == 200
-            && (body.contains("\"s3\": \"available\"") || body.contains("\"s3\": \"running\""))
-    });
-    make_bucket(endpoint.clone(), bucket.clone()).await;
+    s3_lab.wait_available();
+    s3_lab.make_bucket(&bucket).await;
     wait_until("readiness 200 again", 30, || {
         http(port, "/health/ready").0 == 200
     });

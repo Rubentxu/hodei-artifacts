@@ -12,6 +12,10 @@
 //! - AC2: External Dgraph/S3 profile does not touch RocksDB paths and fails
 //!   closed when the backend is unreachable; runtime image contains no build
 //!   tools and no baked-in tokens/secrets.
+//! - HSP-308: the same image boots the graph profile (`RUN_MODE=dgraph`) with a
+//!   real Dgraph and an S3 at hand, writes an artifact, restarts and reads it
+//!   back with the same digest (opt-in: `HSP308_OCI_GRAPH_E2E=1`, see
+//!   `scripts/hsp308-oci-graph-e2e.sh`).
 //! - AC3: Local release packaging produces correlated tarball + OCI archive +
 //!   digest + checksums for the same commit/version/arch, and clean-directory
 //!   checksum verification passes and rejects tampered assets.
@@ -27,6 +31,10 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+
+mod support;
+
+use support::graph_lab::{self, Lab};
 
 const REPO_ROOT: &str = env!("CARGO_MANIFEST_DIR");
 const IMAGE_TAG: &str = "localhost/hodei-artifacts-api:latest";
@@ -439,6 +447,265 @@ fn artifact_written_before_restart_is_read_back_with_same_digest() {
     let (status, _) = http_request(port3, "GET", &blob_path, &[auth], b"");
     assert_ne!(status, 200, "a fresh volume must not serve the artifact");
     podman_checked(&["stop", "-t", "15", &c3]);
+}
+
+/// Start the image on the graph profile: Dgraph and S3 come from the lab
+/// (host network, so the loopback endpoints of the lab are the ones the
+/// container dials), and the bytes live in S3, not in the volume.
+/// Stdout and stderr of a container (the service logs on either).
+fn container_log(name: &str) -> String {
+    let out = podman(&["logs", name]);
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// The image under test: the packaged one unless `HSP308_IMAGE` names another tag.
+fn graph_image() -> String {
+    std::env::var("HSP308_IMAGE").unwrap_or_else(|_| IMAGE_TAG.to_string())
+}
+
+fn run_graph_container(
+    name: &str,
+    lab: &GraphEndpoints,
+    data_mount: &str,
+    policy_mount: &str,
+) -> u16 {
+    let port = free_port();
+    let server_port = port.to_string();
+    let grpc = format!("127.0.0.1:{}", lab.dgraph_grpc_port);
+    let envs: Vec<(&str, &str)> = vec![
+        ("RUN_MODE", "dgraph"),
+        ("HODEI_SERVER__PORT", &server_port),
+        ("HODEI_GRAPH__ENDPOINT", &grpc),
+        ("HODEI_GRAPH__TLS__ENABLED", "false"),
+        ("HODEI_GRAPH__TLS__CA_CERT_PATH", ""),
+        ("HODEI_GRAPH__TLS__SERVER_NAME", ""),
+        ("HODEI_GRAPH__NAMESPACE", "0"),
+        ("HODEI_GRAPH__CREDENTIALS__USERID", graph_lab::DGRAPH_USER),
+        (
+            "HODEI_GRAPH__CREDENTIALS__PASSWORD",
+            graph_lab::DGRAPH_PASSWORD,
+        ),
+        ("HODEI_CONTENT__BACKEND", "s3"),
+        ("HODEI_CONTENT__CAS_PATH", "/app/data/cas"),
+        ("HODEI_CONTENT__S3__TLS", "false"),
+        ("HODEI_CONTENT__S3__BUCKET", &lab.bucket),
+        ("HODEI_CONTENT__S3__ENDPOINT", &lab.s3_endpoint),
+        ("HODEI_CONTENT__S3__REGION", "us-east-1"),
+        ("AWS_ACCESS_KEY_ID", "test"),
+        ("AWS_SECRET_ACCESS_KEY", "test"),
+        ("HODEI_SECURITY__RAW_API_ENABLED", "true"),
+        ("HODEI_SECURITY__AUTH_JWT_SECRET", LAB_SECRET),
+        ("HODEI_SECURITY__AUTH_ISSUER", LAB_ISSUER),
+        ("HODEI_SECURITY__AUTH_AUDIENCE", LAB_AUDIENCE),
+        (
+            "HODEI_SECURITY__AUTHORIZATION_POLICY_PATH",
+            "/policy/policies.cedar",
+        ),
+        (
+            "HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH",
+            "/policy/schema.json",
+        ),
+    ];
+    let env_args: Vec<String> = envs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    let mut args: Vec<&str> = vec![
+        "run",
+        "-d",
+        "--name",
+        name,
+        "--network=host",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=64m",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges:true",
+        "-v",
+        data_mount,
+        "-v",
+        policy_mount,
+    ];
+    for e in &env_args {
+        args.push("-e");
+        args.push(e);
+    }
+    let image = graph_image();
+    args.push(&image);
+    podman_checked(&args);
+    wait_until_healthy(port, name);
+    port
+}
+
+struct GraphEndpoints {
+    dgraph_grpc_port: u16,
+    s3_endpoint: String,
+    bucket: String,
+}
+
+/// HSP-308: the OCI image (not the cargo binary) on the Dgraph/S3 profile.
+///
+/// Opt-in because it needs podman, the Dgraph and LocalStack images and a
+/// built `localhost/hodei-artifacts-api:latest`; the script turns an absent
+/// guard into NOT_RUN (exit 77), never into a PASS. The image is not rebuilt
+/// here (a cold release build takes more than 20 minutes).
+#[tokio::test]
+async fn graph_profile_image_persists_artifact_across_restart_with_same_digest() {
+    if std::env::var("HSP308_OCI_GRAPH_E2E").as_deref() != Ok("1") {
+        eprintln!(
+            "SKIPPED: set HSP308_OCI_GRAPH_E2E=1 (scripts/hsp308-oci-graph-e2e.sh) to run the image on the graph profile"
+        );
+        return;
+    }
+    let image = graph_image();
+    assert!(
+        podman(&["image", "exists", &image]).status.success(),
+        "the image {image} must exist in the store used by this suite (scripts/package-oci.sh)"
+    );
+
+    let mut lab = Lab::new("hodei-hsp308");
+    let dgraph = graph_lab::start_dgraph(&mut lab);
+    let s3 = graph_lab::start_s3(&mut lab);
+    let bucket = format!("hsp308-graph-{}", lab.suffix);
+    s3.make_bucket(&bucket).await;
+    let endpoints = GraphEndpoints {
+        dgraph_grpc_port: dgraph.grpc_port,
+        s3_endpoint: s3.endpoint.clone(),
+        bucket: bucket.clone(),
+    };
+
+    let data_dir = TempDir::new().expect("create data temp dir");
+    prepare_container_data_dir(data_dir.path());
+    let data_mount = format!("{}:/app/data:rw,Z", data_dir.path().display());
+    let policy_dir = prepare_policy_dir();
+    let policy_mount = format!("{}:/policy:ro,Z", policy_dir.path().display());
+    let token = mint_token();
+    let auth = ("Authorization", format!("Bearer {token}"));
+
+    let payload: Vec<u8> = (0..65_536u32)
+        .map(|i| (i.wrapping_mul(37) % 249) as u8)
+        .collect();
+    let expected = sha256_digest(&payload);
+    let blob_path = format!("/repository/{LAB_REPOSITORY}/graph/payload.bin");
+
+    let c1 = format!("hodei-hsp308-c1-{}", std::process::id());
+    let _g1 = ContainerGuard::new(&c1);
+    let port1 = run_graph_container(&c1, &endpoints, &data_mount, &policy_mount);
+    let logs1 = container_log(&c1);
+    assert!(
+        logs1.contains("Bootstrap completed successfully on the graph profile"),
+        "the image must boot the graph profile:\n{logs1}"
+    );
+
+    let repo_body = format!(r#"{{"name":"{LAB_REPOSITORY}","format":"raw","mode":"hosted"}}"#);
+    let (status, answer) = http_request(
+        port1,
+        "POST",
+        "/api/v1/catalog/repositories",
+        &[
+            auth.clone(),
+            ("Content-Type", "application/json".to_string()),
+        ],
+        repo_body.as_bytes(),
+    );
+    assert_eq!(
+        status,
+        201,
+        "repository creation: {}",
+        String::from_utf8_lossy(&answer)
+    );
+    let (status, answer) = http_request(
+        port1,
+        "PUT",
+        &blob_path,
+        &[
+            auth.clone(),
+            (
+                "x-checksum-sha256",
+                expected.trim_start_matches("sha256:").to_string(),
+            ),
+        ],
+        &payload,
+    );
+    assert_eq!(
+        status,
+        201,
+        "artifact publish: {}",
+        String::from_utf8_lossy(&answer)
+    );
+    let answer: Value = serde_json::from_slice(&answer).expect("publish answer is JSON");
+    assert_eq!(answer["digest"].as_str(), Some(expected.as_str()));
+    let (status, before) = http_request(port1, "GET", &blob_path, std::slice::from_ref(&auth), b"");
+    assert_eq!(status, 200, "read-back before the restart");
+    assert_eq!(sha256_digest(&before), expected, "digest before restart");
+
+    podman_checked(&["stop", "-t", "15", &c1]);
+    podman_checked(&["rm", "-f", &c1]);
+
+    // A brand-new container on the same Dgraph and bucket.
+    let c2 = format!("hodei-hsp308-c2-{}", std::process::id());
+    let _g2 = ContainerGuard::new(&c2);
+    let port2 = run_graph_container(&c2, &endpoints, &data_mount, &policy_mount);
+    let (status, after) = http_request(port2, "GET", &blob_path, std::slice::from_ref(&auth), b"");
+    assert_eq!(
+        status, 200,
+        "artifact written before the restart must survive it (Dgraph or S3 not persisting?)"
+    );
+    assert_eq!(
+        sha256_digest(&after),
+        expected,
+        "digest after restart must equal the digest written before it"
+    );
+    podman_checked(&["stop", "-t", "15", &c2]);
+    podman_checked(&["rm", "-f", &c2]);
+
+    // The graph profile must not have used the embedded engine or the local CAS.
+    assert!(
+        !data_dir.path().join("hodei.rocksdb").exists(),
+        "the graph profile must not create the RocksDB directory"
+    );
+
+    // Negative control: same Dgraph, EMPTY bucket. The bytes live in S3, so the
+    // read must not be served; this proves the check above discriminates.
+    let empty_bucket = format!("hsp308-empty-{}", lab.suffix);
+    s3.make_bucket(&empty_bucket).await;
+    let empty = GraphEndpoints {
+        bucket: empty_bucket,
+        ..endpoints
+    };
+    let c3 = format!("hodei-hsp308-c3-{}", std::process::id());
+    let _g3 = ContainerGuard::new(&c3);
+    let port3 = run_graph_container(&c3, &empty, &data_mount, &policy_mount);
+    let (status, _) = http_request(port3, "GET", &blob_path, &[auth], b"");
+    assert_ne!(status, 200, "an empty bucket must not serve the artifact");
+    podman_checked(&["stop", "-t", "15", &c3]);
+}
+
+/// HSP-308 regression: `RUN_MODE=dgraph` loads `config/dgraph.toml` with
+/// `required(false)`, so an image that does not ship it silently boots the
+/// default (rocksdb) profile and then dies with a RocksDB-vs-`[graph]` error.
+/// Cheap, no podman: the staging loop must name every shipped run mode.
+#[test]
+fn oci_staging_ships_the_graph_profile_config() {
+    let script = fs::read_to_string(Path::new(REPO_ROOT).join("scripts/package-oci.sh"))
+        .expect("read package-oci.sh");
+    let loop_line = script
+        .lines()
+        .find(|l| l.starts_with("for cfg in "))
+        .expect("the config staging loop");
+    for profile in [
+        "default.toml",
+        "standalone.toml",
+        "external.toml",
+        "dgraph.toml",
+    ] {
+        assert!(
+            loop_line.contains(profile),
+            "the OCI image must ship config/{profile}: {loop_line}"
+        );
+        assert!(Path::new(REPO_ROOT).join("config").join(profile).is_file());
+    }
 }
 
 #[test]
