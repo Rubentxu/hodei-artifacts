@@ -688,6 +688,7 @@ async fn bootstrap_graph_profile(
     // answers with its default closed behavior and no local engine is
     // opened to give it an answer.
     let app_state = app_state.with_investigation_limits(config.investigation.clone());
+    let app_state = crate::risk_facts::wire_graph_risk_facts(app_state, config, &graph).await?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
             "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"

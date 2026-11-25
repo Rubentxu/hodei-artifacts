@@ -80,3 +80,53 @@ pub fn to_trust_facts(facts: &SubjectFacts) -> RiskFacts {
         risk_version: facts.version,
     }
 }
+
+/// The risk facts of the promotion on the graph profile (HSP-314 F3a): the
+/// reader is [`DgraphRiskFacts`] over the impact view of the SAME alpha, with
+/// the severity catalog the operator gave the deployment
+/// (`trust.risk_catalog_file`, the same rule as the embedded profile: an
+/// unreadable catalog leaves the facts UNKNOWN, it does not stop the boot).
+///
+/// # What this does NOT do yet (F3b)
+///
+/// Nothing maintains the impact view on this profile: the reactor that
+/// consumes the relation deltas and calls `rebuild_advisory` is not wired.
+/// Until it is, a deployment has no materialized routes, the view is never
+/// "current", and the facts stay `established: false` ("not measured"), which
+/// is exactly what [`crate::risk_facts::UnmeasuredRiskFacts`] said. The
+/// difference is that a view somebody DID materialize (an operator tool, the
+/// reactor once wired) is now read instead of ignored, and always fail-closed.
+pub async fn wire_graph_risk_facts(
+    state: crate::app_state::AppState,
+    config: &crate::config::AppConfig,
+    graph: &crate::profile::GraphAuthority,
+) -> Result<crate::app_state::AppState, Box<dyn std::error::Error + Send + Sync>> {
+    use hodei_risk_storage::dgraph_view::DgraphImpactView;
+    use hodei_risk_storage::subject_risk::{AdvisoryCatalog, DgraphRiskFacts, EmptyCatalog};
+    use std::sync::Arc;
+    let catalog: Arc<dyn AdvisoryCatalog> = match config.trust.risk_catalog_file.as_deref() {
+        Some(path) => match crate::risk_facts::load_risk_catalog(path) {
+            Ok(catalog) => Arc::new(catalog),
+            Err(error) => {
+                tracing::warn!("{error}: the risk facts will stay UNKNOWN");
+                Arc::new(EmptyCatalog)
+            }
+        },
+        None => Arc::new(EmptyCatalog),
+    };
+    let store = Arc::new(hodei_evidence_storage::DgraphGraphStore::new(
+        graph.client.clone(),
+    ));
+    let frontier = Arc::new(
+        hodei_evidence_storage::DgraphProjectionFrontier::open(
+            graph.client.clone(),
+            graph.tenant.as_str(),
+        )
+        .await
+        .map_err(|error| {
+            format!("the projection frontier of the risk view could not open: {error}")
+        })?,
+    );
+    let view = Arc::new(DgraphImpactView::new(graph.client.clone(), store, frontier));
+    Ok(state.with_risk_facts(Arc::new(DgraphRiskFacts::new(view, catalog))))
+}

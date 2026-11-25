@@ -487,6 +487,11 @@ impl AppState {
         self
     }
 
+    /// The reader of the risk facts the promotion decides with.
+    pub fn risk_facts_reader(&self) -> Arc<dyn hodei_risk_storage::subject_risk::RiskFactsReader> {
+        self.risk_facts.clone()
+    }
+
     /// Set the reader of the risk facts, once the deployment has an
     /// impact graph to read them from.
     pub fn with_risk_facts(
