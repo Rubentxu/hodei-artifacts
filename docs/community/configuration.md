@@ -322,6 +322,15 @@ La firma es HMAC-SHA256 sobre método, ruta, repositorio, cuenta, principal,
 expiración e id de clave. El secreto lo pone **solo el operador**: no hay clave
 por defecto y nada se deriva del secreto JWT ni del JWKS.
 
+**Limitación aceptada: el canje no reevalúa Cedar.** Cedar decide al *emitir* la
+URL; al canjearla solo se comprueban la firma, la expiración y la puerta de
+confianza (canal `trusted`, por digest). Una revocación de política, de
+principal o de cuenta, o la baja de un usuario, **solo surte efecto cuando
+caduca la URL ya emitida**: 300 s por defecto y, como mucho, 3600 s más 5 s de
+tolerancia de reloj. Quien necesite que una retirada sea inmediata debe acortar
+`ttl_secs`, o rotar la clave retirando la que firmó la URL (sección de rotación
+más abajo); retirar un digest del canal `trusted` sí corta el canje al instante.
+
 | Clave | Por defecto | Qué hace |
 | --- | --- | --- |
 | `keys` | `[]` | El anillo de claves. La **primera** firma y **todas** verifican. Cada entrada es `{ id = "...", secret_file = "..." }` o `{ id = "...", secret_env = "..." }` (exactamente una de las dos). Máximo 8. |

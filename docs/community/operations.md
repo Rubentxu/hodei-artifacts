@@ -500,6 +500,22 @@ y el documento de versión responde `503`.
   (caducada, firma que no coincide, clave desconocida), y el cliente recibe
   siempre el mismo `403`.
 
+**Nota de migración (actualizar a una versión con HSP-313).** Una instalación
+que ya servía providers de Terraform y se actualiza **sin** `[signing]` deja de
+poder instalarlos: el mirror falla cerrado y el documento de versión
+(`<versión>.json`) pasa a responder `503` (el índice y la lectura autenticada
+del zip siguen igual). Para no cortar el servicio, configura la clave **antes**
+de actualizar:
+
+1. Genera el secreto con `openssl rand -hex 32` y entrégalo como fichero o
+   variable (Compose: `HODEI_SIGNING_KEY_FILE`; Helm: `signing.existingSecret`).
+2. Declara `[signing]` con esa clave en todas las réplicas, con el mismo anillo.
+3. Actualiza, y comprueba en el log `the signed URLs of the provider mirror are
+   enabled` y no `no signing key is configured`.
+
+Con Compose, el fichero se exige con `:?`: sin `HODEI_SIGNING_KEY_FILE`,
+`compose up` falla en vez de arrancar sin clave.
+
 ## 7. Documentos relacionados
 
 - [`configuration.md`](configuration.md): claves, variables y perfiles.
