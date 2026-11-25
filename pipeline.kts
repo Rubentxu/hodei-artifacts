@@ -282,11 +282,6 @@ pipeline {
                         "--test hsp116_s3_bench",
                         "--test hsp139_localstack_conformance",
                         "--test hsp139_rustfs_conformance",
-                        // La readiness y la liveness son dos preguntas
-                        // distintas (HSP-237): con el almacen desconectado
-                        // en caliente, la readiness deja de ser 200 y la
-                        // liveness no.
-                        "--test hsp237_readiness",
                         // El recorrido del perfil de grafo (HSP-237, HSP-292):
                         // con HSP237_PROFILE_E2E=1 levanta con podman un
                         // Dgraph real y un S3, arranca el binario en perfil
@@ -437,6 +432,11 @@ pipeline {
                         "--test iam_account_index",
                         "--test iam_audit",
                         "--test iam_backfill",
+                        // La readiness y la liveness son dos preguntas
+                        // distintas (HSP-237): con el almacen desconectado
+                        // en caliente, la readiness deja de ser 200 y la
+                        // liveness no. Arranca el motor embebido.
+                        "--test hsp237_readiness",
                         "--test iam_policy_timestamps",
                         "--test iam_scope",
                         "--test playground_isolation",
