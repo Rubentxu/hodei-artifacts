@@ -25,6 +25,11 @@ max_body_size = 52428800  # 50MB: los artefactos por el borde raw/OCI
 # escrita, no un defecto de configuración.
 endpoint = "127.0.0.1:9080"
 
+# El namespace ACL del login. 0 es el namespace guardian estándar. Va aquí,
+# en `[graph]` y ANTES de las subtablas: declarado bajo `[graph.credentials]`
+# o `[graph.tls]` es una clave desconocida y el arranque lo rechaza.
+namespace = 0
+
 [graph.tls]
 enabled = true
 # El CA propio del clúster Dgraph: el almacén del sistema nunca lo
@@ -40,9 +45,6 @@ server_name = "dgraph-alpha"
 # HODEI_GRAPH__CREDENTIALS__PASSWORD.
 [graph.credentials]
 userid = "groot"
-
-# El namespace ACL del login. 0 es el namespace guardian estándar.
-namespace = 0
 
 # La sección del motor embebido se mantiene porque la configuración es
 # estricta y compartida entre perfiles, pero su db_type DECLARA el grafo:
