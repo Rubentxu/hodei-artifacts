@@ -90,6 +90,43 @@ describe('Canonical product routing & legacy aliases', () => {
     tokensView.unmount();
   });
 
+  it('redirects canonical aliases and distinguishes policy settings from legacy paths', async () => {
+    const overviewView = renderRoute('/overview');
+    expect(await screen.findByTestId('overview-page')).toBeInTheDocument();
+    expect(screen.getByTestId('current-pathname')).toHaveTextContent('/');
+    overviewView.unmount();
+
+    const catalogView = renderRoute('/catalog/repositories');
+    expect(
+      await screen.findByTestId('catalog-repositories-page')
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('current-pathname')).toHaveTextContent(
+      '/console/repositories'
+    );
+    catalogView.unmount();
+
+    const registryView = renderRoute('/admin/registry');
+    expect(
+      await screen.findByTestId('registry-repositories-page')
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('current-pathname')).toHaveTextContent(
+      '/repositories'
+    );
+    registryView.unmount();
+
+    const policiesView = renderRoute('/policies');
+    expect(
+      await screen.findByRole('heading', {
+        name: 'Access Policies',
+        level: 1,
+      })
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('current-pathname')).toHaveTextContent(
+      '/settings/policies'
+    );
+    policiesView.unmount();
+  });
+
   it('does NOT redirect Registry (/repositories) to Catalog (/console/repositories)', async () => {
     const registryView = renderRoute('/repositories');
     expect(

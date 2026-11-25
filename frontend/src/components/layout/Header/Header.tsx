@@ -17,6 +17,7 @@ const Header = () => {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileMenuDialogRef = useRef<HTMLDialogElement>(null);
 
   const isDark =
     theme === THEMES.DARK ||
@@ -40,21 +41,19 @@ const Header = () => {
     setMobileMenuOpen(false);
   }, [location.pathname]);
 
-  // Allow keyboard users to dismiss the mobile menu with Escape.
+  // Use the browser's modal-dialog behavior for inertness and tab containment.
   useEffect(() => {
-    if (!mobileMenuOpen) {
+    const dialog = mobileMenuDialogRef.current;
+    if (!dialog) {
       return;
     }
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setMobileMenuOpen(false);
-        menuButtonRef.current?.focus();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    if (mobileMenuOpen && !dialog.open) {
+      dialog.showModal();
+      dialog.querySelector<HTMLElement>('a[href]')?.focus();
+    } else if (!mobileMenuOpen && dialog.open) {
+      dialog.close();
+    }
   }, [mobileMenuOpen]);
 
   const navLinkClass = (active: boolean) =>
@@ -169,11 +168,21 @@ const Header = () => {
           </div>
         </div>
 
-        {mobileMenuOpen && (
-          <div
-            id="mobile-primary-nav"
-            className="mt-3 border-t border-[var(--hodei-border)] pt-3 md:hidden"
-          >
+        <dialog
+          ref={mobileMenuDialogRef}
+          id="mobile-primary-nav"
+          aria-label="Mobile navigation menu"
+          onCancel={event => {
+            event.preventDefault();
+            setMobileMenuOpen(false);
+          }}
+          onClose={() => {
+            setMobileMenuOpen(false);
+            menuButtonRef.current?.focus();
+          }}
+          className="fixed inset-x-0 top-16 m-0 max-h-[calc(100dvh-4rem)] w-full max-w-none overflow-y-auto border-0 bg-transparent p-4 text-[var(--hodei-text)] shadow-none backdrop:bg-black/40 md:hidden"
+        >
+          <div className="rounded-lg border border-[var(--hodei-border)] bg-[var(--hodei-surface)] p-4 shadow-xl">
             <nav
               aria-label="Mobile primary navigation"
               className="flex flex-col gap-1"
@@ -208,7 +217,7 @@ const Header = () => {
               </Button>
             </div>
           </div>
-        )}
+        </dialog>
       </div>
     </header>
   );

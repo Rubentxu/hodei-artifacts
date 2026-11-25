@@ -17,7 +17,6 @@ import { AdminPage, UsersPage } from '@/pages/admin';
 import { PoliciesPage } from '@/pages/settings/policies';
 import { OpenAPIDemoPage } from '@/pages/OpenAPIDemoPage';
 import Artifacts from '@/pages/Artifacts/Artifacts';
-import PoliciesSimple from '@/pages/Policies/PoliciesSimple';
 import ConsoleRepositoriesPage from '@/pages/console/ConsoleRepositoriesPage';
 import ConsoleBrowsePage from '@/pages/console/ConsoleBrowsePage';
 import ConsolePackagePage from '@/pages/console/ConsolePackagePage';
@@ -117,7 +116,7 @@ export const routeConfig: RouteObject[] = [
       },
       {
         path: '/policies',
-        element: <PoliciesSimple />,
+        element: <Navigate to="/settings/policies" replace />,
       },
       {
         path: '/profile',

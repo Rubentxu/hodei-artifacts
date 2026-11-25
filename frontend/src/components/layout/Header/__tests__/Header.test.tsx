@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
@@ -14,12 +14,47 @@ function renderHeader(initialEntry = '/') {
   );
 }
 
-describe('Header canonical navigation', () => {
-  beforeEach(() => {
-    document.documentElement.classList.remove('dark');
-    useUIStore.getState().setTheme(THEMES.LIGHT);
-  });
+const originalShowModal = HTMLDialogElement.prototype.showModal;
+const originalClose = HTMLDialogElement.prototype.close;
 
+beforeEach(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+    configurable: true,
+    value: function (this: HTMLDialogElement) {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    },
+  });
+  document.documentElement.classList.remove('dark');
+  useUIStore.getState().setTheme(THEMES.LIGHT);
+});
+
+afterEach(() => {
+  if (originalShowModal) {
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+      configurable: true,
+      value: originalShowModal,
+    });
+  } else {
+    Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+  }
+  if (originalClose) {
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+      configurable: true,
+      value: originalClose,
+    });
+  } else {
+    Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
+  }
+});
+
+describe('Header canonical navigation', () => {
   it('renders a single visible entry for each of the 4 canonical areas', () => {
     renderHeader('/');
 
@@ -78,7 +113,7 @@ describe('Header canonical navigation', () => {
     ).toHaveAttribute('aria-current', 'page');
   });
 
-  it('provides visible focus styles and keyboard-accessible mobile drawer', async () => {
+  it('opens the mobile dialog on the first navigation link and restores focus on cancel', async () => {
     const user = userEvent.setup();
     renderHeader('/');
 
@@ -97,16 +132,25 @@ describe('Header canonical navigation', () => {
     await user.click(toggleButton);
 
     expect(toggleButton).toHaveAttribute('aria-expanded', 'true');
-    const mobileNav = screen.getByRole('navigation', {
+    const dialog = screen.getByRole('dialog', {
+      name: 'Mobile navigation menu',
+    });
+    const mobileNav = within(dialog).getByRole('navigation', {
       name: 'Mobile primary navigation',
     });
-    expect(
-      within(mobileNav)
-        .getAllByRole('link')
-        .map(link => link.textContent)
-    ).toEqual(['Overview', 'Repositories', 'Artifacts', 'Administration']);
+    const links = within(mobileNav).getAllByRole('link');
+    expect(links.map(link => link.textContent)).toEqual([
+      'Overview',
+      'Repositories',
+      'Artifacts',
+      'Administration',
+    ]);
+    expect(links[0]).toHaveFocus();
 
-    await user.keyboard('{Escape}');
+    await user.tab();
+    expect(links[1]).toHaveFocus();
+
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
     expect(
       screen.queryByRole('navigation', { name: 'Mobile primary navigation' })
     ).not.toBeInTheDocument();
