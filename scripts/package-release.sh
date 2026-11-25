@@ -30,6 +30,13 @@
 # of the distribution (this script, the same files) without paying for an
 # optimized build. A debug package is never a release asset.
 #
+# # Cross-architecture packaging (HSP-287)
+#
+# `HODEI_PACKAGE_TARGET=<rust-triple>[.<glibc>]` (for example
+# `aarch64-unknown-linux-gnu.2.36`) builds the same layout for another Linux
+# architecture with `cargo zigbuild` and the vendored OpenSSL, and names the
+# archive after that triple. Without it the host is packaged, as before.
+#
 # Usage: scripts/package-release.sh [output-directory]
 
 set -euo pipefail
@@ -68,7 +75,12 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+CROSS_TARGET="${HODEI_PACKAGE_TARGET:-}"
+if [ -n "$CROSS_TARGET" ]; then
+  TARGET="${CROSS_TARGET%%.*}"
+else
+  TARGET="$(rustc -vV | sed -n 's/^host: //p')"
+fi
 if [ -z "$TARGET" ]; then
   echo "error: could not read the host target from rustc" >&2
   exit 1
@@ -119,21 +131,30 @@ done
 # --- Build ------------------------------------------------------------------
 
 echo "==> building the $PROFILE binaries"
-cargo build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME" --bin "$GRAPH_INDEX_BIN_NAME"
+if [ -n "$CROSS_TARGET" ]; then
+  command -v cargo-zigbuild >/dev/null 2>&1 \
+    || { echo "error: HODEI_PACKAGE_TARGET needs cargo-zigbuild" >&2; exit 1; }
+  cargo zigbuild ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} --target "$CROSS_TARGET" --features vendored-openssl \
+    --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME" --bin "$GRAPH_INDEX_BIN_NAME"
+  BUILD_DIR="${TARGET_DIR}/${TARGET}/${PROFILE}"
+else
+  cargo build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME" --bin "$GRAPH_INDEX_BIN_NAME"
+  BUILD_DIR="${TARGET_DIR}/${PROFILE}"
+fi
 
-BIN_PATH="$(find "${TARGET_DIR}/${PROFILE}" -maxdepth 1 -type f -name "$BIN_NAME" -perm -u+x | head -n 1)"
+BIN_PATH="$(find "$BUILD_DIR" -maxdepth 1 -type f -name "$BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$BIN_PATH" ]; then
   echo "error: the release binary was not produced" >&2
   exit 1
 fi
 
-MIGRATION_BIN_PATH="$(find "${TARGET_DIR}/${PROFILE}" -maxdepth 1 -type f -name "$MIGRATION_BIN_NAME" -perm -u+x | head -n 1)"
+MIGRATION_BIN_PATH="$(find "$BUILD_DIR" -maxdepth 1 -type f -name "$MIGRATION_BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$MIGRATION_BIN_PATH" ]; then
   echo "error: the operator command was not produced" >&2
   exit 1
 fi
 
-GRAPH_INDEX_BIN_PATH="$(find "${TARGET_DIR}/${PROFILE}" -maxdepth 1 -type f -name "$GRAPH_INDEX_BIN_NAME" -perm -u+x | head -n 1)"
+GRAPH_INDEX_BIN_PATH="$(find "$BUILD_DIR" -maxdepth 1 -type f -name "$GRAPH_INDEX_BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$GRAPH_INDEX_BIN_PATH" ]; then
   echo "error: the operator command of the graph indexes was not produced" >&2
   exit 1

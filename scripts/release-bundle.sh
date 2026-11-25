@@ -25,6 +25,15 @@
 #                                         with every stage)
 #   RELEASE_BUNDLE_TARBALL_CMD            overrides the tarball stage (tests)
 #   RELEASE_BUNDLE_OCI_CMD                overrides the OCI stage (tests)
+#   RELEASE_BUNDLE_EXTRA_ARCHES           space-separated architectures built in
+#                                         addition to the host one (HSP-287),
+#                                         for example "aarch64": each one is
+#                                         packaged by the OCI stage with
+#                                         HODEI_OCI_ARCH, and the bundle gains a
+#                                         correlated OCI image index (manifest
+#                                         list) that pins every per-arch image
+#                                         manifest digest. Without it, the other
+#                                         architectures are recorded as NOT_RUN.
 #
 # No GitHub Actions, no network publication and no push are involved.
 
@@ -53,7 +62,7 @@ ARCH_MANIFEST="${BIN_NAME}-${VERSION}-${ARCH}.manifest.json"
 
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
-rm -f "$OUT_DIR/$BUNDLE_NAME" "$OUT_DIR/${BUNDLE_NAME}.asc" "$OUT_DIR/$FORMULA_NAME" "$OUT_DIR/$NOTES_NAME"
+rm -f "$OUT_DIR/$BUNDLE_NAME" "$OUT_DIR/${BUNDLE_NAME}.asc" "$OUT_DIR/$FORMULA_NAME" "$OUT_DIR/$NOTES_NAME" "$OUT_DIR/${BIN_NAME}-${VERSION}-oci-index.json"
 
 # --- One signing identity for every stage -----------------------------------
 
@@ -93,13 +102,31 @@ echo "==> [1/4] tarball"
 echo "==> [2/4] OCI image, SBOMs, provenance, manifest and signatures"
 "$OCI_CMD" "$OUT_DIR"
 
+EXTRA_ARCHES="${RELEASE_BUNDLE_EXTRA_ARCHES:-}"
+EXTRA_MANIFESTS=()
+cp "$OUT_DIR/SHA256SUMS" "$OUT_DIR/SHA256SUMS.host"
+for extra_arch in $EXTRA_ARCHES; do
+  [ "$extra_arch" != "$ARCH" ] || { echo "error: extra architecture $extra_arch is the host one" >&2; exit 1; }
+  echo "==> [2b/4] OCI image and tarball for $extra_arch"
+  HODEI_OCI_ARCH="$extra_arch" "$OCI_CMD" "$OUT_DIR"
+  EXTRA_MANIFESTS+=("${BIN_NAME}-${VERSION}-${extra_arch}.manifest.json")
+  # Each OCI stage rewrites SHA256SUMS for its own architecture; keep the union.
+  cat "$OUT_DIR/SHA256SUMS" >> "$OUT_DIR/SHA256SUMS.host"
+done
+if [ -n "$EXTRA_ARCHES" ]; then
+  sort -u -k2 "$OUT_DIR/SHA256SUMS.host" > "$OUT_DIR/SHA256SUMS"
+fi
+rm -f "$OUT_DIR/SHA256SUMS.host"
+
 if [ ! -f "$OUT_DIR/$ARCH_MANIFEST" ]; then
   echo "error: $ARCH_MANIFEST was not produced by the OCI stage" >&2
   exit 1
 fi
 
 echo "==> [3/4] Homebrew formula"
-"$ROOT/scripts/generate-homebrew-formula.sh" "$OUT_DIR/$ARCH_MANIFEST" > "$OUT_DIR/$FORMULA_NAME"
+FORMULA_ARGS=("$OUT_DIR/$ARCH_MANIFEST")
+for em in ${EXTRA_MANIFESTS[@]+"${EXTRA_MANIFESTS[@]}"}; do FORMULA_ARGS+=("$OUT_DIR/$em"); done
+"$ROOT/scripts/generate-homebrew-formula.sh" "${FORMULA_ARGS[@]}" > "$OUT_DIR/$FORMULA_NAME"
 
 # --- Honest status of the architectures this host cannot build ---------------
 
@@ -125,7 +152,7 @@ print(json.dumps(dict(a.split("=", 1) for a in sys.argv[1:])))
 
 echo "==> [4/4] bundle manifest, checksums and signatures"
 python3 -I - "$OUT_DIR" "$BIN_NAME" "$ARCH" "$ARCH_MANIFEST" "$FORMULA_NAME" "$NOTES_NAME" \
-  "$BUNDLE_NAME" "$SECONDARY_JSON" "$SIGNING_KEY_MODE" <<'PY'
+  "$BUNDLE_NAME" "$SECONDARY_JSON" "$SIGNING_KEY_MODE" "$EXTRA_ARCHES" <<'PY'
 import hashlib
 import json
 import os
@@ -133,8 +160,9 @@ import re
 import sys
 
 (out, bin_name, arch, arch_manifest, formula, notes, bundle_name,
- secondary_json, key_mode) = sys.argv[1:10]
+ secondary_json, key_mode, extra_arches) = sys.argv[1:11]
 secondary = json.loads(secondary_json)
+extra_arches = extra_arches.split()
 
 
 def sha(name):
@@ -152,11 +180,19 @@ def ref(name):
 with open(os.path.join(out, arch_manifest), encoding="utf-8") as f:
     m = json.load(f)
 
-tar_name = m["tarball"]["filename"]
-match = re.fullmatch(re.escape(f"{bin_name}-{m['version']}-") + r"(.+)\.tar\.gz", tar_name)
-if not match:
-    raise SystemExit(f"unexpected tarball name: {tar_name}")
-native_triple = match.group(1)
+# Every architecture that was really built, anchored by its own manifest.
+manifests = {arch: m}
+for a in extra_arches:
+    with open(os.path.join(out, f"{bin_name}-{m['version']}-{a}.manifest.json"), encoding="utf-8") as f:
+        manifests[a] = json.load(f)
+    if (manifests[a]["version"], manifests[a]["commit"]) != (m["version"], m["commit"]):
+        raise SystemExit(f"manifest of {a} does not belong to the same version/commit")
+built_triples = {}
+for a, mm in manifests.items():
+    match = re.fullmatch(re.escape(f"{bin_name}-{m['version']}-") + r"(.+)\.tar\.gz", mm["tarball"]["filename"])
+    if not match:
+        raise SystemExit(f"unexpected tarball name: {mm['tarball']['filename']}")
+    built_triples[match.group(1)] = (a, mm["tarball"])
 
 APPLE = "no macOS runner or SDK on this host; Darwin tarballs need a macOS builder"
 TRIPLES = [
@@ -183,8 +219,8 @@ def not_run(component, a, reason, target=None):
 
 
 for a, triple in TRIPLES:
-    if triple == native_triple:
-        ok("tarball", a, [m["tarball"]], triple)
+    if triple in built_triples:
+        ok("tarball", a, [built_triples[triple][1]], triple)
     elif "apple" in triple:
         not_run("tarball", a, APPLE, triple)
     else:
@@ -192,20 +228,49 @@ for a, triple in TRIPLES:
 
 arches = sorted({arch, "x86_64", "aarch64"})
 for a in arches:
-    if a == arch:
+    if a in manifests:
+        mm = manifests[a]
         ok("oci", a, [
-            {"filename": m["oci"]["archive"], "sha256": m["oci"]["sha256"]},
-            ref(m["oci"]["archive"].removesuffix(".tar") + ".digest"),
+            {"filename": mm["oci"]["archive"], "sha256": mm["oci"]["sha256"]},
+            ref(mm["oci"]["archive"].removesuffix(".tar") + ".digest"),
         ])
-        ok("sbom", a, [m["sbom"]["oci_spdx"], m["sbom"]["oci_cyclonedx"], m["sbom"]["cargo_spdx"],
-                       m["license_matrix"]])
-        ok("provenance", a, [m["provenance"]])
+        ok("sbom", a, [mm["sbom"]["oci_spdx"], mm["sbom"]["oci_cyclonedx"], mm["sbom"]["cargo_spdx"],
+                       mm["license_matrix"]])
+        ok("provenance", a, [mm["provenance"]])
     else:
         reason = secondary.get(a, "architecture not built on this host")
         for comp in ("oci", "sbom", "provenance"):
             not_run(comp, a, reason)
 
 ok("formula", "all", [ref(formula)])
+
+# The OCI image index (manifest list): one entry per built architecture, each
+# pinning the digest of the image manifest INSIDE that architecture's archive.
+if len(manifests) > 1:
+    import tarfile
+    PLATFORM = {"x86_64": "amd64", "aarch64": "arm64"}
+    entries = []
+    for a in sorted(manifests):
+        mm = manifests[a]
+        with tarfile.open(os.path.join(out, mm["oci"]["archive"])) as tf:
+            idx = json.load(tf.extractfile("index.json"))
+        if len(idx["manifests"]) != 1:
+            raise SystemExit(f"{a}: the OCI archive must hold exactly one image manifest")
+        d = idx["manifests"][0]
+        if d["digest"] != mm["oci"].get("archive_manifest_digest"):
+            raise SystemExit(f"{a}: manifest oci.archive_manifest_digest differs from the archive index")
+        entries.append({
+            "mediaType": d["mediaType"],
+            "digest": d["digest"],
+            "size": d["size"],
+            "platform": {"architecture": PLATFORM[a], "os": "linux"},
+        })
+    index_name = f"{bin_name}-{m['version']}-oci-index.json"
+    with open(os.path.join(out, index_name), "w", encoding="utf-8") as f:
+        json.dump({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
+                   "manifests": entries}, f, indent=2)
+        f.write("\n")
+    ok("oci_index", "all", [ref(index_name)])
 
 nr = [c for c in components if c["status"] == "NOT_RUN"]
 lines = [
@@ -252,7 +317,8 @@ bundle = {
         "key_mode": key_mode,
         "public_key": m["signing"]["public_key"],
         "fingerprint": m["signing"]["fingerprint"],
-        "signed_files": ["SHA256SUMS", bundle_name, arch_manifest],
+        "signed_files": ["SHA256SUMS", bundle_name, arch_manifest]
+        + [f"{bin_name}-{m['version']}-{a}.manifest.json" for a in extra_arches],
         "honest_limits": m["signing"]["honest_limits"],
     },
 }
@@ -266,7 +332,10 @@ PY
 (
   cd "$OUT_DIR"
   mapfile -t LISTED < <(awk '{print $2}' SHA256SUMS)
-  for extra in "$FORMULA_NAME" "$NOTES_NAME" "$BUNDLE_NAME"; do
+  INDEX_NAME="${BIN_NAME}-${VERSION}-oci-index.json"
+  EXTRAS=("$FORMULA_NAME" "$NOTES_NAME" "$BUNDLE_NAME")
+  [ -f "$INDEX_NAME" ] && EXTRAS+=("$INDEX_NAME")
+  for extra in "${EXTRAS[@]}"; do
     printf '%s\n' "${LISTED[@]}" | grep -qxF "$extra" || LISTED+=("$extra")
   done
   sha256sum "${LISTED[@]}" > SHA256SUMS.new

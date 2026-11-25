@@ -152,4 +152,51 @@ echo "$FORMULA_OUT" | grep -q "sha256 \"$SHA\"" || fail "formula sha256 does not
 echo "$FORMULA_OUT" | grep -q "version \"$VERSION\"" || fail "formula version does not match Cargo.toml"
 ok "Homebrew formula from the real manifest carries the real sha256"
 
+# --- Stage C: clean-room verification of the served assets (HSP-287) ---------
+#
+# The bundle is copied to an EMPTY directory outside the source tree and checked
+# from there with nothing but sha256sum/tar/python3: checksums, and the
+# correlation of every digest and architecture with the manifest.
+# (The second architecture is stage D, scripts/test-release-aarch64.sh.)
+
+echo "==> stage C: clean-room checksum and digest/architecture correlation"
+. "$ROOT/scripts/lib-clean-room.sh"
+clean_room_copy "$OUT" "$WORK/clean-room"
+case "$WORK/clean-room" in "$ROOT"/*) fail "the clean room is inside the source tree" ;; esac
+( cd "$WORK/clean-room" && "$ROOT/scripts/verify-oci-correlation.sh" "$WORK/clean-room" ) >"$WORK/correlation.log" 2>&1 \
+  || { cat "$WORK/correlation.log" >&2; fail "clean-room correlation failed on the real bundle"; }
+grep -q "^ok - $(uname -m): archive manifest sha256:" "$WORK/correlation.log" \
+  || fail "correlation output does not report the host architecture: $(cat "$WORK/correlation.log")"
+ok "clean room: sha256sum -c and digest/architecture correlation pass"
+
+# A byte appended to the OCI archive breaks the checksum.
+clean_room_copy "$OUT" "$WORK/clean-tamper"
+ARCHIVE_NAME="$(basename "$(ls "$WORK"/clean-tamper/*-oci.tar)")"
+echo x >> "$WORK/clean-tamper/$ARCHIVE_NAME"
+if "$ROOT/scripts/verify-oci-correlation.sh" "$WORK/clean-tamper" >"$WORK/tamper-c.log" 2>&1; then
+  fail "clean room accepted a tampered OCI archive"
+fi
+grep -q "FAILED" "$WORK/tamper-c.log" || fail "tampered archive rejected for an unexpected reason: $(cat "$WORK/tamper-c.log")"
+ok "clean room rejects a tampered OCI archive"
+
+# A manifest that claims the other architecture is rejected even when the
+# checksums are recomputed to match (the correlation, not the checksum, fails).
+clean_room_copy "$OUT" "$WORK/clean-mislabel"
+MANIFEST_NAME="$(basename "$(ls "$WORK"/clean-mislabel/*.manifest.json)")"
+python3 -I - "$WORK/clean-mislabel/$MANIFEST_NAME" <<'PY'
+import json, sys
+path = sys.argv[1]
+m = json.load(open(path))
+m["arch"] = "aarch64" if m["arch"] == "x86_64" else "x86_64"
+json.dump(m, open(path, "w"))
+PY
+( cd "$WORK/clean-mislabel" && sha256sum "$MANIFEST_NAME" > "$WORK/new.sum" \
+  && grep -v " $MANIFEST_NAME\$" SHA256SUMS > SHA256SUMS.new && cat "$WORK/new.sum" >> SHA256SUMS.new \
+  && mv SHA256SUMS.new SHA256SUMS )
+if "$ROOT/scripts/verify-oci-correlation.sh" "$WORK/clean-mislabel" >"$WORK/mislabel.log" 2>&1; then
+  fail "clean room accepted a manifest with the wrong architecture"
+fi
+grep -q "^error: " "$WORK/mislabel.log" || fail "mislabel rejected for an unexpected reason: $(cat "$WORK/mislabel.log")"
+ok "clean room rejects a manifest whose architecture does not match the image"
+
 echo "all $PASS checks passed"

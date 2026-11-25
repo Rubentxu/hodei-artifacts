@@ -20,6 +20,15 @@
 #   SHA256SUMS
 #   SHA256SUMS.asc
 #
+# Cross-architecture (HSP-287): `HODEI_OCI_ARCH=aarch64` builds the arm64
+# binary with cargo-zigbuild, the arm64 tarball and the `linux/arm64` image
+# (the base image is pulled for that platform; running it on an x86_64 host
+# needs a qemu-user binfmt handler). The image is tagged
+# `localhost/hodei-artifacts-api:<version>-aarch64` and `:latest` is never
+# moved off the host architecture. Files are named with that architecture, so
+# both architectures can share one output directory (scripts/release-bundle.sh
+# regenerates the shared SHA256SUMS and signs it).
+#
 # Usage: scripts/package-oci.sh [output-directory]
 
 set -euo pipefail
@@ -36,7 +45,13 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-ARCH="$(uname -m)"
+HOST_ARCH="$(uname -m)"
+ARCH="${HODEI_OCI_ARCH:-$HOST_ARCH}"
+case "$ARCH" in
+  x86_64) OCI_PLATFORM="linux/amd64" ;;
+  aarch64) OCI_PLATFORM="linux/arm64" ;;
+  *) echo "error: unsupported HODEI_OCI_ARCH: $ARCH (x86_64 or aarch64)" >&2; exit 1 ;;
+esac
 COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 SHORT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || echo 0)}"
@@ -68,8 +83,13 @@ run_syft() {
 # vendored OpenSSL so the runtime image needs no host-specific libssl.so.4.
 # Only the production API binary is built and staged for the OCI image
 # (no legacy migration binaries such as ensure-iam-index or ensure-graph-index).
-ZIG_TARGET="${OCI_RUST_TARGET:-x86_64-unknown-linux-gnu.2.36}"
+ZIG_TARGET="${OCI_RUST_TARGET:-${ARCH}-unknown-linux-gnu.2.36}"
 RUST_TRIPLE="${ZIG_TARGET%%.*}"
+
+if [ "$ARCH" != "$HOST_ARCH" ] && ! command -v cargo-zigbuild >/dev/null 2>&1; then
+  echo "error: building $ARCH on a $HOST_ARCH host needs cargo-zigbuild" >&2
+  exit 1
+fi
 
 if command -v cargo-zigbuild >/dev/null 2>&1; then
   echo "==> building portable release binary with cargo-zigbuild ($ZIG_TARGET)"
@@ -89,11 +109,18 @@ if [ ! -x "$BIN_DIR/$BIN_NAME" ]; then
 fi
 
 # Ensure the release tarball is also present in OUT_DIR for correlation.
-HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+if [ "$ARCH" = "$HOST_ARCH" ]; then
+  HOST_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+  PACKAGE_TARGET_ENV=""
+else
+  HOST_TRIPLE="${RUST_TRIPLE}"
+  PACKAGE_TARGET_ENV="$ZIG_TARGET"
+fi
 TARBALL_NAME="${BIN_NAME}-${VERSION}-${HOST_TRIPLE}.tar.gz"
 if [ ! -f "$OUT_DIR/$TARBALL_NAME" ] || [ ! -f "$OUT_DIR/${TARBALL_NAME}.sha256" ]; then
-  echo "==> building release tarball via scripts/package-release.sh"
-  SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" "$ROOT/scripts/package-release.sh" "$OUT_DIR"
+  echo "==> building release tarball via scripts/package-release.sh ($HOST_TRIPLE)"
+  SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" HODEI_PACKAGE_TARGET="$PACKAGE_TARGET_ENV" \
+    "$ROOT/scripts/package-release.sh" "$OUT_DIR"
 fi
 
 # Stage deterministic OCI build context containing ONLY hodei-artifacts-api + configs.
@@ -114,19 +141,24 @@ done
 
 find "$OCI_STAGE" -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +
 
-IMAGE_TAG="localhost/hodei-artifacts-api:${VERSION}"
-IMAGE_LATEST="localhost/hodei-artifacts-api:latest"
+if [ "$ARCH" = "$HOST_ARCH" ]; then
+  IMAGE_TAG="localhost/hodei-artifacts-api:${VERSION}"
+  TAG_ARGS=(-t "$IMAGE_TAG" -t "localhost/hodei-artifacts-api:latest")
+else
+  IMAGE_TAG="localhost/hodei-artifacts-api:${VERSION}-${ARCH}"
+  TAG_ARGS=(-t "$IMAGE_TAG")
+fi
 
-echo "==> building OCI image $IMAGE_TAG"
+echo "==> building OCI image $IMAGE_TAG ($OCI_PLATFORM)"
 "${PODMAN_CMD[@]}" build \
+  --platform "$OCI_PLATFORM" \
   --format oci \
   --timestamp "$SOURCE_DATE_EPOCH" \
   --build-arg "VERSION=$VERSION" \
   --build-arg "VCS_REF=$SHORT_COMMIT" \
   --build-arg "BUILD_DATE=$BUILD_DATE" \
   -f "$ROOT/Containerfile" \
-  -t "$IMAGE_TAG" \
-  -t "$IMAGE_LATEST" \
+  "${TAG_ARGS[@]}" \
   "$OCI_STAGE"
 
 PREFIX="${BIN_NAME}-${VERSION}-${ARCH}"
@@ -159,6 +191,27 @@ echo "==> exporting OCI archive $OCI_ARCHIVE"
 "${PODMAN_CMD[@]}" save --format oci-archive -o "$OCI_ARCHIVE" "$IMAGE_TAG"
 
 IMAGE_DIGEST="$("${PODMAN_CMD[@]}" inspect --format '{{.Digest}}' "$IMAGE_TAG")"
+
+# The digest of the image manifest INSIDE the archive (what a registry sees when
+# the archive is pushed) and the architecture of its config. `podman inspect`
+# reports the digest of the locally stored manifest, which can differ from the
+# exported one, so both are recorded and verified separately.
+read -r ARCHIVE_MANIFEST_DIGEST ARCHIVE_CONFIG_ARCH < <(python3 -I - "$OCI_ARCHIVE" <<'PY'
+import json
+import sys
+import tarfile
+
+with tarfile.open(sys.argv[1]) as tf:
+    index = json.load(tf.extractfile("index.json"))
+    if len(index["manifests"]) != 1:
+        raise SystemExit("the OCI archive must hold exactly one image manifest")
+    digest = index["manifests"][0]["digest"]
+    manifest = json.load(tf.extractfile("blobs/sha256/" + digest.split(":", 1)[1]))
+    config = json.load(tf.extractfile("blobs/sha256/" + manifest["config"]["digest"].split(":", 1)[1]))
+print(digest, config["architecture"])
+PY
+)
+[ -n "$ARCHIVE_MANIFEST_DIGEST" ] || { echo "error: could not read the archive manifest digest" >&2; exit 1; }
 printf '%s\n' "$IMAGE_DIGEST" > "$OCI_DIGEST_FILE"
 
 (
@@ -363,6 +416,9 @@ cat > "$MANIFEST_FILE" <<EOF
   "oci": {
     "image": "${IMAGE_TAG}",
     "digest": "${IMAGE_DIGEST}",
+    "archive_manifest_digest": "${ARCHIVE_MANIFEST_DIGEST}",
+    "archive_config_arch": "${ARCHIVE_CONFIG_ARCH}",
+    "platform": "${OCI_PLATFORM}",
     "archive": "${OCI_ARCHIVE_NAME}",
     "sha256": "${OCI_ARCHIVE_SHA256}",
     "binary_sha256": "${OCI_BIN_SHA256}",
