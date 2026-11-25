@@ -350,11 +350,17 @@ pipeline {
                         // Dgraph de mentira que cae y se recupera, la
                         // readiness depende del alpha y la liveness no.
                         "--test hsp237_graph_readiness",
-                        // El recorrido del perfil externo (HSP-237): con
-                        // HSP237_PROFILE_E2E=1 levanta con podman un Dgraph
-                        // de laboratorio y un S3 y mide la readiness al
-                        // pararlos; sin la variable se salta (exit 0).
+                        // El recorrido del perfil de grafo (HSP-237, HSP-292):
+                        // con HSP237_PROFILE_E2E=1 levanta con podman un
+                        // Dgraph real y un S3, arranca el binario en perfil
+                        // de grafo y mide la readiness al pararlos; sin la
+                        // variable se salta (exit 0; el script lo reporta
+                        // como NOT_RUN, exit 77).
                         "--test hsp237_profile_external_e2e",
+                        // El timeout HTTP de la readiness (HSP-292): un probe
+                        // que no contesta da 503 con timeout en menos de
+                        // 2,5 s, sin Dgraph ni S3.
+                        "--test hsp292_readiness_timeout",
                         "--test hsp121_helm_oci",
                         "--test hsp122_apt_client",
                         "--test hsp122_apt_e2e",
