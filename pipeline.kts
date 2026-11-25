@@ -267,6 +267,7 @@ pipeline {
                     "cargo test --workspace " + listOf(
                         "--test binary_contract",
                         "--test bootstrap_integration",
+                        "--test startup_errors",
                         "--test crash_recovery",
                         "--test distribution_contract",
                         "--test production_auth",
@@ -373,6 +374,10 @@ pipeline {
                         // Release verificable: SBOM SPDX/CycloneDX, provenance,
                         // matriz de licencias y firma OpenPGP (HSP-244).
                         "--test hsp244_verifiable_release",
+                        // Instalador y bundle de release verificable
+                        // (HSP-259, HSP-263): scripts contra tarballs reales.
+                        "--test hsp259_installer",
+                        "--test hsp263_release_bundle",
                         // Prueba contra Dgraph real (HSP-181): sin
                         // HODEI_GRAPH_IT_ENDPOINT la suite se salta a si
                         // misma (exit 0); con la variable corre los tres
