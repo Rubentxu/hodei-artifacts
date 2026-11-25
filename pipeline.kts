@@ -240,6 +240,8 @@ pipeline {
                         "--test hsp205_intents_dgraph_it",
                         "--test hsp206_dgraph_investigation_it",
                         "--test hsp208_simulation_dgraph_it",
+                        "--test hsp314_dgraph_risk_facts_it",
+                        "--test hsp314_graph_risk_facts_it",
                         "--test hsp220_drain_outbox_it",
                         "--test hsp314_surface_probe",
                     ).joinToString(" ") + " -- --test-threads=1"
