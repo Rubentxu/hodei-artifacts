@@ -224,6 +224,10 @@ description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation o
 # scripts/package-release.sh: `<name>-<version>-<target>.tar.gz`, whose single
 # top-level directory carries the binaries under `bin/`. Signature and SHA256
 # verification is the job of scripts/install.sh; binstall fetches the same asset.
+# HSP-314: the tarball carries `bin/hodei-artifacts-api` only. The legacy
+# operator tools (ensure-iam-index, ensure-graph-index, backfill-iam-scope,
+# hodei-recovery, perf_lab) are `required-features = ["legacy"]` and ship in
+# scripts/package-legacy-tools.sh's own archive, never in this one.
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
 bin-dir = "{ name }-{ version }-{ target }/bin/{ bin }{ binary-ext }"
@@ -866,11 +870,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp243_user_guides"
 path = "tests/hsp243_user_guides.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp259_installer"
-path = "tests/hsp259_installer.rs"
 required-features = ["legacy"]
 
 [[test]]

@@ -38,14 +38,17 @@ build_bundle() {
   local export_fprs=(${EXPORT_FPRS:-$FPR})
   rm -rf "$dir" "$WORK/pkg"
   mkdir -p "$dir" "$WORK/pkg/$PKG/bin" "$WORK/pkg/$PKG/config"
-  for b in hodei-artifacts-api ensure-iam-index ensure-graph-index; do
+  # HSP-314: the release ships the service alone (the legacy operator tools
+  # live in scripts/package-legacy-tools.sh); hodei-aux stands in for any
+  # extra file under bin/ so the multi-file install path stays covered.
+  for b in hodei-artifacts-api hodei-aux; do
     printf '#!/bin/sh\necho %s\n' "$b" > "$WORK/pkg/$PKG/bin/$b"
     chmod 0755 "$WORK/pkg/$PKG/bin/$b"
   done
   echo '[server]' > "$WORK/pkg/$PKG/config/default.toml"
   echo '[server]' > "$WORK/pkg/$PKG/config/release.toml"
   if [ -n "$evil" ]; then
-    tar -C "$WORK/pkg" -czf "$dir/$PKG.tar.gz" --transform "s|^$PKG/bin/ensure-iam-index|$evil|" "$PKG"
+    tar -C "$WORK/pkg" -czf "$dir/$PKG.tar.gz" --transform "s|^$PKG/bin/hodei-aux|$evil|" "$PKG"
   else
     tar -C "$WORK/pkg" -czf "$dir/$PKG.tar.gz" "$PKG"
   fi
@@ -80,7 +83,7 @@ expect_reject() { # <bundle> <label> <message-fragment> [extra args]
 # 1. Happy path (version detected from the local bundle).
 build_bundle "$WORK/good"
 run_install "$WORK/good" inst >/dev/null
-for b in hodei-artifacts-api ensure-iam-index ensure-graph-index; do
+for b in hodei-artifacts-api hodei-aux; do
   [ -x "$WORK/inst/bin/$b" ] || fail "binary not installed: $b"
 done
 [ -f "$WORK/inst/cfg/default.toml" ] || fail "configuration not initialised"
