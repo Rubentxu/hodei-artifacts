@@ -342,7 +342,12 @@ pipeline {
                         "--test hsp235_rpm_proxy",
                         // Los formatos adicionales: mirror y registry de
                         // Terraform, Conan, Ansible Galaxy y Hugging Face.
-                        // Los clientes reales se saltan sin su herramienta.
+                        // Los clientes reales (terraform, conan,
+                        // ansible-galaxy, hf) NO se saltan: la suite hace
+                        // assert de que la herramienta existe y falla si
+                        // falta. El mirror de Terraform se prueba por
+                        // protocolo (curl y un upstream falso), no con el
+                        // cliente terraform.
                         "--test hsp157_terraform_mirror",
                         "--test hsp296_formats_audit",
                         "--test hsp297_format_prefixes",
