@@ -39,7 +39,6 @@ members = [
 exclude = [
     "crates/artifact",
     "crates/distribution",
-    "crates/policies",
     "crates/repository",
     "crates/search",
     "crates/security",
