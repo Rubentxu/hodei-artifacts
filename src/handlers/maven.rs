@@ -546,7 +546,7 @@ fn respond_derived(
 /// una version que el repositorio no admite no se pide al upstream. Lo que
 /// no es un fichero ni unos metadatos de version se deja pasar: el proxy no
 /// inventa reglas sobre rutas que no entiende.
-pub(super) fn admits_path(
+pub(crate) fn admits_path(
     repository: &RepositoryDescriptor,
     asset_path: &str,
 ) -> Result<bool, RawApiError> {

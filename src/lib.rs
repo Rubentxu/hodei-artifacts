@@ -44,6 +44,7 @@ pub mod readiness;
 pub mod recovery;
 pub mod repository;
 pub mod repository_surreal;
+pub mod resolution;
 pub mod risk_facts;
 pub mod router;
 pub mod trust;
