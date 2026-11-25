@@ -18,6 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hodei_artifacts_api::evidence::{EvidenceReader, EvidenceStoreError};
 use hodei_artifacts_api::evidence_dgraph::DgraphEvidenceReader;
+use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap};
 use hodei_evidence::{EvidenceId, EvidenceRecord, EvidenceStore, EvidenceType, SourceRef};
 use hodei_evidence_storage::DgraphEvidenceStore;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
@@ -212,4 +213,66 @@ async fn a_failing_store_is_an_error_never_an_empty_list() {
         Err(EvidenceStoreError::Unavailable(_)) => {}
         other => panic!("an unreachable alpha must be Unavailable, got {other:?}"),
     }
+}
+
+/// The real `bootstrap` over a `[graph]` configuration wires the Dgraph
+/// reader: the state it returns reads the seeded evidence, answers empty for
+/// a subject or account without evidence, and does not behave like the
+/// `EmptyEvidenceReader` the profile had before.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_graph_profile_bootstrap_wires_the_evidence_reader() {
+    let Ok(endpoint) = std::env::var("HODEI_GRAPH_IT_ENDPOINT") else {
+        eprintln!("SKIP: HODEI_GRAPH_IT_ENDPOINT is not set");
+        return;
+    };
+    let mut config = AppConfig {
+        graph: Some(config_for(&endpoint)),
+        ..AppConfig::default()
+    };
+    let content = tempfile::tempdir().expect("temp dir");
+    config.content.cas_path = content.path().join("cas").to_string_lossy().into_owned();
+    let state = bootstrap(
+        &config,
+        BootstrapConfig {
+            register_iam_schema: false,
+            schema_version: None,
+            validate_schemas: false,
+        },
+    )
+    .await
+    .expect("the graph profile boots");
+
+    let client = connect_to(&endpoint).await;
+    let store = DgraphEvidenceStore::open(client)
+        .await
+        .expect("the evidence store opens");
+    let tag = nonce();
+    let acme = format!("boot{tag}");
+    let subject = subject_of(&acme, "app");
+    let record = evidence(&format!("ev-boot-{tag}"), &acme, vec![subject.clone()]);
+    store.put(record.clone()).await.expect("evidence is stored");
+
+    let reader = state.evidence_reader();
+    assert_eq!(
+        reader
+            .evidence_of_subject(&acme, &subject)
+            .await
+            .expect("the wired reader answers"),
+        vec![record],
+        "the bootstrapped state reads the seeded evidence"
+    );
+    assert!(
+        reader
+            .evidence_of_subject(&acme, &subject_of(&acme, "none"))
+            .await
+            .expect("answers")
+            .is_empty()
+    );
+    assert!(
+        reader
+            .evidence_of_subject(&format!("x{acme}"), &subject)
+            .await
+            .expect("answers")
+            .is_empty()
+    );
 }

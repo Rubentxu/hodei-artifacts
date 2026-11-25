@@ -487,6 +487,11 @@ impl AppState {
         self
     }
 
+    /// The reader of the accepted evidence the capsule is assembled from.
+    pub fn evidence_reader(&self) -> Arc<dyn EvidenceReader> {
+        self.evidence_reader.clone()
+    }
+
     /// The reader of the risk facts the promotion decides with.
     pub fn risk_facts_reader(&self) -> Arc<dyn hodei_risk_storage::subject_risk::RiskFactsReader> {
         self.risk_facts.clone()
