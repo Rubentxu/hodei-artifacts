@@ -96,6 +96,37 @@ se firmó con la clave efímera (`signing.key_mode = "ephemeral-local"`), la
 firma solo da integridad del conjunto, y el manifiesto lo declara en
 `signing.honest_limits`.
 
+### 1.4 Verificación desde una máquina limpia y segunda arquitectura
+
+`scripts/verify-oci-correlation.sh <directorio>` se ejecuta sobre un
+directorio que solo contiene los activos servidos (fuera del árbol fuente) y
+comprueba, con `sha256sum -c`, `tar` y `python3`:
+
+- los checksums de `SHA256SUMS`;
+- que el archivo OCI de cada arquitectura contiene exactamente un manifiesto de
+  imagen cuyo digest es `oci.archive_manifest_digest`, y que su configuración
+  (`architecture`/`os`) es la que declara el manifiesto, el nombre del tarball,
+  `oci.platform`, el fichero `.digest` y la provenance;
+- cuando hay varias arquitecturas, que el índice OCI
+  (`*-oci-index.json`, lista de manifiestos) fija exactamente los digests de
+  los archivos por arquitectura, con su `platform.architecture`.
+
+`oci.digest` es el digest que Podman guarda localmente; puede diferir del que
+ve un registro al subir el archivo, por eso el manifiesto registra además
+`oci.archive_manifest_digest`.
+
+`scripts/test-release-integration.sh` (etapa C) ejecuta esa verificación sobre
+el bundle real en un directorio vacío, y comprueba que rechaza un archivo
+alterado y un manifiesto con otra arquitectura.
+
+La segunda arquitectura se construye con `RELEASE_BUNDLE_EXTRA_ARCHES=aarch64
+scripts/release-bundle.sh` (cross-compilación con `cargo-zigbuild` e imagen
+`linux/arm64`; ejecutarla en un host x86_64 exige un manejador binfmt de
+`qemu-aarch64`). Sin esa variable, `aarch64` queda como `NOT_RUN` con su
+motivo. `scripts/test-release-aarch64.sh` (opt-in con `HODEI_TEST_AARCH64=1`,
+sale con 77 si falta algo) lo construye y verifica de extremo a extremo, y
+arranca la imagen arm64 bajo emulación. Tarda decenas de minutos en frío.
+
 ## 2. Claves de firma del release
 
 `scripts/package-oci.sh` firma `SHA256SUMS` y el manifiesto con GnuPG
