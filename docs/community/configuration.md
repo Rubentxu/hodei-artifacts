@@ -229,6 +229,57 @@ vacío. Si no, el arranque falla.
 | `public_base_url` | ninguna | URL pública del despliegue, la que el registro comunica a sus clientes. |
 | `trusted_proxies` | `[]` | Direcciones (`10.0.0.1`) o redes (`10.0.0.0/8`) de los proxys inversos cuyas cabeceras `Forwarded` se aceptan. Vacía = se ignoran. |
 
+### 5.8 `[graph]`
+
+La sección `[graph]` declara la **autoridad del grafo**: el Alpha de Dgraph
+que el servicio lee y escribe por gRPC. Es opcional (`AppConfig.graph` es un
+`Option`). El perfil de ejemplo es
+[`config/dgraph.toml`](../../config/dgraph.toml) (`RUN_MODE=dgraph`); la
+validación estructural vive en `crates/hodei-graph-client/src/config.rs`.
+
+No hay *fallbacks* implícitos: sin `endpoint` no se prueba `localhost`, con TLS
+sin CA no se confía en el almacén del sistema y con credenciales incompletas no
+se entra como anónimo. Todo lo que no se declara es un error tipado.
+
+| Clave | Por defecto | Variable de entorno | Qué hace |
+| --- | --- | --- | --- |
+| `graph.endpoint` | obligatoria | `HODEI_GRAPH__ENDPOINT` | `host:port` del gRPC del Alpha, **sin esquema** (`https://...` se rechaza) y con puerto explícito entre 1 y 65535. Si TLS se usa o no lo decide `graph.tls.enabled`, no el texto del endpoint. |
+| `graph.tls.enabled` | obligatoria | `HODEI_GRAPH__TLS__ENABLED` | Si la conexión usa TLS. `false` es una decisión escrita, nunca un defecto. La tabla `[graph.tls]` es obligatoria aunque sea plana. |
+| `graph.tls.ca_cert_path` | ninguna | `HODEI_GRAPH__TLS__CA_CERT_PATH` | CA raíz en PEM que firmó el certificado del servidor. **Obligatoria si `enabled = true`**: el clúster Dgraph emite su propia CA. |
+| `graph.tls.client_cert_path` | ninguna | `HODEI_GRAPH__TLS__CLIENT_CERT_PATH` | Certificado de cliente para TLS mutuo. Exige `client_key_path`. |
+| `graph.tls.client_key_path` | ninguna | `HODEI_GRAPH__TLS__CLIENT_KEY_PATH` | Clave de cliente para TLS mutuo. Exige `client_cert_path`. |
+| `graph.tls.server_name` | ninguna | `HODEI_GRAPH__TLS__SERVER_NAME` | Nombre DNS con el que se verifica el certificado, para cuando el Alpha se alcanza por dirección pero el certificado se emitió para el nombre del nodo (`dgraph cert --nodes ...`). Sin él se verifica contra el host del endpoint. |
+| `graph.credentials.userid` | ninguna | `HODEI_GRAPH__CREDENTIALS__USERID` | Usuario ACL (por ejemplo `groot`). No puede estar vacío. |
+| `graph.credentials.password` | ninguna | `HODEI_GRAPH__CREDENTIALS__PASSWORD` | Contraseña ACL. No puede estar vacía; el `Debug` y la serialización la ocultan (`[REDACTED]`). Inyéctala por entorno, no en el fichero. |
+| `graph.connect_timeout_ms` | `5000` | `HODEI_GRAPH__CONNECT_TIMEOUT_MS` | Cota del *handshake* TCP/TLS/HTTP2. `0` se rechaza. |
+| `graph.request_timeout_ms` | `10000` | `HODEI_GRAPH__REQUEST_TIMEOUT_MS` | Cota de cada RPC (login, comprobación de salud, consulta DQL). `0` se rechaza. |
+| `graph.namespace` | `0` | `HODEI_GRAPH__NAMESPACE` | Namespace ACL del login. `0` es el namespace guardián de un clúster Dgraph estándar. Es una clave de `[graph]`, no de `[graph.credentials]`. |
+
+`graph.credentials` es opcional, pero si se declara el par debe estar
+completo (`userid` y `password`). Sin él, el cliente no intenta ningún login y
+toda llamada autenticada falla de forma explícita si el servidor lo exige.
+
+#### Incompatibilidad con el motor embebido
+
+Con `[graph]` presente, el grafo es la **única autoridad** y el motor embebido
+(SurrealDB sobre RocksDB) se **rechaza**; sin `[graph]`, el servicio corre sobre
+el motor embebido como siempre. No hay *fallback* entre ambas autoridades:
+metadatos que viven en dos sitios son metadatos en los que ninguna
+restauración se puede confiar.
+
+- Si `[graph]` está presente y `database.db_type = "rocksdb"`, el arranque
+  termina con este error (extraído de `DatabaseConfig::validate_without_engine`):
+
+  ```text
+  the Dgraph profile refuses the embedded RocksDB engine: [graph] declares the authority, so [database] db_type = "rocksdb" would claim a second one. There is no fallback between the two authorities (HSP-209)
+  ```
+
+- Con `[graph]` presente no se valida ni se prepara `[rocksdb]`: su ruta no se
+  crea, no se abre y no se toca. El resto de claves de `[database]`
+  (`namespace`, `database`, `pool_size`) se siguen validando.
+- Si `[graph]` es inválido (por ejemplo, endpoint con esquema o TLS sin CA), el
+  arranque falla con el error tipado del cliente de grafo, sin conectarse.
+
 ## 6. Perfiles: laboratorio frente a producción
 
 | Aspecto | Laboratorio | Producción |
