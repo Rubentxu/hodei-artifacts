@@ -242,6 +242,7 @@ pipeline {
                         "--test hsp208_simulation_dgraph_it",
                         "--test hsp314_dgraph_risk_facts_it",
                         "--test hsp314_graph_risk_facts_it",
+                        "--test hsp314_graph_evidence_reader_it",
                         "--test hsp220_drain_outbox_it",
                         "--test hsp314_surface_probe",
                     ).joinToString(" ") + " -- --test-threads=1"
