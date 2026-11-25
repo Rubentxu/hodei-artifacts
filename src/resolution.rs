@@ -1275,6 +1275,9 @@ pub(crate) fn hex_of(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
+// The three decision tests bootstrap the embedded engine and run only with
+// `legacy`; their helpers are unused in the default build (HSP-314 F2).
+#[cfg_attr(not(feature = "legacy"), allow(dead_code, unused_imports))]
 mod tests {
     use std::sync::Arc;
 
@@ -1290,28 +1293,37 @@ mod tests {
     };
     use kernel::Hrn as CanonicalHrn;
 
-    use super::{
-        CacheStatus, ResolutionError, ResolutionOrigin, authorize_repository, the_publication_error,
-    };
+    #[cfg(feature = "legacy")]
+    use super::authorize_repository;
+    use super::{CacheStatus, ResolutionError, ResolutionOrigin, the_publication_error};
+    #[cfg(feature = "legacy")]
     use crate::authorization::{AuthorizeResourceUseCase, AuthorizerPort};
+    #[cfg(feature = "legacy")]
     use crate::bootstrap::{BootstrapConfig, bootstrap};
+    #[cfg(feature = "legacy")]
     use crate::config::AppConfig;
 
+    #[cfg(feature = "legacy")]
     struct PermitAuthorizer;
+    #[cfg(feature = "legacy")]
     impl AuthorizerPort for PermitAuthorizer {
         fn authorize(&self, _request: &AuthorizationRequest) -> AuthorizationOutcome {
             AuthorizationOutcome::Permit
         }
     }
 
+    #[cfg(feature = "legacy")]
     struct DenyAuthorizer;
+    #[cfg(feature = "legacy")]
     impl AuthorizerPort for DenyAuthorizer {
         fn authorize(&self, _request: &AuthorizationRequest) -> AuthorizationOutcome {
             AuthorizationOutcome::Deny(DenyReason::NoMatchingPolicy)
         }
     }
 
+    #[cfg(feature = "legacy")]
     struct IndeterminateAuthorizer;
+    #[cfg(feature = "legacy")]
     impl AuthorizerPort for IndeterminateAuthorizer {
         fn authorize(&self, _request: &AuthorizationRequest) -> AuthorizationOutcome {
             AuthorizationOutcome::Indeterminate(IndeterminateReason::EvaluationError)
@@ -1359,6 +1371,8 @@ mod tests {
         }
     }
 
+    // The state is bootstrapped on the embedded engine: legacy only (HSP-314 F2).
+    #[cfg(feature = "legacy")]
     async fn test_state(
         authorizer: Arc<dyn AuthorizerPort>,
     ) -> (tempfile::TempDir, crate::AppState) {
@@ -1383,6 +1397,7 @@ mod tests {
         (dir, state)
     }
 
+    #[cfg(feature = "legacy")]
     #[tokio::test]
     async fn permit_decision_carries_policy_revision_and_outcome() {
         let (_dir, state) = test_state(Arc::new(PermitAuthorizer)).await;
@@ -1402,6 +1417,7 @@ mod tests {
         assert_eq!(decision.action, crate::actions::download_asset());
     }
 
+    #[cfg(feature = "legacy")]
     #[tokio::test]
     async fn deny_decision_never_degrades_to_not_found() {
         let (_dir, state) = test_state(Arc::new(DenyAuthorizer)).await;
@@ -1420,6 +1436,7 @@ mod tests {
         assert_eq!(error.the_verdict().0, StatusCode::FORBIDDEN);
     }
 
+    #[cfg(feature = "legacy")]
     #[tokio::test]
     async fn indeterminate_decision_never_degrades_to_not_found() {
         let (_dir, state) = test_state(Arc::new(IndeterminateAuthorizer)).await;
