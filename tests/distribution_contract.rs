@@ -20,10 +20,9 @@
 //!   boots with a configuration nobody asked for is worse than one that
 //!   refuses to boot.
 //!
-//! HSP-314 F2: this target runs on the default (productive) build. P4, the
-//! boot of the unpacked distribution on the embedded profile, needs `legacy`
-//! and lives in `distribution_contract_embedded`; the boot of the distribution
-//! on the graph profile is covered against a real Dgraph by `hsp237`.
+//! HSP-314 F2: this target runs on the default (productive) build. The boot
+//! of the unpacked distribution on the graph profile is covered against a
+//! real Dgraph by `hsp237`.
 //!
 //! Each test owns a throwaway directory and binds an ephemeral port, so no
 //! state and no port is shared.

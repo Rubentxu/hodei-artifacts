@@ -7,9 +7,7 @@
 //!
 //! HSP-314 F2: these run on the graph profile (`RUN_MODE=dgraph`), the
 //! productive one, so they need no `legacy` feature. Every diagnostic here is
-//! raised before the Alpha is contacted, which is why no Dgraph is needed: the
-//! checks that only fire once the metadata authority is open live in
-//! `tests/startup_errors_embedded.rs`.
+//! raised before the Alpha is contacted, which is why no Dgraph is needed.
 
 use std::process::Command;
 

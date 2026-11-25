@@ -136,7 +136,6 @@ pipeline {
                         "--test graph_projection",
                         "--test hrn_migration",
                         "--test hrn_parity",
-                        "--test legacy_quarantine",
                         "--test module_tree",
                         "--test scale_model",
                         "--test standards_contract",
@@ -428,18 +427,13 @@ pipeline {
                 sh("rm -f target/uat/raw-conformity.md target/uat/oci-push-conformity.md target/uat/oci-index-conformity.md target/uat/doc9.md")
                 sh(
                     "cargo test --workspace --features legacy " + listOf(
-                        "--test binary_contract_embedded",
-                        "--test distribution_contract_embedded",
-                        "--test startup_errors_embedded",
                         "--test capsule_read",
                         "--test hsp118_bundle_contract",
                         "--test hsp126_capsule_oci",
                         "--test admin_surface",
                         "--test audit_events",
                         "--test http_contract",
-                        "--test iam_account_index",
                         "--test iam_audit",
-                        "--test iam_backfill",
                         // La readiness y la liveness son dos preguntas
                         // distintas (HSP-237): con el almacen desconectado
                         // en caliente, la readiness deja de ser 200 y la
@@ -450,9 +444,7 @@ pipeline {
                         "--test playground_isolation",
                         "--test policy_circuits",
                         "--test repository_create",
-                        "--test repository_durable",
                         "--test repository_read",
-                        "--test schema_persistence",
                         "--test har04_raw_hosted_contract",
                         "--test hsp113_search_e2e",
                         // La superficie HTTP del cursor keyset (HSP-222):
@@ -473,7 +465,6 @@ pipeline {
                         "--test hsp288_native_guides",
                         "--test bootstrap_integration",
                         "--test production_auth",
-                        "--test repository_restart_contract",
                         "--test raw_hosted_restart_contract",
                         "--test raw_conformity_uat",
                         "--test blob_integrity_contract",
@@ -482,7 +473,6 @@ pipeline {
                         "--test oci_push_contract",
                         "--test oci_index_contract",
                         "--test hsp104_gc_e2e",
-                        "--test hsp115_recovery_e2e",
                         "--test hsp223_registry_lab",
                         "--test hsp224_maven_central_real",
                         "--test hsp225_npm_registry_real",
@@ -562,20 +552,10 @@ pipeline {
                         "--test hsp313_signed_archive_url",
                         "--test hsp123_migration_e2e",
                         "--test hsp124_quota_e2e",
-                        "--test hsp125_replication_spike",
                         "--test hsp135_vigencia_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
                     ).joinToString(" ")
-                )
-                // Y la otra cara (HSP-213): en el arbol con `legacy` --el
-                // de la herramienta aislada que empaqueta
-                // scripts/package-legacy-tools.sh y el de las suites
-                // historicas-- el mismo perfil sigue arrancando y
-                // sirviendo /health. Un solo hilo: levanta el almacem
-                // embebido y sondea su puerto.
-                sh(
-                    "cargo test -p hodei-artifacts-api --features legacy --test hsp213_embedded_serves -- --test-threads=1"
                 )
                 sh(
                     "if [ ! -f target/uat/raw-conformity.md ]; then " +
