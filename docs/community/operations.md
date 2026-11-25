@@ -69,6 +69,22 @@ La ruta de éxito con un release completo la ejercita
 que invoca este script; **no se repitió a mano** en esta documentación porque
 construir un release exige `podman` y `syft`.
 
+Para anclar la identidad del firmante, pasa la huella completa que te
+comunicó el mantenedor por una vía independiente:
+
+```bash
+scripts/verify-release.sh --require-bundle \
+  --trusted-fingerprint <huella-completa-de-40-o-64-hex> <directorio-dist>
+```
+
+Con esta opción, la clave empaquetada `release-signing-key.asc` debe tener
+exactamente esa huella primaria (se ignoran mayúsculas y espacios); si no,
+el script falla con `does not match --trusted-fingerprint`. Sin la opción, un
+release re-firmado de forma coherente con una clave ajena sigue pasando, porque
+solo se comprueba integridad. En modo bundle, además, `mechanism`, `key_mode` y
+`fingerprint` de cada manifiesto por arquitectura deben coincidir con los de
+`release-bundle.json`.
+
 ### 1.3 Qué prueba la firma y qué no
 
 La clave pública viaja **dentro** del release. La firma prueba que los
@@ -94,6 +110,12 @@ firma solo da integridad del conjunto, y el manifiesto lo declara en
 RELEASE_GPG_HOME=/ruta/al/llavero RELEASE_GPG_KEY_ID=<huella> \
   scripts/package-oci.sh [directorio-de-salida]
 ```
+
+Cuando `scripts/release-bundle.sh` orquesta el release, comparte su clave con
+`scripts/package-oci.sh` y le indica el origen real mediante
+`RELEASE_SIGNING_KEY_MODE` (`ephemeral-local` u `operator-keyring`), de modo
+que el manifiesto por arquitectura y `release-bundle.json` declaran el mismo
+modo.
 
 El script exporta la clave pública activa a `release-signing-key.asc`, y la
 huella y el hash de esa clave quedan en el manifiesto.

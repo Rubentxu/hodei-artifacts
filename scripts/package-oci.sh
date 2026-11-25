@@ -316,7 +316,13 @@ trap cleanup_gpg EXIT
 if [ -n "${RELEASE_GPG_HOME:-}" ] && [ -n "${RELEASE_GPG_KEY_ID:-}" ]; then
   GPG_HOME="$RELEASE_GPG_HOME"
   GPG_KEY_ID="$RELEASE_GPG_KEY_ID"
-  SIGNING_KEY_MODE="operator-keyring"
+  # scripts/release-bundle.sh hands its own (possibly ephemeral) key over through
+  # RELEASE_GPG_*; it declares the real origin of that key so the manifest never
+  # claims an operator keyring for a throwaway key.
+  case "${RELEASE_SIGNING_KEY_MODE:-operator-keyring}" in
+    operator-keyring|ephemeral-local) SIGNING_KEY_MODE="${RELEASE_SIGNING_KEY_MODE:-operator-keyring}" ;;
+    *) echo "error: unsupported RELEASE_SIGNING_KEY_MODE: ${RELEASE_SIGNING_KEY_MODE}" >&2; exit 1 ;;
+  esac
 else
   EPHEMERAL_GPG_DIR="$(mktemp -d)"
   GPG_HOME="$EPHEMERAL_GPG_DIR/gpghome"

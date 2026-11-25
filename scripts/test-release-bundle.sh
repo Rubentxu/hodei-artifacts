@@ -56,7 +56,7 @@ printf '{"bomFormat":"CycloneDX","components":[{"name":"a"}]}\n' > $OCI.cdx.json
 printf '{"total_packages":3,"surrealdb_status":{"present_in_cargo_toml":true}}\n' > $OCI-licenses.json
 sha() { sha256sum "\$1" | cut -d' ' -f1; }
 python3 -I - <<PY
-import json, hashlib
+import json, hashlib, os
 def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
 subjects = [{"name": n, "digest": {"sha256": sha(n)}} for n in ("$TARBALL", "$OCI.tar")]
 json.dump({"_type": "https://in-toto.io/Statement/v1", "subject": subjects,
@@ -72,8 +72,9 @@ json.dump({"name": "$BIN", "version": "$VERSION", "commit": "$COMMIT", "arch": "
                     "cargo_spdx": ref("$ARCH-cargo.spdx.json")},
            "license_matrix": ref("$OCI-licenses.json"),
            "provenance": ref("$ARCH.provenance.json"),
-           "signing": {"mechanism": "openpgp-detached", "key_mode": "operator-keyring",
-                       "public_key": "release-signing-key.asc", "fingerprint": "x",
+           "signing": {"mechanism": "openpgp-detached", "key_mode": os.environ["RELEASE_SIGNING_KEY_MODE"],
+                       "public_key": "release-signing-key.asc",
+                       "fingerprint": os.environ["RELEASE_GPG_KEY_ID"],
                        "honest_limits": "stub"}},
           open("$MANIFEST", "w"))
 PY
@@ -158,20 +159,23 @@ expect_reject "tampered public key" m_key
 # 5. A NOT_RUN without reason or a false-green claim is rejected even when the
 #    forger re-signs everything with a key of their own (logic checks, not only
 #    cryptography).
-forge() { # <label> <python-mutation-of-b> <expected-message-fragment>
-  local label="$1" py="$2" frag="$3" out d="$WORK/f-${1// /_}"
+build_forgery() { # <dir> <python-mutation of b (bundle) and mf (arch manifest)>
+  local d="$1" py="$2"
   rm -rf "$d"; cp -r "$DIST" "$d"
   export GNUPGHOME="$WORK/forger"; rm -rf "$GNUPGHOME"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
   gpg --batch --quiet --passphrase '' --quick-generate-key "forger <f@example.invalid>" ed25519 sign never 2>/dev/null
   gpg --batch --quiet --armor --export > "$d/release-signing-key.asc"
-  python3 -I - "$d" "$py" <<'PY'
+  FORGER_FPR="$(gpg --with-colons --list-secret-keys | awk -F: '/^fpr:/ {print $10; exit}')"
+  export FORGER_FPR
+  python3 -I - "$d" "$py" "$MANIFEST" <<'PY'
 import hashlib, json, os, sys
-d = sys.argv[1]; p = os.path.join(d, "release-bundle.json")
-b = json.load(open(p)); exec(sys.argv[2])
+d = sys.argv[1]; p = os.path.join(d, "release-bundle.json"); mp = os.path.join(d, sys.argv[3])
+b = json.load(open(p)); mf = json.load(open(mp)); fpr = os.environ["FORGER_FPR"]
+exec(sys.argv[2])
 # The forger also keeps the key reference consistent with the swapped key.
 key = next(c for c in b["components"] if c["component"] == "signing")["files"][0]
 key["sha256"] = hashlib.sha256(open(os.path.join(d, "release-signing-key.asc"), "rb").read()).hexdigest()
-json.dump(b, open(p, "w"))
+json.dump(b, open(p, "w")); json.dump(mf, open(mp, "w"))
 PY
   ( cd "$d" && mapfile -t names < <(awk '{print $2}' SHA256SUMS) \
     && sha256sum "${names[@]}" > SHA256SUMS.new && mv SHA256SUMS.new SHA256SUMS )
@@ -179,6 +183,10 @@ PY
   gpg --batch --quiet --yes --armor --detach-sign -o "$d/release-bundle.json.asc" "$d/release-bundle.json"
   gpg --batch --quiet --yes --armor --detach-sign -o "$d/$MANIFEST.asc" "$d/$MANIFEST"
   unset GNUPGHOME
+}
+forge() { # <label> <python-mutation> <expected-message-fragment>
+  local label="$1" py="$2" frag="$3" out d="$WORK/f-${1// /_}"
+  build_forgery "$d" "$py"
   if out="$("$VERIFY" --require-bundle "$d" 2>&1)"; then fail "accepted forged bundle: $label"; fi
   echo "$out" | grep -q "$frag" || fail "forged $label rejected for the wrong reason: $out"
   ok "rejects re-signed bundle: $label"
@@ -187,5 +195,47 @@ forge "NOT_RUN without reason" 'next(c for c in b["components"] if c["status"]==
 forge "complete claimed with NOT_RUN" 'b["status"]="complete"' "claims complete"
 forge "unknown status value" 'next(c for c in b["components"] if c["status"]=="NOT_RUN")["status"]="SKIPPED"' "unknown status"
 forge "native OCI downgraded to NOT_RUN" 'c=next(c for c in b["components"] if c["component"]=="oci" and c["status"]=="ok"); c["status"]="NOT_RUN"; c["reason"]="x"; del c["files"]' "no architecture with a built OCI"
+
+# 6. Signing identity (HSP-267). Without RELEASE_GPG_* the bundle is signed with
+#    an ephemeral key: the per-architecture manifest must say so, in agreement
+#    with the bundle, and never claim an operator keyring.
+python3 -I - "$DIST" "$MANIFEST" <<'PY' || fail "key_mode of the ephemeral release"
+import json, os, sys
+d = sys.argv[1]
+b = json.load(open(os.path.join(d, "release-bundle.json")))["signing"]
+m = json.load(open(os.path.join(d, sys.argv[2])))["signing"]
+assert b["key_mode"] == "ephemeral-local", b
+for f in ("mechanism", "key_mode", "fingerprint"):
+    assert m[f] == b[f], (f, m[f], b[f])
+PY
+ok "ephemeral release declares key_mode=ephemeral-local in the manifest and the bundle"
+
+forge "key_mode altered only in the bundle" 'b["signing"]["key_mode"]="operator-keyring"' "signing key_mode mismatch"
+forge "key_mode altered only in the manifest" 'mf["signing"]["key_mode"]="operator-keyring"' "signing key_mode mismatch"
+forge "mechanism altered only in the manifest" 'mf["signing"]["mechanism"]="openpgp-other"' "signing mechanism mismatch"
+forge "fingerprint altered only in the bundle" 'b["signing"]["fingerprint"]="ABCDEF"' "signing fingerprint mismatch"
+
+# 7. Pinning the signer: a release re-signed coherently with a foreign key (same
+#    fingerprint in manifest and bundle) passes without the option and fails with it.
+COHERENT='b["signing"]["fingerprint"]=fpr; mf["signing"]["fingerprint"]=fpr'
+build_forgery "$WORK/f-coherent" "$COHERENT"
+"$VERIFY" --require-bundle "$WORK/f-coherent" >/dev/null 2>&1 \
+  || fail "coherent foreign-key release should pass without --trusted-fingerprint"
+ok "coherent foreign-key release passes without --trusted-fingerprint (integrity only)"
+REAL_FPR="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["signing"]["fingerprint"])' "$DIST/release-bundle.json")"
+if out="$("$VERIFY" --require-bundle --trusted-fingerprint "$REAL_FPR" "$WORK/f-coherent" 2>&1)"; then
+  fail "accepted foreign-key release despite --trusted-fingerprint"
+fi
+echo "$out" | grep -q "does not match --trusted-fingerprint" || fail "wrong rejection reason: $out"
+ok "--trusted-fingerprint rejects a coherent foreign-key release"
+"$VERIFY" --require-bundle --trusted-fingerprint "$REAL_FPR" "$DIST" >/dev/null 2>&1 \
+  || fail "genuine release rejected with its own fingerprint"
+"$VERIFY" --require-bundle --trusted-fingerprint "$(echo "$REAL_FPR" | tr 'A-F' 'a-f')" "$DIST" >/dev/null 2>&1 \
+  || fail "fingerprint comparison must be case-insensitive"
+ok "--trusted-fingerprint accepts the genuine release"
+if "$VERIFY" --require-bundle --trusted-fingerprint ABCD "$DIST" >/dev/null 2>&1; then
+  fail "accepted a short --trusted-fingerprint"
+fi
+ok "--trusted-fingerprint requires a full fingerprint"
 
 echo "all $PASS checks passed"

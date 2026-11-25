@@ -82,6 +82,8 @@ KEY
   export RELEASE_GPG_KEY_ID
   SIGNING_KEY_MODE="ephemeral-local"
 fi
+# Tell the stages the true origin of the shared key (they only see RELEASE_GPG_*).
+export RELEASE_SIGNING_KEY_MODE="$SIGNING_KEY_MODE"
 
 # --- Stages -------------------------------------------------------------------
 
