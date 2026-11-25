@@ -117,10 +117,7 @@ fn run_block(block: &str, dir: &Path, port: u16, token: &str) -> (bool, String) 
         .ok()
         .filter(|o| o.status.success())
     {
-        command.env(
-            "PYTHONPATH",
-            String::from_utf8_lossy(&site.stdout).trim(),
-        );
+        command.env("PYTHONPATH", String::from_utf8_lossy(&site.stdout).trim());
     }
     let output = command.output().expect("bash runs");
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
