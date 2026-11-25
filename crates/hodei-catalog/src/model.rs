@@ -54,6 +54,40 @@ pub enum RepositoryFormat {
     Apt,
     /// RPM, con creación de repositorios.
     Rpm,
+    /// Terraform/OpenTofu, como **network mirror** de providers.
+    ///
+    /// La modalidad servida es la de espejo: sirve los documentos del
+    /// protocolo (`index.json`, el índice del provider, el documento de
+    /// versión y los zips) traídos del upstream y guardados tal cual. No es
+    /// un registry de origen ni un module registry: no se publica en él.
+    Terraform,
+    /// Conan 2, con recipes y binarios identificados por recipe revision,
+    /// `package_id` y package revision.
+    ///
+    /// La modalidad servida es la hosted: un cliente Conan 2 publica con
+    /// `conan upload` y resuelve con `conan install` contra el remote de
+    /// Hodei. El proxy necesita el dialecto de upstream validado con
+    /// cliente real antes de poder declararse.
+    Conan,
+    /// Ansible Galaxy, collections por API v3.
+    ///
+    /// La modalidad servida es la hosted: un cliente `ansible-galaxy`
+    /// publica con `collection publish` y resuelve con `collection
+    /// install`/`verify` contra la superficie v3 de Hodei. El proxy no se
+    /// declara: el upstream real entrega por redirects firmados y no hay
+    /// cliente verificado contra el.
+    Galaxy,
+    /// Hugging Face, modelos por el dialecto de lectura del hub.
+    ///
+    /// Es una superficie de **lectura de contenido sembrado**, no una
+    /// modalidad servida: un cliente `hf` (`huggingface_hub`) resuelve con
+    /// `hf download` contra la superficie del hub de Hodei (revision JSON y
+    /// resolve con redirects relativos hacia el CAS), pero el release no
+    /// tiene ingesta por API —el handler solo admite GET/HEAD y el
+    /// contenido entra por la siembra del operador—. Por eso `serves_modes`
+    /// es vacio, no se ofrece al crear repositorios y la matriz de
+    /// conformidad lo marca como no soportado en las tres modalidades.
+    Hf,
 }
 
 impl RepositoryFormat {
@@ -71,6 +105,10 @@ impl RepositoryFormat {
             RepositoryFormat::Helm => "helm",
             RepositoryFormat::Apt => "apt",
             RepositoryFormat::Rpm => "rpm",
+            RepositoryFormat::Terraform => "terraform",
+            RepositoryFormat::Conan => "conan",
+            RepositoryFormat::Galaxy => "galaxy",
+            RepositoryFormat::Hf => "hf",
         }
     }
 
@@ -93,6 +131,10 @@ impl RepositoryFormat {
             "helm" => Some(Self::Helm),
             "apt" => Some(Self::Apt),
             "rpm" => Some(Self::Rpm),
+            "terraform" => Some(Self::Terraform),
+            "conan" => Some(Self::Conan),
+            "galaxy" => Some(Self::Galaxy),
+            "hf" => Some(Self::Hf),
             _ => None,
         }
     }
@@ -148,6 +190,28 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
+            // Terraform habla dos dialectos segun la modalidad: el mirror
+            // de providers es proxy (sirve lo que el upstream tiene,
+            // cacheado; no publica y no ensambla grupos) y el registry de
+            // modulos es hosted (el hub guarda los tarballs que se
+            // publican en el, versionados e inmutables).
+            RepositoryFormat::Terraform => &[RepositoryMode::Proxy, RepositoryMode::Hosted],
+            // Conan sirve la hosted: el cliente publica lo que ha creado y
+            // resuelve lo que el remote guarda. El proxy necesita el
+            // dialecto de upstream probado con cliente real, y el group
+            // una resolución compuesta probada, antes de poder prometerse.
+            RepositoryFormat::Conan => &[RepositoryMode::Hosted],
+            // Galaxy sirve la hosted: el cliente publica con `collection
+            // publish` y resuelve con `collection install`/`verify`. El
+            // proxy no se declara: el upstream real entrega por redirects
+            // firmados, un dialecto que no se ha probado con cliente.
+            RepositoryFormat::Galaxy => &[RepositoryMode::Hosted],
+            // Hf no sirve ninguna modalidad: sin ingesta por API (el
+            // handler solo lee y el contenido lo siembra el operador) no
+            // hay un hosted que prometer, y sin escritura tampoco proxy ni
+            // group. La lectura del contenido sembrado existe y esta
+            // probada con cliente real, pero no es una modalidad.
+            RepositoryFormat::Hf => &[],
             RepositoryFormat::Helm => &[],
         }
     }
@@ -179,6 +243,9 @@ impl RepositoryFormat {
             RepositoryFormat::NuGet,
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
+            RepositoryFormat::Terraform,
+            RepositoryFormat::Conan,
+            RepositoryFormat::Galaxy,
         ]
     }
 
@@ -203,6 +270,10 @@ impl RepositoryFormat {
             RepositoryFormat::Helm,
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
+            RepositoryFormat::Terraform,
+            RepositoryFormat::Conan,
+            RepositoryFormat::Galaxy,
+            RepositoryFormat::Hf,
         ]
     }
 }
@@ -788,7 +859,20 @@ mod tests {
             RepositoryFormat::Helm,
             RepositoryFormat::Apt,
             RepositoryFormat::Rpm,
+            RepositoryFormat::Terraform,
+            RepositoryFormat::Conan,
+            RepositoryFormat::Galaxy,
+            RepositoryFormat::Hf,
         ];
+        // The round trip covers every declared format: a format added to the
+        // registry without a line here is a format whose name nobody reads back.
+        for declared in RepositoryFormat::declared() {
+            assert!(
+                formats.contains(declared),
+                "{} is declared but not in the round trip",
+                declared.as_str()
+            );
+        }
         for format in formats {
             assert_eq!(
                 RepositoryFormat::parse(format.as_str()),

@@ -46,11 +46,14 @@
 
 pub mod apt;
 pub mod cargo;
+pub mod conan;
 pub mod conformance;
 pub mod error;
+pub mod galaxy;
 pub mod gc;
 pub mod gomod;
 pub mod group;
+pub mod hf;
 pub mod maven;
 pub mod model;
 pub mod namespaces;
@@ -61,6 +64,8 @@ pub mod proxy;
 pub mod proxy_cache;
 pub mod pypi;
 pub mod search;
+pub mod terraform;
+pub mod terraform_modules;
 pub mod trust;
 pub mod yum;
 

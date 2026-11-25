@@ -340,6 +340,22 @@ pipeline {
                         // El proxy rpm (HSP-235): el repodata del upstream se
                         // sirve tal cual, con su checksum comprobado.
                         "--test hsp235_rpm_proxy",
+                        // Los formatos adicionales: mirror y registry de
+                        // Terraform, Conan, Ansible Galaxy y Hugging Face.
+                        // Los clientes reales (terraform, conan,
+                        // ansible-galaxy, hf) NO se saltan: la suite hace
+                        // assert de que la herramienta existe y falla si
+                        // falta. El mirror de Terraform se prueba por
+                        // protocolo (curl y un upstream falso), no con el
+                        // cliente terraform.
+                        "--test hsp157_terraform_mirror",
+                        "--test hsp296_formats_audit",
+                        "--test hsp297_format_prefixes",
+                        "--test hsp297_trusted_listings",
+                        "--test hsp158_terraform_modules_client",
+                        "--test hsp159_conan_client",
+                        "--test hsp217_galaxy_client",
+                        "--test hsp218_hf_client",
                         "--test hsp123_migration_e2e",
                         "--test hsp124_quota_e2e",
                         "--test hsp125_replication_spike",

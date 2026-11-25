@@ -1060,6 +1060,10 @@ fn format_of(format: &str) -> Result<RepositoryFormat, CatalogError> {
         "helm" => Ok(RepositoryFormat::Helm),
         "apt" => Ok(RepositoryFormat::Apt),
         "rpm" => Ok(RepositoryFormat::Rpm),
+        "terraform" => Ok(RepositoryFormat::Terraform),
+        "conan" => Ok(RepositoryFormat::Conan),
+        "galaxy" => Ok(RepositoryFormat::Galaxy),
+        "hf" => Ok(RepositoryFormat::Hf),
         other => Err(CatalogError::corrupt(
             "repository",
             other.to_string(),

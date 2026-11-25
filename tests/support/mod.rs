@@ -691,6 +691,159 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the cargo repositories");
     }
 
+    /// Crea repositorios **conan hosted** de la primera cuenta. Cada uno
+    /// es una clave y su config (`null` si no lleva).
+    pub fn seed_conan(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(
+                |(key, conan)| serde_json::json!({ "key": key, "conan": conan, "format": "conan" }),
+            )
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the conan repositories");
+    }
+
+    /// Crea repositorios **galaxy hosted** de la primera cuenta. Cada uno
+    /// es una clave y su config (`null` si no lleva).
+    /// Crea repositorios **terraform** de la primera cuenta. Cada
+    /// entrada es una clave y su config (`null` si no tiene); con la
+    /// config se crea hosted (registry de modulos) y con `proxy` proxy
+    /// (mirror de providers).
+    pub fn seed_terraform(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, terraform)| {
+                serde_json::json!({ "key": key, "terraform": terraform, "format": "terraform" })
+            })
+            .collect();
+        self.run_the_seeder(
+            "HODEI_SEED_MAVEN",
+            repositories,
+            "the terraform repositories",
+        );
+    }
+
+    /// Crea repositorios **terraform proxy** (mirror de providers) de la
+    /// primera cuenta: la clave y su `config_settings.proxy`.
+    pub fn seed_terraform_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, proxy)| {
+                serde_json::json!({ "key": key, "proxy": proxy, "format": "terraform" })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the terraform mirrors");
+    }
+
+    /// Like [`Self::seed_terraform_proxies`], with some of the mirrors in
+    /// the **trusted** channel (`config_settings.trust.serve`).
+    pub fn seed_terraform_proxies_trusted(
+        &self,
+        trusted: &[&str],
+        repositories: &[(&str, serde_json::Value)],
+    ) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, proxy)| {
+                serde_json::json!({
+                    "key": key,
+                    "proxy": proxy,
+                    "format": "terraform",
+                    "trusted": trusted.contains(key),
+                })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the terraform mirrors");
+    }
+
+    /// Crea repositorios **hosted** de un formato adicional (`conan`,
+    /// `galaxy`, `terraform`) en el canal **trusted**: la config es la del
+    /// formato (`null` si no lleva).
+    pub fn seed_format_trusted(&self, format: &str, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, config)| {
+                serde_json::json!({
+                    "key": key,
+                    "format": format,
+                    format: config,
+                    "trusted": true,
+                })
+            })
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the trusted repositories");
+    }
+
+    pub fn seed_galaxy(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(
+                |(key, galaxy)| serde_json::json!({ "key": key, "galaxy": galaxy, "format": "galaxy" }),
+            )
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the galaxy repositories");
+    }
+
+    /// Crea repositorios **hf hosted** de la primera cuenta y siembra sus
+    /// modelos. Cada asset es `(ruta de asset, fichero fuente)`: el
+    /// contenido se guarda en el CAS y se publica en el catalogo. La
+    /// escritura del dialecto no se declara (la superficie hf es de
+    /// lectura), y por eso el contenido entra por la siembra del hub.
+    pub fn seed_hf(&self, repositories: &[(&str, Vec<(&str, std::path::PathBuf)>)]) {
+        self.seed_hf_in(&[], repositories);
+    }
+
+    /// Like [`Self::seed_hf`], with the repositories in `trusted` in the
+    /// **trusted** channel (`config_settings.trust.serve`).
+    pub fn seed_hf_trusted(
+        &self,
+        trusted: &[&str],
+        repositories: &[(&str, Vec<(&str, std::path::PathBuf)>)],
+    ) {
+        self.seed_hf_in(trusted, repositories);
+    }
+
+    fn seed_hf_in(
+        &self,
+        trusted: &[&str],
+        repositories: &[(&str, Vec<(&str, std::path::PathBuf)>)],
+    ) {
+        let entries: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(|(key, assets)| {
+                serde_json::json!({
+                    "key": key,
+                    "trusted": trusted.contains(key),
+                    "assets": assets
+                        .iter()
+                        .map(|(asset, file)| {
+                            serde_json::json!({
+                                "asset": asset,
+                                "file": file.to_string_lossy(),
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env("HODEI_SEED_CAS", &self.cas)
+            .env(
+                "HODEI_SEED_HF",
+                serde_json::Value::Array(entries).to_string(),
+            )
+            .status()
+            .expect("the seeder runs");
+        assert!(status.success(), "the hf repositories could not be seeded");
+    }
+
     /// Crea repositorios **apt hosted** de la primera cuenta. Cada
     /// entrada es una clave y su config (`null` si no tiene).
     pub fn seed_apt(&self, repositories: &[(&str, serde_json::Value)]) {
@@ -2352,6 +2505,13 @@ pub fn seed_if_asked() {
         seed_the_maven(&db.to_string_lossy(), &repositories);
         return;
     }
+    if let Ok(hf) = std::env::var("HODEI_SEED_HF") {
+        let cas = std::env::var("HODEI_SEED_CAS").expect("the cas of the hf seeding");
+        let repositories: Vec<serde_json::Value> =
+            serde_json::from_str(&hf).expect("the hf repositories parse");
+        seed_the_hf(&db.to_string_lossy(), &cas, &repositories);
+        return;
+    }
     if let Ok(groups) = std::env::var("HODEI_SEED_GROUPS") {
         let groups: Vec<serde_json::Value> =
             serde_json::from_str(&groups).expect("the groups parse");
@@ -2662,6 +2822,9 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
             if !repository["maven"].is_null() {
                 settings.insert("maven".into(), repository["maven"].clone());
             }
+            if !repository["terraform"].is_null() {
+                settings.insert("terraform".into(), repository["terraform"].clone());
+            }
             if !repository["npm"].is_null() {
                 settings.insert("npm".into(), repository["npm"].clone());
             }
@@ -2698,6 +2861,12 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 hodei_catalog::RepositoryFormat::Apt
             } else if repository["format"].as_str() == Some("rpm") {
                 hodei_catalog::RepositoryFormat::Rpm
+            } else if repository["format"].as_str() == Some("conan") {
+                hodei_catalog::RepositoryFormat::Conan
+            } else if repository["format"].as_str() == Some("galaxy") {
+                hodei_catalog::RepositoryFormat::Galaxy
+            } else if repository["format"].as_str() == Some("terraform") {
+                hodei_catalog::RepositoryFormat::Terraform
             } else {
                 hodei_catalog::RepositoryFormat::Maven2
             };
@@ -2730,6 +2899,100 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
                 )
                 .await
                 .expect("the maven repository is created");
+        }
+        drop(store);
+        drop(db);
+    });
+}
+
+/// Siembra los repositorios **hf hosted** y sus modelos: el contenido de
+/// cada asset entra en el CAS y en el catalogo por la puerta del propio
+/// catalogo (el `FileBlobStore` y el writer), la misma combinacion que
+/// usa la superficie cuando un cliente publica. El repo_id del paquete es
+/// el que la ruta del asset lleva: `artifacts/{owner}/{model}/{file}`.
+fn seed_the_hf(path: &str, cas: &str, repositories: &[serde_json::Value]) {
+    use hodei_catalog::{CatalogWriter, PackageCoordinates, Publication};
+    use hodei_hub::{BlobStore as _, FileBlobStore};
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime");
+    runtime.block_on(async {
+        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path)
+            .await
+            .expect("rocksdb");
+        db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
+        let store = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
+            db.clone(),
+            std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
+        );
+        store.initialize().await.expect("initialize");
+        let blobs = FileBlobStore::new(cas).expect("the blob store");
+        for repository in repositories {
+            let key = repository["key"].as_str().expect("the key");
+            let mut config =
+                hodei_catalog::RepositoryConfig::new(hodei_catalog::DigestScope::Global);
+            let mut settings = serde_json::Map::new();
+            if repository["trusted"].as_bool() == Some(true) {
+                settings.insert("trust".into(), serde_json::json!({ "serve": "trusted" }));
+            }
+            config.config_settings = serde_json::Value::Object(settings);
+            store
+                .create_repository(
+                    FIRST_ACCOUNT,
+                    hodei_catalog::RepositoryDescriptor {
+                        hrn: hodei_catalog::repository_hrn(
+                            "hodei",
+                            "artifacts",
+                            "eu",
+                            FIRST_ACCOUNT,
+                            key,
+                        ),
+                        account: FIRST_ACCOUNT.to_string(),
+                        repo_key: key.to_string(),
+                        format: hodei_catalog::RepositoryFormat::Hf,
+                        mode: hodei_catalog::RepositoryMode::Hosted,
+                        config,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                    },
+                )
+                .await
+                .expect("the hf repository is created");
+            for asset in repository["assets"].as_array().expect("the assets") {
+                let asset_path = asset["asset"].as_str().expect("the asset path");
+                let file = asset["file"].as_str().expect("the source file");
+                let bytes = std::fs::read(file).expect("the model file");
+                let digest = blobs.put(&bytes).await.expect("the blob is stored");
+                // El repo_id es el que la ruta del asset lleva: entre
+                // `artifacts/` y la ultima barra. Un fichero del modelo es
+                // su propia version del paquete, como los ficheros de un
+                // recipe conan.
+                let rest = asset_path
+                    .strip_prefix("artifacts/")
+                    .expect("the asset of a model");
+                let (repo_id, filename) = rest.rsplit_once('/').expect("the file of a model");
+                let publication = Publication {
+                    repository: key.to_string(),
+                    asset_path: asset_path.to_string(),
+                    coordinates: PackageCoordinates {
+                        package_name: repo_id.to_string(),
+                        package_version: filename.to_string(),
+                    },
+                    digest: digest.clone(),
+                    size_bytes: bytes.len() as u64,
+                    tags: Vec::new(),
+                    actor: "seeder".to_string(),
+                    correlation_id: "seed-hf".to_string(),
+                    overwrite: false,
+                    precondition: None,
+                    subject: None,
+                };
+                store
+                    .publish(FIRST_ACCOUNT, publication)
+                    .await
+                    .expect("the model file is published");
+            }
         }
         drop(store);
         drop(db);

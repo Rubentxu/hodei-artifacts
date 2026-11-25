@@ -88,6 +88,14 @@ pub fn build_router(app_state: AppState, config: &AppConfig) -> Router {
     Router::new()
         // Health check endpoints
         .merge(health)
+        // The service discovery the Terraform CLI does at the host root:
+        // the document that names the module registry of the account. The
+        // CLI always fetches it over https, so a plain-http hub declares
+        // the service in its CLI config (`host` + `services`) instead.
+        .route(
+            "/.well-known/terraform.json",
+            get(crate::handlers::terraform_modules::discovery).with_state(app_state.clone()),
+        )
         // API v1 routes
         .nest("/api/v1", api)
         // The raw content surface.
@@ -503,6 +511,58 @@ fn raw_routes(app_state: AppState) -> Router {
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
         )
+        // The Terraform/OpenTofu provider network mirror: `GET index.json`,
+        // `{hostname}/{namespace}/{type}/index.json`, `{version}.json` and
+        // the provider zips. Read-only: the mirror protocol has no writes,
+        // and any other method gets the same JSON error as the rest.
+        .route(
+            "/terraform/{*target}",
+            axum::routing::get(crate::handlers::terraform::handle)
+                .fallback(crate::handlers::terraform::handle)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
+        // The Conan 2 remote surface: the v2 protocol with revisions
+        // (`GET /v1/ping`, `GET /v2/users/authenticate`, search, snapshots
+        // and the `PUT` of recipe and package files). The path is the
+        // protocol grammar's own, so it arrives raw and the handler is the
+        // one that decodes it.
+        .route(
+            "/conan/{*target}",
+            axum::routing::get(crate::handlers::conan::handle)
+                .head(crate::handlers::conan::handle)
+                .put(crate::handlers::conan::handle)
+                .fallback(crate::handlers::conan::handle)
+                // A conan_package.tgz is a whole package, so the default
+                // limit of `axum` would refuse it before the protocol.
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
+        // The Ansible Galaxy surface: the collections API v3 (`GET /api/`,
+        // collection and version documents, the paginated versions, the
+        // artifact bytes and the `POST` publish form). The path is the
+        // protocol grammar's own, so it arrives raw and the handler is the
+        // one that decodes it.
+        .route(
+            "/galaxy/{*target}",
+            axum::routing::get(crate::handlers::galaxy::handle)
+                .head(crate::handlers::galaxy::handle)
+                .post(crate::handlers::galaxy::handle)
+                .fallback(crate::handlers::galaxy::handle)
+                // A collection tarball is a whole artifact, so the default
+                // limit of `axum` would refuse it before the protocol.
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    app_state
+                        .max_body_size
+                        .saturating_add(MULTIPART_ENVELOPE_SLACK),
+                )),
+        )
         // The Go module proxy: `GET {module}/@v/list|.info|.mod|.zip` and
         // `{module}/@latest`, plus the `PUT` of those same paths that
         // publishes into a hosted repository. Module paths carry `!` and
@@ -519,6 +579,19 @@ fn raw_routes(app_state: AppState) -> Router {
                         .max_body_size
                         .saturating_add(MULTIPART_ENVELOPE_SLACK),
                 )),
+        )
+        // The Hugging Face surface: the read dialect of the hub (`GET
+        // /api/models/.../revision/...`, the `HEAD` resolve with its
+        // relative `Location` and the streamed blob). Read-only: the
+        // upload of the dialect is not declared in this release, and any
+        // other method gets the same JSON error as the rest. The path is
+        // the protocol grammar's own, so it arrives raw and the handler
+        // is the one that decodes it.
+        .route(
+            "/hf/{*target}",
+            axum::routing::get(crate::handlers::hf::handle)
+                .head(crate::handlers::hf::handle)
+                .fallback(crate::handlers::hf::handle),
         )
         // The NuGet v3 surface: the service index, the flat container,
         // the registration leaf and the `PUT package/{id}/{version}` that

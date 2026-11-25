@@ -148,6 +148,12 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
         (RepositoryFormat::Go, RepositoryMode::Group) => &["hsp232_go_group"],
         (RepositoryFormat::Apt, RepositoryMode::Hosted) => &["hsp122_apt_e2e", "hsp122_apt_client"],
         (RepositoryFormat::Rpm, RepositoryMode::Hosted) => &["hsp122_yum_e2e", "hsp122_yum_client"],
+        (RepositoryFormat::Conan, RepositoryMode::Hosted) => &["hsp159_conan_client"],
+        (RepositoryFormat::Galaxy, RepositoryMode::Hosted) => &["hsp217_galaxy_client"],
+        (RepositoryFormat::Terraform, RepositoryMode::Hosted) => {
+            &["hsp158_terraform_modules_client"]
+        }
+        (RepositoryFormat::Terraform, RepositoryMode::Proxy) => &["hsp157_terraform_mirror"],
         _ => &[],
     }
 }
@@ -183,6 +189,16 @@ fn note_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static str {
         }
         (RepositoryFormat::NuGet, RepositoryMode::Group) => {
             "a nuget group is refused in the dialect of nuget: it never degrades to a raw answer"
+        }
+        (RepositoryFormat::Terraform, RepositoryMode::Proxy) => {
+            "accredited by protocol evidence, not by a native client: hsp157_terraform_mirror \
+             speaks the network mirror protocol with curl against a fake upstream; the terraform \
+             CLI is only exercised on the hosted registry (hsp158_terraform_modules_client)"
+        }
+        (RepositoryFormat::Hf, _) => {
+            "hf is read-only seeded content, not a served modality: there is no ingestion by API, \
+             so no repository can be created; the read dialect is proven with the real client by \
+             hsp218_hf_client"
         }
         (RepositoryFormat::Helm, _) => {
             "no helm repository is served: charts ride on the OCI surface (hsp121_helm_oci)"
@@ -487,6 +503,10 @@ fn aliases_of(format: RepositoryFormat) -> &'static [&'static str] {
         RepositoryFormat::Helm => &["helm"],
         RepositoryFormat::Apt => &["apt"],
         RepositoryFormat::Rpm => &["rpm", "yum", "dnf"],
+        RepositoryFormat::Terraform => &["terraform", "tofu", "opentofu"],
+        RepositoryFormat::Conan => &["conan"],
+        RepositoryFormat::Galaxy => &["galaxy", "ansible"],
+        RepositoryFormat::Hf => &["hf", "huggingface"],
     }
 }
 

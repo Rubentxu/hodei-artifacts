@@ -490,3 +490,392 @@ Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
   es `microdnf` (y `apt`+`gpgv` en el lado Debian). El contrato promete
   que la firma servida abre con la clave publicada y que ningún cliente
   que la exige instala con otra clave.
+
+## CONAN — repositorios Conan 2 hosted
+
+### 1. Qué afirma este contrato
+
+Un repositorio `conan` en modalidad **hosted** es un **remote de Conan 2**
+con revisiones: `conan create` construye contra perfiles reales,
+`conan upload` publica contra Hodei y `conan install` resuelve desde él en
+una cache limpia. Lo que el remote preserva es la identidad versionada del
+propio dialecto: la **recipe revision** (`rrev`), el **`package_id`** y la
+**package revision** (`prev`) son segmentos que el servidor conserva
+opacos — nunca derivados del nombre ni igualados a la versión — y los
+binarios de dos `package_id` del mismo recipe viven bajo prefijos de asset
+distintos (`packages/{n}/{v}/{u}/{c}/{rrev}/{pid}/{prev}/{file}`), de modo
+que un `package_id` pide y recibe SUS bytes, no los del otro.
+
+El scoping es el del hub: la credencial del remote se verifica como
+credencial bearer del principal en el authenticate del dialecto
+(`GET /v2/users/authenticate`, Basic de entrada, token de salida), y el
+listing de un principal de otra cuenta no ve lo que no le toca.
+
+### 2. Cómo se comprueba
+
+- `tests/hsp159_conan_client.rs`: el cliente **conan 2.x real** (el del
+  venv de la UAT, fijado por `CONAN_BIN` y por el assert de versión
+  major 2) crea el mismo recipe con **dos perfiles** (opción `flavor`
+  distinta → dos `package_id` de la misma `rrev`), lo sube con
+  `conan upload`, lista el remote (`conan list "ref#*" -r`) y compara que
+  el remote diga las mismas revisiones que la cache local; instala los dos
+  perfiles en caches limpias y comprueba, por `package_id`, que el
+  contenido bajado (el `flavor.txt` de cada binario) es el del perfil y
+  que el sha256 de cada `conan_package.tgz` descargado es el del subido;
+  con el servicio parado, el re-install de la cache caliente funciona sin
+  red, y faltando el binario, el install falla. Otro principal no ve la
+  receta de la cuenta primera.
+- El **dialecto HTTP** (tabla de rutas v2, ping con
+  `X-Conan-Server-Capabilities: revisions`, documentos de revisiones y
+  snapshots) quedó fijado con un **spike contra `conan_server` 1.66** como
+  remote de referencia, detrás de un proxy de registro; la gramática vive
+  en `hodei_catalog::conan` (pura, con sus unitarios) y los efectos en
+  `src/handlers/conan.rs`. La evidencia del spike y de la UAT está en
+  `target/uat/hsp159/evidencia.md`.
+
+### 3. Lo que este contrato NO promete
+
+- **No hay proxy ni group para conan.** El upstream de un proxy conan
+  necesita su dialecto validado con cliente real antes de poder
+  declararse, y la resolución compuesta de un group lo mismo. Solo la
+  hosted está probada y declarada.
+- **No se sirve `DELETE`** (el `conan remove` contra el remote): la
+  superficie hosted mínima no borra revisiones.
+- **La deduplicación `checksum_deploy` no se anuncia.** El ping declara
+  solo `revisions`; la subida es de ficheros completos.
+- **El token del remote es la credencial del hub**, no un JWT emitido por
+  el servidor de conan: el authenticate verifica la contraseña como
+  credencial bearer y la devuelve como token. La semántica de scoping es
+  la del hub, no una tabla de usuarios propia.
+
+## FMT-06 — selección de ecosistema: Ansible Galaxy elegido, Conda aplazado
+
+**Tarea:** HSP-168 (HAE-35). Ficha de selección, no contrato de formato:
+ninguno de los dos ecosistemas se sirve todavía (no hay variante
+`RepositoryFormat` ni fila en la matriz).
+
+### Qué afirma esta ficha
+
+El primer ecosistema adicional con demanda es **Ansible Galaxy**
+(collections, API v3), y se recomienda abrir UNA tarea vertical de hosted.
+**Conda queda aplazado** (KEEP_AS_IS) sin compromiso de implementación.
+
+La selección se sustenta en uso real contrastado en el spike:
+
+- **Audiencia.** El hub ya sirve al consumidor de IaC/automación (mirror de
+  providers Terraform servido, registry privado de modules/providers en
+  backlog); Ansible es la otra pata natural de esa automatización y ningún
+  formato servido lo cubre. Conda solapa con la audiencia Python que PyPI ya
+  atiende en hosted, proxy y group.
+- **Trust.** El artefacto Galaxy es un tarball auto-descripto (MANIFEST.json
+  y FILES.json con sha256 por fichero) y el protocolo verifica el sha256 del
+  artefacto contra la API al instalar; tiene además firma GPG opcional por
+  versión, encaje directo con la línea de políticas de confianza.
+- **Cliente reproducible.** `ansible-core==2.19.6` fija el CLI completo por
+  pip en un venv (python 3.14; el 3.15 del sistema rompe esta versión). El
+  cliente real de Conda exige un binario externo (micromamba/miniconda).
+- **Coste de hosted.** El dialecto Galaxy v3 son documentos JSON derivados
+  del catálogo más un tarball; Conda exige generar `repodata.json` por
+  subdir y servir variantes `.bz2`/`.zst`.
+
+### Evidencia del spike (cliente real 2.19.6)
+
+- **Remote de referencia real** (galaxy.ansible.com, galaxy_ng/Pulp): captura
+  de wire con `ansible-galaxy collection install ansible.posix:2.2.1`
+  anónima: descubrimiento `/api/`, documentos de colección y versiones
+  paginados DRF, artefacto servido por cadena de 302 con `validate_token`
+  hasta un objeto S3 presigned cuya clave es `artifact/{2}/{sha256}` — CAS
+  por contenido, el mismo modelo de blobs del hub.
+- **Fixture local mínimo** en el worktree (127.0.0.1, venv): instalación
+  nativa de `hodei.spike:1.0.0` OK con el dialecto v3 completo; **rechazo
+  nativo de artefacto corrupto** (`Mismatch artifact hash with downloaded
+  file`); **publish nativo** OK con `Authorization: Token`, multipart con
+  fichero base64 y campo `sha256` (verificado), y polling de tarea de
+  import emulada síncrona.
+
+### Lo que esta ficha NO promete
+
+- **Ningún formato se sirve.** Sin variante `RepositoryFormat::Galaxy` ni
+  `::Conda`, sin handler, sin fila en la matriz: la tarea vertical
+  propuesta queda para decisión del supervisor, no creada.
+- **El proxy de Galaxy no está probado**: el upstream real entrega por
+  redirects firmados; no se declara proxy sin cliente verificado contra él.
+- **La firma GPG no se ejercitó** (opcional sin keyring); los roles con la
+  API legacy v1 quedan fuera de alcance.
+- La evidencia completa (wire logs, comandos, comparación CAS vs adapter,
+  incompatibilidades y propuesta de tarea) está en
+  `target/uat/hsp168/evidencia.md` del worktree del spike.
+
+## GALAXY — repositorios Ansible Galaxy hosted
+
+### 1. Qué afirma este contrato
+
+Un repositorio `galaxy` en modalidad **hosted** es un **servidor Ansible
+Galaxy por API v3**: `ansible-galaxy collection publish` publica contra
+Hodei y `ansible-galaxy collection install` / `verify` resuelven y
+comparan contra él con el cliente real (`ansible-core` 2.19). La
+identidad versionada es la del propio dialecto: el **fully qualified
+collection name** `{namespace}.{name}` y la versión, declarados por el
+`MANIFEST.json` que el artefacto lleva dentro (gzip + tar, miembro en la
+raíz) y leídos en el publish. La superficie es la del cliente:
+
+- `GET /galaxy/{repo}/api/` — discovery con `available_versions` (solo
+  `v3`); el cliente llega aquí tras fallar la raíz del servidor, como
+  hace con cualquier Galaxy.
+- `GET /galaxy/{repo}/api/v3/collections/{ns}/{name}/` — documento de la
+  collection, con `created_at`/`updated_at` que el cliente usa para
+  invalidar su cache de respuestas.
+- `GET /galaxy/{repo}/api/v3/collections/{ns}/{name}/versions/` —
+  versiones paginadas al estilo DRF (`meta`, `links.next` absoluto,
+  `data`), con `limit`/`offset` y `next` como ruta absoluta, la única
+  forma que el cliente acepta.
+- `GET .../versions/{version}/` — documento de versión: `download_url`
+  (ruta absoluta), `artifact.sha256`, `metadata.dependencies` y `href`.
+- `GET /galaxy/{repo}/artifact/{sha256}/{file}` — los bytes del
+  artefacto desde el CAS; la URL lleva el digest que el documento
+  declara, y el que se sirve es el mismo: es el que el cliente verifica
+  al bajar (`Mismatch artifact hash with downloaded file` si no
+  coincide).
+- `POST /galaxy/{repo}/api/v3/artifacts/collections/` — publish:
+  multipart con `sha256` y `file`, el fichero en base64 con
+  `Content-Transfer-Encoding` (el dialecto MIME del cliente) y
+  `Authorization: Token` con la credencial del hub. La superficie
+  verifica el sha256 **en el commit**, lee la identidad del
+  `MANIFEST.json`, y contesta la tarea de import que el cliente sondea
+  en `api/v3/imports/collections/{task}/` (aquí síncrona: al leerla ya
+  está `completed`).
+
+El scoping es el del hub: la API key del cliente (`Authorization: Token
+<key>`) se verifica como credencial bearer del principal, y un principal
+de otra cuenta ni ve ni publica en un repositorio que no es suyo.
+
+### 2. Cómo se comprueba
+
+- `tests/hsp217_galaxy_client.rs`: el cliente **ansible-core 2.19 real**
+  (el del venv de la UAT con Python 3.14, fijado por `GALAXY_BIN` y por
+  el assert de versión) construye la collection con
+  `ansible-galaxy collection build`, la publica con `collection publish`
+  (dos veces: la repetición del mismo contenido es un eco, no una
+  reescritura), la instala con `collection install` en un directorio
+  limpio, la compara con `collection verify` ("Successfully verified"),
+  corrompe un fichero del instalado y espera que el `verify` falle, y
+  comprueba que otro principal ni instala ni publica; con el servicio
+  parado, el re-install de la cache caliente no toca la red ("Nothing to
+  do") y un requisito sin servir falla.
+- El **rechazo del artefacto corrupto** va por el cliente real: un
+  tarball cuyo `MANIFEST.json` no es el documento del formato se publica
+  y la superficie lo rechaza con `HTTP Code: 400` sin guardar nada; el
+  artefacto bueno se publica después en su versión libre. El **sha256
+  mentiroso** (los bytes no son los que el formulario declara) va por el
+  socket, porque el cliente real no puede decir esa mentira: la
+  superficie lo rechaza con 400 y el digest mal formado también.
+- La **gramática del dialecto** (tabla de rutas v3, documentos, página
+  DRF, lectura del `MANIFEST.json` dentro del gzip/tar) vive en
+  `hodei_catalog::galaxy` (pura, con sus unitarios) y los efectos en
+  `src/handlers/galaxy.rs`; la derivación es del código del cliente
+  (`ansible/galaxy/api.py` de 2.19.6), el mismo método que fijó conan
+  contra `rest_routes.py`. La evidencia está en
+  `target/uat/hsp217/evidencia.md`.
+
+### 3. Lo que este contrato NO promete
+
+- **No hay proxy para galaxy.** El upstream real (galaxy_ng/Pulp)
+  entrega los artefactos por una cadena de redirects con tokens
+  firmados; un proxy sin cliente verificado contra ese dialecto no se
+  declara.
+- **No hay firma GPG por versión.** Los documentos llevan `signatures:
+  []` y el cliente no ejercita keyring: la firma es otro contrato.
+- **Los roles con la API legacy v1 quedan fuera.** La superficie es de
+  collections v3; `ansible-galaxy role` no la habla.
+- **La resolución de dependencias de una collection** (el
+  `metadata.dependencies` de su manifiesto) se sirve en el documento de
+  versión, pero la suite solo publica collections sin dependencias: un
+  grafo de dependencias entre collections servidas por el mismo hub no
+  está ejercitado.
+
+## TERRAFORM — registry de módulos privado (hosted) — FMT-04
+
+**Tareas:** HSP-158 (HAE-25, registry de módulos privado) sobre el mirror de HSP-157 (HAE-24) · **Servicio medido:** `hodei-artifacts 0.2.0` · **Cliente fijado:** `terraform 1.10.1` (asdf, `.tool-versions` del worktree)
+
+### 1. Qué afirma este contrato
+
+Afirma que **un cliente `terraform` real resuelve e instala un módulo privado por versión** contra un repositorio Terraform **hosted** del hub, con el *module registry protocol v1*: `terraform init` de una fuente `127.0.0.1:PUERTO/hodei/demo/local` con restricción `version` pasa por discovery → índice de versiones → download con `X-Terraform-Get` → go-getter, que baja el tarball y **verifica el `?checksum=sha256:`** contra los bytes recibidos.
+
+Las reglas, una por una:
+
+- **Dos dialectos, una modalidad cada uno.** El formato Terraform sirve dos modalidades y cada una habla su protocolo: **proxy** → *provider network mirror* (HSP-157, `hodei_catalog::terraform`), **hosted** → *module registry protocol v1* (HSP-158, `hodei_catalog::terraform_modules`). La fila de la matriz queda `Terraform → [Proxy, Hosted]`: no es una variante de formato nueva, es el mismo ecosistema con dos contratos, y la modalidad decide el dialecto de la superficie `/terraform/{repositorio}/...`. Un repositorio hosted no sirve rutas de mirror y un proxy no sirve rutas de registry.
+- **Service discovery.** El hub sirve `GET /.well-known/terraform.json` con `{"modules.v1": "/terraform/{repo}/v1/modules/"}`: nombra al **único** registry de módulos de la cuenta de la credencial (0 registries → `404`, varios → `409`, y la config de CLI nombra el repositorio explícito). El CLI pide ese documento **siempre por https** (`terraform-svchost/disco` lo fija): un hub http declara el servicio en la **config de CLI** (`host` + `services`, que es el `ForceHostServices` del disco) — es la vía que ejercita la UAT; con TLS el well-known es alcanzable por el cliente.
+- **Índice de versiones.** `GET /v1/modules/{namespace}/{name}/{system}/versions` con la credencial Bearer del CLI config (`credentials "host" { token }`). El documento lleva `modules[0].versions[]` en orden; el cliente resuelve la restricción semver (las pre-release se ignoran salvo petición exacta, como el cliente hace).
+- **Download autorizado.** `GET /v1/modules/{namespace}/{name}/{system}/{version}/download` responde **`204` sin cuerpo** con `X-Terraform-Get: /terraform/{repo}/artifacts/{ns}/{name}/{sys}/{version}.tar.gz?checksum=sha256:{digest}`. Un valor que empieza por `/` el cliente lo resuelve contra la URL pedida (el propio `registry/client.go` lo permite), y el checksum es el digest del CAS: el cliente verifica los bytes contra el contenido almacenado, no contra una promesa.
+- **Artefacto por netrc.** go-getter **no** lleva la credencial del registry: su HTTP getter lee `~/.netrc` (o `$NETRC`) y manda `Basic`. La superficie del artefacto acepta el Bearer del hub y el **Basic de netrc cuya contraseña es la clave** (el login se ignora). La búsqueda de netrc es por `host:puerto`.
+- **Publicación inmutable.** El CLI no publica módulos: la publicación la define el hub, `POST /terraform/{repo}/publish/{ns}/{name}/{sys}/{version}` con el tarball entero. El hub valida el gzip, calcula el sha256 **al commit** y devuelve el recibo (`201` con namespace/name/system/version/sha256/size_bytes/path). **Re-publicar una versión existente es `409`, también con los mismos bytes** (inmutabilidad por contrato, más estricta que la eco de galaxy); el catálogo rechaza además el contenido distinto en la carrera. Un tarball que no es gzip es `400`.
+- **Acceso.** Misma autorización que el resto de superficies: `401` sin credencial verificable, `403` de Cedar (`UploadAsset`/`DownloadAsset`), `404` para el repositorio de otra cuenta (el init de otra cuenta no encuentra el módulo).
+- **Offline.** El módulo instalado queda en `.terraform/modules` con su manifiesto: el `init` repetido con caché templada **no necesita red** (el instalador reutiliza lo instalado, `initwd/module_install.go`); un init de caché fría sin hub falla. El hub no tiene upstream: todo lo servido sale del CAS.
+
+### 2. Cómo se verificó
+
+- **Suite:** `tests/hsp158_terraform_modules_client.rs` (`TF_CLI`, por defecto `terraform`, fijado a 1.10.x) contra el servicio real del arnés: `terraform init` real con credencial de CLI config y netrc, instalación verificada por el manifiesto (`"Version":"1.0.0"`), re-publicación y mutación rechazadas (`409`), índice con las dos versiones, init por `2.0.0`, init de otra cuenta denegado, offline templado/frío, y el wire de discovery/download/artefacto por socket.
+- **Gramática:** la tabla de rutas y los documentos viven en `hodei_catalog::terraform_modules` (pura, con unitarios de traversal y de documentos); los efectos en `src/handlers/terraform_modules.rs` y el despacho por modalidad en `src/handlers/terraform.rs`.
+- **Dialecto contrastado** contra el código fuente de terraform v1.10.1 (`internal/registry/client.go`, `internal/registry/response/module_versions.go`, `internal/initwd/module_install.go`, `internal/getmodules/getter.go`), `terraform-svchost/disco` y `go-getter` v1.7 (`client.go` y `get_http.go`: checksum por query solo en descarga de archivo, netrc por host con puerto). La evidencia está en `target/uat/hsp158/evidencia.md`.
+
+### 3. Lo que este contrato NO promete
+
+- **Evidencia del mirror (proxy): de protocolo, no de cliente nativo.** La modalidad proxy de Terraform está acreditada por `hsp157_terraform_mirror`, que habla el protocolo de network mirror con `curl` contra un upstream falso. El CLI `terraform` real solo se ejecuta contra el registry hosted (`hsp158_terraform_modules_client`); un `terraform init` con `provider_installation { network_mirror }` contra el mirror no está verificado.
+- **No hay provider origin registry.** El discovery devuelve solo `modules.v1`: el registry de providers de origen (AC3 condicional) **no se implementa** y nada no implementado se anuncia. El mirror de providers (HSP-157) sigue siendo la vía de providers.
+- **No hay source `git::` para módulos privados.** El módulo privado se sirve por HTTP con checksum; una fuente git del propio cliente queda fuera por diseño (no se sustituye Git).
+- **El well-known no es alcanzable por el cliente sobre http.** `disco` fija https; el documento existe y está ejercitado por socket, y el cliente real lo usa vía `services` de la config de CLI. Sobre un despliegue con TLS el well-known es el camino natural.
+- **OpenTofu (`tofu`) no está ejercitado.** `tofu` no está instalado en este entorno y no se ha provisionado; el protocolo es el mismo, pero no se declara sin ejecución.
+- **Multi-registry por cuenta en el well-known.** Con más de un registry de módulos por cuenta, el discovery responde `409` y la selección es de la config de CLI; no hay aliasing por host.
+
+## FMT-07 — selección de cartera: modelos Hugging Face elegidos, APK runner-up
+
+**Tarea:** HSP-169 (HAE-36). Ficha de selección de cartera, no contrato de
+formato: ningún candidato se sirve todavía (no hay variante
+`RepositoryFormat` ni fila en la matriz).
+
+### Qué afirma esta ficha
+
+De la cartera (APK Alpine, Composer, RubyGems, Pub/Swift, Git LFS,
+VSIX/Open VSX, CRAN/p2, modelos Hugging Face) se elige por necesidad el
+slice de **model artifacts / hub-compatible** (lectura con el CLI `hf` de
+`huggingface_hub`) y se recomienda abrir UNA tarea vertical de hosted.
+**APK Alpine queda como runner-up** (próxima ficha si hay demanda); Git LFS
+y VSIX quedan condicionados por exclusiones de servicio; Composer,
+RubyGems, Pub/Swift y CRAN/p2 sin cliente instalable en el entorno de
+trabajo.
+
+La selección se sustenta en uso real contrastado en el spike:
+
+- **Cliente reproducible.** `huggingface_hub==1.2.3` instala el CLI `hf`
+  por pip en venv (python 3.14) y quedó demostrado contra el remote real y
+  contra un fixture local. Ruby/PHP ausentes en el host; apk es binario
+  estático sin gestor de fijación equivalente.
+- **Esfuerzo de protocolo mínimo.** Lectura = JSON de revision
+  (`/api/models/{repo}/revision/{rev}`) + `HEAD resolve` con
+  `X-Repo-Commit`/`X-Linked-Etag` (sha256)/`X-Linked-Size` + `GET` streaming
+  del blob. Sin firma en el protocolo base; APK exige índice firmado RSA por
+  repo×arch.
+- **Encaje CAS exacto.** El etag del formato ES el sha256 y el cliente nombra
+  sus blobs por sha256: CAS por contenido, el mismo modelo del hub.
+- **Streaming por diseño.** Los pesos de modelos son los artefactos grandes
+  típicos: 256 MiB descargados con RSS acotado en cliente (~99 MB) y
+  servidor (~25 MB), sin buffers completos.
+
+### Evidencia del spike (cliente real 1.2.3)
+
+- **Remote real** (huggingface.co): wire de `hf download prajjwal1/bert-tiny`
+  en dos modos — xet por defecto (302 con metadata + token de
+  `xet-read-token` y CAS nativo invisible a httpx) y ruta HTTP clásica con
+  `HF_HUB_DISABLE_XET=1` (302 con metadata + `GET` del resolve => 200 con
+  los bytes).
+- **Fixture local mínimo**: repo `hodei/spike-model` con `model.safetensors`
+  de 256 MiB y `config.json`; descarga de fichero y de repo completo OK con
+  checksum sha256 verificado (`9f215d17...` == etag == nombre de blob).
+- **Hallazgo de trust**: en la ruta HTTP clásica el cliente solo verifica el
+  TAMAÑO; el sha256 declarado en `X-Linked-Etag` no se verifica en cliente
+  (una descarga servida corrupta fue ACEPTADA por el CLI, detectada solo por
+  `sha256sum` externo). En hosted la garantía de integridad debe venir del
+  CAS del servidor — conexión directa con HSP-105.
+
+### Lo que esta ficha NO promete
+
+- **Ningún formato se sirve.** Sin `RepositoryFormat::HfHub` ni fila en la
+  matriz: la tarea vertical propuesta queda para decisión del supervisor,
+  no creada.
+- **Model inference, Git server y marketplace IDE quedan FUERA** (encargo
+  explícito): el dialecto probado es HTTP puro sin git, sin xet nativo y sin
+  inferencia. El binario/extension de VSIX sí entra en un futuro slice, pero
+  esta ficha no lo abre.
+- **Upload/publish no probado** (solo lectura); el dialecto de escritura
+  clásica y el protocolo xet quedan para decisión posterior.
+- La evidencia completa (score de la cartera, wire logs, incompatibilidades,
+  exclusiones y propuesta de tarea) está en
+  `target/uat/hsp169/evidencia.md` del worktree del spike.
+
+## HF — repositorios Hugging Face hosted (lectura)
+
+> **Limitación vigente (HSP-218, revisión de integración).** El release **no
+> tiene ingesta por API** para HF: el handler solo admite `GET`/`HEAD` y el
+> contenido entra únicamente por la siembra del operador
+> (`HODEI_SEED_HF`, usada por la suite). Por eso `hf` **no es una modalidad
+> servida**: `serves_modes` es vacío, no se ofrece en `/api/v1/capabilities`,
+> no se puede crear un repositorio `hf` por API y la matriz de conformidad
+> lo marca `NOT_SUPPORTED` en hosted, proxy y group. Lo que sí está probado
+> con cliente real (`hsp218_hf_client`, `hf` 1.2.3) es la **lectura** del
+> contenido sembrado. Declarar `hosted` exige antes una ingesta por API.
+
+### 1. Qué afirma este contrato
+
+Un repositorio `hf` (sembrado, de solo lectura) es un **hub de modelos en el
+dialecto de lectura de Hugging Face**: `hf download` del CLI `hf`
+(`huggingface_hub` 1.2.3, que habla httpx) resuelve un modelo contra
+Hodei con el cliente real. El dialecto es el que el spike de HSP-169
+verificó contra huggingface.co (ruta HTTP clásica, sin xet) y contra un
+fixture local; la superficie, con `HF_ENDPOINT=http://{hub}/hf/{repo}`:
+
+- `GET /hf/{repo}/api/models/{owner}/{name}/revision/{rev}` — documento
+  de revisión: `id` (el `repo_id`), `sha` (el commit) y `siblings[]`
+  (`rfilename`). El commit es **el digest del listado del snapshot**
+  (`rfilename sha256` ordenado): content-addressed como el CAS que lo
+  sirve, y solo cambia cuando cambia el contenido que declara. Una
+  revisión que no es `main` ni el commit del snapshot es un 404: el
+  catálogo guarda el estado actual, no una historia de ramas.
+- `HEAD /hf/{repo}/{owner}/{name}/resolve/{rev}/{rfilename}` — una `302`
+  con las cabeceras del wire real: `X-Repo-Commit`, `X-Linked-Etag`
+  (el sha256 del fichero, entre comillas), `X-Linked-Size` y una
+  `Location` **relativa** (ruta desde la raíz del servidor, sin scheme ni
+  host — la forma del hub clásico). El cliente solo sigue los redirects
+  relativos; la Location lleva el modelo, el digest y el fichero porque
+  la URL nombra lo que sirve.
+- `HEAD`/`GET {Location}` (`/hf/{repo}/cdn-lfs/{owner}/{name}/{sha256}/
+  {rfilename}`) — la metadata se lee de la respuesta final del redirect y
+  los bytes van **en streaming** desde el CAS, a tramos de 64 KiB, sin
+  buffer completo en memoria: los pesos de un modelo son el artefacto
+  grande típico. El `ETag` de la respuesta es el sha256 del contenido.
+- `GET` del resolve directo: los mismos bytes, sin redirect.
+
+La identidad del blob es su sha256 — etag, nombre de cache del cliente y
+digest del CAS son el mismo valor —: CAS exacto, el mismo encaje que la
+ficha FMT-07 prometió. El servidor no emite `X-Xet-*`, así que el cliente
+cae a la ruta HTTP clásica (decisión del fixture del spike, documentada).
+
+El scoping es el del hub: el cliente lleva el token como
+`Authorization: Bearer`, se verifica como credencial bearer del principal
+y otro principal no ve el repositorio de la cuenta primera. Un modelo del
+catálogo es el conjunto de assets `artifacts/{owner}/{name}/{rfilename}`;
+la escritura no se declara (el upload clásico y el xet quedan fuera) y el
+contenido entra por la siembra del hub.
+
+### 2. Cómo se comprueba
+
+- `tests/hsp218_hf_client.rs`: el cliente **`hf` real** (el del venv de
+  la UAT, fijado por `HF_BIN` y por el assert de versión) descarga un
+  modelo pequeño sembrado, y el sha256 de lo instalado es el etag que la
+  superficie declaró; con el servicio parado, la cache caliente resuelve
+  sin red; otro principal no ve el modelo de la cuenta primera. La
+  gramática vive en `hodei_catalog::hf` (pura, con sus unitarios) y los
+  efectos en `src/handlers/hf.rs`.
+- **Test negativo documentado** (límite del cliente): en la ruta HTTP
+  clásica el CLI **solo verifica el tamaño**, nunca el sha256 declarado
+  en `X-Linked-Etag` — una descarga servida corrupta es ACEPTADA por el
+  cliente real y solo un `sha256sum` externo la detecta (hallazgo del
+  spike, reproducido en la suite con el fixture del spike en modo
+  `CORRUPT=1`). En hosted la garantía de integridad la cubre el **CAS del
+  servidor** (conexión con HSP-105): el almacén no entrega bytes que no
+  son su digest, y el etag que el cliente usa para nombrar su cache es el
+  digest que el CAS verificó al servir.
+
+### 3. Lo que este contrato NO promete
+
+- **No hay escritura.** Ni el upload clásico ni el protocolo xet se
+  declaran: la superficie es de lectura y el contenido entra por la
+  siembra del hub. El dialecto de escritura queda para decisión
+  posterior.
+- **No hay proxy ni group para hf.** El upstream real anuncia xet y
+  entrega por redirects firmados a un CDN: otro dialecto que no se ha
+  probado con cliente.
+- **Una sola revisión servida.** `main` y el commit del snapshot; no hay
+  ramas ni historial de commits en la hosted.
+- **El rigor del cliente es del cliente.** El CLI no verifica el sha256
+  de la descarga (solo el tamaño): es el límite documentado arriba, y el
+  hub lo cubre desde el CAS, no desde el wire.

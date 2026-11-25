@@ -563,8 +563,8 @@ async fn the_capabilities_say_what_can_be_created() {
     );
     assert_eq!(
         of("oci")["modes"],
-        json!(["hosted", "group"]),
-        "the OCI surface serves the hosted and the group one"
+        json!(["hosted", "proxy", "group"]),
+        "the OCI surface serves the hosted, the proxy and the group one (HSP-228)"
     );
     assert_eq!(of("npm")["modes"], json!(["hosted", "proxy", "group"]));
     assert_eq!(
@@ -584,6 +584,20 @@ async fn the_capabilities_say_what_can_be_created() {
         "the distro client installs from what this hub publishes"
     );
     assert_eq!(of("rpm")["modes"], json!(["hosted"]));
+    assert_eq!(
+        of("conan")["modes"],
+        json!(["hosted"]),
+        "the conan remote serves what conan publishes and what conan resolves"
+    );
+    assert_eq!(
+        of("galaxy")["modes"],
+        json!(["hosted"]),
+        "the galaxy surface serves what ansible-galaxy publishes and what it resolves"
+    );
+    assert!(
+        formats.iter().all(|format| format["name"] != "hf"),
+        "hf is seeded read-only content with no ingestion by API: it is not a modality to create"
+    );
     assert!(
         formats.iter().all(|format| format["name"] != "helm"),
         "a format that this release does not serve is not offered: helm"

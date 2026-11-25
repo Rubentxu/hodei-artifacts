@@ -380,6 +380,29 @@ pub(super) fn the_admission_error(admission: crate::trust::Admission) -> RawApiE
     }
 }
 
+/// The records of a listing that the channel of the repository admits.
+///
+/// A listing or a metadata document exposes the digest, the size and the
+/// existence of what it names. In the trusted channel a digest without a
+/// concession is hidden as if it did not exist, so it cannot appear in a
+/// listing either: the records the channel does not admit are dropped.
+pub(super) async fn the_admitted(
+    state: &AppState,
+    account: &str,
+    repository: &RepositoryDescriptor,
+    records: Vec<AssetRecord>,
+) -> Result<Vec<AssetRecord>, RawApiError> {
+    let mut admitted = Vec::with_capacity(records.len());
+    for record in records {
+        match crate::trust::admit(state, account, repository, &record.digest).await {
+            Ok(()) => admitted.push(record),
+            Err(crate::trust::Admission::Hidden) => {}
+            Err(other) => return Err(the_admission_error(other)),
+        }
+    }
+    Ok(admitted)
+}
+
 /// El contenido que hay ahora en esa dirección.
 pub(super) async fn the_current_asset(
     state: &AppState,
