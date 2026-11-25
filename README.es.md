@@ -21,7 +21,7 @@ El build por defecto y el archivo/imagen OCI de release son el **perfil de grafo
 
 ## Quickstart en 60 segundos (sin compilar Rust)
 
-> **Laboratorio embebido, solo legacy.** El laboratorio de abajo levanta el motor embebido en un directorio temporal, así que necesita un binario compilado con `--features legacy`; el archivo de release (sin esa feature) rechaza el perfil embebido. Para un servicio real, usa el perfil de grafo de arriba.
+> **Laboratorio sobre el perfil de grafo.** El laboratorio de abajo ejecuta el binario de release en el perfil de grafo: el script levanta con Podman un Dgraph (Zero + Alpha con ACL) y un LocalStack S3 desechables (`hodei-community-*`, se retiran al terminar), o usa los tuyos con `--graph-endpoint`, `--s3-endpoint` y `--s3-bucket`. Sin Podman y sin endpoints termina con el código 77 (`NOT_RUN`) en lugar de fingir que corrió.
 
 Levanta un laboratorio local aislado desde el paquete de release: arranca el servidor, acuña un JWT efímero, crea repositorios `raw` + `maven2`, publica y descarga paquetes y verifica sus digests:
 

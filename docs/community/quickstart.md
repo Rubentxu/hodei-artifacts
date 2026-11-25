@@ -12,12 +12,11 @@ limpieza borra ese directorio y nada más.
 > **Estado (HSP-314 F2).** El perfil productivo de Hodei es el **perfil de
 > grafo**: un Alpha de Dgraph como autoridad de metadatos y S3 para los bytes
 > (`RUN_MODE=dgraph`). El `tar.gz` de `scripts/package-release.sh` y la imagen
-> OCI se construyen **sin** el motor embebido (SurrealDB/RocksDB), así que ya no
-> pueden ejecutar el laboratorio de este tutorial, que levanta el perfil
-> embebido en un directorio temporal. El laboratorio sigue existiendo, pero
-> solo sobre un binario compilado con `--features legacy`, hasta que HSP-314 F4
-> lo retire. Para un servicio real, sigue el camino del perfil de grafo de la
-> sección siguiente.
+> OCI se construyen **sin** el motor embebido (SurrealDB/RocksDB), y el
+> laboratorio de este tutorial corre sobre ese mismo perfil: levanta un Dgraph y
+> un S3 desechables con Podman (o usa los tuyos) y los retira al terminar. El
+> motor embebido solo existe con `--features legacy` hasta que HSP-314 F4 lo
+> retire.
 >
 > Hasta HSP-314 F3, la investigación, los hechos de riesgo y el reactor de CVE
 > no tienen cableado sobre Dgraph y siguen cerrados.
@@ -51,17 +50,26 @@ detalles están en [`operations.md`](operations.md) (sección 6) y en
 > Compose se validan (`compose config`) y no llevan credenciales literales; la
 > pila completa no se ha levantado de punta a punta con Garage.
 
-## El laboratorio embebido (solo `legacy`)
+## El laboratorio sobre el perfil de grafo
 
-El resto de este tutorial describe el laboratorio sobre el perfil embebido.
+El resto de este tutorial describe el laboratorio: el mismo binario de
+producción, con un Alpha de Dgraph y un S3 desechables.
 
 ## 1. Qué necesitas
 
 - `curl`, `openssl`, `tar`, `sha256sum` y `sha1sum` (presentes en cualquier
   distribución de Linux y en macOS con las herramientas de línea de comandos).
 - La distribución de Hodei Artifacts.
+- **Podman**, para que el script levante un Dgraph (Zero + Alpha con ACL) y un
+  LocalStack S3 desechables, con nombres `hodei-community-*`, y los retire al
+  terminar. La primera vez descarga las dos imágenes (por eso hace falta red); si
+  ya las tienes, no. Con tu propio Alpha y tu propio S3 no hace falta Podman:
+  `--graph-endpoint HOST:PUERTO --s3-endpoint URL --s3-bucket NOMBRE`, con la
+  contraseña ACL en `HODEI_GRAPH__CREDENTIALS__PASSWORD` y las claves de S3 en
+  `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY`.
 
-No necesitas Rust, ni Cargo, ni Docker, ni Podman, ni red.
+No necesitas Rust, ni Cargo, ni Docker. Sin Podman y sin endpoints propios el
+script termina con el código 77 (`NOT_RUN`): no finge que corrió.
 
 ## 2. Consigue la distribución
 
@@ -279,9 +287,8 @@ El servicio está vivo pero una dependencia no está:
 1. **El catálogo o el almacén de bytes.** `503` aquí significa que el
    catálogo no puede responder. En el perfil de grafo, comprueba que el
    Alpha (`graph.endpoint`) y el bucket S3 responden y que las credenciales
-   son las correctas; en el laboratorio embebido, el log dice qué ruta de
-   datos usa (`rocksdb.path` y `content.cas_path`) y si el directorio
-   existe y se puede escribir.
+   son las correctas; en el laboratorio, `logs/service.log` del directorio del
+   laboratorio dice a qué Alpha y a qué bucket apunta el servicio.
 2. **Un proxy sin salida.** Si el repositorio es *proxy* y su contenido no
    está en la caché, un `503` explícito es la respuesta: el servicio no sale
    a la red porque `proxy.allowed_hosts` está vacío, o porque el upstream no

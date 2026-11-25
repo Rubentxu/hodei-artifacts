@@ -21,7 +21,7 @@ The default build and the release archive/OCI image are the **graph profile**: a
 
 ## 60-Second Quickstart (No Rust Required)
 
-> **Embedded lab, legacy only.** The lab below runs the embedded engine in a temporary directory, so it needs a binary built with `--features legacy`; the release archive (built without it) rejects the embedded profile. Use the graph profile above for a real service.
+> **Graph-profile lab.** The lab below runs the released binary on the graph profile: the script starts a throwaway Dgraph (Zero + Alpha with ACL) and a LocalStack S3 with Podman (`hodei-community-*`, removed when it ends), or uses yours with `--graph-endpoint`, `--s3-endpoint` and `--s3-bucket`. Without Podman and without endpoints it exits 77 (`NOT_RUN`) instead of pretending it ran.
 
 Run an isolated local lab from the release archive — starts the server, mints an ephemeral JWT, creates `raw` + `maven2` repositories, publishes & pulls packages, and verifies digests:
 
