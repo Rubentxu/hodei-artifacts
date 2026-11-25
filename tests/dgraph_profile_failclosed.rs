@@ -201,3 +201,47 @@ fn the_embedded_contract_survives_the_graph_profile() {
         "the refusal names the value the deployment asked for: {error}"
     );
 }
+
+/// HSP-307: `namespace` placed after `[graph.credentials]` used to be read
+/// as `graph.credentials.namespace` and silently discarded, so a value
+/// other than 0 was ignored. Unknown keys under `[graph.*]` are now an
+/// error that names the key, wherever they are declared.
+#[test]
+fn a_misplaced_graph_namespace_is_rejected_by_name() {
+    let shipped = shipped_profile(SHIPPED_GRAPH_PROFILE);
+    let password = "[graph.credentials]\npassword = \"from-the-process-environment\"".to_string();
+    // The pre-fix shape: `namespace` after the `[graph.credentials]` header.
+    for table in ["graph.credentials", "graph.tls"] {
+        let misplaced = format!("[{table}]\nnamespace = 7");
+        let error =
+            deserialize_like_the_boot(&[shipped.clone(), password.clone(), misplaced.clone()])
+                .expect_err("a namespace under a graph subtable must not be dropped silently")
+                .to_string();
+        assert!(
+            error.contains("namespace"),
+            "the error must name the unknown key under [{table}], got: {error}"
+        );
+    }
+    let error = deserialize_like_the_boot(&[
+        shipped,
+        password,
+        "[graph]\nnot_a_graph_key = 1".to_string(),
+    ])
+    .expect_err("an unknown key directly under [graph] must be rejected")
+    .to_string();
+    assert!(error.contains("not_a_graph_key"), "got: {error}");
+}
+
+/// HSP-307: the well-placed `namespace` reaches `graph.namespace`, and the
+/// shipped profile keeps declaring it under `[graph]`.
+#[test]
+fn a_graph_namespace_under_graph_reaches_the_client_config() {
+    let shipped = shipped_profile(SHIPPED_GRAPH_PROFILE);
+    let password = "[graph.credentials]\npassword = \"from-the-process-environment\"".to_string();
+    let config = deserialize_like_the_boot(&[shipped.clone(), password.clone()])
+        .expect("the shipped profile boots");
+    assert_eq!(config.graph.as_ref().expect("graph").namespace, 0);
+    let config = deserialize_like_the_boot(&[shipped, password, "[graph]\nnamespace = 7".into()])
+        .expect("a namespace under [graph] is valid");
+    assert_eq!(config.graph.as_ref().expect("graph").namespace, 7);
+}

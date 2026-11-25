@@ -33,6 +33,7 @@ pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 10_000;
 /// Serialized from TOML (or equivalent sources). Every field that could
 /// hide a fallback is required in `validate` instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GraphClientConfig {
     /// The gRPC endpoint of the Alpha, as `host:port`. No scheme: whether
     /// the connection uses TLS is the `tls.enabled` flag, not the text of
@@ -63,6 +64,7 @@ pub struct GraphClientConfig {
 
 /// The TLS choice of the deployment, written down explicitly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GraphTlsConfig {
     /// Whether the gRPC connection uses TLS. `false` is a deliberate,
     /// visible choice (never the result of missing configuration).
@@ -95,6 +97,7 @@ pub struct GraphTlsConfig {
 /// never serialized. It reaches the server only inside the gRPC
 /// `LoginRequest`.
 #[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GraphLoginCredentials {
     /// The ACL user (e.g. the guardian `groot`).
     pub userid: String,
