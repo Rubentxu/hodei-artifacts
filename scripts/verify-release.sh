@@ -13,22 +13,43 @@
 #     architecture, plus the Homebrew formula and the release notes. Every
 #     per-architecture manifest listed in SHA256SUMS is verified as well.
 #
-# Usage: scripts/verify-release.sh [--require-bundle] <dist-directory>
+# Usage: scripts/verify-release.sh [--require-bundle] [--trusted-fingerprint <fpr>]
+#                                  <dist-directory>
 #
 # `--require-bundle` fails when the directory is not a complete bundle, so a
 # stripped-down single-architecture directory cannot pass as a full release.
+#
+# The public key travels with the artifacts, so by itself it only proves
+# integrity. `--trusted-fingerprint <fpr>` (full fingerprint, communicated out
+# of band) additionally pins the signer: the packaged key must have exactly
+# that primary fingerprint, otherwise a release re-signed coherently with a
+# foreign key is rejected.
 
 set -euo pipefail
 
+USAGE="usage: scripts/verify-release.sh [--require-bundle] [--trusted-fingerprint <fpr>] <dist-directory>"
 REQUIRE_BUNDLE=0
-if [ "${1:-}" = "--require-bundle" ]; then
-  REQUIRE_BUNDLE=1
-  shift
-fi
+TRUSTED_FPR=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --require-bundle) REQUIRE_BUNDLE=1; shift ;;
+    --trusted-fingerprint)
+      [ $# -ge 2 ] || { echo "$USAGE" >&2; exit 1; }
+      TRUSTED_FPR="$(printf '%s' "$2" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+      if ! printf '%s' "$TRUSTED_FPR" | grep -Eq '^([0-9A-F]{40}|[0-9A-F]{64})$'; then
+        echo "error: --trusted-fingerprint must be a full OpenPGP fingerprint (40 or 64 hex digits)" >&2
+        exit 1
+      fi
+      shift 2 ;;
+    --) shift; break ;;
+    -*) echo "$USAGE" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
 
 DIST_DIR="${1:-}"
 if [ -z "$DIST_DIR" ] || [ ! -d "$DIST_DIR" ]; then
-  echo "usage: scripts/verify-release.sh [--require-bundle] <dist-directory>" >&2
+  echo "$USAGE" >&2
   exit 1
 fi
 
@@ -86,6 +107,17 @@ for doc in "${SIGNED_DOCS[@]}"; do
   fi
   cp "$DIST_DIR/${base}.asc" "$CLEAN_DIR/${base}.asc"
 done
+
+# 0. Optional signer pinning: the packaged key must be the trusted one.
+if [ -n "$TRUSTED_FPR" ]; then
+  PKT_FPRS="$(gpg --batch --show-keys --with-colons "$CLEAN_DIR/release-signing-key.asc" 2>/dev/null \
+    | awk -F: '/^pub:/ {want=1; next} /^fpr:/ && want {print $10; want=0}')"
+  if [ "$(printf '%s\n' "$PKT_FPRS" | grep -c .)" -ne 1 ] \
+    || [ "$(printf '%s' "$PKT_FPRS" | tr '[:lower:]' '[:upper:]')" != "$TRUSTED_FPR" ]; then
+    echo "error: release-signing-key.asc fingerprint (${PKT_FPRS:-none}) does not match --trusted-fingerprint $TRUSTED_FPR" >&2
+    exit 1
+  fi
+fi
 
 # 1. Verify OpenPGP signatures using gpgv against the exported public key.
 gpg --dearmor < "$CLEAN_DIR/release-signing-key.asc" > "$CLEAN_DIR/trusted.gpg"
@@ -214,6 +246,16 @@ with open(os.path.join(clean_dir, "SHA256SUMS"), encoding="utf-8") as f:
 for m in manifests:
     if (m["name"], m["version"], m["commit"]) != (b["name"], b["version"], b["commit"]):
         die(f"manifest {m['arch']} does not belong to the bundle (name/version/commit)")
+
+# Every per-architecture manifest must declare exactly the signing identity of
+# the bundle, so a re-signed forgery cannot alter it in only one place.
+for m in manifests:
+    for field in ("mechanism", "key_mode", "fingerprint"):
+        if m["signing"].get(field) != b["signing"].get(field):
+            die(
+                f"signing {field} mismatch: manifest {m['arch']} declares "
+                f"{m['signing'].get(field)!r} but the bundle declares {b['signing'].get(field)!r}"
+            )
 
 STATUSES = ("ok", "NOT_RUN")
 by_key = {}
