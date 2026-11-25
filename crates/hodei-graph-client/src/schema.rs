@@ -76,7 +76,13 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// a relation delta invalidates ONLY the advisories whose route it
 /// touches, and the watermark says up to which delta version the view is
 /// complete. Purely additive over v6: nothing is renamed or dropped.
-pub const SCHEMA_VERSION: u64 = 7;
+///
+/// v8 adds the security cases of the risk (`hodei.case.*`): ONE node per
+/// (tenant, case id) holding the case record, with the tenant and the
+/// trigger exact-indexed so a case is read by account and by the
+/// vulnerability that opened it. Purely additive over v7: nothing is
+/// renamed or dropped.
+pub const SCHEMA_VERSION: u64 = 8;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -1214,6 +1220,57 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            // v8: the security cases of the risk, ONE node per
+            // (tenant, case id). The key is exact and `@upsert`, so two
+            // reactions that open the case of the same vulnerability meet
+            // on the server and only one of them creates it. The tenant
+            // and the trigger are exact-indexed: a case is read by the
+            // account that owns it and by the vulnerability that opened it.
+            spec(
+                "hodei.case.key",
+                "hodei.case.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.case.tenant",
+                "hodei.case.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.case.trigger",
+                "hodei.case.trigger: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.case.record",
+                "hodei.case.record: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.case.opened_at",
+                "hodei.case.opened_at: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -1292,6 +1349,10 @@ pub fn hodei_schema() -> HodeiSchema {
              hodei.impact.route_evidence\n  hodei.impact.route_node\n  \
              hodei.impact.subjects\n  hodei.impact.paths\n  hodei.impact.deployments\n  \
              hodei.impact.watermark\n  hodei.impact.updated_at\n}"
+                .to_owned(),
+            // The security cases (v8): one node per case of one account.
+            "type HodeiSecurityCase {\n  hodei.case.key\n  hodei.case.tenant\n  \
+             hodei.case.trigger\n  hodei.case.record\n  hodei.case.opened_at\n}"
                 .to_owned(),
         ],
     )

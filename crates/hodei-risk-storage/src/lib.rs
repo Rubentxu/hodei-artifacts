@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use hodei_evidence::domain::graph::{GraphChangeSet, RelationType};
 #[cfg(feature = "legacy")]
 use hodei_evidence::ports::graph::{GraphQuery, GraphWriter};
+pub mod dgraph_cases;
 pub mod dgraph_view;
 pub mod impact_view;
 pub mod reactions;

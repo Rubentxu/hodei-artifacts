@@ -360,6 +360,52 @@ pub async fn walk_impact_dgraph(
     Ok(walk)
 }
 
+/// The blast radius of a vulnerability over the Dgraph graph: the Dgraph
+/// counterpart of [`crate::blast_radius`], with the same shape and the
+/// same semantics.
+///
+/// It reads through [`walk_impact_dgraph`], so the walk is the bounded
+/// one: every hop is expanded at the server with the account and the
+/// asserted status as filters, and it accounts itself against `limits`.
+/// The difference with the reference is the fail-closed contract of the
+/// native engine: a walk that hit a bound is NOT a blast radius, and it
+/// is refused with an error instead of being returned as complete.
+pub async fn blast_radius_dgraph(
+    graph: &DgraphGraphStore,
+    tenant: &Hrn,
+    vulnerability: &Hrn,
+    limits: &GraphReadLimits,
+) -> Result<hodei_risk::case::BlastRadius, RiskError> {
+    use hodei_risk::case::{BlastRadius, SubjectDepth};
+
+    let walk = walk_impact_dgraph(graph, tenant, vulnerability, limits).await?;
+    if walk.trace.incomplete {
+        return Err(RiskError::Unavailable(format!(
+            "the blast radius walk hit its bounds ({:?}): a partial radius is not an answer",
+            walk.trace.reasons
+        )));
+    }
+
+    let affected_deployments: Vec<String> = walk.deployments.iter().cloned().collect();
+    // The artifacts come out of the map already sorted by subject.
+    let depths: Vec<SubjectDepth> = walk
+        .artifacts
+        .iter()
+        .map(|(subject, depth)| SubjectDepth {
+            subject: subject.clone(),
+            depth: if *depth == usize::MAX { 1 } else { *depth },
+            deployments: affected_deployments.clone(),
+        })
+        .collect();
+
+    Ok(BlastRadius {
+        affected_subjects: walk.artifacts.keys().cloned().collect(),
+        affected_deployments,
+        affected_components: walk.affected_components.iter().cloned().collect(),
+        depths,
+    })
+}
+
 /// One hop of the walk with its budget accounting: the round trip, the
 /// edges received and the far nodes received. The frontier is named by
 /// its node HRNs, and the expansion is bounded by what the budget still
