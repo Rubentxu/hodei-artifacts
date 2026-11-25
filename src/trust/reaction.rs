@@ -50,13 +50,10 @@
 //! los hechos, se piden las reevaluaciones y se persiguen los
 //! vencimientos.
 
-#[cfg(feature = "legacy")]
 use std::collections::{BTreeMap, BTreeSet};
-#[cfg(feature = "legacy")]
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-#[cfg(feature = "legacy")]
 use kernel::Hrn;
 use serde::Serialize;
 #[cfg(feature = "legacy")]
@@ -64,67 +61,52 @@ use surrealdb::Surreal;
 #[cfg(feature = "legacy")]
 use surrealdb::engine::local::Db;
 
-#[cfg(feature = "legacy")]
-use hodei_catalog::TrustLedger;
-#[cfg(feature = "legacy")]
+use hodei_catalog::{GrantSweepRow, GrantSweepSource, TrustLedger};
 use hodei_evidence::application::capsule::CapsuleAssembler;
-#[cfg(feature = "legacy")]
 use hodei_evidence::application::projector::evidence_hrn;
 #[cfg(feature = "legacy")]
-use hodei_evidence::domain::graph::{GraphChangeSet, GraphNode, NodeKind, RelationType};
-#[cfg(feature = "legacy")]
-use hodei_evidence::ports::graph::GraphWriter;
-#[cfg(feature = "legacy")]
+use hodei_evidence::domain::graph::RelationType;
+use hodei_evidence::domain::graph::{GraphChangeSet, GraphNode, NodeKind};
+use hodei_evidence::ports::graph::{GraphReadLimits, GraphWriter};
 use hodei_evidence::standards::inventory::read_cyclonedx_17;
+use hodei_evidence::{ContentDigest, EvidenceId, RelationDeltaScan};
 #[cfg(feature = "legacy")]
-use hodei_evidence::{ContentDigest, EvidenceId, RelationDelta, RelationDeltaKind};
-#[cfg(feature = "legacy")]
+use hodei_evidence::{RelationDelta, RelationDeltaKind};
+use hodei_graph_client::GraphClient;
 use hodei_reactive::behavior::{BehaviorError, GuardOutcome};
-#[cfg(feature = "legacy")]
 use hodei_reactive::events::{Event, EventKind, Subscription};
-#[cfg(feature = "legacy")]
 use hodei_reactive::intent::{
     Intent, IntentExecutor, IntentOrigin, IntentOutbox, Plan, PlanningBehavior, ReadScope,
 };
-#[cfg(feature = "legacy")]
 use hodei_reactive::reactions::{
     BlastRadiusSource, DecisionRequester, DomainIntentExecutor, ImpactedSubject,
     PlannedVulnerabilityReaction, ReasonCode, SecurityCaseSink,
 };
-#[cfg(feature = "legacy")]
-use hodei_reactive::runtime::{DispatchReport, ReactiveRuntime};
-#[cfg(feature = "legacy")]
+use hodei_reactive::runtime::{DispatchReport, ExecutionStore, ReactiveRuntime};
 use hodei_risk::osv::read_osv;
-#[cfg(feature = "legacy")]
 use hodei_risk::projection::{project, vulnerability_hrn};
-#[cfg(feature = "legacy")]
-use hodei_risk_storage::blast_radius;
+use hodei_risk_storage::BlastRadiusReader;
+use hodei_risk_storage::dgraph_cases::DgraphSecurityCaseStore;
+use hodei_risk_storage::dgraph_view::{DgraphBlastRadius, DgraphImpactView};
+use hodei_risk_storage::impact_view::ImpactMaterializer;
 #[cfg(feature = "legacy")]
 use hodei_risk_storage::impact_view::SurrealImpactView;
 #[cfg(feature = "legacy")]
 use hodei_risk_storage::reactions::SurrealSecurityCaseStore;
-#[cfg(feature = "legacy")]
 use hodei_risk_storage::subject_risk::RiskFactsReader;
-#[cfg(feature = "legacy")]
 use hodei_trust_policy::PromotionService;
-#[cfg(feature = "legacy")]
 use hodei_trust_policy::context::TrustContext;
-#[cfg(feature = "legacy")]
 use hodei_trust_policy::ports::DecisionStore;
 #[cfg(feature = "legacy")]
 use hodei_trust_policy_storage::SurrealDecisionStore;
 #[cfg(feature = "legacy")]
 use hodei_trust_policy_storage::intents::SurrealIntentStore;
-#[cfg(feature = "legacy")]
 use hodei_trust_policy_storage::reactions::{PromotionDecisionRequester, TrustContextSource};
+use hodei_trust_policy_storage::{DgraphDecisionStore, DgraphIntentStore, DgraphTrustStore};
 
-#[cfg(feature = "legacy")]
 use crate::config::InvestigationConfig;
-#[cfg(feature = "legacy")]
 use crate::evidence::EvidenceReader;
-#[cfg(feature = "legacy")]
 use crate::risk_facts::to_trust_facts;
-#[cfg(feature = "legacy")]
 use crate::trust::promotion::{TRUSTED_DISTRIBUTION, TrustPlane, TrustedChannelTargets};
 
 /// Por qué el ciclo no pudo recorrer un tramo.
@@ -193,7 +175,6 @@ pub struct SweepCounters {
     pub already_said: usize,
 }
 
-#[cfg(feature = "legacy")]
 /// El tenant de la composición estampado en los intents.
 ///
 /// No es una identidad de cuenta: la autoridad multi-cuenta del ciclo es
@@ -203,7 +184,6 @@ pub struct SweepCounters {
 /// ejecutor la comprueba contra la composición que sirve.
 const COMPOSITION_MARK: &str = "hodei";
 
-#[cfg(feature = "legacy")]
 /// El techo de sujetos que un solo evento de drift puede nombrar.
 ///
 /// Un barrido que encontrara más deja el resto para el siguiente: decir
@@ -212,11 +192,12 @@ const COMPOSITION_MARK: &str = "hodei";
 /// cadena que cada sujeto dispara.
 const MAX_DRIFT_SUBJECTS: usize = 1024;
 
-#[cfg(feature = "legacy")]
 /// El techo de filas de deltas que una pasada de reconciliación lee.
 const MAX_RECONCILE_DELTAS: usize = 512;
 
-#[cfg(feature = "legacy")]
+/// El techo de concesiones que una pasada del barrido de vigencia lee.
+const MAX_SWEEP_GRANTS: usize = 4096;
+
 /// The blast radius of the service: the tenant of every question comes
 /// from the subject's own account and region, through the same template
 /// the promotion and the risk facts already use.
@@ -228,22 +209,17 @@ const MAX_RECONCILE_DELTAS: usize = 512;
 /// the crate asserts (a canonical HRN whose account must own the
 /// advisory), and delegates the walk itself to the crate, unchanged.
 pub struct GraphBlastRadius {
-    graph: Arc<hodei_evidence_storage::SurrealGraphStore<Db>>,
+    graph: Arc<dyn BlastRadiusReader>,
     limits: InvestigationConfig,
 }
 
-#[cfg(feature = "legacy")]
 impl GraphBlastRadius {
     /// The radius over the graph and the template of the composition.
-    pub fn new(
-        graph: Arc<hodei_evidence_storage::SurrealGraphStore<Db>>,
-        limits: InvestigationConfig,
-    ) -> Self {
+    pub fn new(graph: Arc<dyn BlastRadiusReader>, limits: InvestigationConfig) -> Self {
         Self { graph, limits }
     }
 }
 
-#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl BlastRadiusSource for GraphBlastRadius {
     async fn impacted(
@@ -270,7 +246,9 @@ impl BlastRadiusSource for GraphBlastRadius {
             return Err("the tenant template does not name an HRN".to_string());
         };
 
-        let radius = blast_radius(self.graph.as_ref(), &tenant, &vulnerability)
+        let radius = self
+            .graph
+            .blast_radius_of(&tenant, &vulnerability)
             .await
             .map_err(|error| error.to_string())?;
 
@@ -290,7 +268,6 @@ impl BlastRadiusSource for GraphBlastRadius {
     }
 }
 
-#[cfg(feature = "legacy")]
 /// The context of the reevaluation: the real one.
 ///
 /// It assembles the capsule from the evidence that exists and the risk
@@ -304,7 +281,6 @@ pub struct ContextFromEvidence {
     limits: InvestigationConfig,
 }
 
-#[cfg(feature = "legacy")]
 impl ContextFromEvidence {
     /// The source over the service's readers.
     pub fn new(
@@ -320,7 +296,6 @@ impl ContextFromEvidence {
     }
 }
 
-#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl TrustContextSource for ContextFromEvidence {
     async fn context_of(
@@ -369,7 +344,6 @@ impl TrustContextSource for ContextFromEvidence {
     }
 }
 
-#[cfg(feature = "legacy")]
 /// The digest a subject HRN names: `artifact/<repo>/<alg>-<hex>`.
 fn digest_of_subject(subject: &Hrn) -> Result<String, String> {
     let resource = subject.resource_id();
@@ -383,7 +357,6 @@ fn digest_of_subject(subject: &Hrn) -> Result<String, String> {
     Ok(format!("{algorithm}:{value}"))
 }
 
-#[cfg(feature = "legacy")]
 /// An identifier safe for a Surreal record id and for an event name.
 ///
 /// The HRNs of the cycle are full of `:` and `/`, and a raw HRN inside an
@@ -402,7 +375,8 @@ fn sanitize(value: &str) -> String {
 }
 
 #[cfg(feature = "legacy")]
-/// A concession the sweep found, with everything the renewal needs.
+/// A concession as the embedded engine stores it, with everything the
+/// renewal needs.
 #[derive(Debug, Clone, serde::Deserialize)]
 struct StaleGrantRow {
     decision_id: String,
@@ -415,7 +389,6 @@ struct StaleGrantRow {
     valid_until: Option<DateTime<Utc>>,
 }
 
-#[cfg(feature = "legacy")]
 /// The planned reevaluation of a concession whose validity lapsed.
 ///
 /// It is the local twin of `PlannedExceptionExpiryReaction` and it
@@ -429,7 +402,6 @@ struct StaleGrantRow {
 /// carried is done.
 pub struct PlannedGrantExpiryReaction;
 
-#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl PlanningBehavior for PlannedGrantExpiryReaction {
     fn name(&self) -> &str {
@@ -497,7 +469,6 @@ impl PlanningBehavior for PlannedGrantExpiryReaction {
     }
 }
 
-#[cfg(feature = "legacy")]
 /// The planned reevaluation of a concession whose policy version is no
 /// longer the active one.
 ///
@@ -509,7 +480,6 @@ impl PlanningBehavior for PlannedGrantExpiryReaction {
 /// rather than reaching back into the catalog.
 pub struct PlannedPolicyDriftReaction;
 
-#[cfg(feature = "legacy")]
 #[async_trait::async_trait]
 impl PlanningBehavior for PlannedPolicyDriftReaction {
     fn name(&self) -> &str {
@@ -589,7 +559,6 @@ impl PlanningBehavior for PlannedPolicyDriftReaction {
     }
 }
 
-#[cfg(feature = "legacy")]
 /// The cycle itself: the runtime, its durable outbox, and the sweeps
 /// that keep the concessions honest after the admission that opened
 /// them.
@@ -600,18 +569,144 @@ impl PlanningBehavior for PlannedPolicyDriftReaction {
 /// account's graph: both the radius and the requester enforce it.
 pub struct VulnerabilityReactor {
     runtime: ReactiveRuntime,
-    graph: Arc<hodei_evidence_storage::SurrealGraphStore<Db>>,
-    view: SurrealImpactView<Db>,
-    db: Arc<Surreal<Db>>,
+    graph: Arc<dyn GraphWriter>,
+    view: Arc<dyn ImpactMaterializer>,
+    deltas: Arc<dyn RelationDeltaScan>,
+    grants: Arc<dyn GrantSweepSource>,
     plane: Arc<TrustPlane>,
-    decisions: Arc<SurrealDecisionStore<Db>>,
+    decisions: Arc<dyn DecisionStore>,
     ledger: Arc<dyn TrustLedger>,
     limits: InvestigationConfig,
 }
 
-#[cfg(feature = "legacy")]
+/// Everything the cycle touches, as ports.
+///
+/// The cycle depends on these and on no engine: the embedded engine and
+/// the graph authority both fill them in, and a test fills them with
+/// whatever it wants to break. The case sink is already resolved for the
+/// account of each advisory (see [`PerTenantCaseSink`]), because the
+/// crate's own sink contract carries no tenant.
+pub struct ReactorPorts {
+    /// Where the projection of an admitted advisory is written.
+    pub graph: Arc<dyn GraphWriter>,
+    /// How far an advisory reaches in that graph.
+    pub blast_radius: Arc<dyn BlastRadiusReader>,
+    /// The materialized impact view the cycle keeps current.
+    pub view: Arc<dyn ImpactMaterializer>,
+    /// The deltas of every tenant, for the reconciliation pass.
+    pub deltas: Arc<dyn RelationDeltaScan>,
+    /// The concessions the validity sweep looks at.
+    pub grants: Arc<dyn GrantSweepSource>,
+    /// The record of what the runtime already executed.
+    pub execution: Arc<dyn ExecutionStore>,
+    /// The durable outbox of intents.
+    pub outbox: Arc<dyn IntentOutbox>,
+    /// Where the security case of an advisory is opened.
+    pub cases: Arc<dyn SecurityCaseSink>,
+    /// The decisions the requester reads and writes.
+    pub decisions: Arc<dyn DecisionStore>,
+    /// The trust plane the promotion endpoint also uses.
+    pub plane: Arc<TrustPlane>,
+    /// The book of concessions.
+    pub ledger: Arc<dyn TrustLedger>,
+    /// The evidence of a subject.
+    pub evidence: Arc<dyn EvidenceReader>,
+    /// The risk facts of a subject.
+    pub risk_facts: Arc<dyn RiskFactsReader>,
+    /// The tenant template and the limits of the investigation.
+    pub limits: InvestigationConfig,
+}
+
+/// Opens the case store of one tenant.
+type CaseSinkOpener = Box<dyn Fn(&Hrn) -> Arc<dyn SecurityCaseSink> + Send + Sync>;
+
+/// The security case store of each account, resolved from the advisory.
+///
+/// The sink contract of the reactive crate says `open_or_update(advisory,
+/// impacted, now)` and names no tenant, while a case store of the graph
+/// authority is bound to one account at construction. The advisory is a
+/// canonical HRN whose account owns it, and the tenant template of the
+/// composition turns that account into the graph tenant, exactly as the
+/// blast radius does: so the tenant is derived here, from the same
+/// authority, and the store of that tenant is built once and reused. The
+/// stores themselves keep refusing a subject outside their account.
+pub struct PerTenantCaseSink {
+    limits: InvestigationConfig,
+    open: CaseSinkOpener,
+    stores: Mutex<BTreeMap<String, Arc<dyn SecurityCaseSink>>>,
+}
+
+impl PerTenantCaseSink {
+    /// The sink that builds the store of a tenant with `open` the first
+    /// time that tenant is seen.
+    pub fn new(
+        limits: InvestigationConfig,
+        open: impl Fn(&Hrn) -> Arc<dyn SecurityCaseSink> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            limits,
+            open: Box::new(open),
+            stores: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    /// The store of the tenant the advisory belongs to.
+    fn store_of(&self, advisory: &str) -> Result<Arc<dyn SecurityCaseSink>, String> {
+        let Some(advisory_hrn) = Hrn::from_string(advisory) else {
+            return Err(format!("the advisory {advisory} is not a canonical HRN"));
+        };
+        let Some(tenant) = self.limits.the_graph_tenant(&advisory_hrn) else {
+            return Err("the tenant template does not name an HRN".to_string());
+        };
+        let mut stores = self
+            .stores
+            .lock()
+            .map_err(|_| "the case store registry is poisoned".to_string())?;
+        Ok(stores
+            .entry(tenant.to_string())
+            .or_insert_with(|| (self.open)(&tenant))
+            .clone())
+    }
+}
+
+#[async_trait::async_trait]
+impl SecurityCaseSink for PerTenantCaseSink {
+    async fn open_or_update(
+        &self,
+        advisory: &str,
+        impacted: &[ImpactedSubject],
+        now: DateTime<Utc>,
+    ) -> Result<String, String> {
+        self.store_of(advisory)?
+            .open_or_update(advisory, impacted, now)
+            .await
+    }
+}
+
+/// What the graph authority needs to host the cycle: the connection, the
+/// namespace the frontier lives under, and the stores of trust the
+/// profile already opened.
+pub struct DgraphReactorParts {
+    /// The connected, schema-validated client.
+    pub client: Arc<GraphClient>,
+    /// The tenant namespace of the projection frontier.
+    pub namespace: String,
+    /// The book of concessions, also read by the validity sweep.
+    pub trust: Arc<DgraphTrustStore>,
+    /// The store of promotion decisions.
+    pub decisions: Arc<DgraphDecisionStore>,
+    /// The trust plane the promotion endpoint also uses.
+    pub plane: Arc<TrustPlane>,
+    /// The evidence of a subject.
+    pub evidence: Arc<dyn EvidenceReader>,
+    /// The risk facts of a subject.
+    pub risk_facts: Arc<dyn RiskFactsReader>,
+    /// The tenant template and the limits of the investigation.
+    pub limits: InvestigationConfig,
+}
+
 impl VulnerabilityReactor {
-    /// Builds the cycle over the parts the composition root already has.
+    /// Builds the cycle over ports.
     ///
     /// Nothing here invents a decision: the policy registry and the
     /// store of decisions are shared with the plane the promotion
@@ -619,6 +714,79 @@ impl VulnerabilityReactor {
     /// state, so a policy activated later is seen by both halves. The
     /// service cannot be cloned, so the reactor builds its own over
     /// them.
+    pub fn from_ports(ports: ReactorPorts) -> Self {
+        let ReactorPorts {
+            graph,
+            blast_radius,
+            view,
+            deltas,
+            grants,
+            execution,
+            outbox,
+            cases,
+            decisions,
+            plane,
+            ledger,
+            evidence,
+            risk_facts,
+            limits,
+        } = ports;
+        let requester_service = Arc::new(PromotionService::new(
+            decisions.clone(),
+            Arc::new(TrustedChannelTargets),
+            Arc::new(plane.registry()),
+        ));
+        let radius = Arc::new(GraphBlastRadius::new(blast_radius, limits.clone()));
+        let contexts: Arc<dyn TrustContextSource> = Arc::new(ContextFromEvidence::new(
+            evidence,
+            risk_facts,
+            limits.clone(),
+        ));
+        let requester: Arc<dyn DecisionRequester> = Arc::new(
+            PromotionDecisionRequester::new(
+                requester_service,
+                decisions.clone(),
+                contexts,
+                plane.policy_id().to_string(),
+                TRUSTED_DISTRIBUTION,
+                "reactor",
+            )
+            .with_ledger(ledger.clone()),
+        );
+        let executor: Arc<dyn IntentExecutor> = Arc::new(DomainIntentExecutor::new(
+            COMPOSITION_MARK,
+            cases,
+            requester,
+        ));
+
+        let mut runtime =
+            ReactiveRuntime::new(execution, Default::default()).with_tenant(COMPOSITION_MARK);
+        runtime.with_outbox(outbox);
+        runtime.register_planned(
+            Arc::new(PlannedVulnerabilityReaction::new(radius)),
+            executor.clone(),
+        );
+        runtime.register_planned(Arc::new(PlannedGrantExpiryReaction), executor.clone());
+        runtime.register_planned(Arc::new(PlannedPolicyDriftReaction), executor);
+
+        Self {
+            runtime,
+            graph,
+            view,
+            deltas,
+            grants,
+            plane,
+            decisions,
+            ledger,
+            limits,
+        }
+    }
+
+    /// Builds the cycle over the embedded engine.
+    ///
+    /// The Surreal adapters are the reference of every port; this keeps
+    /// the composition of the legacy profile exactly as it was.
+    #[cfg(feature = "legacy")]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         db: Arc<Surreal<Db>>,
@@ -631,56 +799,90 @@ impl VulnerabilityReactor {
         limits: InvestigationConfig,
     ) -> Self {
         let intents = Arc::new(SurrealIntentStore::new(db.clone()));
-        let cases = Arc::new(SurrealSecurityCaseStore::new(db.clone()));
-        let decisions = Arc::new(SurrealDecisionStore::new(db.clone()));
-        let requester_service = Arc::new(PromotionService::new(
-            decisions.clone() as Arc<dyn DecisionStore>,
-            Arc::new(TrustedChannelTargets),
-            Arc::new(plane.registry()),
-        ));
-        let radius = Arc::new(GraphBlastRadius::new(graph.clone(), limits.clone()));
-        let contexts: Arc<dyn TrustContextSource> = Arc::new(ContextFromEvidence::new(
+        let sources = Arc::new(SurrealReactorSources::new(db.clone()));
+        Self::from_ports(ReactorPorts {
+            graph: graph.clone(),
+            blast_radius: graph,
+            view: Arc::new(view),
+            deltas: sources.clone(),
+            grants: sources,
+            execution: intents.clone(),
+            outbox: intents,
+            cases: Arc::new(SurrealSecurityCaseStore::new(db.clone())),
+            decisions: Arc::new(SurrealDecisionStore::new(db)),
+            plane,
+            ledger,
             evidence,
             risk_facts,
-            limits.clone(),
-        ));
-        let requester: Arc<dyn DecisionRequester> = Arc::new(
-            PromotionDecisionRequester::new(
-                requester_service,
-                decisions.clone() as Arc<dyn DecisionStore>,
-                contexts,
-                plane.policy_id().to_string(),
-                TRUSTED_DISTRIBUTION,
-                "reactor",
-            )
-            .with_ledger(ledger.clone()),
-        );
-        let executor: Arc<dyn IntentExecutor> = Arc::new(DomainIntentExecutor::new(
-            COMPOSITION_MARK,
-            cases as Arc<dyn SecurityCaseSink>,
-            requester,
-        ));
-
-        let mut runtime =
-            ReactiveRuntime::new(intents.clone(), Default::default()).with_tenant(COMPOSITION_MARK);
-        runtime.with_outbox(intents as Arc<dyn IntentOutbox>);
-        runtime.register_planned(
-            Arc::new(PlannedVulnerabilityReaction::new(radius)),
-            executor.clone(),
-        );
-        runtime.register_planned(Arc::new(PlannedGrantExpiryReaction), executor.clone());
-        runtime.register_planned(Arc::new(PlannedPolicyDriftReaction), executor);
-
-        Self {
-            runtime,
-            graph,
-            view,
-            db,
-            plane,
-            decisions,
-            ledger,
             limits,
-        }
+        })
+    }
+
+    /// Builds the cycle over the graph authority.
+    ///
+    /// The same composition as the embedded one with the Dgraph adapters
+    /// of every port. The case store is bound to an account at
+    /// construction, so a sink resolves the account of each advisory and
+    /// opens the store of that tenant on first use.
+    ///
+    /// # Errors
+    ///
+    /// [`ReactorError::Unavailable`] when the frontier or the intent
+    /// store cannot open: a cycle without its durable outbox would lose
+    /// what a crash leaves behind.
+    pub async fn over_dgraph(parts: DgraphReactorParts) -> Result<Self, ReactorError> {
+        let DgraphReactorParts {
+            client,
+            namespace,
+            trust,
+            decisions,
+            plane,
+            evidence,
+            risk_facts,
+            limits,
+        } = parts;
+        let graph = Arc::new(hodei_evidence_storage::DgraphGraphStore::new(
+            client.clone(),
+        ));
+        let frontier = Arc::new(
+            hodei_evidence_storage::DgraphProjectionFrontier::open(client.clone(), &namespace)
+                .await
+                .map_err(|error| ReactorError::Unavailable(error.to_string()))?,
+        );
+        let view = Arc::new(DgraphImpactView::new(
+            client.clone(),
+            graph.clone(),
+            frontier.clone(),
+        ));
+        let deltas = Arc::new(hodei_evidence_storage::DgraphDeltaLedger::new(frontier));
+        let intents = Arc::new(
+            DgraphIntentStore::open(client.clone())
+                .await
+                .map_err(|error| ReactorError::Unavailable(error.to_string()))?,
+        );
+        let case_client = client.clone();
+        let cases = Arc::new(PerTenantCaseSink::new(limits.clone(), move |tenant| {
+            Arc::new(DgraphSecurityCaseStore::new(
+                case_client.clone(),
+                tenant.clone(),
+            ))
+        }));
+        Ok(Self::from_ports(ReactorPorts {
+            graph: graph.clone(),
+            blast_radius: Arc::new(DgraphBlastRadius::new(graph, GraphReadLimits::probe())),
+            view,
+            deltas,
+            grants: trust.clone(),
+            execution: intents.clone(),
+            outbox: intents,
+            cases,
+            decisions,
+            plane,
+            ledger: trust,
+            evidence,
+            risk_facts,
+            limits,
+        }))
     }
 
     /// Admits one OSV advisory and runs the cycle.
@@ -850,28 +1052,20 @@ impl VulnerabilityReactor {
         &self,
         now: DateTime<Utc>,
     ) -> Result<SweepCounters, ReactorError> {
-        let rows: Vec<StaleGrantRow> = self
-            .db
-            .query(
-                "SELECT decision_id, account, repository, digest_algorithm, digest, subject, \
-                 policy_version, valid_until FROM trust_grant \
-                 WHERE revoked_at = NONE \
-                 ORDER BY account, repository, digest \
-                 LIMIT 4096;",
-            )
+        let rows = self
+            .grants
+            .unrevoked_grants(MAX_SWEEP_GRANTS)
             .await
-            .map_err(|error| ReactorError::Unavailable(error.to_string()))?
-            .take(0)
             .map_err(|error| ReactorError::Unavailable(error.to_string()))?;
 
         let active = self.plane.active_policy_version();
         let mut counters = SweepCounters::default();
         // Concessions whose own horizon lapsed, grouped by subject.
-        let mut lapsed: BTreeMap<String, Vec<&StaleGrantRow>> = BTreeMap::new();
+        let mut lapsed: BTreeMap<String, Vec<&GrantSweepRow>> = BTreeMap::new();
         // Concessions decided under a version that is no longer active,
         // grouped by account: the drift event is per account and
         // version.
-        let mut drifted: BTreeMap<String, Vec<&StaleGrantRow>> = BTreeMap::new();
+        let mut drifted: BTreeMap<String, Vec<&GrantSweepRow>> = BTreeMap::new();
 
         for row in &rows {
             let Some(subject) = row.subject.as_deref() else {
@@ -977,7 +1171,7 @@ impl VulnerabilityReactor {
     /// deciding, which this module does not do.
     async fn renew_concessions(
         &self,
-        rows: &[&StaleGrantRow],
+        rows: &[&GrantSweepRow],
         now: DateTime<Utc>,
         counters: &mut SweepCounters,
     ) -> Result<(), ReactorError> {
@@ -1048,26 +1242,17 @@ impl VulnerabilityReactor {
     pub async fn reconcile_impact_view(&self) -> Result<usize, ReactorError> {
         // The ledger's own reading port is per subscription and per
         // tenant, and a reconciler of the whole store has to see every
-        // tenant's story: the same table, read straight, is the honest
-        // question here. The quota bounds the pass; the deltas beyond
-        // it are the next pass's, and applying one twice is a no-op by
-        // the view's own watermark.
-        let rows: Vec<hodei_evidence_storage::DeltaRow> = self
-            .db
-            .query(format!(
-                "SELECT * FROM type::table($table) ORDER BY tenant, seq LIMIT {MAX_RECONCILE_DELTAS};"
-            ))
-            .bind(("table", hodei_evidence_storage::DELTA_TABLE))
+        // tenant's story: the scan port is that question. The quota
+        // bounds the pass; the deltas beyond it are the next pass's, and
+        // applying one twice is a no-op by the view's own watermark.
+        let deltas = self
+            .deltas
+            .scan(MAX_RECONCILE_DELTAS)
             .await
-            .map_err(|error| ReactorError::Unavailable(error.to_string()))?
-            .take(0)
-            .map_err(|error| ReactorError::Unavailable(error.to_string()))?;
+            .map_err(ReactorError::Unavailable)?;
 
         let mut done = 0;
-        for row in rows {
-            let Some(delta) = delta_of_row(&row) else {
-                continue;
-            };
+        for delta in deltas {
             // `invalidated_by` says which routes the delta touches; the
             // apply is the view's own step, and a route that already
             // digested the graph's current truth says nothing here.
@@ -1121,8 +1306,78 @@ fn delta_of_row(row: &hodei_evidence_storage::DeltaRow) -> Option<RelationDelta>
 }
 
 #[cfg(feature = "legacy")]
+/// The embedded engine's answer to the two questions the sweep and the
+/// reconciliation ask of the whole store: the concessions nobody revoked
+/// and the deltas of every tenant. It is the SurrealQL the cycle always
+/// ran, behind the ports.
+pub struct SurrealReactorSources {
+    db: Arc<Surreal<Db>>,
+}
+
+#[cfg(feature = "legacy")]
+impl SurrealReactorSources {
+    /// The sources over the database of the embedded profile.
+    pub fn new(db: Arc<Surreal<Db>>) -> Self {
+        Self { db }
+    }
+}
+
+#[cfg(feature = "legacy")]
+#[async_trait::async_trait]
+impl GrantSweepSource for SurrealReactorSources {
+    async fn unrevoked_grants(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<GrantSweepRow>, hodei_catalog::CatalogError> {
+        let rows: Vec<StaleGrantRow> = self
+            .db
+            .query(format!(
+                "SELECT decision_id, account, repository, digest_algorithm, digest, subject, \
+                 policy_version, valid_until FROM trust_grant \
+                 WHERE revoked_at = NONE \
+                 ORDER BY account, repository, digest \
+                 LIMIT {limit};"
+            ))
+            .await
+            .map_err(|error| hodei_catalog::CatalogError::unavailable(error.to_string()))?
+            .take(0)
+            .map_err(|error| hodei_catalog::CatalogError::unavailable(error.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|row| GrantSweepRow {
+                decision_id: row.decision_id,
+                account: row.account,
+                repository: row.repository,
+                digest_algorithm: row.digest_algorithm,
+                digest: row.digest,
+                subject: row.subject,
+                policy_version: row.policy_version,
+                valid_until: row.valid_until,
+            })
+            .collect())
+    }
+}
+
+#[cfg(feature = "legacy")]
+#[async_trait::async_trait]
+impl RelationDeltaScan for SurrealReactorSources {
+    async fn scan(&self, quota: usize) -> Result<Vec<RelationDelta>, String> {
+        let rows: Vec<hodei_evidence_storage::DeltaRow> = self
+            .db
+            .query(format!(
+                "SELECT * FROM type::table($table) ORDER BY tenant, seq LIMIT {quota};"
+            ))
+            .bind(("table", hodei_evidence_storage::DELTA_TABLE))
+            .await
+            .map_err(|error| error.to_string())?
+            .take(0)
+            .map_err(|error| error.to_string())?;
+        Ok(rows.iter().filter_map(delta_of_row).collect())
+    }
+}
+
 /// The digest a grant row names.
-fn digest_of_row(row: &StaleGrantRow) -> Result<ContentDigest, String> {
+fn digest_of_row(row: &GrantSweepRow) -> Result<ContentDigest, String> {
     let algorithm = match row.digest_algorithm.as_str() {
         "sha256" => hodei_evidence::DigestAlgorithm::Sha256,
         "sha512" => hodei_evidence::DigestAlgorithm::Sha512,
@@ -1368,5 +1623,171 @@ mod tests {
         assert!(text.contains("unreadable"));
         let text = ReactorError::Unavailable("the graph did not answer".to_string()).to_string();
         assert!(text.contains("not answer") || text.contains("did not answer"));
+    }
+}
+
+#[cfg(test)]
+mod port_tests {
+    //! The cycle's ports, tested without any engine: what the adapters of
+    //! the engines must also honour.
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use hodei_risk::case::{BlastRadius, SubjectDepth};
+    use hodei_risk_storage::RiskError;
+
+    use super::*;
+
+    const ADVISORY: &str = "hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-0001";
+
+    /// A sink that remembers which tenant it was built for.
+    struct TenantSink {
+        tenant: String,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl SecurityCaseSink for TenantSink {
+        async fn open_or_update(
+            &self,
+            _advisory: &str,
+            _impacted: &[ImpactedSubject],
+            _now: DateTime<Utc>,
+        ) -> Result<String, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.tenant.clone())
+        }
+    }
+
+    fn sink_over(opened: Arc<AtomicUsize>, calls: Arc<AtomicUsize>) -> PerTenantCaseSink {
+        PerTenantCaseSink::new(InvestigationConfig::default(), move |tenant| {
+            opened.fetch_add(1, Ordering::SeqCst);
+            Arc::new(TenantSink {
+                tenant: tenant.to_string(),
+                calls: calls.clone(),
+            })
+        })
+    }
+
+    #[tokio::test]
+    async fn the_case_goes_to_the_store_of_the_tenant_the_advisory_belongs_to() {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let sink = sink_over(opened, Arc::new(AtomicUsize::new(0)));
+        let acme = sink
+            .open_or_update(ADVISORY, &[], Utc::now())
+            .await
+            .expect("the case is opened");
+        let other = sink
+            .open_or_update(
+                "hrn:hodei:artifacts:eu:other:Vulnerability/GHSA-0001",
+                &[],
+                Utc::now(),
+            )
+            .await
+            .expect("the case is opened");
+        assert!(acme.contains(":acme:"), "the tenant of acme: {acme}");
+        assert!(other.contains(":other:"), "the tenant of other: {other}");
+        assert_ne!(acme, other, "one account never shares the store of another");
+    }
+
+    #[tokio::test]
+    async fn a_tenant_store_is_built_once_and_reused() {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sink = sink_over(opened.clone(), calls.clone());
+        for _ in 0..3 {
+            sink.open_or_update(ADVISORY, &[], Utc::now())
+                .await
+                .expect("the case is opened");
+        }
+        assert_eq!(opened.load(Ordering::SeqCst), 1, "built once per tenant");
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "and used every time");
+    }
+
+    #[tokio::test]
+    async fn an_advisory_that_is_not_an_hrn_opens_no_store() {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let sink = sink_over(opened.clone(), Arc::new(AtomicUsize::new(0)));
+        assert!(
+            sink.open_or_update("GHSA-0001", &[], Utc::now())
+                .await
+                .is_err()
+        );
+        assert_eq!(opened.load(Ordering::SeqCst), 0);
+    }
+
+    /// A radius reader that counts its questions and answers a fixed radius.
+    struct FixedRadius {
+        asked: Arc<AtomicUsize>,
+        radius: BlastRadius,
+    }
+
+    #[async_trait::async_trait]
+    impl BlastRadiusReader for FixedRadius {
+        async fn blast_radius_of(
+            &self,
+            _tenant: &Hrn,
+            _vulnerability: &Hrn,
+        ) -> Result<BlastRadius, RiskError> {
+            self.asked.fetch_add(1, Ordering::SeqCst);
+            Ok(self.radius.clone())
+        }
+    }
+
+    fn depth(subject: &str, depth: usize) -> SubjectDepth {
+        SubjectDepth {
+            subject: subject.to_string(),
+            depth,
+            deployments: vec![format!("{subject}/deployment")],
+        }
+    }
+
+    #[tokio::test]
+    async fn the_radius_keeps_only_the_subjects_below_the_component() {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let radius = GraphBlastRadius::new(
+            Arc::new(FixedRadius {
+                asked: asked.clone(),
+                radius: BlastRadius {
+                    affected_subjects: Vec::new(),
+                    affected_deployments: Vec::new(),
+                    affected_components: Vec::new(),
+                    depths: vec![depth("component", 0), depth("artifact", 1)],
+                },
+            }),
+            InvestigationConfig::default(),
+        );
+        let impacted = radius
+            .impacted("acme", ADVISORY)
+            .await
+            .expect("the radius is answered");
+        assert_eq!(impacted.len(), 1, "depth zero is a fact, not a subject");
+        assert_eq!(impacted[0].subject, "artifact");
+        assert_eq!(
+            impacted[0].deployment.as_deref(),
+            Some("artifact/deployment")
+        );
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn the_identity_gate_closes_before_the_port_is_asked() {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let radius = GraphBlastRadius::new(
+            Arc::new(FixedRadius {
+                asked: asked.clone(),
+                radius: BlastRadius {
+                    affected_subjects: Vec::new(),
+                    affected_deployments: Vec::new(),
+                    affected_components: Vec::new(),
+                    depths: Vec::new(),
+                },
+            }),
+            InvestigationConfig::default(),
+        );
+        assert!(radius.impacted("", ADVISORY).await.is_err());
+        assert!(radius.impacted("other", ADVISORY).await.is_err());
+        assert!(radius.impacted("acme", "not-an-hrn").await.is_err());
+        assert_eq!(asked.load(Ordering::SeqCst), 0, "no question was asked");
     }
 }

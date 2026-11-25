@@ -63,7 +63,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use hodei_catalog::{CatalogError, TrustGrant, TrustLedger};
+use hodei_catalog::{CatalogError, GrantSweepRow, GrantSweepSource, TrustGrant, TrustLedger};
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_graph_client::port::{GraphMutationBlock, GraphMutationPort, GraphUpsertTransaction};
 use hodei_graph_client::schema::dql_string;
@@ -1079,6 +1079,49 @@ impl TrustLedger for DgraphTrustStore {
     }
 }
 
+#[async_trait]
+impl GrantSweepSource for DgraphTrustStore {
+    async fn unrevoked_grants(&self, limit: usize) -> Result<Vec<GrantSweepRow>, CatalogError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        // The server orders and bounds the page, so a pass reads a
+        // finite slice of the book whatever its size.
+        let query = format!(
+            "{{ q(func: type({GRANT_TYPE}), orderasc: hodei.trust.grant.account, \
+             orderasc: hodei.trust.grant.repository, orderasc: hodei.trust.grant.digest, \
+             first: {limit}) @filter(NOT has(hodei.trust.grant.revoked_at)) {{ {fields} }} }}",
+            fields = GRANT_FIELDS,
+        );
+        let response = query_json(&self.client, &query).await?;
+        let mut rows: Vec<GrantSweepRow> = Vec::new();
+        for node in response
+            .get("q")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
+            // A node the ledger cannot read back is corruption, and a
+            // sweep that skipped it would call the book clean.
+            let grant = grant_of(&node)?;
+            rows.push(GrantSweepRow {
+                decision_id: grant.decision_id,
+                account: grant.account,
+                repository: grant.repository,
+                digest_algorithm: grant.digest.algorithm.to_string(),
+                digest: grant.digest.value,
+                subject: grant.subject,
+                policy_version: grant.policy_version,
+                valid_until: grant.valid_until,
+            });
+        }
+        rows.sort_by(|a, b| {
+            (&a.account, &a.repository, &a.digest).cmp(&(&b.account, &b.repository, &b.digest))
+        });
+        Ok(rows)
+    }
+}
+
 /// The store of promotion decisions over the graph.
 ///
 /// A decision is written once and never changed: the row is keyed by the
@@ -1246,7 +1289,9 @@ pub enum DgraphIntentError {
     Unavailable(String),
     /// A receipt arrived for an intent nobody holds a claim on: the
     /// state it found is named, so the operator can see what stood.
-    #[error("the intent {identity} is not claimed (its state is {state}), so nobody can receive this receipt")]
+    #[error(
+        "the intent {identity} is not claimed (its state is {state}), so nobody can receive this receipt"
+    )]
     NotClaimed {
         /// The intent the receipt spoke about.
         identity: String,
@@ -1256,16 +1301,16 @@ pub enum DgraphIntentError {
     /// A receipt arrived while the intent is still claimed but its lease
     /// is dead: the claim does not exist any more, whatever the state
     /// field says.
-    #[error(
-        "the claim of intent {identity} has no live lease, so nobody can receive this receipt"
-    )]
+    #[error("the claim of intent {identity} has no live lease, so nobody can receive this receipt")]
     LeaseDead {
         /// The intent the receipt spoke about.
         identity: String,
     },
     /// A fenced write presented a token the intent has moved past: a
     /// worker that was overtaken cannot write.
-    #[error("the write of intent {identity} was refused by fencing: the presented token is {presented} and the intent is at generation {current}")]
+    #[error(
+        "the write of intent {identity} was refused by fencing: the presented token is {presented} and the intent is at generation {current}"
+    )]
     FencingRejected {
         /// The intent the write spoke about.
         identity: String,

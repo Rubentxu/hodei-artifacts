@@ -229,6 +229,42 @@ pub trait TrustLedger: Send + Sync {
     ) -> Result<Vec<TrustGrant>, CatalogError>;
 }
 
+/// A concession the validity sweep looks at: the row, with what the
+/// renewal needs and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantSweepRow {
+    /// The decision that granted it.
+    pub decision_id: String,
+    /// The account it belongs to.
+    pub account: String,
+    /// The repository it covers.
+    pub repository: String,
+    /// The algorithm of the digest it covers, as stored (`sha256`).
+    pub digest_algorithm: String,
+    /// The value of the digest it covers.
+    pub digest: String,
+    /// The subject the decision evaluated, when the grant carries the
+    /// validity contract.
+    pub subject: Option<String>,
+    /// The version of the policy that decided it.
+    pub policy_version: Option<String>,
+    /// The instant it stops being valid.
+    pub valid_until: Option<DateTime<Utc>>,
+}
+
+/// The question the validity sweep asks of the book: which concessions
+/// are not revoked yet, across every account.
+///
+/// It is not part of [`TrustLedger`] because only the sweep needs it and
+/// the serving path must not grow a way to enumerate the book.
+#[async_trait]
+pub trait GrantSweepSource: Send + Sync {
+    /// The concessions nobody revoked, ordered by account, repository and
+    /// digest, at most `limit` of them. The bound keeps a pass finite: the
+    /// rest belongs to the next one.
+    async fn unrevoked_grants(&self, limit: usize) -> Result<Vec<GrantSweepRow>, CatalogError>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

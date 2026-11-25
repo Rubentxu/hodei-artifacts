@@ -371,6 +371,35 @@ impl std::fmt::Display for RiskError {
 
 impl std::error::Error for RiskError {}
 
+/// The port of the blast radius: how far a vulnerability reaches in the
+/// graph of an account.
+///
+/// The reactive cycle asks this question through the port, so it does not
+/// care which engine holds the graph. Each adapter keeps the semantics of
+/// its own walk; the Dgraph one refuses a walk that hit a bound instead of
+/// answering with a partial radius.
+#[async_trait::async_trait]
+pub trait BlastRadiusReader: Send + Sync {
+    /// The radius of `vulnerability` in the graph of `tenant`.
+    async fn blast_radius_of(
+        &self,
+        tenant: &kernel::Hrn,
+        vulnerability: &kernel::Hrn,
+    ) -> Result<hodei_risk::case::BlastRadius, RiskError>;
+}
+
+#[cfg(feature = "legacy")]
+#[async_trait]
+impl<C: Connection> BlastRadiusReader for hodei_evidence_storage::SurrealGraphStore<C> {
+    async fn blast_radius_of(
+        &self,
+        tenant: &kernel::Hrn,
+        vulnerability: &kernel::Hrn,
+    ) -> Result<BlastRadius, RiskError> {
+        blast_radius(self, tenant, vulnerability).await
+    }
+}
+
 #[cfg(feature = "legacy")]
 /// Writes a change set of the risk into the graph.
 pub async fn apply<C: Connection>(

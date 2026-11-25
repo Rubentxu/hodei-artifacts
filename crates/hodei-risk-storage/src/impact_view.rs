@@ -23,8 +23,9 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "legacy")]
 use std::sync::Arc;
 
+use hodei_evidence::domain::delta::RelationDelta;
 #[cfg(feature = "legacy")]
-use hodei_evidence::domain::delta::{RelationDelta, RelationDeltaLedger};
+use hodei_evidence::domain::delta::RelationDeltaLedger;
 #[cfg(feature = "legacy")]
 use hodei_evidence::domain::graph::RelationType;
 #[cfg(feature = "legacy")]
@@ -187,6 +188,31 @@ pub struct ImpactSnapshot {
     pub subjects: Vec<(String, usize)>,
     /// The version the view is complete up to.
     pub watermark: u64,
+}
+
+/// The WRITE side of the impact view, as the reactive cycle drives it:
+/// materialize one advisory, ask what a delta touches, apply a delta.
+///
+/// The cycle depends on this port and not on an engine. Both adapters
+/// keep the same contract: every operation is idempotent, a delta is
+/// applied only to the advisories whose route it touches, and a failure
+/// is an error, never a silent no-op.
+#[async_trait::async_trait]
+pub trait ImpactMaterializer: Send + Sync {
+    /// Materializes the impact of one advisory from the authoritative
+    /// walk, at the version the ledger has reached.
+    async fn rebuild_advisory(
+        &self,
+        tenant: &Hrn,
+        advisory: &Hrn,
+    ) -> Result<ImpactSnapshot, String>;
+
+    /// The advisories whose routes the delta invalidates.
+    async fn invalidated_by(&self, delta: &RelationDelta) -> Result<Vec<Hrn>, String>;
+
+    /// Recomputes ONLY the advisories the delta touches and answers with
+    /// them.
+    async fn apply_delta(&self, delta: &RelationDelta) -> Result<Vec<Hrn>, String>;
 }
 
 #[cfg(feature = "legacy")]
@@ -970,5 +996,25 @@ impl<C: Connection> ImpactReader for SurrealImpactView<C> {
         advisory: &Hrn,
     ) -> Result<ImpactAnswer, ImpactReadError> {
         SurrealImpactView::serve_impact(self, tenant, advisory).await
+    }
+}
+
+#[cfg(feature = "legacy")]
+#[async_trait::async_trait]
+impl<C: Connection> ImpactMaterializer for SurrealImpactView<C> {
+    async fn rebuild_advisory(
+        &self,
+        tenant: &Hrn,
+        advisory: &Hrn,
+    ) -> Result<ImpactSnapshot, String> {
+        SurrealImpactView::rebuild_advisory(self, tenant, advisory).await
+    }
+
+    async fn invalidated_by(&self, delta: &RelationDelta) -> Result<Vec<Hrn>, String> {
+        SurrealImpactView::invalidated_by(self, delta).await
+    }
+
+    async fn apply_delta(&self, delta: &RelationDelta) -> Result<Vec<Hrn>, String> {
+        SurrealImpactView::apply_delta(self, delta).await
     }
 }
