@@ -289,11 +289,11 @@ impl ContentConfig {
         // the choice must be made on purpose, in the configuration.
         match (self.backend, self.s3.as_ref()) {
             (ContentBackend::S3, None) => Err(ConfigError::Message(
-                "Invalid content configuration: backend = \"s3\" requires the [content.s3] table with a bucket; there is no fallback to the filesystem".to_string(),
+                "Invalid content configuration: backend = \"s3\" requires the [content.s3] table with a bucket; there is no fallback to the filesystem. Set HODEI_CONTENT__S3__BUCKET (and HODEI_CONTENT__S3__ENDPOINT for a non-AWS store) or set HODEI_CONTENT__BACKEND=filesystem".to_string(),
             )),
             (ContentBackend::S3, Some(table)) if table.bucket.trim().is_empty() => {
                 Err(ConfigError::Message(
-                    "Invalid content configuration: [content.s3].bucket cannot be empty".to_string(),
+                    "Invalid content configuration: [content.s3].bucket cannot be empty. Set HODEI_CONTENT__S3__BUCKET".to_string(),
                 ))
             }
             _ => Ok(()),
@@ -887,7 +887,7 @@ impl SecurityConfig {
         if auth_any {
             if self.auth_jwt_secret.is_some() == self.auth_jwks_path.is_some() {
                 return Err(ConfigError::Message(
-                    "Production security requires exactly one of auth_jwt_secret or auth_jwks_path"
+                    "Production security requires exactly one of auth_jwt_secret or auth_jwks_path. Set exactly one of HODEI_SECURITY__AUTH_JWT_SECRET or HODEI_SECURITY__AUTH_JWKS_PATH (or the keys in [security] of config/default.toml) and unset the other"
                         .to_string(),
                 ));
             }
@@ -897,7 +897,7 @@ impl SecurityConfig {
                 || self.authorization_schema_path.is_none()
             {
                 return Err(ConfigError::Message(
-                    "Production security requires auth_issuer, auth_audience, authorization_policy_path and authorization_schema_path together".to_string(),
+                    "Production security requires auth_issuer, auth_audience, authorization_policy_path and authorization_schema_path together. Set HODEI_SECURITY__AUTH_ISSUER, HODEI_SECURITY__AUTH_AUDIENCE, HODEI_SECURITY__AUTHORIZATION_POLICY_PATH and HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH, or remove every auth key to run without production auth".to_string(),
                 ));
             }
         }
@@ -907,7 +907,7 @@ impl SecurityConfig {
             || self.auth_jwks_path.as_deref().is_some_and(str::is_empty)
         {
             return Err(ConfigError::Message(
-                "Production auth issuer, audience, JWT secret and JWKS path cannot be empty"
+                "Production auth issuer, audience, JWT secret and JWKS path cannot be empty. Give HODEI_SECURITY__AUTH_ISSUER, HODEI_SECURITY__AUTH_AUDIENCE, HODEI_SECURITY__AUTH_JWT_SECRET and HODEI_SECURITY__AUTH_JWKS_PATH a value, or unset the ones you do not use"
                     .to_string(),
             ));
         }
@@ -1367,6 +1367,8 @@ fn the_config_file_names(run_mode: &str) -> [String; 3] {
 /// string, an `Authorization` header, an environment dump. Whatever the
 /// source, the text goes through here before it reaches the operator.
 pub fn redact_secrets(text: &str) -> String {
+    let text = redact_private_key_blocks(text);
+    let text = text.as_str();
     const SENSITIVE: [&str; 8] = [
         "token",
         "password",
@@ -1416,6 +1418,45 @@ pub fn redact_secrets(text: &str) -> String {
         out.push(word.to_string());
     }
     out.join(" ")
+}
+
+/// Replace every PEM private-key block with `[REDACTED]`.
+///
+/// A key pasted into a variable reaches the error text with its markers and
+/// base64 body, on several lines or flattened onto one. Everything from the
+/// `-----BEGIN ... PRIVATE KEY-----` marker to the matching `-----END`
+/// marker goes; a block that never closes is cut to the end of the text,
+/// because what follows an unterminated key is most likely its body.
+fn redact_private_key_blocks(text: &str) -> String {
+    const BEGIN: &str = "-----BEGIN ";
+    const KEY: &str = "PRIVATE KEY-----";
+    const END: &str = "-----END ";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(BEGIN) {
+        let after_begin = &rest[start + BEGIN.len()..];
+        let is_private = after_begin
+            .find("-----")
+            .is_some_and(|close| after_begin[..close + 5].ends_with(KEY));
+        if !is_private {
+            out.push_str(&rest[..start + BEGIN.len()]);
+            rest = after_begin;
+            continue;
+        }
+        out.push_str(&rest[..start]);
+        out.push_str("[REDACTED]");
+        let body_start = start + BEGIN.len();
+        let tail = &rest[body_start..];
+        rest = match tail.find(END).and_then(|end| {
+            let after_end = &tail[end + END.len()..];
+            after_end.find(KEY).map(|k| &after_end[k + KEY.len()..])
+        }) {
+            Some(remaining) => remaining,
+            None => "",
+        };
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Explain a failed configuration load to the operator.
@@ -1606,10 +1647,20 @@ impl LoggingConfig {
 
 #[cfg(test)]
 mod tests {
+    /// The error the loader really produces for a TOML text, not a hand-made one.
+    fn the_real_load_error(toml: &str) -> ConfigError {
+        Config::builder()
+            .add_source(File::from_str(toml, ::config::FileFormat::Toml))
+            .build()
+            .expect("the text is valid TOML")
+            .try_deserialize::<AppConfig>()
+            .expect_err("the text lacks required sections")
+    }
+
     #[test]
     fn a_missing_config_file_names_the_expected_path_and_the_action() {
         let tmp = tempfile::tempdir().unwrap();
-        let error = ConfigError::Message("missing field `server`".to_string());
+        let error = the_real_load_error("");
         let text = explain_config_error(&error, tmp.path(), "development");
         let expected = tmp.path().join("config/default.toml");
         assert!(text.contains(&expected.display().to_string()), "{text}");
@@ -1622,7 +1673,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir(tmp.path().join("config")).unwrap();
         std::fs::write(tmp.path().join("config/default.toml"), "").unwrap();
-        let error = ConfigError::Message("missing field `database`".to_string());
+        let error = the_real_load_error(
+            "[server]\nhost = \"h\"\nport = 1\nrequest_timeout_secs = 1\nmax_body_size = 1\n",
+        );
         let text = explain_config_error(&error, tmp.path(), "development");
         assert!(text.contains("config/default.toml"), "{text}");
         assert!(!text.contains("No configuration file found"), "{text}");
@@ -1631,16 +1684,17 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "root bypasses permission bits, so it cannot observe the failure; run unprivileged with --ignored (the root-valid path is covered by a_content_directory_below_a_regular_file_names_the_path_and_the_fix)"]
     fn an_unwritable_content_directory_names_the_path_and_the_fix() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("cas");
         std::fs::create_dir(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-        // Root ignores permission bits; skip the assertion there.
-        if std::fs::write(dir.join("probe"), b"x").is_ok() {
-            return;
-        }
+        assert!(
+            std::fs::write(dir.join("probe"), b"x").is_err(),
+            "permission bits are not enforced for this user; run this test unprivileged"
+        );
         let content = ContentConfig {
             cas_path: dir.to_string_lossy().into_owned(),
             ..Default::default()
@@ -1650,6 +1704,111 @@ mod tests {
         assert!(text.contains(&dir.display().to_string()), "{text}");
         assert!(text.contains("HODEI_CONTENT__CAS_PATH"), "{text}");
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// Valid for every user, root included: no permission bit is involved.
+    #[test]
+    fn a_content_directory_below_a_regular_file_names_the_path_and_the_fix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("file");
+        std::fs::write(&blocker, "x").unwrap();
+        let content = ContentConfig {
+            cas_path: blocker.join("cas").to_string_lossy().into_owned(),
+            ..Default::default()
+        };
+        let text = content
+            .preflight_storage()
+            .expect_err("cannot exist")
+            .to_string();
+        assert!(text.contains(&blocker.display().to_string()), "{text}");
+        assert!(text.contains("HODEI_CONTENT__CAS_PATH"), "{text}");
+    }
+
+    const PEM_BODY: &str = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTUt9Us8cKj";
+
+    fn the_pem(kind: &str) -> String {
+        format!("-----BEGIN {kind}-----\n{PEM_BODY}\nMIIEvQ2ndLine==\n-----END {kind}-----")
+    }
+
+    #[test]
+    fn a_private_key_block_never_reaches_the_operator() {
+        for kind in [
+            "PRIVATE KEY",
+            "RSA PRIVATE KEY",
+            "EC PRIVATE KEY",
+            "ENCRYPTED PRIVATE KEY",
+        ] {
+            let pem = the_pem(kind);
+            let flat = pem.replace('\n', " ");
+            let escaped = pem.replace('\n', "\\n");
+            for block in [pem, flat, escaped] {
+                let raw = format!("invalid value {block} for key; endpoint=http://h:9000");
+                let redacted = redact_secrets(&raw);
+                for leaked in ["BEGIN", "-----", PEM_BODY, "MIIEvQ2ndLine", "END"] {
+                    assert!(!redacted.contains(leaked), "{leaked} leaked: {redacted}");
+                }
+                assert!(redacted.contains("endpoint=http://h:9000"), "{redacted}");
+                let error = ConfigError::Message(raw);
+                let text = explain_config_error(
+                    &error,
+                    std::path::Path::new("/nonexistent"),
+                    "development",
+                );
+                for leaked in ["BEGIN", PEM_BODY, "MIIEvQ2ndLine"] {
+                    assert!(!text.contains(leaked), "{leaked} leaked: {text}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_unterminated_private_key_block_is_cut_to_the_end() {
+        let raw = format!("bad: -----BEGIN PRIVATE KEY-----\n{PEM_BODY}");
+        let redacted = redact_secrets(&raw);
+        assert!(
+            !redacted.contains(PEM_BODY) && !redacted.contains("BEGIN"),
+            "{redacted}"
+        );
+    }
+
+    #[test]
+    fn a_public_certificate_marker_is_left_alone() {
+        let raw = "-----BEGIN CERTIFICATE----- abc -----END CERTIFICATE-----";
+        assert_eq!(redact_secrets(raw), raw);
+    }
+
+    #[test]
+    fn the_production_auth_errors_name_the_variable_and_the_action() {
+        let both = SecurityConfig {
+            auth_jwt_secret: Some("s".into()),
+            auth_jwks_path: Some("p".into()),
+            ..SecurityConfig::default()
+        };
+        let text = both.validate_production_auth().unwrap_err().to_string();
+        assert!(text.contains("HODEI_SECURITY__AUTH_JWT_SECRET"), "{text}");
+        assert!(text.contains("HODEI_SECURITY__AUTH_JWKS_PATH"), "{text}");
+
+        let partial = SecurityConfig {
+            auth_jwt_secret: Some("s".into()),
+            ..SecurityConfig::default()
+        };
+        let text = partial.validate_production_auth().unwrap_err().to_string();
+        assert!(text.contains("HODEI_SECURITY__AUTH_ISSUER"), "{text}");
+        assert!(
+            text.contains("HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH"),
+            "{text}"
+        );
+
+        let empty = SecurityConfig {
+            auth_jwt_secret: Some("s".into()),
+            auth_issuer: Some(String::new()),
+            auth_audience: Some("a".into()),
+            authorization_policy_path: Some("p".into()),
+            authorization_schema_path: Some("s".into()),
+            ..SecurityConfig::default()
+        };
+        let text = empty.validate_production_auth().unwrap_err().to_string();
+        assert!(text.contains("HODEI_SECURITY__AUTH_ISSUER"), "{text}");
     }
 
     #[test]

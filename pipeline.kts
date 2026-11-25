@@ -267,6 +267,7 @@ pipeline {
                     "cargo test --workspace " + listOf(
                         "--test binary_contract",
                         "--test bootstrap_integration",
+                        "--test startup_errors",
                         "--test crash_recovery",
                         "--test distribution_contract",
                         "--test production_auth",

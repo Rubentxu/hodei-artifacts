@@ -1305,20 +1305,20 @@ fn validate_bootstrap_configuration(
     if config.database.namespace.is_none() || config.database.namespace.as_ref().unwrap().is_empty()
     {
         return Err(Box::new(BootstrapError::Initialization(
-            "Database namespace is required but not configured".to_string(),
+            "Database namespace is required but not configured. Set HODEI_DATABASE__NAMESPACE or [database].namespace in config/default.toml".to_string(),
         )));
     }
 
     if config.database.database.is_none() || config.database.database.as_ref().unwrap().is_empty() {
         return Err(Box::new(BootstrapError::Initialization(
-            "Database name is required but not configured".to_string(),
+            "Database name is required but not configured. Set HODEI_DATABASE__DATABASE or [database].database in config/default.toml".to_string(),
         )));
     }
 
     // Validate RocksDB path
     if config.rocksdb.path.is_empty() {
         return Err(Box::new(BootstrapError::Initialization(
-            "RocksDB path is required but not configured".to_string(),
+            "RocksDB path is required but not configured. Set HODEI_ROCKSDB__PATH or [rocksdb].path in config/default.toml".to_string(),
         )));
     }
 
@@ -1365,6 +1365,38 @@ mod tests {
         };
         assert!(error.contains("missing-bucket"), "{error}");
         assert!(error.contains("HODEI_CONTENT__S3__ENDPOINT"), "{error}");
+    }
+
+    #[test]
+    fn the_required_bootstrap_values_name_the_variable_and_the_action() {
+        let cases: [(fn(&mut AppConfig), &str); 3] = [
+            (|c| c.database.namespace = None, "HODEI_DATABASE__NAMESPACE"),
+            (
+                |c| c.database.database = Some(String::new()),
+                "HODEI_DATABASE__DATABASE",
+            ),
+            (|c| c.rocksdb.path = String::new(), "HODEI_ROCKSDB__PATH"),
+        ];
+        for (break_it, variable) in cases {
+            let mut config = AppConfig::default();
+            break_it(&mut config);
+            let error = validate_bootstrap_configuration(&config)
+                .expect_err("a required value is missing")
+                .to_string();
+            assert!(error.contains(variable), "{error}");
+            assert!(error.contains("config/default.toml"), "{error}");
+        }
+    }
+
+    #[test]
+    fn the_bucket_failure_never_echoes_a_private_key() {
+        let pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----";
+        let text = the_bucket_failure("b", &format!("cannot be used: {pem}"));
+        assert!(
+            !text.contains("BEGIN") && !text.contains("MIIEvQIBADAN"),
+            "{text}"
+        );
+        assert!(text.contains("HODEI_CONTENT__S3__ENDPOINT"), "{text}");
     }
 
     #[test]
