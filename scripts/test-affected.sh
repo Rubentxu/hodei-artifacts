@@ -227,6 +227,13 @@ run_gate() {
                 return
             fi
             ;;
+        compose)
+            if [ ! -f "${GIT_ROOT}/scripts/compose-smoke.sh" ]; then
+                record "${gate}" "NOT_RUN" 0 0 "falta scripts/compose-smoke.sh"
+                printf '  %-28s %-8s %s\n' "${gate}" "NOT_RUN" "falta scripts/compose-smoke.sh"
+                return
+            fi
+            ;;
         frontend)
             if [ ! -f "${GIT_ROOT}/frontend/package.json" ]; then
                 record "${gate}" "NOT_RUN" 0 0 "no hay frontend/package.json"
@@ -261,6 +268,12 @@ run_gate() {
     if [ "${exit_code}" -eq 0 ]; then
         status="PASS"
         note="log: ${log}"
+    elif [ "${kind}" = "compose" ] && [ "${exit_code}" -eq 77 ]; then
+        # El smoke devuelve 77 cuando no hay runtime, proveedor compose o
+        # imagen: no ha verificado nada, y eso NO es un PASS (HSP-273).
+        status="NOT_RUN"
+        note="$(grep -m1 '^NOT_RUN:' "${log}" || echo "NOT_RUN: el smoke salio con 77")"
+        note="${note}; log: ${log}"
     else
         status="FAIL"
         note="codigo de salida ${exit_code}; log: ${log}"
@@ -268,6 +281,9 @@ run_gate() {
 
     record "${gate}" "${status}" "${duration}" "${exit_code}" "${note}"
     printf '  %-28s %-8s %s ms\n' "${gate}" "${status}" "${duration}"
+    if [ "${status}" = "NOT_RUN" ]; then
+        echo "  ${note}" >&2
+    fi
 
     if [ "${status}" = "FAIL" ]; then
         tail -n 20 "${log}" >&2 || true

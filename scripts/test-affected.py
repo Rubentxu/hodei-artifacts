@@ -67,6 +67,26 @@ CODE_DIRECTORIES = ("src", "tests", "benches", "examples")
 OPENAPI_GATE = "openapi"
 FRONTEND_GATE = "frontend"
 CI_SUITES_GATE = "ci_suites"
+COMPOSE_GATE = "compose-smoke"
+
+
+def is_deploy_file(path):
+    """Si el fichero cambia lo que `scripts/compose-smoke.sh` verifica (HSP-273).
+
+    Los ficheros compose, la imagen (`Containerfile`), el despliegue de Garage
+    y el propio smoke y sus ayudantes.
+    """
+    name = os.path.basename(path)
+    directory = os.path.dirname(path)
+    if directory == "" and (
+        (name.startswith("compose") and name.endswith((".yaml", ".yml")))
+        or name == "compose.env.example"
+        or name == "Containerfile"
+    ):
+        return True
+    if path.startswith("deploy/garage/"):
+        return True
+    return directory == "scripts" and name.startswith("compose-smoke")
 
 
 def fail(message):
@@ -258,6 +278,12 @@ def detect_causes(files, packages, root):
         "frontend",
         [path for path in files if path.startswith("frontend/")],
         "el frontend cambio: sus componentes tienen que seguir pasando",
+    )
+    add(
+        "deploy",
+        [path for path in files if is_deploy_file(path)],
+        "el despliegue cambio (compose, Containerfile o Garage): el smoke con un runtime real "
+        "es lo unico que lo verifica",
     )
     add(
         "pipeline",
@@ -486,6 +512,15 @@ def build_plan(args, files):
             "cd frontend && npm test",
             "el frontend cambio: sus componentes tienen que seguir pasando",
         )
+    if "deploy" in cause_names:
+        add_gate(
+            COMPOSE_GATE,
+            "compose",
+            None,
+            "bash scripts/compose-smoke.sh",
+            "el despliegue cambio: el smoke arranca los perfiles compose con podman y comprueba "
+            "que el perfil externo falla cerrado (exit 77 = NOT_RUN, nunca verde)",
+        )
     if "pipeline" in cause_names:
         if root_package is not None and any(
             target["name"] == CI_SUITES_GATE and "test" in target["kind"]
@@ -554,7 +589,10 @@ def cmd_plan(args):
                     [
                         gate["gate"],
                         gate["kind"],
-                        gate["package"] or "",
+                        # `-` and not an empty field: the shell reads the TSV with
+                        # `IFS=$'\t' read`, and tab is whitespace there, so an empty
+                        # package would collapse and shift command/reason (HSP-273).
+                        gate["package"] or "-",
                         gate["command"],
                         gate["reason"],
                     ]

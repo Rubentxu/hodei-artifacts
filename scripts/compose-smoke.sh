@@ -102,10 +102,9 @@ wait_ready() {
 cid_of() { compose -f "$ROOT/$1" -f "$OVERRIDE" ps -a -q "$2" | head -n1; }
 
 # --- 4 (static, cheap): no credentials in compose files or the example env ----
-if grep -nE '^[^#]*(SECRET|TOKEN|ACCESS_KEY)[A-Z_]*[:=] *["]?[A-Za-z0-9/+]{8,}' \
-     compose.yaml compose.external.yaml compose.env.example | grep -v '\${'; then
-  fail "a credential-like literal was found in compose files or compose.env.example"
-fi
+# The scanner also flags literals inside `${NAME:-literal}` defaults and short literals.
+python3 scripts/compose-scan-secrets.py compose.yaml compose.external.yaml compose.env.example \
+  || fail "a credential-like literal was found in compose files or compose.env.example"
 pass "no credential literals in compose.yaml, compose.external.yaml, compose.env.example"
 if grep -nE '^[^#]*(rocksdb|cas_path|CAS_PATH|/app/data)' compose.external.yaml; then
   fail "compose.external.yaml must not reference RocksDB or filesystem CAS paths"
@@ -184,8 +183,12 @@ CODE="$("${PODMAN_CMD[@]}" inspect --format '{{.State.ExitCode}}' "$CID")"
 [ "$STATE" = "exited" ] && [ "$CODE" != "0" ] \
   || fail "unreachable S3 did not fail closed (state=$STATE exit=$CODE)"
 [ "$(http_status /health/ready)" != "200" ] || fail "service answered ready with unreachable S3"
+# The failure must be a connectivity failure, not a rejected configuration.
+CLASS="$("${PODMAN_CMD[@]}" logs "$CID" 2>&1 | scripts/compose-classify-failure.sh)"
+[ "$CLASS" = "connectivity" ] \
+  || fail "unreachable S3 failed for the wrong reason: classified '$CLASS', expected 'connectivity'"
 compose -f compose.yaml -f "$OVERRIDE" -f "$WORK/s3-override.yaml" down -v >/dev/null
-pass "fail closed: unreachable S3 backend exits non-zero (exit=$CODE) and never reports ready"
+pass "fail closed: unreachable S3 backend exits non-zero (exit=$CODE), classified connectivity, never reports ready"
 
 # --- 3b. fail closed: external profile (Dgraph + S3) --------------------------
 # Only the API is started (--no-deps): Dgraph/Garage are unreachable from it, and
@@ -206,8 +209,15 @@ CODE="$("${PODMAN_CMD[@]}" inspect --format '{{.State.ExitCode}}' "$CID")"
 [ "$(http_status /health/ready)" != "200" ] || fail "external profile answered ready without a backend"
 MOUNTS="$("${PODMAN_CMD[@]}" inspect --format '{{range .Mounts}}{{.Destination}} {{end}}' "$CID")"
 case "$MOUNTS" in *"/app/data"*) fail "external profile mounts /app/data: $MOUNTS" ;; esac
+# Today the API rejects db_type=dgraph before touching any backend, so the failure
+# must be classified unsupported-backend and NOT connectivity: a backend that is
+# merely down (Dgraph/Garage unreachable) is a different failure. When the Dgraph
+# backend lands this assertion must change on purpose, not drift silently.
+CLASS="$("${PODMAN_CMD[@]}" logs "$CID" 2>&1 | scripts/compose-classify-failure.sh)"
+[ "$CLASS" = "unsupported-backend" ] \
+  || fail "external profile failed for the wrong reason: classified '$CLASS', expected 'unsupported-backend'"
 compose -f compose.external.yaml -f "$OVERRIDE" down -v --remove-orphans >/dev/null
-pass "fail closed: external profile exits non-zero (exit=$CODE), no /app/data mount, never ready"
+pass "fail closed: external profile exits non-zero (exit=$CODE), classified unsupported-backend (not connectivity), no /app/data mount, never ready"
 
 echo "compose smoke: all checks passed"
 echo "limitation: the external profile's happy path (Dgraph + S3 serving traffic) is NOT_RUN;"
