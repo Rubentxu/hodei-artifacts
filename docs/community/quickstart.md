@@ -18,8 +18,10 @@ limpieza borra ese directorio y nada más.
 > motor embebido solo existe con `--features legacy` hasta que HSP-314 F4 lo
 > retire.
 >
-> Hasta HSP-314 F3, la investigación no tiene cableado sobre Dgraph y sigue
-> cerrada. Los hechos de riesgo y el reactor de CVE sí corren sobre Dgraph.
+> La investigación (`POST /api/v1/investigations` y su comprobación de frescura),
+> los hechos de riesgo y el reactor de CVE corren sobre Dgraph (HSP-314 F3). La
+> investigación solo se monta si el despliegue activa `investigation_api_enabled`
+> y, si el alpha no contesta, responde `503` en vez de un informe vacío.
 
 ## Camino productivo: el perfil de grafo con Compose
 
