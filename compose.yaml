@@ -25,6 +25,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
+      # Mountpoint of the signing key file on a read-only root filesystem.
+      - /run/secrets:rw,noexec,nosuid,size=1m
     cap_drop:
       - ALL
     security_opt:
