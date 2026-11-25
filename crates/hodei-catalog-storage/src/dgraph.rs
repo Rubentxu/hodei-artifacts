@@ -43,17 +43,19 @@ use hodei_catalog::search::{
     RepositoryAttribute, SearchHit, SearchPage, SearchQuery, parse_search_cursor,
 };
 use hodei_catalog::{
-    AccessDecision, AccessRequest, AssetDisposition, AssetRecord, BlobIntegrityProbe, BlobLocation,
-    BlobProbeError, BlobReference, CatalogAction, CatalogAuthorizer, CatalogError, CatalogReader,
-    CatalogResource, CatalogSearch, CatalogWriter, DigestScope, MutableTag, PackageCoordinates,
-    PackageVersion, Precondition, Publication, PublishOutcome, ReferrerRecord, RepositoryConfig,
-    RepositoryDescriptor, RepositoryFormat, RepositoryMode, ServeChannel, TrustState,
+    AccessDecision, AccessRequest, AptCasReference, AptGroupSnapshot, AptSnapshotKey,
+    AptSnapshotMember, AptSnapshotStore, AssetDisposition, AssetRecord, BlobIntegrityProbe,
+    BlobLocation, BlobProbeError, BlobReference, CatalogAction, CatalogAuthorizer, CatalogError,
+    CatalogReader, CatalogResource, CatalogSearch, CatalogWriter, DigestScope, MutableTag,
+    PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome, ReferrerRecord,
+    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, ServeChannel,
+    TrustState,
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_graph_client::guard::{GuardKind, GuardScope, GuardedEffect};
 use hodei_graph_client::{
-    GraphClient, GraphClientError, GraphMutationBlock, GraphMutationPort, GuardStore, OperationId,
-    RevisionDemand, Tenant, dql_string,
+    GraphClient, GraphClientError, GraphMutationBlock, GraphMutationPort, GraphUpsertTransaction,
+    GuardStore, OperationId, RevisionDemand, Tenant, dql_string,
 };
 use kernel::application::ports::clock::Identity;
 use sha2::{Digest as _, Sha256};
@@ -193,6 +195,87 @@ pub fn catalog_schema_dql() -> String {
         ("hodei.catalog.reference.size_bytes", "int", ""),
         ("hodei.catalog.reference.trust_state", "string", ""),
         ("hodei.catalog.reference.updated_at", "datetime", ""),
+        // Immutable APT generations and their independently addressable index rows.
+        (
+            "hodei.catalog.apt_snapshot.key",
+            "string",
+            "@index(exact) @upsert",
+        ),
+        (
+            "hodei.catalog.apt_snapshot.namespace",
+            "string",
+            "@index(exact)",
+        ),
+        ("hodei.catalog.apt_snapshot.revision", "int", "@index(int)"),
+        (
+            "hodei.catalog.apt_snapshot.digest",
+            "string",
+            "@index(exact)",
+        ),
+        ("hodei.catalog.apt_snapshot.payload", "string", ""),
+        (
+            "hodei.catalog.apt_snapshot_root.key",
+            "string",
+            "@index(exact) @upsert",
+        ),
+        (
+            "hodei.catalog.apt_snapshot_root.account",
+            "string",
+            "@index(exact)",
+        ),
+        (
+            "hodei.catalog.apt_snapshot_root.repository",
+            "string",
+            "@index(exact)",
+        ),
+        ("hodei.catalog.apt_snapshot_root.subject", "string", ""),
+        (
+            "hodei.catalog.apt_snapshot_root.digest_algorithm",
+            "string",
+            "@index(exact)",
+        ),
+        (
+            "hodei.catalog.apt_snapshot_root.digest",
+            "string",
+            "@index(exact)",
+        ),
+        ("hodei.catalog.apt_snapshot_root.size_bytes", "int", ""),
+        (
+            "hodei.catalog.apt_pointer.key",
+            "string",
+            "@index(exact) @upsert",
+        ),
+        ("hodei.catalog.apt_pointer.revision", "int", ""),
+        (
+            "hodei.catalog.apt_packages_hash.key",
+            "string",
+            "@index(exact) @upsert",
+        ),
+        (
+            "hodei.catalog.apt_packages_hash.snapshot_key",
+            "string",
+            "@index(exact)",
+        ),
+        (
+            "hodei.catalog.apt_packages_hash.namespace",
+            "string",
+            "@index(exact)",
+        ),
+        (
+            "hodei.catalog.apt_packages_hash.architecture",
+            "string",
+            "@index(exact)",
+        ),
+        (
+            "hodei.catalog.apt_packages_hash.digest",
+            "string",
+            "@index(exact)",
+        ),
+        (
+            "hodei.catalog.apt_packages_hash.revision",
+            "int",
+            "@index(int)",
+        ),
         (
             "hodei.catalog.outbox.key",
             "string",
@@ -275,6 +358,22 @@ pub fn catalog_schema_dql() -> String {
             TAG_TYPE,
             "tag",
             "key account repository tag_name package_name package_version updated_at",
+        ),
+        (
+            "CatalogAptSnapshot",
+            "apt_snapshot",
+            "key namespace revision digest payload",
+        ),
+        (
+            "CatalogAptSnapshotRoot",
+            "apt_snapshot_root",
+            "key account repository subject digest_algorithm digest size_bytes",
+        ),
+        ("CatalogAptPointer", "apt_pointer", "key revision"),
+        (
+            "CatalogAptPackagesHash",
+            "apt_packages_hash",
+            "key snapshot_key namespace architecture digest revision",
         ),
     ] {
         ddl.push_str(&format!("type {name} {{\n"));
@@ -493,6 +592,25 @@ fn publication_operation_id(account: &str, publication: &Publication) -> Operati
     hasher.update(publication.correlation_id.as_bytes());
     let id = format!("pub-{:x}", hasher.finalize());
     OperationId::new(&id).expect("a sha256-derived operation id is always valid")
+}
+
+fn repository_config_operation_id(
+    account: &str,
+    repo_key: &str,
+    previous_version: u64,
+    config: &RepositoryConfig,
+) -> OperationId {
+    let mut hasher = Sha256::new();
+    hasher.update(account.as_bytes());
+    hasher.update([0]);
+    hasher.update(repo_key.as_bytes());
+    hasher.update(previous_version.to_le_bytes());
+    hasher.update([0]);
+    hasher.update(scope_name(config.digest_scope).as_bytes());
+    hasher.update([0]);
+    hasher.update(config.config_settings.to_string().as_bytes());
+    OperationId::new(&format!("cfg-{:x}", hasher.finalize()))
+        .expect("a sha256-derived operation id is always valid")
 }
 
 /// El identificador de operación determinista de una creación de repositorio.
@@ -2558,13 +2676,112 @@ impl CatalogWriter for DgraphCatalogStore {
 
     async fn update_config(
         &self,
-        _principal_account: &str,
-        _repo_key: &str,
-        _config: RepositoryConfig,
+        principal_account: &str,
+        repo_key: &str,
+        mut config: RepositoryConfig,
     ) -> Result<RepositoryDescriptor, CatalogError> {
-        // El slice Raw no sirve reconfiguraciones: lo dice, no lo finge.
-        Err(CatalogError::invalid(
-            "the dgraph raw slice does not serve configuration changes",
+        self.decide(&AccessRequest::repository(
+            principal_account,
+            CatalogAction::Configure,
+            repo_key,
+        ))
+        .await?;
+        if !config.has_readable_settings() {
+            return Err(CatalogError::invalid(
+                "repository config_settings must be an object",
+            ));
+        }
+        let guard = repository_guard_scope(principal_account, repo_key)?;
+        let key = repository_key(principal_account, repo_key);
+
+        for _attempt in 0..WRITE_ATTEMPTS {
+            let row = self
+                .the_repository_row(principal_account, repo_key)
+                .await?
+                .ok_or_else(|| {
+                    CatalogError::missing("repository", format!("{principal_account}/{repo_key}"))
+                })?;
+            let descriptor = row.clone().into_descriptor(principal_account, repo_key)?;
+            if !descriptor.format.supports(&descriptor.mode) {
+                return Err(CatalogError::invalid(
+                    "the repository format does not serve its declared mode",
+                ));
+            }
+            if config.digest_scope != descriptor.config.digest_scope {
+                return Err(CatalogError::invalid(
+                    "a repository digest scope cannot change after creation",
+                ));
+            }
+            the_npm_of(descriptor.format, &config)?;
+            the_upstream_of(descriptor.mode, &config)?;
+            if descriptor.mode == RepositoryMode::Group {
+                hodei_catalog::group::GroupConfig::of(&config)
+                    .map_err(|error| CatalogError::invalid(error.to_string()))?;
+            } else if config.config_settings.get("group").is_some() {
+                return Err(CatalogError::invalid(
+                    "only a group repository can declare config_settings.group",
+                ));
+            }
+            let previous_version = row.config_version;
+            config.version = previous_version
+                .checked_add(1)
+                .ok_or_else(|| CatalogError::invalid("repository config version is exhausted"))?;
+            let operation = repository_config_operation_id(
+                principal_account,
+                repo_key,
+                previous_version,
+                &config,
+            );
+            let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+            let effect = GuardedEffect {
+                query_lines: vec![format!(
+                    "r as var(func: eq(hodei.catalog.repository.key, {})) @filter(eq(hodei.catalog.repository.config_version, \"{}\"))",
+                    dql_string(&key),
+                    previous_version
+                )],
+                set_nquads: String::new(),
+                recorded_result: "configured".to_owned(),
+            };
+            self.guards
+                .execute_guarded_composite(
+                    &guard,
+                    &operation,
+                    RevisionDemand::Advance,
+                    effect,
+                    &|current| {
+                        vec![GraphMutationBlock::set_if(
+                            format!("{} AND eq(len(r), 1)", parent_gate(current)),
+                            format!(
+                                "uid(r) <hodei.catalog.repository.config_version> \"{}\" .\n\
+                                 uid(r) <hodei.catalog.repository.config_scope> \"{}\" .\n\
+                                 uid(r) <hodei.catalog.repository.config_settings> {} .\n\
+                                 uid(r) <hodei.catalog.repository.updated_at> \"{}\" .\n",
+                                config.version,
+                                scope_name(config.digest_scope),
+                                dql_string(&config.config_settings.to_string()),
+                                now,
+                            ),
+                        )]
+                    },
+                )
+                .await
+                .map_err(the_guard_error)?;
+            let updated = self
+                .the_repository_row(principal_account, repo_key)
+                .await?
+                .ok_or_else(|| {
+                    CatalogError::unavailable("the repository disappeared after configuration")
+                })?;
+            let updated_descriptor = updated.into_descriptor(principal_account, repo_key)?;
+            if updated_descriptor.config.version == config.version
+                && updated_descriptor.config.digest_scope == config.digest_scope
+                && updated_descriptor.config.config_settings == config.config_settings
+            {
+                return Ok(updated_descriptor);
+            }
+        }
+        Err(CatalogError::unavailable(
+            "the repository configuration could not be updated after the attempts",
         ))
     }
 
@@ -3984,5 +4201,387 @@ mod tests {
             "pool/main/h/hello_1.0.0~rc1+deb12_amd64.deb",
         );
         assert!(key.contains("hello_1.0.0~rc1+deb12_amd64.deb"));
+    }
+}
+
+const APT_SNAPSHOT_MAX_PAYLOAD: usize = 900_000;
+
+fn apt_namespace(key: &AptSnapshotKey) -> String {
+    format!(
+        "{}|{}|{}|{}",
+        key_part(&key.account),
+        key_part(&key.group),
+        key_part(&key.distribution),
+        key_part(&key.principal_subject)
+    )
+}
+
+fn apt_revision_key(namespace: &str, revision: u64) -> String {
+    format!("{namespace}|{revision}")
+}
+
+fn apt_snapshot_value(snapshot: &AptGroupSnapshot) -> serde_json::Value {
+    let reference = |r: &AptCasReference| {
+        serde_json::json!({
+            "account": r.location.account,
+            "scope": match r.location.scope { DigestScope::Global => "global", DigestScope::AccountPartitioned => "account_partitioned" },
+            "algorithm": r.location.digest.algorithm.to_string(),
+            "digest": r.location.digest.value,
+            "size": r.size_bytes
+        })
+    };
+    serde_json::json!({
+        "release": reference(&snapshot.release), "signature": reference(&snapshot.signature),
+        "packages": snapshot.packages_by_arch.iter().map(|(k,v)| (k.clone(), reference(v))).collect::<serde_json::Map<_,_>>(),
+        "pool": snapshot.pool_by_path.iter().map(|(k,v)| (k.clone(), reference(v))).collect::<serde_json::Map<_,_>>(),
+        "members": snapshot.members.iter().map(|m| serde_json::json!({"repository":m.repository,"package":m.package,"version":m.version,"content":reference(&m.content)})).collect::<Vec<_>>()
+    })
+}
+
+fn apt_read_reference(value: &serde_json::Value) -> Result<AptCasReference, CatalogError> {
+    let account = value["account"]
+        .as_str()
+        .ok_or_else(|| CatalogError::corrupt("APT snapshot", "account", "missing"))?
+        .to_owned();
+    let scope = match value["scope"].as_str() {
+        Some("global") => DigestScope::Global,
+        Some("account_partitioned") => DigestScope::AccountPartitioned,
+        _ => return Err(CatalogError::corrupt("APT snapshot", "scope", "invalid")),
+    };
+    let algorithm = match value["algorithm"].as_str() {
+        Some("sha256") => DigestAlgorithm::Sha256,
+        Some("sha512") => DigestAlgorithm::Sha512,
+        _ => {
+            return Err(CatalogError::corrupt(
+                "APT snapshot",
+                "algorithm",
+                "invalid",
+            ));
+        }
+    };
+    Ok(AptCasReference {
+        location: BlobLocation::new(
+            &account,
+            scope,
+            ContentDigest {
+                algorithm,
+                value: value["digest"]
+                    .as_str()
+                    .ok_or_else(|| CatalogError::corrupt("APT snapshot", "digest", "missing"))?
+                    .to_owned(),
+            },
+        ),
+        size_bytes: value["size"]
+            .as_u64()
+            .ok_or_else(|| CatalogError::corrupt("APT snapshot", "size", "invalid"))?,
+    })
+}
+
+fn apt_snapshot_from_row(row: &serde_json::Value) -> Result<AptGroupSnapshot, CatalogError> {
+    let payload: serde_json::Value = serde_json::from_str(
+        row["hodei.catalog.apt_snapshot.payload"]
+            .as_str()
+            .ok_or_else(|| CatalogError::corrupt("APT snapshot", "payload", "missing"))?,
+    )
+    .map_err(|e| CatalogError::corrupt("APT snapshot", "payload", e.to_string()))?;
+    let revision = row["hodei.catalog.apt_snapshot.revision"]
+        .as_u64()
+        .ok_or_else(|| CatalogError::corrupt("APT snapshot", "revision", "invalid"))?;
+    let digest_text = row["hodei.catalog.apt_snapshot.digest"]
+        .as_str()
+        .ok_or_else(|| CatalogError::corrupt("APT snapshot", "digest", "missing"))?;
+    let (alg, value) = digest_text
+        .split_once(':')
+        .ok_or_else(|| CatalogError::corrupt("APT snapshot", "digest", "invalid"))?;
+    let algorithm = match alg {
+        "sha256" => DigestAlgorithm::Sha256,
+        "sha512" => DigestAlgorithm::Sha512,
+        _ => return Err(CatalogError::corrupt("APT snapshot", "digest", "algorithm")),
+    };
+    let parse_map = |v: &serde_json::Value| -> Result<
+        std::collections::BTreeMap<String, AptCasReference>,
+        CatalogError,
+    > {
+        v.as_object()
+            .ok_or_else(|| CatalogError::corrupt("APT snapshot", "references", "invalid"))?
+            .iter()
+            .map(|(k, v)| Ok((k.clone(), apt_read_reference(v)?)))
+            .collect()
+    };
+    let members = payload["members"]
+        .as_array()
+        .ok_or_else(|| CatalogError::corrupt("APT snapshot", "members", "invalid"))?
+        .iter()
+        .map(|m| {
+            Ok(AptSnapshotMember {
+                repository: m["repository"]
+                    .as_str()
+                    .ok_or_else(|| CatalogError::corrupt("APT snapshot", "member", "repository"))?
+                    .to_owned(),
+                package: m["package"]
+                    .as_str()
+                    .ok_or_else(|| CatalogError::corrupt("APT snapshot", "member", "package"))?
+                    .to_owned(),
+                version: m["version"]
+                    .as_str()
+                    .ok_or_else(|| CatalogError::corrupt("APT snapshot", "member", "version"))?
+                    .to_owned(),
+                content: apt_read_reference(&m["content"])?,
+            })
+        })
+        .collect::<Result<Vec<_>, CatalogError>>()?;
+    Ok(AptGroupSnapshot {
+        revision,
+        digest: ContentDigest {
+            algorithm,
+            value: value.to_owned(),
+        },
+        release: apt_read_reference(&payload["release"])?,
+        signature: apt_read_reference(&payload["signature"])?,
+        packages_by_arch: parse_map(&payload["packages"])?,
+        pool_by_path: parse_map(&payload["pool"])?,
+        members,
+    })
+}
+
+#[async_trait]
+impl AptSnapshotStore for DgraphCatalogStore {
+    async fn current_apt_snapshot(
+        &self,
+        key: &AptSnapshotKey,
+    ) -> Result<Option<AptGroupSnapshot>, CatalogError> {
+        let ns = apt_namespace(key);
+        let q = format!(
+            "{{ p(func:eq(hodei.catalog.apt_pointer.key,{})) {{ hodei.catalog.apt_pointer.revision }} }}",
+            dql_string(&ns)
+        );
+        let r = self
+            .client
+            .execute_dql(&q)
+            .await
+            .map_err(|e| CatalogError::unavailable(e.to_string()))?;
+        let Some(rev) = r.json["p"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|p| p["hodei.catalog.apt_pointer.revision"].as_u64())
+        else {
+            return Ok(None);
+        };
+        self.apt_snapshot_by_revision(key, rev).await
+    }
+    async fn apt_snapshot_by_revision(
+        &self,
+        key: &AptSnapshotKey,
+        revision: u64,
+    ) -> Result<Option<AptGroupSnapshot>, CatalogError> {
+        let sk = apt_revision_key(&apt_namespace(key), revision);
+        let q = format!(
+            "{{ s(func:eq(hodei.catalog.apt_snapshot.key,{})) {{ hodei.catalog.apt_snapshot.namespace hodei.catalog.apt_snapshot.revision hodei.catalog.apt_snapshot.digest hodei.catalog.apt_snapshot.payload }} }}",
+            dql_string(&sk)
+        );
+        let r = self
+            .client
+            .execute_dql(&q)
+            .await
+            .map_err(|e| CatalogError::unavailable(e.to_string()))?;
+        let Some(row) = r.json["s"].as_array().and_then(|a| a.first()) else {
+            return Ok(None);
+        };
+        if row["hodei.catalog.apt_snapshot.namespace"].as_str() != Some(apt_namespace(key).as_str())
+        {
+            return Ok(None);
+        }
+        Ok(Some(apt_snapshot_from_row(row)?))
+    }
+    async fn apt_snapshot_by_packages_hash(
+        &self,
+        key: &AptSnapshotKey,
+        architecture: &str,
+        digest: &ContentDigest,
+    ) -> Result<Option<AptGroupSnapshot>, CatalogError> {
+        let ns = apt_namespace(key);
+        let q = format!(
+            "{{ h(func:eq(hodei.catalog.apt_packages_hash.namespace,{}), orderdesc:hodei.catalog.apt_packages_hash.revision, first:1) @filter(eq(hodei.catalog.apt_packages_hash.architecture,{}) AND eq(hodei.catalog.apt_packages_hash.digest,{})) {{ hodei.catalog.apt_packages_hash.snapshot_key }} }}",
+            dql_string(&ns),
+            dql_string(architecture),
+            dql_string(&format!("{}:{}", digest.algorithm, digest.value))
+        );
+        let r = self
+            .client
+            .execute_dql(&q)
+            .await
+            .map_err(|e| CatalogError::unavailable(e.to_string()))?;
+        let Some(sk) = r.json["h"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|v| v["hodei.catalog.apt_packages_hash.snapshot_key"].as_str())
+        else {
+            return Ok(None);
+        };
+        let Some(rev) = sk.rsplit('|').next().and_then(|s| s.parse::<u64>().ok()) else {
+            return Err(CatalogError::corrupt(
+                "APT snapshot",
+                "hash index",
+                "bad snapshot key",
+            ));
+        };
+        self.apt_snapshot_by_revision(key, rev).await
+    }
+    async fn publish_apt_snapshot(
+        &self,
+        key: &AptSnapshotKey,
+        expected_revision: Option<u64>,
+        snapshot: AptGroupSnapshot,
+    ) -> Result<(), CatalogError> {
+        let ns = apt_namespace(key);
+        let sk = apt_revision_key(&ns, snapshot.revision);
+        if snapshot.revision != expected_revision.map_or(1, |r| r.saturating_add(1)) {
+            return Err(CatalogError::PreconditionFailed {
+                kind: "APT snapshot",
+                key: ns,
+                detail: "revision must follow expected revision".into(),
+            });
+        }
+        let refs = std::iter::once(&snapshot.release)
+            .chain(std::iter::once(&snapshot.signature))
+            .chain(snapshot.packages_by_arch.values())
+            .chain(snapshot.pool_by_path.values())
+            .chain(snapshot.members.iter().map(|m| &m.content));
+        if refs.into_iter().any(|r| r.location.account != key.account) {
+            return Err(CatalogError::invalid(
+                "APT snapshot blob belongs to another account",
+            ));
+        }
+        if snapshot.members.len() > 10_000
+            || snapshot.pool_by_path.len() > 50_000
+            || snapshot.packages_by_arch.len() > 256
+        {
+            return Err(CatalogError::invalid(
+                "APT snapshot exceeds collection limits",
+            ));
+        }
+        let payload = apt_snapshot_value(&snapshot).to_string();
+        if payload.len() > APT_SNAPSHOT_MAX_PAYLOAD {
+            return Err(CatalogError::invalid(
+                "APT snapshot payload exceeds 900000 bytes",
+            ));
+        }
+        let nsq = dql_string(&ns);
+        let skq = dql_string(&sk);
+        let ptrset = if expected_revision.is_none() {
+            format!(
+                "_:ptr <hodei.catalog.apt_pointer.revision> \"{}\" .\n",
+                snapshot.revision
+            )
+        } else {
+            format!(
+                "uid(ptr) <hodei.catalog.apt_pointer.revision> \"{}\" .\n",
+                snapshot.revision
+            )
+        };
+        let pointer = if expected_revision.is_none() {
+            format!("_:ptr <hodei.catalog.apt_pointer.key> {nsq} .\n{ptrset}")
+        } else {
+            ptrset
+        };
+        let mut set = format!(
+            "_:s <hodei.catalog.apt_snapshot.key> {skq} .\n_:s <hodei.catalog.apt_snapshot.namespace> {nsq} .\n_:s <hodei.catalog.apt_snapshot.revision> \"{}\" .\n_:s <hodei.catalog.apt_snapshot.digest> {} .\n_:s <hodei.catalog.apt_snapshot.payload> {} .\n",
+            snapshot.revision,
+            dql_string(&format!(
+                "{}:{}",
+                snapshot.digest.algorithm, snapshot.digest.value
+            )),
+            dql_string(&payload)
+        );
+        set.push_str(&pointer);
+        let mut apt_roots = vec![
+            ("release".to_owned(), &snapshot.release),
+            ("signature".to_owned(), &snapshot.signature),
+        ];
+        apt_roots.extend(
+            snapshot
+                .packages_by_arch
+                .iter()
+                .map(|(architecture, reference)| (format!("packages/{architecture}"), reference)),
+        );
+        apt_roots.extend(
+            snapshot
+                .pool_by_path
+                .iter()
+                .map(|(path, reference)| (format!("pool/{path}"), reference)),
+        );
+        apt_roots.extend(
+            snapshot
+                .members
+                .iter()
+                .enumerate()
+                .map(|(index, member)| (format!("member/{index}"), &member.content)),
+        );
+        for (index, (subject, reference)) in apt_roots.iter().enumerate() {
+            let root_key = format!("{ns}|{}|{}", snapshot.revision, key_part(subject));
+            set.push_str(&format!(
+                "_:ar{index} <dgraph.type> \"CatalogAptSnapshotRoot\" .\n_:ar{index} <hodei.catalog.apt_snapshot_root.key> {} .\n_:ar{index} <hodei.catalog.apt_snapshot_root.account> {} .\n_:ar{index} <hodei.catalog.apt_snapshot_root.repository> {} .\n_:ar{index} <hodei.catalog.apt_snapshot_root.subject> {} .\n_:ar{index} <hodei.catalog.apt_snapshot_root.digest_algorithm> {} .\n_:ar{index} <hodei.catalog.apt_snapshot_root.digest> {} .\n_:ar{index} <hodei.catalog.apt_snapshot_root.size_bytes> \"{}\" .\n",
+                dql_string(&root_key),
+                dql_string(&key.account),
+                dql_string(&key.group),
+                dql_string(subject),
+                dql_string(&reference.location.digest.algorithm.to_string()),
+                dql_string(&reference.location.digest.value),
+                reference.size_bytes,
+            ));
+        }
+        for (index, (arch, cas)) in snapshot.packages_by_arch.iter().enumerate() {
+            let hk = format!(
+                "{ns}|{}|{}:{}|{}",
+                key_part(arch),
+                cas.location.digest.algorithm,
+                cas.location.digest.value,
+                snapshot.revision
+            );
+            set.push_str(&format!("_:h{index} <hodei.catalog.apt_packages_hash.key> {} .\n_:h{index} <hodei.catalog.apt_packages_hash.snapshot_key> {skq} .\n_:h{index} <hodei.catalog.apt_packages_hash.namespace> {nsq} .\n_:h{index} <hodei.catalog.apt_packages_hash.architecture> {} .\n_:h{index} <hodei.catalog.apt_packages_hash.digest> {} .\n_:h{index} <hodei.catalog.apt_packages_hash.revision> \"{}\" .\n", dql_string(&hk), dql_string(arch), dql_string(&format!("{}:{}", cas.location.digest.algorithm, cas.location.digest.value)), snapshot.revision));
+        }
+        let condition = match expected_revision {
+            None => "eq(len(ptr),0)".to_owned(),
+            Some(_) => "eq(len(ptr),1)".to_owned(),
+        };
+        let query = if let Some(expected) = expected_revision {
+            format!(
+                "{{ ptr as var(func:eq(hodei.catalog.apt_pointer.key,{nsq})) @filter(eq(hodei.catalog.apt_pointer.revision,{expected})) s as var(func:eq(hodei.catalog.apt_snapshot.key,{skq})) }}"
+            )
+        } else {
+            format!(
+                "{{ ptr as var(func:eq(hodei.catalog.apt_pointer.key,{nsq})) s as var(func:eq(hodei.catalog.apt_snapshot.key,{skq})) }}"
+            )
+        };
+        let transaction = GraphUpsertTransaction {
+            query,
+            blocks: vec![GraphMutationBlock::set_if(
+                format!("{condition} AND eq(len(s),0)"),
+                set,
+            )],
+            commit_now: true,
+        };
+        match self.client.upsert(transaction).await {
+            Ok(_) => {}
+            Err(GraphClientError::UpsertConflict { .. }) => {
+                return Err(CatalogError::PreconditionFailed {
+                    kind: "APT snapshot",
+                    key: ns.clone(),
+                    detail: "expected revision mismatch or immutable key already exists".into(),
+                });
+            }
+            Err(e) => return Err(CatalogError::unavailable(e.to_string())),
+        }
+        let saved = self
+            .apt_snapshot_by_revision(key, snapshot.revision)
+            .await?;
+        if saved.as_ref() != Some(&snapshot) {
+            return Err(CatalogError::PreconditionFailed {
+                kind: "APT snapshot",
+                key: ns,
+                detail: "revision row was not committed".into(),
+            });
+        }
+        Ok(())
     }
 }

@@ -7,6 +7,9 @@
 //! lo que `apt-get` espera leer. Un indice mal formado no es un matiz:
 //! apt lo descarta y el cliente real deja de ver el paquete.
 
+use crate::model::RepositoryConfig;
+use crate::proxy::UpstreamConfigError;
+use serde::Deserialize;
 use sha2::Digest as _;
 use std::collections::BTreeMap;
 use std::io::Read as _;
@@ -29,6 +32,9 @@ pub enum AptError {
     /// El identificador no cabe en una ruta segura del pool.
     #[error("the package identity is not filesystem safe: {0}")]
     BadIdentity(String),
+    /// Upstream Release or Packages metadata is malformed or expired.
+    #[error("invalid apt metadata: {0}")]
+    InvalidMetadata(String),
 }
 
 /// Lo que un `.deb` declara de si mismo: los campos del `control` que
@@ -344,13 +350,32 @@ pub fn packages_record(control: &DebControl, pool_path: &str, size: u64, sha256:
 /// defecto hoy y lo unico que apt exige. Los indices ya estan
 /// renderizados; aqui solo se pintan las filas.
 pub fn release_header(dist: &str, date: &str, indexes: &[(&str, &[u8])]) -> String {
+    release_header_with_options(dist, date, indexes, false)
+}
+
+/// Renders a Debian `Release` header with `Acquire-By-Hash: yes` enabled so
+/// APT clients fetch immutable content-addressed index snapshots.
+pub fn release_header_by_hash(dist: &str, date: &str, indexes: &[(&str, &[u8])]) -> String {
+    release_header_with_options(dist, date, indexes, true)
+}
+
+fn release_header_with_options(
+    dist: &str,
+    date: &str,
+    indexes: &[(&str, &[u8])],
+    acquire_by_hash: bool,
+) -> String {
     let mut out = String::new();
     out.push_str("Origin: Hodei\n");
     out.push_str(&format!("Suite: {dist}\n"));
     out.push_str(&format!("Codename: {dist}\n"));
     out.push_str(&format!("Date: {date}\n"));
     out.push_str(&format!("Architectures: {}\n", ARCHITECTURES.join(" ")));
-    out.push_str("Components: main\nSHA256:\n");
+    out.push_str("Components: main\n");
+    if acquire_by_hash {
+        out.push_str("Acquire-By-Hash: yes\n");
+    }
+    out.push_str("SHA256:\n");
     for (name, bytes) in indexes {
         out.push_str(&format!(" {}\n", line_for(name, bytes)));
     }
@@ -390,25 +415,73 @@ pub fn record_path_for(pool_path: &str) -> String {
     format!("{pool_path}.record")
 }
 
-/// Las rutas que la superficie apt sabe servir, ya interpretadas. La
-/// componente es siempre `main`: es la que declara `Release` y la que
-/// pintan los registros; una distribucion con mas componentes es
-/// materia del proxy, no del hosted.
+/// Compression format of a Debian `Packages` index file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackagesCompression {
+    /// Uncompressed `Packages`.
+    Plain,
+    /// Gzip-compressed `Packages.gz`.
+    Gz,
+    /// XZ-compressed `Packages.xz`.
+    Xz,
+}
+
+impl PackagesCompression {
+    /// File extension for this compression format.
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Plain => "",
+            Self::Gz => ".gz",
+            Self::Xz => ".xz",
+        }
+    }
+
+    /// HTTP Content-Type for this compression format.
+    pub fn content_type(&self) -> &'static str {
+        match self {
+            Self::Plain => "text/plain",
+            Self::Gz => "application/gzip",
+            Self::Xz => "application/x-xz",
+        }
+    }
+}
+
+/// Las rutas que la superficie apt sabe servir, ya interpretadas.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// El binario en si, en `pool/main/{package}/{archivo}.deb`. La
-    /// ruta completa es lo que se valida contra el control: el pool no
-    /// admite archivos que no declaren ser lo que dicen sus bytes.
+    /// El binario en si, en `pool/.../{archivo}.deb`.
     Pool {
         /// La ruta del binario dentro del repositorio.
         path: String,
     },
     /// El indice de una arquitectura de una distribucion.
     Packages {
-        /// La distribucion: `stable`, `trixie`...
+        /// La distribucion: `stable`, `bookworm`, `trixie`...
         dist: String,
+        /// The component (`main`, `contrib`, ...), or `None` for flat/monolithic layout.
+        component: Option<String>,
         /// La arquitectura del indice pedido.
         architecture: String,
+        /// Index compression (`Packages`, `Packages.gz`, `Packages.xz`).
+        compression: PackagesCompression,
+    },
+    /// By-hash index lookup (`dists/{dist}/{component}/binary-{arch}/by-hash/SHA256/{hash}`).
+    PackagesByHash {
+        /// Distribution name.
+        dist: String,
+        /// Optional component name.
+        component: Option<String>,
+        /// Target architecture.
+        architecture: String,
+        /// Hash algorithm (e.g. `SHA256`).
+        algorithm: String,
+        /// Expected hex digest.
+        hash: String,
+    },
+    /// Inline-signed `InRelease` file for a distribution.
+    InRelease {
+        /// Distribution name.
+        dist: String,
     },
     /// La cabecera firmada de una distribucion.
     Release {
@@ -424,7 +497,97 @@ pub enum Route {
     Key,
 }
 
+fn valid_apt_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && !segment.contains("..")
+        && !segment.contains('/')
+        && segment
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+}
+
+fn parse_packages_suffix(tail: &str) -> Option<(&str, PackagesCompression)> {
+    if let Some(prefix) = tail.strip_suffix("/Packages") {
+        Some((prefix, PackagesCompression::Plain))
+    } else if let Some(prefix) = tail.strip_suffix("/Packages.gz") {
+        Some((prefix, PackagesCompression::Gz))
+    } else if let Some(prefix) = tail.strip_suffix("/Packages.xz") {
+        Some((prefix, PackagesCompression::Xz))
+    } else {
+        None
+    }
+}
+
+fn parse_component_and_arch(prefix: &str) -> Result<(Option<String>, String), AptError> {
+    let (component, arch_part) = if let Some(arch) = prefix.strip_prefix("binary-") {
+        (None, arch)
+    } else if let Some((comp, rest)) = prefix.split_once('/') {
+        if !valid_apt_segment(comp) {
+            return Err(AptError::BadIdentity(comp.to_string()));
+        }
+        let arch = rest
+            .strip_prefix("binary-")
+            .ok_or_else(|| AptError::BadIdentity(prefix.to_string()))?;
+        (Some(comp.to_string()), arch)
+    } else {
+        return Err(AptError::BadIdentity(prefix.to_string()));
+    };
+    if arch_part.is_empty()
+        || !arch_part
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(AptError::BadIdentity(arch_part.to_string()));
+    }
+    Ok((component, arch_part.to_string()))
+}
+
 impl Route {
+    /// Canonical repository-relative asset path for this route.
+    pub fn asset_path(&self) -> String {
+        match self {
+            Self::Key => "key.asc".to_string(),
+            Self::Pool { path } => path.clone(),
+            Self::InRelease { dist } => format!("dists/{dist}/InRelease"),
+            Self::Release { dist } => format!("dists/{dist}/Release"),
+            Self::ReleaseSignature { dist } => format!("dists/{dist}/Release.gpg"),
+            Self::Packages {
+                dist,
+                component: Some(component),
+                architecture,
+                compression,
+            } => format!(
+                "dists/{dist}/{component}/binary-{architecture}/Packages{}",
+                compression.extension()
+            ),
+            Self::Packages {
+                dist,
+                component: None,
+                architecture,
+                compression,
+            } => format!(
+                "dists/{dist}/binary-{architecture}/Packages{}",
+                compression.extension()
+            ),
+            Self::PackagesByHash {
+                dist,
+                component: Some(component),
+                architecture,
+                algorithm,
+                hash,
+            } => {
+                format!("dists/{dist}/{component}/binary-{architecture}/by-hash/{algorithm}/{hash}")
+            }
+            Self::PackagesByHash {
+                dist,
+                component: None,
+                architecture,
+                algorithm,
+                hash,
+            } => format!("dists/{dist}/binary-{architecture}/by-hash/{algorithm}/{hash}"),
+        }
+    }
+
     /// Interpreta el resto de `/apt/{repositorio}/...`, crudo: apt no
     /// escapa nombres, y un `%` aqui es un nombre imposible.
     pub fn parse(rest: &str) -> Result<Route, AptError> {
@@ -453,17 +616,14 @@ impl Route {
             .ok_or_else(|| AptError::BadIdentity(rest.to_string()))?;
         let (dist, tail) = dist_part
             .split_once('/')
-            .ok_or(AptError::BadIdentity(rest.to_string()))?;
-        if dist.is_empty()
-            || dist.contains("..")
-            || dist.contains('/')
-            || !dist
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
-        {
+            .ok_or_else(|| AptError::BadIdentity(rest.to_string()))?;
+        if !valid_apt_segment(dist) {
             return Err(AptError::BadIdentity(dist.to_string()));
         }
         match tail {
+            "InRelease" => Ok(Route::InRelease {
+                dist: dist.to_string(),
+            }),
             "Release" => Ok(Route::Release {
                 dist: dist.to_string(),
             }),
@@ -471,28 +631,35 @@ impl Route {
                 dist: dist.to_string(),
             }),
             _ => {
-                // apt siempre pide el indice con su componente:
-                // `main/binary-{arch}/Packages`. La variante sin
-                // componente tambien se acepta: es la forma monolítica
-                // que alguna herramienta usa y el hosted solo tiene
-                // `main`. Otra componente es una ruta imposible.
-                let index = tail
-                    .strip_prefix("main/")
-                    .unwrap_or(tail)
-                    .strip_prefix("binary-")
-                    .and_then(|arch| arch.strip_suffix("/Packages"))
-                    .ok_or_else(|| AptError::BadIdentity(tail.to_string()))?;
-                if index.is_empty()
-                    || !index
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                {
-                    return Err(AptError::BadIdentity(index.to_string()));
+                if let Some((prefix, compression)) = parse_packages_suffix(tail) {
+                    let (component, architecture) = parse_component_and_arch(prefix)?;
+                    return Ok(Route::Packages {
+                        dist: dist.to_string(),
+                        component,
+                        architecture,
+                        compression,
+                    });
                 }
-                Ok(Route::Packages {
-                    dist: dist.to_string(),
-                    architecture: index.to_string(),
-                })
+                if let Some((prefix, hash_tail)) = tail.split_once("/by-hash/") {
+                    let (component, architecture) = parse_component_and_arch(prefix)?;
+                    let (algorithm, hash) = hash_tail
+                        .split_once('/')
+                        .ok_or_else(|| AptError::BadIdentity(tail.to_string()))?;
+                    if algorithm != "SHA256"
+                        || hash.len() != 64
+                        || !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                    {
+                        return Err(AptError::BadIdentity(tail.to_string()));
+                    }
+                    return Ok(Route::PackagesByHash {
+                        dist: dist.to_string(),
+                        component,
+                        architecture,
+                        algorithm: algorithm.to_string(),
+                        hash: hash.to_string(),
+                    });
+                }
+                Err(AptError::BadIdentity(tail.to_string()))
             }
         }
     }
@@ -502,6 +669,419 @@ impl Route {
     pub fn release_date(moment: &chrono::DateTime<chrono::Utc>) -> String {
         moment.format("%a, %d %b %Y %H:%M:%S UTC").to_string()
     }
+}
+
+/// Optional APT proxy scope configuration under `config_settings.apt`.
+///
+/// Restricts which distributions, components, and architectures this proxy
+/// repository is allowed to serve. When a list is empty, that dimension is
+/// unrestricted.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AptProxyConfig {
+    /// Allowed distributions (empty means unrestricted).
+    pub distributions: Vec<String>,
+    /// Allowed components (empty means unrestricted).
+    pub components: Vec<String>,
+    /// Allowed architectures (empty means unrestricted).
+    pub architectures: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAptProxyConfig {
+    #[serde(default)]
+    distributions: Vec<String>,
+    #[serde(default)]
+    components: Vec<String>,
+    #[serde(default)]
+    architectures: Vec<String>,
+}
+
+impl AptProxyConfig {
+    /// Reads and validates `config_settings.apt` if present.
+    pub fn of(config: &RepositoryConfig) -> Result<Self, UpstreamConfigError> {
+        let Some(value) = config.config_settings.get("apt") else {
+            return Ok(Self::default());
+        };
+        if value.is_null() {
+            return Ok(Self::default());
+        }
+        let raw: RawAptProxyConfig = serde_json::from_value(value.clone())
+            .map_err(|error| UpstreamConfigError(format!("invalid apt settings: {error}")))?;
+        for item in raw
+            .distributions
+            .iter()
+            .chain(raw.components.iter())
+            .chain(raw.architectures.iter())
+        {
+            if !valid_apt_segment(item) {
+                return Err(UpstreamConfigError(format!(
+                    "invalid apt identifier: {item:?}"
+                )));
+            }
+        }
+        Ok(Self {
+            distributions: raw.distributions,
+            components: raw.components,
+            architectures: raw.architectures,
+        })
+    }
+
+    /// Returns true if `dist` is allowed by this configuration.
+    pub fn allows_dist(&self, dist: &str) -> bool {
+        self.distributions.is_empty() || self.distributions.iter().any(|d| d == dist)
+    }
+
+    /// Returns true if `component` is allowed by this configuration.
+    pub fn allows_component(&self, component: Option<&str>) -> bool {
+        if self.components.is_empty() {
+            return true;
+        }
+        match component {
+            Some(comp) => self.components.iter().any(|c| c == comp),
+            None => false,
+        }
+    }
+
+    /// Returns true if `arch` is allowed by this configuration.
+    pub fn allows_architecture(&self, arch: &str) -> bool {
+        self.architectures.is_empty() || self.architectures.iter().any(|a| a == arch)
+    }
+
+    /// Returns true if `pool_path` belongs to an allowed component.
+    pub fn allows_pool_path(&self, pool_path: &str) -> bool {
+        if self.components.is_empty() {
+            return true;
+        }
+        let Some(rest) = pool_path.strip_prefix("pool/") else {
+            return false;
+        };
+        let Some((component, _)) = rest.split_once('/') else {
+            return false;
+        };
+        self.components.iter().any(|c| c == component)
+    }
+}
+
+/// Parsed fields of an upstream `Release` or `InRelease` document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedRelease {
+    /// `Suite` header value, if present.
+    pub suite: Option<String>,
+    /// `Codename` header value, if present.
+    pub codename: Option<String>,
+    /// `Valid-Until` timestamp, if present.
+    pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
+    /// Map from relative index path (e.g. `main/binary-amd64/Packages.xz`) to `(sha256_hex, size_bytes)`.
+    pub sha256_entries: BTreeMap<String, (String, u64)>,
+}
+
+impl ParsedRelease {
+    /// Returns true if `Valid-Until` is present and strictly earlier than `now`.
+    pub fn is_expired(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+        self.valid_until.is_some_and(|until| until < now)
+    }
+}
+
+/// Extracts the plain `Release` body from `Release` or OpenPGP clearsigned `InRelease` bytes.
+pub fn extract_release_body(bytes: &[u8], is_inrelease: bool) -> Result<String, AptError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| AptError::InvalidMetadata("Release is not valid UTF-8".to_string()))?;
+    if !is_inrelease {
+        return Ok(text.to_string());
+    }
+    let mut lines = text.lines();
+    let mut found_header = false;
+    for line in &mut lines {
+        if line.trim_end() == "-----BEGIN PGP SIGNED MESSAGE-----" {
+            found_header = true;
+            break;
+        }
+    }
+    if !found_header {
+        return Err(AptError::InvalidMetadata(
+            "InRelease is missing the PGP signed message header".to_string(),
+        ));
+    }
+    // Skip armor headers (e.g. `Hash: SHA256`) until the blank separator line.
+    let mut found_blank = false;
+    for line in &mut lines {
+        if line.trim_end().is_empty() {
+            found_blank = true;
+            break;
+        }
+    }
+    if !found_blank {
+        return Err(AptError::InvalidMetadata(
+            "InRelease is missing the header separator".to_string(),
+        ));
+    }
+    let mut body = String::new();
+    let mut found_sig = false;
+    for line in lines {
+        let trimmed = line.trim_end();
+        if trimmed == "-----BEGIN PGP SIGNATURE-----" {
+            found_sig = true;
+            break;
+        }
+        // RFC 4880 dash-escaping: `- ` at the start of a line escapes `-`.
+        let unescaped = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        body.push_str(unescaped);
+        body.push('\n');
+    }
+    if !found_sig {
+        return Err(AptError::InvalidMetadata(
+            "InRelease is missing the PGP signature block".to_string(),
+        ));
+    }
+    Ok(body)
+}
+
+fn parse_apt_timestamp(raw: &str) -> Result<chrono::DateTime<chrono::Utc>, AptError> {
+    let trimmed = raw.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(trimmed) {
+        return Ok(dt.with_timezone(&chrono::Utc));
+    }
+    if let Some(without_utc) = trimmed.strip_suffix(" UTC")
+        && let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(without_utc, "%a, %d %b %Y %H:%M:%S")
+    {
+        return Ok(naive.and_utc());
+    }
+    Err(AptError::InvalidMetadata(format!(
+        "unparseable Release timestamp: {trimmed}"
+    )))
+}
+
+/// Parses a `Release` document, extracting `Suite`, `Codename`, `Valid-Until`, and `SHA256:` entries.
+pub fn parse_release(text: &str) -> Result<ParsedRelease, AptError> {
+    let mut suite = None;
+    let mut codename = None;
+    let mut valid_until = None;
+    let mut sha256_entries = BTreeMap::new();
+    let mut in_sha256 = false;
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if in_sha256 {
+                let mut parts = line.split_whitespace();
+                let (Some(digest), Some(size_str), Some(path)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    continue;
+                };
+                if parts.next().is_some() {
+                    continue;
+                }
+                let size = size_str.parse::<u64>().map_err(|_| {
+                    AptError::InvalidMetadata(format!("invalid size in Release SHA256: {size_str}"))
+                })?;
+                sha256_entries.insert(path.to_string(), (digest.to_ascii_lowercase(), size));
+            }
+            continue;
+        }
+        in_sha256 = false;
+        if let Some((key, value)) = line.split_once(':') {
+            let key_lower = key.trim().to_ascii_lowercase();
+            let val = value.trim();
+            match key_lower.as_str() {
+                "suite" if !val.is_empty() => suite = Some(val.to_string()),
+                "codename" if !val.is_empty() => codename = Some(val.to_string()),
+                "valid-until" if !val.is_empty() => {
+                    valid_until = Some(parse_apt_timestamp(val)?);
+                }
+                "sha256" => {
+                    in_sha256 = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if sha256_entries.is_empty() {
+        return Err(AptError::InvalidMetadata(
+            "Release contains no SHA256 entries".to_string(),
+        ));
+    }
+
+    Ok(ParsedRelease {
+        suite,
+        codename,
+        valid_until,
+        sha256_entries,
+    })
+}
+
+/// Decompresses a `Packages`, `Packages.gz`, or `Packages.xz` index payload.
+pub fn decompress_packages(
+    bytes: &[u8],
+    compression: PackagesCompression,
+) -> Result<Vec<u8>, AptError> {
+    match compression {
+        PackagesCompression::Plain => Ok(bytes.to_vec()),
+        PackagesCompression::Gz => gunzip(bytes),
+        PackagesCompression::Xz => {
+            let mut out = Vec::new();
+            xz2::read::XzDecoder::new(bytes)
+                .read_to_end(&mut out)
+                .map_err(|_| AptError::BadArchive("the xz Packages index does not decompress"))?;
+            Ok(out)
+        }
+    }
+}
+
+/// Expected digest and size of a `.deb` entry in a `Packages` index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebIndexEntry {
+    /// Expected lowercase hex SHA256 digest.
+    pub sha256: String,
+    /// Expected size in bytes.
+    pub size: u64,
+}
+
+/// Finds the `SHA256` and `Size` for `pool_path` inside a decompressed `Packages` text.
+pub fn find_deb_in_packages(packages_text: &str, pool_path: &str) -> Option<DebIndexEntry> {
+    let mut filename: Option<&str> = None;
+    let mut sha256: Option<String> = None;
+    let mut size: Option<u64> = None;
+
+    let check_stanza = |filename: Option<&str>, sha256: Option<String>, size: Option<u64>| {
+        if filename == Some(pool_path)
+            && let (Some(sha256), Some(size)) = (sha256, size)
+        {
+            return Some(DebIndexEntry { sha256, size });
+        }
+        None
+    };
+
+    for raw_line in packages_text.lines() {
+        let line = raw_line.trim_end_matches('\r');
+        if line.is_empty() {
+            if let Some(found) = check_stanza(filename, sha256.take(), size) {
+                return Some(found);
+            }
+            filename = None;
+            size = None;
+            continue;
+        }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            continue;
+        }
+        if let Some(val) = line.strip_prefix("Filename:") {
+            filename = Some(val.trim());
+        } else if let Some(val) = line.strip_prefix("SHA256:") {
+            sha256 = Some(val.trim().to_ascii_lowercase());
+        } else if let Some(val) = line.strip_prefix("Size:") {
+            size = val.trim().parse::<u64>().ok();
+        }
+    }
+    check_stanza(filename, sha256, size)
+}
+
+/// A single package stanza parsed from a Debian `Packages` index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageStanza {
+    /// `Package` field value.
+    pub package: String,
+    /// `Version` field value.
+    pub version: String,
+    /// `Architecture` field value.
+    pub architecture: String,
+    /// `Filename` field value.
+    pub filename: String,
+    /// Normalized stanza text (no leading/trailing blank lines, ends with `\n\n`).
+    pub raw: String,
+}
+
+/// Parses all package stanzas from a decompressed Debian `Packages` index.
+pub fn parse_packages_stanzas(packages_text: &str) -> Result<Vec<PackageStanza>, AptError> {
+    let normalized = packages_text.replace("\r\n", "\n");
+    let mut out = Vec::new();
+    for block in normalized.split("\n\n") {
+        let trimmed = block.trim_matches('\n');
+        if trimmed.trim().is_empty() {
+            continue;
+        }
+        let mut package: Option<String> = None;
+        let mut version: Option<String> = None;
+        let mut architecture: Option<String> = None;
+        let mut filename: Option<String> = None;
+        for line in trimmed.lines() {
+            if line.starts_with(' ') || line.starts_with('\t') {
+                continue;
+            }
+            if let Some(val) = line.strip_prefix("Package:") {
+                if package.is_none() {
+                    package = Some(val.trim().to_string());
+                }
+            } else if let Some(val) = line.strip_prefix("Version:") {
+                if version.is_none() {
+                    version = Some(val.trim().to_string());
+                }
+            } else if let Some(val) = line.strip_prefix("Architecture:") {
+                if architecture.is_none() {
+                    architecture = Some(val.trim().to_string());
+                }
+            } else if let Some(val) = line.strip_prefix("Filename:")
+                && filename.is_none()
+            {
+                filename = Some(val.trim().to_string());
+            }
+        }
+        let (Some(package), Some(version), Some(architecture), Some(filename)) =
+            (package, version, architecture, filename)
+        else {
+            return Err(AptError::BadArchive(
+                "a Packages stanza is missing Package, Version, Architecture, or Filename",
+            ));
+        };
+        if package.is_empty()
+            || version.is_empty()
+            || architecture.is_empty()
+            || filename.is_empty()
+        {
+            return Err(AptError::BadArchive(
+                "a Packages stanza has an empty identity field",
+            ));
+        }
+        out.push(PackageStanza {
+            package,
+            version,
+            architecture,
+            filename,
+            raw: format!("{trimmed}\n\n"),
+        });
+    }
+    Ok(out)
+}
+
+/// Composes a deterministic `Packages` index for `target_arch` from member
+/// stanzas ordered by group precedence (first member wins on `(package, version, arch)`).
+pub fn compose_packages_index<'a>(
+    member_stanzas: impl IntoIterator<Item = &'a [PackageStanza]>,
+    target_arch: &str,
+) -> String {
+    let mut winners: BTreeMap<(&str, &str, &str), &str> = BTreeMap::new();
+    for stanzas in member_stanzas {
+        for stanza in stanzas {
+            if stanza.architecture != target_arch && stanza.architecture != "all" {
+                continue;
+            }
+            winners
+                .entry((
+                    stanza.package.as_str(),
+                    stanza.version.as_str(),
+                    stanza.architecture.as_str(),
+                ))
+                .or_insert(stanza.raw.as_str());
+        }
+    }
+    let mut out = String::new();
+    for raw in winners.into_values() {
+        out.push_str(raw);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -634,7 +1214,9 @@ mod tests {
             Route::parse("dists/stable/binary-amd64/Packages").unwrap(),
             Route::Packages {
                 dist: "stable".into(),
-                architecture: "amd64".into()
+                component: None,
+                architecture: "amd64".into(),
+                compression: PackagesCompression::Plain,
             }
         );
         // La forma que apt siempre usa: con la componente delante.
@@ -642,7 +1224,24 @@ mod tests {
             Route::parse("dists/stable/main/binary-arm64/Packages").unwrap(),
             Route::Packages {
                 dist: "stable".into(),
-                architecture: "arm64".into()
+                component: Some("main".into()),
+                architecture: "arm64".into(),
+                compression: PackagesCompression::Plain,
+            }
+        );
+        assert_eq!(
+            Route::parse("dists/bookworm/contrib/binary-amd64/Packages.xz").unwrap(),
+            Route::Packages {
+                dist: "bookworm".into(),
+                component: Some("contrib".into()),
+                architecture: "amd64".into(),
+                compression: PackagesCompression::Xz,
+            }
+        );
+        assert_eq!(
+            Route::parse("dists/bookworm/InRelease").unwrap(),
+            Route::InRelease {
+                dist: "bookworm".into()
             }
         );
         assert_eq!(
@@ -668,13 +1267,74 @@ mod tests {
 
     #[test]
     fn a_route_cannot_escape_or_be_nonsense() {
-        // No hay componente que valga, ni path traversal, ni rutas sueltas.
+        // Invalid component/arch paths, path traversal, or unknown routes.
         assert!(Route::parse("dists/stable/other/Packages").is_err());
         assert!(Route::parse("pool/../etc/passwd").is_err());
         assert!(Route::parse("pool/main/x/no-extension").is_err());
         assert!(Route::parse("dists/st..able/Release").is_err());
         assert!(Route::parse("dists/").is_err());
         assert!(Route::parse("index.html").is_err());
+    }
+
+    #[test]
+    fn release_parsing_extracts_valid_until_and_sha256_entries() {
+        let release = concat!(
+            "Origin: Debian\n",
+            "Suite: stable\n",
+            "Codename: bookworm\n",
+            "Date: Tue, 17 Nov 2026 18:00:00 UTC\n",
+            "Valid-Until: Tue, 24 Nov 2026 18:00:00 UTC\n",
+            "SHA256:\n",
+            " e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 0 main/binary-amd64/Packages\n",
+            " 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef 42 main/binary-amd64/Packages.xz\n",
+        );
+        let parsed = parse_release(release).unwrap();
+        assert_eq!(parsed.suite.as_deref(), Some("stable"));
+        assert_eq!(parsed.codename.as_deref(), Some("bookworm"));
+        assert!(parsed.valid_until.is_some());
+        assert_eq!(
+            parsed.sha256_entries.get("main/binary-amd64/Packages.xz"),
+            Some(&(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                42
+            ))
+        );
+        let before = chrono::DateTime::parse_from_rfc3339("2026-11-20T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let after = chrono::DateTime::parse_from_rfc3339("2026-11-25T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(!parsed.is_expired(before));
+        assert!(parsed.is_expired(after));
+    }
+
+    #[test]
+    fn find_deb_in_packages_matches_filename_and_digest() {
+        let packages = concat!(
+            "Package: hello-hodei\n",
+            "Version: 1.0.0\n",
+            "Architecture: amd64\n",
+            "Filename: pool/main/h/hello-hodei/hello-hodei_1.0.0_amd64.deb\n",
+            "Size: 1234\n",
+            "SHA256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            "Description: Hello\n",
+            "\n",
+        );
+        let found = find_deb_in_packages(
+            packages,
+            "pool/main/h/hello-hodei/hello-hodei_1.0.0_amd64.deb",
+        )
+        .unwrap();
+        assert_eq!(
+            found,
+            DebIndexEntry {
+                sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_string(),
+                size: 1234
+            }
+        );
+        assert!(find_deb_in_packages(packages, "pool/main/o/other/other_1.0_amd64.deb").is_none());
     }
 
     #[test]
@@ -694,5 +1354,49 @@ mod tests {
             Route::release_date(&moment),
             "Tue, 17 Nov 2026 18:00:00 UTC"
         );
+    }
+
+    #[test]
+    fn compose_packages_index_respects_precedence_and_is_deterministic() {
+        let m1 = parse_packages_stanzas(concat!(
+            "Package: zebra\n",
+            "Version: 1.0.0\n",
+            "Architecture: amd64\n",
+            "Filename: pool/main/z/zebra_1.0.0_amd64.deb\n",
+            "SHA256: 1111111111111111111111111111111111111111111111111111111111111111\n\n",
+            "Package: shared\n",
+            "Version: 2.0.0\n",
+            "Architecture: amd64\n",
+            "Filename: pool/main/s/shared_2.0.0_amd64.deb\n",
+            "SHA256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n",
+        ))
+        .unwrap();
+        let m2 = parse_packages_stanzas(concat!(
+            "Package: shared\n",
+            "Version: 2.0.0\n",
+            "Architecture: amd64\n",
+            "Filename: pool/main/s/shared_2.0.0_amd64.deb\n",
+            "SHA256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\n",
+            "Package: alpha\n",
+            "Version: 1.0.0\n",
+            "Architecture: all\n",
+            "Filename: pool/main/a/alpha_1.0.0_all.deb\n",
+            "SHA256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n\n",
+        ))
+        .unwrap();
+
+        let composed = compose_packages_index([m1.as_slice(), m2.as_slice()], "amd64");
+        assert!(
+            composed.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert!(
+            !composed.contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+        assert!(composed.contains("Package: alpha"));
+        assert!(composed.contains("Package: zebra"));
+        let alpha_pos = composed.find("Package: alpha").unwrap();
+        let shared_pos = composed.find("Package: shared").unwrap();
+        let zebra_pos = composed.find("Package: zebra").unwrap();
+        assert!(alpha_pos < shared_pos && shared_pos < zebra_pos);
     }
 }

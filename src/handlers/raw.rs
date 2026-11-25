@@ -51,10 +51,10 @@ const CHECKSUM_HEADER: &str = "x-checksum-sha256";
 pub use crate::resolution::ResolutionError as RawApiError;
 #[allow(unused_imports)]
 pub(super) use crate::resolution::{
-    Resolved, apply_cache_headers, apply_common_headers, apply_group_headers, hex_of,
+    ProxyServed, Resolved, apply_cache_headers, apply_common_headers, apply_group_headers, hex_of,
     the_admission_error, the_admitted, the_blob_error, the_catalog, the_content_store, the_context,
-    the_current_asset, the_decision, the_proxy_asset, the_proxy_asset_at, the_publication_error,
-    the_repository_in, the_resolved_asset, write_the_content,
+    the_current_asset, the_decision, the_proxy_asset, the_proxy_asset_at, the_proxy_asset_verified,
+    the_publication_error, the_repository_in, the_resolved_asset, write_the_content,
 };
 
 /// La ruta pedida, con sus reglas.

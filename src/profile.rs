@@ -312,6 +312,7 @@ pub async fn assemble_graph_profile(
     let state = state
         .with_catalog(reader, writer)
         .with_catalog_search(searcher)
+        .with_apt_snapshot_store(catalog.clone())
         .with_trust_ledger(trust_ledger)
         .with_proxy_plane(proxy_plane)
         .with_trust_plane(plane)

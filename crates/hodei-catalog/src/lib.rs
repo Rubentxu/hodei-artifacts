@@ -89,7 +89,8 @@ pub use model::{
 };
 pub use namespaces::{Judgement, MAX_RESERVED, NamespacePolicy, NamespacePolicyError, OnConflict};
 pub use ports::{
-    AccessDecision, AccessRequest, AllowAllAuthorizer, BlobIntegrityProbe, BlobProbeError,
+    AccessDecision, AccessRequest, AllowAllAuthorizer, AptCasReference, AptGroupSnapshot,
+    AptSnapshotKey, AptSnapshotMember, AptSnapshotStore, BlobIntegrityProbe, BlobProbeError,
     CatalogAction, CatalogAuthorizer, CatalogReader, CatalogResource, CatalogSearch, CatalogWriter,
     DenyAllAuthorizer, MAX_ASSETS_UNDER,
 };

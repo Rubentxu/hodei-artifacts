@@ -19,7 +19,7 @@ use crate::repository::{
     DenyAllAuthenticator, InMemoryRepositoryStore, RepositoryReader, RepositoryWriter,
 };
 use hodei_authz::PrincipalAuthenticator;
-use hodei_catalog::{CatalogReader, CatalogSearch, CatalogWriter};
+use hodei_catalog::{AptSnapshotStore, CatalogReader, CatalogSearch, CatalogWriter};
 use hodei_hub::blob::BlobStore;
 use hodei_iam::register_iam_schema::ports::RegisterIamSchemaPort;
 use hodei_policies::build_schema::ports::BuildSchemaPort;
@@ -131,6 +131,11 @@ pub struct AppState {
     /// that serves content without an index answers that the search is
     /// not available, and not that there is nothing to find.
     pub(crate) catalog_search: Option<Arc<dyn CatalogSearch>>,
+    /// Durable storage for immutable APT group generations.
+    ///
+    /// Group metadata and its current pointer are unavailable when this port
+    /// is not wired; handlers must fail closed rather than recomputing a view.
+    pub(crate) apt_snapshot_store: Option<Arc<dyn AptSnapshotStore>>,
     /// The store of content by digest.
     ///
     /// Optional for the same reason the catalog is: without it there are no
@@ -218,7 +223,7 @@ pub struct AppState {
     pub(crate) quota: Arc<crate::quota::QuotaLedger>,
     /// La clave con la que el hub firma la metadata de los repositorios
     /// de sistema: el `Release.gpg` de apt y el `repomd.xml.asc` de yum.
-    pub(crate) metadata_signer: Arc<crate::openpgp::MetadataSigner>,
+    pub(crate) metadata_signer: Arc<dyn crate::openpgp::MetadataSigning>,
     /// The largest content this service accepts, in bytes.
     ///
     /// A limit that is not written is a limit that is not enforced, and a
@@ -329,6 +334,7 @@ impl AppState {
             catalog_reader: None,
             catalog_writer: None,
             catalog_search: None,
+            apt_snapshot_store: None,
             content_store: None,
             readiness: Arc::new(crate::readiness::NothingRequired),
             gc: None,
@@ -401,6 +407,7 @@ impl AppState {
             catalog_reader: None,
             catalog_writer: None,
             catalog_search: None,
+            apt_snapshot_store: None,
             content_store: None,
             readiness: Arc::new(crate::readiness::NothingRequired),
             gc: None,
@@ -547,6 +554,21 @@ impl AppState {
     /// different bounds and different pages.
     pub fn with_catalog_search(mut self, searcher: Arc<dyn CatalogSearch>) -> Self {
         self.catalog_search = Some(searcher);
+        self
+    }
+
+    /// Inject the signer used for repository metadata.
+    pub fn with_metadata_signer(
+        mut self,
+        signer: Arc<dyn crate::openpgp::MetadataSigning>,
+    ) -> Self {
+        self.metadata_signer = signer;
+        self
+    }
+
+    /// Inject durable storage for immutable APT group generations.
+    pub fn with_apt_snapshot_store(mut self, store: Arc<dyn AptSnapshotStore>) -> Self {
+        self.apt_snapshot_store = Some(store);
         self
     }
 
