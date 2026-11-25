@@ -110,6 +110,10 @@ impl Client {
             .env("CONAN_HOME", &self.home)
             .env("HOME", &self.root)
             .env("CONAN_NON_INTERACTIVE", "1")
+            // `conan create` writes its generator scripts (`conanbuild.sh`,
+            // `conanrun.sh`, ...) into the working directory: the deployment
+            // directory, never the checkout the suite runs from.
+            .current_dir(&self.root)
             .output()
             .expect("conan runs");
         let mut text = String::from_utf8_lossy(&output.stdout).into_owned();

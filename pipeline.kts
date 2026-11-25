@@ -282,6 +282,7 @@ pipeline {
                         "--test hsp207_capsule_dgraph_it",
                         "--test hsp208_simulation_dgraph_it",
                         "--test hsp220_drain_outbox_it",
+                        "--test hsp304_formats_dgraph_it",
                     ).joinToString(" ") + " -- --test-threads=1"
                 )
             }
@@ -396,6 +397,12 @@ pipeline {
                         "--test hsp159_conan_client",
                         "--test hsp217_galaxy_client",
                         "--test hsp218_hf_client",
+                        // Residuales de la pila de formatos (HSP-304): terraform
+                        // init real contra el mirror sobre https verificado
+                        // (NOT_RUN visible si faltan terraform/socat/openssl) y
+                        // la matriz 401/403/cuenta ajena/413 de las escrituras.
+                        "--test hsp304_terraform_init",
+                        "--test hsp304_format_access",
                         "--test hsp123_migration_e2e",
                         "--test hsp124_quota_e2e",
                         "--test hsp125_replication_spike",
