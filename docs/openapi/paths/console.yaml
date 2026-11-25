@@ -152,7 +152,9 @@ catalogSearch:
     summary: Buscar en el catálogo
     description: >
       La búsqueda se acota a la cuenta del principal verificado. El total
-      es `null` cuando hay más coincidencias de las que se cuentan.
+      es `null` cuando hay más coincidencias de las que se cuentan. Sin
+      `cursor` la página va por ventana (`offset`); con `cursor` va por
+      clave (keyset) y no depende de lo que quede por delante.
     operationId: searchCatalog
     parameters:
       - name: repository
@@ -188,6 +190,16 @@ catalogSearch:
       - name: offset
         in: query
         schema: { type: integer, minimum: 0, default: 0 }
+      - name: cursor
+        in: query
+        schema: { type: string }
+        description: >
+          La clave opaca que devolvió la página anterior como
+          `next_cursor`: la página empieza **después** de esa clave, en
+          el orden del contrato (repositorio, camino). Un cursor y un
+          offset no van juntos, y un cursor ilegible o que nombra un
+          repositorio que el principal no puede leer se rechaza por su
+          nombre: la búsqueda no cae al principio del catálogo.
     responses:
       '200':
         description: La página de resultados.

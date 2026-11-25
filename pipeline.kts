@@ -223,6 +223,14 @@ pipeline {
                         "--test hsp109_maven_contract",
                         "--test hsp113_search_contract",
                         "--test hsp113_search_e2e",
+                        // La superficie HTTP del cursor keyset (HSP-222):
+                        // el contrato vive en el almacen (HSP-191) y los
+                        // IT de Dgraph lo ejercitan (HSP-147); lo que se
+                        // fija aqui es que /api/v1/search lo acepta, lo
+                        // propaga, lo echo, rechaza por su nombre el que
+                        // no se lee o el de otra cuenta y no degrada a
+                        // offset. Almacen falso in-process: lane rapida.
+                        "--test hsp222_search_cursor_surface",
                         "--test hsp114_console_contract",
                         "--test hsp132_registry_list",
                         "--test hsp88_investigation_query",
