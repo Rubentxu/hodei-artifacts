@@ -441,12 +441,14 @@ impl ProxyFetcher {
         let upstream_origin = upstream.origin();
         // El token, si lo hay, manda: es la credencial que el upstream
         // acaba de pedir. La de la configuracion es la de reserva.
-        let secret = match token {
-            Some(_) => None,
-            None => upstream
-                .credential
-                .as_ref()
-                .and_then(|credential| self.secrets.get(credential)),
+        let secret = match (token, upstream.credential.as_ref()) {
+            (Some(_), _) | (None, None) => None,
+            // A repository that names a credential the service cannot
+            // provide (not allowed by the operator, or not set) fails
+            // closed: it never degrades to an anonymous request.
+            (None, Some(credential)) => {
+                Some(self.secrets.get(credential).ok_or(FetchError::Credential)?)
+            }
         };
         let credential = match token {
             Some(token) => Some(TheCredential {
@@ -1291,6 +1293,34 @@ mod tests {
         assert!(EnvSecrets::default().get(&reference).is_none());
         assert!(EnvSecrets::allowing(["OTHER"]).get(&reference).is_none());
         assert!(EnvSecrets::allowing(["PATH"]).get(&reference).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_credential_the_service_cannot_provide_fails_closed_before_any_request() {
+        let port = serve_always(
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi".to_string(),
+        )
+        .await;
+        // `PATH` exists in any environment: what is measured is the list.
+        let upstream = upstream(
+            &format!("http://pinned.test:{port}/"),
+            serde_json::json!({ "credential_ref": "env:PATH" }),
+        );
+        let build = || {
+            fetcher_with(
+                vec![entry("pinned.test", Some(port), true)],
+                vec![("pinned.test", vec!["127.0.0.1".parse().unwrap()])],
+            )
+        };
+        // Not allowed by the operator: no anonymous fallback.
+        let error = build()
+            .open(&upstream, "a.bin")
+            .await
+            .expect_err("a refused credential");
+        assert_eq!(error, FetchError::Credential);
+        // Allowed: the same upstream is reached.
+        let allowed = build().with_allowed_credentials(["PATH"]);
+        assert!(allowed.open(&upstream, "a.bin").await.is_ok());
     }
 
     fn lab_names() -> Vec<(&'static str, Vec<std::net::IpAddr>)> {
