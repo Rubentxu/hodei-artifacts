@@ -84,6 +84,15 @@ export GARAGE_RPC_SECRET=smoke-placeholder-rpc
 export GARAGE_ADMIN_TOKEN=smoke-placeholder-admin
 export AWS_ACCESS_KEY_ID=smoke-placeholder-key
 export AWS_SECRET_ACCESS_KEY=smoke-placeholder-secret
+# Ephemeral signing key of the Terraform mirror: generated here, readable by the
+# container user, and deleted with $WORK. Never a fixed value.
+export HODEI_SIGNING_KEY_FILE="$WORK/signing-key"
+if command -v openssl >/dev/null 2>&1; then
+  openssl rand -hex 32 > "$HODEI_SIGNING_KEY_FILE"
+else
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$HODEI_SIGNING_KEY_FILE"
+fi
+chmod 0444 "$HODEI_SIGNING_KEY_FILE"
 
 http_status() {
   # Prints the HTTP status line code for GET $1 on the published port, or 000.

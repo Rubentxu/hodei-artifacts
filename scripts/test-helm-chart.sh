@@ -81,6 +81,16 @@ check "external+garage: both Garage PVCs RWO" "$([ "$(q "$extg" "$gsts | [.spec.
 check "external+garage: API has no PVC and no PVC volume" "$([ -z "$(q "$extg" 'select(.kind=="PersistentVolumeClaim") | .kind')" ] && [ -z "$(q "$extg" "$dep | .spec.template.spec.volumes[]? | select(.persistentVolumeClaim) | .name")" ] && echo ok || echo no)"
 check "external+garage: no Secret rendered" "$([ -z "$(q "$extg" 'select(.kind=="Secret") | .kind')" ] && echo ok || echo no)"
 
+# --- signing keys of the Terraform mirror (HSP-313) ---
+sig=$(helm template t "$chart" --set signing.existingSecret=hodei-signing)
+envof() { q "$1" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"$2\")"; }
+check "signing: no key without a Secret (the mirror fails closed)" "$([ -z "$(envof "$std" HODEI_SIGNING__KEYS__0__ID)" ] && echo ok || echo no)"
+check "signing: key id and secret reference rendered from the Secret" "$([ "$(q "$sig" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING_KEY_SECRET_0\") | .valueFrom.secretKeyRef.name")" = hodei-signing ] && [ "$(q "$sig" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING__KEYS__0__SECRET_ENV\") | .value")" = HODEI_SIGNING_KEY_SECRET_0 ] && [ "$(q "$sig" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING__KEYS__0__ID\") | .value")" = primary ] && echo ok || echo no)"
+check "signing: the secret value is never inline" "$([ -z "$(q "$sig" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING_KEY_SECRET_0\") | .value // \"\"")" ] && echo ok || echo no)"
+check "signing: still no Secret rendered" "$([ -z "$(q "$sig" 'select(.kind=="Secret") | .kind')" ] && echo ok || echo no)"
+sig2=$(helm template t "$chart" --set signing.existingSecret=hodei-signing --set 'signing.keys[0].id=b' --set 'signing.keys[0].secretKey=kb' --set 'signing.keys[1].id=a' --set 'signing.keys[1].secretKey=ka')
+check "signing: a ring of two keys keeps the order (index 0 signs)" "$([ "$(q "$sig2" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING__KEYS__1__ID\") | .value")" = a ] && echo ok || echo no)"
+
 # --- helm package is reproducible only with SOURCE_DATE_EPOCH (HSP-269) ---
 # Without it the archive embeds the mtime of every file, so two checkouts differ.
 work=$(mktemp -d)

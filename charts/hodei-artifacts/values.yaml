@@ -57,6 +57,21 @@ secrets:
   jwtSecretKey: auth-jwt-secret          # -> HODEI_SECURITY__AUTH_JWT_SECRET
   metadataSignerKey: metadata-signer-armor # -> HODEI_METADATA_SIGNER_ARMOR
 
+# Signing keys of the Terraform mirror archive URLs. The secrets live in an
+# existing Secret (never inline): each entry names the key id and the key of the
+# Secret that holds its secret (>= 32 bytes, e.g. `openssl rand -hex 32`). The
+# first key signs, all of them verify; give every replica the same Secret.
+# Without `existingSecret` no key is configured and the mirror fails closed (it
+# issues no archive URLs, and a Terraform client cannot install from it).
+#
+#   kubectl create secret generic hodei-signing --from-literal=signing-key="$(openssl rand -hex 32)"
+signing:
+  existingSecret: ""
+  ttlSecs: 300
+  keys:
+    - id: primary
+      secretKey: signing-key
+
 extraEnv: []
 extraVolumes: []
 extraVolumeMounts: []
