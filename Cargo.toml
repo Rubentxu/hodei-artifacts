@@ -40,7 +40,6 @@ exclude = [
     "crates/artifact",
     "crates/distribution",
     "crates/hodei-authorizer",
-    "crates/hodei-organizations",
     "crates/policies",
     "crates/repository",
     "crates/search",
