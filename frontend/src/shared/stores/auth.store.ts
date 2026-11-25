@@ -8,6 +8,8 @@ export interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  /** Monotonically increasing counter bumped on login, logout, or principal/token change. */
+  sessionEpoch: number;
 
   // Actions
   login: (user: User, token: string) => void;
@@ -25,6 +27,17 @@ export interface AuthState {
   clearError: () => void;
 }
 
+/**
+ * Derives a cache-safe session identifier without exposing raw credentials.
+ */
+export const selectPrincipalSessionKey = (
+  state: Pick<AuthState, 'user' | 'token' | 'sessionEpoch'>
+): string => {
+  const principal =
+    state.user?.id ?? (state.token ? 'authenticated' : 'anonymous');
+  return `${principal}:${state.sessionEpoch}`;
+};
+
 export const useAuthStore = create<AuthState>()(
   persist(
     set => ({
@@ -32,42 +45,55 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       isAuthenticated: false,
+      sessionEpoch: 0,
       isLoading: false,
       error: null,
 
       // Actions
       login: (user, token) => {
-        set({
+        set(state => ({
           user,
           token,
           isAuthenticated: true,
+          sessionEpoch: state.sessionEpoch + 1,
           error: null,
           isLoading: false,
-        });
+        }));
       },
 
       logout: () => {
-        set({
+        set(state => ({
           user: null,
           token: null,
           isAuthenticated: false,
+          sessionEpoch: state.sessionEpoch + 1,
           error: null,
           isLoading: false,
-        });
+        }));
       },
 
       setUser: user => {
-        set({ user });
-        if (user) {
-          set({ isAuthenticated: true });
-        }
+        set(state => {
+          const principalChanged =
+            user?.id !== state.user?.id ||
+            Boolean(user) !== Boolean(state.user);
+          return {
+            user,
+            isAuthenticated: user ? true : state.isAuthenticated,
+            sessionEpoch: principalChanged
+              ? state.sessionEpoch + 1
+              : state.sessionEpoch,
+          };
+        });
       },
 
       setToken: token => {
-        set({ token });
-        if (token) {
-          set({ isAuthenticated: true });
-        }
+        set(state => ({
+          token,
+          isAuthenticated: token ? true : state.isAuthenticated,
+          sessionEpoch:
+            token !== state.token ? state.sessionEpoch + 1 : state.sessionEpoch,
+        }));
       },
 
       setIsLoading: isLoading => set({ isLoading }),
@@ -92,6 +118,7 @@ export const useAuth = () => {
   const user = useAuthStore(state => state.user);
   const token = useAuthStore(state => state.token);
   const isAuthenticated = useAuthStore(state => state.isAuthenticated);
+  const sessionEpoch = useAuthStore(state => state.sessionEpoch);
   const isLoading = useAuthStore(state => state.isLoading);
   const error = useAuthStore(state => state.error);
 
@@ -107,6 +134,7 @@ export const useAuth = () => {
     user,
     token,
     isAuthenticated,
+    sessionEpoch,
     isLoading,
     error,
     login,
@@ -128,7 +156,7 @@ export const usePermissions = () => {
   };
 
   const hasAnyRole = (roles: string[]): boolean => {
-    return roles.includes(user?.role || '');
+    return roles.includes(user?.role ?? '');
   };
 
   const isAdmin = (): boolean => {
