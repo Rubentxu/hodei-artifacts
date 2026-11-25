@@ -17,15 +17,22 @@
 
 #![forbid(unsafe_code)]
 
+// HSP-213: el outbox de auditoría sobre el motor embebido y el
+// adaptador completo del catálogo sobre SurrealDB quedan tras la feature
+// `legacy`; el binario productivo no la declara.
+#[cfg(feature = "legacy")]
 pub mod audit_outbox;
 // El puerto Dgraph del catálogo (HSP-187, slice Raw): el mismo contrato
 // de HAR-02/HAR-03 sobre el grafo nativo, con el outbox de auditoría en
 // la MISMA transacción que el commit.
 pub mod dgraph;
+#[cfg(feature = "legacy")]
 pub mod surreal;
 
+#[cfg(feature = "legacy")]
 pub use audit_outbox::{AUDIT_OUTBOX_TABLE, AuditRow, SurrealAuditOutbox};
 pub use dgraph::{CATALOG_DGRAPH_SCHEMA_VERSION, DgraphAuditOutbox, DgraphCatalogStore};
+#[cfg(feature = "legacy")]
 pub use surreal::{
     SCHEMA_VERSION, SurrealCatalogStore, the_assets_under_read, the_guard_fetch, the_prefix_end,
 };

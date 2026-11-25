@@ -9,27 +9,39 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "legacy")]
 use async_trait::async_trait;
+#[cfg(feature = "legacy")]
 use hodei_evidence::domain::graph::{GraphChangeSet, RelationType};
+#[cfg(feature = "legacy")]
 use hodei_evidence::ports::graph::{GraphQuery, GraphWriter};
 pub mod dgraph_view;
 pub mod impact_view;
 pub mod reactions;
 pub mod subject_risk;
 
+#[cfg(feature = "legacy")]
 use hodei_risk::case::{BlastRadius, SubjectDepth};
+#[cfg(feature = "legacy")]
 use hodei_risk::ports::RiskRelationError;
+#[cfg(feature = "legacy")]
 use hodei_risk::traversal::Edge;
+#[cfg(feature = "legacy")]
 use kernel::Hrn;
+#[cfg(feature = "legacy")]
 use std::sync::Arc;
+#[cfg(feature = "legacy")]
 use surrealdb::Connection;
+#[cfg(feature = "legacy")]
 use surrealdb::Surreal;
 
+#[cfg(feature = "legacy")]
 /// The reader of the risk relations of an account.
 pub struct RiskRelationReader<C: Connection> {
     graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
 }
 
+#[cfg(feature = "legacy")]
 impl<C: Connection> RiskRelationReader<C> {
     /// A reader over a graph.
     pub fn new(graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>) -> Self {
@@ -78,6 +90,7 @@ impl<C: Connection> RiskRelationReader<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// Whether the relation is one of the risk relations.
 ///
 /// The deployments are among them: a blast radius that does not say where
@@ -93,6 +106,7 @@ fn is_risk_relation(relation: RelationType) -> bool {
     )
 }
 
+#[cfg(feature = "legacy")]
 /// The blast radius of a vulnerability, walked in the graph.
 ///
 /// The walk is **bounded**: it starts at the vulnerability and it only
@@ -222,6 +236,7 @@ pub async fn blast_radius<C: Connection>(
     })
 }
 
+#[cfg(feature = "legacy")]
 /// The relations that start at MANY nodes, of a kind.
 pub async fn relations_from_many<C: Connection>(
     graph: &hodei_evidence_storage::SurrealGraphStore<C>,
@@ -256,6 +271,7 @@ pub async fn relations_from_many<C: Connection>(
         .collect())
 }
 
+#[cfg(feature = "legacy")]
 /// The relations that end at MANY nodes, of a kind.
 ///
 /// The walk of varios saltos asks the same question of many nodes, and
@@ -302,6 +318,7 @@ pub async fn relations_to_many<C: Connection>(
         .collect())
 }
 
+#[cfg(feature = "legacy")]
 /// The relation of a row.
 ///
 /// The HRNs are TEXT in the store, and they are read as text: an HRN
@@ -316,6 +333,7 @@ struct RelationRow {
 }
 
 /// The relations that end at a node, of a kind.
+#[cfg(feature = "legacy")]
 async fn relations_to<C: Connection>(
     graph: &hodei_evidence_storage::SurrealGraphStore<C>,
     tenant: &kernel::Hrn,
@@ -352,6 +370,7 @@ impl std::fmt::Display for RiskError {
 
 impl std::error::Error for RiskError {}
 
+#[cfg(feature = "legacy")]
 /// Writes a change set of the risk into the graph.
 pub async fn apply<C: Connection>(
     graph: &hodei_evidence_storage::SurrealGraphStore<C>,
@@ -363,6 +382,7 @@ pub async fn apply<C: Connection>(
         .map_err(|error| RiskError::Unavailable(error.to_string()))
 }
 
+#[cfg(feature = "legacy")]
 /// The reader of the risk relations, over a database.
 pub fn reader_over<C: Connection>(db: Arc<Surreal<C>>) -> Arc<RiskRelationReader<C>> {
     Arc::new(RiskRelationReader::new(Arc::new(
@@ -370,6 +390,7 @@ pub fn reader_over<C: Connection>(db: Arc<Surreal<C>>) -> Arc<RiskRelationReader
     )))
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait]
 impl<C: Connection> hodei_risk::ports::RiskRelationSource for RiskRelationReader<C> {
     async fn edges(&self, tenant: &Hrn) -> Result<Vec<Edge>, RiskRelationError> {

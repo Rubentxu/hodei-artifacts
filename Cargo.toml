@@ -164,6 +164,53 @@ tracing-test = "0.2.5"
 http = "1.1.0"
 infer = "0.19.0"
 
+# HSP-213: el almacen embebido (SurrealDB sobre RocksDB) queda tras la
+# feature `legacy`. El binario y la imagen productivos se construyen con
+# `--no-default-features`: ahi no se enlaza ni surrealdb ni librocksdb, y
+# un perfil sin `[graph]` se rechaza con el mensaje de migracion. Las
+# suites historicas y las herramientas de legado se siguen construyendo
+# con el perfil por defecto, que es lo que preserva la evidencia.
+[features]
+default = ["legacy"]
+legacy = [
+    "dep:surrealdb",
+    "hodei-iam/legacy",
+    "hodei-evidence-storage/legacy",
+    "hodei-investigator-storage/legacy",
+    "hodei-risk-storage/legacy",
+    "hodei-trust-policy-storage/legacy",
+    "hodei-catalog-storage/legacy",
+]
+# Statically link OpenSSL for portable container/release binaries (e.g. Debian Bookworm).
+vendored-openssl = ["dep:openssl"]
+
+# Los comandos de legado hablan con el motor embebido: no existen en una
+# construccion productiva.
+[[bin]]
+name = "ensure-iam-index"
+path = "src/bin/ensure-iam-index.rs"
+required-features = ["legacy"]
+
+[[bin]]
+name = "ensure-graph-index"
+path = "src/bin/ensure-graph-index.rs"
+required-features = ["legacy"]
+
+[[bin]]
+name = "backfill-iam-scope"
+path = "src/bin/backfill-iam-scope.rs"
+required-features = ["legacy"]
+
+[[bin]]
+name = "hodei-recovery"
+path = "src/bin/hodei-recovery.rs"
+required-features = ["legacy"]
+
+[[bin]]
+name = "perf_lab"
+path = "src/bin/perf_lab.rs"
+required-features = ["legacy"]
+
 [package]
 name = "hodei-artifacts-api"
 version = "0.2.0"
@@ -177,6 +224,10 @@ description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation o
 # scripts/package-release.sh: `<name>-<version>-<target>.tar.gz`, whose single
 # top-level directory carries the binaries under `bin/`. Signature and SHA256
 # verification is the job of scripts/install.sh; binstall fetches the same asset.
+# HSP-314: the tarball carries `bin/hodei-artifacts-api` only. The legacy
+# operator tools (ensure-iam-index, ensure-graph-index, backfill-iam-scope,
+# hodei-recovery, perf_lab) are `required-features = ["legacy"]` and ship in
+# scripts/package-legacy-tools.sh's own archive, never in this one.
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
 bin-dir = "{ name }-{ version }-{ target }/bin/{ bin }{ binary-ext }"
@@ -184,18 +235,13 @@ pkg-fmt = "tgz"
 
 
 
-[features]
-default = []
-# Statically link OpenSSL for portable container/release binaries (e.g. Debian Bookworm).
-vendored-openssl = ["dep:openssl"]
-
 [dependencies]
 kernel = { path = "crates/kernel" }
-hodei-iam = { path = "crates/hodei-iam" }
+hodei-iam = { path = "crates/hodei-iam", default-features = false }
 hodei-policies = { path = "crates/hodei-policies" }
 # The adapters of the evidence context: the operator command that declares
 # the indexes of the graph needs to know which ones the graph needs.
-hodei-evidence-storage = { path = "crates/hodei-evidence-storage" }
+hodei-evidence-storage = { path = "crates/hodei-evidence-storage", default-features = false }
 hodei-evidence = { path = "crates/hodei-evidence" }
 # El contrato de auditoría: el evento, el sink, el outbox y el dispatcher.
 # Lo usan el catálogo y la aplicación, y por eso vive en un crate y no en
@@ -204,13 +250,13 @@ hodei-audit = { path = "crates/hodei-audit" }
 # El catálogo: el contrato de repositorios, assets y versiones, y su
 # adaptador sobre el motor. La superficie de contenido crudo los usa.
 hodei-catalog = { path = "crates/hodei-catalog" }
-hodei-catalog-storage = { path = "crates/hodei-catalog-storage" }
+hodei-catalog-storage = { path = "crates/hodei-catalog-storage", default-features = false }
 # La promocion al canal trusted: el servicio que decide con la politica de
 # confianza y el almacen duradero de sus decisiones.
 hodei-trust-policy = { path = "crates/hodei-trust-policy" }
-hodei-trust-policy-storage = { path = "crates/hodei-trust-policy-storage" }
+hodei-trust-policy-storage = { path = "crates/hodei-trust-policy-storage", default-features = false }
 # Los hechos de riesgo de la promocion: la lectura del grafo de impacto.
-hodei-risk-storage = { path = "crates/hodei-risk-storage" }
+hodei-risk-storage = { path = "crates/hodei-risk-storage", default-features = false }
 # El cliente del grafo: el ledger durable de cuota arbitra sus reservas con
 # el mecanismo de guardas G06 que vive aqui.
 hodei-graph-client = { path = "crates/hodei-graph-client" }
@@ -233,7 +279,7 @@ aws-sdk-s3 = "1"
 # recuperador sobre el grafo y la evidencia. La superficie de
 # investigacion los sirve; no reescribe nada de lo que hacen.
 hodei-investigator = { path = "crates/hodei-investigator" }
-hodei-investigator-storage = { path = "crates/hodei-investigator-storage" }
+hodei-investigator-storage = { path = "crates/hodei-investigator-storage", default-features = false }
 # Published core; no path/git dependency to a sibling checkout.
 hodei-authz = { workspace = true }
 
@@ -274,7 +320,7 @@ uuid = { workspace = true }
 jsonwebtoken = { workspace = true }
 
 # Database
-surrealdb = { workspace = true }
+surrealdb = { workspace = true, optional = true }
 
 # Policy engine
 cedar-policy = { workspace = true }
@@ -329,3 +375,564 @@ serde_yaml = "0.9"
 # El IT del catálogo Dgraph (HSP-187) abre el motor de verdad: el cliente
 # autenticado y la guarda versionada viven aquí.
 hodei-graph-client = { path = "crates/hodei-graph-client" }
+
+# HSP-314 F1: suites que siembran o montan el motor embebido (SurrealDB) y por
+# tanto solo existen con la feature `legacy`. Con `--no-default-features` no se
+# compilan; la cobertura sin legacy la dan los IT de grafo (*_dgraph_it con
+# perfil [graph]) y hsp237/hsp308.
+
+[[test]]
+name = "blob_integrity_contract"
+path = "tests/blob_integrity_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "doc9_uat"
+path = "tests/doc9_uat.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "har04_raw_hosted_contract"
+path = "tests/har04_raw_hosted_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp104_gc_e2e"
+path = "tests/hsp104_gc_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp105_trust_e2e"
+path = "tests/hsp105_trust_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp106_proxy_e2e"
+path = "tests/hsp106_proxy_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp107_proxy_cache_e2e"
+path = "tests/hsp107_proxy_cache_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp108_group_e2e"
+path = "tests/hsp108_group_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp109_maven_cli"
+path = "tests/hsp109_maven_cli.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp109_maven_e2e"
+path = "tests/hsp109_maven_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp110_maven_cli"
+path = "tests/hsp110_maven_cli.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp110_maven_remote_e2e"
+path = "tests/hsp110_maven_remote_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp111_npm_cli"
+path = "tests/hsp111_npm_cli.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp111_npm_e2e"
+path = "tests/hsp111_npm_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp112_pypi_cli"
+path = "tests/hsp112_pypi_cli.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp112_pypi_e2e"
+path = "tests/hsp112_pypi_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp113_search_e2e"
+path = "tests/hsp113_search_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp114_console_contract"
+path = "tests/hsp114_console_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp115_recovery_e2e"
+path = "tests/hsp115_recovery_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp118_bundle_contract"
+path = "tests/hsp118_bundle_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp119_cargo_cli"
+path = "tests/hsp119_cargo_cli.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp119_cargo_e2e"
+path = "tests/hsp119_cargo_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp120_dotnet_client"
+path = "tests/hsp120_dotnet_client.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp120_nuget_e2e"
+path = "tests/hsp120_nuget_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp121_go_client"
+path = "tests/hsp121_go_client.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp121_go_e2e"
+path = "tests/hsp121_go_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp121_helm_oci"
+path = "tests/hsp121_helm_oci.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp122_apt_client"
+path = "tests/hsp122_apt_client.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp122_apt_e2e"
+path = "tests/hsp122_apt_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp122_yum_client"
+path = "tests/hsp122_yum_client.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp122_yum_e2e"
+path = "tests/hsp122_yum_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp123_migration_e2e"
+path = "tests/hsp123_migration_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp124_quota_e2e"
+path = "tests/hsp124_quota_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp125_replication_spike"
+path = "tests/hsp125_replication_spike.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp126_capsule_oci"
+path = "tests/hsp126_capsule_oci.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp134_risk_facts_e2e"
+path = "tests/hsp134_risk_facts_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp135_vigencia_e2e"
+path = "tests/hsp135_vigencia_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp137_ciclo_cve_e2e"
+path = "tests/hsp137_ciclo_cve_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp138_s3_arranque_e2e"
+path = "tests/hsp138_s3_arranque_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp142_capability_matrix"
+path = "tests/hsp142_capability_matrix.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp143_namespaces_e2e"
+path = "tests/hsp143_namespaces_e2e.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp143_npm_namespaces_cli"
+path = "tests/hsp143_npm_namespaces_cli.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp157_terraform_mirror"
+path = "tests/hsp157_terraform_mirror.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp158_terraform_modules_client"
+path = "tests/hsp158_terraform_modules_client.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp159_conan_client"
+path = "tests/hsp159_conan_client.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp187_catalog_dgraph_it"
+path = "tests/hsp187_catalog_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp190_oci_catalog_dgraph_it"
+path = "tests/hsp190_oci_catalog_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp191_maven_dgraph_it"
+path = "tests/hsp191_maven_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp193_npm_dgraph_it"
+path = "tests/hsp193_npm_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp194_pypi_dgraph_it"
+path = "tests/hsp194_pypi_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp195_apt_dgraph_it"
+path = "tests/hsp195_apt_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp197_yum_dgraph_it"
+path = "tests/hsp197_yum_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp207_capsule_dgraph_it"
+path = "tests/hsp207_capsule_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp217_galaxy_client"
+path = "tests/hsp217_galaxy_client.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp218_hf_client"
+path = "tests/hsp218_hf_client.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp223_registry_lab"
+path = "tests/hsp223_registry_lab.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp224_maven_central_real"
+path = "tests/hsp224_maven_central_real.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp225_npm_registry_real"
+path = "tests/hsp225_npm_registry_real.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp226_pypi_registry_real"
+path = "tests/hsp226_pypi_registry_real.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp227_raw_external"
+path = "tests/hsp227_raw_external.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp228_oci_proxy"
+path = "tests/hsp228_oci_proxy.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp229_oci_group"
+path = "tests/hsp229_oci_group.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp232_go_group"
+path = "tests/hsp232_go_group.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp235_rpm_proxy"
+path = "tests/hsp235_rpm_proxy.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp238_public_url"
+path = "tests/hsp238_public_url.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp288_native_guides"
+path = "tests/hsp288_native_guides.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp296_formats_audit"
+path = "tests/hsp296_formats_audit.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp297_format_prefixes"
+path = "tests/hsp297_format_prefixes.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp297_trusted_listings"
+path = "tests/hsp297_trusted_listings.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp300_go_sumdb"
+path = "tests/hsp300_go_sumdb.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp304_format_access"
+path = "tests/hsp304_format_access.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp304_terraform_init"
+path = "tests/hsp304_terraform_init.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp313_signed_archive_url"
+path = "tests/hsp313_signed_archive_url.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp88_investigation_query"
+path = "tests/hsp88_investigation_query.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp89_investigation_freshness"
+path = "tests/hsp89_investigation_freshness.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "iam_account_index"
+path = "tests/iam_account_index.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "iam_backfill"
+path = "tests/iam_backfill.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "iam_policy_timestamps"
+path = "tests/iam_policy_timestamps.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "oci_e2e_contract"
+path = "tests/oci_e2e_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "oci_index_contract"
+path = "tests/oci_index_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "oci_pull_contract"
+path = "tests/oci_pull_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "oci_push_contract"
+path = "tests/oci_push_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "raw_conformity_uat"
+path = "tests/raw_conformity_uat.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "raw_hosted_restart_contract"
+path = "tests/raw_hosted_restart_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "repository_durable"
+path = "tests/repository_durable.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "schema_persistence"
+path = "tests/schema_persistence.rs"
+required-features = ["legacy"]
+
+# HSP-314 F1: suites que arrancan el binario o el bootstrap con el perfil
+# embebido (sin `[graph]`). Sin `legacy` el arranque se rechaza por diseno
+# (HSP-213), asi que solo se construyen con la feature. Migrarlas al perfil
+# `[graph]` o retirarlas es trabajo de F2/F3. Las dos *_dgraph_it montan los
+# almacenes a mano tras un bootstrap embebido.
+
+[[test]]
+name = "admin_surface"
+path = "tests/admin_surface.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "audit_events"
+path = "tests/audit_events.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "binary_contract"
+path = "tests/binary_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "bootstrap_integration"
+path = "tests/bootstrap_integration.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "capsule_read"
+path = "tests/capsule_read.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "distribution_contract"
+path = "tests/distribution_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp132_registry_list"
+path = "tests/hsp132_registry_list.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp222_search_cursor_surface"
+path = "tests/hsp222_search_cursor_surface.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp237_graph_readiness"
+path = "tests/hsp237_graph_readiness.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp241_community_quickstart"
+path = "tests/hsp241_community_quickstart.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp243_user_guides"
+path = "tests/hsp243_user_guides.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp292_readiness_timeout"
+path = "tests/hsp292_readiness_timeout.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "http_contract"
+path = "tests/http_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "iam_audit"
+path = "tests/iam_audit.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "iam_scope"
+path = "tests/iam_scope.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "playground_isolation"
+path = "tests/playground_isolation.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "policy_circuits"
+path = "tests/policy_circuits.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "production_auth"
+path = "tests/production_auth.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "repository_create"
+path = "tests/repository_create.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "repository_read"
+path = "tests/repository_read.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "repository_restart_contract"
+path = "tests/repository_restart_contract.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "startup_errors"
+path = "tests/startup_errors.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp196_proxy_dgraph_it"
+path = "tests/hsp196_proxy_dgraph_it.rs"
+required-features = ["legacy"]
+
+[[test]]
+name = "hsp304_formats_dgraph_it"
+path = "tests/hsp304_formats_dgraph_it.rs"
+required-features = ["legacy"]

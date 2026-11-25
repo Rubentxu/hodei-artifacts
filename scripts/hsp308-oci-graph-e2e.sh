@@ -41,6 +41,13 @@ store=(--storage-driver="${PODMAN_STORAGE_DRIVER:-vfs}" --root "${PODMAN_ROOT:-/
 default_timeout=300
 if [ "${HSP308_BUILD_IMAGE:-0}" = "1" ]; then
   default_timeout=3600
+  # HSP-314: construir aqui no puede retaguear :latest del almacen
+  # compartido; la imagen vive en un almacen propio de esta corrida, y la
+  # prueba posterior (que lee PODMAN_ROOT) lo usa tambien.
+  export PODMAN_ROOT="${HSP308_PODMAN_ROOT:-$PWD/$out/podman-root}"
+  export PODMAN_RUNROOT="${HSP308_PODMAN_RUNROOT:-$PWD/$out/podman-runroot}"
+  mkdir -p "$PODMAN_ROOT" "$PODMAN_RUNROOT"
+  store=(--storage-driver="${PODMAN_STORAGE_DRIVER:-vfs}" --root "$PODMAN_ROOT" --runroot "$PODMAN_RUNROOT")
 elif ! podman "${store[@]}" image exists localhost/hodei-artifacts-api:latest; then
   echo "NOT_RUN: falta localhost/hodei-artifacts-api:latest en el almacen de podman (scripts/package-oci.sh, o HSP308_BUILD_IMAGE=1)" | tee "$out/NOT_RUN.txt"
   exit 77

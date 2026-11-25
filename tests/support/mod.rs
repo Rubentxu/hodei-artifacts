@@ -26,6 +26,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use base64::Engine as _;
+#[cfg(feature = "legacy")]
 use hodei_catalog::CatalogWriter;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
@@ -2530,6 +2531,7 @@ fn the_first_line_of(command: &[&str]) -> String {
 ///
 /// Solo siembra si el proceso es el que otro ha mandado sembrar: el
 /// proceso que siembra es otro, y el que se prueba es el servicio.
+#[cfg(feature = "legacy")]
 pub fn seed_if_asked() {
     let Some(db) = std::env::var_os("HODEI_SEED_DB") else {
         return;
@@ -2586,11 +2588,13 @@ pub fn seed_if_asked() {
 }
 
 /// Siembra el catálogo con un repositorio por cuenta.
+#[cfg(feature = "legacy")]
 pub fn seed_the_catalog(path: &str, extra: &[&str], trusted: &[&str]) {
     seed_the_catalog_with(path, extra, trusted, &serde_json::Map::new(), &[]);
 }
 
 /// Siembra el catálogo y, ademas, un repositorio proxy por cada upstream.
+#[cfg(feature = "legacy")]
 pub fn seed_the_catalog_with(
     path: &str,
     extra: &[&str],
@@ -2675,6 +2679,7 @@ pub fn seed_the_catalog_with(
 
 /// Cambia la configuracion proxy de un repositorio sembrado: la version de
 /// su configuracion sube.
+#[cfg(feature = "legacy")]
 fn reconfigure_the_proxy(path: &str, key: &str, proxy: serde_json::Value) {
     use hodei_catalog::{CatalogReader, CatalogWriter};
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2714,6 +2719,7 @@ fn reconfigure_the_proxy(path: &str, key: &str, proxy: serde_json::Value) {
 /// Cambia la politica de namespaces de un repositorio sembrado: la version
 /// de su configuracion sube, y una resolucion previa incompatible deja de
 /// valer.
+#[cfg(feature = "legacy")]
 fn reconfigure_the_namespaces(path: &str, key: &str, namespaces: serde_json::Value) {
     use hodei_catalog::{CatalogReader, CatalogWriter};
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2756,6 +2762,7 @@ fn reconfigure_the_namespaces(path: &str, key: &str, namespaces: serde_json::Val
 }
 
 /// Crea grupos de la primera cuenta, en orden.
+#[cfg(feature = "legacy")]
 fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
     use hodei_catalog::CatalogWriter;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2825,6 +2832,7 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
 }
 
 /// Crea repositorios Maven2 hosted de la primera cuenta.
+#[cfg(feature = "legacy")]
 fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
     use hodei_catalog::CatalogWriter;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -2945,6 +2953,7 @@ fn seed_the_maven(path: &str, repositories: &[serde_json::Value]) {
 /// catalogo (el `FileBlobStore` y el writer), la misma combinacion que
 /// usa la superficie cuando un cliente publica. El repo_id del paquete es
 /// el que la ruta del asset lleva: `artifacts/{owner}/{model}/{file}`.
+#[cfg(feature = "legacy")]
 fn seed_the_hf(path: &str, cas: &str, repositories: &[serde_json::Value]) {
     use hodei_catalog::{CatalogWriter, PackageCoordinates, Publication};
     use hodei_hub::{BlobStore as _, FileBlobStore};
@@ -3036,6 +3045,7 @@ fn seed_the_hf(path: &str, cas: &str, repositories: &[serde_json::Value]) {
 
 /// Cambia los miembros de un grupo sembrado: la version de su
 /// configuracion sube.
+#[cfg(feature = "legacy")]
 fn reconfigure_the_group(path: &str, key: &str, members: &[String]) {
     use hodei_catalog::{CatalogReader, CatalogWriter};
     let runtime = tokio::runtime::Builder::new_current_thread()

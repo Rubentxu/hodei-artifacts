@@ -15,15 +15,25 @@
 //! the ledger's, and the lag is EXPOSED, never hidden: un resultado
 //! viejo presentado como actual es una falsa seguridad.
 
+// HSP-213: el camino embebido (SurrealDB) vive tras la feature `legacy`;
+// estos imports solo lo sirven a él. El resto del fichero —las filas, el
+// puerto y la ruta— es el vocabulario compartido con el lector Dgraph.
+#[cfg(feature = "legacy")]
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "legacy")]
 use std::sync::Arc;
 
+#[cfg(feature = "legacy")]
 use hodei_evidence::domain::delta::{RelationDelta, RelationDeltaLedger};
+#[cfg(feature = "legacy")]
 use hodei_evidence::domain::graph::RelationType;
+#[cfg(feature = "legacy")]
 use hodei_evidence_storage::surreal::delta::SurrealRelationDeltaLedger;
+#[cfg(feature = "legacy")]
 use hodei_evidence_storage::surreal::graph::SurrealGraphStore;
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "legacy")]
 use surrealdb::Connection;
 
 /// The table the materialized view lives in.
@@ -179,6 +189,7 @@ pub struct ImpactSnapshot {
     pub watermark: u64,
 }
 
+#[cfg(feature = "legacy")]
 /// The materialized view, over the graph and the ledger of deltas that
 /// already exist. No hay almacenes nuevos: la vista vive en el mismo
 /// SurrealDB, con los indices que el operador administra.
@@ -187,6 +198,7 @@ pub struct SurrealImpactView<C: Connection> {
     deltas: Arc<SurrealRelationDeltaLedger<C>>,
 }
 
+#[cfg(feature = "legacy")]
 impl<C: Connection> SurrealImpactView<C> {
     /// The view over the graph and the ledger of deltas.
     pub fn new(
@@ -613,12 +625,14 @@ impl<C: Connection> SurrealImpactView<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 /// Escapes a part of a record identifier, with the same rules the rest
 /// of the stores use.
 fn escape_id(value: &str) -> String {
     value.replace('~', "~0").replace(':', "~1")
 }
 
+#[cfg(feature = "legacy")]
 /// What one walk of the impact saw: los sujetos que el advisory
 /// alcanza, con sus profundidades, y las rutas de soporte que usó.
 #[derive(Debug, Default)]
@@ -640,6 +654,7 @@ pub struct ImpactWalk {
     pub subject_routes: BTreeMap<String, Vec<(String, String)>>,
 }
 
+#[cfg(feature = "legacy")]
 /// The walk records what it used as it uses it: the identity of the
 /// relation, the evidence that supports it and the nodes it joins, for
 /// the route of the advisory and for the ones that invalidate.
@@ -662,6 +677,7 @@ fn record_route(
     }
 }
 
+#[cfg(feature = "legacy")]
 /// A step of the walk, with the identity and the evidence of the
 /// relation that made it.
 #[derive(Debug, Clone, Deserialize)]
@@ -674,6 +690,7 @@ pub struct SupportStepRow {
     pub from: String,
 }
 
+#[cfg(feature = "legacy")]
 /// The walk of the impact, shared by the authoritative answer and by
 /// the view: the same traversal, the same cost, and the route recorded
 /// as it goes.
@@ -826,6 +843,7 @@ pub async fn walk_impact<C: Connection>(
     Ok(walk)
 }
 
+#[cfg(feature = "legacy")]
 /// The relations that end at a node, of a kind, WITH their route step.
 async fn relations_to_rows<C: Connection>(
     graph: &SurrealGraphStore<C>,
@@ -849,6 +867,7 @@ async fn relations_to_rows<C: Connection>(
     response.take(0).map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "legacy")]
 /// The relations that end at MANY nodes, of a kind, WITH their step.
 async fn relations_to_many_rows<C: Connection>(
     graph: &SurrealGraphStore<C>,
@@ -876,6 +895,7 @@ async fn relations_to_many_rows<C: Connection>(
     response.take(0).map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "legacy")]
 /// The relations that start at MANY nodes, of a kind, WITH their step.
 async fn relations_from_many_rows<C: Connection>(
     graph: &SurrealGraphStore<C>,
@@ -903,6 +923,7 @@ async fn relations_from_many_rows<C: Connection>(
     response.take(0).map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "legacy")]
 /// The subjects of an answer, from a walk: the artifacts with their
 /// depth, the components the vulnerability is in at depth zero, each
 /// with the path that explains it.
@@ -939,6 +960,7 @@ fn the_answer_subjects(walk: &ImpactWalk) -> Vec<SubjectPath> {
     subjects
 }
 
+#[cfg(feature = "legacy")]
 /// The read-only port, over the real view.
 #[async_trait::async_trait]
 impl<C: Connection> ImpactReader for SurrealImpactView<C> {

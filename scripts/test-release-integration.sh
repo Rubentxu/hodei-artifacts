@@ -25,7 +25,23 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# HSP-314: la etapa B construye la imagen en un almacen de podman propio de
+# esta corrida (PODMAN_ROOT/RUNROOT dentro de $WORK), para no retaguear
+# `:latest` del almacen compartido (/var/tmp/podman-root). Para reutilizar
+# otro almacen, exporta HODEI_RELEASE_TEST_SHARED_PODMAN=1.
+if [ "${HODEI_RELEASE_TEST_SHARED_PODMAN:-0}" != "1" ]; then
+  export PODMAN_ROOT="$WORK/podman-root" PODMAN_RUNROOT="$WORK/podman-runroot"
+  mkdir -p "$PODMAN_ROOT" "$PODMAN_RUNROOT"
+fi
+# Los ficheros del almacen vfs pueden pertenecer a subuids: se borran dentro
+# del user namespace de podman, y si no se puede, con rm normal.
+cleanup() {
+  if [ -d "$WORK/podman-root" ]; then
+    podman unshare rm -rf "$WORK/podman-root" "$WORK/podman-runroot" 2>/dev/null || true
+  fi
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
 OUT="$WORK/dist"
 mkdir -p "$OUT"
 
@@ -33,7 +49,7 @@ PASS=0
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { PASS=$((PASS + 1)); echo "ok - $*"; }
 
-BINS=(hodei-artifacts-api ensure-iam-index ensure-graph-index)
+BINS=(hodei-artifacts-api)
 VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
 TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 
@@ -72,7 +88,7 @@ def expand(template, extra=None):
     assert "{ " not in out, "unexpanded placeholder in " + out
     return out
 print("PKG_URL=" + expand(binstall["pkg-url"]))
-for b in ("hodei-artifacts-api", "ensure-iam-index", "ensure-graph-index"):
+for b in ("hodei-artifacts-api",):
     print("BIN_DIR=" + expand(binstall["bin-dir"], {"bin": b}))
 PY
 )"
@@ -130,6 +146,10 @@ for b in "${BINS[@]}"; do
   [ -x "$WORK/inst/bin/$b" ] || fail "binary not installed from the real bundle: $b"
 done
 [ -f "$WORK/inst/cfg/default.toml" ] || fail "configuration not initialised from the real bundle"
+# HSP-314: the release ships the service alone; a legacy tool in bin/ would
+# mean the tarball was built with the embedded engine.
+[ "$(ls "$WORK/inst/bin")" = "hodei-artifacts-api" ] \
+  || fail "the installed bin/ must hold only hodei-artifacts-api, found: $(ls "$WORK/inst/bin" | tr '\n' ' ')"
 ok "install.sh installs the real bundle (binaries and config)"
 
 # The same bundle with a tampered tarball must be rejected.

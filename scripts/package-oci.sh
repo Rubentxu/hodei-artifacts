@@ -104,12 +104,12 @@ fi
 
 if command -v cargo-zigbuild >/dev/null 2>&1; then
   echo "==> building portable release binary with cargo-zigbuild ($ZIG_TARGET)"
-  cargo zigbuild --release --target "$ZIG_TARGET" --features vendored-openssl --bin "$BIN_NAME"
+  cargo zigbuild --release --target "$ZIG_TARGET" --no-default-features --features vendored-openssl --bin "$BIN_NAME"
   BIN_DIR="${TARGET_DIR}/${RUST_TRIPLE}/release"
   BUILD_RUST_TARGET="$ZIG_TARGET"
 else
   echo "==> building release binary with cargo build"
-  cargo build --release --features vendored-openssl --bin "$BIN_NAME"
+  cargo build --release --no-default-features --features vendored-openssl --bin "$BIN_NAME"
   BIN_DIR="${TARGET_DIR}/release"
   BUILD_RUST_TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 fi

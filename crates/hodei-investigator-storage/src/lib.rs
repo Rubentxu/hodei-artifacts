@@ -40,6 +40,7 @@ use hodei_investigator::scope::{
 };
 use kernel::Hrn;
 use kernel::application::ports::{EvaluationDecision, EvaluationRequest, IamPolicyEvaluator};
+#[cfg(feature = "legacy")]
 use surrealdb::Connection;
 
 /// El recuperador sobre el grafo y la evidencia reales.
@@ -52,14 +53,20 @@ use surrealdb::Connection;
 /// Esta variante sirve el grafo Surreal del despliegue;
 /// [`DgraphEvidenceRetriever`] sirve la autoridad del grafo con el
 /// MISMO nucleo, el mismo presupuesto y el mismo read-set.
+///
+/// HSP-213: el lector sobre el motor embebido queda tras la feature
+/// `legacy`, que el binario productivo no declara.
+#[cfg(feature = "legacy")]
 pub struct GraphEvidenceRetriever<C: Connection> {
     inner: InvestigationRetriever<SurrealSource<C>>,
 }
 
 /// La fuente Surreal: el grafo de la cuenta, con su generacion leida de
 /// la historia de deltas del mismo almacen.
+#[cfg(feature = "legacy")]
 struct SurrealSource<C: Connection>(Arc<hodei_evidence_storage::SurrealGraphStore<C>>);
 
+#[cfg(feature = "legacy")]
 #[async_trait]
 impl<C: Connection> GraphSource for SurrealSource<C> {
     async fn generation(&self, tenant: &Hrn) -> Result<u64, String> {
@@ -79,6 +86,7 @@ impl<C: Connection> GraphSource for SurrealSource<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 impl<C: Connection> GraphEvidenceRetriever<C> {
     /// El recuperador sobre un almacen de evidencia, un almacen de
     /// contenido, un grafo y el Authorizer compartido. Sin autorizador
@@ -108,6 +116,7 @@ impl<C: Connection> GraphEvidenceRetriever<C> {
     }
 }
 
+#[cfg(feature = "legacy")]
 #[async_trait]
 impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
     async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
