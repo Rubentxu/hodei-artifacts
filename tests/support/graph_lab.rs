@@ -53,6 +53,31 @@ pub fn http(port: u16, path: &str) -> (u16, String) {
     (code.trim().parse().unwrap_or(0), body.to_string())
 }
 
+/// True when something behind the published gRPC port keeps the connection
+/// open. The podman port forwarder accepts connections even when the backend
+/// is not listening yet and then closes them, so a bare `connect` proves
+/// nothing: a live gRPC server sends its HTTP/2 SETTINGS frame (or stays
+/// silent), a dead backend reads EOF or a reset right away. Two consecutive
+/// probes must agree.
+fn grpc_listener_serves(port: u16) -> bool {
+    use std::io::Read;
+    use std::net::TcpStream;
+    (0..2).all(|_| {
+        let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
+            return false;
+        };
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
+        let mut buffer = [0u8; 16];
+        match stream.read(&mut buffer) {
+            Ok(read) => read > 0,
+            Err(e) => matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+        }
+    })
+}
+
 pub fn wait_until(what: &str, seconds: u64, mut condition: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(seconds);
     while Instant::now() < deadline {
@@ -199,6 +224,9 @@ pub fn start_dgraph(lab: &mut Lab) -> Dgraph {
         let (code, body) = http(http_port, "/health");
         code == 200 && body.contains("healthy")
     });
+    // `/health` can answer before the gRPC listener serves; the service
+    // bootstrap connects over gRPC, so wait for that listener too.
+    wait_until("dgraph alpha grpc", 60, || grpc_listener_serves(grpc_port));
     Dgraph {
         alpha,
         http_port,
