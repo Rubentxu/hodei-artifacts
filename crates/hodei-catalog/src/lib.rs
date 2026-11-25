@@ -101,4 +101,4 @@ pub use search::{
     DEFAULT_LIMIT, MAX_COUNTED, MAX_LIMIT, MAX_OFFSET, RepositoryAttribute, SearchError, SearchHit,
     SearchPage, SearchQuery,
 };
-pub use trust::{ServeChannel, TrustGrant, TrustLedger};
+pub use trust::{GrantSweepRow, GrantSweepSource, ServeChannel, TrustGrant, TrustLedger};

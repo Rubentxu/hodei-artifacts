@@ -406,6 +406,32 @@ pub async fn blast_radius_dgraph(
     })
 }
 
+/// The blast radius of the Dgraph graph, behind the port the reactive
+/// cycle asks. It carries the bounds of the walk: a walk that hits one is
+/// refused, never returned as a radius.
+pub struct DgraphBlastRadius {
+    graph: Arc<DgraphGraphStore>,
+    limits: GraphReadLimits,
+}
+
+impl DgraphBlastRadius {
+    /// The radius over a graph, walked under `limits`.
+    pub fn new(graph: Arc<DgraphGraphStore>, limits: GraphReadLimits) -> Self {
+        Self { graph, limits }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::BlastRadiusReader for DgraphBlastRadius {
+    async fn blast_radius_of(
+        &self,
+        tenant: &Hrn,
+        vulnerability: &Hrn,
+    ) -> Result<hodei_risk::case::BlastRadius, RiskError> {
+        blast_radius_dgraph(self.graph.as_ref(), tenant, vulnerability, &self.limits).await
+    }
+}
+
 /// One hop of the walk with its budget accounting: the round trip, the
 /// edges received and the far nodes received. The frontier is named by
 /// its node HRNs, and the expansion is bounded by what the budget still
@@ -1103,6 +1129,25 @@ impl ImpactReader for DgraphImpactView {
         advisory: &Hrn,
     ) -> Result<ImpactAnswer, ImpactReadError> {
         DgraphImpactView::serve_impact(self, tenant, advisory).await
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::impact_view::ImpactMaterializer for DgraphImpactView {
+    async fn rebuild_advisory(
+        &self,
+        tenant: &Hrn,
+        advisory: &Hrn,
+    ) -> Result<ImpactSnapshot, String> {
+        DgraphImpactView::rebuild_advisory(self, tenant, advisory).await
+    }
+
+    async fn invalidated_by(&self, delta: &RelationDelta) -> Result<Vec<Hrn>, String> {
+        DgraphImpactView::invalidated_by(self, delta).await
+    }
+
+    async fn apply_delta(&self, delta: &RelationDelta) -> Result<Vec<Hrn>, String> {
+        DgraphImpactView::apply_delta(self, delta).await
     }
 }
 

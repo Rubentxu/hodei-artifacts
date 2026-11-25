@@ -134,6 +134,24 @@ pub trait RelationDeltaLedger: Send + Sync {
     async fn version_of(&self, tenant: &Hrn) -> Result<u64, String>;
 }
 
+/// The reading of the deltas of EVERY tenant, for a reconciler that
+/// converges a whole store.
+///
+/// [`RelationDeltaLedger::pending`] is per subscription and per tenant,
+/// which is right for a consumer of one account. A reconciler of the
+/// whole store has to see every tenant's story, and it does not know
+/// the tenants beforehand: this port is that question and nothing more.
+/// It is a read: it never moves a cursor, and the deltas it answers are
+/// applied by the consumer idempotently.
+#[async_trait]
+pub trait RelationDeltaScan: Send + Sync {
+    /// Up to `quota` deltas of any tenant, ordered by tenant and then by
+    /// version. A row the store cannot read back is skipped, not fatal:
+    /// the reconciliation converges, and one unreadable row of a long
+    /// pass must not stop the others.
+    async fn scan(&self, quota: usize) -> Result<Vec<RelationDelta>, String>;
+}
+
 /// The ledger of the deltas, in memory.
 ///
 /// The reference material of the port: the same rules the durable one

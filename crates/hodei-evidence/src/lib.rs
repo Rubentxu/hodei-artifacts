@@ -48,7 +48,7 @@ pub use application::rebuild::{GraphFingerprint, RebuildError, RebuildReport, re
 pub use domain::content::{ContentDigest, ContentError, ContentRef, DigestAlgorithm};
 pub use domain::delta::{
     InMemoryRelationDeltaLedger, RelationDelta, RelationDeltaKind, RelationDeltaLedger,
-    RelationDeltaSubscription,
+    RelationDeltaScan, RelationDeltaSubscription,
 };
 pub use domain::event::{
     EventEnvelope, EventEnvelopeBuilder, EventError, EventId, EventType, EvidencePayload,

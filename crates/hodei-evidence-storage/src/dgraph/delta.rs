@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hodei_evidence::domain::delta::{
-    RelationDelta, RelationDeltaLedger, RelationDeltaSubscription,
+    RelationDelta, RelationDeltaLedger, RelationDeltaScan, RelationDeltaSubscription,
 };
 use kernel::Hrn;
 
@@ -68,6 +68,16 @@ impl RelationDeltaLedger for DgraphDeltaLedger {
     async fn version_of(&self, tenant: &Hrn) -> Result<u64, String> {
         self.frontier
             .delta_version(tenant)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[async_trait]
+impl RelationDeltaScan for DgraphDeltaLedger {
+    async fn scan(&self, quota: usize) -> Result<Vec<RelationDelta>, String> {
+        self.frontier
+            .all_deltas(quota)
             .await
             .map_err(|error| error.to_string())
     }

@@ -375,6 +375,37 @@ impl DgraphProjectionFrontier {
         Ok((wanted, stopped))
     }
 
+    /// The deltas of EVERY tenant, ordered by tenant and then by
+    /// version, at most `quota` of them. It serves the reconciler of the
+    /// whole store, which does not know the tenants beforehand. A stored
+    /// row that cannot be read back whole is skipped: the reconciliation
+    /// converges, and one corrupt row must not stop the rest.
+    pub async fn all_deltas(&self, quota: usize) -> Result<Vec<RelationDelta>, FrontierError> {
+        if quota == 0 {
+            return Ok(Vec::new());
+        }
+        let query = format!(
+            "{{ q(func: type({DELTA_TYPE}), orderasc: hodei.delta.tenant, \
+             orderasc: hodei.delta.seq, first: {quota}) {{ {DELTA_FIELDS} }} }}"
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| FrontierError::Unavailable(error.to_string()))?;
+        let mut rows: Vec<DeltaRow> = response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|node| DeltaRow::from_node(node).ok())
+            .collect();
+        rows.sort_by(|a, b| (&a.raw.tenant, a.seq).cmp(&(&b.raw.tenant, b.seq)));
+        Ok(rows.iter().filter_map(DeltaRow::try_delta).collect())
+    }
+
     /// Applies the changeset and moves the checkpoint as ONE commit.
     /// `emit_deltas` is false for a rebuild watermark: the rebuild
     /// records how far it got and says nothing — the deltas of the event
@@ -751,6 +782,17 @@ impl DeltaRow {
                 })?,
             raw,
         })
+    }
+
+    /// The domain delta the row says, or `None` when a stored field is
+    /// not the identifier it must be. The scan of the whole store reads
+    /// through this one: a row nobody can parse is not a panic.
+    fn try_delta(&self) -> Option<RelationDelta> {
+        Hrn::from_string(&self.raw.tenant)?;
+        Hrn::from_string(&self.raw.from)?;
+        Hrn::from_string(&self.raw.to)?;
+        hodei_evidence::RelationType::parse(&self.raw.relation)?;
+        Some(self.delta())
     }
 
     /// The domain delta the row says.
