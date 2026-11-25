@@ -51,6 +51,33 @@ pub struct MetadataSigner {
     public: SignedPublicKey,
 }
 
+/// Operations required to publish signed repository metadata.
+pub trait MetadataSigning: Send + Sync {
+    /// Return the public key in armored form.
+    fn key_asc(&self) -> Result<String, OpenPgpError>;
+    /// Return the public key fingerprint in uppercase hexadecimal.
+    fn fingerprint_hex(&self) -> String;
+    /// Sign bytes as an armored detached signature.
+    fn sign_detached(&self, data: &[u8]) -> Result<Vec<u8>, OpenPgpError>;
+    /// Sign UTF-8 text as an armored cleartext message.
+    fn sign_cleartext(&self, text: &str) -> Result<Vec<u8>, OpenPgpError>;
+}
+
+impl MetadataSigning for MetadataSigner {
+    fn key_asc(&self) -> Result<String, OpenPgpError> {
+        MetadataSigner::key_asc(self)
+    }
+    fn fingerprint_hex(&self) -> String {
+        MetadataSigner::fingerprint_hex(self)
+    }
+    fn sign_detached(&self, data: &[u8]) -> Result<Vec<u8>, OpenPgpError> {
+        MetadataSigner::sign_detached(self, data)
+    }
+    fn sign_cleartext(&self, text: &str) -> Result<Vec<u8>, OpenPgpError> {
+        MetadataSigner::sign_cleartext(self, text)
+    }
+}
+
 impl MetadataSigner {
     /// Genera una clave Ed25519 nueva con la identidad dada. La firma
     /// primaria es de la propia clave (sin subclaves): apt y rpm solo
@@ -123,6 +150,18 @@ impl MetadataSigner {
     /// sirve en la misma peticion. El armor no es un adorno: apt
     /// concatena firma y mensaje para gpgv, y solo el formato blindado
     /// se reconoce ahi como firma separada.
+    /// Signs UTF-8 metadata as an OpenPGP cleartext-signed message.
+    pub fn sign_cleartext(&self, text: &str) -> Result<Vec<u8>, OpenPgpError> {
+        pgp::composed::CleartextSignedMessage::sign(
+            thread_rng(),
+            text,
+            &self.secret.primary_key,
+            &Password::from(""),
+        )
+        .and_then(|message| message.to_armored_bytes(pgp::composed::ArmorOptions::default()))
+        .map_err(|error| OpenPgpError::Signing(error.to_string()))
+    }
+
     pub fn sign_detached(&self, data: &[u8]) -> Result<Vec<u8>, OpenPgpError> {
         let signature = DetachedSignature::sign_binary_data(
             thread_rng(),
