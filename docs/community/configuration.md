@@ -306,6 +306,81 @@ restauración se puede confiar.
 - Si `[graph]` es inválido (por ejemplo, endpoint con esquema o TLS sin CA), el
   arranque falla con el error tipado del cliente de grafo, sin conectarse.
 
+### 5.9 `[signing]`
+
+El mirror de providers de Terraform necesita firmar URLs. Terraform descarga el
+zip de un provider **sin enviar ninguna credencial** (ni el bloque
+`credentials` ni netrc), así que el documento de versión que el mirror entrega
+a un lector autenticado (`<versión>.json`) declara, para cada plataforma, una
+URL del zip firmada y de corta vida. Esa URL solo sirve para ese zip, de ese
+repositorio, a esa cuenta, hasta que expira; canjearla no necesita
+`Authorization` y no sirve para nada más. Cedar se evalúa al emitirla y la
+puerta de confianza (canal `trusted`) se vuelve a aplicar, por digest, al
+canjearla.
+
+La firma es HMAC-SHA256 sobre método, ruta, repositorio, cuenta, principal,
+expiración e id de clave. El secreto lo pone **solo el operador**: no hay clave
+por defecto y nada se deriva del secreto JWT ni del JWKS.
+
+| Clave | Por defecto | Qué hace |
+| --- | --- | --- |
+| `keys` | `[]` | El anillo de claves. La **primera** firma y **todas** verifican. Cada entrada es `{ id = "...", secret_file = "..." }` o `{ id = "...", secret_env = "..." }` (exactamente una de las dos). Máximo 8. |
+| `ttl_secs` | `300` | Vida de una URL emitida, en segundos. Mínimo 1, máximo 3600. |
+
+Reglas del anillo:
+
+- `id`: de 1 a 32 caracteres entre letras, dígitos, `-` y `_`; sin repetidos.
+  Viaja en la URL, así que nombra la clave y no revela nada de ella.
+- `secret_file` es una ruta a un fichero con el secreto; `secret_env` es el
+  **nombre** de la variable de entorno que lo contiene. El secreto no se
+  escribe nunca en el TOML (un campo `secret` literal se rechaza). Los
+  espacios y saltos de línea de los extremos se ignoran.
+- El secreto debe tener al menos **32 bytes**. Un secreto más corto, un
+  fichero que no se puede leer o una variable ausente **impiden el
+  arranque**, con un mensaje que nombra la clave y nunca el secreto.
+- Todas las réplicas reciben el **mismo** anillo: una URL emitida por una
+  réplica la verifica cualquier otra.
+- En variables de entorno el anillo se escribe con índices:
+  `HODEI_SIGNING__KEYS__0__ID`, `HODEI_SIGNING__KEYS__0__SECRET_FILE` (o
+  `HODEI_SIGNING__KEYS__0__SECRET_ENV`), `HODEI_SIGNING__KEYS__1__ID`, …; el
+  índice 0 es la clave que firma. El TTL es `HODEI_SIGNING__TTL_SECS`.
+- La verificación tolera 5 segundos de desfase de reloj entre réplicas, y no
+  cree una expiración más lejana que el TTL máximo más esos 5 segundos.
+
+Sin ninguna clave el mirror **falla cerrado**: el arranque lo avisa en el log
+(`no signing key is configured`), el documento de versión responde
+`503` con un mensaje explícito y no emite URLs de zip. El resto del mirror (el
+índice y la lectura autenticada del zip) sigue funcionando; un cliente
+Terraform, en cambio, no puede instalar providers.
+
+Generar una clave y arrancar con ella:
+
+```bash
+install -d -m 0700 secrets
+openssl rand -hex 32 > secrets/signing-key      # 64 caracteres hexadecimales
+chmod 0400 secrets/signing-key                  # legible por el UID del servicio (10001 en la imagen)
+```
+
+```toml
+[signing]
+keys = [{ id = "2026-11", secret_file = "/run/secrets/hodei-signing-key" }]
+ttl_secs = 300
+```
+
+Rotar una clave sin cortar las URLs en vuelo (el TTL es de minutos, así que
+cada paso espera, como mínimo, `ttl_secs` más 5 segundos):
+
+1. **Añadir la nueva detrás**: `keys = [{ id = "A", … }, { id = "B", … }]`.
+   Reinicia **todas** las réplicas con el mismo anillo: ahora todas verifican
+   con B, y A sigue firmando.
+2. **Promover la nueva**: `keys = [{ id = "B", … }, { id = "A", … }]` y
+   reinicia. B firma; A solo verifica lo que ya está en vuelo.
+3. **Retirar la antigua**: `keys = [{ id = "B", … }]` tras esperar el TTL.
+   Lo que firmó A deja de verificar (y ya había caducado).
+
+Si una clave se filtra, retírala del anillo de inmediato: las URLs firmadas con
+ella dejan de verificar en el siguiente reinicio, sin esperar al TTL.
+
 ## 6. Perfiles: laboratorio frente a producción
 
 | Aspecto | Laboratorio | Producción |
@@ -343,6 +418,9 @@ HTTP en claro. En producción:
   de producción no declare `auth_jwt_secret`.
 - Pasa `auth_jwt_secret` con `HODEI_SECURITY__AUTH_JWT_SECRET`, o monta un
   JWKS y apunta `auth_jwks_path` a él (`HODEI_SECURITY__AUTH_JWKS_PATH`).
+- La clave que firma las URLs del mirror de Terraform (sección 5.9) se genera
+  con `openssl rand -hex 32` y se entrega por `secret_file` o `secret_env`;
+  jamás se escribe en un TOML ni se reutiliza el secreto JWT.
 - Las credenciales de S3 y de upstreams de proxy no van en el TOML: vienen de
   la cadena del SDK y de variables nombradas en `proxy.allowed_credentials`.
 - El texto de los errores de arranque pasa por `redact_secrets`, que sustituye
@@ -358,6 +436,8 @@ HTTP en claro. En producción:
 - [ ] El bloque de autenticación está completo (sección 5.1).
 - [ ] `security.cors_allowed_origins` lista orígenes explícitos o está vacía.
 - [ ] `HODEI_METADATA_SIGNER_ARMOR` está definida si se sirve APT o RPM.
+- [ ] `[signing]` tiene al menos una clave (mismo anillo en todas las réplicas)
+      si se sirve el mirror de providers de Terraform (sección 5.9).
 - [ ] `/app/data` (o `rocksdb.path` y `content.cas_path`) es un volumen
       persistente y escribible por el usuario del servicio (UID 10001 en la
       imagen).
