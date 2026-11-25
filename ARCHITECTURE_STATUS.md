@@ -54,27 +54,14 @@ define el evento, el sink y el outbox sin nombrar el motor donde se
 guardan, porque es un contrato que usan dos contextos con Stores
 distintos.
 
-### 2.2 Crates en el árbol que **no** son miembros — material heredado
+### 2.2 Crates heredados — eliminados
 
-Ninguno se compila, ninguno se despliega, ninguno se enlaza. Todos están
-excluidos del workspace de forma explícita (`exclude` en el manifiesto raíz),
-para que nadie los confunda con código vivo.
-
-| Crate | Líneas | Clasificación | Para qué sirve |
-| --- | --- | --- | --- |
-| `crates/distribution` | 24 455 | `legacy` | OCI, Maven, npm, Docker. La base de M9, si M9 llega. |
-| `crates/search` | 15 850 | `legacy` | Búsqueda de texto completo. |
-| `crates/artifact` | 14 188 | `legacy` | Subida por trozos, metadatos, versionado. Material para M1 y M9. |
-| `crates/hodei-organizations` | 7 924 | `legacy` | SCP y organizaciones. Sustituido por el modelo de cuenta por defecto. |
-| `crates/security` | 5 546 | `legacy` | SBOM, vulnerabilidades, firma. Material para M2 y M4. |
-| `crates/repository` | 5 113 | `legacy` | CRUD de repositorios. |
-| `crates/hodei-authorizer` | 3 077 | `legacy` | Servicio de autorización anterior, superado por el gate Cedar. |
-| `crates/policies` | 3 315 | `legacy` | Crate de políticas anterior. No compila contra el kernel actual. |
-| `crates/supply-chain` | 962 | `legacy` | SBOM de cadena de suministro. Material para M2. |
-
-**Decisión:** no se borran todavía. Son la única fuente de las ideas de M1,
-M2, M4 y M9, y borrarlas tiraría ese material. Cuando una idea se promueva,
-el código se trae de aquí y el crate viejo se elimina con su línea.
+Los nueve crates de la generación anterior que estaban excluidos del
+workspace (`distribution`, `search`, `artifact`, `hodei-organizations`,
+`security`, `repository`, `hodei-authorizer`, `policies`, `supply-chain`) se
+eliminaron en HSP-314 F4 (S4): no compilaban, ninguno se desplegaba ni se
+enlazaba y arrastraban código de SurrealDB. El material sigue en el historial
+de git por si una idea se promueve.
 
 ## 3. Capacidades
 
@@ -130,7 +117,7 @@ artefactos OCI con control de acceso, no multi-formato-- y no lo segundo.
 - No hay Maven ni npm. La superficie de OCI **sí** existe --pull, push,
   índice, etiquetas y referrers, con su contrato de compatibilidad en
   `uat/UAT-OCI.md`--, pero vive en `src/oci/` y `src/handlers/oci.rs`, no en
-  el material de `crates/distribution`, que sigue sin integrar.
+  el antiguo `crates/distribution`, ya eliminado.
 - No hay organizaciones ni SCP. El modelo vivo es la cuenta por defecto.
 - No hay grafo, ni evidencia, ni decisión de promoción. Son M1, M2 y M3.
 
