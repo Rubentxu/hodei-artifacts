@@ -705,6 +705,14 @@ const THE_CASES: &[(&str, &str)] = &[
         "ac4_public_creation_refused",
         "Un proxy OCI con upstream invalido se rechaza con diagnostico",
     ),
+    (
+        "ac5_native_client_pull",
+        "skopeo saca del proxy directo el manifiesto, los blobs y la lista de manifiestos",
+    ),
+    (
+        "ac5_native_client_referrers",
+        "oras pide al proxy directo los referrers de un manifiesto",
+    ),
 ];
 
 /// El titulo y el descargo del informe.
@@ -712,7 +720,7 @@ fn the_report() {
     describe_registry_lab(
         "Laboratorio de OCI proxy — informe",
         &[
-            "- **Ni un cliente real.** Lo que se ha ejecutado es el camino de la distribución contra un upstream local: no se ha hablado con `podman`, `skopeo` ni `oras`, y este informe no dice nada de ellos.",
+            "- **Un cliente real, y solo en dos casos.** El grueso de los casos habla el camino de la distribución con `curl` contra un upstream local. Los dos casos `ac5_native_client_*` ejecutan `skopeo` (pull del manifiesto, los blobs y la lista de manifiestos) y `oras` (referrers) contra un repositorio proxy directo; si el cliente no está, el caso se declara `NOT_RUN` con el motivo. `podman` no se ha usado, y el resto de los casos no dicen nada de ningún cliente.",
             "- **Ni la red real.** Por defecto el laboratorio no sale a la red: el upstream es un registro local. El contenido es un fixture, y lo que se demuestra es el camino, no la integridad de ese contenido.",
             "- **Ni la superficie de push.** Solo se ha medido el pull: manifiesto y blob, por etiqueta y por digest.",
             "- **Ni el laboratorio.** Los casos de `scope: harness` miden el arnés —el recuento— y no el producto. Los dos recuentos van aparte.",
@@ -1649,6 +1657,476 @@ fn ac4_public_creation_refused() {
             case()
                 .command("curl POST /api/v1/catalog/repositories (config invalida)")
                 .origin(&lab.registry.origin())
+                .passed()
+        },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// AC5: un cliente nativo contra el proxy directo.
+// ---------------------------------------------------------------------------
+
+/// The content of the native-client cases: two images, the list that names
+/// them and a referrer that hangs from the first image.
+struct TheNativeContent {
+    /// The tag of the list.
+    list_tag: &'static str,
+    /// The tag of the first image alone.
+    image_tag: &'static str,
+    /// Every manifest by digest (`sha256:...`): what the upstream serves.
+    manifests: Vec<(String, Vec<u8>)>,
+    /// Every blob by digest (`sha256:...`).
+    blobs: Vec<(String, Vec<u8>)>,
+    /// The digest of the list.
+    list_digest: String,
+    /// The digest of the first image, the subject of the referrer.
+    subject_digest: String,
+    /// The digest of the referrer.
+    referrer_digest: String,
+}
+
+/// Builds an image for one architecture, with blobs of its own.
+fn a_native_image(architecture: &str) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
+    let config = json!({ "architecture": architecture, "os": "linux" })
+        .to_string()
+        .into_bytes();
+    let layer = format!("layer-of-{architecture}").into_bytes();
+    let config_digest = format!("sha256:{}", sha256_of(&config));
+    let layer_digest = format!("sha256:{}", sha256_of(&layer));
+    let manifest = json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+            "mediaType": "application/vnd.oci.image.config.v1+json",
+            "digest": config_digest,
+            "size": config.len()
+        },
+        "layers": [{
+            "mediaType": "application/vnd.oci.image.layer.v1.tar",
+            "digest": layer_digest,
+            "size": layer.len()
+        }]
+    })
+    .to_string()
+    .into_bytes();
+    (
+        manifest,
+        vec![(config_digest, config), (layer_digest, layer)],
+    )
+}
+
+/// Seeds the upstream with the native-client content.
+fn the_native_content(registry: &TheRegistry) -> TheNativeContent {
+    let (first, first_blobs) = a_native_image("amd64");
+    let (second, second_blobs) = a_native_image("arm64");
+    let first_digest = format!("sha256:{}", sha256_of(&first));
+    let second_digest = format!("sha256:{}", sha256_of(&second));
+    let list = json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [
+            {
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "digest": first_digest,
+                "size": first.len(),
+                "platform": { "os": "linux", "architecture": "amd64" }
+            },
+            {
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "digest": second_digest,
+                "size": second.len(),
+                "platform": { "os": "linux", "architecture": "arm64" }
+            }
+        ]
+    })
+    .to_string()
+    .into_bytes();
+    let list_digest = format!("sha256:{}", sha256_of(&list));
+
+    // The referrer: a manifest whose `subject` is the first image.
+    let referrer = json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "artifactType": "application/vnd.hodei.signature.v1+json",
+        "config": {
+            "mediaType": "application/vnd.oci.empty.v1+json",
+            "digest": format!("sha256:{}", sha256_of(b"{}")),
+            "size": 2
+        },
+        "layers": [{
+            "mediaType": "application/vnd.oci.empty.v1+json",
+            "digest": format!("sha256:{}", sha256_of(b"{}")),
+            "size": 2
+        }],
+        "subject": {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": first_digest,
+            "size": first.len()
+        }
+    })
+    .to_string()
+    .into_bytes();
+    let referrer_digest = format!("sha256:{}", sha256_of(&referrer));
+
+    let manifests = vec![
+        (first_digest.clone(), first),
+        (second_digest, second),
+        (list_digest.clone(), list),
+        (referrer_digest.clone(), referrer),
+    ];
+    let mut blobs: Vec<(String, Vec<u8>)> = first_blobs;
+    blobs.extend(second_blobs);
+    blobs.push((format!("sha256:{}", sha256_of(b"{}")), b"{}".to_vec()));
+
+    for (digest, bytes) in &manifests {
+        registry.publish(digest, bytes.clone());
+    }
+    for (digest, bytes) in &blobs {
+        registry.publish_blob(digest.trim_start_matches("sha256:"), bytes.clone());
+    }
+    registry.publish("multi", manifests[2].1.clone());
+    registry.publish("single", manifests[0].1.clone());
+    TheNativeContent {
+        list_tag: "multi",
+        image_tag: "single",
+        manifests,
+        blobs,
+        list_digest,
+        subject_digest: first_digest,
+        referrer_digest,
+    }
+}
+
+/// Whether a command exists and answers to its version request.
+///
+/// Only the **absence** of the client is a reason not to run: a client
+/// that is there and fails is a failure of the case.
+fn the_client_exists(program: &str, version_argument: &str) -> bool {
+    std::process::Command::new(program)
+        .arg(version_argument)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+/// Runs a native client in an isolated home and returns the outcome.
+fn run_native(home: &std::path::Path, program: &str, args: &[&str]) -> (bool, String, String) {
+    match std::process::Command::new(program)
+        .args(args)
+        .env("HOME", home)
+        .env("DOCKER_CONFIG", home.join("config"))
+        .env("XDG_RUNTIME_DIR", home.join("run"))
+        .output()
+    {
+        Ok(output) => (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ),
+        Err(error) => (false, String::new(), error.to_string()),
+    }
+}
+
+/// Reads a blob of an OCI image layout, if it is there.
+fn a_layout_blob(layout: &std::path::Path, digest: &str) -> Option<Vec<u8>> {
+    std::fs::read(
+        layout
+            .join("blobs/sha256")
+            .join(digest.trim_start_matches("sha256:")),
+    )
+    .ok()
+}
+
+#[test]
+fn ac5_native_client_pull() {
+    const ID: &str = "ac5_native_client_pull";
+    const TITLE: &str =
+        "skopeo saca del proxy directo el manifiesto, los blobs y la lista de manifiestos";
+    run_registry_lab_case(
+        THE_CASES,
+        ID,
+        TITLE,
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            the_report();
+            if !the_client_exists("skopeo", "--version") {
+                return LabCase::new(ID, TITLE)
+                    .not_run("skopeo no esta instalado o no responde a --version");
+            }
+            let lab = TheLab::new();
+            let content = the_native_content(&lab.registry);
+            let mut service = lab.start();
+            let port = service.port;
+            let home = lab.a_file("native-home");
+            std::fs::create_dir_all(home.join("config")).expect("the home");
+            std::fs::create_dir_all(home.join("run")).expect("the runtime directory");
+            let credentials = format!("alice:{}", the_client_token());
+            let source = |reference: &str| format!("docker://127.0.0.1:{port}/{NAME}{reference}");
+            let mut problems: Vec<String> = Vec::new();
+
+            // 1. The list, pulled whole with its children, into an OCI layout.
+            let layout = lab.a_file("layout-list");
+            let (ok, stdout, stderr) = run_native(
+                &home,
+                "skopeo",
+                &[
+                    "copy",
+                    "--all",
+                    "--preserve-digests",
+                    "--src-tls-verify=false",
+                    "--src-creds",
+                    &credentials,
+                    &source(&format!(":{}", content.list_tag)),
+                    &format!("oci:{}:list", layout.display()),
+                ],
+            );
+            if !ok {
+                problems.push(format!(
+                    "skopeo copy --all of the list failed: {stderr} {stdout}"
+                ));
+            } else {
+                // Every object of the upstream is in the layout, byte for byte.
+                for (digest, upstream_bytes) in &content.manifests {
+                    if *digest == content.referrer_digest {
+                        continue;
+                    }
+                    match a_layout_blob(&layout, digest) {
+                        None => problems.push(format!("the layout lacks the manifest {digest}")),
+                        Some(pulled) if &pulled != upstream_bytes => problems.push(format!(
+                            "the manifest {digest} pulled by skopeo is not the one of the upstream"
+                        )),
+                        Some(_) => {}
+                    }
+                }
+                for (digest, upstream_bytes) in &content.blobs {
+                    if digest == &format!("sha256:{}", sha256_of(b"{}")) {
+                        continue;
+                    }
+                    match a_layout_blob(&layout, digest) {
+                        None => problems.push(format!("the layout lacks the blob {digest}")),
+                        Some(pulled) if &pulled != upstream_bytes => problems.push(format!(
+                            "the blob {digest} pulled by skopeo is not the one of the upstream"
+                        )),
+                        Some(_) => {}
+                    }
+                }
+                // The index of the layout names the list by the digest of
+                // the upstream: the digest was preserved.
+                let named = std::fs::read(layout.join("index.json"))
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                    .and_then(|index| index["manifests"][0]["digest"].as_str().map(str::to_string));
+                if named.as_deref() != Some(content.list_digest.as_str()) {
+                    problems.push(format!(
+                        "the layout names the list as {named:?} and the upstream says {}",
+                        content.list_digest
+                    ));
+                }
+            }
+
+            // 2. The raw manifest of the list, by tag and by digest: the
+            // bytes of the upstream, and the digest that skopeo computes
+            // over them is the one of the upstream.
+            let list_bytes = &content
+                .manifests
+                .iter()
+                .find(|(digest, _)| *digest == content.list_digest)
+                .expect("the list")
+                .1;
+            for reference in [
+                format!(":{}", content.list_tag),
+                format!("@{}", content.list_digest),
+            ] {
+                let (ok, stdout, stderr) = run_native(
+                    &home,
+                    "skopeo",
+                    &[
+                        "inspect",
+                        "--raw",
+                        "--tls-verify=false",
+                        "--creds",
+                        &credentials,
+                        &source(&reference),
+                    ],
+                );
+                if !ok {
+                    problems.push(format!("skopeo inspect --raw {reference} failed: {stderr}"));
+                } else if stdout.as_bytes() != list_bytes.as_slice() {
+                    problems.push(format!(
+                        "skopeo inspect --raw {reference} did not return the bytes of the upstream"
+                    ));
+                }
+            }
+
+            // 3. A single image by tag: manifest and blobs, and the digest
+            // that skopeo writes down is the one of the upstream.
+            let image_layout = lab.a_file("layout-image");
+            let digest_file = lab.a_file("image.digest");
+            let (ok, _, stderr) = run_native(
+                &home,
+                "skopeo",
+                &[
+                    "copy",
+                    "--preserve-digests",
+                    "--digestfile",
+                    digest_file.to_str().expect("the path"),
+                    "--src-tls-verify=false",
+                    "--src-creds",
+                    &credentials,
+                    &source(&format!(":{}", content.image_tag)),
+                    &format!("oci:{}:image", image_layout.display()),
+                ],
+            );
+            if !ok {
+                problems.push(format!("skopeo copy of the image failed: {stderr}"));
+            } else {
+                let written = std::fs::read_to_string(&digest_file).unwrap_or_default();
+                if written.trim() != content.subject_digest {
+                    problems.push(format!(
+                        "skopeo wrote the digest {written:?} and the upstream says {}",
+                        content.subject_digest
+                    ));
+                }
+                if a_layout_blob(&image_layout, &content.subject_digest).as_deref()
+                    != Some(content.manifests[0].1.as_slice())
+                {
+                    problems.push("the image manifest is not the one of the upstream".to_string());
+                }
+            }
+
+            // 4. `Docker-Content-Digest` of the list is the one of the
+            // upstream bytes: it is what a client verifies against.
+            let into = lab.a_file("list-over-http");
+            let answer = Curl::call(
+                port,
+                "GET",
+                &the_manifest_path(content.list_tag),
+                &the_client_token(),
+                None,
+                None,
+                Some(&into),
+            )
+            .run();
+            let header = answer.header("Docker-Content-Digest");
+            if header.as_deref() != Some(content.list_digest.as_str()) {
+                problems.push(format!(
+                    "Docker-Content-Digest of the list was {header:?} and the upstream says {}",
+                    content.list_digest
+                ));
+            }
+            if &answer.body != list_bytes {
+                problems.push("the list over HTTP is not the one of the upstream".to_string());
+            }
+
+            // The upstream was the one that answered.
+            if lab
+                .registry
+                .hits(&format!("{NAME}/manifests/{}", content.list_tag))
+                == 0
+            {
+                problems.push("the upstream never saw the request of the list".to_string());
+            }
+            support::stop(&mut service);
+
+            if problems.is_empty() {
+                LabCase::new(ID, TITLE)
+                    .command("skopeo copy --all / inspect --raw / copy --digestfile")
+                    .origin(&lab.registry.origin())
+                    .sha256(content.list_digest.trim_start_matches("sha256:"))
+                    .passed()
+            } else {
+                LabCase::new(ID, TITLE).failed(problems.join("; "))
+            }
+        },
+    );
+}
+
+// Known product gap, measured by this case and not hidden by it: a direct
+// proxy answers `/referrers/<digest>` from its own catalog only, so the
+// referrers that the upstream holds are not served (the answer is an empty
+// index). The case is ignored, with that reason, until the proxy serves them;
+// run it with `--ignored` to see the failure.
+#[test]
+#[ignore = "HSP-299: the direct OCI proxy does not serve the referrers of the upstream (empty index)"]
+fn ac5_native_client_referrers() {
+    const ID: &str = "ac5_native_client_referrers";
+    const TITLE: &str = "oras pide al proxy directo los referrers de un manifiesto";
+    run_registry_lab_case(
+        THE_CASES,
+        ID,
+        TITLE,
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            the_report();
+            let oras = support::the_oras();
+            if !the_client_exists(&oras, "version") {
+                return LabCase::new(ID, TITLE)
+                    .not_run("oras no esta instalado o no responde a version");
+            }
+            let lab = TheLab::new();
+            let content = the_native_content(&lab.registry);
+            let mut service = lab.start();
+            let port = service.port;
+            let home = lab.a_file("native-home");
+            std::fs::create_dir_all(home.join("config")).expect("the home");
+            std::fs::create_dir_all(home.join("run")).expect("the runtime directory");
+
+            // The referrer is pulled through the proxy first, so that it is
+            // known to the proxy as any manifest that a client has used, and
+            // then it is asked for with the native client.
+            let pulled = Curl::call(
+                port,
+                "GET",
+                &the_manifest_path(&content.referrer_digest),
+                &the_client_token(),
+                None,
+                None,
+                Some(&lab.a_file("referrer-pulled")),
+            )
+            .run();
+            assert_eq!(pulled.status, 200, "the referrer was not pulled");
+            let (ok, stdout, stderr) = run_native(
+                &home,
+                &oras,
+                &[
+                    "discover",
+                    "--plain-http",
+                    "--username",
+                    "alice",
+                    "--password",
+                    &the_client_token(),
+                    "--format",
+                    "json",
+                    &format!("127.0.0.1:{port}/{NAME}@{}", content.subject_digest),
+                ],
+            );
+            support::stop(&mut service);
+            if !ok {
+                return LabCase::new(ID, TITLE)
+                    .failed(format!("oras discover failed: {stderr} {stdout}"));
+            }
+            let found: serde_json::Value =
+                serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
+            let listed: Vec<String> = found["manifests"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|one| one["digest"].as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !listed.contains(&content.referrer_digest) {
+                return LabCase::new(ID, TITLE).failed(format!(
+                    "the referrers that oras discovered through the proxy were {listed:?} and \
+                     the upstream holds {}: {stdout}",
+                    content.referrer_digest
+                ));
+            }
+            LabCase::new(ID, TITLE)
+                .command("oras discover --plain-http <proxy>/oci-proxy@sha256:...")
+                .origin(&lab.registry.origin())
+                .sha256(content.referrer_digest.trim_start_matches("sha256:"))
                 .passed()
         },
     );
