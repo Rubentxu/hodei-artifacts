@@ -35,6 +35,7 @@ pub mod handlers;
 #[cfg(feature = "legacy")]
 pub mod iam_backfill;
 pub mod investigation;
+pub mod investigation_dgraph;
 pub mod migration;
 pub mod oci;
 pub mod openapi;

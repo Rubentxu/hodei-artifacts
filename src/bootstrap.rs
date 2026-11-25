@@ -690,6 +690,8 @@ async fn bootstrap_graph_profile(
     let app_state = crate::risk_facts::wire_graph_risk_facts(app_state, config, &graph).await?;
     let app_state = crate::evidence_dgraph::wire_graph_evidence_reader(app_state, &graph).await?;
     let app_state = crate::reactor_dgraph::wire_graph_reactor(app_state, config, &graph).await?;
+    let app_state =
+        crate::investigation_dgraph::wire_graph_investigation(app_state, config, &graph).await?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
             "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"
