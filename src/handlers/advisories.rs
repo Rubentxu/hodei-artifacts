@@ -16,11 +16,8 @@
 //! decide que principal puede; aqui no se vuelve a decidir.
 
 use crate::app_state::AppState;
-#[cfg(feature = "legacy")]
 use crate::audit::AuditResult;
-#[cfg(feature = "legacy")]
 use crate::handlers::{correlation_id, record_audit};
-#[cfg(feature = "legacy")]
 use crate::trust::reaction::AdvisoryAdmission;
 use crate::trust::reaction::ReactorError;
 use axum::{
@@ -30,11 +27,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use hodei_authz::VerifiedContext;
-#[cfg(feature = "legacy")]
 use hodei_catalog::CatalogError;
-// HSP-213: el digest solo lo necesita el tramo del ciclo, que no existe
-// fuera de la feature `legacy`.
-#[cfg(feature = "legacy")]
 use hodei_evidence::ContentDigest;
 use serde::Deserialize;
 
@@ -101,7 +94,6 @@ impl IntoResponse for AdvisoryApiError {
 
 /// El digest del cuerpo: `sha256:<hex>`, la MISMA forma que la
 /// promocion y el libro mayor usan para nombrar el sujeto.
-#[cfg(feature = "legacy")]
 fn parse_digest(text: &str) -> Option<ContentDigest> {
     let value = text.strip_prefix("sha256:")?;
     if value.chars().any(|c| c.is_ascii_uppercase()) {
@@ -115,7 +107,6 @@ fn parse_digest(text: &str) -> Option<ContentDigest> {
 /// texto, y el valor ya parseado se re-serializa de forma canonica para
 /// que el identificador de la evidencia sea el mismo para todos los que
 /// digan el mismo advisory.
-#[cfg(feature = "legacy")]
 fn document_of(value: &serde_json::Value) -> String {
     value.to_string()
 }
@@ -127,102 +118,88 @@ pub async fn accept(
     headers: HeaderMap,
     Json(request): Json<AcceptAdvisoryRequest>,
 ) -> Result<Response, AdvisoryApiError> {
-    // HSP-213: fuera de la feature `legacy` no hay ciclo reactivo que
-    // correr --el ciclo vive sobre los almacenes embebidos--, y la
-    // entrada responde 501 con el mismo mensaje de siempre.
-    #[cfg(not(feature = "legacy"))]
-    {
-        let _ = (&state, &context, &headers, &request);
-        Err(AdvisoryApiError::new(
+    let correlation = correlation_id(&headers, &state.identity);
+    let account = context.account().as_str().to_string();
+    let actor = context.principal().subject().as_str().to_string();
+
+    let reactor = state.reactor.as_ref().ok_or_else(|| {
+        AdvisoryApiError::new(
             StatusCode::NOT_IMPLEMENTED,
             "the reactive cycle is not wired in this deployment",
-        ))
-    }
-    #[cfg(feature = "legacy")]
-    {
-        let correlation = correlation_id(&headers, &state.identity);
-        let account = context.account().as_str().to_string();
-        let actor = context.principal().subject().as_str().to_string();
+        )
+    })?;
+    let reader = state.catalog_reader.as_ref().ok_or_else(|| {
+        AdvisoryApiError::new(StatusCode::NOT_IMPLEMENTED, "the catalog is not available")
+    })?;
 
-        let reactor = state.reactor.as_ref().ok_or_else(|| {
-            AdvisoryApiError::new(
-                StatusCode::NOT_IMPLEMENTED,
-                "the reactive cycle is not wired in this deployment",
-            )
-        })?;
-        let reader = state.catalog_reader.as_ref().ok_or_else(|| {
-            AdvisoryApiError::new(StatusCode::NOT_IMPLEMENTED, "the catalog is not available")
-        })?;
-
-        // El repositorio da la region del tenant del grafo, la MISMA_region
-        // con la que la promocion escribio el sujeto. Un repositorio que no
-        // existe o es de otra cuenta es el mismo 404 de siempre: la consulta
-        // va acotada a la cuenta verificada.
-        let repository = reader
-            .repository(&account, &request.repository)
-            .await
-            .map_err(|error| match error {
-                CatalogError::Missing { .. } => {
-                    AdvisoryApiError::new(StatusCode::NOT_FOUND, "the repository does not exist")
-                }
-                _ => AdvisoryApiError::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "the catalog could not answer",
-                ),
-            })?;
-        let region = repository.hrn.region().to_string();
-
-        let advisory_text = document_of(&request.advisory);
-        let inventory_text = request.inventory.as_ref().map(document_of);
-        let digest = parse_digest(&request.digest).ok_or_else(|| {
-            AdvisoryApiError::new(
-                StatusCode::BAD_REQUEST,
-                "a digest is `sha256:` followed by 64 lowercase hexadecimal digits",
-            )
-        })?;
-
-        // El sujeto del ciclo es EL ARTEFACTO que el cuerpo nombra
-        // (repositorio + digest), no "todo lo que el advisory toca": la
-        // proyeccion escribe los componentes y el `affected_by` contra ese
-        // sujeto, y el radio de impacto parte de ellos. La region la da el
-        // repositorio --la MISMA region con la que la promocion estampo el
-        // HRN del sujeto, o el ciclo preguntaria el grafo de otro tenant.
-        let outcome = reactor
-            .admit_advisory(
-                &account,
-                &region,
-                &request.repository,
-                &digest,
-                &advisory_text,
-                inventory_text.as_deref(),
-            )
-            .await;
-
-        let admission: AdvisoryAdmission = match outcome {
-            Ok(admission) => admission,
-            Err(error) => {
-                record_audit(
-                    &state,
-                    &actor,
-                    &account,
-                    "AcceptAdvisory",
-                    &request.repository,
-                    AuditResult::Failed,
-                    &correlation,
-                );
-                return Err(error.into());
+    // El repositorio da la region del tenant del grafo, la MISMA_region
+    // con la que la promocion escribio el sujeto. Un repositorio que no
+    // existe o es de otra cuenta es el mismo 404 de siempre: la consulta
+    // va acotada a la cuenta verificada.
+    let repository = reader
+        .repository(&account, &request.repository)
+        .await
+        .map_err(|error| match error {
+            CatalogError::Missing { .. } => {
+                AdvisoryApiError::new(StatusCode::NOT_FOUND, "the repository does not exist")
             }
-        };
+            _ => AdvisoryApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the catalog could not answer",
+            ),
+        })?;
+    let region = repository.hrn.region().to_string();
 
-        record_audit(
-            &state,
-            &actor,
+    let advisory_text = document_of(&request.advisory);
+    let inventory_text = request.inventory.as_ref().map(document_of);
+    let digest = parse_digest(&request.digest).ok_or_else(|| {
+        AdvisoryApiError::new(
+            StatusCode::BAD_REQUEST,
+            "a digest is `sha256:` followed by 64 lowercase hexadecimal digits",
+        )
+    })?;
+
+    // El sujeto del ciclo es EL ARTEFACTO que el cuerpo nombra
+    // (repositorio + digest), no "todo lo que el advisory toca": la
+    // proyeccion escribe los componentes y el `affected_by` contra ese
+    // sujeto, y el radio de impacto parte de ellos. La region la da el
+    // repositorio --la MISMA region con la que la promocion estampo el
+    // HRN del sujeto, o el ciclo preguntaria el grafo de otro tenant.
+    let outcome = reactor
+        .admit_advisory(
             &account,
-            "AcceptAdvisory",
-            &admission.advisory,
-            AuditResult::Allowed,
-            &correlation,
-        );
-        Ok((StatusCode::OK, Json(admission)).into_response())
-    }
+            &region,
+            &request.repository,
+            &digest,
+            &advisory_text,
+            inventory_text.as_deref(),
+        )
+        .await;
+
+    let admission: AdvisoryAdmission = match outcome {
+        Ok(admission) => admission,
+        Err(error) => {
+            record_audit(
+                &state,
+                &actor,
+                &account,
+                "AcceptAdvisory",
+                &request.repository,
+                AuditResult::Failed,
+                &correlation,
+            );
+            return Err(error.into());
+        }
+    };
+
+    record_audit(
+        &state,
+        &actor,
+        &account,
+        "AcceptAdvisory",
+        &admission.advisory,
+        AuditResult::Allowed,
+        &correlation,
+    );
+    Ok((StatusCode::OK, Json(admission)).into_response())
 }

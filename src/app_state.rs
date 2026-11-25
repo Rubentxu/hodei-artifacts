@@ -175,10 +175,9 @@ pub struct AppState {
     /// Optional, and fail-closed: a deployment without it answers `501`
     /// on the advisory entry and never reevaluates on its own -- a
     /// concession revoked by a CVE is revoked by the promotion path, not
-    /// invented here. HSP-213: the cycle runs on the embedded stores, so
-    /// outside the `legacy` feature the deployment never has one and the
-    /// entry answers `501` by construction.
-    #[cfg(feature = "legacy")]
+    /// invented here. The embedded profile and the graph profile (HSP-314
+    /// F3b-3) each wire their own; a deployment that wires none answers
+    /// `501` by construction.
     pub(crate) reactor: Option<Arc<crate::trust::reaction::VulnerabilityReactor>>,
     /// The investigation of a subject.
     ///
@@ -337,7 +336,6 @@ impl AppState {
             trust_ledger: None,
             proxy_plane: None,
             trust_plane: None,
-            #[cfg(feature = "legacy")]
             reactor: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             quota: Arc::new(crate::quota::QuotaLedger::new(
@@ -410,7 +408,6 @@ impl AppState {
             trust_ledger: None,
             proxy_plane: None,
             trust_plane: None,
-            #[cfg(feature = "legacy")]
             reactor: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             quota: Arc::new(crate::quota::QuotaLedger::new(
@@ -560,7 +557,6 @@ impl AppState {
     }
 
     /// Inject the reactive cycle of the CVE.
-    #[cfg(feature = "legacy")]
     pub fn with_reactor(
         mut self,
         reactor: Arc<crate::trust::reaction::VulnerabilityReactor>,
