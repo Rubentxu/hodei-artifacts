@@ -148,6 +148,32 @@ S3 real en esta documentación).
 Los valores `endpoint = "127.0.0.1:4566"` y `tls = false` del perfil son los de
 un almacén local de pruebas, no los de producción (sección 6).
 
+### Perfil `dgraph.toml`
+
+[`config/dgraph.toml`](../../config/dgraph.toml) es el perfil productivo sobre
+la autoridad única del grafo. Se carga con `RUN_MODE=dgraph` y, como el resto
+de perfiles, se superpone a `config/default.toml`. Viaja en la imagen OCI junto
+con los demás ficheros de `config/` (la imagen copia el directorio entero),
+aunque la imagen fija `RUN_MODE=standalone`: para usarlo hay que declarar
+`RUN_MODE=dgraph` al arrancar.
+
+Lo que el perfil declara:
+
+- `[graph]` con `endpoint` (`host:port` del Alpha), `namespace`, la tabla
+  `[graph.tls]` (`enabled`, `ca_cert_path`, `server_name`) y
+  `[graph.credentials]` con `userid`. La contraseña no va en el fichero: se
+  inyecta con `HODEI_GRAPH__CREDENTIALS__PASSWORD`.
+- `[database] db_type = "dgraph"`, que declara el grafo y evita reclamar el
+  motor embebido.
+- `[content] backend = "s3"` con su tabla `[content.s3]`: los bytes no viven
+  en el grafo.
+
+El significado de cada clave de `[graph]` está en la sección 5.8. Una clave
+desconocida bajo `[graph]`, `[graph.tls]` o `[graph.credentials]` se
+**rechaza** con un error que nombra la clave; en particular, `namespace` va en
+`[graph]`, antes de las subtablas, y bajo `[graph.credentials]` detiene el
+arranque en lugar de ignorarse.
+
 ## 5. Claves que los perfiles no declaran
 
 Tienen valor por defecto y se pueden añadir a cualquier fichero de perfil o
