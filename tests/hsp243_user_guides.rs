@@ -1,6 +1,9 @@
 //! Verification of HSP-243 user guides, links, capabilities matrix, and
 //! executable recipes for Maven 2, npm, and PyPI against the real Hodei service.
 
+mod guide_blocks;
+
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
@@ -408,6 +411,9 @@ fn guides_have_required_metadata_and_no_insecure_production_advice() {
     }
 
     // Ensure no production HTTP-without-TLS or signature-disable advice exists.
+    // The exceptions are structural: an insecure flag may only appear on an
+    // exact, listed prose line outside any code fence, and an `http://` URL
+    // is accepted only when its parsed host is a loopback host.
     for rel_path in [
         "README.md",
         "README.es.md",
@@ -415,38 +421,12 @@ fn guides_have_required_metadata_and_no_insecure_production_advice() {
         "docs/community/ecosystems.md",
     ] {
         let text = fs::read_to_string(root.join(rel_path)).expect(rel_path);
-        for line in text.lines() {
-            let lower = line.to_lowercase();
-            // Any mention of insecure flags must be an explicit prohibition ("nunca" / "never" / "no uses").
-            for forbidden in [
-                "insecure-registries",
-                "strict-ssl=false",
-                "[trusted=yes]",
-                "gpgcheck=0",
-                "sslverify=0",
-                "--insecure",
-            ] {
-                if lower.contains(forbidden) {
-                    assert!(
-                        lower.contains("nunca")
-                            || lower.contains("never")
-                            || lower.contains("no uses"),
-                        "{rel_path} contains '{forbidden}' without explicit prohibition: {line}"
-                    );
-                }
-            }
-            if lower.contains("http://") {
-                assert!(
-                    lower.contains("127.0.0.1")
-                        || lower.contains("localhost")
-                        || lower.contains("ejemplo")
-                        || lower.contains("example")
-                        || lower.contains("local")
-                        || lower.contains("https://"),
-                    "{rel_path} contains non-local http:// URL: {line}"
-                );
-            }
-        }
+        let violations = insecure_advice_violations(rel_path, &text);
+        assert!(
+            violations.is_empty(),
+            "insecure advice in {rel_path}:\n{}",
+            violations.join("\n")
+        );
     }
 
     // Verify backup/restore and upgrade operations are linked.
@@ -463,6 +443,171 @@ fn guides_have_required_metadata_and_no_insecure_production_advice() {
     }
 }
 
+/// Insecure flags that may be named only inside a prohibition.
+const INSECURE_FLAGS: [&str; 6] = [
+    "insecure-registries",
+    "strict-ssl=false",
+    "[trusted=yes]",
+    "gpgcheck=0",
+    "sslverify=0",
+    "--insecure",
+];
+
+/// The exact prose lines (trimmed, per file) that may name an insecure flag
+/// because they prohibit it. Any other line naming a flag, and any line
+/// inside a code fence, is a violation: wording a line differently does not
+/// make it an exception, it must be reviewed and listed here.
+const ALLOWED_PROHIBITIONS: &[(&str, &str)] = &[
+    (
+        "docs/community/ecosystems.md",
+        "- **Credenciales seguras:** en `.npmrc` usa `//artifacts.example.com/npm/doc-npm/:_authToken=${HODEI_TOKEN}` (mantén TLS activo en producción; no uses `strict-ssl=false`).",
+    ),
+    (
+        "docs/community/ecosystems.md",
+        "- **Credenciales seguras:** `docker login artifacts.example.com` (credenciales almacenadas en credential helper del sistema; en producción siempre HTTPS, nunca `insecure-registries`).",
+    ),
+    (
+        "docs/community/ecosystems.md",
+        "- **Credenciales seguras y firma:** instala la clave pública de `/apt/{repo}/key.asc` en `/etc/apt/keyrings/` (`signed-by=...`); **nunca** uses `[trusted=yes]` en producción. Usa `/etc/apt/auth.conf.d/` (permisos `600`) para credenciales.",
+    ),
+    (
+        "docs/community/ecosystems.md",
+        "- **Credenciales seguras y firma:** configura `gpgcheck=1` y `repo_gpgcheck=1` con `gpgkey=https://artifacts.example.com/yum/doc-rpm/key.asc`; **nunca** uses `gpgcheck=0` ni `sslverify=0` en producción.",
+    ),
+    (
+        "docs/community/ecosystems.md",
+        "- **Credenciales seguras:** `helm registry login artifacts.example.com` (sobre HTTPS en producción; verifica provenance/digests y no uses `--insecure` en producción).",
+    ),
+];
+
+/// Hosts an `http://` URL may name: the offline lab only.
+const LOOPBACK_HOSTS: [&str; 2] = ["127.0.0.1", "localhost"];
+
+/// The host of every `http://` URL in `line`, parsed (not matched as a
+/// substring): the characters after the scheme up to the first delimiter.
+fn http_hosts(line: &str) -> Vec<String> {
+    line.match_indices("http://")
+        .map(|(i, _)| {
+            line[i + "http://".len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-')
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// Every insecure-advice violation of one document.
+fn insecure_advice_violations(rel_path: &str, text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        let lower = line.to_lowercase();
+        for flag in INSECURE_FLAGS {
+            if !lower.contains(flag) {
+                continue;
+            }
+            let listed = !in_fence
+                && ALLOWED_PROHIBITIONS
+                    .iter()
+                    .any(|(file, exact)| *file == rel_path && *exact == line.trim());
+            if !listed {
+                violations.push(format!("unlisted use of '{flag}': {line}"));
+            }
+        }
+        for host in http_hosts(line) {
+            if !LOOPBACK_HOSTS.contains(&host.as_str()) {
+                violations.push(format!("non-loopback http:// host '{host}': {line}"));
+            }
+        }
+    }
+    violations
+}
+
+#[test]
+fn insecure_advice_filter_has_no_word_based_exceptions() {
+    // The old filter accepted any line that merely contained "nunca",
+    // "ejemplo", "local" or "https://". None of these may excuse a violation.
+    let cases = [
+        "nunca desactives nada, pero usa gpgcheck=0 en producción",
+        "Ejemplo: `sslverify=0` en el servidor local",
+        "usa --insecure con https://artifacts.example.com",
+    ];
+    for line in cases {
+        assert!(
+            !insecure_advice_violations("docs/community/ecosystems.md", line).is_empty(),
+            "a word in the line must not excuse an insecure flag: {line}"
+        );
+    }
+    for line in [
+        "descarga de http://artifacts.example.com/x (ejemplo, local, https://)",
+        "ver http://evil.localhost.example.com/ejemplo",
+        "mira http://127.0.0.1.evil.com/ejemplo",
+    ] {
+        assert!(
+            !insecure_advice_violations("docs/community/ecosystems.md", line).is_empty(),
+            "a word in the line must not excuse a non-loopback http:// URL: {line}"
+        );
+    }
+    // A listed prohibition is accepted in prose, never inside a fence, and
+    // never in a file it is not listed for.
+    let (file, exact) = ALLOWED_PROHIBITIONS[0];
+    assert!(insecure_advice_violations(file, exact).is_empty());
+    assert!(!insecure_advice_violations("README.md", exact).is_empty());
+    let fenced = format!("```bash\n{exact}\n```");
+    assert!(!insecure_advice_violations(file, &fenced).is_empty());
+    // Loopback URLs, with or without port, stay valid.
+    assert!(
+        insecure_advice_violations(
+            file,
+            "curl http://127.0.0.1:${PORT}/v2/ y http://localhost/"
+        )
+        .is_empty()
+    );
+}
+
+thread_local! {
+    /// `(method, path)` of every request `send` made, in order.
+    static SENT: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The requests the Maven, npm and PyPI recipes make, in order. The recipe
+/// test asserts that it sends exactly these; the documentation test asserts
+/// that the `curl` blocks of `ecosystems.md` document exactly these.
+const RECIPE_REQUESTS: &[(&str, &str, &str)] = &[
+    ("maven2", "POST", "/api/v1/catalog/repositories"),
+    (
+        "maven2",
+        "PUT",
+        "/repository/doc-maven/com/acme/demo/1.0.0/demo-1.0.0.pom",
+    ),
+    (
+        "maven2",
+        "PUT",
+        "/repository/doc-maven/com/acme/demo/1.0.0/demo-1.0.0.jar",
+    ),
+    (
+        "maven2",
+        "GET",
+        "/repository/doc-maven/com/acme/demo/1.0.0/demo-1.0.0.jar",
+    ),
+    ("npm", "POST", "/api/v1/catalog/repositories"),
+    ("npm", "PUT", "/npm/doc-npm/@acme%2fdemo"),
+    ("npm", "GET", "/npm/doc-npm/@acme%2fdemo"),
+    ("npm", "GET", "/npm/doc-npm/@acme/demo/-/demo-1.0.0.tgz"),
+    ("pypi", "POST", "/api/v1/catalog/repositories"),
+    ("pypi", "POST", "/pypi/doc-pypi/"),
+    ("pypi", "GET", "/pypi/doc-pypi/simple/demo-pkg/"),
+    (
+        "pypi",
+        "GET",
+        "/pypi/doc-pypi/files/demo-pkg/demo_pkg-1.0.0-py3-none-any.whl",
+    ),
+];
+
 async fn send(
     app: &axum::Router,
     method: &str,
@@ -470,6 +615,10 @@ async fn send(
     content_type: Option<&str>,
     body: Vec<u8>,
 ) -> (StatusCode, Vec<u8>) {
+    SENT.with(|sent| {
+        sent.borrow_mut()
+            .push((method.to_string(), uri.to_string()))
+    });
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
@@ -509,6 +658,8 @@ async fn documented_maven_npm_pypi_recipes_work_against_real_service() {
             .collect();
         assert_eq!(actual_modes, expected_modes);
     }
+
+    SENT.with(|sent| sent.borrow_mut().clear());
 
     // 1. Maven 2 recipe (doc-maven)
     let (status, body) = send(
@@ -728,6 +879,30 @@ async fn documented_maven_npm_pypi_recipes_work_against_real_service() {
         html_str.contains("demo_pkg-1.0.0-py3-none-any.whl"),
         "simple index missing wheel: {html_str}"
     );
+
+    // 4. The wheel linked by the index downloads with the exact bytes uploaded.
+    let (status, downloaded_wheel) = send(
+        &app,
+        "GET",
+        "/pypi/doc-pypi/files/demo-pkg/demo_pkg-1.0.0-py3-none-any.whl",
+        None,
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(downloaded_wheel, wheel, "the downloaded wheel differs");
+    assert!(
+        html_str.contains("/pypi/doc-pypi/files/demo-pkg/demo_pkg-1.0.0-py3-none-any.whl#sha256=")
+            && html_str.contains(&sha256_hex),
+        "the index must link the wheel with its sha256: {html_str}"
+    );
+
+    let sent = SENT.with(|sent| sent.borrow().clone());
+    let expected: Vec<(String, String)> = RECIPE_REQUESTS
+        .iter()
+        .map(|(_, method, path)| (method.to_string(), path.to_string()))
+        .collect();
+    assert_eq!(sent, expected, "the recipe sent unexpected requests");
 }
 
 #[test]
@@ -882,6 +1057,42 @@ fn every_serde_config_field_is_documented_in_configuration_md() {
         assert!(
             doc.contains(&variable),
             "configuration.md must name the variable {variable} for {path}"
+        );
+    }
+}
+
+/// AC2 (HSP-288): the `curl` blocks of the Maven, npm and PyPI sections of
+/// `ecosystems.md` are extracted and compared, method and path, with the
+/// requests the executable recipe sends (`RECIPE_REQUESTS`).
+#[test]
+fn documented_curl_blocks_match_the_requests_the_recipe_sends() {
+    let doc = fs::read_to_string(repo_root().join("docs/community/ecosystems.md"))
+        .expect("ecosystems.md");
+    for (ecosystem, heading) in [
+        ("maven2", "### Maven 2 (`maven2`)"),
+        ("npm", "### npm (`npm`)"),
+        ("pypi", "### PyPI (`pypi`)"),
+    ] {
+        let section = guide_blocks::section(&doc, heading);
+        let documented: Vec<(String, String)> = guide_blocks::bash_blocks(section)
+            .iter()
+            // The native-client block is executed by hsp288_native_guides.
+            .filter(|block| !block.lead_in.contains("**Ejemplo con cliente nativo"))
+            .flat_map(|block| guide_blocks::commands(&block.body))
+            .filter_map(|command| guide_blocks::curl_request(&command))
+            .collect();
+        let tested: Vec<(String, String)> = RECIPE_REQUESTS
+            .iter()
+            .filter(|(eco, _, _)| *eco == ecosystem)
+            .map(|(_, method, path)| (method.to_string(), path.to_string()))
+            .collect();
+        assert!(
+            !documented.is_empty(),
+            "{ecosystem}: no curl request documented"
+        );
+        assert_eq!(
+            documented, tested,
+            "{ecosystem}: documented curl requests differ from the recipe test"
         );
     }
 }
