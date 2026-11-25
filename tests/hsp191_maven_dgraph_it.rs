@@ -17,9 +17,8 @@
 //!   esquema declara `@index(exact)` en los predicados filtrados y la
 //!   consulta exacta devuelve solo lo suyo en un coste relativo pequeño),
 //!   y el scoping por cuenta (los assets de otra cuenta no existen aquí);
-//! - la PARIDAD de lectura con la referencia Surreal para el mismo estado:
-//!   por coordenadas, listado y páginas (ventana por offset en la
-//!   referencia, cursor por clave en el grafo).
+//! - las lecturas del estado publicado según el contrato: por coordenadas,
+//!   listado por prefijo y páginas por cursor de clave.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -44,16 +43,13 @@ use hodei_authz::{
 };
 use hodei_catalog::search::{SearchQuery, search_cursor};
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogReader, CatalogSearch, CatalogWriter, DigestScope,
-    PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor, RepositoryFormat,
-    RepositoryMode, repository_hrn,
+    CatalogReader, CatalogSearch, CatalogWriter, DigestScope, PackageCoordinates, Publication,
+    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::{DgraphCatalogStore, SurrealCatalogStore};
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::FileBlobStore;
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -276,10 +272,12 @@ impl Vertical {
         let tmp = tempfile::tempdir().expect("temp dir");
         let mut config = AppConfig::default();
         config.security.raw_api_enabled = true;
-        config.repository.durable = false;
-        config.rocksdb.path = tmp
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
 
@@ -1152,42 +1150,23 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
 }
 
 // ---------------------------------------------------------------------------
-// La paridad de lectura con la referencia Surreal.
+// Las lecturas dicen lo que el contrato del catálogo dice.
 // ---------------------------------------------------------------------------
 
-async fn the_surreal_reference() -> (TempDir, SurrealCatalogStore) {
-    let tmp = tempfile::tempdir().expect("tmp");
-    let mut last = String::new();
-    let db = loop {
-        match Surreal::new::<RocksDb>(tmp.path().join("db")).await {
-            Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-                break db;
-            }
-            Err(error) => {
-                last = error.to_string();
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    };
-    let _ = last;
-    let store = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
-    store.initialize().await.expect("initialize");
-    (tmp, store)
-}
-
-/// El mismo estado en los dos motores responde lo mismo: por coordenadas,
-/// el listado por prefijo y las páginas (la referencia por ventana de
-/// offset, el grafo por cursor de clave) dicen la misma secuencia.
+/// El estado publicado responde lo que el contrato dice: por coordenadas
+/// (digest y tamaño de lo publicado), el listado por prefijo (los caminos
+/// del prefijo, en orden ascendente) y las páginas por cursor de clave (la
+/// secuencia entera y el total son los de lo publicado). HSP-314 F4: antes
+/// se comparaba con un segundo motor por offset; ahora la secuencia
+/// esperada es la de los caminos publicados ordenados.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_reads_match_the_surreal_reference() {
+async fn the_reads_match_the_contract_for_the_published_state() {
     let Some(client) = fresh_client().await else {
         return;
     };
     let account = account("parity");
 
     let dgraph = Arc::new(open_store(client.clone()).await);
-    let (_tmp, surreal) = the_surreal_reference().await;
 
     let repo = "parity";
     let descriptor = a_descriptor(
@@ -1197,16 +1176,12 @@ async fn the_reads_match_the_surreal_reference() {
         serde_json::json!({}),
     );
     dgraph
-        .create_repository(&account, descriptor.clone())
-        .await
-        .expect("the dgraph repository");
-    surreal
         .create_repository(&account, descriptor)
         .await
-        .expect("the surreal repository");
+        .expect("the dgraph repository");
 
-    // El mismo estado: los mismos caminos, coordenadas, digests y tamaños.
-    // Las coordenadas son las que la superficie de contenido publica: el
+    // El estado: los caminos, coordenadas, digests y tamaños. Las
+    // coordenadas son las que la superficie de contenido publica: el
     // camino del fichero y su digest, uno por fichero.
     let assets = [
         "com/acme/lib/1.0/lib-1.0.pom",
@@ -1235,76 +1210,59 @@ async fn the_reads_match_the_surreal_reference() {
             subject: None,
         };
         dgraph
-            .publish(&account, publication.clone())
-            .await
-            .expect("the dgraph publication");
-        surreal
             .publish(&account, publication)
             .await
-            .expect("the surreal publication");
+            .expect("the dgraph publication");
     }
 
-    // Por coordenadas: la misma versión es el mismo digest en los dos.
+    // Por coordenadas: la versión es el digest y el tamaño de lo publicado.
+    let published = b"parity::com/acme/lib/1.1/lib-1.1.jar";
     let coordinates = PackageCoordinates {
         package_name: "com/acme/lib/1.1/lib-1.1.jar".to_string(),
-        package_version: ContentDigest::of_bytes(b"parity::com/acme/lib/1.1/lib-1.1.jar").value,
+        package_version: ContentDigest::of_bytes(published).value,
     };
     let dgraph_version = dgraph
         .version(&account, repo, &coordinates)
         .await
         .expect("the dgraph version");
-    let surreal_version = surreal
-        .version(&account, repo, &coordinates)
-        .await
-        .expect("the surreal version");
-    assert_eq!(dgraph_version.digest, surreal_version.digest);
-    assert_eq!(dgraph_version.size_bytes, surreal_version.size_bytes);
+    assert_eq!(dgraph_version.digest, ContentDigest::of_bytes(published));
+    assert_eq!(dgraph_version.size_bytes, published.len() as u64);
 
-    // El listado por prefijo: el mismo conjunto, en el mismo orden.
+    // El listado por prefijo: los caminos publicados bajo el prefijo, en
+    // orden ascendente y sin los de fuera del prefijo.
     let dgraph_listing = dgraph
         .assets_under(&account, repo, "com/acme/lib/")
         .await
         .expect("the dgraph listing");
-    let surreal_listing = surreal
-        .assets_under(&account, repo, "com/acme/lib/")
-        .await
-        .expect("the surreal listing");
     let dgraph_paths: Vec<String> = dgraph_listing
         .iter()
         .map(|asset| asset.asset_path.clone())
         .collect();
-    let surreal_paths: Vec<String> = surreal_listing
+    let mut expected_listing: Vec<String> = assets
         .iter()
-        .map(|asset| asset.asset_path.clone())
+        .filter(|path| path.starts_with("com/acme/lib/"))
+        .map(|path| path.to_string())
         .collect();
-    assert_eq!(dgraph_paths, surreal_paths);
+    expected_listing.sort();
+    assert_eq!(expected_listing.len(), 4);
+    assert_eq!(dgraph_paths, expected_listing);
 
-    // Las páginas de búsqueda: la referencia por ventana de offset, el
-    // grafo por cursor de clave. La secuencia entera es la misma, y el
-    // total también.
+    // Las páginas de búsqueda por cursor de clave: la secuencia entera es
+    // la de los caminos publicados ordenados, y el total, el de los
+    // publicados.
     let repositories = dgraph.repositories(&account).await.expect("the repos");
-    let surreal_repositories = surreal.repositories(&account).await.expect("the repos");
     let query = SearchQuery::new().with_repository(repo).with_limit(2);
     let mut dgraph_page = dgraph
         .search(&account, &repositories, &query)
         .await
         .expect("the dgraph page");
-    let mut surreal_page = surreal
-        .search(&account, &surreal_repositories, &query)
-        .await
-        .expect("the surreal page");
-    assert_eq!(dgraph_page.total, surreal_page.total);
+    assert_eq!(dgraph_page.total, Some(assets.len()));
 
-    // El grafo, por cursores, dice la misma secuencia que la referencia
-    // por offsets.
     let mut keyed: Vec<(String, String)> = Vec::new();
-    let mut offseted: Vec<(String, String)> = Vec::new();
     for hit in &dgraph_page.results {
         keyed.push((hit.repository.clone(), hit.asset_path.clone()));
     }
-    for hit in &surreal_page.results {
-        offseted.push((hit.repository.clone(), hit.asset_path.clone()));
-    }
+    assert!(dgraph_page.results.len() <= 2, "a page respects its limit");
     while dgraph_page.more {
         let last = dgraph_page.results.last().expect("a page with rows");
         dgraph_page = dgraph
@@ -1318,34 +1276,22 @@ async fn the_reads_match_the_surreal_reference() {
             )
             .await
             .expect("the keyed page");
+        assert!(dgraph_page.results.len() <= 2, "a page respects its limit");
         for hit in &dgraph_page.results {
             keyed.push((hit.repository.clone(), hit.asset_path.clone()));
         }
     }
-    let mut offset = 2usize;
-    while surreal_page.more {
-        surreal_page = surreal
-            .search(
-                &account,
-                &surreal_repositories,
-                &SearchQuery::new()
-                    .with_repository(repo)
-                    .with_limit(2)
-                    .with_offset(offset),
-            )
-            .await
-            .expect("the offset page");
-        offset += 2;
-        for hit in &surreal_page.results {
-            offseted.push((hit.repository.clone(), hit.asset_path.clone()));
-        }
-    }
+    let mut expected_sequence: Vec<(String, String)> = assets
+        .iter()
+        .map(|path| (repo.to_string(), path.to_string()))
+        .collect();
+    expected_sequence.sort();
     assert_eq!(
-        keyed, offseted,
-        "the same state pages the same, by key or by offset"
+        keyed, expected_sequence,
+        "paging by key walks every published path once, in order"
     );
     record_evidence(
-        "the_reads_match_the_surreal_reference",
-        "paridad Surreal para el mismo estado: coordenadas, listado por prefijo y secuencia de páginas (cursor vs offset) idénticos",
+        "the_reads_match_the_contract_for_the_published_state",
+        "lecturas segun el contrato: coordenadas (digest y tamano), listado por prefijo ordenado y secuencia de paginas por cursor igual a lo publicado",
     );
 }

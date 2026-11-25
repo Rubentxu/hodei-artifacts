@@ -321,10 +321,12 @@ impl Instance {
         );
         let mut config = AppConfig::default();
         config.security.raw_api_enabled = true;
-        config.repository.durable = false;
-        config.rocksdb.path = local
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        config.graph = config_from_env();
+        config.content.cas_path = local
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
         let state = bootstrap(

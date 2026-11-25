@@ -17,7 +17,7 @@
 //! - el gate de disponibilidad del blob **antes de servir**: un manifest
 //!   cuyos bytes ya no están en el CAS no se sirve, y un manifest que
 //!   nombra una capa que el repositorio no tiene no se publica;
-//! - la paridad de lectura con la referencia Surreal para el mismo estado
+//! - las lecturas del estado publicado dicen lo que el contrato dice
 //!   (manifest, tags list, referrers list).
 
 use std::path::PathBuf;
@@ -41,16 +41,12 @@ use hodei_authz::{
     PrincipalId,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogReader, CatalogWriter, DigestScope, PackageCoordinates, Publication,
-    ReferrerRecord, RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode,
-    repository_hrn,
+    CatalogReader, CatalogWriter, DigestScope, PackageCoordinates, Publication, ReferrerRecord,
+    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::FileBlobStore;
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -218,10 +214,12 @@ impl Vertical {
         let tmp = tempfile::tempdir().expect("temp dir");
         let mut config = AppConfig::default();
         config.security.oci_api_enabled = true;
-        config.repository.durable = false;
-        config.rocksdb.path = tmp
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
 
@@ -1273,14 +1271,16 @@ async fn the_oras_pushes_pulls_and_discovers_over_the_dgraph_catalog() {
 }
 
 // ---------------------------------------------------------------------------
-// AC4: la paridad de lectura con la referencia Surreal.
+// AC4: las lecturas dicen lo que el contrato del catálogo dice.
 // ---------------------------------------------------------------------------
 
-/// El mismo estado OCI (manifest con subject, su referrer, su etiqueta)
-/// construido en los dos motores, y las lecturas que dicen lo mismo:
-/// asset, referrers list, tag y tags list.
+/// El estado OCI (manifest con subject, su referrer, su etiqueta) publicado
+/// en Dgraph se lee como el contrato dice: asset (digest, subject, tamaño),
+/// referrers list (exactamente el referrer publicado), tag y tags list.
+/// (HSP-314 F4: antes se comparaba con un segundo motor; los valores
+/// esperados salen ahora de lo que la prueba publicó.)
 #[tokio::test]
-async fn the_dgraph_oci_reads_match_the_surreal_reference_for_the_same_state() {
+async fn the_dgraph_oci_reads_match_the_contract_for_the_published_state() {
     let Some(_) = config_from_env() else {
         eprintln!("SKIP: HODEI_GRAPH_IT_ENDPOINT is not set");
         return;
@@ -1295,80 +1295,55 @@ async fn the_dgraph_oci_reads_match_the_surreal_reference_for_the_same_state() {
         .await
         .expect("the dgraph repository");
 
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let db = Surreal::new::<RocksDb>(tmp.path().join("db"))
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-    let surreal = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
-    surreal.initialize().await.expect("the surreal catalog");
-    surreal
-        .create_repository(&account, an_oci_descriptor(&account, repo))
-        .await
-        .expect("the surreal repository");
-
-    // El mismo estado en las dos: manifest, su referrer, la etiqueta.
+    // El estado: manifest, su referrer, la etiqueta.
     let manifest = b"the same oci state in two engines";
     let manifest_digest = ContentDigest::of_bytes(manifest);
     let subject = ContentDigest::of_bytes(b"the parity subject");
     let referrer = b"the parity sbom";
     let referrer_digest = ContentDigest::of_bytes(referrer);
-    let build = |correlation: String| {
-        (
-            Publication {
-                repository: repo.to_string(),
-                asset_path: format!("manifests/{}", manifest_digest.value),
-                coordinates: PackageCoordinates {
-                    package_name: format!("manifests/{}", manifest_digest.value),
-                    package_version: manifest_digest.value.clone(),
-                },
-                digest: manifest_digest.clone(),
-                size_bytes: manifest.len() as u64,
-                tags: Vec::new(),
-                actor: "it".to_string(),
-                correlation_id: correlation.clone(),
-                overwrite: true,
-                precondition: None,
-                subject: Some(subject.clone()),
-            },
-            Publication {
-                repository: repo.to_string(),
-                asset_path: format!("manifests/{}", referrer_digest.value),
-                coordinates: PackageCoordinates {
-                    package_name: format!("manifests/{}", referrer_digest.value),
-                    package_version: referrer_digest.value.clone(),
-                },
-                digest: referrer_digest.clone(),
-                size_bytes: referrer.len() as u64,
-                tags: Vec::new(),
-                actor: "it".to_string(),
-                correlation_id: correlation,
-                overwrite: true,
-                precondition: None,
-                subject: Some(manifest_digest.clone()),
-            },
-        )
+    let correlation = format!("corr-dg-{account}");
+    let manifest_publication = Publication {
+        repository: repo.to_string(),
+        asset_path: format!("manifests/{}", manifest_digest.value),
+        coordinates: PackageCoordinates {
+            package_name: format!("manifests/{}", manifest_digest.value),
+            package_version: manifest_digest.value.clone(),
+        },
+        digest: manifest_digest.clone(),
+        size_bytes: manifest.len() as u64,
+        tags: Vec::new(),
+        actor: "it".to_string(),
+        correlation_id: correlation.clone(),
+        overwrite: true,
+        precondition: None,
+        subject: Some(subject.clone()),
     };
-    let (manifest_a, referrer_a) = build(format!("corr-dg-{account}"));
-    let (manifest_s, referrer_s) = build(format!("corr-sr-{account}"));
+    let referrer_publication = Publication {
+        repository: repo.to_string(),
+        asset_path: format!("manifests/{}", referrer_digest.value),
+        coordinates: PackageCoordinates {
+            package_name: format!("manifests/{}", referrer_digest.value),
+            package_version: referrer_digest.value.clone(),
+        },
+        digest: referrer_digest.clone(),
+        size_bytes: referrer.len() as u64,
+        tags: Vec::new(),
+        actor: "it".to_string(),
+        correlation_id: correlation,
+        overwrite: true,
+        precondition: None,
+        subject: Some(manifest_digest.clone()),
+    };
     dgraph
-        .publish(&account, manifest_a)
+        .publish(&account, manifest_publication)
         .await
         .expect("dgraph manifest");
     dgraph
-        .publish(&account, referrer_a)
+        .publish(&account, referrer_publication)
         .await
         .expect("dgraph referrer");
-    surreal
-        .publish(&account, manifest_s)
-        .await
-        .expect("surreal manifest");
-    surreal
-        .publish(&account, referrer_s)
-        .await
-        .expect("surreal referrer");
 
-    // El manifest: mismo digest, mismo subject, mismos bytes declarados.
+    // El manifest: el digest, el subject y los bytes que se publicaron.
     let dgraph_asset = dgraph
         .asset(
             &account,
@@ -1377,39 +1352,22 @@ async fn the_dgraph_oci_reads_match_the_surreal_reference_for_the_same_state() {
         )
         .await
         .expect("dgraph asset");
-    let surreal_asset = surreal
-        .asset(
-            &account,
-            repo,
-            &format!("manifests/{}", manifest_digest.value),
-        )
-        .await
-        .expect("surreal asset");
-    assert_eq!(dgraph_asset.digest, surreal_asset.digest);
-    assert_eq!(dgraph_asset.subject, surreal_asset.subject);
-    assert_eq!(dgraph_asset.size_bytes, surreal_asset.size_bytes);
+    assert_eq!(dgraph_asset.digest, manifest_digest);
+    assert_eq!(dgraph_asset.subject, Some(subject));
+    assert_eq!(dgraph_asset.size_bytes, manifest.len() as u64);
 
-    // La lista de referrers: la misma, en el mismo orden por digest.
+    // Los referrers del manifest: exactamente el referrer publicado.
     let dgraph_referrers: Vec<ReferrerRecord> = dgraph
         .referrers(&account, repo, &manifest_digest)
         .await
         .expect("dgraph referrers");
-    let surreal_referrers: Vec<ReferrerRecord> = surreal
-        .referrers(&account, repo, &manifest_digest)
-        .await
-        .expect("surreal referrers");
     let dgraph_digests: Vec<String> = dgraph_referrers
         .iter()
         .map(|record| record.digest.value.clone())
         .collect();
-    let surreal_digests: Vec<String> = surreal_referrers
-        .iter()
-        .map(|record| record.digest.value.clone())
-        .collect();
-    assert_eq!(dgraph_digests, surreal_digests, "the same referrers list");
     assert_eq!(dgraph_digests, vec![referrer_digest.value.clone()]);
 
-    // La etiqueta: movida en las dos, y las dos dicen lo mismo.
+    // La etiqueta: movida al manifest, y la lista de etiquetas la nombra.
     let coords = PackageCoordinates {
         package_name: format!("manifests/{}", manifest_digest.value),
         package_version: manifest_digest.value.clone(),
@@ -1418,21 +1376,16 @@ async fn the_dgraph_oci_reads_match_the_surreal_reference_for_the_same_state() {
         .move_tag(&account, repo, "stable", coords.clone())
         .await
         .expect("dgraph tag");
-    let surreal_tag = surreal
-        .move_tag(&account, repo, "stable", coords.clone())
-        .await
-        .expect("surreal tag");
-    assert_eq!(dgraph_tag.coordinates, surreal_tag.coordinates);
+    assert_eq!(dgraph_tag.coordinates, coords);
 
     let dgraph_tags = dgraph.tags(&account, repo).await.expect("dgraph tags");
-    let surreal_tags = surreal.tags(&account, repo).await.expect("surreal tags");
-    assert_eq!(dgraph_tags.len(), surreal_tags.len());
     assert_eq!(dgraph_tags.len(), 1);
-    assert_eq!(dgraph_tags[0].coordinates, surreal_tags[0].coordinates);
+    assert_eq!(dgraph_tags[0].tag_name, "stable");
+    assert_eq!(dgraph_tags[0].coordinates, coords);
 
     record_evidence(
         "AC4",
-        "paridad Surreal para el mismo estado OCI: asset (digest+subject), \
-         referrers list (1 entrada, mismo digest), tag y tags list iguales",
+        "lecturas OCI segun el contrato: asset (digest+subject+tamano), \
+         referrers list (1 entrada, el digest publicado), tag y tags list",
     );
 }

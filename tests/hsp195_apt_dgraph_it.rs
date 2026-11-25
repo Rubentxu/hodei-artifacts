@@ -25,10 +25,9 @@
 //!   path and other bytes on a published path are 404/409 as the contract
 //!   says. The outbox census is per tenant (`eq(hodei.catalog.outbox.tenant)`,
 //!   the HSP-220 lesson) and the plan probe confirms the exact indexes.
-//! - Parity: the same apt state seeded at store level answers identically
-//!   on Dgraph and on the Surreal reference (rows, digests and the
-//!   assembled `Packages` bytes), and the immutable/conflict behavior is
-//!   the same on both engines.
+//! - Contract reads: the published apt state seeded at store level answers
+//!   what the grammar and the publication say (rows, digests and the
+//!   assembled `Packages` bytes), and an immutable path conflicts.
 
 mod support;
 
@@ -58,14 +57,12 @@ use hodei_catalog::{
     AllowAllAuthorizer, CatalogReader, CatalogWriter, DigestScope, PackageCoordinates, Publication,
     RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::{DgraphCatalogStore, SurrealCatalogStore};
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::{BlobStore, FileBlobStore};
 use sha2::Digest as _;
 use support::{Answer, Curl};
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tempfile::TempDir;
 
 /// The run: one per execution, so no test meets what another left behind.
@@ -424,10 +421,12 @@ impl Vertical {
 
         let mut config = AppConfig::default();
         config.security.raw_api_enabled = true;
-        config.repository.durable = false;
-        config.rocksdb.path = tmp
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
 
@@ -1268,11 +1267,14 @@ async fn the_apt_queries_are_scoped_keyed_and_indexed() {
 }
 
 // ---------------------------------------------------------------------------
-// Parity: the same apt state on both engines answers the same.
+// Contract reads: the published apt state answers what the grammar and the
+// publication say (HSP-314 F4: this used to compare against a second
+// reference engine; every expected value now derives from the published
+// bytes and the apt grammar).
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_apt_reads_match_the_surreal_reference() {
+async fn the_apt_reads_match_the_contract_for_the_published_state() {
     let Some(client) = fresh_client().await else {
         return;
     };
@@ -1283,28 +1285,7 @@ async fn the_apt_reads_match_the_surreal_reference() {
         .await
         .expect("the dgraph repository is created");
 
-    let tmp = tempfile::tempdir().expect("tmp");
-    let db = loop {
-        match Surreal::new::<RocksDb>(tmp.path().join("db")).await {
-            Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-                break db;
-            }
-            Err(error) => {
-                eprintln!("the surreal reference retries its open: {error}");
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    };
-    let reference = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
-    reference.initialize().await.expect("initialize");
-    reference
-        .create_repository(&mine, an_apt_descriptor(&mine, REPO))
-        .await
-        .expect("the surreal repository is created");
-
-    // The same three packages (one with the guard-hostile version) on the
-    // two engines.
+    // Three packages (one with the guard-hostile version).
     let debs = [
         a_package("parity-one", "1.0"),
         a_package("parity-two", "2.0"),
@@ -1312,23 +1293,33 @@ async fn the_apt_reads_match_the_surreal_reference() {
             "Package: parity-three\n",
             "Version: 3.0~beta+1\n",
             "Architecture: amd64\n",
-            "Description: the tilde and the plus on both engines\n",
+            "Description: the tilde and the plus on the graph\n",
         )),
     ];
+    // What the listing must carry: (path, digest) of every published asset.
+    let mut expected_rows: Vec<(String, String)> = Vec::new();
+    let mut expected_index = String::new();
+    let mut records: Vec<(String, String)> = Vec::new();
     for deb in &debs {
         let control = apt::read_deb_control(deb).expect("the control parses");
         let expected =
             apt::pool_path_for(&control.package, &control.version, &control.architecture)
                 .expect("the pool path");
         let (pool, graph_deb, graph_record) = publish_deb_pair(&graph, &mine, REPO, deb).await;
-        let (reference_pool, reference_deb, reference_record) =
-            publish_deb_pair(&reference, &mine, REPO, deb).await;
         assert_eq!(pool, expected, "the path is the grammar's own");
-        assert_eq!(pool, reference_pool);
-        assert_eq!(graph_deb, reference_deb);
-        assert_eq!(graph_record, reference_record);
+        // The published digests are the digests of the bytes and of the
+        // `Packages` record the grammar assembles from them.
+        let deb_digest = ContentDigest::of_bytes(deb);
+        let record_bytes =
+            apt::packages_record(&control, &pool, deb.len() as u64, &deb_digest.value).into_bytes();
+        let record_digest = ContentDigest::of_bytes(&record_bytes);
+        assert_eq!(graph_deb, deb_digest);
+        assert_eq!(graph_record, record_digest);
+        expected_rows.push((pool.clone(), deb_digest.value.clone()));
+        expected_rows.push((apt::record_path_for(&pool), record_digest.value.clone()));
+        records.push((apt::record_path_for(&pool), record_digest.value.clone()));
 
-        // The version rows carry the same digest on both sides.
+        // The version row carries the digest of the deb.
         let version = graph
             .version(
                 &mine,
@@ -1340,21 +1331,9 @@ async fn the_apt_reads_match_the_surreal_reference() {
             )
             .await
             .expect("the graph version");
-        let reference_version = reference
-            .version(
-                &mine,
-                REPO,
-                &PackageCoordinates {
-                    package_name: control.package.clone(),
-                    package_version: control.version.clone(),
-                },
-            )
-            .await
-            .expect("the reference version");
-        assert_eq!(version.digest, reference_version.digest);
+        assert_eq!(version.digest, deb_digest);
 
-        // Other bytes on the published path conflict on both engines, and
-        // the same bytes settle idempotently on both.
+        // Other bytes on the published path conflict: immutability holds.
         let conflict = Publication {
             repository: REPO.to_string(),
             asset_path: pool.clone(),
@@ -1371,28 +1350,31 @@ async fn the_apt_reads_match_the_surreal_reference() {
             precondition: None,
             subject: None,
         };
-        let graph_verdict = graph.publish(&mine, conflict.clone()).await;
-        let reference_verdict = reference.publish(&mine, conflict).await;
+        let verdict = graph.publish(&mine, conflict).await;
         assert!(
-            graph_verdict.is_err() && reference_verdict.is_err(),
-            "the immutable path conflicts on both engines: graph {:?} / surreal {:?}",
-            graph_verdict.map(|_| ()),
-            reference_verdict.map(|_| ()),
+            verdict.is_err(),
+            "the immutable path conflicts: {:?}",
+            verdict.map(|_| ()),
         );
     }
+    records.sort();
+    for (path, digest) in &records {
+        expected_index.push_str(&format!("{path}\n{digest}\n"));
+    }
+    expected_rows.sort();
 
-    // The assembled index: the same rows produce the same `Packages` bytes
-    // (the handler's own assembly rule), so the metadata derives equal on
-    // both engines.
+    // The listing: every published path, ascending, with its digest, and
+    // the index assembled from its `.record` rows is the expected one.
     let mine_records = graph
         .assets_under(&mine, REPO, "pool/")
         .await
         .expect("the graph window");
-    let reference_records = reference
-        .assets_under(&mine, REPO, "pool/")
-        .await
-        .expect("the reference window");
-    assert_eq!(mine_records.len(), reference_records.len());
+    let listed: Vec<(String, String)> = mine_records
+        .iter()
+        .map(|row| (row.asset_path.clone(), row.digest.value.clone()))
+        .collect();
+    assert_eq!(listed, expected_rows, "the listing is what was published");
+    assert_eq!(mine_records.len(), 6);
     let index_of = |rows: &[hodei_catalog::AssetRecord]| -> String {
         let mut out = String::new();
         for row in rows {
@@ -1406,11 +1388,11 @@ async fn the_apt_reads_match_the_surreal_reference() {
     };
     assert_eq!(
         index_of(&mine_records),
-        index_of(&reference_records),
-        "the listing the index assembles from is identical on both engines"
+        expected_index,
+        "the listing the index assembles from is the published records, in order"
     );
     record_evidence(
-        "the_apt_reads_match_the_surreal_reference",
-        "paridad apt: las mismas publicaciones (con la versión 3.0~beta+1) dejan las mismas filas, los mismos digests y el mismo listado ordenado en Dgraph y en la referencia Surreal; otro contenido en la ruta publicada conflicto en ambos y la inmutabilidad se respeta igual",
+        "the_apt_reads_match_the_contract_for_the_published_state",
+        "lecturas apt segun el contrato: las publicaciones (con la version 3.0~beta+1) dejan las filas, los digests y el listado ordenado que dicen los bytes y la gramatica; otro contenido en la ruta publicada es conflicto y la inmutabilidad se respeta",
     );
 }

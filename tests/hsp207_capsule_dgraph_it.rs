@@ -21,7 +21,7 @@
 //!   historica, las mismas ausencias con su motivo — y la firma detached
 //!   sigue verificando sobre los bytes que el grafo guarda.
 //! - **Frontera AC2**: una capsula distractor (otro digest de imagen,
-//!   misma cuenta y repositorio) se ingiere igual; leer la primera
+//!   otra cuenta y repositorio, porque el alpha es compartido) se ingiere igual; leer la primera
 //!   responde exactamente sus paths, y el path del distractor no aparece
 //!   jamas en su respuesta. Las consultas del modulo son `eq` exacto
 //!   acotado — la prueba de forma vive en las unidades.
@@ -45,18 +45,16 @@ use hodei_catalog::model::{
     RepositoryFormat, RepositoryMode, repository_hrn,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogError, CatalogWriter, ChecksumEvidence, ProvenanceLedger,
-    ProvenanceReceipt, ReceiptOutcome, TrustGrant, TrustLedger,
+    CatalogError, CatalogWriter, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt,
+    ReceiptOutcome, TrustGrant, TrustLedger,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::schema::dql_string;
 use hodei_graph_client::{GraphClient, GraphClientConfig, Tenant};
 use hodei_hub::BlobStore;
 use hodei_hub::blob::FileBlobStore;
 use serde_json::json;
-use surrealdb::Surreal;
-use surrealdb::engine::local::{Db, RocksDb};
 
 use hodei_artifacts_api::bundles;
 use hodei_artifacts_api::bundles::Mapping;
@@ -68,10 +66,198 @@ use hodei_artifacts_api::bundles::capsule_dgraph::{
 };
 use hodei_artifacts_api::bundles::manifest::MANIFEST_NAME;
 use hodei_artifacts_api::openpgp::MetadataSigner;
+use hodei_artifacts_api::proxy::dgraph_ledger::DgraphProvenanceLedger;
 
 const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
 
-include!("support/hsp118_site.rs");
+include!("support/hsp219_concurrent_open.rs");
+
+/// Un registro con su catalogo y su almacen, en un directorio propio.
+///
+/// HSP-314 F4: el catalogo y el libro de recibos son los del grafo (antes
+/// eran el motor embebido, que es efimero por prueba). El alpha es
+/// compartido y persistente, asi que cada `Site` lleva su PROPIA cuenta y
+/// su PROPIO repositorio: nada de una instancia toca las filas de otra, ni
+/// las de una corrida anterior. El libro de decisiones sigue siendo el
+/// espejo en memoria (`MirrorLedger`): el de confianza vive en otra slice.
+struct Site {
+    tmp: tempfile::TempDir,
+    store: DgraphCatalogStore,
+    ledger: DgraphProvenanceLedger,
+    trust: MirrorLedger,
+    cas: std::path::PathBuf,
+    account: String,
+    repository: String,
+}
+
+impl Site {
+    async fn new(client: Arc<GraphClient>) -> Self {
+        static SITE: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock moves")
+            .as_nanos();
+        let n = SITE.fetch_add(1, Ordering::SeqCst);
+        let tmp = tempfile::tempdir().expect("tmp");
+        let store = open_store(client.clone()).await;
+        let ledger = DgraphProvenanceLedger::open(client)
+            .await
+            .expect("the receipt ledger opens");
+        let cas = tmp.path().join("cas");
+        Site {
+            tmp,
+            store,
+            ledger,
+            trust: MirrorLedger::new(),
+            cas,
+            account: format!("it207acme{}{n}", &nanos.to_string()[8..]),
+            repository: "mirror".to_string(),
+        }
+    }
+
+    fn blobs(&self) -> FileBlobStore {
+        FileBlobStore::new(&self.cas).expect("the store of content")
+    }
+
+    async fn create_proxy(&self, upstream_id: &str) {
+        let mut config = RepositoryConfig::new(DigestScope::Global);
+        config.config_settings = json!({
+            "proxy": {
+                "upstream": { "id": upstream_id, "url": UPSTREAM_URL, "scopes": ["/"] }
+            }
+        });
+        self.store
+            .create_repository(
+                &self.account,
+                RepositoryDescriptor {
+                    hrn: repository_hrn(
+                        "hodei",
+                        "artifacts",
+                        "eu",
+                        &self.account,
+                        &self.repository,
+                    ),
+                    account: self.account.clone(),
+                    repo_key: self.repository.clone(),
+                    format: RepositoryFormat::Raw,
+                    mode: RepositoryMode::Proxy,
+                    config,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+            )
+            .await
+            .expect("the proxy is created");
+    }
+
+    /// Lo que hace una resolucion de proxy: guardar y publicar.
+    async fn resolve(&self, path: &str, content: &[u8]) -> ContentDigest {
+        let digest = ContentDigest::of_bytes(content);
+        self.blobs().put(content).await.expect("the blob is stored");
+        self.store
+            .publish(
+                &self.account,
+                Publication {
+                    repository: self.repository.clone(),
+                    asset_path: path.to_string(),
+                    coordinates: PackageCoordinates {
+                        package_name: path.to_string(),
+                        package_version: digest.value.clone(),
+                    },
+                    digest: digest.clone(),
+                    size_bytes: content.len() as u64,
+                    tags: Vec::new(),
+                    actor: "hrn:hodei:iam:acme:User/alice".to_string(),
+                    correlation_id: format!("corr-{path}"),
+                    overwrite: false,
+                    precondition: None,
+                    subject: None,
+                },
+            )
+            .await
+            .expect("the content is published");
+        digest
+    }
+
+    /// El recibo firmado que confirma una resolucion.
+    async fn receipt(&self, path: &str, digest: &ContentDigest, size_bytes: u64) {
+        self.ledger
+            .record(&ProvenanceReceipt {
+                id: format!(
+                    "prv-{}-{}-central-1-fetched",
+                    self.account,
+                    path.replace('/', "-")
+                ),
+                account: self.account.clone(),
+                repository: self.repository.clone(),
+                asset_path: path.to_string(),
+                upstream_id: "central".to_string(),
+                source_url: format!("{UPSTREAM_URL}{path}"),
+                config_version: 1,
+                digest: digest.clone(),
+                size_bytes,
+                checksum: ChecksumEvidence::ComputedOnly,
+                status: 200,
+                redirects: 0,
+                etag: None,
+                last_modified: Some((Utc::now() - Duration::hours(1)).to_rfc3339()),
+                outcome: ReceiptOutcome::Fetched,
+                actor: "hrn:hodei:iam:acme:User/alice".to_string(),
+                correlation_id: format!("corr-{path}"),
+                fetched_at: Utc::now() - Duration::seconds(2 * 3600),
+            })
+            .await
+            .expect("the receipt is recorded");
+    }
+}
+
+async fn export_with(
+    site: &Site,
+    name: &str,
+    signer: Option<&MetadataSigner>,
+) -> std::path::PathBuf {
+    let to = site.tmp.path().join(name);
+    let blobs = site.blobs();
+    let report = bundles::export(
+        &site.store,
+        &site.ledger,
+        &site.trust,
+        &blobs,
+        &site.account,
+        &site.repository,
+        &to,
+        signer,
+    )
+    .await
+    .expect("the export runs");
+    report.path
+}
+
+async fn import_into(
+    site: &Site,
+    directory: &std::path::Path,
+) -> Result<bundles::ImportReport, bundles::BundleError> {
+    let blobs = site.blobs();
+    bundles::import(
+        &site.store,
+        &site.store,
+        &site.ledger,
+        &blobs,
+        &site.account,
+        &site.repository,
+        directory,
+        // El destino es otro `Site` (otra cuenta: el alpha es compartido y
+        // cada sitio lleva la suya), asi que la importacion cruza duenos y
+        // lo declara de forma explicita, como pide el contrato de HSP-126.
+        Mapping {
+            allow: true,
+            overwrite: false,
+        },
+        "operator",
+        "corr-capsule",
+    )
+    .await
+}
 
 const DEC_ID: &str = "dec-h207-1";
 const DEC_ID_2: &str = "dec-h207-2";
@@ -359,47 +545,25 @@ async fn copies_of(client: &GraphClient, predicate: &str, key: &str) -> usize {
 /// El paquete del escenario central: una ruta con decision (`tools/a.bin`),
 /// una confirmada sin decision (`tools/b.bin`) y una retenida (`tools/c.bin`)
 /// — la absence explicita forma parte del contrato.
-async fn capsule_site(decided: &mut ContentDigest) -> (Site, PathBuf, MetadataSigner) {
-    let site = Site::new().await;
-    site.create_proxy("acme", "mirror", "central").await;
-    let a = site
-        .resolve("acme", "mirror", "tools/a.bin", b"tool a")
-        .await;
-    site.receipt(
-        "acme",
-        "mirror",
-        "tools/a.bin",
-        &a,
-        6,
-        hodei_catalog::ReceiptOutcome::Fetched,
-        "central",
-        1,
-    )
-    .await;
+async fn capsule_site(
+    client: Arc<GraphClient>,
+    decided: &mut ContentDigest,
+) -> (Site, PathBuf, MetadataSigner) {
+    let site = Site::new(client).await;
+    site.create_proxy("central").await;
+    let a = site.resolve("tools/a.bin", b"tool a").await;
+    site.receipt("tools/a.bin", &a, 6).await;
     *decided = a.clone();
-    let b = site
-        .resolve("acme", "mirror", "tools/b.bin", b"tool b")
-        .await;
-    site.receipt(
-        "acme",
-        "mirror",
-        "tools/b.bin",
-        &b,
-        6,
-        hodei_catalog::ReceiptOutcome::Fetched,
-        "central",
-        1,
-    )
-    .await;
+    let b = site.resolve("tools/b.bin", b"tool b").await;
+    site.receipt("tools/b.bin", &b, 6).await;
     // c.bin no tiene recibo: se retiene y la capsula lo dice.
-    site.resolve("acme", "mirror", "tools/c.bin", b"tool c")
-        .await;
+    site.resolve("tools/c.bin", b"tool c").await;
 
     let signer = scratch_signer("capsule");
-    site.store
+    site.trust
         .grant(&[TrustGrant {
-            account: "acme".to_string(),
-            repository: "mirror".to_string(),
+            account: site.account.clone(),
+            repository: site.repository.clone(),
             digest: a,
             decision_id: DEC_ID.to_string(),
             actor: ACTOR.to_string(),
@@ -422,11 +586,11 @@ async fn capsule_site(decided: &mut ContentDigest) -> (Site, PathBuf, MetadataSi
 
 /// Concede el digest con la decision nombrada, para el overlay de
 /// vigencia que lee `read_capsule_with_trust`.
-async fn seed_grant(ledger: &MirrorLedger, digest: &ContentDigest, decision_id: &str) {
+async fn seed_grant(ledger: &MirrorLedger, site: &Site, digest: &ContentDigest, decision_id: &str) {
     ledger
         .grant(&[TrustGrant {
-            account: "acme".to_string(),
-            repository: "mirror".to_string(),
+            account: site.account.clone(),
+            repository: site.repository.clone(),
             digest: digest.clone(),
             decision_id: decision_id.to_string(),
             actor: ACTOR.to_string(),
@@ -454,7 +618,7 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
     };
     let tenant = run_tenant("parity");
     let mut decided = ContentDigest::sha256("0".repeat(64));
-    let (_site, directory, signer) = capsule_site(&mut decided).await;
+    let (_site, directory, signer) = capsule_site(client.clone(), &mut decided).await;
     let layout = directory.join("oci");
     let verified = verify_capsule(&layout, &signer).expect("the layout verifies");
 
@@ -566,23 +730,10 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
     // AC2 — el distractor: otra capsula firmada, mismo tenant y mismo
     // repositorio. Se ingiere bajo su propia clave; leer la primera
     // jamas alcanza su path.
-    let other_site = Site::new().await;
-    other_site.create_proxy("acme", "mirror", "central").await;
-    let d = other_site
-        .resolve("acme", "mirror", "tools/z.bin", b"tool z")
-        .await;
-    other_site
-        .receipt(
-            "acme",
-            "mirror",
-            "tools/z.bin",
-            &d,
-            6,
-            hodei_catalog::ReceiptOutcome::Fetched,
-            "central",
-            1,
-        )
-        .await;
+    let other_site = Site::new(client.clone()).await;
+    other_site.create_proxy("central").await;
+    let d = other_site.resolve("tools/z.bin", b"tool z").await;
+    other_site.receipt("tools/z.bin", &d, 6).await;
     let other_directory = export_with(&other_site, "other", Some(&signer)).await;
     let other_layout = other_directory.join("oci");
     verify_capsule(&other_layout, &signer).expect("the distractor verifies");
@@ -630,9 +781,9 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
     // el MISMO paquete exportado se importa intacto en otro destino.
     // Leer la capsula en el grafo no cambia como se ve un paquete ya
     // exportado — la paridad export <-> grafo es additive.
-    let target = Site::new().await;
-    target.create_proxy("acme", "mirror", "central").await;
-    let report = import_into(&target, &directory, "acme", "mirror")
+    let target = Site::new(client.clone()).await;
+    target.create_proxy("central").await;
+    let report = import_into(&target, &directory)
         .await
         .expect("the destination accepts the package");
     assert_eq!(
@@ -659,7 +810,7 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
     };
     let tenant = run_tenant("revoke");
     let mut decided = ContentDigest::sha256("0".repeat(64));
-    let (_site, directory, signer) = capsule_site(&mut decided).await;
+    let (site, directory, signer) = capsule_site(client.clone(), &mut decided).await;
     let layout = directory.join("oci");
     verify_capsule(&layout, &signer).expect("the layout verifies");
 
@@ -673,7 +824,7 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
         .expect("the capsule is ingested");
 
     let ledger = MirrorLedger::new();
-    seed_grant(&ledger, &decided, DEC_ID).await;
+    seed_grant(&ledger, &site, &decided, DEC_ID).await;
     let now = Utc::now();
 
     // Hoy la decision vigente ES la de la capsula: Active.
@@ -691,8 +842,8 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
     // del release sigue siendo el byte firmado.
     ledger
         .revoke_decision(
-            "acme",
-            "mirror",
+            &site.account,
+            &site.repository,
             DEC_ID,
             "hrn:hodei:iam:acme:User/dave",
             "the risk changed",
@@ -736,7 +887,7 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
 
     // Re-promocion con OTRA decision: la capsula conserva la suya y el
     // estado nombra la vigente — Superseded, jamas la decision antigua.
-    seed_grant(&ledger, &decided, DEC_ID_2).await;
+    seed_grant(&ledger, &site, &decided, DEC_ID_2).await;
     let superseded = store
         .read_capsule_with_trust(&image_digest, &ledger, now + Duration::hours(1))
         .await
@@ -777,7 +928,7 @@ async fn a_signed_capsule_is_never_rewritten_in_the_graph() {
     };
     let tenant = run_tenant("immutable");
     let mut decided = ContentDigest::sha256("0".repeat(64));
-    let (_site, directory, signer) = capsule_site(&mut decided).await;
+    let (_site, directory, signer) = capsule_site(client.clone(), &mut decided).await;
     let layout = directory.join("oci");
     let image_digest = index_image_digest(&layout);
 

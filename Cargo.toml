@@ -363,6 +363,51 @@ serde_yaml = "0.9"
 # autenticado y la guarda versionada viven aquí.
 hodei-graph-client = { path = "crates/hodei-graph-client" }
 
+# HSP-314 F4 S3: IT de catalogo y formatos sobre Dgraph real. Compilan y
+# corren con `--no-default-features` (sin `legacy`): la referencia de paridad
+# del motor embebido se sustituyo por aserciones directas del contrato. Se
+# saltan a si mismos (exit 0) sin HODEI_GRAPH_IT_ENDPOINT.
+
+[[test]]
+name = "hsp187_catalog_dgraph_it"
+path = "tests/hsp187_catalog_dgraph_it.rs"
+
+[[test]]
+name = "hsp190_oci_catalog_dgraph_it"
+path = "tests/hsp190_oci_catalog_dgraph_it.rs"
+
+[[test]]
+name = "hsp191_maven_dgraph_it"
+path = "tests/hsp191_maven_dgraph_it.rs"
+
+[[test]]
+name = "hsp193_npm_dgraph_it"
+path = "tests/hsp193_npm_dgraph_it.rs"
+
+[[test]]
+name = "hsp194_pypi_dgraph_it"
+path = "tests/hsp194_pypi_dgraph_it.rs"
+
+[[test]]
+name = "hsp195_apt_dgraph_it"
+path = "tests/hsp195_apt_dgraph_it.rs"
+
+[[test]]
+name = "hsp196_proxy_dgraph_it"
+path = "tests/hsp196_proxy_dgraph_it.rs"
+
+[[test]]
+name = "hsp197_yum_dgraph_it"
+path = "tests/hsp197_yum_dgraph_it.rs"
+
+[[test]]
+name = "hsp207_capsule_dgraph_it"
+path = "tests/hsp207_capsule_dgraph_it.rs"
+
+[[test]]
+name = "hsp304_formats_dgraph_it"
+path = "tests/hsp304_formats_dgraph_it.rs"
+
 # HSP-314 F1: suites que siembran o montan el motor embebido (SurrealDB) y por
 # tanto solo existen con la feature `legacy`. Con `--no-default-features` no se
 # compilan; la cobertura sin legacy la dan los IT de grafo (*_dgraph_it con
@@ -586,46 +631,6 @@ path = "tests/hsp159_conan_client.rs"
 required-features = ["legacy"]
 
 [[test]]
-name = "hsp187_catalog_dgraph_it"
-path = "tests/hsp187_catalog_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp190_oci_catalog_dgraph_it"
-path = "tests/hsp190_oci_catalog_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp191_maven_dgraph_it"
-path = "tests/hsp191_maven_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp193_npm_dgraph_it"
-path = "tests/hsp193_npm_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp194_pypi_dgraph_it"
-path = "tests/hsp194_pypi_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp195_apt_dgraph_it"
-path = "tests/hsp195_apt_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp197_yum_dgraph_it"
-path = "tests/hsp197_yum_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp207_capsule_dgraph_it"
-path = "tests/hsp207_capsule_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
 name = "hsp217_galaxy_client"
 path = "tests/hsp217_galaxy_client.rs"
 required-features = ["legacy"]
@@ -777,8 +782,7 @@ required-features = ["legacy"]
 # HSP-314 F1: suites que arrancan el binario o el bootstrap con el perfil
 # embebido (sin `[graph]`). Sin `legacy` el arranque se rechaza por diseno
 # (HSP-213), asi que solo se construyen con la feature. Migrarlas al perfil
-# `[graph]` o retirarlas es trabajo de F2/F3. Las dos *_dgraph_it montan los
-# almacenes a mano tras un bootstrap embebido.
+# `[graph]` o retirarlas es trabajo de F2/F3.
 
 [[test]]
 name = "admin_surface"
@@ -877,17 +881,3 @@ required-features = ["legacy"]
 name = "repository_read"
 path = "tests/repository_read.rs"
 required-features = ["legacy"]
-
-
-[[test]]
-name = "hsp196_proxy_dgraph_it"
-path = "tests/hsp196_proxy_dgraph_it.rs"
-required-features = ["legacy"]
-
-[[test]]
-name = "hsp304_formats_dgraph_it"
-path = "tests/hsp304_formats_dgraph_it.rs"
-required-features = ["legacy"]
-
-
-
