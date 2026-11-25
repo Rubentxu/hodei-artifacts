@@ -1,1 +1,0 @@
-// Data Transfer Objects for the sign_artifact feature.
