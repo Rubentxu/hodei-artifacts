@@ -45,13 +45,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${1:-$ROOT/dist}"
 BIN_NAME="hodei-artifacts-api"
 # HSP-213: the release ships the service alone. The operator commands that
-# read or index the embedded engine (ensure-iam-index, ensure-graph-index,
-# backfill-iam-scope, hodei-recovery, perf_lab) live behind the `legacy`
-# feature and are packaged by scripts/package-legacy-tools.sh as the
-# isolated tool: the production binary and image must not contain
-# SurrealDB nor RocksDB while the migration window is open. The window
-# opened on 2026-11-22 and closes after the performance spine and the
-# retirement of the reader, not before.
+# read or indexed the embedded engine were retired in HSP-314 F4; the
+# production binary and image must not contain SurrealDB nor RocksDB.
 
 PROFILE="${HODEI_PACKAGE_PROFILE:-release}"
 case "$PROFILE" in

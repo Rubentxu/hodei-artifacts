@@ -172,6 +172,14 @@ de datos, y el proceso real en la de infraestructura.
 
 **Tarea:** HSP-115 (HAR-21)
 
+> **Herramienta retirada (HSP-314 F4).** El binario `hodei-recovery`, su
+> módulo `backup` y la suite `hsp115_recovery_e2e` ya no existen: operaban
+> sobre el motor embebido (SurrealDB sobre RocksDB), que se retiró del producto.
+> Esta sección queda como registro de lo que se midió entonces y **no** describe
+> una superficie disponible. En el perfil de grafo, la copia es la de Dgraph
+> (`deploy/dgraph/README.md`) y la del bucket S3; el scrub sigue disponible por
+> HTTP (`GET /api/v1/scrub`).
+
 ## R1. Qué afirma
 
 Afirma que un operador puede **copiar** el registro con el servicio parado,
@@ -210,8 +218,8 @@ escondidas. Las reglas:
 
 ## R2. Qué se ha medido
 
-`tests/hsp115_recovery_e2e.rs` ejecuta el binario `hodei-recovery` y el
-servicio **reales** como procesos, con `curl` y `sha256sum` como clientes, y
+La suite `hsp115_recovery_e2e` (ya borrada) ejecutaba el binario
+`hodei-recovery` (ya retirado) y el servicio **reales** como procesos, con `curl` y `sha256sum` como clientes, y
 una base RocksDB real:
 
 | Caso | Qué comprueba |
@@ -315,13 +323,12 @@ Los valores por defecto (`--db`, `--cas`, `--namespace`, `--database`,
 
 ## R5. Cómo se ejecuta
 
-```bash
-cargo test --test hsp115_recovery_e2e -- --nocapture
-cargo test -p hodei-artifacts-api --lib recovery
-```
+Ya no hay e2e de recuperación: la suite `hsp115_recovery_e2e` se borró.
+Lo que sigue vivo son las pruebas unitarias del módulo `recovery`:
 
-La pipeline registra la suite `hsp115_recovery_e2e` en la etapa de
-infraestructura (`pipeline.kts`), junto al proceso real de la recolección.
+```bash
+cargo test -p hodei-artifacts-api --no-default-features --lib recovery
+```
 
 ---
 

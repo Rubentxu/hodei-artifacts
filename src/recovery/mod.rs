@@ -12,8 +12,6 @@
 //!   huerfano) y el servicio que lo calcula reutilizando el censo de la
 //!   recoleccion de basura.
 //! - [`export`]: la correccion del export del motor para que se pueda importar.
-//! - [`backup`]: la copia coherente, su verificacion, la restauracion y la
-//!   reparacion desde una copia.
 //! - [`import`]: el import idempotente del paquete semantico portable
 //!   (HSP-210): misma clave canonica, mismo orden, ninguna copia de UID.
 //! - [`reconcile`]: el rebuild de proyecciones y la reconciliacion
@@ -37,11 +35,6 @@
 //!    embebido bloquea la base mientras el servicio vive; no se promete
 //!    copia en caliente ni alta disponibilidad.
 
-// HSP-213: la copia del motor embebido abre RocksDB en el propio
-// proceso: solo existe con la feature `legacy`, que el binario
-// productivo no declara y la herramienta legado si.
-#[cfg(feature = "legacy")]
-pub mod backup;
 pub mod cutover;
 pub mod export;
 pub mod import;
@@ -49,11 +42,6 @@ pub mod manifest;
 pub mod reconcile;
 pub mod scrub;
 
-#[cfg(feature = "legacy")]
-pub use backup::{
-    BackupReport, RepairReport, RestoreReport, VerifyOutcome, backup, inspect, open_database,
-    repair_from_backup, restore, verify,
-};
 pub use cutover::{
     Authority, AuthorityError, CutoverError, CutoverMachine, CutoverMetrics, CutoverWindow, Phase,
     drain_rows, export_package,

@@ -80,7 +80,7 @@ de git por si una idea se promueve.
 | Autorización Cedar con bundle declarado | superficie de repositorios | `tests/policy_circuits.rs` |
 | Auditoría de seguridad | eventos de las mutaciones | `tests/audit_events.rs`, `tests/iam_audit.rs` |
 | Outbox de auditoría | frontera única de commit y entrega | `crates/hodei-catalog-storage/tests/har03_outbox_contract.rs` |
-| Comando operador del índice de políticas | `ensure-iam-index` | `tests/iam_account_index.rs` |
+| Comando operador del índice de políticas | Retirado (HSP-314 F4) | n/a |
 | Contenido crudo: publicar, descargar y describir | `PUT|GET|HEAD /repository/{*target}` | `tests/raw_conformity_uat.rs` |
 | OCI: pull de blobs y manifiestos | `GET|HEAD /v2/{*target}` | `tests/oci_pull_contract.rs` |
 | OCI: push de blobs y manifiestos | `POST|PATCH|PUT /v2/{*target}` | `tests/oci_push_contract.rs` |
@@ -216,6 +216,9 @@ crecen con el tamano de la tabla: el grafo respondia a una pregunta que
 tocaba diez relaciones leyendo todas las relaciones. Particionar por
 cuenta habria repartido el coste sin quitarlo, y habria multiplicado el
 almacen por el numero de cuentas.
+
+(Retirado en HSP-314 F4: `ensure-graph-index` y `ensure-iam-index` ya no
+existen; el texto siguiente es historia del motor embebido.)
 
 La respuesta son **indices, declarados por un comando del operador**:
 `ensure-graph-index` declara los indices de las tablas del grafo desde su
@@ -2090,11 +2093,9 @@ la sección RECOVERY de [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md); aquí
 se dice qué hay y dónde vive.
 
 **Qué hay.** `src/recovery/` es la biblioteca: `manifest` (el formato de la
-copia y su comprobación), `backup` (copia, verificación, restauración y
-reparación), `scrub` (el veredicto puro `assess` y el `Scrubber`, que
+copia y su comprobación), `backup` (retirado en HSP-314 F4), `scrub` (el veredicto puro `assess` y el `Scrubber`, que
 reutiliza el censo de `src/gc/`) y `export` (el filtro que corrige el export
-de SurrealDB 2.7). `src/bin/hodei-recovery.rs` es la orden del operador
-(`backup`, `verify`, `restore`, `scrub`, `repair`) y `GET /api/v1/scrub` es el
+de SurrealDB 2.7). `hodei-recovery` (la orden del operador) se retiró en HSP-314 F4, y `GET /api/v1/scrub` es el
 scrub sobre el servicio vivo.
 
 **Cómo decide.** Los metadatos van antes que los bytes y cada blob se copia a

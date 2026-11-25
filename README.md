@@ -48,7 +48,7 @@ tar -xzf "$PKG.tar.gz" && cd "$PKG"
 ## Why hodei-artifacts?
 
 - **Fail-closed security by default:** Admin surface (`/api/v1` IAM, policies, schemas, playground) is closed by default (`admin_api_enabled = false`); business routes require verified Bearer JWTs and per-repository Cedar ABAC policies.
-- **Content-addressed & auditable:** SHA-256 deduplicated blob hub (`hodei-hub` with local CAS or S3-compatible backend), security audit log, and `hodei-recovery` backup/restore/scrub CLI.
+- **Content-addressed & auditable:** SHA-256 deduplicated blob hub (`hodei-hub` with local CAS or S3-compatible backend), security audit log, and an HTTP scrub endpoint.
 - **10 package ecosystems in one binary:** Native protocol surfaces for `raw`, `oci`, `maven2`, `npm`, `pypi`, `cargo`, `go`, `nuget`, `apt`, and `rpm` (plus Helm charts over OCI), without JVM or GC overhead.
 - **Strict public URL governance:** `public_base_url` and `trusted_proxies` are controlled strictly by configuration, never by untrusted `Host` or `X-Forwarded-*` headers.
 
@@ -84,7 +84,7 @@ Derived from [`RepositoryFormat::served()`](crates/hodei-catalog/src/model.rs), 
 - **Configuration reference:** [`docs/community/configuration.md`](docs/community/configuration.md) · **Operations:** [`docs/community/operations.md`](docs/community/operations.md) · **Release notes template:** [`docs/community/release-notes-template.md`](docs/community/release-notes-template.md)
 - **Admin surface:** [`docs/security/admin-surface.md`](docs/security/admin-surface.md) and [`docs/security/production-auth.md`](docs/security/production-auth.md)
 - **Repository access & audit events:** [`docs/security/repository-read.md`](docs/security/repository-read.md) and [`docs/security/audit-events.md`](docs/security/audit-events.md)
-- **Backup, restore, scrub & repair (`hodei-recovery`):** [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación)
+- **Backup & restore:** Dgraph and S3 bucket backups; the `hodei-recovery` tool was retired in HSP-314 F4 (history in [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación))
 - **Upgrade & release packaging:** [`scripts/package-release.sh`](scripts/package-release.sh) and [`docs/community/ecosystems.md`](docs/community/ecosystems.md#3-operaciones-copia-de-seguridad-restauración-y-actualización)
 - **Architecture & Security overview:** [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md)
 

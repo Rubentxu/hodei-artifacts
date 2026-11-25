@@ -14,7 +14,7 @@
 //!
 //! El scrub **no repara por su cuenta**. Reparar un blob es devolverle los
 //! bytes correctos, y los unicos bytes correctos son los de una copia cuyo
-//! hash coincide ([`super::backup::repair_from_backup`]). Inventar bytes, o
+//! hash coincide. Inventar bytes, o
 //! borrar una referencia para que el informe salga limpio, seria esconder
 //! el dano.
 

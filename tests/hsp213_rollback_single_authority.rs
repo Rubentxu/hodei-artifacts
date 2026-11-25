@@ -298,10 +298,10 @@ async fn the_pre_write_rollback_restores_one_authority_exactly() {
 /// propio arbol del test. Que este modulo compile sin `legacy` ya afirma
 /// que la maquina de rollback (`src/recovery/cutover.rs`) no depende del
 /// lector retirado; la asercion del mensaje recuerda que, en ese mismo
-/// arbol, la unica forma de volver al almacen local es la herramienta de
-/// la ventana, no un segundo binario del servicio.
+/// arbol, no queda herramienta para volver al almacen local (retiradas en
+/// HSP-314 F4), y tampoco un segundo binario del servicio.
 #[test]
 fn the_rehearsal_tree_ships_no_embedded_engine() {
     assert!(hodei_artifacts_api::bootstrap::LEGACY_PROFILE_REFUSAL.contains("HSP-213"));
-    assert!(hodei_artifacts_api::bootstrap::LEGACY_PROFILE_REFUSAL.contains("hodei-recovery"));
+    assert!(hodei_artifacts_api::bootstrap::LEGACY_PROFILE_REFUSAL.contains("HSP-314 F4"));
 }

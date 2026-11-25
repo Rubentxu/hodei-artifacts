@@ -32,8 +32,6 @@ pub mod evidence_dgraph;
 pub mod evidence_surreal;
 pub mod gc;
 pub mod handlers;
-#[cfg(feature = "legacy")]
-pub mod iam_backfill;
 pub mod investigation;
 pub mod investigation_dgraph;
 pub mod migration;

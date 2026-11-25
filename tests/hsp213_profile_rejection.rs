@@ -5,7 +5,7 @@
 //! binario productivo, el que empaqueta `scripts/package-release.sh` — un
 //! despliegue sin `[graph]` (el perfil antiguo de `HODEI_ROCKSDB__PATH`)
 //! muere con el mensaje de migracion: nombra la retirada, la autoridad
-//! externa, la herramienta legacy y la ventana (abierta 2026-11-22). Y no
+//! externa y el retiro de las herramientas de operacion (HSP-314 F4). Y no
 //! crea el path local: la negativa es previa a tocar el almacen.
 //!
 //! El arreglo de features
@@ -41,15 +41,12 @@ fn the_production_binary_refuses_the_embedded_profile_with_the_migration_message
         "the production binary must refuse the embedded profile, not boot it"
     );
     let text = String::from_utf8_lossy(&output.stderr).into_owned();
-    // El mensaje nombra la retirada, el destino, la herramienta y la
-    // ventana: quien lea el log sabe exactamente a donde migrar.
+    // El mensaje nombra la retirada, el destino y el retiro de las
+    // herramientas: quien lea el log sabe exactamente a donde migrar.
     for fragment in [
         "retired from the production binary (HSP-213)",
         "declare a [graph] section",
-        "hodei-recovery",
-        "--features legacy",
-        "migration window",
-        "2026-11-22",
+        "HSP-314 F4",
     ] {
         assert!(
             text.contains(fragment),

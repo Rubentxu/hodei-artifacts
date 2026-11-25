@@ -7,8 +7,8 @@
 //! error explícito y no escribe un byte en `cas_path`**, que raw y OCI
 //! reales publican y descargan sobre un cubo conservando su SHA256, que
 //! el reinicio con el mismo catálogo y el mismo cubo conserva los datos,
-//! y que el GC usa el backend elegido. La recuperación sobre S3 se
-//! comprueba por el lado honesto: el binario de operación se niega.
+//! y que el GC usa el backend elegido (la herramienta `hodei-recovery`,
+//! y su negativa sobre S3, se retiró en HSP-314 F4).
 //!
 //! El servidor S3 es el contenedor compartido de la serie HSP-116: si ya
 //! esta vivo se reutiliza, si no se levanta. Un cuarto contenedor por
@@ -471,40 +471,6 @@ fn an_unreachable_bucket_stops_the_boot_and_leaves_the_directory_alone() {
     assert!(
         !cas.exists(),
         "AC1: el cas_path no se toca cuando el backend elegido es S3"
-    );
-}
-
-/// AC3 (lado recovery): `hodei-recovery scrub` contra un despliegue con
-/// backend S3 se niega con el mensaje explicito **antes** de abrir la
-/// base, y sale con codigo de fallo de operacion.
-#[test]
-fn recovery_over_s3_declares_itself_unavailable_before_touching_anything() {
-    let deployment = a_deployment();
-    // El servicio no hace falta: lo que se prueba es el binario de
-    // operacion contra la misma configuracion que tendria el servicio.
-    // La base existe --el seed la escribio-- y si el guard no existiera
-    // el scrub la abriria: la no-apertura es parte de lo que se observa.
-    let environment = the_s3_environment(&the_bucket());
-    let mut command = Command::new(env!("CARGO_BIN_EXE_hodei-recovery"));
-    command
-        .env_remove("RUN_MODE")
-        .env("HODEI_ROCKSDB__PATH", &deployment.db)
-        .env("HODEI_CONTENT__CAS_PATH", &deployment.cas);
-    for (name, value) in &environment {
-        command.env(name, value);
-    }
-    let output = command
-        .arg("scrub")
-        .output()
-        .expect("the recovery binary runs");
-    assert!(
-        !output.status.success(),
-        "AC3: el scrub sobre S3 no se hace pasandolo por alto"
-    );
-    let said = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert!(
-        said.contains("recovery over the S3 backend is not available"),
-        "AC3: la negativa tiene que decirlo con esas palabras:\n{said}"
     );
 }
 
