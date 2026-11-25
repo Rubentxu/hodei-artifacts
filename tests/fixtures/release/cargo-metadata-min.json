@@ -1,0 +1,207 @@
+{
+  "packages": [
+    {
+      "name": "hodei-artifacts-api",
+      "version": "1.0.0",
+      "id": "path#hodei-artifacts-api@1.0.0",
+      "license": "MIT",
+      "license_file": null,
+      "source": null,
+      "repository": null,
+      "dependencies": [
+        {
+          "name": "serde"
+        },
+        {
+          "name": "ring-like"
+        },
+        {
+          "name": "zlib-ish"
+        },
+        {
+          "name": "hodei-kernel"
+        }
+      ]
+    },
+    {
+      "name": "hodei-kernel",
+      "version": "1.0.0",
+      "id": "path#hodei-kernel@1.0.0",
+      "license": null,
+      "license_file": null,
+      "source": null,
+      "repository": null,
+      "dependencies": []
+    },
+    {
+      "name": "serde",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0",
+      "license": "MIT OR Apache-2.0",
+      "license_file": null,
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": null,
+      "dependencies": []
+    },
+    {
+      "name": "legacy-slash",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#legacy-slash@1.0.0",
+      "license": "MIT/Apache-2.0",
+      "license_file": null,
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": null,
+      "dependencies": []
+    },
+    {
+      "name": "ring-like",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#ring-like@1.0.0",
+      "license": "ISC AND (Apache-2.0 OR MIT) AND BSD-3-Clause",
+      "license_file": null,
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": null,
+      "dependencies": []
+    },
+    {
+      "name": "zlib-ish",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zlib-ish@1.0.0",
+      "license": "Apache-2.0 WITH LLVM-exception OR Zlib",
+      "license_file": null,
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": null,
+      "dependencies": []
+    },
+    {
+      "name": "dev-only-tool",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#dev-only-tool@1.0.0",
+      "license": "MIT",
+      "license_file": null,
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "repository": null,
+      "dependencies": []
+    }
+  ],
+  "workspace_members": [
+    "path#hodei-artifacts-api@1.0.0",
+    "path#hodei-kernel@1.0.0"
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "path#hodei-artifacts-api@1.0.0",
+        "dependencies": [
+          "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0",
+          "registry+https://github.com/rust-lang/crates.io-index#ring-like@1.0.0",
+          "registry+https://github.com/rust-lang/crates.io-index#zlib-ish@1.0.0",
+          "path#hodei-kernel@1.0.0",
+          "registry+https://github.com/rust-lang/crates.io-index#legacy-slash@1.0.0",
+          "registry+https://github.com/rust-lang/crates.io-index#dev-only-tool@1.0.0"
+        ],
+        "deps": [
+          {
+            "name": "serde",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "ring-like",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#ring-like@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "zlib-ish",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#zlib-ish@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "hodei-kernel",
+            "pkg": "path#hodei-kernel@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "legacy-slash",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#legacy-slash@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "dev-only-tool",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#dev-only-tool@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": "dev",
+                "target": null
+              }
+            ]
+          }
+        ],
+        "features": []
+      },
+      {
+        "id": "path#hodei-kernel@1.0.0",
+        "dependencies": [],
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0",
+        "dependencies": [],
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#legacy-slash@1.0.0",
+        "dependencies": [],
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#ring-like@1.0.0",
+        "dependencies": [],
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#zlib-ish@1.0.0",
+        "dependencies": [],
+        "deps": [],
+        "features": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#dev-only-tool@1.0.0",
+        "dependencies": [],
+        "deps": [],
+        "features": []
+      }
+    ],
+    "root": "path#hodei-artifacts-api@1.0.0"
+  },
+  "version": 1
+}

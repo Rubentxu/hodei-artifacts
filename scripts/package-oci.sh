@@ -52,6 +52,20 @@ case "$ARCH" in
   aarch64) OCI_PLATFORM="linux/arm64" ;;
   *) echo "error: unsupported HODEI_OCI_ARCH: $ARCH (x86_64 or aarch64)" >&2; exit 1 ;;
 esac
+
+# shellcheck source=scripts/lib-release-tree.sh
+. "$ROOT/scripts/lib-release-tree.sh"
+TREE_CLEAN="$(release_require_clean_tree "$ROOT" "$OUT_DIR")" || exit 1
+
+# The architecture, the Rust target and the image platform must be one and the
+# same: a stray OCI_RUST_TARGET must not label an aarch64 binary as x86_64.
+ZIG_TARGET="${OCI_RUST_TARGET:-${ARCH}-unknown-linux-gnu.2.36}"
+RUST_TRIPLE="${ZIG_TARGET%%.*}"
+if [ "${RUST_TRIPLE%%-*}" != "$ARCH" ]; then
+  echo "error: OCI_RUST_TARGET ($ZIG_TARGET) targets ${RUST_TRIPLE%%-*} but the release architecture is $ARCH" >&2
+  exit 1
+fi
+
 COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 SHORT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || echo 0)}"
@@ -83,9 +97,6 @@ run_syft() {
 # vendored OpenSSL so the runtime image needs no host-specific libssl.so.4.
 # Only the production API binary is built and staged for the OCI image
 # (no legacy migration binaries such as ensure-iam-index or ensure-graph-index).
-ZIG_TARGET="${OCI_RUST_TARGET:-${ARCH}-unknown-linux-gnu.2.36}"
-RUST_TRIPLE="${ZIG_TARGET%%.*}"
-
 if [ "$ARCH" != "$HOST_ARCH" ] && ! command -v cargo-zigbuild >/dev/null 2>&1; then
   echo "error: building $ARCH on a $HOST_ARCH host needs cargo-zigbuild" >&2
   exit 1
@@ -228,65 +239,13 @@ echo "==> generating dependency & license matrix from cargo metadata"
 CARGO_LOCK_SHA256="$(sha256sum "$ROOT/Cargo.lock" | cut -d' ' -f1)"
 CARGO_METADATA_TMP="$OUT_DIR/.cargo-metadata.json"
 cargo metadata --locked --format-version 1 > "$CARGO_METADATA_TMP"
-python3 - "$CARGO_METADATA_TMP" "$LICENSE_MATRIX_FILE" "$ROOT/Cargo.toml" <<'PY'
-import collections
-import json
-import sys
-
-meta_path = sys.argv[1]
-out_path = sys.argv[2]
-cargo_toml_path = sys.argv[3]
-with open(meta_path, "r", encoding="utf-8") as f:
-    meta = json.load(f)
-
-packages = []
-license_counts = collections.Counter()
-unlicensed = []
-surrealdb_versions = []
-
-for pkg in sorted(meta.get("packages", []), key=lambda p: (p["name"], p["version"])):
-    lic = pkg.get("license") or pkg.get("license_file") or "UNKNOWN"
-    if lic == "UNKNOWN":
-        unlicensed.append(f"{pkg['name']}@{pkg['version']}")
-    license_counts[lic] += 1
-    if pkg["name"] == "surrealdb":
-        surrealdb_versions.append(pkg["version"])
-    packages.append({
-        "name": pkg["name"],
-        "version": pkg["version"],
-        "license": lic,
-        "source": pkg.get("source") or "workspace",
-        "repository": pkg.get("repository"),
-    })
-
-with open(cargo_toml_path, "r", encoding="utf-8") as f:
-    cargo_toml_text = f.read()
-surrealdb_in_root_cargo = "surrealdb" in cargo_toml_text
-
-matrix = {
-    "schema_version": 1,
-    "generator": "cargo metadata --locked --format-version 1",
-    "total_packages": len(packages),
-    "license_summary": dict(sorted(license_counts.items())),
-    "unlicensed_packages": unlicensed,
-    "surrealdb_status": {
-        "present_in_cargo_toml": surrealdb_in_root_cargo,
-        "present_in_resolved_graph": len(surrealdb_versions) > 0,
-        "versions": surrealdb_versions,
-        "note": (
-            "surrealdb remains a direct Cargo.toml dependency pending HSP-213 removal; "
-            "the production OCI image excludes legacy migration binaries."
-            if surrealdb_in_root_cargo
-            else "surrealdb excluded from Cargo.toml"
-        ),
-    },
-    "packages": packages,
-}
-
-with open(out_path, "w", encoding="utf-8") as f:
-    json.dump(matrix, f, indent=2)
-    f.write("\n")
-PY
+# The policy (scripts/release-license-policy.json) fails the release on any
+# UNKNOWN licence or one outside the allowlist; the same script re-checks the
+# matrix in scripts/verify-release.sh.
+python3 -I "$ROOT/scripts/release-license-matrix.py" generate \
+  --metadata "$CARGO_METADATA_TMP" --out "$LICENSE_MATRIX_FILE" \
+  --policy "$ROOT/scripts/release-license-policy.json" --root-package "$BIN_NAME" \
+  --oci-cdx "$OCI_CDX_FILE"
 rm -f "$CARGO_METADATA_TMP"
 
 TARBALL_SHA256="$(cut -d' ' -f1 < "$OUT_DIR/${TARBALL_NAME}.sha256")"
@@ -322,6 +281,7 @@ provenance = {
                 "arch": "${ARCH}",
                 "source_date_epoch": int("${SOURCE_DATE_EPOCH}"),
                 "rust_target": "${BUILD_RUST_TARGET}",
+                "tree_clean": "${TREE_CLEAN}" == "true",
                 "oci_image_digest": "${IMAGE_DIGEST}",
             },
             "resolvedDependencies": [
@@ -407,6 +367,7 @@ cat > "$MANIFEST_FILE" <<EOF
   "version": "${VERSION}",
   "commit": "${COMMIT}",
   "arch": "${ARCH}",
+  "tree_clean": ${TREE_CLEAN},
   "source_date_epoch": ${SOURCE_DATE_EPOCH},
   "build_date": "${BUILD_DATE}",
   "tarball": {

@@ -50,6 +50,48 @@ fn podman(args: &[&str]) -> Output {
         .expect("podman command must execute")
 }
 
+/// Whether the git working tree is clean (the release script refuses a dirty one
+/// unless `HODEI_ALLOW_DIRTY_TREE=1`). A developer's worktree is usually dirty
+/// mid-task, so the test opts in knowingly only then and the verifier gets
+/// `--allow-dirty-tree`; a clean tree gets neither.
+fn tree_is_clean() -> bool {
+    let out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(REPO_ROOT)
+        .output()
+        .expect("git status");
+    out.status.success() && out.stdout.is_empty()
+}
+
+fn verify_args() -> Vec<&'static str> {
+    if tree_is_clean() {
+        vec![]
+    } else {
+        vec!["--allow-dirty-tree"]
+    }
+}
+
+/// Whether the root package declares a dependency (from `cargo metadata`).
+fn root_declares_dependency(name: &str) -> bool {
+    let out = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(REPO_ROOT)
+        .output()
+        .expect("cargo metadata");
+    assert!(out.status.success(), "cargo metadata must succeed");
+    let meta: Value = serde_json::from_slice(&out.stdout).expect("parse cargo metadata");
+    meta["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "hodei-artifacts-api")
+        .expect("root package")["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d["name"] == name)
+}
+
 /// Package the verifiable release once per test binary invocation so all tests
 /// inspect the exact same correlated output.
 fn packaged_dist() -> &'static Path {
@@ -60,6 +102,10 @@ fn packaged_dist() -> &'static Path {
         let script = Path::new(REPO_ROOT).join("scripts/package-oci.sh");
         let out = Command::new(&script)
             .arg(&dist_path)
+            .env(
+                "HODEI_ALLOW_DIRTY_TREE",
+                if tree_is_clean() { "0" } else { "1" },
+            )
             .current_dir(REPO_ROOT)
             .output()
             .expect("run scripts/package-oci.sh");
@@ -200,19 +246,36 @@ fn verifiable_release_emits_sboms_provenance_license_matrix_and_signatures() {
         !matrix["license_summary"].as_object().unwrap().is_empty(),
         "license_summary must be populated"
     );
-    assert!(
-        matrix["surrealdb_status"]["present_in_cargo_toml"]
-            .as_bool()
-            .unwrap(),
-        "Cargo.toml still declares surrealdb pending HSP-213; matrix must report it honestly"
+    // The matrix must tell the truth about surrealdb (HSP-289): its fields are
+    // compared with the real tree, never pinned to a constant.
+    let status = &matrix["surrealdb_status"];
+    let declared = root_declares_dependency("surrealdb");
+    assert_eq!(
+        status["present_in_cargo_toml"].as_bool().unwrap(),
+        declared,
+        "present_in_cargo_toml must equal what the root package really declares"
     );
     assert!(
-        matrix["surrealdb_status"]["note"]
-            .as_str()
-            .unwrap()
-            .contains("HSP-213"),
+        status["note"].as_str().unwrap().contains("HSP-213"),
         "surrealdb_status note must reference HSP-213"
     );
+    // The OCI SBOM exclusion of surrealdb/rocksdb is only claimed when it holds:
+    // while the binary links them it is NOT_RUN with a reason.
+    let linked = status["reachable_from_release_binary"].as_array().unwrap();
+    let exclusion = &status["oci_sbom_exclusion"];
+    if linked.is_empty() {
+        assert_eq!(exclusion["status"].as_str().unwrap(), "ok");
+        let cdx_text = fs::read_to_string(dist.join(oci_cdx_name))
+            .unwrap()
+            .to_lowercase();
+        assert!(
+            !cdx_text.contains("surrealdb") && !cdx_text.contains("rocksdb"),
+            "OCI SBOM must not list surrealdb or rocksdb"
+        );
+    } else {
+        assert_eq!(exclusion["status"].as_str().unwrap(), "NOT_RUN");
+        assert!(!exclusion["reason"].as_str().unwrap().trim().is_empty());
+    }
 
     // Validate provenance attestation and honest SLSA limits.
     let prov: Value = serde_json::from_str(
@@ -237,6 +300,20 @@ fn verifiable_release_emits_sboms_provenance_license_matrix_and_signatures() {
     assert_eq!(
         manifest["signing"]["mechanism"].as_str().unwrap(),
         "openpgp-detached"
+    );
+    let params = &prov["predicate"]["buildDefinition"]["externalParameters"];
+    assert_eq!(
+        params["tree_clean"].as_bool().unwrap(),
+        manifest["tree_clean"].as_bool().unwrap(),
+        "provenance and manifest must agree on tree_clean"
+    );
+    assert_eq!(params["tree_clean"].as_bool().unwrap(), tree_is_clean());
+    assert!(
+        params["rust_target"]
+            .as_str()
+            .unwrap()
+            .starts_with(manifest["arch"].as_str().unwrap()),
+        "rust_target must build the manifest architecture"
     );
 }
 
@@ -293,6 +370,7 @@ fn external_clean_dir_verification_passes_and_rejects_tampering() {
 
     // 1. Verify valid bundle in clean directory via verify-release.sh.
     let ok_out = Command::new(&verify_script)
+        .args(verify_args())
         .arg(dist)
         .output()
         .expect("run verify-release.sh");
@@ -371,6 +449,7 @@ fn external_clean_dir_verification_passes_and_rejects_tampering() {
         drop(f);
 
         let tampered_out = Command::new(&verify_script)
+            .args(verify_args())
             .arg(tampered_dir.path())
             .output()
             .expect("run verify-release.sh on tampered bundle");
