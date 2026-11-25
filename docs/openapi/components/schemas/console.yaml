@@ -195,6 +195,20 @@ CatalogSearchPage:
       type: integer
     offset:
       type: integer
+    cursor:
+      type: string
+      description: >
+        El cursor con el que se pidió esta página, cuando se pidió con
+        uno. Ausente si la página no llevó cursor.
+    next_cursor:
+      type: string
+      description: >
+        La clave del último resultado de la página, para pedir la que
+        sigue: la página siguiente empieza **después** de esa clave, por
+        lo que una fila que aparezca por delante no salta ni repite
+        ningún resultado. Ausente cuando no hay nada después. Se entrega
+        también en la primera página sin cursor: es la puerta de entrada
+        a la paginación keyset desde HTTP.
     results:
       type: array
       items: { $ref: './console.yaml#/CatalogSearchHit' }
