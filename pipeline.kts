@@ -349,6 +349,9 @@ pipeline {
                         "--test hsp121_go_client",
                         "--test hsp121_go_e2e",
                         "--test hsp232_go_group",
+                        // Modulo publico real a traves del group Go, verificado contra
+                        // sum.golang.org y un h1 fijado; muta el zip (HSP-300).
+                        "--test hsp300_go_sumdb",
                         // La readiness y la liveness son dos preguntas
                         // distintas (HSP-237): con el almacen desconectado
                         // en caliente, la readiness deja de ser 200 y la
