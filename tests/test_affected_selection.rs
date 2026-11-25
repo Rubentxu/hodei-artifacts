@@ -123,6 +123,15 @@ const CASES: &[Case] = &[
         crates: &[],
     },
     Case {
+        name: "chart",
+        cause: "chart",
+        file: "charts/hodei-artifacts/values.yaml",
+        content: "replicaCount: 1\n",
+        // The chart is verified by rendering it (HSP-269).
+        gates: &["helm-chart"],
+        crates: &[],
+    },
+    Case {
         name: "frontend",
         cause: "frontend",
         file: "frontend/src/App.tsx",
@@ -896,6 +905,36 @@ fn a_compose_smoke_that_passes_is_pass_and_one_that_fails_is_fail() {
     let (outcome, report) = run_with_report(&fixture, "smoke-fail", &["--no-bounded"]);
     assert_eq!(outcome.code, Some(1));
     assert_eq!(read_report(&report)["result"], "FAIL");
+}
+
+#[test]
+fn a_chart_gate_fails_on_nonzero_and_is_not_run_on_77() {
+    // HSP-269: scripts/test-helm-chart.sh is the gate of charts/**.
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/chart-fail",
+        &[(
+            "scripts/test-helm-chart.sh",
+            "#!/usr/bin/env bash\nexit 1\n",
+        )],
+    );
+    let (outcome, report) = run_with_report(&fixture, "chart-fail", &["--no-bounded"]);
+    assert_eq!(outcome.code, Some(1));
+    assert_eq!(read_report(&report)["result"], "FAIL");
+
+    git(&fixture.repository, &["checkout", "-q", "main"]);
+    change(
+        &fixture,
+        "case/chart-77",
+        &[(
+            "scripts/test-helm-chart.sh",
+            "#!/usr/bin/env bash\necho 'NOT_RUN: helm is not installed'\nexit 77\n",
+        )],
+    );
+    let (outcome, report) = run_with_report(&fixture, "chart-77", &["--no-bounded"]);
+    assert_eq!(outcome.code, Some(1));
+    assert_eq!(read_report(&report)["result"], "NOT_RUN");
 }
 
 #[test]

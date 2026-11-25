@@ -234,6 +234,13 @@ run_gate() {
                 return
             fi
             ;;
+        helm)
+            if [ ! -f "${GIT_ROOT}/scripts/test-helm-chart.sh" ]; then
+                record "${gate}" "NOT_RUN" 0 0 "falta scripts/test-helm-chart.sh"
+                printf '  %-28s %-8s %s\n' "${gate}" "NOT_RUN" "falta scripts/test-helm-chart.sh"
+                return
+            fi
+            ;;
         frontend)
             if [ ! -f "${GIT_ROOT}/frontend/package.json" ]; then
                 record "${gate}" "NOT_RUN" 0 0 "no hay frontend/package.json"
@@ -268,7 +275,7 @@ run_gate() {
     if [ "${exit_code}" -eq 0 ]; then
         status="PASS"
         note="log: ${log}"
-    elif [ "${kind}" = "compose" ] && [ "${exit_code}" -eq 77 ]; then
+    elif { [ "${kind}" = "compose" ] || [ "${kind}" = "helm" ]; } && [ "${exit_code}" -eq 77 ]; then
         # El smoke devuelve 77 cuando no hay runtime, proveedor compose o
         # imagen: no ha verificado nada, y eso NO es un PASS (HSP-273).
         status="NOT_RUN"

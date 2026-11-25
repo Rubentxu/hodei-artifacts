@@ -66,17 +66,27 @@ y `HODEI_METADATA_SIGNER_ARMOR`.
 ```bash
 helm install hodei charts/hodei-artifacts                                   # standalone
 helm install hodei charts/hodei-artifacts -f charts/hodei-artifacts/values-rocksdb-garage.yaml
-helm package charts/hodei-artifacts                                         # reproducible
+SOURCE_DATE_EPOCH=1700000000 helm package charts/hodei-artifacts            # reproducible
 ```
 
 ## Verificación
 
 ```bash
-scripts/test-helm-chart.sh   # lint, contratos de manifiestos y kubeconform
+scripts/test-helm-chart.sh   # lint, contratos de manifiestos, empaquetado reproducible,
+                             # perfil external con Garage y bootstrap contra un doble de la API
 ```
 
-El script solo renderiza: no necesita clúster. No hay prueba contra un clúster
-real; el Job de Garage (rutas `/v2/...` de la API de administración, imagen
-`curlimages/curl`) y los StatefulSets de Dgraph están sin probar en vivo, y
+`helm package` solo es reproducible con `SOURCE_DATE_EPOCH`: sin ella el
+archivo incrusta la fecha de modificación de cada fichero y dos copias del
+mismo chart dan hashes distintos (comprobado con Helm v4.3.2). El script lo
+verifica comparando el sha256 de dos copias con fechas distintas. Lo ejecuta
+`scripts/test-affected.sh` cuando cambia `charts/**` (gate `helm-chart`; sale
+con 77, es decir `NOT_RUN`, si falta `helm`, `yq`, `python3` o `curl`).
+
+El script solo renderiza: no necesita clúster. El `bootstrap.sh` del Job de
+Garage se ejecuta contra un doble local de la API de administración v2
+(`scripts/garage-admin-double.py`): comprueba la idempotencia y los 404 y 5xx,
+pero no contra un Garage real. No hay prueba contra un clúster real; el Job
+(imagen `curlimages/curl`) y los StatefulSets de Dgraph están sin probar en vivo, y
 las versiones de imagen son etiquetas, no resúmenes verificados, salvo Dgraph
 (el de `deploy/dgraph/compose.yaml`).
