@@ -1,7 +1,7 @@
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { useAuthStore } from '@/shared/stores/auth.store';
 import { server } from '@/shared/test/mocks/server';
@@ -44,7 +44,17 @@ const makeRepo = (name: string) => ({
   asset_count: 2,
 });
 
+const capabilities = {
+  formats: [{ name: 'pypi', modes: ['hosted', 'proxy', 'group'] }],
+};
+
 describe('Console session isolation', () => {
+  beforeEach(() => {
+    server.use(
+      http.get('/api/v1/capabilities', () => HttpResponse.json(capabilities))
+    );
+  });
+
   afterEach(() => {
     cleanup();
     act(() => {
