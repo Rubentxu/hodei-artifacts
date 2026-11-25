@@ -2,12 +2,13 @@
 # Executable smoke test for compose.yaml and compose.external.yaml (HSP-258).
 #
 # Verifies against a real container runtime (Podman + a compose provider):
-#   1. standalone: starts as non-root with a read-only rootfs, named volume,
-#      and a passing /health/ready healthcheck;
-#   2. standalone: data persists in the named volume across down/up;
-#   3. fail closed: an unreachable S3 backend and the external (Dgraph + S3)
-#      profile never become ready, exit non-zero and never touch RocksDB/CAS;
-#   4. static: the compose files and compose.env.example carry no credentials.
+#   1. fail closed: the graph profile (compose.yaml, RUN_MODE=dgraph) with an
+#      unreachable Dgraph Alpha and object store never becomes ready, exits
+#      non-zero, mounts no /app/data and is not rejected as unsupported;
+#   2. static: the compose files and compose.env.example carry no credentials
+#      and validate.
+# HSP-314 F2: the standalone (RocksDB) scenarios were removed with the embedded
+# profile; the happy path of the graph profile is covered by hsp237/hsp308.
 #
 # Requires the image built by `scripts/package-oci.sh` (localhost/hodei-artifacts-api:latest).
 # Exit codes: 0 = all checks passed, 1 = a check failed, 77 = NOT_RUN (no runtime/image).
@@ -47,7 +48,6 @@ cleanup() {
   for f in compose.yaml compose.external.yaml; do
     compose -f "$ROOT/$f" -f "$OVERRIDE" down -v --remove-orphans >/dev/null 2>&1
   done
-  compose -f "$ROOT/compose.yaml" -f "$OVERRIDE" -f "$WORK/s3-override.yaml" down -v --remove-orphans >/dev/null 2>&1
   [ -n "$SERVICE_PID" ] && kill "$SERVICE_PID" >/dev/null 2>&1
   rm -rf "$WORK"
 }
@@ -84,6 +84,14 @@ export GARAGE_RPC_SECRET=smoke-placeholder-rpc
 export GARAGE_ADMIN_TOKEN=smoke-placeholder-admin
 export AWS_ACCESS_KEY_ID=smoke-placeholder-key
 export AWS_SECRET_ACCESS_KEY=smoke-placeholder-secret
+# Placeholders that satisfy the required variables of the graph profile; the
+# fail-closed case below points them at a closed port.
+export HODEI_GRAPH__ENDPOINT=127.0.0.1:1
+export HODEI_GRAPH__CREDENTIALS__PASSWORD=smoke-placeholder-secret
+export HODEI_CONTENT__S3__BUCKET=smoke-bucket
+export HODEI_CONTENT__S3__ENDPOINT=127.0.0.1:1
+export HODEI_DGRAPH_HMAC_SECRET_FILE="$WORK/hmac-secret"
+: > "$HODEI_DGRAPH_HMAC_SECRET_FILE"
 # Ephemeral signing key of the Terraform mirror: generated here, readable by the
 # container user, and deleted with $WORK. Never a fixed value.
 export HODEI_SIGNING_KEY_FILE="$WORK/signing-key"
@@ -124,110 +132,46 @@ compose -f compose.yaml -f "$OVERRIDE" config -q || fail "compose.yaml does not 
 compose -f compose.external.yaml -f "$OVERRIDE" config -q || fail "compose.external.yaml does not validate"
 pass "both compose files validate"
 
-# --- 1. standalone boots hardened and healthy ---------------------------------
-compose -f compose.yaml -f "$OVERRIDE" up -d >/dev/null
-wait_ready || fail "standalone did not become ready on /health/ready"
-CID="$(cid_of compose.yaml hodei-artifacts-api)"
-[ -n "$CID" ] || fail "standalone container id not found"
-USER_CFG="$("${PODMAN_CMD[@]}" inspect --format '{{.Config.User}}' "$CID")"
-[ "$USER_CFG" = "10001:10001" ] || fail "expected user 10001:10001, got '$USER_CFG'"
-[ "$("${PODMAN_CMD[@]}" inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$CID")" = "true" ] \
-  || fail "rootfs is not read-only"
-UID_RUNTIME="$("${PODMAN_CMD[@]}" top "$CID" user | tail -n +2 | head -n1 | tr -d '[:space:]')"
-case "$UID_RUNTIME" in hodei|10001) ;; *) fail "process runs as '$UID_RUNTIME', expected hodei/10001" ;; esac
-for _ in $(seq 1 60); do
-  H="$("${PODMAN_CMD[@]}" inspect --format '{{.State.Health.Status}}' "$CID")"
-  [ "$H" = "healthy" ] && break
-  sleep 1
-done
-[ "$H" = "healthy" ] || fail "container healthcheck status is '$H', expected healthy"
-pass "standalone: non-root uid 10001, read-only rootfs, /health/ready 200, healthcheck healthy"
-
-# --- 2. persistence across down/up -------------------------------------------
-# Inspect the named volume through a throwaway container (the volume is shared).
-VOLUME="${PROJECT}_hodei-artifacts-data"
-volume_run() {
-  "${PODMAN_CMD[@]}" run --rm --user 10001:10001 -v "$VOLUME:/app/data" \
-    --entrypoint /bin/bash "$IMAGE" -c "$1"
-}
-compose -f compose.yaml -f "$OVERRIDE" down >/dev/null
-volume_run 'echo persisted > /app/data/smoke-marker' || fail "could not write to the named volume"
-compose -f compose.yaml -f "$OVERRIDE" up -d >/dev/null
-wait_ready || fail "standalone did not become ready after restart"
-CID="$(cid_of compose.yaml hodei-artifacts-api)"
-compose -f compose.yaml -f "$OVERRIDE" down >/dev/null
-[ "$(volume_run 'cat /app/data/smoke-marker')" = "persisted" ] \
-  || fail "marker lost after down/up: named volume is not persistent"
-volume_run 'test -d /app/data/hodei.rocksdb' \
-  || fail "RocksDB directory missing from the persisted volume"
-pass "standalone: data persisted in the named volume across down/up"
-compose -f compose.yaml -f "$OVERRIDE" down -v >/dev/null
-
-# --- 3a. fail closed: unreachable S3 backend on the standalone profile --------
-cat > "$WORK/s3-override.yaml" <<'YAML'
+# --- 1. fail closed: the graph profile (compose.yaml) without its backends -----
+# HSP-314 F2: the productive profile is the Dgraph one, and the API must never
+# become ready, nor fall back to RocksDB or the filesystem, when the Alpha and the
+# object store are unreachable. Only the API is started; the endpoints point at a
+# closed loopback port.
+cat > "$WORK/unreachable-override.yaml" <<'YAML'
 services:
   hodei-artifacts-api:
     # Observe the first failure instead of the restart loop.
     restart: "no"
-    environment:
-      HODEI_CONTENT__BACKEND: s3
-      HODEI_CONTENT__S3__BUCKET: unreachable-bucket
-      HODEI_CONTENT__S3__ENDPOINT: 127.0.0.1:1
-      HODEI_CONTENT__S3__REGION: eu-west-1
-      HODEI_CONTENT__S3__TLS: "false"
-      HODEI_CONTENT__CAS_PATH: /app/data/forbidden-s3.cas
-      AWS_ACCESS_KEY_ID: smoke-placeholder-key
-      AWS_SECRET_ACCESS_KEY: smoke-placeholder-secret
 YAML
-compose -f compose.yaml -f "$OVERRIDE" -f "$WORK/s3-override.yaml" up -d >/dev/null 2>&1 || true
-CID="$(compose -f compose.yaml -f "$OVERRIDE" -f "$WORK/s3-override.yaml" ps -a -q hodei-artifacts-api | head -n1)"
-[ -n "$CID" ] || fail "S3 fail-closed container was not created"
+export HODEI_GRAPH__ENDPOINT=127.0.0.1:1
+export HODEI_GRAPH__TLS__ENABLED=false
+export HODEI_GRAPH__CREDENTIALS__PASSWORD=smoke-placeholder-secret
+export HODEI_CONTENT__S3__BUCKET=unreachable-bucket
+export HODEI_CONTENT__S3__ENDPOINT=127.0.0.1:1
+export HODEI_CONTENT__S3__TLS=false
+compose -f compose.yaml -f "$OVERRIDE" -f "$WORK/unreachable-override.yaml" up -d >/dev/null 2>&1 || true
+CID="$(cid_of compose.yaml hodei-artifacts-api)"
+[ -n "$CID" ] || fail "graph profile API container was not created"
 STATE=""
-for _ in $(seq 1 30); do
+for _ in $(seq 1 60); do
   STATE="$("${PODMAN_CMD[@]}" inspect --format '{{.State.Status}}' "$CID")"
   [ "$STATE" = "exited" ] && break
   sleep 1
 done
 CODE="$("${PODMAN_CMD[@]}" inspect --format '{{.State.ExitCode}}' "$CID")"
 [ "$STATE" = "exited" ] && [ "$CODE" != "0" ] \
-  || fail "unreachable S3 did not fail closed (state=$STATE exit=$CODE)"
-[ "$(http_status /health/ready)" != "200" ] || fail "service answered ready with unreachable S3"
-# The failure must be a connectivity failure, not a rejected configuration.
-CLASS="$("${PODMAN_CMD[@]}" logs "$CID" 2>&1 | scripts/compose-classify-failure.sh)"
-[ "$CLASS" = "connectivity" ] \
-  || fail "unreachable S3 failed for the wrong reason: classified '$CLASS', expected 'connectivity'"
-compose -f compose.yaml -f "$OVERRIDE" -f "$WORK/s3-override.yaml" down -v >/dev/null
-pass "fail closed: unreachable S3 backend exits non-zero (exit=$CODE), classified connectivity, never reports ready"
-
-# --- 3b. fail closed: external profile (Dgraph + S3) --------------------------
-# Only the API is started (--no-deps): Dgraph/Garage are unreachable from it, and
-# today the API also rejects db_type=dgraph. Either way it must fail closed.
-printf 'services:\n  hodei-artifacts-api:\n    restart: "no"\n' > "$WORK/norestart.yaml"
-compose -f compose.external.yaml -f "$OVERRIDE" -f "$WORK/norestart.yaml" up -d --no-deps hodei-artifacts-api >/dev/null 2>&1 || true
-CID="$(cid_of compose.external.yaml hodei-artifacts-api)"
-[ -n "$CID" ] || fail "external profile API container was not created"
-STATE=""
-for _ in $(seq 1 30); do
-  STATE="$("${PODMAN_CMD[@]}" inspect --format '{{.State.Status}}' "$CID")"
-  [ "$STATE" = "exited" ] && break
-  sleep 1
-done
-CODE="$("${PODMAN_CMD[@]}" inspect --format '{{.State.ExitCode}}' "$CID")"
-[ "$STATE" = "exited" ] && [ "$CODE" != "0" ] \
-  || fail "external profile did not fail closed (state=$STATE exit=$CODE)"
-[ "$(http_status /health/ready)" != "200" ] || fail "external profile answered ready without a backend"
+  || fail "the graph profile did not fail closed (state=$STATE exit=$CODE)"
+[ "$(http_status /health/ready)" != "200" ] || fail "the graph profile answered ready without a backend"
 MOUNTS="$("${PODMAN_CMD[@]}" inspect --format '{{range .Mounts}}{{.Destination}} {{end}}' "$CID")"
-case "$MOUNTS" in *"/app/data"*) fail "external profile mounts /app/data: $MOUNTS" ;; esac
-# Today the API rejects db_type=dgraph before touching any backend, so the failure
-# must be classified unsupported-backend and NOT connectivity: a backend that is
-# merely down (Dgraph/Garage unreachable) is a different failure. When the Dgraph
-# backend lands this assertion must change on purpose, not drift silently.
+case "$MOUNTS" in *"/app/data"*) fail "the graph profile mounts /app/data: $MOUNTS" ;; esac
+# The configuration must have been accepted: a rejected profile is a different
+# failure from a backend that is merely down.
 CLASS="$("${PODMAN_CMD[@]}" logs "$CID" 2>&1 | scripts/compose-classify-failure.sh)"
-[ "$CLASS" = "unsupported-backend" ] \
-  || fail "external profile failed for the wrong reason: classified '$CLASS', expected 'unsupported-backend'"
-compose -f compose.external.yaml -f "$OVERRIDE" down -v --remove-orphans >/dev/null
-pass "fail closed: external profile exits non-zero (exit=$CODE), classified unsupported-backend (not connectivity), no /app/data mount, never ready"
+[ "$CLASS" != "unsupported-backend" ] \
+  || fail "the graph profile was rejected as an unsupported backend: classified '$CLASS'"
+compose -f compose.yaml -f "$OVERRIDE" down -v --remove-orphans >/dev/null
+pass "fail closed: graph profile exits non-zero (exit=$CODE), classified $CLASS (not unsupported-backend), no /app/data mount, never ready"
 
 echo "compose smoke: all checks passed"
-echo "limitation: the external profile's happy path (Dgraph + S3 serving traffic) is NOT_RUN;"
-echo "            the API rejects db_type=dgraph today (only 'rocksdb' is supported)."
+echo "limitation: the happy path of compose.external.yaml (Dgraph + Garage serving traffic) is NOT_RUN here;"
+echo "            it needs the Garage layout/bucket/key and the Alpha ACL bootstrap, see scripts/hsp308-oci-graph-e2e.sh."

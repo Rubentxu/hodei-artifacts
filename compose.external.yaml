@@ -1,16 +1,23 @@
-# Declarative external-backend deployment for hodei-artifacts-api (Dgraph + S3/Garage).
+# Self-contained stack on the Dgraph profile: Dgraph Zero+Alpha (ACL on), a
+# single-node Garage S3 and the API (HSP-314 F2).
 #
-# Uses external Dgraph metadata and S3-compatible object storage (Garage with
-# separated `meta` and `data` volumes, or an external S3 endpoint via env vars).
-# Never configures RocksDB or local filesystem CAS paths, and contains no
-# hardcoded credentials (provide runtime credentials via environment / `.env`).
+# The API starts with RUN_MODE=dgraph, the productive profile: `[graph]`
+# declares the Alpha as the single metadata authority and the bytes live in
+# Garage. It never configures RocksDB or local filesystem CAS paths, and it
+# contains no hardcoded credentials (provide them through the environment /
+# `.env`). The API fails closed when the Alpha or the object store are
+# unreachable. For an API-only deployment against your own Dgraph and S3, use
+# compose.yaml.
 #
-# KNOWN LIMITATION: the hodei-artifacts-api service currently only supports the
-# embedded `rocksdb` metadata backend; with RUN_MODE=external it rejects
-# `db_type = dgraph` at startup and exits non-zero (fail closed). This file
-# declares the target topology and is validated (`compose config`), but the API
-# container will not become healthy until the Dgraph backend lands. Dgraph and
-# Garage themselves start independently of the API.
+# Operator steps outside this file: generate the ACL HMAC secret file
+# (HODEI_DGRAPH_HMAC_SECRET_FILE), and create the Garage layout, the bucket and
+# the access key (`garage layout`, `garage bucket create`, `garage key create`)
+# whose values go in AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY. The Alpha's
+# guardian account (groot) ships with Dgraph's default password: change it and
+# put the new one in HODEI_GRAPH__CREDENTIALS__PASSWORD.
+#
+# Not wired yet (HSP-314 F3): the investigation surface, the risk facts and the
+# CVE reactor have no Dgraph wiring, so they stay closed on this profile.
 
 name: hodei-artifacts-external
 
@@ -34,6 +41,7 @@ services:
     command: >
       dgraph alpha --my=dgraph-alpha:7080 --zero=dgraph-zero:5080
       --postings=/dgraph-data/p --wal=/dgraph-data/w
+      --acl "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256"
       --telemetry "reports=false"
     ports:
       - "${HODEI_BIND_ADDR:-127.0.0.1}:${DGRAPH_ALPHA_HTTP_PORT:-8080}:8080"
@@ -41,6 +49,8 @@ services:
     volumes:
       - dgraph-alpha-data:/dgraph-data
       - dgraph-backups:/dgraph-backups
+      # `z` relabels the secret for SELinux hosts.
+      - ${HODEI_DGRAPH_HMAC_SECRET_FILE:?set HODEI_DGRAPH_HMAC_SECRET_FILE to a file with the ACL HMAC secret (openssl rand -hex 32)}:/dgraph/secrets/hmac-secret:ro,z
     networks:
       - hodei-external
 
@@ -82,9 +92,15 @@ services:
       # the operator generates (`openssl rand -hex 32`), mounted read-only.
       - ${HODEI_SIGNING_KEY_FILE:?set HODEI_SIGNING_KEY_FILE to a file with the signing secret (openssl rand -hex 32)}:/run/secrets/hodei-signing-key:ro
     environment:
-      RUN_MODE: external
-      HODEI_DATABASE__DB_TYPE: dgraph
-      HODEI_SCHEMA__STORAGE_TYPE: dgraph
+      RUN_MODE: dgraph
+      HODEI_GRAPH__ENDPOINT: dgraph-alpha:9080
+      # The Alpha is on the private compose network: plaintext inside it.
+      HODEI_GRAPH__TLS__ENABLED: "false"
+      HODEI_GRAPH__TLS__CA_CERT_PATH: ""
+      HODEI_GRAPH__TLS__SERVER_NAME: ""
+      HODEI_GRAPH__NAMESPACE: ${HODEI_GRAPH__NAMESPACE:-0}
+      HODEI_GRAPH__CREDENTIALS__USERID: ${HODEI_GRAPH__CREDENTIALS__USERID:-groot}
+      HODEI_GRAPH__CREDENTIALS__PASSWORD: ${HODEI_GRAPH__CREDENTIALS__PASSWORD:?set HODEI_GRAPH__CREDENTIALS__PASSWORD (the ACL password of the service account)}
       HODEI_CONTENT__BACKEND: s3
       HODEI_CONTENT__S3__BUCKET: ${HODEI_CONTENT__S3__BUCKET:-hodei-content}
       HODEI_CONTENT__S3__ENDPOINT: ${HODEI_CONTENT__S3__ENDPOINT:-garage:3900}
