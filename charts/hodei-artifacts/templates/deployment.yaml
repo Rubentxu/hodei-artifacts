@@ -1,6 +1,4 @@
-{{- $rocks := include "hodei.usesRocksdb" . -}}
 {{- $profile := include "hodei.profile" . -}}
-{{- $s3 := ne $profile "standalone" -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,17 +9,11 @@ metadata:
     hodei.io/profile: {{ $profile }}
 spec:
   replicas: {{ include "hodei.replicas" . }}
-  {{- if $rocks }}
-  # RocksDB admits a single writer: never run two pods against the volume.
-  strategy:
-    type: Recreate
-  {{- else }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 0
       maxSurge: 1
-  {{- end }}
   selector:
     matchLabels:
       {{- include "hodei.selectorLabels" . | nindent 6 }}
@@ -54,22 +46,33 @@ spec:
             - name: http
               containerPort: {{ .Values.config.server.port }}
           env:
-            # The image ships config/standalone.toml and config/external.toml.
+            # The image ships config/dgraph.toml: `[graph]` IS the profile.
             - name: RUN_MODE
-              value: {{ ternary "standalone" "external" (eq $rocks "true") }}
+              value: dgraph
+            - name: HODEI_GRAPH__ENDPOINT
+              value: {{ include "hodei.graph.endpoint" . | quote }}
+            - name: HODEI_GRAPH__TLS__ENABLED
+              value: {{ .Values.graph.tls.enabled | quote }}
+            - name: HODEI_GRAPH__TLS__CA_CERT_PATH
+              value: {{ .Values.graph.tls.caCertPath | quote }}
+            - name: HODEI_GRAPH__TLS__SERVER_NAME
+              value: {{ .Values.graph.tls.serverName | quote }}
+            - name: HODEI_GRAPH__NAMESPACE
+              value: {{ .Values.graph.namespace | quote }}
+            - name: HODEI_GRAPH__CREDENTIALS__USERID
+              value: {{ .Values.graph.credentials.userid | quote }}
+            - name: HODEI_GRAPH__CREDENTIALS__PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "graph.credentials.existingSecret is required: the ACL password of the service account is never rendered by this chart" .Values.graph.credentials.existingSecret }}
+                  key: {{ .Values.graph.credentials.passwordKey }}
             - name: HODEI_SERVER__PORT
               value: {{ .Values.config.server.port | quote }}
             - name: HODEI_LOGGING__LEVEL
               value: {{ .Values.config.logging.level | quote }}
             - name: HODEI_LOGGING__FORMAT
               value: {{ .Values.config.logging.format | quote }}
-            {{- if $rocks }}
-            - name: HODEI_ROCKSDB__PATH
-              value: {{ .Values.config.rocksdbPath | quote }}
-            - name: HODEI_CONTENT__CAS_PATH
-              value: {{ .Values.config.casPath | quote }}
-            {{- end }}
-            {{- if $s3 }}
+            {{- /* The bytes live in S3: there is no filesystem fallback. */}}
             - name: HODEI_CONTENT__BACKEND
               value: s3
             - name: HODEI_CONTENT__S3__BUCKET
@@ -96,7 +99,6 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.s3.existingSecret }}
                   key: {{ .Values.s3.secretAccessKeyKey }}
-            {{- end }}
             {{- end }}
             {{- with .Values.config.publicBaseUrl }}
             - name: HODEI_PUBLIC_URL__PUBLIC_BASE_URL
@@ -161,25 +163,12 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            {{- if $rocks }}
-            - name: data
-              mountPath: /app/data
-            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
-        {{- if $rocks }}
-        - name: data
-          {{- if .Values.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ default (printf "%s-data" (include "hodei.fullname" .)) .Values.persistence.existingClaim }}
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
-        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

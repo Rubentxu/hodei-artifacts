@@ -14,10 +14,28 @@
 # with an ephemeral secret that only exists inside the lab, and the service
 # verifies it exactly as it verifies a production token.
 #
+# # The profile
+#
+# HSP-314 F2: the lab runs on the productive profile of the released binary,
+# the graph one (RUN_MODE=dgraph, a [graph] section and an S3 content store).
+# The released tarball has no embedded engine, so the lab needs a Dgraph Alpha
+# and an S3. Two ways to give them:
+#
+#   - your own: --graph-endpoint HOST:PORT --s3-endpoint URL --s3-bucket NAME,
+#     with the ACL password in HODEI_GRAPH__CREDENTIALS__PASSWORD and the S3
+#     keys in AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY;
+#   - or none: the script starts a throwaway Dgraph (Zero + Alpha with ACL)
+#     and a LocalStack S3 with podman, named "<prefix>-zero|alpha|s3-<pid>"
+#     (prefix: HODEI_QUICKSTART_PREFIX, default "hodei-community"), and
+#     removes them when it ends.
+#
+# Without endpoints and without podman, or without the images, the script
+# ends with exit 77 (NOT_RUN): it never pretends it ran.
+#
 # # What it is isolated from
 #
 # Everything happens under one temporary directory: the HOME, the
-# configuration, the database, the content store, the logs and the token.
+# configuration, the content staging, the logs and the token.
 # The service is started with an environment that has nothing of the
 # caller's in it. The cleanup command removes that directory and nothing
 # else, and it refuses to remove a directory that does not declare itself a
@@ -29,6 +47,10 @@
 #   guard     the production profile without a secret must stay closed
 #   cleanup   remove the lab directory and nothing else
 #   help      this text
+#
+# # Exit codes
+#
+#   0 the path ran; 1 a step failed; 77 NOT_RUN (no backends available)
 #
 # # Usage
 #
@@ -43,6 +65,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 BIN_NAME="hodei-artifacts-api"
+
+# The lab replaces HOME; podman must keep the image store of the person who
+# runs the script, so it is called with the environment the script started with.
+ORIG_HOME="$HOME"
+ORIG_XDG_CONFIG_HOME="${XDG_CONFIG_HOME-}"
+ORIG_XDG_CACHE_HOME="${XDG_CACHE_HOME-}"
+pm() {
+  (
+    export HOME="$ORIG_HOME"
+    unset XDG_CONFIG_HOME XDG_CACHE_HOME
+    [ -z "$ORIG_XDG_CONFIG_HOME" ] || export XDG_CONFIG_HOME="$ORIG_XDG_CONFIG_HOME"
+    [ -z "$ORIG_XDG_CACHE_HOME" ] || export XDG_CACHE_HOME="$ORIG_XDG_CACHE_HOME"
+    exec podman "$@"
+  )
+}
 
 # The account of the lab and the principal that acts in it. The account is
 # part of the principal, so it is also the isolation: a principal of another
@@ -68,6 +105,7 @@ MARKER_VALUE="hodei-community-lab/v1"
 ARCHIVE=""
 DISTRIBUTION=""
 LAB_DIR=""
+LAB_GIVEN=""
 PORT=""
 TOKEN=""
 SECRET=""
@@ -78,6 +116,24 @@ SERVICE_PID=""
 SERVICE_PORT=""
 BASE_URL=""
 STATUS=""
+
+# The backends of the graph profile.
+GRAPH_ENDPOINT=""
+S3_ENDPOINT=""
+S3_BUCKET=""
+GRAPH_USER="${HODEI_GRAPH__CREDENTIALS__USERID:-groot}"
+GRAPH_PASSWORD="${HODEI_GRAPH__CREDENTIALS__PASSWORD:-}"
+S3_ACCESS_KEY="${AWS_ACCESS_KEY_ID:-}"
+S3_SECRET_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+# Throwaway backends started with podman when none were given.
+OWN_BACKENDS=""
+BACKEND_PREFIX="${HODEI_QUICKSTART_PREFIX:-hodei-community}"
+BACKEND_SUFFIX="$$"
+BACKEND_CONTAINERS=()
+BACKEND_NETWORK=""
+BACKEND_VOLUMES=()
+DGRAPH_IMAGE="docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb"
+S3_IMAGE="docker.io/localstack/localstack:4.14"
 
 usage() {
   cat <<USAGE
@@ -97,6 +153,9 @@ options:
   --account NAME       the account of the lab (default: $ACCOUNT)
   --user NAME          the principal of the lab (default: $USER_NAME)
   --profile PATH       the production profile of the guard (default: config/release.toml)
+  --graph-endpoint H:P the gRPC address of your Dgraph Alpha (default: a throwaway one with podman)
+  --s3-endpoint URL    the endpoint of your S3 (with --s3-bucket)
+  --s3-bucket NAME     the bucket of the content (it must exist)
   -h, --help           this text
 USAGE
 }
@@ -104,6 +163,18 @@ USAGE
 die() {
   echo "error: $*" >&2
   exit 1
+}
+
+# The backends are not there: the path cannot run, and it says so.
+not_run() {
+  echo "NOT_RUN: $*" >&2
+  # A lab this run created and that holds nothing is not left behind.
+  if [ -n "$LAB_DIR" ] && [ -f "$LAB_DIR/$MARKER_NAME" ] && [ -z "$LAB_GIVEN" ]; then
+    stop_service 2>/dev/null || true
+    remove_backends "$LAB_DIR"
+    rm -rf -- "$LAB_DIR"
+  fi
+  exit 77
 }
 
 step() {
@@ -236,6 +307,7 @@ resolve_distribution() {
 # of the tutorial.
 prepare_lab() {
   if [ -n "$LAB_DIR" ]; then
+    LAB_GIVEN=1
     mkdir -p "$LAB_DIR"
   else
     LAB_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hodei-community-lab.XXXXXX")"
@@ -263,42 +335,68 @@ prepare_lab() {
 # written here on purpose: it travels in the environment of the service, it
 # is minted for this run and it dies with the lab.
 write_lab_config() {
-  # The baseline of the service travels with the lab: the configuration is
-  # deserialized strictly, and a deployment without it does not start.
-  cp "$DISTRIBUTION_DIR/config/default.toml" "$LAB_DIR/config/default.toml"
-  cat > "$LAB_DIR/config/community.toml" <<TOML
-# The profile of the community lab.
-#
-# It is a lab: the content surface is open, the administrative one is not,
-# and the data lives inside the lab directory.
-
-[server]
-host = "127.0.0.1"
-
-[rocksdb]
-path = "$LAB_DIR/data/hodei.rocksdb"
-create_if_missing = true
-
-[content]
-cas_path = "$LAB_DIR/data/hodei.cas"
-
-[schema]
-register_iam_on_startup = false
-validate = true
-storage_type = "rocksdb"
-
-[repository]
-durable = true
-
-[security]
+  # "closed" writes the profile with no authenticator and no policy: the guard
+  # starts it to show that it stays closed, or refuses, and never serves.
+  local security
+  if [ "${1:-}" = "closed" ]; then
+    security='[security]
+admin_api_enabled = false
+raw_api_enabled = false'
+  else
+    security="[security]
 admin_api_enabled = false
 raw_api_enabled = true
 # The secret is not here: it is in the environment of the service, it is
 # ephemeral and it is minted for this run only.
-auth_issuer = "$ISSUER"
-auth_audience = "$AUDIENCE"
-authorization_policy_path = "$LAB_DIR/policy/policies.cedar"
-authorization_schema_path = "$LAB_DIR/policy/schema.json"
+auth_issuer = \"$ISSUER\"
+auth_audience = \"$AUDIENCE\"
+authorization_policy_path = \"$LAB_DIR/policy/policies.cedar\"
+authorization_schema_path = \"$LAB_DIR/policy/schema.json\""
+  fi
+  # The baseline of the service travels with the lab: the configuration is
+  # deserialized strictly, and a deployment without it does not start.
+  cp "$DISTRIBUTION_DIR/config/default.toml" "$LAB_DIR/config/default.toml"
+  cat > "$LAB_DIR/config/dgraph.toml" <<TOML
+# The profile of the community lab: the productive graph profile (HSP-209).
+#
+# The authority of the metadata is the Dgraph Alpha declared in [graph] and the
+# bytes live in the S3 declared in [content.s3]. The credentials of both travel
+# in the environment of the service, never here.
+
+[server]
+host = "127.0.0.1"
+
+[graph]
+endpoint = "$GRAPH_ENDPOINT"
+namespace = 0
+
+[graph.tls]
+enabled = false
+
+[graph.credentials]
+userid = "$GRAPH_USER"
+
+[database]
+db_type = "dgraph"
+
+[content]
+backend = "s3"
+
+[content.s3]
+bucket = "$S3_BUCKET"
+region = "us-east-1"
+endpoint = "$S3_ENDPOINT"
+tls = false
+
+[schema]
+register_iam_on_startup = false
+validate = true
+storage_type = "dgraph"
+
+[repository]
+durable = false
+
+$security
 
 [logging]
 level = "info"
@@ -313,11 +411,153 @@ write_lab_policy() {
   cp "$TEMPLATES_DIR/schema.json" "$LAB_DIR/policy/schema.json"
 }
 
+# The throwaway backends of the lab (podman): a Dgraph Zero + Alpha with ACL
+# on an internal network, and a LocalStack S3. Everything is named after the
+# prefix and removed when the script ends (see stop_backends).
+start_backends() {
+  command -v podman >/dev/null 2>&1 \
+    || not_run "no backends were given (--graph-endpoint, --s3-endpoint, --s3-bucket) and podman is not installed"
+  local image
+  for image in "$DGRAPH_IMAGE" "$S3_IMAGE"; do
+    if ! pm image exists "$image" 2>/dev/null; then
+      pm pull -q "$image" >/dev/null 2>&1 \
+        || not_run "the image $image is not available and could not be pulled"
+    fi
+  done
+  OWN_BACKENDS=1
+  local p="$BACKEND_PREFIX" n="$BACKEND_SUFFIX"
+  BACKEND_NETWORK="$p-net-$n"
+  local zero="$p-zero-$n" alpha="$p-alpha-$n" s3="$p-s3-$n"
+  local http_port grpc_port s3_port attempt
+  mkdir -p "$LAB_DIR/backend"
+  openssl rand -hex 32 | tr -d '\n' > "$LAB_DIR/backend/hmac-secret"
+  chmod 644 "$LAB_DIR/backend/hmac-secret"
+  # The names go to the lab first: a lab that dies half way is still cleanable.
+  printf '%s\n' "$zero" "$alpha" "$s3" > "$LAB_DIR/backend/containers"
+  printf '%s\n' "$BACKEND_NETWORK" > "$LAB_DIR/backend/network"
+  BACKEND_CONTAINERS=("$zero" "$alpha" "$s3")
+  BACKEND_VOLUMES=("$p-zero-data-$n" "$p-alpha-data-$n")
+  printf '%s\n' "${BACKEND_VOLUMES[@]}" > "$LAB_DIR/backend/volumes"
+  echo "    starting a throwaway Dgraph and S3 with podman ($p-*-$n)"
+  pm network create --internal "$BACKEND_NETWORK" >/dev/null || die "the backend network was not created"
+  local v
+  for v in "${BACKEND_VOLUMES[@]}"; do pm volume create "$v" >/dev/null || die "the volume $v was not created"; done
+  pm run -d --name "$zero" --hostname dgraph-zero --network "$BACKEND_NETWORK" \
+    -v "$p-zero-data-$n:/dgraph-data" "$DGRAPH_IMAGE" dgraph zero --my=dgraph-zero:5080 \
+    --wal=/dgraph-data/zero --telemetry reports=false >/dev/null || die "Dgraph Zero did not start"
+  # The ports are picked at random and published by the container runtime: another
+  # process (or another lab) can take one between the pick and the bind, so a
+  # bind failure is retried with other ports.
+  local started=""
+  for attempt in 1 2 3 4 5 6; do
+    http_port="$(free_port)"; grpc_port="$(free_port)"
+    [ "$http_port" != "$grpc_port" ] || continue
+    if pm run -d --name "$alpha" --hostname dgraph-alpha --network "$BACKEND_NETWORK" \
+      -p "127.0.0.1:$http_port:8080" -p "127.0.0.1:$grpc_port:9080" \
+      -v "$p-alpha-data-$n:/dgraph-data" \
+      -v "$LAB_DIR/backend/hmac-secret:/dgraph/secrets/hmac-secret:ro,z" \
+      "$DGRAPH_IMAGE" dgraph alpha --my=dgraph-alpha:7080 --zero=dgraph-zero:5080 \
+      --postings=/dgraph-data/p --wal=/dgraph-data/w \
+      --acl "secret-file=/dgraph/secrets/hmac-secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256" \
+      --security whitelist=0.0.0.0/0 --telemetry reports=false >/dev/null 2>&1; then
+      started=1
+      break
+    fi
+    pm rm -f -t 0 "$alpha" >/dev/null 2>&1
+  done
+  [ -n "$started" ] || die "Dgraph Alpha did not start"
+  started=""
+  for attempt in 1 2 3 4 5 6; do
+    s3_port="$(free_port)"
+    if pm run -d --name "$s3" -p "127.0.0.1:$s3_port:4566" "$S3_IMAGE" >/dev/null 2>&1; then
+      started=1
+      break
+    fi
+    pm rm -f -t 0 "$s3" >/dev/null 2>&1
+  done
+  [ -n "$started" ] || die "the S3 did not start"
+  local deadline=$(( SECONDS + 120 ))
+  until curl -s -m 3 "http://127.0.0.1:$http_port/health" 2>/dev/null | grep -q healthy; do
+    [ "$SECONDS" -lt "$deadline" ] || die "Dgraph Alpha was not healthy in time"
+    sleep 1
+  done
+  # /health can answer before the gRPC listener serves: the service connects over gRPC.
+  sleep 5
+  until curl -s -m 3 "http://127.0.0.1:$s3_port/_localstack/health" 2>/dev/null | grep -Eq '"s3": "(available|running)"'; do
+    [ "$SECONDS" -lt "$deadline" ] || die "the S3 was not available in time"
+    sleep 1
+  done
+  GRAPH_ENDPOINT="127.0.0.1:$grpc_port"
+  GRAPH_USER="groot"
+  GRAPH_PASSWORD="password"
+  S3_ENDPOINT="http://127.0.0.1:$s3_port"
+  S3_BUCKET="community-lab-$n"
+  S3_ACCESS_KEY="test"
+  S3_SECRET_KEY="test"
+  curl -fsS -X PUT "$S3_ENDPOINT/$S3_BUCKET" >/dev/null || die "the bucket $S3_BUCKET was not created"
+}
+
+# Remove what the lab started: containers, volumes and network. It reads the
+# names from the lab, so it also cleans a run that died half way.
+remove_backends() {
+  local dir="$1" name
+  [ -d "$dir/backend" ] || return 0
+  command -v podman >/dev/null 2>&1 || return 0
+  if [ -f "$dir/backend/containers" ]; then
+    while read -r name; do [ -n "$name" ] && pm rm -f -t 0 "$name" >/dev/null 2>&1; done < "$dir/backend/containers"
+  fi
+  if [ -f "$dir/backend/volumes" ]; then
+    while read -r name; do [ -n "$name" ] && pm volume rm -f "$name" >/dev/null 2>&1; done < "$dir/backend/volumes"
+  fi
+  if [ -f "$dir/backend/network" ]; then
+    while read -r name; do [ -n "$name" ] && pm network rm -f "$name" >/dev/null 2>&1; done < "$dir/backend/network"
+  fi
+  return 0
+}
+
+stop_backends() {
+  [ -n "$OWN_BACKENDS" ] || return 0
+  remove_backends "$LAB_DIR"
+  OWN_BACKENDS=""
+}
+
+# The backends the lab runs on: the ones that were given, or throwaway ones.
+ensure_backends() {
+  if [ -n "$GRAPH_ENDPOINT" ] || [ -n "$S3_ENDPOINT" ] || [ -n "$S3_BUCKET" ]; then
+    [ -n "$GRAPH_ENDPOINT" ] && [ -n "$S3_ENDPOINT" ] && [ -n "$S3_BUCKET" ] \
+      || die "give --graph-endpoint, --s3-endpoint and --s3-bucket together, or none of them"
+    [ -n "$GRAPH_PASSWORD" ] || die "HODEI_GRAPH__CREDENTIALS__PASSWORD is needed with --graph-endpoint"
+    [ -n "$S3_ACCESS_KEY" ] && [ -n "$S3_SECRET_KEY" ] \
+      || die "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are needed with --s3-endpoint"
+    return 0
+  fi
+  start_backends
+}
+
+# The environment of the graph profile: where the Alpha and the S3 are, and the
+# credentials of both. They travel in the environment of the service, never in a file.
+graph_environment() {
+  GRAPH_ENV=(
+    "HODEI_GRAPH__ENDPOINT=$GRAPH_ENDPOINT"
+    "HODEI_GRAPH__TLS__ENABLED=false"
+    "HODEI_GRAPH__CREDENTIALS__USERID=$GRAPH_USER"
+    "HODEI_GRAPH__CREDENTIALS__PASSWORD=$GRAPH_PASSWORD"
+    "HODEI_CONTENT__BACKEND=s3"
+    "HODEI_CONTENT__S3__BUCKET=$S3_BUCKET"
+    "HODEI_CONTENT__S3__ENDPOINT=$S3_ENDPOINT"
+    "HODEI_CONTENT__S3__REGION=us-east-1"
+    "HODEI_CONTENT__S3__TLS=false"
+    "AWS_ACCESS_KEY_ID=$S3_ACCESS_KEY"
+    "AWS_SECRET_ACCESS_KEY=$S3_SECRET_KEY"
+  )
+}
+
 # Start the service of the lab and wait until it answers.
 start_service() {
-  local port="$1" run_mode="${2:-community}"
+  local port="$1" run_mode="${2:-dgraph}"
   SERVICE_PORT="$port"
   BASE_URL="http://127.0.0.1:$port"
+  graph_environment
   (
     cd "$LAB_DIR" || exit 1
     exec env -i \
@@ -327,9 +567,7 @@ start_service() {
       RUST_LOG=info \
       HODEI_SERVER__HOST=127.0.0.1 \
       HODEI_SERVER__PORT="$port" \
-      HODEI_ROCKSDB__PATH="$LAB_DIR/data/hodei.rocksdb" \
-      HODEI_CONTENT__CAS_PATH="$LAB_DIR/data/hodei.cas" \
-      HODEI_REPOSITORY__DURABLE=true \
+      "${GRAPH_ENV[@]}" \
       HODEI_SECURITY__RAW_API_ENABLED=true \
       HODEI_SECURITY__AUTH_JWT_SECRET="$SECRET" \
       HODEI_SECURITY__AUTH_ISSUER="$ISSUER" \
@@ -346,6 +584,7 @@ start_service_without_credentials() {
   local port="$1" run_mode="$2"
   SERVICE_PORT="$port"
   BASE_URL="http://127.0.0.1:$port"
+  graph_environment
   (
     cd "$LAB_DIR" || exit 1
     exec env -i \
@@ -355,9 +594,7 @@ start_service_without_credentials() {
       RUST_LOG=info \
       HODEI_SERVER__HOST=127.0.0.1 \
       HODEI_SERVER__PORT="$port" \
-      HODEI_ROCKSDB__PATH="$LAB_DIR/data/hodei.rocksdb" \
-      HODEI_CONTENT__CAS_PATH="$LAB_DIR/data/hodei.cas" \
-      HODEI_REPOSITORY__DURABLE=true \
+      "${GRAPH_ENV[@]}" \
       "$DISTRIBUTION_DIR/bin/$BIN_NAME"
   ) >> "$LAB_DIR/logs/service.log" 2>&1 &
   SERVICE_PID=$!
@@ -463,7 +700,11 @@ run_scenario() {
   resolve_distribution
   resolve_templates
   write_lab_policy
+  ensure_backends
   write_lab_config
+  note "profile:    graph (RUN_MODE=dgraph)"
+  note "dgraph:     $GRAPH_ENDPOINT"
+  note "s3:         $S3_ENDPOINT (bucket $S3_BUCKET)"
   note "lab:        $LAB_DIR"
   note "home:       $HOME"
   note "distribution: $DISTRIBUTION_DIR"
@@ -632,6 +873,8 @@ guard_scenario() {
   resolve_distribution
   resolve_templates
   write_lab_policy
+  ensure_backends
+  write_lab_config closed
 
   local profile=""
   local candidate
@@ -656,12 +899,10 @@ guard_scenario() {
   note "no auth_jwt_secret in the production profile"
 
   step "Without a secret, the production profile starts closed"
-  cp "$DISTRIBUTION_DIR/config/default.toml" "$LAB_DIR/config/default.toml"
-  cp "$profile" "$LAB_DIR/config/release.toml"
   printf 'the content the closed surface is asked to publish\n' > "$LAB_DIR/work/hello.txt"
   printf '{"name":"whatever","format":"raw","mode":"hosted"}' > "$LAB_DIR/work/raw-repository.json"
   PORT="${PORT:-$(free_port)}"
-  start_service_without_credentials "$PORT" release
+  start_service_without_credentials "$PORT" dgraph
   wait_for_health
   note "the service is up on $BASE_URL without an authenticator"
   local health_status
@@ -688,12 +929,11 @@ guard_scenario() {
     exec env -i \
       PATH="$PATH" \
       HOME="$LAB_DIR/home" \
-      RUN_MODE=release \
+      RUN_MODE=dgraph \
       RUST_LOG=info \
       HODEI_SERVER__HOST=127.0.0.1 \
       HODEI_SERVER__PORT="${PORT}" \
-      HODEI_ROCKSDB__PATH="$LAB_DIR/data/hodei.rocksdb" \
-      HODEI_CONTENT__CAS_PATH="$LAB_DIR/data/hodei.cas" \
+      "${GRAPH_ENV[@]}" \
       HODEI_SECURITY__AUTH_JWT_SECRET="$SECRET" \
       HODEI_SECURITY__AUTH_ISSUER="$ISSUER" \
       HODEI_SECURITY__AUTH_AUDIENCE="$AUDIENCE" \
@@ -723,12 +963,11 @@ guard_scenario() {
     exec env -i \
       PATH="$PATH" \
       HOME="$LAB_DIR/home" \
-      RUN_MODE=release \
+      RUN_MODE=dgraph \
       RUST_LOG=info \
       HODEI_SERVER__HOST=127.0.0.1 \
       HODEI_SERVER__PORT="${PORT}" \
-      HODEI_ROCKSDB__PATH="$LAB_DIR/data/hodei.rocksdb" \
-      HODEI_CONTENT__CAS_PATH="$LAB_DIR/data/hodei.cas" \
+      "${GRAPH_ENV[@]}" \
       HODEI_SECURITY__AUTH_JWT_SECRET="$SECRET" \
       HODEI_SECURITY__AUTH_ISSUER="$ISSUER" \
       HODEI_SECURITY__AUTH_AUDIENCE="$AUDIENCE" \
@@ -769,6 +1008,7 @@ serve_scenario() {
   SECRET="$(cat "$LAB_DIR/secret")"
   PORT="${PORT:-$(free_port)}"
   resolve_distribution
+  ensure_backends
   write_lab_config
   start_service "$PORT"
   wait_for_health
@@ -797,6 +1037,7 @@ cleanup_lab() {
   [ "$(cat "$resolved/$MARKER_NAME")" = "$MARKER_VALUE" ] \
     || die "refusing to remove '$resolved': it does not declare itself a lab"
   echo "removing $resolved"
+  remove_backends "$resolved"
   rm -rf -- "$resolved"
   echo "the lab is gone"
 }
@@ -813,6 +1054,9 @@ main() {
       --account) ACCOUNT="$2"; shift 2 ;;
       --user) USER_NAME="$2"; shift 2 ;;
       --profile) PROFILE_PATH="$2"; shift 2 ;;
+      --graph-endpoint) GRAPH_ENDPOINT="$2"; shift 2 ;;
+      --s3-endpoint) S3_ENDPOINT="$2"; shift 2 ;;
+      --s3-bucket) S3_BUCKET="$2"; shift 2 ;;
       -h|--help) usage; exit 0 ;;
       *) die "unknown option '$1'" ;;
     esac
@@ -833,8 +1077,8 @@ main() {
 
   # The service never outlives the script: a lab that is left behind with a
   # process holding its database is a lab that cannot be cleaned.
-  trap 'stop_service' EXIT
-  trap 'stop_service; exit 130' INT TERM
+  trap 'stop_service; stop_backends' EXIT
+  trap 'stop_service; stop_backends; exit 130' INT TERM
 
   case "$command" in
     run) run_scenario ;;

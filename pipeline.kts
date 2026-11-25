@@ -75,6 +75,9 @@ pipeline {
             timestamps {
                 sh("cargo fmt --all -- --check")
                 sh("cargo clippy --workspace --all-targets -- -D warnings")
+                // HSP-314 F2: `legacy` ya no es el defecto; el motor embebido
+                // se valida aparte, con la misma regla, hasta F4.
+                sh("cargo clippy --workspace --all-targets --features legacy -- -D warnings")
                 sh("cargo build --workspace")
             }
         }
@@ -122,7 +125,6 @@ pipeline {
                         "--test hsp104_reclaim_contract",
                         "--test m6_uat",
                         "--test m5_uat",
-                        "--test capsule_read",
                         "--test ci_suites",
                         "--test compose_smoke_contract",
                         "--test test_affected_selection",
@@ -139,10 +141,8 @@ pipeline {
                         "--test standards_contract",
                         "--test hsp93_counterfactual",
                         "--test hsp116_parity_suite",
-                        "--test hsp118_bundle_contract",
                         "--test hsp123_migration_pure",
                         "--test hsp124_quota_pure",
-                        "--test hsp126_capsule_oci",
                         "--test hsp134_risk_facts",
                     ).joinToString(" ")
                 )
@@ -167,36 +167,21 @@ pipeline {
             timestamps {
                 sh(
                     "cargo test --workspace " + listOf(
-                        "--test admin_surface",
                         "--test atomic_projection",
                         "--test dgraph_profile_failclosed",
-                        "--test audit_events",
                         "--test backend_selection_failclosed",
-                        "--test http_contract",
-                        "--test iam_account_index",
-                        "--test iam_audit",
                         "--test ingestion_contract",
                         "--test ledger_contract",
                         "--test planned_migration",
                         "--test reactions_isolation",
                         "--test relation_deltas",
-                        "--test iam_backfill",
-                        "--test iam_policy_timestamps",
-                        "--test iam_scope",
                         "--test impact_view",
                         "--test intent_store",
                         "--test integration_create_group_comprehensive_test",
                         "--test integration_create_policy_new_test",
                         "--test integration_create_user_comprehensive_test",
-                        "--test playground_isolation",
-                        "--test policy_circuits",
-                        "--test repository_create",
-                        "--test repository_durable",
-                        "--test repository_read",
-                        "--test schema_persistence",
                         "--test support_reconciliation",
                         "--test har03_outbox_contract",
-                        "--test har04_raw_hosted_contract",
                         "--test hsp104_gc_ledger_contract",
                         "--test hsp104_gc_service",
                         "--test hsp174_gc_census_cache",
@@ -222,25 +207,8 @@ pipeline {
                         "--test hsp108_group_contract",
                         "--test hsp109_maven_contract",
                         "--test hsp113_search_contract",
-                        "--test hsp113_search_e2e",
-                        // La superficie HTTP del cursor keyset (HSP-222):
-                        // el contrato vive en el almacen (HSP-191) y los
-                        // IT de Dgraph lo ejercitan (HSP-147); lo que se
-                        // fija aqui es que /api/v1/search lo acepta, lo
-                        // propaga, lo echo, rechaza por su nombre el que
-                        // no se lee o el de otra cuenta y no degrada a
-                        // offset. Almacen falso in-process: lane rapida.
-                        "--test hsp222_search_cursor_surface",
-                        "--test hsp114_console_contract",
-                        "--test hsp132_registry_list",
-                        "--test hsp88_investigation_query",
-                        "--test hsp89_investigation_freshness",
                         "--test freshness_storage",
                         "--test hsp92_surreal_conformance",
-                        "--test hsp134_risk_facts_e2e",
-                        "--test hsp142_capability_matrix",
-                        "--test hsp243_user_guides",
-                        "--test hsp288_native_guides",
                     ).joinToString(" ")
                 )
             }
@@ -259,16 +227,8 @@ pipeline {
                 sh("bash scripts/dgraph-it-gate.sh")
                 sh(
                     "cargo test --workspace " + listOf(
-                        "--test hsp187_catalog_dgraph_it",
                         "--test hsp189_dgraph_graph_it",
                         "--test hsp189_upsert_probe_it",
-                        "--test hsp190_oci_catalog_dgraph_it",
-                        "--test hsp191_maven_dgraph_it",
-                        "--test hsp193_npm_dgraph_it",
-                        "--test hsp194_pypi_dgraph_it",
-                        "--test hsp195_apt_dgraph_it",
-                        "--test hsp196_proxy_dgraph_it",
-                        "--test hsp197_yum_dgraph_it",
                         "--test hsp198_quota_dgraph_it",
                         "--test hsp199_dgraph_frontier_it",
                         "--test hsp200_dgraph_bounded_it",
@@ -279,11 +239,26 @@ pipeline {
                         "--test hsp204_dgraph_reachability_it",
                         "--test hsp205_intents_dgraph_it",
                         "--test hsp206_dgraph_investigation_it",
-                        "--test hsp207_capsule_dgraph_it",
                         "--test hsp208_simulation_dgraph_it",
                         "--test hsp220_drain_outbox_it",
-                        "--test hsp304_formats_dgraph_it",
                         "--test hsp314_surface_probe",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
+                // HSP-314 F2: los IT que montan tiendas a mano con el motor
+                // embebido solo se compilan con `--features legacy`; corren en
+                // su propio comando (mismo gate de endpoint, un solo hilo).
+                sh(
+                    "cargo test --workspace --features legacy " + listOf(
+                        "--test hsp187_catalog_dgraph_it",
+                        "--test hsp190_oci_catalog_dgraph_it",
+                        "--test hsp191_maven_dgraph_it",
+                        "--test hsp193_npm_dgraph_it",
+                        "--test hsp194_pypi_dgraph_it",
+                        "--test hsp195_apt_dgraph_it",
+                        "--test hsp196_proxy_dgraph_it",
+                        "--test hsp197_yum_dgraph_it",
+                        "--test hsp207_capsule_dgraph_it",
+                        "--test hsp304_formats_dgraph_it",
                     ).joinToString(" ") + " -- --test-threads=1"
                 )
             }
@@ -298,71 +273,15 @@ pipeline {
                 sh(
                     "cargo test --workspace " + listOf(
                         "--test binary_contract",
-                        "--test bootstrap_integration",
+                        "--test distribution_contract",
                         "--test startup_errors",
                         "--test crash_recovery",
-                        "--test distribution_contract",
-                        "--test production_auth",
-                        "--test repository_restart_contract",
                         "--test har02_catalog_contract",
-                        "--test raw_hosted_restart_contract",
-                        "--test raw_conformity_uat",
-                        "--test blob_integrity_contract",
-                        "--test doc9_uat",
-                        "--test oci_pull_contract",
-                        "--test oci_push_contract",
-                        "--test oci_index_contract",
-                        "--test hsp104_gc_e2e",
-                        "--test hsp115_recovery_e2e",
-                        "--test hsp223_registry_lab",
-                        "--test hsp224_maven_central_real",
-                        "--test hsp225_npm_registry_real",
-                        "--test hsp226_pypi_registry_real",
-                        "--test hsp227_raw_external",
-                        "--test hsp228_oci_proxy",
-                        "--test hsp229_oci_group",
-                        "--test hsp105_trust_e2e",
-                        "--test hsp106_proxy_e2e",
-                        "--test hsp107_proxy_cache_e2e",
-                        "--test hsp108_group_e2e",
-                        "--test hsp109_maven_e2e",
-                        "--test hsp109_maven_cli",
-                        "--test hsp110_maven_remote_e2e",
-                        "--test hsp110_maven_cli",
-                        "--test hsp111_npm_e2e",
-                        "--test hsp111_npm_cli",
-                        "--test hsp112_pypi_e2e",
-                        "--test hsp112_pypi_cli",
-                        // La direccion publica del despliegue (HSP-238): lo
-                        // que el registro anuncia lo decide la
-                        // configuracion y no la peticion.
-                        "--test hsp238_public_url",
-                        "--test hsp143_namespaces_e2e",
-                        "--test hsp143_npm_namespaces_cli",
                         "--test hsp116_localstack_fidelity",
                         "--test hsp116_s3_contract",
                         "--test hsp116_s3_bench",
                         "--test hsp139_localstack_conformance",
                         "--test hsp139_rustfs_conformance",
-                        "--test hsp119_cargo_e2e",
-                        "--test hsp119_cargo_cli",
-                        "--test hsp120_dotnet_client",
-                        "--test hsp120_nuget_e2e",
-                        "--test hsp121_go_client",
-                        "--test hsp121_go_e2e",
-                        "--test hsp232_go_group",
-                        // Modulo publico real a traves del group Go, verificado contra
-                        // sum.golang.org y un h1 fijado; muta el zip (HSP-300).
-                        "--test hsp300_go_sumdb",
-                        // La readiness y la liveness son dos preguntas
-                        // distintas (HSP-237): con el almacen desconectado
-                        // en caliente, la readiness deja de ser 200 y la
-                        // liveness no.
-                        "--test hsp237_readiness",
-                        // La readiness del perfil de grafo (HSP-237): con un
-                        // Dgraph de mentira que cae y se recupera, la
-                        // readiness depende del alpha y la liveness no.
-                        "--test hsp237_graph_readiness",
                         // El recorrido del perfil de grafo (HSP-237, HSP-292):
                         // con HSP237_PROFILE_E2E=1 levanta con podman un
                         // Dgraph real y un S3, arranca el binario en perfil
@@ -370,58 +289,17 @@ pipeline {
                         // variable se salta (exit 0; el script lo reporta
                         // como NOT_RUN, exit 77).
                         "--test hsp237_profile_external_e2e",
-                        // El timeout HTTP de la readiness (HSP-292): un probe
-                        // que no contesta da 503 con timeout en menos de
-                        // 2,5 s, sin Dgraph ni S3.
-                        "--test hsp292_readiness_timeout",
-                        "--test hsp121_helm_oci",
-                        "--test hsp122_apt_client",
-                        "--test hsp122_apt_e2e",
-                        "--test hsp122_yum_client",
-                        "--test hsp122_yum_e2e",
-                        // El proxy rpm (HSP-235): el repodata del upstream se
-                        // sirve tal cual, con su checksum comprobado.
-                        "--test hsp235_rpm_proxy",
-                        // Los formatos adicionales: mirror y registry de
-                        // Terraform, Conan, Ansible Galaxy y Hugging Face.
-                        // Los clientes reales (terraform, conan,
-                        // ansible-galaxy, hf) NO se saltan: la suite hace
-                        // assert de que la herramienta existe y falla si
-                        // falta. El mirror de Terraform se prueba por
-                        // protocolo (curl y un upstream falso), no con el
-                        // cliente terraform.
-                        "--test hsp157_terraform_mirror",
-                        "--test hsp296_formats_audit",
-                        "--test hsp297_format_prefixes",
-                        "--test hsp297_trusted_listings",
-                        "--test hsp158_terraform_modules_client",
-                        "--test hsp159_conan_client",
-                        "--test hsp217_galaxy_client",
-                        "--test hsp218_hf_client",
-                        // Residuales de la pila de formatos (HSP-304): terraform
-                        // init real contra el mirror sobre https verificado
-                        // (NOT_RUN visible si faltan terraform/socat/openssl) y
-                        // la matriz 401/403/cuenta ajena/413 de las escrituras.
-                        "--test hsp304_terraform_init",
-                        "--test hsp304_format_access",
-                        // URLs de zip firmadas del mirror de providers: ligadas a
-                        // ruta, repositorio, cuenta y expiracion; rotacion; falla
-                        // cerrado sin clave; sin secretos en el log.
-                        "--test hsp313_signed_archive_url",
-                        "--test hsp123_migration_e2e",
-                        "--test hsp124_quota_e2e",
-                        "--test hsp125_replication_spike",
-                        "--test hsp135_vigencia_e2e",
-                        "--test hsp137_ciclo_cve_e2e",
-                        "--test hsp138_s3_arranque_e2e",
-                        // El camino comunitario (HSP-241): el script que
-                        // el tutorial dice a la comunidad ejecutar,
-                        // contra el binario real: publica, descarga,
-                        // comprueba los digests, reinicia y limpia.
-                        "--test hsp241_community_quickstart",
                         // Imagen OCI reproducible, perfiles declarativos y
                         // smoke de despliegue real con Podman (HSP-242).
                         "--test hsp242_oci_image",
+                        // El camino comunitario (HSP-241) sobre el perfil de
+                        // grafo: el tarball real sin legacy contra un Dgraph y
+                        // un S3 propios levantados con podman (sin podman el
+                        // script sale 77 y la prueba lo dice: NOT_RUN visible).
+                        // Con la documentacion que lee HSP-243, que no
+                        // necesita ni Dgraph ni legacy.
+                        "--test hsp241_community_quickstart",
+                        "--test hsp243_user_guides",
                         // Release verificable: SBOM SPDX/CycloneDX, provenance,
                         // matriz de licencias y firma OpenPGP (HSP-244).
                         "--test hsp244_verifiable_release",
@@ -524,6 +402,164 @@ pipeline {
                 sh(
                     "cargo test -p hodei-artifacts-api --no-default-features --test hsp213_profile_rejection --test hsp213_rollback_single_authority"
                 )
+            }
+        }
+
+        // HSP-314 F2: `legacy` ya no es el defecto, asi que el motor embebido
+        // (SurrealDB sobre RocksDB) tiene su propia etapa. Aqui corren las
+        // suites que lo siembran o lo montan y que solo se compilan con
+        // `--features legacy` (`required-features` en Cargo.toml). La etapa
+        // cubre el motor embebido hasta F4, cuando se retira surrealdb y
+        // estas suites migran a [graph] o se borran con el. Cada target
+        // vive en exactamente una suite (tests/ci_suites.rs).
+        stage("legacy (embedded engine)") {
+            timestamps {
+                // Los informes de una ejecucion anterior no son evidencia de esta:
+                // se borran antes de correr, para que una suite que pase sin
+                // escribirlos se note.
+                sh("rm -f target/uat/raw-conformity.md target/uat/oci-push-conformity.md target/uat/oci-index-conformity.md target/uat/doc9.md")
+                sh(
+                    "cargo test --workspace --features legacy " + listOf(
+                        "--test binary_contract_embedded",
+                        "--test distribution_contract_embedded",
+                        "--test startup_errors_embedded",
+                        "--test capsule_read",
+                        "--test hsp118_bundle_contract",
+                        "--test hsp126_capsule_oci",
+                        "--test admin_surface",
+                        "--test audit_events",
+                        "--test http_contract",
+                        "--test iam_account_index",
+                        "--test iam_audit",
+                        "--test iam_backfill",
+                        // La readiness y la liveness son dos preguntas
+                        // distintas (HSP-237): con el almacen desconectado
+                        // en caliente, la readiness deja de ser 200 y la
+                        // liveness no. Arranca el motor embebido.
+                        "--test hsp237_readiness",
+                        "--test iam_policy_timestamps",
+                        "--test iam_scope",
+                        "--test playground_isolation",
+                        "--test policy_circuits",
+                        "--test repository_create",
+                        "--test repository_durable",
+                        "--test repository_read",
+                        "--test schema_persistence",
+                        "--test har04_raw_hosted_contract",
+                        "--test hsp113_search_e2e",
+                        // La superficie HTTP del cursor keyset (HSP-222):
+                        // el contrato vive en el almacen (HSP-191) y los
+                        // IT de Dgraph lo ejercitan (HSP-147); lo que se
+                        // fija aqui es que /api/v1/search lo acepta, lo
+                        // propaga, lo echo, rechaza por su nombre el que
+                        // no se lee o el de otra cuenta y no degrada a
+                        // offset. Almacen falso in-process: lane rapida.
+                        "--test hsp222_search_cursor_surface",
+                        "--test hsp114_console_contract",
+                        "--test hsp132_registry_list",
+                        "--test hsp88_investigation_query",
+                        "--test hsp89_investigation_freshness",
+                        "--test hsp134_risk_facts_e2e",
+                        "--test hsp142_capability_matrix",
+                        "--test hsp243_user_guides_recipes",
+                        "--test hsp288_native_guides",
+                        "--test bootstrap_integration",
+                        "--test production_auth",
+                        "--test repository_restart_contract",
+                        "--test raw_hosted_restart_contract",
+                        "--test raw_conformity_uat",
+                        "--test blob_integrity_contract",
+                        "--test doc9_uat",
+                        "--test oci_pull_contract",
+                        "--test oci_push_contract",
+                        "--test oci_index_contract",
+                        "--test hsp104_gc_e2e",
+                        "--test hsp115_recovery_e2e",
+                        "--test hsp223_registry_lab",
+                        "--test hsp224_maven_central_real",
+                        "--test hsp225_npm_registry_real",
+                        "--test hsp226_pypi_registry_real",
+                        "--test hsp227_raw_external",
+                        "--test hsp228_oci_proxy",
+                        "--test hsp229_oci_group",
+                        "--test hsp105_trust_e2e",
+                        "--test hsp106_proxy_e2e",
+                        "--test hsp107_proxy_cache_e2e",
+                        "--test hsp108_group_e2e",
+                        "--test hsp109_maven_e2e",
+                        "--test hsp109_maven_cli",
+                        "--test hsp110_maven_remote_e2e",
+                        "--test hsp110_maven_cli",
+                        "--test hsp111_npm_e2e",
+                        "--test hsp111_npm_cli",
+                        "--test hsp112_pypi_e2e",
+                        "--test hsp112_pypi_cli",
+                        // La direccion publica del despliegue (HSP-238): lo
+                        // que el registro anuncia lo decide la
+                        // configuracion y no la peticion.
+                        "--test hsp238_public_url",
+                        "--test hsp143_namespaces_e2e",
+                        "--test hsp143_npm_namespaces_cli",
+                        "--test hsp119_cargo_e2e",
+                        "--test hsp119_cargo_cli",
+                        "--test hsp120_dotnet_client",
+                        "--test hsp120_nuget_e2e",
+                        "--test hsp121_go_client",
+                        "--test hsp121_go_e2e",
+                        "--test hsp232_go_group",
+                        // Modulo publico real a traves del group Go, verificado contra
+                        // sum.golang.org y un h1 fijado; muta el zip (HSP-300).
+                        "--test hsp300_go_sumdb",
+                        // La readiness del perfil de grafo (HSP-237): con un
+                        // Dgraph de mentira que cae y se recupera, la
+                        // readiness depende del alpha y la liveness no.
+                        "--test hsp237_graph_readiness",
+                        // El timeout HTTP de la readiness (HSP-292): un probe
+                        // que no contesta da 503 con timeout en menos de
+                        // 2,5 s, sin Dgraph ni S3.
+                        "--test hsp292_readiness_timeout",
+                        "--test hsp121_helm_oci",
+                        "--test hsp122_apt_client",
+                        "--test hsp122_apt_e2e",
+                        "--test hsp122_yum_client",
+                        "--test hsp122_yum_e2e",
+                        // El proxy rpm (HSP-235): el repodata del upstream se
+                        // sirve tal cual, con su checksum comprobado.
+                        "--test hsp235_rpm_proxy",
+                        // Los formatos adicionales: mirror y registry de
+                        // Terraform, Conan, Ansible Galaxy y Hugging Face.
+                        // Los clientes reales (terraform, conan,
+                        // ansible-galaxy, hf) NO se saltan: la suite hace
+                        // assert de que la herramienta existe y falla si
+                        // falta. El mirror de Terraform se prueba por
+                        // protocolo (curl y un upstream falso), no con el
+                        // cliente terraform.
+                        "--test hsp157_terraform_mirror",
+                        "--test hsp296_formats_audit",
+                        "--test hsp297_format_prefixes",
+                        "--test hsp297_trusted_listings",
+                        "--test hsp158_terraform_modules_client",
+                        "--test hsp159_conan_client",
+                        "--test hsp217_galaxy_client",
+                        "--test hsp218_hf_client",
+                        // Residuales de la pila de formatos (HSP-304): terraform
+                        // init real contra el mirror sobre https verificado
+                        // (NOT_RUN visible si faltan terraform/socat/openssl) y
+                        // la matriz 401/403/cuenta ajena/413 de las escrituras.
+                        "--test hsp304_terraform_init",
+                        "--test hsp304_format_access",
+                        // URLs de zip firmadas del mirror de providers: ligadas a
+                        // ruta, repositorio, cuenta y expiracion; rotacion; falla
+                        // cerrado sin clave; sin secretos en el log.
+                        "--test hsp313_signed_archive_url",
+                        "--test hsp123_migration_e2e",
+                        "--test hsp124_quota_e2e",
+                        "--test hsp125_replication_spike",
+                        "--test hsp135_vigencia_e2e",
+                        "--test hsp137_ciclo_cve_e2e",
+                        "--test hsp138_s3_arranque_e2e",
+                    ).joinToString(" ")
+                )
                 // Y la otra cara (HSP-213): en el arbol con `legacy` --el
                 // de la herramienta aislada que empaqueta
                 // scripts/package-legacy-tools.sh y el de las suites
@@ -531,7 +567,7 @@ pipeline {
                 // sirviendo /health. Un solo hilo: levanta el almacem
                 // embebido y sondea su puerto.
                 sh(
-                    "cargo test -p hodei-artifacts-api --test hsp213_embedded_serves -- --test-threads=1"
+                    "cargo test -p hodei-artifacts-api --features legacy --test hsp213_embedded_serves -- --test-threads=1"
                 )
                 sh(
                     "if [ ! -f target/uat/raw-conformity.md ]; then " +
@@ -634,7 +670,7 @@ pipeline {
                 // `sh` es una consola distinta: el veredicto se da al
                 // final, con la evidencia ya archivada.
                 sh(
-                    "cargo test --workspace --test oci_e2e_contract -- --test-threads=1 " +
+                    "cargo test --workspace --features legacy --test oci_e2e_contract -- --test-threads=1 " +
                         "> target/uat/oci-e2e.log 2>&1; echo $? > target/uat/oci-e2e.status"
                 )
                 // El log y el informe se leen **antes** de fallar: la

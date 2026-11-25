@@ -22,6 +22,13 @@
 //! 7. (HSP-270) The bash block of the README Quickstart is extracted and
 //!    executed against that tarball, digest verification included.
 //!
+//! HSP-314 F2: the lab runs on the graph profile (`RUN_MODE=dgraph`), the only
+//! one the released binary has. The script starts its own throwaway Dgraph and
+//! S3 with podman (`hodei-hsp314f2-qs-*`) and removes them when it ends. Without
+//! podman or the images the script exits 77 (NOT_RUN) and the tests that need
+//! the backends print `NOT_RUN` and return, unless `HSP241_REQUIRE_BACKENDS=1`
+//! (set by the pipeline stage that has them), where it is a failure.
+//!
 //! The service is a real process and the client is a real `curl`: the
 //! assertions are about what the wire said.
 
@@ -66,16 +73,40 @@ fn a_distribution(root: &Path) -> PathBuf {
     distribution
 }
 
-/// The script, run, and everything it said.
-fn run_the_script(arguments: &[&str]) -> (bool, String) {
+/// The prefix of the throwaway Dgraph and S3 the script starts with podman.
+const BACKEND_PREFIX: &str = "hodei-hsp314f2-qs";
+
+/// The exit code of a script that could not run its backends (NOT_RUN).
+const NOT_RUN: i32 = 77;
+
+/// A run that exited 77 is not a pass: it says so, and it fails when the
+/// stage that has the backends demands them.
+fn the_backends_were_missing(code: Option<i32>, text: &str) -> bool {
+    if code != Some(NOT_RUN) {
+        return false;
+    }
+    assert!(
+        std::env::var("HSP241_REQUIRE_BACKENDS").as_deref() != Ok("1"),
+        "NOT_RUN where the backends are required (HSP241_REQUIRE_BACKENDS=1):\n{text}"
+    );
+    eprintln!("NOT_RUN: the graph backends of the quickstart are not available here:\n{text}");
+    true
+}
+
+/// The script, run, and everything it said. `None` when it was NOT_RUN.
+fn run_the_script(arguments: &[&str]) -> Option<(bool, String)> {
     let output = Command::new("bash")
         .arg(the_script())
         .args(arguments)
+        .env("HODEI_QUICKSTART_PREFIX", BACKEND_PREFIX)
         .output()
         .expect("the quickstart script runs");
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
-    (output.status.success(), text)
+    if the_backends_were_missing(output.status.code(), &text) {
+        return None;
+    }
+    Some((output.status.success(), text))
 }
 
 #[test]
@@ -88,13 +119,15 @@ fn the_community_quickstart_publishes_pulls_and_survives_a_restart() {
     fs::write(&neighbour, b"this file is not the laboratory").expect("the neighbour file");
 
     let lab_argument = lab.to_string_lossy().into_owned();
-    let (succeeded, text) = run_the_script(&[
+    let Some((succeeded, text)) = run_the_script(&[
         "run",
         "--distribution",
         &distribution.to_string_lossy(),
         "--lab-dir",
         &lab_argument,
-    ]);
+    ]) else {
+        return;
+    };
     assert!(succeeded, "the quickstart did not finish:\n{text}");
 
     // The account, its repositories and the two publishes.
@@ -148,7 +181,8 @@ fn the_community_quickstart_publishes_pulls_and_survives_a_restart() {
     );
 
     // The cleanup: the laboratory and nothing else.
-    let (succeeded, text) = run_the_script(&["cleanup", "--lab-dir", &lab_argument]);
+    let (succeeded, text) = run_the_script(&["cleanup", "--lab-dir", &lab_argument])
+        .expect("the cleanup needs no backend");
     assert!(succeeded, "the cleanup did not finish:\n{text}");
     assert!(
         !lab.exists(),
@@ -160,7 +194,8 @@ fn the_community_quickstart_publishes_pulls_and_survives_a_restart() {
     );
 
     // And it refuses a directory that does not declare itself a laboratory.
-    let (succeeded, text) = run_the_script(&["cleanup", "--lab-dir", &neighbour.to_string_lossy()]);
+    let (succeeded, text) = run_the_script(&["cleanup", "--lab-dir", &neighbour.to_string_lossy()])
+        .expect("the cleanup needs no backend");
     assert!(
         !succeeded,
         "the cleanup removed a directory that is not a lab:\n{text}"
@@ -177,13 +212,15 @@ fn the_production_profile_without_a_secret_stays_closed() {
     let distribution = a_distribution(root.path());
     let lab = root.path().join("guard-lab");
 
-    let (succeeded, text) = run_the_script(&[
+    let Some((succeeded, text)) = run_the_script(&[
         "guard",
         "--distribution",
         &distribution.to_string_lossy(),
         "--lab-dir",
         &lab.to_string_lossy(),
-    ]);
+    ]) else {
+        return;
+    };
     assert!(succeeded, "the guard did not finish:\n{text}");
 
     // The production profile declares no secret.
@@ -324,7 +361,22 @@ fn a_clean_command(home: &Path) -> Command {
         .env_clear()
         .env("PATH", CLEAN_PATH)
         .env("HOME", home)
-        .env("TMPDIR", home);
+        .env("TMPDIR", home)
+        .env("HODEI_QUICKSTART_PREFIX", BACKEND_PREFIX);
+    // Not the toolchain, but the container store and runtime of whoever runs
+    // the suite: the lab starts its Dgraph and S3 with podman, and a person
+    // that follows the tutorial has podman where it already is.
+    let real_home = std::env::var("HOME").unwrap_or_default();
+    let data =
+        std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{real_home}/.local/share"));
+    let config =
+        std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{real_home}/.config"));
+    command
+        .env("XDG_DATA_HOME", data)
+        .env("XDG_CONFIG_HOME", config);
+    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+        command.env("XDG_RUNTIME_DIR", runtime);
+    }
     command
 }
 
@@ -390,6 +442,9 @@ fn the_real_tarball_runs_in_a_clean_directory_without_cargo() {
         .output()
         .expect("the quickstart runs");
     let text = output_text(&output);
+    if the_backends_were_missing(output.status.code(), &text) {
+        return;
+    }
     assert!(output.status.success(), "the quickstart failed:\n{text}");
     assert_the_run_told_the_whole_story(&text);
     assert!(
@@ -507,6 +562,9 @@ fn the_readme_quickstart_block_runs_against_the_real_bundle() {
         .output()
         .expect("the block runs");
     let text = output_text(&output);
+    if the_backends_were_missing(output.status.code(), &text) {
+        return;
+    }
     assert!(output.status.success(), "the README block failed:\n{text}");
     assert!(
         text.contains(&format!("{}.tar.gz: OK", packaged.package_name)),

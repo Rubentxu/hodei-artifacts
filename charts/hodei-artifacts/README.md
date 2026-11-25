@@ -1,45 +1,49 @@
 # Chart de Helm de hodei-artifacts
 
-Despliega `hodei-artifacts-api` en Kubernetes con tres perfiles de
-almacenamiento. Las variables y los perfiles siguen
-[`config/standalone.toml`](../../config/standalone.toml),
-[`config/external.toml`](../../config/external.toml),
+Despliega `hodei-artifacts-api` en Kubernetes sobre el **perfil de grafo**
+(`RUN_MODE=dgraph`, HSP-314 F2): un Alpha de Dgraph es la autoridad única de los
+metadatos y los bytes viven en S3. Las variables siguen
+[`config/dgraph.toml`](../../config/dgraph.toml),
 [`src/config.rs`](../../src/config.rs) y
 [`docs/community/configuration.md`](../../docs/community/configuration.md).
 Si algo de aquí discrepa del código, manda el código.
 
 ## Estado honesto
 
-| Perfil | Fichero de valores | ¿Arranca hoy? |
-| --- | --- | --- |
-| `standalone` | `values.yaml` (por defecto) | Sí: RocksDB y CAS en una PVC. |
-| `rocksdb-garage` | `values-rocksdb-garage.yaml` | La configuración (RocksDB + `content.backend = "s3"`) es válida según `src/config.rs`. El Job de Garage **no se ha ejecutado contra un clúster real** (ver Verificación). |
-| `external` | `values-external.yaml` | **No.** El servicio solo acepta `database.db_type = "rocksdb"`; con `RUN_MODE=external` termina con `Unsupported database type 'dgraph'`. El perfil es configuración declarativa para cuando exista un adaptador Dgraph. |
+- Los perfiles `standalone` y `rocksdb-garage` **se retiraron**: la imagen ya no
+  lleva el motor embebido (RocksDB), así que `helm template` falla con un
+  mensaje que remite al perfil `graph`.
+- El perfil `graph` (`values.yaml`, por defecto) renderiza una API sin estado
+  (`replicaCount >= 1`, `RollingUpdate`, sin PVC, `PodDisruptionBudget`) que
+  llega al Alpha por `graph.endpoint` o, con `dgraph.enabled`, al Alpha del
+  propio chart. La contraseña ACL de la cuenta de servicio se referencia desde
+  un Secret (`graph.credentials.existingSecret`): el chart nunca la renderiza.
+- **Sin probar en vivo:** el chart solo se renderiza (`scripts/test-helm-chart.sh`);
+  no se ha desplegado en un clúster real. Lo que sí está probado con Dgraph y S3
+  reales es el binario y la imagen en perfil de grafo (`hsp237`, `hsp308`).
+- **Superficies cerradas hasta F3 (HSP-314):** la investigación, los hechos de
+  riesgo y el reactor de CVE no tienen cableado sobre Dgraph y siguen cerrados
+  en este perfil.
 
 El servicio **no termina TLS** (`src/main.rs` sirve HTTP en claro). Termina TLS
 en el Ingress o en el balanceador y define `config.publicBaseUrl` con
-esquema `https`. El servicio no tiene clave de configuración para el endpoint
-de Dgraph; el chart despliega Zero/Alpha, pero la API no los consume todavía.
+esquema `https`.
 
-## Qué hace cada perfil
+## Qué renderiza
 
-- **standalone**: 1 réplica, `strategy.type: Recreate`, una PVC `ReadWriteOnce`
-  en `/app/data` (RocksDB y CAS en el sistema de ficheros).
-- **rocksdb-garage**: igual para la API (1 réplica, `Recreate`, PVC de RocksDB)
-  más un StatefulSet de Garage con **dos `volumeClaimTemplates` RWO
-  separados** por réplica (`meta`, pensado para SSD de baja latencia, y
-  `data`, para capacidad) y un Job de arranque idempotente (layout, bucket e
-  importación de clave desde un Secret mediante la API de administración v2
-  de Garage).
-- **external**: API sin estado, `replicaCount >= 2`, `RollingUpdate`, sin PVC,
-  `PodDisruptionBudget`; Dgraph Zero/Alpha como StatefulSets con PVC `RWO`
-  (opcional con `dgraph.enabled`) y S3 externo o Garage.
-
-Todo perfil con RocksDB **fuerza 1 réplica y `Recreate`**, con `replicaCount`
-ignorado. El pod corre como no-root (UID/GID y `fsGroup` 10001, el de la
-imagen), con `readOnlyRootFilesystem`, sin capacidades y con `seccomp`
-`RuntimeDefault`. Las sondas son `/health/live` (arranque y vida) y
-`/health/ready` (disponibilidad).
+- **API**: sin estado, `RollingUpdate`, sin PVC, `PodDisruptionBudget`. Corre
+  como no-root (UID/GID y `fsGroup` 10001, el de la imagen), con
+  `readOnlyRootFilesystem`, sin capacidades y con `seccomp` `RuntimeDefault`.
+  Las sondas son `/health/live` (arranque y vida) y `/health/ready`
+  (disponibilidad, que depende del Alpha y de S3).
+- **Dgraph** (opcional, `dgraph.enabled`): Zero/Alpha como StatefulSets con PVC
+  `RWO` y ACL con el secreto HMAC de un Secret existente. Overlay:
+  `values-graph.yaml`.
+- **Garage** (opcional, `garage.enabled`): un StatefulSet con **dos
+  `volumeClaimTemplates` RWO separados** por réplica (`meta`, pensado para SSD
+  de baja latencia, y `data`, para capacidad) y un Job de arranque idempotente
+  (layout, bucket e importación de clave desde un Secret mediante la API de
+  administración v2 de Garage).
 
 ## Secretos
 
@@ -52,7 +56,9 @@ kubectl create secret generic hodei-s3 \
   --from-literal=rpc-secret="$(openssl rand -hex 32)" \
   --from-literal=admin-token="$(openssl rand -base64 32)"
 kubectl create secret generic hodei-dgraph-acl \
-  --from-literal=hmac-secret="$(openssl rand -hex 32)"   # solo perfil external
+  --from-literal=hmac-secret="$(openssl rand -hex 32)"   # solo con dgraph.enabled
+kubectl create secret generic hodei-dgraph-credentials \
+  --from-literal=password="<contraseña ACL de la cuenta de servicio>"
 ```
 
 El identificador de clave de Garage debe cumplir su formato (`GK` más 24
@@ -64,8 +70,13 @@ y `HODEI_METADATA_SIGNER_ARMOR`.
 ## Uso
 
 ```bash
-helm install hodei charts/hodei-artifacts                                   # standalone
-helm install hodei charts/hodei-artifacts -f charts/hodei-artifacts/values-rocksdb-garage.yaml
+# Alpha propio (TLS declarado) y S3 propio
+helm install hodei charts/hodei-artifacts \
+  --set graph.endpoint=alpha.example.com:9080 \
+  --set graph.credentials.existingSecret=hodei-dgraph-credentials \
+  --set s3.existingSecret=hodei-s3 --set s3.endpoint=s3.example.com
+# Dgraph dentro del clúster
+helm install hodei charts/hodei-artifacts -f charts/hodei-artifacts/values-graph.yaml
 SOURCE_DATE_EPOCH=1700000000 helm package charts/hodei-artifacts            # reproducible
 ```
 
@@ -73,7 +84,7 @@ SOURCE_DATE_EPOCH=1700000000 helm package charts/hodei-artifacts            # re
 
 ```bash
 scripts/test-helm-chart.sh   # lint, contratos de manifiestos, empaquetado reproducible,
-                             # perfil external con Garage y bootstrap contra un doble de la API
+                             # perfil graph con Dgraph y Garage, y bootstrap contra un doble de la API
 ```
 
 `helm package` solo es reproducible con `SOURCE_DATE_EPOCH`: sin ella el

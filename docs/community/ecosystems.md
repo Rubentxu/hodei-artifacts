@@ -415,7 +415,7 @@ curl -sS -H "Authorization: Bearer ${HODEI_TOKEN}" \
 
 - **Copia de seguridad, verificación, restauración y reparación (`hodei-recovery`)**: consulta la sección **RECOVERY** en [`uat/UAT-OPERATIONS.md`](../../uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación) (`hodei-recovery backup --to DIR`, `verify DIR`, `restore --from DIR`, `scrub`, `repair --from DIR`).
 - **Actualización (upgrade) de versión**:
-  1. Detén el servicio (`hodei-artifacts-api`) — la base RocksDB no admite copia en caliente.
+  1. Detén el servicio (`hodei-artifacts-api`) — la base RocksDB (solo motor embebido `legacy`) no admite copia en caliente; en el perfil de grafo, la copia es la de Dgraph y la del bucket S3.
   2. Ejecuta `hodei-recovery backup --to <dir>` y `hodei-recovery verify <dir>`.
   3. Despliega el nuevo paquete `tar.gz` generado por [`scripts/package-release.sh`](../../scripts/package-release.sh) verificando su `.sha256`.
   4. Arranca el servicio y valida `/health/ready` y `GET /api/v1/capabilities`.

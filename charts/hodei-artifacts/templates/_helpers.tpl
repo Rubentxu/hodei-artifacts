@@ -38,26 +38,35 @@ app.kubernetes.io/component: api
 {{- end -}}
 {{- end -}}
 
-{{/* Validates the profile once; every template calls it through the Deployment. */}}
+{{/*
+Validates the profile once; every template calls it through the Deployment.
+HSP-314 F2: the image no longer ships the embedded RocksDB engine, so the only
+profile is the graph one (RUN_MODE=dgraph). The old names fail with the way out.
+*/}}
 {{- define "hodei.profile" -}}
-{{- if not (has .Values.profile (list "standalone" "rocksdb-garage" "external")) -}}
-{{- fail (printf "profile must be one of standalone, rocksdb-garage, external (got %q)" .Values.profile) -}}
+{{- if has .Values.profile (list "standalone" "rocksdb-garage") -}}
+{{- fail (printf "profile %q was removed (HSP-314 F2): the image no longer embeds RocksDB; use profile graph (Dgraph + S3)" .Values.profile) -}}
+{{- end -}}
+{{- if ne .Values.profile "graph" -}}
+{{- fail (printf "profile must be graph (got %q)" .Values.profile) -}}
 {{- end -}}
 {{- .Values.profile -}}
 {{- end -}}
 
-{{/* "true" when the profile keeps metadata in embedded RocksDB. */}}
-{{- define "hodei.usesRocksdb" -}}
-{{- if ne (include "hodei.profile" .) "external" -}}true{{- end -}}
-{{- end -}}
-
-{{/* RocksDB admits a single writer: force 1 replica; external honours replicaCount. */}}
+{{/* The API is stateless on the graph profile: it honours replicaCount (>= 1). */}}
 {{- define "hodei.replicas" -}}
-{{- if include "hodei.usesRocksdb" . -}}1{{- else -}}
-{{- if lt (int .Values.replicaCount) 2 -}}
-{{- fail "profile external requires replicaCount >= 2" -}}
+{{- if lt (int .Values.replicaCount) 1 -}}
+{{- fail "replicaCount must be >= 1" -}}
 {{- end -}}
 {{- .Values.replicaCount -}}
+{{- end -}}
+
+{{/* gRPC endpoint of the Dgraph Alpha: the in-cluster one or the declared one. */}}
+{{- define "hodei.graph.endpoint" -}}
+{{- if .Values.dgraph.enabled -}}
+{{- printf "%s-alpha:9080" (include "hodei.dgraph.fullname" .) -}}
+{{- else -}}
+{{- required "graph.endpoint is required when dgraph.enabled is false (host:port of the Alpha gRPC)" .Values.graph.endpoint -}}
 {{- end -}}
 {{- end -}}
 

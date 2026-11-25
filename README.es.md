@@ -15,7 +15,13 @@
 
 ---
 
+## Perfil productivo: Dgraph + S3 (HSP-314 F2)
+
+El build por defecto y el archivo/imagen OCI de release son el **perfil de grafo**: un Alpha de Dgraph es la autoridad única de los metadatos y los bytes viven en S3 (`RUN_MODE=dgraph`, `config/dgraph.toml`). El motor embebido SurrealDB/RocksDB es opt-in (`--features legacy`) y se retira en HSP-314 F4. Despliega con [`compose.external.yaml`](compose.external.yaml) (Dgraph + Garage + API), [`compose.yaml`](compose.yaml) (solo la API, con tu Dgraph y tu S3) o el [chart de Helm](charts/hodei-artifacts/README.md); véase [`docs/community/operations.md`](docs/community/operations.md). La investigación, los hechos de riesgo y el reactor de CVE no están cableados en este perfil todavía (HSP-314 F3) y siguen cerrados.
+
 ## Quickstart en 60 segundos (sin compilar Rust)
+
+> **Laboratorio sobre el perfil de grafo.** El laboratorio de abajo ejecuta el binario de release en el perfil de grafo: el script levanta con Podman un Dgraph (Zero + Alpha con ACL) y un LocalStack S3 desechables (`hodei-community-*`, se retiran al terminar), o usa los tuyos con `--graph-endpoint`, `--s3-endpoint` y `--s3-bucket`. Sin Podman y sin endpoints termina con el código 77 (`NOT_RUN`) en lugar de fingir que corrió.
 
 Levanta un laboratorio local aislado desde el paquete de release: arranca el servidor, acuña un JWT efímero, crea repositorios `raw` + `maven2`, publica y descarga paquetes y verifica sus digests:
 

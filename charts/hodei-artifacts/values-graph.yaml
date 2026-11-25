@@ -1,0 +1,26 @@
+# Graph profile with the in-cluster Dgraph Zero/Alpha (HSP-314 F2).
+#
+# The API starts with RUN_MODE=dgraph against the in-cluster Alpha and keeps its
+# bytes in S3. Secrets are referenced by name only: `hodei-s3` (S3 key pair),
+# `hodei-dgraph-acl` (ACL HMAC secret of the Alpha) and `hodei-dgraph-credentials`
+# (key `password`: the ACL password of the service account).
+profile: graph
+replicaCount: 2
+graph:
+  tls:
+    # The in-cluster Alpha is plaintext inside the cluster network.
+    enabled: false
+    caCertPath: ""
+    serverName: ""
+  credentials:
+    existingSecret: hodei-dgraph-credentials
+s3:
+  existingSecret: hodei-s3
+  endpoint: s3.example.invalid
+  region: eu-west-1
+  tls: true
+dgraph:
+  enabled: true
+  aclSecret: hodei-dgraph-acl
+garage:
+  enabled: false

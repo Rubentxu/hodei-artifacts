@@ -20,36 +20,38 @@ check() { # description, condition result
 }
 yes() { if "$@" >/dev/null 2>&1; then echo ok; else echo no; fi; }
 
-helm lint "$chart" >/dev/null && check "lint default" ok || check "lint default" no
+# HSP-314 F2: the graph profile is the only one. The credentials Secret is
+# required (the ACL password is never rendered by the chart) and the Alpha is
+# either the in-cluster one or a declared endpoint.
+creds=(--set graph.credentials.existingSecret=hodei-dgraph-credentials)
+helm lint "$chart" "${creds[@]}" --set graph.endpoint=alpha.example.invalid:9080 >/dev/null && check "lint default" ok || check "lint default" no
 
-std=$(helm template t "$chart")
-rg=$(helm template t "$chart" -f "$chart/values-rocksdb-garage.yaml")
-ext=$(helm template t "$chart" -f "$chart/values-external.yaml")
-rgf=$(helm template t "$chart" -f "$chart/values-rocksdb-garage.yaml" --set replicaCount=5)
+base=$(helm template t "$chart" "${creds[@]}" --set graph.endpoint=alpha.example.invalid:9080)
+ext=$(helm template t "$chart" -f "$chart/values-graph.yaml")
+rg=$(helm template t "$chart" "${creds[@]}" --set graph.endpoint=alpha.example.invalid:9080 --set garage.enabled=true --set garage.existingSecret=hodei-s3 --set s3.existingSecret=hodei-s3)
+std=$base
 
 q() { yq -r "$2" <<<"$1" | { grep -vE '^(---)?$' || true; }; }
 dep='select(.kind=="Deployment")'
+envof() { q "$1" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"$2\")"; }
+envval() { q "$1" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"$2\") | .value"; }
 
-for p in "standalone:$std" "rocksdb-garage:$rg"; do
+for p in "graph:$base" "graph+dgraph:$ext" "graph+garage:$rg"; do
   n=${p%%:*}; m=${p#*:}
-  check "$n: Recreate" "$([ "$(q "$m" "$dep | .spec.strategy.type")" = Recreate ] && echo ok || echo no)"
-  check "$n: 1 replica" "$([ "$(q "$m" "$dep | .spec.replicas")" = 1 ] && echo ok || echo no)"
-  check "$n: fsGroup 10001" "$([ "$(q "$m" "$dep | .spec.template.spec.securityContext.fsGroup")" = 10001 ] && echo ok || echo no)"
-  check "$n: RWO PVC" "$([ "$(q "$m" 'select(.kind=="PersistentVolumeClaim") | .spec.accessModes[0]')" = ReadWriteOnce ] && echo ok || echo no)"
-done
-check "rocksdb-garage ignores replicaCount=5" "$([ "$(q "$rgf" "$dep | .spec.replicas")" = 1 ] && echo ok || echo no)"
-
-check "external: replicas >= 2" "$([ "$(q "$ext" "$dep | .spec.replicas")" -ge 2 ] && echo ok || echo no)"
-check "external: no PVC" "$([ -z "$(q "$ext" 'select(.kind=="PersistentVolumeClaim") | .kind')" ] && echo ok || echo no)"
-check "external: no persistentVolumeClaim volume" "$([ -z "$(q "$ext" "$dep | .spec.template.spec.volumes[] | select(.persistentVolumeClaim) | .name")" ] && echo ok || echo no)"
-check "external: RollingUpdate" "$([ "$(q "$ext" "$dep | .spec.strategy.type")" = RollingUpdate ] && echo ok || echo no)"
-for p in "standalone:$std" "rocksdb-garage:$rg" "external:$ext"; do
-  n=${p%%:*}; m=${p#*:}
+  check "$n: RUN_MODE=dgraph" "$([ "$(envval "$m" RUN_MODE)" = dgraph ] && echo ok || echo no)"
+  check "$n: no RocksDB or CAS path in the environment" "$([ -z "$(envof "$m" HODEI_ROCKSDB__PATH)" ] && [ -z "$(envof "$m" HODEI_CONTENT__CAS_PATH)" ] && echo ok || echo no)"
+  check "$n: content backend is s3" "$([ "$(envval "$m" HODEI_CONTENT__BACKEND)" = s3 ] && echo ok || echo no)"
+  check "$n: ACL password comes from a Secret, never inline" "$([ -z "$(q "$m" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_GRAPH__CREDENTIALS__PASSWORD\") | .value // \"\"")" ] && [ "$(q "$m" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_GRAPH__CREDENTIALS__PASSWORD\") | .valueFrom.secretKeyRef.name")" = hodei-dgraph-credentials ] && echo ok || echo no)"
+  check "$n: RollingUpdate" "$([ "$(q "$m" "$dep | .spec.strategy.type")" = RollingUpdate ] && echo ok || echo no)"
+  check "$n: no PVC and no persistentVolumeClaim volume for the API" "$([ -z "$(q "$m" 'select(.kind=="PersistentVolumeClaim") | .kind')" ] && [ -z "$(q "$m" "$dep | .spec.template.spec.volumes[]? | select(.persistentVolumeClaim) | .name")" ] && echo ok || echo no)"
   check "$n: liveness /health/live" "$([ "$(q "$m" "$dep | .spec.template.spec.containers[0].livenessProbe.httpGet.path")" = /health/live ] && echo ok || echo no)"
   check "$n: readiness /health/ready" "$([ "$(q "$m" "$dep | .spec.template.spec.containers[0].readinessProbe.httpGet.path")" = /health/ready ] && echo ok || echo no)"
   check "$n: runAsUser 10001, non-root" "$([ "$(q "$m" "$dep | .spec.template.spec.securityContext.runAsUser")" = 10001 ] && echo ok || echo no)"
   check "$n: no Secret rendered" "$([ -z "$(q "$m" 'select(.kind=="Secret") | .kind')" ] && echo ok || echo no)"
 done
+check "graph: declared endpoint reaches the API" "$([ "$(envval "$base" HODEI_GRAPH__ENDPOINT)" = alpha.example.invalid:9080 ] && echo ok || echo no)"
+check "graph+dgraph: the API points at the in-cluster Alpha" "$([ "$(envval "$ext" HODEI_GRAPH__ENDPOINT)" = t-hodei-artifacts-dgraph-alpha:9080 ] && echo ok || echo no)"
+check "graph: replicas >= 2 by default" "$([ "$(q "$base" "$dep | .spec.replicas")" -ge 2 ] && echo ok || echo no)"
 
 sts='select(.kind=="StatefulSet" and .metadata.name=="t-hodei-artifacts-garage")'
 check "garage: two volumeClaimTemplates (meta, data)" "$([ "$(q "$rg" "$sts | [.spec.volumeClaimTemplates[].metadata.name] | join(\",\")")" = meta,data ] && echo ok || echo no)"
@@ -59,36 +61,30 @@ for s in UpdateClusterLayout ApplyClusterLayout CreateBucket ImportKey AllowBuck
   check "bootstrap script: $s" "$(grep -q "$s" <<<"$(q "$rg" "$job")" && echo ok || echo no)"
 done
 check "bootstrap Job reads key from Secret" "$([ "$(q "$rg" 'select(.kind=="Job") | .spec.template.spec.containers[0].env[] | select(.name=="SECRET_ACCESS_KEY") | .valueFrom.secretKeyRef.name')" = hodei-s3 ] && echo ok || echo no)"
-check "external: dgraph Zero/Alpha StatefulSets with PVC templates" "$([ "$(q "$ext" 'select(.kind=="StatefulSet" and (.metadata.name|test("dgraph"))) | .spec.volumeClaimTemplates[0].metadata.name' | sort | tr "\n" ,)" = alpha-data,zero-data, ] && echo ok || echo no)"
+check "graph+dgraph: Zero/Alpha StatefulSets with PVC templates" "$([ "$(q "$ext" 'select(.kind=="StatefulSet" and (.metadata.name|test("dgraph"))) | .spec.volumeClaimTemplates[0].metadata.name' | sort | tr "\n" ,)" = alpha-data,zero-data, ] && echo ok || echo no)"
 
-check "invalid profile fails" "$([ "$(yes helm template t "$chart" --set profile=bogus)" = no ] && echo ok || echo no)"
-check "garage without Secret name fails" "$([ "$(yes helm template t "$chart" --set garage.enabled=true --set s3.existingSecret=x)" = no ] && echo ok || echo no)"
+check "removed profile standalone fails" "$([ "$(yes helm template t "$chart" "${creds[@]}" --set profile=standalone)" = no ] && echo ok || echo no)"
+check "removed profile rocksdb-garage fails" "$([ "$(yes helm template t "$chart" "${creds[@]}" --set profile=rocksdb-garage)" = no ] && echo ok || echo no)"
+check "invalid profile fails" "$([ "$(yes helm template t "$chart" "${creds[@]}" --set profile=bogus)" = no ] && echo ok || echo no)"
+check "no credentials Secret fails (the ACL password is never rendered)" "$([ "$(yes helm template t "$chart" --set graph.endpoint=a:1)" = no ] && echo ok || echo no)"
+check "no Alpha endpoint fails without the in-cluster Dgraph" "$([ "$(yes helm template t "$chart" "${creds[@]}")" = no ] && echo ok || echo no)"
+check "garage without Secret name fails" "$([ "$(yes helm template t "$chart" "${creds[@]}" --set graph.endpoint=a:1 --set garage.enabled=true --set s3.existingSecret=x)" = no ] && echo ok || echo no)"
 
 if command -v kubeconform >/dev/null 2>&1; then
-  for m in "$std" "$rg" "$ext"; do
+  for m in "$base" "$rg" "$ext"; do
     echo "$m" | kubeconform -strict -summary -ignore-missing-schemas - >/dev/null && check "kubeconform" ok || check "kubeconform" no
   done
 else
   echo "NOT_RUN - kubeconform is not installed"
 fi
 
-# --- external profile with the in-cluster Garage enabled (HSP-269) ---
-extg=$(helm template t "$chart" -f "$chart/values-external.yaml" --set garage.enabled=true --set garage.existingSecret=hodei-s3)
-gsts='select(.kind=="StatefulSet" and .metadata.name=="t-hodei-artifacts-garage")'
-check "external+garage: Garage StatefulSet and bootstrap Job rendered" "$([ "$(q "$extg" 'select(.kind=="Job") | .metadata.name')" = t-hodei-artifacts-garage-bootstrap ] && [ "$(q "$extg" "$gsts | .metadata.name")" = t-hodei-artifacts-garage ] && echo ok || echo no)"
-check "external+garage: Garage has two volumeClaimTemplates (meta, data)" "$([ "$(q "$extg" "$gsts | [.spec.volumeClaimTemplates[].metadata.name] | join(\",\")")" = meta,data ] && echo ok || echo no)"
-check "external+garage: both Garage PVCs RWO" "$([ "$(q "$extg" "$gsts | [.spec.volumeClaimTemplates[].spec.accessModes[0]] | unique | join(\",\")")" = ReadWriteOnce ] && echo ok || echo no)"
-check "external+garage: API has no PVC and no PVC volume" "$([ -z "$(q "$extg" 'select(.kind=="PersistentVolumeClaim") | .kind')" ] && [ -z "$(q "$extg" "$dep | .spec.template.spec.volumes[]? | select(.persistentVolumeClaim) | .name")" ] && echo ok || echo no)"
-check "external+garage: no Secret rendered" "$([ -z "$(q "$extg" 'select(.kind=="Secret") | .kind')" ] && echo ok || echo no)"
-
 # --- signing keys of the Terraform mirror (HSP-313) ---
-sig=$(helm template t "$chart" --set signing.existingSecret=hodei-signing)
-envof() { q "$1" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"$2\")"; }
+sig=$(helm template t "$chart" "${creds[@]}" --set graph.endpoint=a:1 --set signing.existingSecret=hodei-signing)
 check "signing: no key without a Secret (the mirror fails closed)" "$([ -z "$(envof "$std" HODEI_SIGNING__KEYS__0__ID)" ] && echo ok || echo no)"
 check "signing: key id and secret reference rendered from the Secret" "$([ "$(q "$sig" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING_KEY_SECRET_0\") | .valueFrom.secretKeyRef.name")" = hodei-signing ] && [ "$(q "$sig" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING__KEYS__0__SECRET_ENV\") | .value")" = HODEI_SIGNING_KEY_SECRET_0 ] && [ "$(q "$sig" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING__KEYS__0__ID\") | .value")" = primary ] && echo ok || echo no)"
 check "signing: the secret value is never inline" "$([ -z "$(q "$sig" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING_KEY_SECRET_0\") | .value // \"\"")" ] && echo ok || echo no)"
 check "signing: still no Secret rendered" "$([ -z "$(q "$sig" 'select(.kind=="Secret") | .kind')" ] && echo ok || echo no)"
-sig2=$(helm template t "$chart" --set signing.existingSecret=hodei-signing --set 'signing.keys[0].id=b' --set 'signing.keys[0].secretKey=kb' --set 'signing.keys[1].id=a' --set 'signing.keys[1].secretKey=ka')
+sig2=$(helm template t "$chart" "${creds[@]}" --set graph.endpoint=a:1 --set signing.existingSecret=hodei-signing --set 'signing.keys[0].id=b' --set 'signing.keys[0].secretKey=kb' --set 'signing.keys[1].id=a' --set 'signing.keys[1].secretKey=ka')
 check "signing: a ring of two keys keeps the order (index 0 signs)" "$([ "$(q "$sig2" "$dep | .spec.template.spec.containers[0].env[] | select(.name==\"HODEI_SIGNING__KEYS__1__ID\") | .value")" = a ] && echo ok || echo no)"
 
 # --- helm package is reproducible only with SOURCE_DATE_EPOCH (HSP-269) ---

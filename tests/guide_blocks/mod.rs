@@ -175,3 +175,37 @@ pub fn http_urls(command: &str) -> Vec<String> {
         })
         .collect()
 }
+
+/// The requests the Maven, npm and PyPI recipes make, in order. The recipe
+/// test asserts that it sends exactly these; the documentation test asserts
+/// that the `curl` blocks of `ecosystems.md` document exactly these.
+pub const RECIPE_REQUESTS: &[(&str, &str, &str)] = &[
+    ("maven2", "POST", "/api/v1/catalog/repositories"),
+    (
+        "maven2",
+        "PUT",
+        "/repository/doc-maven/com/acme/demo/1.0.0/demo-1.0.0.pom",
+    ),
+    (
+        "maven2",
+        "PUT",
+        "/repository/doc-maven/com/acme/demo/1.0.0/demo-1.0.0.jar",
+    ),
+    (
+        "maven2",
+        "GET",
+        "/repository/doc-maven/com/acme/demo/1.0.0/demo-1.0.0.jar",
+    ),
+    ("npm", "POST", "/api/v1/catalog/repositories"),
+    ("npm", "PUT", "/npm/doc-npm/@acme%2fdemo"),
+    ("npm", "GET", "/npm/doc-npm/@acme%2fdemo"),
+    ("npm", "GET", "/npm/doc-npm/@acme/demo/-/demo-1.0.0.tgz"),
+    ("pypi", "POST", "/api/v1/catalog/repositories"),
+    ("pypi", "POST", "/pypi/doc-pypi/"),
+    ("pypi", "GET", "/pypi/doc-pypi/simple/demo-pkg/"),
+    (
+        "pypi",
+        "GET",
+        "/pypi/doc-pypi/files/demo-pkg/demo_pkg-1.0.0-py3-none-any.whl",
+    ),
+];

@@ -39,7 +39,7 @@ COPY --chown=0:0 --chmod=0644 config/ /app/config/
 
 WORKDIR /app
 
-ENV RUN_MODE=standalone
+ENV RUN_MODE=dgraph
 
 EXPOSE 3000
 

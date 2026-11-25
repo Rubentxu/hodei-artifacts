@@ -4,14 +4,42 @@
 //!
 //! Every message asserted here comes out of the real binary, with the real
 //! loader: nothing is a hand-made error.
+//!
+//! HSP-314 F2: these run on the graph profile (`RUN_MODE=dgraph`), the
+//! productive one, so they need no `legacy` feature. Every diagnostic here is
+//! raised before the Alpha is contacted, which is why no Dgraph is needed: the
+//! checks that only fire once the metadata authority is open live in
+//! `tests/startup_errors_embedded.rs`.
 
 use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_hodei-artifacts-api");
 
+/// The graph profile, with a credential and an endpoint that are never dialed
+/// because every case stops earlier. Nothing here is a real secret.
+fn the_graph_profile(command: &mut Command) -> &mut Command {
+    command
+        .env("RUN_MODE", "dgraph")
+        .env("HODEI_GRAPH__ENDPOINT", "127.0.0.1:1")
+        .env("HODEI_GRAPH__TLS__ENABLED", "false")
+        .env("HODEI_GRAPH__TLS__CA_CERT_PATH", "")
+        .env("HODEI_GRAPH__TLS__SERVER_NAME", "")
+        .env(
+            "HODEI_GRAPH__CREDENTIALS__PASSWORD",
+            "placeholder-not-a-secret",
+        )
+}
+
 fn the_clean_command(dir: &std::path::Path) -> Command {
     let mut command = Command::new(BIN);
     command.current_dir(dir).env_clear();
+    command
+}
+
+/// A clean command on the graph profile.
+fn the_graph_command(dir: &std::path::Path) -> Command {
+    let mut command = the_clean_command(dir);
+    the_graph_profile(&mut command);
     command
 }
 
@@ -31,11 +59,9 @@ fn an_unusable_content_directory_exits_with_the_path_and_never_prints_secrets() 
     let tmp = tempfile::tempdir().unwrap();
     let blocker = tmp.path().join("file");
     std::fs::write(&blocker, "x").unwrap();
-    let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/default.toml");
-    std::fs::create_dir(tmp.path().join("config")).unwrap();
-    std::fs::copy(shipped, tmp.path().join("config/default.toml")).unwrap();
-    let output = the_clean_command(tmp.path())
-        .env("HODEI_ROCKSDB__PATH", tmp.path().join("db"))
+    let tmp = the_directory_with_config(&the_shipped_config(), tmp);
+    let output = the_graph_command(tmp.path())
+        .env("HODEI_CONTENT__BACKEND", "filesystem")
         .env("HODEI_CONTENT__CAS_PATH", blocker.join("cas"))
         .env("HODEI_SECURITY__JWT_SECRET", "super-secret-value-123")
         .output()
@@ -56,12 +82,22 @@ fn the_shipped_config() -> String {
     .unwrap()
 }
 
-/// A working directory whose `config/default.toml` is `contents`.
-fn the_directory_with_config(contents: &str) -> tempfile::TempDir {
-    let tmp = tempfile::tempdir().unwrap();
+/// A working directory whose `config/default.toml` is `contents` and whose
+/// `config/dgraph.toml` is the shipped graph profile, in `tmp`.
+fn the_directory_with_config(contents: &str, tmp: tempfile::TempDir) -> tempfile::TempDir {
     std::fs::create_dir(tmp.path().join("config")).unwrap();
     std::fs::write(tmp.path().join("config/default.toml"), contents).unwrap();
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/dgraph.toml"),
+        tmp.path().join("config/dgraph.toml"),
+    )
+    .unwrap();
     tmp
+}
+
+/// The same, in a fresh directory.
+fn a_fresh_directory_with_config(contents: &str) -> tempfile::TempDir {
+    the_directory_with_config(contents, tempfile::tempdir().unwrap())
 }
 
 #[test]
@@ -76,7 +112,11 @@ fn a_config_without_the_server_section_names_the_section_and_its_variables() {
         .expect("a section follows [server]");
     let without_server = format!("{}{}", &shipped[..start], &shipped[end..]);
     assert!(!without_server.contains("[server]"));
-    let tmp = the_directory_with_config(&without_server);
+    // Only `default.toml`: the graph profile file would bring its own
+    // `[server]` and mask the very section this case removes.
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join("config")).unwrap();
+    std::fs::write(tmp.path().join("config/default.toml"), &without_server).unwrap();
     let output = the_clean_command(tmp.path()).output().unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -92,9 +132,8 @@ fn a_config_without_the_server_section_names_the_section_and_its_variables() {
 
 #[test]
 fn a_partial_production_auth_bundle_names_the_variables_and_the_action() {
-    let tmp = the_directory_with_config(&the_shipped_config());
-    let output = the_clean_command(tmp.path())
-        .env("HODEI_ROCKSDB__PATH", tmp.path().join("db"))
+    let tmp = a_fresh_directory_with_config(&the_shipped_config());
+    let output = the_graph_command(tmp.path())
         .env("HODEI_CONTENT__CAS_PATH", tmp.path().join("cas"))
         .env("HODEI_SECURITY__AUTH_JWT_SECRET", "super-secret-value-123")
         .output()
@@ -111,9 +150,9 @@ fn a_partial_production_auth_bundle_names_the_variables_and_the_action() {
 
 #[test]
 fn a_private_key_pasted_into_a_value_never_reaches_the_output() {
-    let tmp = the_directory_with_config(&the_shipped_config());
+    let tmp = a_fresh_directory_with_config(&the_shipped_config());
     let pem = format!("-----BEGIN PRIVATE KEY-----\n{PEM_BODY}\n-----END PRIVATE KEY-----");
-    let output = the_clean_command(tmp.path())
+    let output = the_graph_command(tmp.path())
         .env("HODEI_SERVER__PORT", &pem)
         .output()
         .unwrap();
@@ -126,41 +165,6 @@ fn a_private_key_pasted_into_a_value_never_reaches_the_output() {
     assert!(text.contains("Configuration error"), "{text}");
     for leaked in ["BEGIN", "-----", PEM_BODY] {
         assert!(!text.contains(leaked), "{leaked} leaked: {text}");
-    }
-}
-
-#[test]
-fn an_unreachable_s3_backend_exits_with_the_bucket_the_variable_and_no_credentials() {
-    let tmp = the_directory_with_config(&the_shipped_config());
-    let output = the_clean_command(tmp.path())
-        .env("HODEI_ROCKSDB__PATH", tmp.path().join("db"))
-        // The store of content is opened only for a durable repository
-        // catalog; without it the backend would not be consulted at all.
-        .env("HODEI_REPOSITORY__DURABLE", "true")
-        .env("HODEI_CONTENT__BACKEND", "s3")
-        .env("HODEI_CONTENT__S3__BUCKET", "missing-bucket")
-        .env("HODEI_CONTENT__S3__ENDPOINT", "127.0.0.1:1")
-        .env("HODEI_CONTENT__S3__REGION", "us-east-1")
-        .env("HODEI_CONTENT__S3__TLS", "false")
-        .env("AWS_ACCESS_KEY_ID", "AKIAIOSFODNN7EXAMPLE")
-        .env("AWS_SECRET_ACCESS_KEY", "wJalrXUtnFEMI-secret-from-env")
-        .env("AWS_SESSION_TOKEN", "session-token-from-env")
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(text.contains("missing-bucket"), "{text}");
-    assert!(text.contains("HODEI_CONTENT__S3__ENDPOINT"), "{text}");
-    for secret in [
-        "AKIAIOSFODNN7EXAMPLE",
-        "wJalrXUtnFEMI-secret-from-env",
-        "session-token-from-env",
-    ] {
-        assert!(!text.contains(secret), "{secret} leaked: {text}");
     }
 }
 
@@ -189,10 +193,9 @@ fn the_output_within(mut command: Command, seconds: u64) -> Option<std::process:
 
 #[test]
 fn a_malformed_signing_ring_names_the_section_and_never_prints_the_secret() {
-    let tmp = the_directory_with_config(&the_shipped_config());
-    let mut command = the_clean_command(tmp.path());
+    let tmp = a_fresh_directory_with_config(&the_shipped_config());
+    let mut command = the_graph_command(tmp.path());
     command
-        .env("HODEI_ROCKSDB__PATH", tmp.path().join("db"))
         .env("HODEI_CONTENT__CAS_PATH", tmp.path().join("cas"))
         .env("HODEI_SIGNING__KEYS__0__ID", "k1")
         .env("HODEI_SIGNING__KEYS__0__SECRET_ENV", "THE_KEY")
@@ -211,29 +214,4 @@ fn a_malformed_signing_ring_names_the_section_and_never_prints_the_secret() {
         !text.contains("a-secret-that-must-not-be-printed"),
         "{text}"
     );
-}
-
-#[test]
-fn a_signing_key_that_cannot_be_used_stops_the_boot_without_printing_the_secret() {
-    let tmp = the_directory_with_config(&the_shipped_config());
-    let mut command = the_clean_command(tmp.path());
-    command
-        .env("HODEI_ROCKSDB__PATH", tmp.path().join("db"))
-        .env("HODEI_CONTENT__CAS_PATH", tmp.path().join("cas"))
-        .env("HODEI_SIGNING__KEYS__0__ID", "k1")
-        .env("HODEI_SIGNING__KEYS__0__SECRET_ENV", "THE_KEY")
-        .env("THE_KEY", "short-secret-do-not-print");
-    let output = the_output_within(command, 60).expect("the boot is refused, not served");
-    assert!(
-        !output.status.success(),
-        "a short secret must stop the boot"
-    );
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(text.contains("signing"), "{text}");
-    assert!(text.contains("at least 32"), "{text}");
-    assert!(!text.contains("short-secret-do-not-print"), "{text}");
 }

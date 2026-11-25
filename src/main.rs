@@ -180,6 +180,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "legacy")]
     use tempfile::tempdir;
 
     #[test]
@@ -188,6 +189,8 @@ mod tests {
         assert!(config.validate().is_ok());
     }
 
+    // Boots the embedded engine: legacy only (HSP-314 F2).
+    #[cfg(feature = "legacy")]
     #[tokio::test]
     async fn test_bootstrap() {
         let temp_dir = tempdir().unwrap();

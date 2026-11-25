@@ -1,13 +1,22 @@
-# Declarative standalone deployment for hodei-artifacts-api.
+# Declarative deployment of hodei-artifacts-api on the Dgraph profile
+# (HSP-314 F2: the graph profile is the productive one; the embedded
+# RocksDB profile is no longer shipped in the image).
 #
-# IMPORTANT — Single-writer constraint (max 1 replica):
-#   Standalone mode uses embedded RocksDB (/app/data/hodei.rocksdb) and local
-#   filesystem CAS (/app/data/hodei.cas). RocksDB acquires an exclusive lock on
-#   its data directory, so this service MUST run as a single writer
-#   (deploy.replicas: 1, never scale > 1).
-#   For multi-replica or external storage deployments, use compose.external.yaml.
+# This file declares ONLY the API. The metadata authority is a Dgraph Alpha
+# and the bytes live in an S3-compatible object store; both are yours and are
+# reached through the variables of compose.env.example. For a self-contained
+# stack with a local Dgraph and Garage, use compose.external.yaml.
+#
+# The service starts with RUN_MODE=dgraph: `config/dgraph.toml` declares
+# `[graph]`, and that declaration IS the profile. The API fails closed when
+# the Alpha, the credentials or the object store are unreachable; it never
+# falls back to RocksDB or to the filesystem. Secrets travel in the
+# environment, never in this file.
+#
+# Not wired yet (HSP-314 F3): the investigation surface, the risk facts and the
+# CVE reactor have no Dgraph wiring, so they stay closed on this profile.
 
-name: hodei-artifacts-standalone
+name: hodei-artifacts
 
 services:
   hodei-artifacts-api:
@@ -16,23 +25,37 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
+      # Mountpoint of the signing key file on a read-only root filesystem.
+      - /run/secrets:rw,noexec,nosuid,size=1m
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
-    # Single-writer invariant: RocksDB + filesystem CAS support at most 1 replica.
-    deploy:
-      replicas: 1
     ports:
       - "${HODEI_BIND_ADDR:-127.0.0.1}:${HODEI_PORT:-3000}:3000"
     volumes:
-      - hodei-artifacts-data:/app/data
       # The secret that signs the archive URLs of the Terraform mirror: a file
       # the operator generates (`openssl rand -hex 32`), mounted read-only.
       - ${HODEI_SIGNING_KEY_FILE:?set HODEI_SIGNING_KEY_FILE to a file with the signing secret (openssl rand -hex 32)}:/run/secrets/hodei-signing-key:ro
     environment:
-      RUN_MODE: ${RUN_MODE:-standalone}
+      RUN_MODE: ${RUN_MODE:-dgraph}
+      # The graph profile: the Alpha is the single metadata authority.
+      HODEI_GRAPH__ENDPOINT: ${HODEI_GRAPH__ENDPOINT:?set HODEI_GRAPH__ENDPOINT to the gRPC host:port of your Dgraph Alpha}
+      HODEI_GRAPH__TLS__ENABLED: ${HODEI_GRAPH__TLS__ENABLED:-true}
+      HODEI_GRAPH__TLS__CA_CERT_PATH: ${HODEI_GRAPH__TLS__CA_CERT_PATH:-/etc/hodei/dgraph/ca.crt}
+      HODEI_GRAPH__TLS__SERVER_NAME: ${HODEI_GRAPH__TLS__SERVER_NAME:-dgraph-alpha}
+      HODEI_GRAPH__NAMESPACE: ${HODEI_GRAPH__NAMESPACE:-0}
+      HODEI_GRAPH__CREDENTIALS__USERID: ${HODEI_GRAPH__CREDENTIALS__USERID:-groot}
+      HODEI_GRAPH__CREDENTIALS__PASSWORD: ${HODEI_GRAPH__CREDENTIALS__PASSWORD:?set HODEI_GRAPH__CREDENTIALS__PASSWORD (the ACL password of the service account)}
+      # The bytes live in the object store: there is no filesystem fallback.
+      HODEI_CONTENT__BACKEND: s3
+      HODEI_CONTENT__S3__BUCKET: ${HODEI_CONTENT__S3__BUCKET:?set HODEI_CONTENT__S3__BUCKET}
+      HODEI_CONTENT__S3__ENDPOINT: ${HODEI_CONTENT__S3__ENDPOINT:?set HODEI_CONTENT__S3__ENDPOINT}
+      HODEI_CONTENT__S3__REGION: ${HODEI_CONTENT__S3__REGION:-garage}
+      HODEI_CONTENT__S3__TLS: ${HODEI_CONTENT__S3__TLS:-true}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?set AWS_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?set AWS_SECRET_ACCESS_KEY in .env}
       HODEI_SERVER__REQUEST_TIMEOUT_SECS: ${HODEI_SERVER__REQUEST_TIMEOUT_SECS:-30}
       HODEI_SERVER__MAX_BODY_SIZE: ${HODEI_SERVER__MAX_BODY_SIZE:-10485760}
       HODEI_LOGGING__LEVEL: ${HODEI_LOGGING__LEVEL:-info}
@@ -56,6 +79,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-
-volumes:
-  hodei-artifacts-data:

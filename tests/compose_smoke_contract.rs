@@ -162,7 +162,7 @@ fn a_down_backend_and_an_unsupported_backend_are_told_apart() {
 }
 
 #[test]
-fn the_smoke_asserts_a_different_failure_mode_for_each_profile() {
+fn the_smoke_tells_a_rejected_profile_from_a_backend_that_is_down() {
     let script = fs::read_to_string(root().join("scripts/compose-smoke.sh"))
         .expect("the smoke script is readable");
     assert!(
@@ -174,12 +174,9 @@ fn the_smoke_asserts_a_different_failure_mode_for_each_profile() {
         "the smoke must use the classifier"
     );
     assert!(
-        script.contains(r#"[ "$CLASS" = "connectivity" ]"#),
-        "the unreachable S3 case must assert connectivity"
-    );
-    assert!(
-        script.contains(r#"[ "$CLASS" = "unsupported-backend" ]"#),
-        "the external profile case must assert unsupported-backend"
+        script.contains(r#"[ "$CLASS" != "unsupported-backend" ]"#),
+        "the graph profile case must assert that the profile was accepted, so a rejected \
+         configuration cannot pass as a backend that is merely down"
     );
 }
 

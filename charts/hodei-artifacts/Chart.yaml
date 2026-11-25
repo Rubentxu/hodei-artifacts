@@ -1,6 +1,6 @@
 apiVersion: v2
 name: hodei-artifacts
-description: Hodei Artifacts API with storage profiles (standalone, RocksDB + Garage S3, external Dgraph/S3)
+description: "Hodei Artifacts API on the graph profile (Dgraph + S3), with optional in-cluster Dgraph and Garage"
 type: application
 version: 0.1.0
 appVersion: "0.2.0"

@@ -210,6 +210,10 @@ fn is_the_isolation_lane(body: &str) -> bool {
 const FAST: &str = "fast (unit and contract)";
 const INTEGRATION: &str = "integration (database)";
 const INFRASTRUCTURE: &str = "infrastructure (boot and processes)";
+/// HSP-314 F2: `legacy` is not the default feature any more, so the suites
+/// that need the embedded engine run in their own stage, with
+/// `--features legacy`, until HSP-314 F4 retires the engine.
+const LEGACY: &str = "legacy (embedded engine)";
 
 #[test]
 fn every_test_target_belongs_to_exactly_one_suite() {
@@ -255,7 +259,7 @@ fn every_suite_names_a_target_that_exists() {
 #[test]
 fn the_three_suites_are_the_ones_the_pipeline_declares() {
     let suites = suites_in_pipeline();
-    for expected in [FAST, INTEGRATION, INFRASTRUCTURE] {
+    for expected in [FAST, INTEGRATION, INFRASTRUCTURE, LEGACY] {
         assert!(
             suites.contains_key(expected),
             "the pipeline must declare the suite `{expected}`; it declares {:?}",
@@ -400,17 +404,17 @@ fn the_suites_are_listed_in_the_pipeline() {
 #[test]
 fn the_pipeline_archives_the_conformity_report() {
     let stages = stages_in_pipeline();
-    let infrastructure = stages
-        .get(INFRASTRUCTURE)
-        .expect("the infrastructure suite");
+    // The conformity report is written by `raw_conformity_uat`, which needs
+    // the embedded engine and so runs in the legacy stage.
+    let legacy = stages.get(LEGACY).expect("the legacy suite");
 
     assert!(
-        infrastructure.contains("target/uat/raw-conformity.md"),
-        "the infrastructure stage must mention the conformity report"
+        legacy.contains("target/uat/raw-conformity.md"),
+        "the legacy stage must mention the conformity report"
     );
     assert!(
-        infrastructure.contains("archiveArtifacts"),
-        "the infrastructure stage must archive the conformity report"
+        legacy.contains("archiveArtifacts"),
+        "the legacy stage must archive the conformity report"
     );
 }
 
@@ -422,13 +426,76 @@ fn the_pipeline_archives_the_conformity_report() {
 #[test]
 fn the_pipeline_removes_the_previous_conformity_report() {
     let stages = stages_in_pipeline();
-    let infrastructure = stages
-        .get(INFRASTRUCTURE)
-        .expect("the infrastructure suite");
+    let legacy = stages.get(LEGACY).expect("the legacy suite");
 
     assert!(
-        infrastructure.contains("rm -rf target/uat"),
-        "the infrastructure stage must remove the report of the previous run before running \
-         the suite"
+        legacy.contains("rm -f target/uat/raw-conformity.md"),
+        "the legacy stage must remove the report of the previous run before running the suite"
     );
+    assert!(
+        legacy.contains("--features legacy"),
+        "the legacy stage must run its suites with the legacy feature"
+    );
+}
+
+/// The targets Cargo only builds with the `legacy` feature
+/// (`required-features = ["legacy"]` in the manifest).
+fn legacy_only_targets() -> Vec<String> {
+    let manifest = fs::read_to_string(manifest_dir().join("Cargo.toml"))
+        .unwrap_or_else(|error| panic!("cannot read the manifest: {error}"));
+    let mut targets = Vec::new();
+    for block in manifest.split("[[test]]").skip(1) {
+        let block = block.split("\n[").next().unwrap_or(block);
+        if !block.contains("required-features = [\"legacy\"]") {
+            continue;
+        }
+        if let Some(line) = block
+            .lines()
+            .find(|line| line.trim().starts_with("name = "))
+        {
+            targets.push(line.split('"').nth(1).unwrap_or_default().to_string());
+        }
+    }
+    targets
+}
+
+/// HSP-314 F2: `legacy` is not a default feature, so a target that needs it
+/// and is run by a command without `--features legacy` fails the stage with
+/// "requires the features: legacy". Every such target has to be named by a
+/// command that turns the feature on.
+#[test]
+fn every_legacy_only_target_runs_with_the_legacy_feature() {
+    let targets = legacy_only_targets();
+    assert!(
+        !targets.is_empty(),
+        "the manifest declares legacy-only targets, so the list cannot be empty"
+    );
+    let stages = stages_in_pipeline();
+    let bodies: Vec<&String> = stages.values().collect();
+    for target in &targets {
+        let needle = format!("--test {target}\"");
+        let needle_inline = format!("--test {target} ");
+        let owners: Vec<&&String> = bodies
+            .iter()
+            .filter(|body| body.contains(&needle) || body.contains(&needle_inline))
+            .collect();
+        assert!(
+            !owners.is_empty(),
+            "the legacy-only target `{target}` is named by no stage"
+        );
+        for body in owners {
+            let command_start = body
+                .find(&needle)
+                .or_else(|| body.find(&needle_inline))
+                .expect("the target is in the body");
+            let command_head = &body[..command_start];
+            let command_begin = command_head.rfind("cargo test").unwrap_or(0);
+            let command = &command_head[command_begin..];
+            assert!(
+                command.contains("--features legacy"),
+                "the legacy-only target `{target}` is run by a `cargo test` command without \
+                 `--features legacy`: {command}"
+            );
+        }
+    }
 }
