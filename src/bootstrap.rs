@@ -1369,7 +1369,8 @@ mod tests {
 
     #[test]
     fn the_required_bootstrap_values_name_the_variable_and_the_action() {
-        let cases: [(fn(&mut AppConfig), &str); 3] = [
+        type Break = fn(&mut AppConfig);
+        let cases: [(Break, &str); 3] = [
             (|c| c.database.namespace = None, "HODEI_DATABASE__NAMESPACE"),
             (
                 |c| c.database.database = Some(String::new()),

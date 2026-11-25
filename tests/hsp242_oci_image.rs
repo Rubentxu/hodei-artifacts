@@ -404,7 +404,7 @@ fn artifact_written_before_restart_is_read_back_with_same_digest() {
         Some(expected.as_str()),
         "the service must report the digest of the written bytes"
     );
-    let (status, before) = http_request(port1, "GET", &blob_path, &[auth.clone()], b"");
+    let (status, before) = http_request(port1, "GET", &blob_path, std::slice::from_ref(&auth), b"");
     assert_eq!(status, 200, "read-back before the restart");
     assert_eq!(sha256_digest(&before), expected, "digest before restart");
 
@@ -415,7 +415,7 @@ fn artifact_written_before_restart_is_read_back_with_same_digest() {
     let c2 = format!("hodei-hsp287-c2-{}", std::process::id());
     let _g2 = ContainerGuard::new(&c2);
     let port2 = run_authenticated_container(&c2, &data_mount, &policy_mount);
-    let (status, after) = http_request(port2, "GET", &blob_path, &[auth.clone()], b"");
+    let (status, after) = http_request(port2, "GET", &blob_path, std::slice::from_ref(&auth), b"");
     assert_eq!(
         status, 200,
         "artifact written before the restart must survive it (volume not persisting?)"
