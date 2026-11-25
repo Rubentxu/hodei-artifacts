@@ -1,0 +1,75 @@
+# compose-smoke real run (HSP-273)
+# date: 2026-11-25T01:57:17Z
+# podman: podman version 6.1.3; compose provider: Docker Compose version v5.5.0
+# base commit: 32fcf40e598f9d32151797d33ceb7ee4f73403a8 + working tree of branch test/hsp-273-compose-smoke
+# command: bounded bash scripts/compose-smoke.sh
+
+ok: no credential literals in compose.yaml, compose.external.yaml, compose.env.example
+ok: compose.external.yaml has no RocksDB / CAS path
+ok: both compose files validate
+ Network hodei-smoke-80502_default Creating 
+ Network hodei-smoke-80502_default Creating 
+ Volume hodei-smoke-80502_hodei-artifacts-data Creating 
+ Volume hodei-smoke-80502_hodei-artifacts-data Creating 
+ Network hodei-smoke-80502_default Created 
+ Network hodei-smoke-80502_default Created 
+ Volume hodei-smoke-80502_hodei-artifacts-data Created 
+ Volume hodei-smoke-80502_hodei-artifacts-data Created 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Creating 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Created 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Starting 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Started 
+ok: standalone: non-root uid 10001, read-only rootfs, /health/ready 200, healthcheck healthy
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Stopping 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Stopped 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Removing 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Removed 
+ Network hodei-smoke-80502_default Removing 
+ Network hodei-smoke-80502_default Removed 
+ Network hodei-smoke-80502_default Creating 
+ Network hodei-smoke-80502_default Creating 
+ Network hodei-smoke-80502_default Created 
+ Network hodei-smoke-80502_default Created 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Creating 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Created 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Starting 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Started 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Stopping 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Stopped 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Removing 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Removed 
+ Network hodei-smoke-80502_default Removing 
+ Network hodei-smoke-80502_default Removed 
+ok: standalone: data persisted in the named volume across down/up
+ Volume hodei-smoke-80502_hodei-artifacts-data Removing 
+ Volume hodei-smoke-80502_hodei-artifacts-data Removed 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Stopping 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Stopped 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Removing 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Removed 
+ Network hodei-smoke-80502_default Removing 
+ Volume hodei-smoke-80502_hodei-artifacts-data Removing 
+ Volume hodei-smoke-80502_hodei-artifacts-data Removed 
+ Network hodei-smoke-80502_default Removed 
+ok: fail closed: unreachable S3 backend exits non-zero (exit=1), classified connectivity, never reports ready
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Stopping 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Stopped 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Removing 
+ Container hodei-smoke-80502-hodei-artifacts-api-1 Removed 
+ Volume hodei-smoke-80502_garage-data Removing 
+ Volume hodei-smoke-80502_garage-meta Removing 
+ Volume hodei-smoke-80502_garage-data Removed 
+ Volume hodei-smoke-80502_garage-meta Removed 
+ Volume hodei-smoke-80502_dgraph-backups Removing 
+ Network hodei-smoke-80502_hodei-external Removing 
+ Volume hodei-smoke-80502_dgraph-zero-data Removing 
+ Volume hodei-smoke-80502_dgraph-alpha-data Removing 
+ Volume hodei-smoke-80502_dgraph-backups Removed 
+ Volume hodei-smoke-80502_dgraph-alpha-data Removed 
+ Network hodei-smoke-80502_hodei-external Removed 
+ Volume hodei-smoke-80502_dgraph-zero-data Removed 
+ok: fail closed: external profile exits non-zero (exit=1), classified unsupported-backend (not connectivity), no /app/data mount, never ready
+compose smoke: all checks passed
+limitation: the external profile's happy path (Dgraph + S3 serving traffic) is NOT_RUN;
+            the API rejects db_type=dgraph today (only 'rocksdb' is supported).
+exit=0

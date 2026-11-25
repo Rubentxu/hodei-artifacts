@@ -114,6 +114,15 @@ const CASES: &[Case] = &[
         crates: &["fixture-api"],
     },
     Case {
+        name: "deploy",
+        cause: "deploy",
+        file: "compose.yaml",
+        content: "name: fixture\nservices: {}\n",
+        // The deployment is verified only by the compose smoke (HSP-273).
+        gates: &["compose-smoke"],
+        crates: &[],
+    },
+    Case {
         name: "frontend",
         cause: "frontend",
         file: "frontend/src/App.tsx",
@@ -814,6 +823,79 @@ fn a_gate_that_is_not_run_makes_the_script_exit_non_zero() {
         outcome.stdout
     );
     assert_eq!(read_report(&report)["result"], "NOT_RUN");
+}
+
+const SMOKE_NOT_RUN: &str =
+    "#!/usr/bin/env bash\necho 'NOT_RUN: podman is not installed' >&2\nexit 77\n";
+
+#[test]
+fn a_compose_smoke_that_exits_77_is_not_run_and_never_green() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/smoke-77",
+        &[
+            ("compose.yaml", "name: fixture\nservices: {}\n"),
+            ("scripts/compose-smoke.sh", SMOKE_NOT_RUN),
+        ],
+    );
+    let (outcome, report) = run_with_report(&fixture, "smoke-77", &["--no-bounded"]);
+
+    assert_eq!(
+        outcome.code,
+        Some(1),
+        "{}\n{}",
+        outcome.stdout,
+        outcome.stderr
+    );
+    let report = read_report(&report);
+    assert_eq!(report["result"], "NOT_RUN");
+    let gate = report["gates"]
+        .as_array()
+        .expect("the report has the gates")
+        .iter()
+        .find(|gate| gate["gate"] == "compose-smoke")
+        .expect("the compose-smoke gate is in the report");
+    assert_eq!(gate["status"], "NOT_RUN");
+    assert!(
+        gate["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("podman is not installed")),
+        "the NOT_RUN reason must be visible: {gate}"
+    );
+    assert!(
+        outcome.stderr.contains("NOT_RUN: podman is not installed"),
+        "the reason must be shown on stderr: {}",
+        outcome.stderr
+    );
+}
+
+#[test]
+fn a_compose_smoke_that_passes_is_pass_and_one_that_fails_is_fail() {
+    let fixture = fixture();
+    change(
+        &fixture,
+        "case/smoke-pass",
+        &[("scripts/compose-smoke.sh", "#!/usr/bin/env bash\nexit 0\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "smoke-pass", &["--no-bounded"]);
+    assert!(
+        outcome.succeeded(),
+        "{}\n{}",
+        outcome.stdout,
+        outcome.stderr
+    );
+    assert_eq!(read_report(&report)["result"], "PASS");
+
+    git(&fixture.repository, &["checkout", "-q", "main"]);
+    change(
+        &fixture,
+        "case/smoke-fail",
+        &[("scripts/compose-smoke.sh", "#!/usr/bin/env bash\nexit 1\n")],
+    );
+    let (outcome, report) = run_with_report(&fixture, "smoke-fail", &["--no-bounded"]);
+    assert_eq!(outcome.code, Some(1));
+    assert_eq!(read_report(&report)["result"], "FAIL");
 }
 
 #[test]
