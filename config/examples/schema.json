@@ -26,6 +26,9 @@
         }
       },
       "Artifact": {
+        "memberOfTypes": [
+          "Artifacts::Artifact"
+        ],
         "shape": {
           "type": "Record",
           "attributes": {}
