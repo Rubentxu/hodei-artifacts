@@ -41,7 +41,6 @@ exclude = [
     "crates/distribution",
     "crates/repository",
     "crates/search",
-    "crates/security",
     "crates/supply-chain",
 ]
 resolver = "2"
