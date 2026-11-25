@@ -113,7 +113,10 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn extract_markdown_links(content: &str) -> Vec<String> {
+/// Every internal link target of a document, verbatim (path and optional
+/// `#anchor`). External URLs are skipped; a bare `#anchor` is kept because it
+/// points into the same document.
+fn extract_link_targets(content: &str) -> Vec<String> {
     let mut links = Vec::new();
     let bytes = content.as_bytes();
     let mut i = 0;
@@ -127,12 +130,8 @@ fn extract_markdown_links(content: &str) -> Vec<String> {
             if !target.is_empty()
                 && !target.starts_with("http://")
                 && !target.starts_with("https://")
-                && !target.starts_with('#')
             {
-                let path_only = target.split('#').next().unwrap_or("");
-                if !path_only.is_empty() {
-                    links.push(path_only.to_string());
-                }
+                links.push(target.to_string());
             }
             i += 2 + end + 1;
             continue;
@@ -140,6 +139,79 @@ fn extract_markdown_links(content: &str) -> Vec<String> {
         i += 1;
     }
     links
+}
+
+fn extract_markdown_links(content: &str) -> Vec<String> {
+    extract_link_targets(content)
+        .into_iter()
+        .filter_map(|target| {
+            let path_only = target.split('#').next().unwrap_or("");
+            (!path_only.is_empty()).then(|| path_only.to_string())
+        })
+        .collect()
+}
+
+/// GitHub's slug of one heading text: lowercase, inline markup and
+/// punctuation dropped (letters, digits, `_` and `-` survive, Unicode letters
+/// included), spaces turned into hyphens.
+fn github_slug(heading: &str) -> String {
+    heading
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_')
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
+}
+
+/// The anchors GitHub generates for a Markdown document: one per ATX heading
+/// outside fenced code, with `-1`, `-2`... appended to repeated slugs.
+fn heading_anchors(content: &str) -> BTreeSet<String> {
+    let mut anchors = BTreeSet::new();
+    let mut seen: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut in_fence = false;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let hashes = line.chars().take_while(|c| *c == '#').count();
+        if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
+            let slug = github_slug(line[hashes..].trim().trim_end_matches('#'));
+            let count = seen.entry(slug.clone()).or_insert(0);
+            let anchor = if *count == 0 {
+                slug
+            } else {
+                format!("{slug}-{count}")
+            };
+            *count += 1;
+            anchors.insert(anchor);
+        }
+    }
+    anchors
+}
+
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(&text[i + 1..i + 3], 16)
+        {
+            out.push(byte);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn parse_workspace_members(cargo_toml: &str) -> BTreeSet<String> {
@@ -187,6 +259,32 @@ fn documentation_links_and_workspace_crates_are_valid() {
                 doc.display(),
                 link,
                 resolved.display()
+            );
+        }
+        // Anchors: `file.md#slug` and bare `#slug` must name a real heading.
+        for target in extract_link_targets(&content) {
+            let Some((path_part, anchor)) = target.split_once('#') else {
+                continue;
+            };
+            if anchor.is_empty() {
+                continue;
+            }
+            let target_file = if path_part.is_empty() {
+                doc.clone()
+            } else {
+                base_dir.join(path_part)
+            };
+            if target_file.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let text = fs::read_to_string(&target_file).expect("read link target");
+            let anchors = heading_anchors(&text);
+            assert!(
+                anchors.contains(&percent_decode(anchor).to_lowercase()),
+                "broken anchor in {}: '{}' (no such heading in {})",
+                doc.display(),
+                target,
+                target_file.display()
             );
         }
     }
@@ -648,7 +746,11 @@ fn readme_headers_link_the_visual_demo_and_its_generator() {
             "{readme_name} must point to the demo generator"
         );
     }
-    for rel in [asset, "docs/community/quickstart-demo.cast", "scripts/render-demo.sh"] {
+    for rel in [
+        asset,
+        "docs/community/quickstart-demo.cast",
+        "scripts/render-demo.sh",
+    ] {
         let meta = fs::metadata(root.join(rel)).unwrap_or_else(|_| panic!("{rel} must exist"));
         assert!(meta.len() > 0, "{rel} must not be empty");
     }
@@ -658,4 +760,128 @@ fn readme_headers_link_the_visual_demo_and_its_generator() {
         !root.join("docs/community/quickstart-demo.tape").exists(),
         "the obsolete VHS tape must not coexist with render-demo.sh"
     );
+}
+
+/// Every leaf path of a JSON document, dotted (`a.b.c`).
+fn leaf_paths(prefix: &str, value: &Value, out: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(map) if !map.is_empty() => {
+            for (key, child) in map {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                leaf_paths(&path, child, out);
+            }
+        }
+        _ => {
+            out.insert(prefix.to_string());
+        }
+    }
+}
+
+/// The text of the section of `configuration.md` whose heading names
+/// `` `[section]` ``, up to the next heading of the same or higher level.
+fn section_text<'a>(doc: &'a str, section: &str) -> Option<&'a str> {
+    let marker = format!("`[{section}]`");
+    let mut start = None;
+    let mut offset = 0;
+    for line in doc.split_inclusive('\n') {
+        if line.starts_with("### ") || line.starts_with("## ") {
+            if let Some(begin) = start {
+                return Some(&doc[begin..offset]);
+            }
+            if line.contains(&marker) {
+                start = Some(offset);
+            }
+        }
+        offset += line.len();
+    }
+    start.map(|begin| &doc[begin..])
+}
+
+#[test]
+fn every_serde_config_field_is_documented_in_configuration_md() {
+    use hodei_artifacts_api::config::{ContentBackend, S3ContentConfig};
+    use hodei_graph_client::{GraphClientConfig, GraphLoginCredentials, GraphTlsConfig};
+
+    // A configuration with every optional table populated, so that the real
+    // serde output enumerates every field of AppConfig and GraphClientConfig.
+    // The struct literals are exhaustive on purpose: adding a field breaks
+    // this test at compile time until it is documented and covered here.
+    let mut config = AppConfig::default();
+    config.content.backend = ContentBackend::default();
+    config.content.s3 = Some(S3ContentConfig {
+        bucket: "b".into(),
+        endpoint: Some("e".into()),
+        region: Some("r".into()),
+        tls: true,
+    });
+    config.graph = Some(GraphClientConfig {
+        endpoint: "127.0.0.1:9080".into(),
+        tls: GraphTlsConfig {
+            enabled: true,
+            ca_cert_path: Some("ca".into()),
+            client_cert_path: Some("cert".into()),
+            client_key_path: Some("key".into()),
+            server_name: Some("name".into()),
+        },
+        credentials: Some(GraphLoginCredentials {
+            userid: "u".into(),
+            password: "p".into(),
+        }),
+        connect_timeout_ms: 1,
+        request_timeout_ms: 1,
+        namespace: 0,
+    });
+    let value = serde_json::to_value(&config).expect("serialize AppConfig");
+    let mut paths = BTreeSet::new();
+    leaf_paths("", &value, &mut paths);
+
+    // Fields that are `skip_serializing` (secrets or paths that must never be
+    // dumped) cannot show up in the serialized form; they are documented in
+    // section 5.1 and listed here explicitly.
+    for hidden in ["security.auth_jwt_secret", "security.auth_jwks_path"] {
+        paths.insert(hidden.to_string());
+    }
+    assert!(
+        paths.contains("graph.tls.ca_cert_path") && paths.contains("content.s3.bucket"),
+        "the reflection must reach nested tables: {paths:?}"
+    );
+
+    let doc = fs::read_to_string(repo_root().join("docs/community/configuration.md"))
+        .expect("configuration.md");
+    let mut missing = Vec::new();
+    for path in &paths {
+        let full = format!("`{path}`");
+        if doc.contains(&full) {
+            continue;
+        }
+        // Two-level keys are documented as bare `key` rows under the
+        // section heading `[section]` (sections 5.x).
+        let documented_in_section = path
+            .split_once('.')
+            .filter(|(_, leaf)| !leaf.contains('.'))
+            .and_then(|(section, leaf)| {
+                section_text(&doc, section).map(|text| text.contains(&format!("| `{leaf}` |")))
+            })
+            .unwrap_or(false);
+        if !documented_in_section {
+            missing.push(path.clone());
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "configuration keys missing from docs/community/configuration.md: {missing:?}"
+    );
+
+    // Every documented graph key also names its real environment variable.
+    for path in paths.iter().filter(|p| p.starts_with("graph.")) {
+        let variable = format!("HODEI_{}", path.to_uppercase().replace('.', "__"));
+        assert!(
+            doc.contains(&variable),
+            "configuration.md must name the variable {variable} for {path}"
+        );
+    }
 }
