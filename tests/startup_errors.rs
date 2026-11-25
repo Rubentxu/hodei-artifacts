@@ -163,3 +163,77 @@ fn an_unreachable_s3_backend_exits_with_the_bucket_the_variable_and_no_credentia
         assert!(!text.contains(secret), "{secret} leaked: {text}");
     }
 }
+
+/// Runs the binary and gives it `seconds` to stop on its own; a service that
+/// boots would never stop, and the test must not wait for it.
+fn the_output_within(mut command: Command, seconds: u64) -> Option<std::process::Output> {
+    use std::process::Stdio;
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return Some(child.wait_with_output().unwrap());
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn a_malformed_signing_ring_names_the_section_and_never_prints_the_secret() {
+    let tmp = the_directory_with_config(&the_shipped_config());
+    let mut command = the_clean_command(tmp.path());
+    command
+        .env("HODEI_ROCKSDB__PATH", tmp.path().join("db"))
+        .env("HODEI_CONTENT__CAS_PATH", tmp.path().join("cas"))
+        .env("HODEI_SIGNING__KEYS__0__ID", "k1")
+        .env("HODEI_SIGNING__KEYS__0__SECRET_ENV", "THE_KEY")
+        .env("HODEI_SIGNING__KEYS__0__SECRET_FILE", "/run/secrets/k1")
+        .env("THE_KEY", "a-secret-that-must-not-be-printed-0123456789");
+    let output = the_output_within(command, 60).expect("the boot is refused, not served");
+    assert!(!output.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("signing configuration"), "{text}");
+    assert!(text.contains("exactly one"), "{text}");
+    assert!(
+        !text.contains("a-secret-that-must-not-be-printed"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_signing_key_that_cannot_be_used_stops_the_boot_without_printing_the_secret() {
+    let tmp = the_directory_with_config(&the_shipped_config());
+    let mut command = the_clean_command(tmp.path());
+    command
+        .env("HODEI_ROCKSDB__PATH", tmp.path().join("db"))
+        .env("HODEI_CONTENT__CAS_PATH", tmp.path().join("cas"))
+        .env("HODEI_SIGNING__KEYS__0__ID", "k1")
+        .env("HODEI_SIGNING__KEYS__0__SECRET_ENV", "THE_KEY")
+        .env("THE_KEY", "short-secret-do-not-print");
+    let output = the_output_within(command, 60).expect("the boot is refused, not served");
+    assert!(
+        !output.status.success(),
+        "a short secret must stop the boot"
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("signing"), "{text}");
+    assert!(text.contains("at least 32"), "{text}");
+    assert!(!text.contains("short-secret-do-not-print"), "{text}");
+}
