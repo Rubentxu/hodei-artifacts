@@ -15,8 +15,12 @@ use hodei_authz::{
     PrincipalId,
 };
 use serde_json::{Value, json};
-use tempfile::TempDir;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 struct Accounts;
 
@@ -42,11 +46,11 @@ impl PrincipalAuthenticator for Accounts {
     }
 }
 
-async fn app() -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
+async fn app() -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = true;
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     let policy = r#"permit(principal, action == Admin::Action::"AccessAdminApi", resource);"#;
     let authorizer: Arc<dyn AuthorizerPort> = Arc::new(SharedAuthorizer::new(Arc::new(
         CedarAuthorizer::from_policies_unchecked(

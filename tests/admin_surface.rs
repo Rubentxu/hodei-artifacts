@@ -21,8 +21,12 @@ use hodei_authz::{
     AccountId, AuthenticationError, Credentials, PrincipalAuthenticator, PrincipalClaims,
     PrincipalId,
 };
-use tempfile::TempDir;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/v1/schemas/build"),
@@ -47,24 +51,20 @@ const ADMIN_ROUTES: &[(&str, &str)] = &[
 
 const GATE_MARKER: &str = "administrative API disabled";
 
-async fn test_app() -> (Router, TempDir) {
+async fn test_app() -> (Router, Workdir) {
     test_app_with(false, Vec::new()).await
 }
 
 async fn test_app_with(
     admin_enabled: bool,
     cors_allowed_origins: Vec<String>,
-) -> (Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+) -> (Router, Workdir) {
+    let tmp = Workdir::new();
 
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = admin_enabled;
     config.security.cors_allowed_origins = cors_allowed_origins;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -116,11 +116,11 @@ fn authorizer_with_policy(policy: &str) -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-async fn test_app_with_admin_policy(admin_enabled: bool, policy: &str) -> (Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+async fn test_app_with_admin_policy(admin_enabled: bool, policy: &str) -> (Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = admin_enabled;
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -137,7 +137,7 @@ async fn test_app_with_admin_policy(admin_enabled: bool, policy: &str) -> (Route
     (build_router(state, &config), tmp)
 }
 
-async fn test_app_with_admin_auth(permit_alice: bool) -> (Router, TempDir) {
+async fn test_app_with_admin_auth(permit_alice: bool) -> (Router, Workdir) {
     let policy = if permit_alice {
         r#"permit(
             principal == Iam::User::"hrn:hodei:iam::acme:User/alice",

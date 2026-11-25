@@ -44,6 +44,27 @@ pub mod lab;
 /// recorrido del binario (HSP-237) y el de la imagen OCI (HSP-308).
 pub mod graph_lab;
 
+/// The graph profile of the harness (HSP-314 F4 S2a): one ACL namespace of a
+/// real Dgraph per deployment, and the seeders over the real catalog store.
+pub mod graph_profile;
+
+/// Whether the deployments of this build run on the graph profile.
+///
+/// Without `legacy` the embedded engine does not exist, so the answer is
+/// always yes. With `legacy` (until F4 retires it) the embedded engine stays
+/// the default for the suites not yet migrated, and `HODEI_HARNESS_PROFILE=graph`
+/// selects the graph profile for the ones that are.
+pub fn graph_profile() -> bool {
+    #[cfg(not(feature = "legacy"))]
+    {
+        true
+    }
+    #[cfg(feature = "legacy")]
+    {
+        std::env::var("HODEI_HARNESS_PROFILE").is_ok_and(|value| value == "graph")
+    }
+}
+
 /// El binario del servicio, tal y como lo compila la CI.
 pub const BIN: &str = env!("CARGO_BIN_EXE_hodei-artifacts-api");
 
@@ -308,8 +329,13 @@ fn a_staging_name() -> String {
 pub struct Deployment {
     /// El directorio que lo contiene todo.
     pub directory: tempfile::TempDir,
-    /// El directorio de la base.
+    /// La base: el directorio del motor embebido o, en el perfil de grafo,
+    /// el localizador del tenant (`graph://<namespace>/<clave>`) que el
+    /// proceso sembrador lee.
     pub db: String,
+    /// El namespace Dgraph propio del despliegue (perfil de grafo): se borra
+    /// al soltarse el despliegue.
+    pub graph: Option<graph_profile::GraphTenant>,
     /// El directorio del almacén de contenido.
     pub cas: String,
     /// El directorio del staging del almacén de contenido.
@@ -326,7 +352,11 @@ impl Deployment {
     /// Un despliegue vacío.
     pub fn new() -> Self {
         let directory = tempfile::tempdir().expect("a temp dir");
-        let db = directory.path().join("db").to_string_lossy().into_owned();
+        let graph = graph_profile().then(graph_profile::GraphTenant::create);
+        let db = match &graph {
+            Some(tenant) => tenant.locator(),
+            None => directory.path().join("db").to_string_lossy().into_owned(),
+        };
         let cas = directory.path().join("cas").to_string_lossy().into_owned();
         let staging = PathBuf::from(&cas).join("staging");
         let policy = directory.path().join("policies.cedar");
@@ -336,6 +366,7 @@ impl Deployment {
         Self {
             directory,
             db,
+            graph,
             cas,
             staging,
             lives: Mutex::new(Vec::new()),
@@ -1224,7 +1255,6 @@ impl Deployment {
             .env_remove("HODEI_SECURITY__AUTH_JWKS_PATH")
             .env("HODEI_SERVER__HOST", "127.0.0.1")
             .env("HODEI_SERVER__PORT", port.to_string())
-            .env("HODEI_ROCKSDB__PATH", &self.db)
             .env("HODEI_CONTENT__CAS_PATH", &self.cas)
             .env("HODEI_REPOSITORY__DURABLE", "true")
             .env("HODEI_SECURITY__RAW_API_ENABLED", "true")
@@ -1243,7 +1273,20 @@ impl Deployment {
                 "HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH",
                 self.schema_path(),
             )
-            .env("RUST_LOG", "info")
+            .env("RUST_LOG", "info");
+        match &self.graph {
+            // The graph profile: the production binary on `RUN_MODE=dgraph`
+            // against the tenant of this deployment.
+            Some(tenant) => {
+                for (name, value) in tenant.service_environment() {
+                    command.env(name, value);
+                }
+            }
+            None => {
+                command.env("HODEI_ROCKSDB__PATH", &self.db);
+            }
+        }
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
@@ -2531,11 +2574,29 @@ fn the_first_line_of(command: &[&str]) -> String {
 ///
 /// Solo siembra si el proceso es el que otro ha mandado sembrar: el
 /// proceso que siembra es otro, y el que se prueba es el servicio.
-#[cfg(feature = "legacy")]
 pub fn seed_if_asked() {
     let Some(db) = std::env::var_os("HODEI_SEED_DB") else {
         return;
     };
+    // The graph profile: the locator names the tenant of the deployment and
+    // the catalog is written through the real Dgraph store.
+    if let Some(tenant) = graph_profile::GraphTenant::from_locator(&db.to_string_lossy()) {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("the runtime")
+            .block_on(graph_profile::seed_from_environment(&tenant));
+        return;
+    }
+    #[cfg(feature = "legacy")]
+    seed_embedded_if_asked(&db);
+    #[cfg(not(feature = "legacy"))]
+    panic!("HODEI_SEED_DB is not a graph tenant locator and the embedded engine is not built");
+}
+
+/// The embedded seeder (feature `legacy`, until F4 retires the engine).
+#[cfg(feature = "legacy")]
+fn seed_embedded_if_asked(db: &std::ffi::OsStr) {
     if let Ok(repositories) = std::env::var("HODEI_SEED_MAVEN") {
         let repositories: Vec<serde_json::Value> =
             serde_json::from_str(&repositories).expect("the maven repositories parse");

@@ -264,6 +264,19 @@ pipeline {
                         "--test hsp304_formats_dgraph_it",
                     ).joinToString(" ") + " -- --test-threads=1"
                 )
+                // HSP-314 F4 S2a: las suites de comportamiento migradas al harness del
+                // perfil de grafo (tests/support/graph_profile.rs): el binario (o el
+                // `bootstrap` en proceso) arranca sobre `RUN_MODE=dgraph` y cada despliegue
+                // crea y borra su propio namespace ACL del alpha. Sin
+                // HODEI_GRAPH_IT_ENDPOINT (+ _USER/_PASSWORD/_ADMIN) se saltan a si mismas
+                // (exit 0) y el gate de arriba declara NOT_RUN. Sin `legacy`.
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp112_pypi_cli",
+                        "--test admin_surface",
+                        "--test iam_scope",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
             }
         }
 
@@ -426,7 +439,6 @@ pipeline {
                         "--test capsule_read",
                         "--test hsp118_bundle_contract",
                         "--test hsp126_capsule_oci",
-                        "--test admin_surface",
                         "--test audit_events",
                         "--test http_contract",
                         "--test iam_audit",
@@ -436,7 +448,6 @@ pipeline {
                         // liveness no. Arranca el motor embebido.
                         "--test hsp237_readiness",
                         "--test iam_policy_timestamps",
-                        "--test iam_scope",
                         "--test playground_isolation",
                         "--test policy_circuits",
                         "--test repository_create",
@@ -487,7 +498,6 @@ pipeline {
                         "--test hsp111_npm_e2e",
                         "--test hsp111_npm_cli",
                         "--test hsp112_pypi_e2e",
-                        "--test hsp112_pypi_cli",
                         // La direccion publica del despliegue (HSP-238): lo
                         // que el registro anuncia lo decide la
                         // configuracion y no la peticion.
