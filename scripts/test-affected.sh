@@ -198,6 +198,18 @@ fi
 RESULTS="${PLAN_DIR}/results.tsv"
 : > "${RESULTS}"
 
+# Per-phase measurements (HSP-290): one row per measured step of a gate with
+# gate, phase, status, duration_ms, cpu_user_ms, cpu_sys_ms, max_rss_kib.
+# CPU and RSS come from GNU time (rusage of the reaped process tree); where
+# the host has no GNU time they are written as UNKNOWN, never as zero.
+PHASES="${PLAN_DIR}/phases.tsv"
+: > "${PHASES}"
+
+HAVE_TIME=0
+if [ -x /usr/bin/time ] && /usr/bin/time -f '%U' true >/dev/null 2>&1; then
+    HAVE_TIME=1
+fi
+
 now_ms() {
     local value
     value="$(date +%s%3N 2>/dev/null || true)"
@@ -211,10 +223,54 @@ record() {
     printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "${RESULTS}"
 }
 
+# Runs one measured step and sets STEP_EXIT, STEP_MS, STEP_USER, STEP_SYS,
+# STEP_RSS. The step runs under `bounded` when limits apply, with the GNU time
+# wrapper INSIDE the bound so the rusage covers the real process tree.
+run_step() {
+    local command="$1" log="$2"
+    local usage="${log}.usage" start end
+    local -a wrapper=()
+    : > "${usage}"
+    if [ "${HAVE_TIME}" = "1" ]; then
+        wrapper=(/usr/bin/time -o "${usage}" -f '%U %S %M')
+    fi
+
+    start="$(now_ms)"
+    if [ "${USE_BOUNDED}" = "1" ]; then
+        bounded "${wrapper[@]}" bash -c "${command}" > "${log}" 2>&1 && STEP_EXIT=0 || STEP_EXIT=$?
+    else
+        "${wrapper[@]}" bash -c "${command}" > "${log}" 2>&1 && STEP_EXIT=0 || STEP_EXIT=$?
+    fi
+    end="$(now_ms)"
+    STEP_MS=$(( end - start ))
+
+    STEP_USER="UNKNOWN"
+    STEP_SYS="UNKNOWN"
+    STEP_RSS="UNKNOWN"
+    if [ "${HAVE_TIME}" = "1" ]; then
+        local line user sys rss
+        line="$(tail -n 1 "${usage}" 2>/dev/null || true)"
+        if [[ "${line}" =~ ^([0-9]+\.[0-9]+)\ ([0-9]+\.[0-9]+)\ ([0-9]+)$ ]]; then
+            user="${BASH_REMATCH[1]}"
+            sys="${BASH_REMATCH[2]}"
+            rss="${BASH_REMATCH[3]}"
+            STEP_USER="$(awk -v v="${user}" 'BEGIN { printf "%d", v * 1000 }')"
+            STEP_SYS="$(awk -v v="${sys}" 'BEGIN { printf "%d", v * 1000 }')"
+            STEP_RSS="${rss}"
+        fi
+    fi
+    rm -f "${usage}"
+}
+
+record_phase() {
+    # gate, phase, status, duration, user, sys, rss
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "${PHASES}"
+}
+
 run_gate() {
     local gate="$1" kind="$2" command="$3" reason="$4"
     local log="${PLAN_DIR}/logs/$(printf '%s' "${gate}" | tr ':' '_').log"
-    local status exit_code note start end duration
+    local status exit_code note duration
 
     # Un gate que no se puede ejecutar NO es un gate que ha pasado: se
     # declara NOT_RUN, con el motivo, y el informe lo dirá.
@@ -259,18 +315,64 @@ run_gate() {
     echo "  porque ${reason}"
     echo "  ${command}"
 
-    start="$(now_ms)"
-    if [ "${USE_BOUNDED}" = "1" ]; then
-        if [ "${command%% *}" = "cargo" ]; then
-            bounded ${command} > "${log}" 2>&1 && exit_code=0 || exit_code=$?
+    # The phases of a gate. A package test gate is measured in three steps
+    # so compile, link and execution are separate numbers (HSP-290):
+    #   compile    `cargo check --tests`: front-end work, no codegen
+    #   link       `cargo test --no-run`: codegen and linking of the test
+    #              binaries (the artifacts), reusing nothing from `check`
+    #   execution  `cargo test`: artifacts are fresh, so this is run time
+    #              (doctests are compiled by rustdoc here, and counted here)
+    # Every other gate is a single step classified by its kind.
+    duration=0
+    exit_code=0
+    if [ "${kind}" = "test" ] && [ "${command#cargo test}" != "${command}" ]; then
+        local rest="${command#cargo test}"
+        local compile_log="${log%.log}.compile.log"
+        local link_log="${log%.log}.link.log"
+
+        run_step "cargo check${rest} --tests" "${compile_log}"
+        record_phase "${gate}" compile "$([ "${STEP_EXIT}" -eq 0 ] && echo PASS || echo FAIL)" \
+            "${STEP_MS}" "${STEP_USER}" "${STEP_SYS}" "${STEP_RSS}"
+        duration=$(( duration + STEP_MS ))
+        exit_code="${STEP_EXIT}"
+        if [ "${exit_code}" -ne 0 ]; then
+            cp "${compile_log}" "${log}"
+            record_phase "${gate}" link NOT_RUN 0 UNKNOWN UNKNOWN UNKNOWN
+            record_phase "${gate}" execution NOT_RUN 0 UNKNOWN UNKNOWN UNKNOWN
         else
-            bounded bash -c "${command}" > "${log}" 2>&1 && exit_code=0 || exit_code=$?
+            run_step "cargo test${rest} --no-run" "${link_log}"
+            record_phase "${gate}" link "$([ "${STEP_EXIT}" -eq 0 ] && echo PASS || echo FAIL)" \
+                "${STEP_MS}" "${STEP_USER}" "${STEP_SYS}" "${STEP_RSS}"
+            duration=$(( duration + STEP_MS ))
+            exit_code="${STEP_EXIT}"
+            if [ "${exit_code}" -ne 0 ]; then
+                cp "${link_log}" "${log}"
+                record_phase "${gate}" execution NOT_RUN 0 UNKNOWN UNKNOWN UNKNOWN
+            else
+                run_step "${command}" "${log}"
+                record_phase "${gate}" execution "$([ "${STEP_EXIT}" -eq 0 ] && echo PASS || echo FAIL)" \
+                    "${STEP_MS}" "${STEP_USER}" "${STEP_SYS}" "${STEP_RSS}"
+                duration=$(( duration + STEP_MS ))
+                exit_code="${STEP_EXIT}"
+            fi
         fi
     else
-        bash -c "${command}" > "${log}" 2>&1 && exit_code=0 || exit_code=$?
+        local phase="execution"
+        case "${kind}" in
+            fmt|openapi) phase="setup" ;;
+            clippy) phase="compile" ;;
+        esac
+        run_step "${command}" "${log}"
+        exit_code="${STEP_EXIT}"
+        duration="${STEP_MS}"
+        if [ "${exit_code}" -eq 0 ]; then
+            record_phase "${gate}" "${phase}" PASS "${STEP_MS}" "${STEP_USER}" "${STEP_SYS}" "${STEP_RSS}"
+        elif { [ "${kind}" = "compose" ] || [ "${kind}" = "helm" ]; } && [ "${exit_code}" -eq 77 ]; then
+            record_phase "${gate}" "${phase}" NOT_RUN "${STEP_MS}" "${STEP_USER}" "${STEP_SYS}" "${STEP_RSS}"
+        else
+            record_phase "${gate}" "${phase}" FAIL "${STEP_MS}" "${STEP_USER}" "${STEP_SYS}" "${STEP_RSS}"
+        fi
     fi
-    end="$(now_ms)"
-    duration=$(( end - start ))
 
     if [ "${exit_code}" -eq 0 ]; then
         status="PASS"
@@ -307,17 +409,31 @@ report_rc=0
 python3 "${PLANNER}" report \
     --plan "${PLAN_DIR}/plan.json" \
     --results "${RESULTS}" \
+    --phases "${PHASES}" \
     --out "${REPORT_PATH}" \
     --mode run \
     --limits "${LIMITS}" || report_rc=$?
 
+# Register the run in the local cost history. The history is evidence, not a
+# gate: a failed registration never changes the verdict, but it is NEVER
+# silent -- the warning goes to stderr (HSP-290). The recorder only reads
+# inputs under target/reports, so the report and the logs are staged there.
 if [ -f "${SCRIPT_DIR}/test-cost-history.py" ]; then
-    python3 "${SCRIPT_DIR}/test-cost-history.py" record \
-        --source-type test-affected \
-        --input "${REPORT_PATH}" \
-        --logs-dir "${PLAN_DIR}/logs" \
-        --out-dir "${GIT_ROOT}/target/reports" \
-        --render || true
+    HISTORY_DIR="${GIT_ROOT}/target/reports"
+    INPUTS_DIR="${HISTORY_DIR}/inputs"
+    if mkdir -p "${INPUTS_DIR}/logs" \
+        && cp "${REPORT_PATH}" "${INPUTS_DIR}/report.json" \
+        && { find "${INPUTS_DIR}/logs" -type f -name '*.log' -delete; cp "${PLAN_DIR}"/logs/*.log "${INPUTS_DIR}/logs/"; } \
+        && python3 "${SCRIPT_DIR}/test-cost-history.py" record \
+            --source-type test-affected \
+            --input "${INPUTS_DIR}/report.json" \
+            --logs-dir "${INPUTS_DIR}/logs" \
+            --out-dir "${HISTORY_DIR}" \
+            --render; then
+        :
+    else
+        echo "aviso: no se pudo registrar el historico de coste de pruebas (el veredicto no cambia)" >&2
+    fi
 fi
 
 exit "${report_rc}"

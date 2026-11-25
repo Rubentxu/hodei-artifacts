@@ -59,6 +59,18 @@
 
 pipeline {
     stages {
+        // The history needs a real start: this stamp is where the duration
+        // of the whole run is read from. A stamp still here at the start of
+        // the next run means the previous run never reached the report
+        // stage, and it is recorded as FAILED (the installed PipelineK has
+        // no `post {}` to run a finalizer on failure).
+        stage("start (test cost history)") {
+            timestamps {
+                sh("mkdir -p target/reports/runs")
+                sh("python3 scripts/test-cost-history.py pipeline-start --out-dir target/reports")
+            }
+        }
+
         stage("validate (format, lint and build)") {
             timestamps {
                 sh("cargo fmt --all -- --check")
@@ -134,6 +146,14 @@ pipeline {
                         "--test hsp134_risk_facts",
                     ).joinToString(" ")
                 )
+            }
+        }
+
+        stage("scripts (python contracts)") {
+            timestamps {
+                // The test cost history and the planner of `test-affected`
+                // are scripts, not crates: nothing else runs their tests.
+                sh("python3 -m unittest discover -s scripts -p 'test_*.py'")
             }
         }
 
@@ -618,13 +638,16 @@ pipeline {
 
         stage("report (test cost history)") {
             timestamps {
-                sh("mkdir -p target/reports/runs")
+                // Duration is the wall time since the start stamp and status
+                // is `auto`: this stage is only reached when every earlier
+                // stage passed. Nothing here is typed in by hand.
                 sh(
                     "python3 scripts/test-cost-history.py record " +
                         "--source-type pipeline " +
                         "--stage pipeline " +
                         "--phase execution " +
-                        "--status PASSED " +
+                        "--status auto " +
+                        "--started-at-file target/reports/.pipeline-start.json " +
                         "--suite 'pipeline:full' " +
                         "--out-dir target/reports " +
                         "--render"
