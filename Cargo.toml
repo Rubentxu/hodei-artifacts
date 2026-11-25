@@ -37,7 +37,6 @@ members = [
     ".",
 ]
 exclude = [
-    "crates/search",
 ]
 resolver = "2"
 
