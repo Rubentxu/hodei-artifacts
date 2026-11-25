@@ -62,6 +62,37 @@ pub const AUDIENCE: &str = "hodei-artifacts";
 /// La cuenta de la primera persona.
 pub const FIRST_ACCOUNT: &str = "acme";
 
+/// The secret of the signing key of the test deployments: 64 hex characters,
+/// as `openssl rand -hex 32` writes them. A fixture, never a real key.
+pub const SIGNING_SECRET: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+/// A second fixture secret, for the rotation cases.
+pub const SIGNING_SECRET_NEXT: &str =
+    "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+
+/// The environment that gives a test deployment a signing ring.
+///
+/// Each entry of `ring` is a key id and the name of the environment variable
+/// that holds its secret; the first signs and all of them verify. The
+/// secrets themselves are passed in the variables that the names point at.
+pub fn signing_environment(ring: &[(&str, &str, &str)]) -> Vec<(String, String)> {
+    let mut environment = Vec::new();
+    for (index, (id, variable, secret)) in ring.iter().enumerate() {
+        environment.push((format!("HODEI_SIGNING__KEYS__{index}__ID"), id.to_string()));
+        environment.push((
+            format!("HODEI_SIGNING__KEYS__{index}__SECRET_ENV"),
+            variable.to_string(),
+        ));
+        environment.push((variable.to_string(), secret.to_string()));
+    }
+    environment
+}
+
+/// The ring most cases use: one key, `k1`.
+pub fn the_signing_ring() -> Vec<(String, String)> {
+    signing_environment(&[("k1", "HODEI_TEST_SIGNING_SECRET_K1", SIGNING_SECRET)])
+}
+
 /// La cuenta de la segunda persona.
 pub const SECOND_ACCOUNT: &str = "other";
 

@@ -124,6 +124,21 @@ spec:
                   key: {{ .Values.secrets.metadataSignerKey }}
                   optional: true
             {{- end }}
+            {{- if .Values.signing.existingSecret }}
+            - name: HODEI_SIGNING__TTL_SECS
+              value: {{ .Values.signing.ttlSecs | quote }}
+            {{- range $index, $key := .Values.signing.keys }}
+            - name: HODEI_SIGNING__KEYS__{{ $index }}__ID
+              value: {{ $key.id | quote }}
+            - name: HODEI_SIGNING__KEYS__{{ $index }}__SECRET_ENV
+              value: HODEI_SIGNING_KEY_SECRET_{{ $index }}
+            - name: HODEI_SIGNING_KEY_SECRET_{{ $index }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.signing.existingSecret }}
+                  key: {{ $key.secretKey }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

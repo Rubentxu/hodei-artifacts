@@ -182,3 +182,37 @@ fn the_smoke_asserts_a_different_failure_mode_for_each_profile() {
         "the external profile case must assert unsupported-backend"
     );
 }
+
+#[test]
+fn both_compose_files_wire_the_signing_key_without_a_literal_secret() {
+    for name in ["compose.yaml", "compose.external.yaml"] {
+        let text = fs::read_to_string(root().join(name)).expect("the compose file is readable");
+        assert!(
+            text.contains("${HODEI_SIGNING_KEY_FILE:?"),
+            "{name} must require the key file, with no default: a default would be a shared key"
+        );
+        assert!(
+            text.contains("HODEI_SIGNING__KEYS__0__SECRET_FILE: /run/secrets/hodei-signing-key"),
+            "{name} must hand the key to the service as a file"
+        );
+        assert!(
+            text.contains(":/run/secrets/hodei-signing-key:ro"),
+            "{name} must mount the key read-only"
+        );
+        assert!(
+            !text.contains("HODEI_SIGNING__KEYS__0__SECRET:"),
+            "{name} must never carry the secret itself"
+        );
+    }
+}
+
+#[test]
+fn the_smoke_generates_an_ephemeral_signing_key() {
+    let script = fs::read_to_string(root().join("scripts/compose-smoke.sh"))
+        .expect("the smoke script is readable");
+    assert!(
+        script.contains("export HODEI_SIGNING_KEY_FILE=")
+            && script.contains("openssl rand -hex 32"),
+        "the smoke must generate its own key, not ship one"
+    );
+}

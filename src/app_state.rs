@@ -198,6 +198,9 @@ pub struct AppState {
     /// deployment and not by the request, because a request can be
     /// written by anybody.
     pub(crate) public_url: crate::public_url::PublicUrl,
+    /// The ring of keys that signs the short-lived URLs of the provider
+    /// mirror. Empty by default: a deployment without keys issues none.
+    pub(crate) signed_urls: crate::signed_url::SignedUrls,
     /// The registry of the upload sessions.
     ///
     /// It lives here because it is state that **survives a request**: the
@@ -348,6 +351,7 @@ impl AppState {
             investigation: None,
             investigation_limits: crate::config::InvestigationConfig::default(),
             public_url: crate::public_url::PublicUrl::default(),
+            signed_urls: crate::signed_url::SignedUrls::unconfigured(),
         }
     }
 
@@ -420,6 +424,7 @@ impl AppState {
             investigation: None,
             investigation_limits: crate::config::InvestigationConfig::default(),
             public_url: crate::public_url::PublicUrl::default(),
+            signed_urls: crate::signed_url::SignedUrls::unconfigured(),
         }
     }
 
@@ -467,6 +472,12 @@ impl AppState {
     /// Set the limits of the investigation.
     pub fn with_investigation_limits(mut self, limits: crate::config::InvestigationConfig) -> Self {
         self.investigation_limits = limits;
+        self
+    }
+
+    /// Set the ring of keys that signs short-lived URLs.
+    pub fn with_signed_urls(mut self, signed_urls: crate::signed_url::SignedUrls) -> Self {
+        self.signed_urls = signed_urls;
         self
     }
 
