@@ -1,7 +1,7 @@
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useAuthStore } from '@/shared/stores/auth.store';
 import { server } from '@/shared/test/mocks/server';
@@ -92,6 +92,67 @@ describe('Console session isolation', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('repo-alpha')).not.toBeInTheDocument();
+    });
+
+    const cachedAlpha = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ['console'] })
+      .filter(query =>
+        (JSON.stringify(query.state.data) ?? '').includes('repo-alpha')
+      );
+    expect(cachedAlpha).toHaveLength(0);
+  });
+
+  it('cancels in-flight console queries when the principal logs out', async () => {
+    const delayedResponse = createDeferred<{
+      repositories: ReturnType<typeof makeRepo>[];
+    }>();
+    let requestStarted = false;
+
+    server.use(
+      http.get('/api/v1/catalog/repositories', async ({ request }) => {
+        if (request.headers.get('authorization') !== 'Bearer token-a') {
+          return HttpResponse.json({ error: 'unauthenticated' }, { status: 401 });
+        }
+        requestStarted = true;
+        const payload = await delayedResponse.promise;
+        return HttpResponse.json(payload);
+      })
+    );
+
+    act(() => {
+      useAuthStore.getState().login(principalA, 'token-a');
+    });
+
+    const { queryClient } = render(
+      <MemoryRouter>
+        <RepositoriesView />
+      </MemoryRouter>
+    );
+    const cancelQueries = vi.spyOn(queryClient, 'cancelQueries');
+
+    await waitFor(() => {
+      expect(requestStarted).toBe(true);
+    });
+
+    const previousSession = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ['console'] })[0]?.queryKey[1];
+    expect(previousSession).toBeDefined();
+
+    act(() => {
+      useAuthStore.getState().logout();
+    });
+
+    await waitFor(() => {
+      expect(cancelQueries).toHaveBeenCalledWith({
+        queryKey: ['console', previousSession],
+      });
+    });
+
+    delayedResponse.resolve({ repositories: [makeRepo('repo-alpha')] });
+    await act(async () => {
+      await Promise.resolve();
     });
 
     const cachedAlpha = queryClient
