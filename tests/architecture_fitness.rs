@@ -151,18 +151,34 @@ fn the_check_would_catch_a_downcast() {
 /// sink and the outbox that everybody speaks, and a contract that drags a
 /// database engine into every crate that names it is a contract that stops
 /// being a contract.
-const PROTECTED_CRATES: [&str; 4] = [
+const PROTECTED_CRATES: [&str; 8] = [
     "crates/kernel",
     "crates/hodei-evidence",
     "crates/hodei-catalog",
     "crates/hodei-audit",
+    "crates/hodei-trust-policy",
+    "crates/hodei-risk",
+    "crates/hodei-reachability",
+    "crates/hodei-policies",
 ];
 
 /// The mechanisms a protected crate must not depend on.
 ///
 /// The list is explicit on purpose: an allowlist that nobody reads is a
 /// formality, and a denylist that is written down can be argued about.
-const BANNED_DEPENDENCIES: [&str; 6] = ["surrealdb", "axum", "reqwest", "sqlx", "mongodb", "redis"];
+const BANNED_DEPENDENCIES: [&str; 11] = [
+    "surrealdb",
+    "axum",
+    "reqwest",
+    "http",
+    "hyper",
+    "tonic",
+    "dgraph",
+    "hodei-graph-client",
+    "sqlx",
+    "mongodb",
+    "redis",
+];
 
 /// Whether a dependency section names the given crate.
 ///
@@ -495,5 +511,114 @@ fn the_closure_follows_the_edges_inside_the_workspace() {
     assert!(
         !domain.contains(&"crates/hodei-catalog-storage".to_string()),
         "the domain must not reach the adapter: {domain:?}"
+    );
+}
+
+/// Only the authorized crates in the active workspace may depend on `cedar-policy`.
+///
+/// No duplicate Cedar engine or copy may be introduced in another workspace member.
+#[test]
+fn no_new_cedar_copies_in_workspace() {
+    let root = repository_root();
+    let allowed = ["crates/kernel", "crates/hodei-policies", "."];
+    let mut offences = Vec::new();
+
+    for member in workspace_members(&root) {
+        if allowed.contains(&member.as_str()) {
+            continue;
+        }
+        let manifest = root.join(&member).join("Cargo.toml");
+        let Ok(content) = fs::read_to_string(&manifest) else {
+            continue;
+        };
+        let dependencies = content
+            .split("[dev-dependencies]")
+            .next()
+            .unwrap_or_default();
+        if names_dependency(dependencies, "cedar-policy") {
+            offences.push(format!(
+                "{member} declares cedar-policy outside the authorized policy/kernel crates"
+            ));
+        }
+    }
+
+    assert!(
+        offences.is_empty(),
+        "new cedar-policy dependency found in workspace:\n{}",
+        offences.join("\n")
+    );
+}
+
+/// Handlers and the shared resolution seam must not construct duplicate
+/// authorization authorities; all authorization goes through `AuthorizeResourceUseCase`.
+#[test]
+fn no_duplicate_cedar_authorities_in_handlers_or_seam() {
+    let root = repository_root();
+    let mut files = Vec::new();
+    collect(&root.join("src/handlers"), &mut files);
+    files.push(root.join("src/resolution.rs"));
+
+    let forbidden = ["CedarAuthorizer", "hodei_authz::cedar"];
+    let mut offences = Vec::new();
+    for file in files {
+        let Ok(content) = fs::read_to_string(&file) else {
+            continue;
+        };
+        for (number, line) in content.lines().enumerate() {
+            for pattern in forbidden {
+                if line.contains(pattern) {
+                    offences.push(format!(
+                        "{}:{}: {pattern}",
+                        file.strip_prefix(&root).unwrap_or(&file).display(),
+                        number + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offences.is_empty(),
+        "handlers or resolution seam construct a duplicate Cedar authority:\n{}",
+        offences.join("\n")
+    );
+}
+
+/// Migrated protocol handlers consume the shared resolution seam (`crate::resolution`)
+/// and must not cross-import `handlers/raw.rs`.
+#[test]
+fn migrated_protocol_handlers_do_not_cross_import_raw_handler() {
+    let root = repository_root();
+    let migrated = ["src/handlers/npm.rs", "src/handlers/pypi.rs"];
+    let forbidden = [
+        "super::raw::",
+        "super::raw;",
+        "super::raw ",
+        "crate::handlers::raw::",
+        "crate::handlers::raw;",
+        "crate::handlers::raw ",
+    ];
+    let mut offences = Vec::new();
+
+    for rel in migrated {
+        let path = root.join(rel);
+        let content = fs::read_to_string(&path).expect("migrated handler must exist");
+        for (number, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for pattern in forbidden {
+                if line.contains(pattern) {
+                    offences.push(format!("{rel}:{}: {pattern}", number + 1));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offences.is_empty(),
+        "migrated protocol handlers must not cross-import handlers/raw.rs:\n{}",
+        offences.join("\n")
     );
 }

@@ -40,14 +40,14 @@ use hodei_catalog::{
     terraform::{Route, TerraformError},
 };
 
-use super::raw::{
-    RawApiError, apply_cache_headers, apply_common_headers, the_admission_error, the_blob_error,
-    the_content_store, the_context, the_decision, the_proxy_asset_as, the_proxy_asset_at,
-    the_repository_in, the_repository_of,
-};
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{correlation_id, record_audit};
+use crate::resolution::{
+    ResolutionError as RawApiError, apply_cache_headers, apply_common_headers, the_admission_error,
+    the_blob_error, the_content_store, the_context, the_decision, the_proxy_asset_as,
+    the_proxy_asset_at, the_repository_in, the_repository_of,
+};
 use crate::signed_url::{Claims, Scope};
 
 /// Lo que pasa con una peticion que no se puede servir.
