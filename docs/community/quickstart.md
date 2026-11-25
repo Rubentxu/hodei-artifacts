@@ -221,6 +221,12 @@ decisión es de Cedar, y es por repositorio:
 4. **Mira el log del servicio**: la petición llega con su actor, su
    operación, su recurso y su resultado. Nunca con el token.
 
+El laboratorio lo demuestra en cada ejecución: tras el primer pull,
+`run` firma un token válido de **otra cuenta** (`other/intruder`) y comprueba
+que `POST /api/v1/catalog/repositories` responde `403` (no `401`) y que no
+puede leer el blob del laboratorio. La prueba
+`tests/hsp241_community_quickstart.rs` lo contrasta contra el tarball real.
+
 Un `403` en `POST /api/v1/catalog/repositories` casi siempre es la política:
 crear un repositorio necesita `CreateRepository`, y un laboratorio que sólo
 publica no la tiene.
@@ -240,6 +246,13 @@ El servicio está vivo pero una dependencia no está:
 3. **El verificador no pudo responder.** Si el autenticador no está
    disponible, la respuesta es `503` y no `401`: un `401` ante una caída
    mandaría a cambiar una credencial que estaba bien.
+
+> **Qué está contrastado y qué no.** Ningún test del quickstart provoca un
+> `503`. El laboratorio verifica los tokens con un secreto HS256 local, que
+> no es un verificador remoto que pueda caerse, y simularlo exigiría
+> inventar una infraestructura (un emisor externo) que el laboratorio no
+> tiene. Lo descrito en el punto 3 es el comportamiento declarado del
+> servicio, no una comprobación ejecutada por esta guía.
 
 ### `404 Not Found`
 
